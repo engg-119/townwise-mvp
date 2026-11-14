@@ -1,12 +1,13 @@
 // Files attached to a person's message (spec D36, docs/portal/tuning-chat.md section 3), without Docker: the attachments
-// block's words, where it sits in the stored message, how the turn's content is built and capped, what a turn sends
-// against what it saves, and start_calibration's refusal in a turn that read a file.
+// block's words, where it sits in the stored message, how the turn's content is built and capped (tokens, a message's
+// pictures, a replica's bytes in flight), what a turn sends against what it saves, and start_calibration's refusal in a
+// turn that read a file.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ATTACHMENT_TOKEN_CAP, attachedTo, attachmentsBlock, estimatedTokens, expandedMessage, PICTURE_TOKENS, refusalOf, turnAttachments,
-  type AttachmentRead,
+  ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_TOKEN_CAP, attachedTo, attachmentsBlock, bytesToRead, createByteGate, estimatedTokens, expandedMessage,
+  MESSAGE_PICTURE_BYTES, PICTURE_TOKENS, readAttachments, refusalOf, turnAttachments, type AttachmentCheck, type AttachmentRead, type FileRead,
 } from '../src/chat/attachments.ts';
 import { startCalibrationTool } from '../src/chat/tools/calibration.ts';
 import type { ToolContext } from '../src/chat/tools/registry.ts';
@@ -23,9 +24,20 @@ const E = `f_${'e'.repeat(24)}`;
 
 const LEAD = 'Townwise added this before the person\'s message; they didn\'t type it. The person attached these files from Your data to this message. Their content follows for this turn only; to read one again in a later turn, call read_data_item with its ref.';
 
-const read = (ref: string, value: ItemForModel): AttachmentRead => ({ ref, kind: null, read: value });
-const textRead = (value: string, truncated = false): ItemForModel => ({ status: 'text', text: value, truncated });
-const PICTURE: ItemForModel = { status: 'picture', mediaType: 'image/png', base64: 'iVBORw0KGgo=' };
+const read = (ref: string, value: FileRead): AttachmentRead => ({ ref, kind: null, read: value });
+const check = (ref: string, value: ItemForModel): AttachmentCheck => ({ ref, kind: null, check: value });
+const textRead = (value: string, truncated = false): FileRead => ({ status: 'text', text: value, truncated });
+const PICTURE: FileRead = { status: 'picture', mediaType: 'image/png', base64: 'iVBORw0KGgo=' };
+/** A file the checks found the turn can send, `bytes` long; `reads` counts its reads. */
+function readable(kind: 'text' | 'picture', bytes: number, reads: { count: number } = { count: 0 }): ItemForModel {
+  return {
+    status: 'readable', kind, bytes,
+    read: () => {
+      reads.count += 1;
+      return Promise.resolve(kind === 'text' ? { status: 'text', text: 'Fall menu', truncated: false } : PICTURE as Extract<FileRead, { status: 'picture' }>);
+    },
+  };
+}
 const textBlock = (value: string): BetaContentBlockParam => ({ type: 'text', text: value });
 
 describe('the attachments block', () => {
@@ -65,6 +77,16 @@ describe('the attachments block', () => {
       `- ${E}: a picture, not read: no longer in Your data`,
     ]);
     expect(content).toEqual([]);
+    // A regenerate's file the caller may no longer attach, a picture too large in pixels, and one past the pictures' cap.
+    expect(turnAttachments([
+      { ref: A, kind: 'picture', read: { status: 'not_allowed' } },
+      read(B, { status: 'too_many_pixels', kind: 'picture' }),
+      read(C, { status: 'too_much', kind: 'picture' }),
+    ]).block.split('\n').slice(2, -1)).toEqual([
+      `- ${A}: a picture, not read: only the person who added it or an org admin can attach it`,
+      `- ${B}: a picture, not read: too large in pixels`,
+      `- ${C}: a picture, not read: too much at once`,
+    ]);
     expect(turnAttachments([{ ref: A, kind: 'text', read: { status: 'files_off' } }]).block).toContain(`- ${A}: a text file, not read: stored files are off`);
   });
 
@@ -155,9 +177,44 @@ describe('the turn\'s content and its cap', () => {
   });
 
   it('a send refuses the first file it can\'t attach, in the message\'s order', () => {
-    expect(refusalOf([read(A, PICTURE), read(B, { status: 'turned_off', kind: 'text' })])).toBeNull();
-    expect(refusalOf([read(A, PICTURE), read(B, { status: 'not_ready' }), read(C, { status: 'not_found' })])).toBe('not_ready');
-    expect(refusalOf([read(A, { status: 'not_reference' })])).toBe('not_reference');
+    expect(refusalOf([check(A, readable('picture', 10)), check(B, { status: 'turned_off', kind: 'text' })])).toBeNull();
+    expect(refusalOf([check(A, readable('picture', 10)), check(B, { status: 'not_ready' }), check(C, { status: 'not_found' })])).toBe('not_ready');
+    expect(refusalOf([check(A, { status: 'not_reference' })])).toBe('not_reference');
+    expect(refusalOf([check(A, { status: 'not_allowed' }), check(B, { status: 'not_found' })])).toBe('not_allowed');
+  });
+
+  it('reads the files only when asked, and at most 7.5 MB of pictures a message: that picture and every file with content after it are too much', async () => {
+    expect(MESSAGE_PICTURE_BYTES).toBe(7_500_000);
+    const reads = { count: 0 };
+    const off = check(E, { status: 'turned_off', kind: 'text' });
+    const checks = [
+      check(A, readable('picture', 3_750_000, reads)),
+      check(B, readable('text', 65_536, reads)),
+      check(C, readable('picture', 3_750_000, reads)), // exactly 7.5 MB of pictures: fits
+      check(D, readable('picture', 1, reads)),
+      off,
+    ];
+    expect(bytesToRead(checks)).toBe(3_750_000 + 65_536 + 3_750_000);
+    expect(reads.count).toBe(0);
+    const read = await readAttachments([...checks.slice(0, 4), check(`f_${'9'.repeat(24)}`, readable('text', 5, reads)), off]);
+    expect(reads.count).toBe(3);
+    expect(read.map((file) => file.read.status)).toEqual(['picture', 'text', 'picture', 'too_much', 'too_much', 'turned_off']);
+    expect(turnAttachments(read).block.split('\n').slice(2, -1)[3]).toBe(`- ${D}: a picture, not read: too much at once`);
+  });
+
+  it('a replica holds at most 64 MB of attached files for its turns at once, and each release gives back what was held', () => {
+    expect(ATTACHMENT_BYTES_IN_FLIGHT).toBe(64_000_000);
+    const gate = createByteGate(10);
+    expect(gate.reserve(6)).toBe(true);
+    expect(gate.reserve(5)).toBe(false);
+    expect(gate.held).toBe(6);
+    expect(gate.reserve(4)).toBe(true);
+    // A turn with nothing to read always goes.
+    expect(gate.reserve(0)).toBe(true);
+    gate.release(6);
+    expect(gate.reserve(5)).toBe(true);
+    gate.release(100);
+    expect(gate.held).toBe(0);
   });
 
   it('expands a stored message with the block as the turn wrote it and the content after it, leaving the stored one as it was', () => {
@@ -170,13 +227,19 @@ describe('the turn\'s content and its cap', () => {
       role: 'user', content: [textBlock(rules), textBlock(turn.block), ...turn.content, textBlock('What is this?')],
     });
     expect(stored).toEqual(copy);
-    expect(expandedMessage({ role: 'user', content: 'Plain' }, turn)).toEqual({ role: 'user', content: 'Plain' });
+    expect(expandedMessage({ role: 'user', content: 'Plain' }, turn)).toBeNull();
+    // Nothing read and the block as stored: the turn sends the stored message, so its thinking is kept.
+    const unread = turnAttachments([read(A, { status: 'turned_off', kind: 'picture' })]);
+    const asStored: BetaMessageParam = { role: 'user', content: [textBlock(unread.block), textBlock('What is this?')] };
+    expect(expandedMessage(asStored, unread)).toBeNull();
+    // A regenerate whose file was turned off since sends the block as it is now, with no content.
+    expect(expandedMessage(stored, unread)).toEqual({ role: 'user', content: [textBlock(rules), textBlock(unread.block), textBlock('What is this?')] });
   });
 });
 
 describe('a turn with attachments', () => {
   const stored: BetaMessageParam = { role: 'user', content: [textBlock(attachmentsBlock([`- ${A}: a text file`])), textBlock('What is on it?')] };
-  const expanded = expandedMessage(stored, turnAttachments([read(A, textRead('Sentinel-file-text'))]));
+  const expanded = expandedMessage(stored, turnAttachments([read(A, textRead('Sentinel-file-text'))])) ?? stored;
   const noTools = {} as unknown as ToolContext;
   const base = {
     tools: noTools, signal: new AbortController().signal, now: () => new Date('2026-06-01T12:00:00.000Z'), emit: () => undefined,
@@ -211,14 +274,14 @@ describe('a turn with attachments', () => {
     expect(saved).not.toContain('sig-again');
   });
 
-  it('start_calibration refuses in a turn that read an attached file, before anything is looked up', async () => {
-    const tc = { role: 'org_admin', attachedContent: true } as unknown as ToolContext;
+  it('start_calibration refuses in a turn that read a file, before anything is looked up', async () => {
+    const tc = { role: 'org_admin', turn: { readUntrusted: true } } as unknown as ToolContext;
     expect(JSON.parse((await startCalibrationTool.run(tc, { regimeStart: null })).content)).toEqual({
-      started: false, code: 'attachment_turn',
-      message: 'A calibration can’t start in a turn that read an attached file. Ask the owner to confirm in a new message.',
+      started: false, code: 'file_turn',
+      message: 'A calibration can’t start in a turn that read a file from Your data. Ask the owner to confirm in a new message.',
     });
     // A member hears the role rule first.
-    const member = { role: 'member', attachedContent: true } as unknown as ToolContext;
+    const member = { role: 'member', turn: { readUntrusted: true } } as unknown as ToolContext;
     expect(JSON.parse((await startCalibrationTool.run(member, { regimeStart: null })).content)).toMatchObject({ code: 'org_admin_only' });
   });
 });

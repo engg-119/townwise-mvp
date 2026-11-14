@@ -207,7 +207,7 @@ describe('get_day', () => {
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      attachedContent: false,
+      turn: { readUntrusted: false },
     };
     return { tc, byIds, ranges };
   }

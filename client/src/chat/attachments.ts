@@ -7,6 +7,16 @@ import type { AttachmentKind, MessageAttachment } from './api';
 
 /** Files one message can attach (the API's limit, api/src/chat/attachments.ts). */
 export const MAX_ATTACHMENTS = 5;
+/** The largest picture TownwiseAI reads (api/src/files/limits.ts MODEL_PICTURE_BYTES): a larger one gets no thumbnail. */
+export const PICTURE_MAX_BYTES = 3_750_000;
+
+/** A Your data file's ref as the API writes one (api/src/chat/attachments.ts ATTACHMENT_REF). */
+const FILE_REF = /^f_[0-9a-f]{24}$/;
+
+/** True for a well-formed file ref: only such a ref becomes an item page's path or a read. */
+export function isFileRef(ref: string): boolean {
+  return FILE_REF.test(ref);
+}
 
 /** What a chip calls a file of each kind. */
 export const KIND_WORD: Readonly<Record<AttachmentKind, string>> = {

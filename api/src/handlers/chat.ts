@@ -14,8 +14,8 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import {
-  ATTACHMENT_REF, attachedOnPath, attachedTo, expandedMessage, MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments,
-  type Attached, type AttachmentRefusal,
+  ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_REF, attachedOnPath, attachedTo, bytesToRead, checkAttachments, createByteGate, expandedMessage,
+  MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentRefusal, type TurnAttachments,
 } from '../chat/attachments.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
@@ -50,6 +50,8 @@ const STALE_TURN_MS = 3 * 60 * 1000;
 /** Keeps the Container Apps ingress from closing an idle stream. */
 const PING_MS = 15_000;
 const TITLE_CHARS = 60;
+/** D36: the bytes of attached files this replica holds for its turns, from a send's checks to the end of its turn. */
+export const attachmentBytes = createByteGate(ATTACHMENT_BYTES_IN_FLIGHT);
 
 /**
  * A send, or a regenerate. A send's `parentId` makes it an edit: the node the new message hangs under, null for a new
@@ -317,6 +319,9 @@ function attachmentRefused(refusal: AttachmentRefusal): AppError {
     case 'not_found': return notFound();
     case 'not_reference': return new AppError(400, 'invalid_request', 'Only files kept on Your data can be attached');
     case 'not_ready': return new AppError(409, 'attachment_not_ready', 'That file is still uploading. Send it when it’s ready.');
+    // The right to download the original (handlers/files.ts isUploaderOrAdmin). Not `forbidden`, which makes the client
+    // re-read GET /api/me and route again (spec 4.3): nothing about the caller's access changed.
+    case 'not_allowed': return new AppError(403, 'attachment_not_allowed', 'Only the person who added a file or an org admin can attach it');
   }
 }
 
@@ -359,21 +364,39 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   }
   if (!('replyTo' in body) && files.length > 0 && !ctx.items.on) throw filesUnavailable();
   // Before any claim, so a store failure has nothing to release. A regenerate resends its stored message as it was,
-  // its files read again as they are now.
-  const [rules, toolLocation, reads] = await Promise.all([
+  // its files checked again as they are now. Only each file's record and first bytes are read here.
+  const [rules, toolLocation, checks] = await Promise.all([
     'replyTo' in body ? [] : ctx.stores.businessRules.list(scope, location.id),
     locationForTools(ctx, scope, location),
-    files.length === 0 ? [] : readAttachments(ctx.items, scope, location.id, files),
+    files.length === 0 ? [] : checkAttachments(ctx.items, scope, location.id, { userId: caller.userId, role: caller.role }, files),
   ]);
-  // A send refuses a file that isn't on Your data here, a sales file, or one not kept yet; one turned off, or whose
-  // original is gone, is listed as not read instead. A regenerate refuses none: its message was sent.
-  const refusal = 'replyTo' in body ? null : refusalOf(reads);
+  // A send refuses a file that isn't on Your data here, a sales file, one not kept yet, or one the caller may not
+  // attach; one turned off, or whose original is gone, is listed as not read instead. A regenerate refuses none: its
+  // message was sent.
+  const refusal = 'replyTo' in body ? null : refusalOf(checks);
   if (refusal !== null) throw attachmentRefused(refusal);
-  const attached = reads.length === 0 ? null : turnAttachments(reads);
+  // The bytes the turn will read are held from here until it ends; every exit gives them back once.
+  let heldBytes = bytesToRead(checks);
+  if (!attachmentBytes.reserve(heldBytes)) {
+    ctx.logger.info({ orgId: scope.orgId, locationId: location.id, held: attachmentBytes.held }, 'townwise.chat_attachments_busy');
+    throw new AppError(503, 'attachments_busy', 'TownwiseAI is reading a lot of files right now. Try again in a moment.', { retryAfterSeconds: 2 });
+  }
+  const releaseBytes = (): void => {
+    attachmentBytes.release(heldBytes);
+    heldBytes = 0;
+  };
   const now = ctx.now();
   const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };
   const { turnId } = claim;
-  if (!(await ctx.stores.chatLiveTurns.claim(scope, caller.userId, claim))) {
+  let live: boolean;
+  try {
+    live = await ctx.stores.chatLiveTurns.claim(scope, caller.userId, claim);
+  } catch (err) {
+    releaseBytes();
+    throw err;
+  }
+  if (!live) {
+    releaseBytes();
     throw new AppError(409, 'chat_turn_in_progress', 'You already have a reply in progress. Wait for it, or stop it first.');
   }
   // Every exit from here on releases the person's claim, by this turn's id.
@@ -391,10 +414,21 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   try {
     claimed = await claimTurn(ctx, scope, owner, body, claim);
   } catch (err) {
+    releaseBytes();
     await releaseLiveTurn();
     throw err;
   }
   const { conversationId, title, history, nodes } = claimed;
+  // D36: the files' bytes, read only now that the turn holds its claims. A failure gives everything back before the stream.
+  let attached: TurnAttachments | null = null;
+  try {
+    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks));
+  } catch (err) {
+    releaseBytes();
+    await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
+    await releaseLiveTurn();
+    throw err;
+  }
   // D36: a turn's log lines count its message's files by kind, never a name or anything from a file.
   const ids = { orgId: scope.orgId, locationId: location.id, conversationId, ...(attached === null ? {} : { attachments: attached.counts }) };
 
@@ -425,6 +459,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     // Only the newest business_rules block on the path is sent in full; the stored messages keep theirs.
     const modelHistory = historyForModel(history, userMessage);
     const person = userMessage ?? modelHistory.at(-1);
+    // Sent in place of the stored message only when it differs: content was read, or a regenerate's files changed.
     const expanded = attached === null || person === undefined ? null : expandedMessage(person, attached);
     // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
     send('conversation', {
@@ -436,7 +471,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
       tools: {
         ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
-        attachedContent: (attached?.content.length ?? 0) > 0,
+        // read_data_item sets it too, once it hands back an item's text.
+        turn: { readUntrusted: (attached?.content.length ?? 0) > 0 },
       },
       history: modelHistory,
       userMessage,
@@ -488,7 +524,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       details: {
         locationId: location.id, conversationId, model: result.model, calls: result.calls,
         inputTokens: result.inputTokens, outputTokens: result.outputTokens, stopReason: result.stopReason,
-        ...(attached === null ? {} : { attachments: reads.length }),
+        ...(attached === null ? {} : { attachments: checks.length }),
       },
     });
     ctx.logger.info({
@@ -502,6 +538,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     send('error', { code: 'internal' });
   } finally {
     clearInterval(ping);
+    releaseBytes();
     // Before the stream ends, so the client's next turn never finds this one still live.
     await releaseLiveTurn();
     if (!res.writableEnded) res.end();

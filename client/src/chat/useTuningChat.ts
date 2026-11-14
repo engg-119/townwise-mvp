@@ -240,6 +240,12 @@ export function sendErrorText(error: unknown, attached = false): string {
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t send messages.';
     if (error.code === 'files_unavailable') return 'File storage is off right now, so files can’t be attached. Remove them to send your message.';
     if (error.code === 'attachment_not_ready') return 'An attached file is still uploading. Send your message once it’s ready.';
+    // D36: attaching takes the right to download the original, so a teammate's file (one already on Your data that a
+    // chip found again, among them) is theirs or an org admin's to attach.
+    if (error.code === 'attachment_not_allowed') {
+      return 'Only the person who added a file to Your data, or an org admin, can attach it. Remove the files a teammate added to send your message.';
+    }
+    if (error.code === 'attachments_busy') return 'TownwiseAI is reading a lot of files right now. Try again in a moment.';
     if (error.status === 404 && attached) return 'An attached file isn’t on Your data for this location anymore, or this conversation was deleted.';
     if (error.status === 404) return 'This conversation or location wasn’t found.';
     if (error.status === 400 && attached) return 'That message couldn’t be sent with these files. Only files kept on Your data can be attached.';
@@ -856,9 +862,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         failure ??= exhausted ? TELL_BUDGET : sendErrorText(error, attached);
         // A card's words stay in the card, never in the composer.
         const content = telling === undefined && 'content' in request ? request.content : '';
+        const draftBefore = latest.current.draft;
         dispatch({ type: 'failed', error: exhausted ? null : sendErrorText(error, attached), content, exhausted });
-        // The turn was taken back (its message left the page), so its files go back to the composer with the text.
-        if (action.type === 'send' && !latest.current.messages.some((message) => message.key === action.userKey)) returned?.();
+        // The turn was taken back (its message left the page) and its text went back to the composer, so its files go
+        // back with it. Text typed meanwhile stays, and so do the composer's files as the person left them.
+        const takenBack = action.type === 'send' && !latest.current.messages.some((message) => message.key === action.userKey);
+        if (takenBack && draftBefore === '' && content !== '') returned?.();
       },
     ).finally(() => {
       if (live.current === controller) live.current = null;
@@ -1150,8 +1159,10 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       // the card answers its question.
       const ended = told.current.get(replyKey);
       told.current.delete(replyKey);
-      // Sent again from where the conversation is now: after the leaf, like any message, with the files it carried.
-      start(request !== null && 'content' in request ? request.content : messageText(asked), 0, ended === undefined ? undefined : { ended }, asked.attachments);
+      // Sent again from where the conversation is now: after the leaf, like any message, with the files it carried,
+      // except one gone from Your data, as an edit sends them (the server would refuse it).
+      const attachments = asked.attachments.filter((attachment) => attachment.state !== 'gone');
+      start(request !== null && 'content' in request ? request.content : messageText(asked), 0, ended === undefined ? undefined : { ended }, attachments);
     },
     reload: () => {
       dispatch({ type: 'load' });

@@ -1,6 +1,7 @@
 // Reference items (spec 11A, D28): pasted text kept as a `.txt` stored file, and the one reader TownwiseAI's tools use
 // for a text item's words, which also reads a file attached to a message for its turn (D36: text, or a picture's
-// bytes). The title, the text and a picture are never logged or audited. Nothing here logs.
+// bytes without its metadata), for the person who added it or an org admin only. The title, the text and a picture
+// are never logged or audited. Nothing here logs.
 import { createHash } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -11,8 +12,9 @@ import { utcDay } from '../dates.ts';
 import type { FileKind, FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
-import { CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, MODEL_PICTURE_BYTES, STORED_BYTES_PER_ORG } from './limits.ts';
+import { CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_LOCATION, MODEL_PICTURE_BYTES, MODEL_PICTURE_MAX_SIDE, STORED_BYTES_PER_ORG } from './limits.ts';
 import { decoderFor, detectEncoding } from './parse/text.ts';
+import { pictureSize, withoutMetadata } from './picture.ts';
 import { pictureType, sanitizeName, type PictureType } from './sniff.ts';
 import { fingerprintOf } from './upload.ts';
 
@@ -134,23 +136,51 @@ const ATTACHMENT_KINDS: Readonly<Record<FileKind, AttachmentKind>> = {
   text: 'text', xlsx: 'excel', xls: 'excel', pdf: 'pdf', docx: 'word', doc: 'word', zip: 'zip', other: 'file',
 };
 
-/** A file attached to a TownwiseAI message, as that turn sends it to the model (spec D36). */
-export type ItemForModel =
+/** A file attached to a TownwiseAI message, once its bytes are read for the turn (spec D36). */
+export type ItemContent =
   /** A text file: its first characters, as readText reads them. */
   | { readonly status: 'text'; readonly text: string; readonly truncated: boolean }
-  /** A picture of at most MODEL_PICTURE_BYTES: its bytes, base64. */
+  /** A picture of at most MODEL_PICTURE_BYTES and MODEL_PICTURE_MAX_SIDE pixels a side: its bytes without metadata, base64. */
   | { readonly status: 'picture'; readonly mediaType: PictureType; readonly base64: string }
+  /**
+   * Not sent after all: its original was deleted since it was checked, a picture whose bytes don't parse as their type,
+   * or one over MODEL_PICTURE_MAX_SIDE pixels on a side.
+   */
+  | { readonly status: 'gone' | 'not_readable' | 'too_many_pixels'; readonly kind: AttachmentKind };
+
+/** A file attached to a TownwiseAI message, as the checks before the turn's claim find it (spec D36). */
+export type ItemForModel =
+  /**
+   * A text file or a picture the turn can send: `bytes` is how many of its bytes `read` takes, and `read` reads them,
+   * which a turn does only after its claim. Nothing is read before.
+   */
+  | { readonly status: 'readable'; readonly kind: 'text' | 'picture'; readonly bytes: number; read(): Promise<ItemContent> }
   /** Kept on Your data, but not sent: a kind TownwiseAI can't read yet, a picture too large, turned off, or its original deleted. */
   | { readonly status: 'not_readable' | 'too_large' | 'turned_off' | 'gone'; readonly kind: AttachmentKind }
-  /** Not a file a message can attach: stored files are off, no such file at this location, a sales file, or not kept yet. */
-  | { readonly status: 'files_off' | 'not_found' | 'not_reference' | 'not_ready' };
+  /**
+   * Not a file this person can attach: stored files are off, no such file at this location (or another member's still
+   * uploading), a sales file, not kept yet, or one only the person who added it or an org admin may attach.
+   */
+  | { readonly status: 'files_off' | 'not_found' | 'not_reference' | 'not_ready' | 'not_allowed' };
+
+/**
+ * Who attaches a file (spec D36): the same right as downloading its original, so the person who added it or an org
+ * admin (staff open as admin act as one).
+ */
+export interface ItemViewer {
+  readonly userId: string;
+  readonly role: Role;
+}
 
 /** The door TownwiseAI's tools and its turns read an item through (chat/* imports no file code). */
 export interface ItemReader {
   readonly on: boolean;
   readText(scope: OrgScope, locationId: string, fileId: string): Promise<ItemText>;
-  /** A reference file attached to a message (spec D36): its content for this turn, or why none is sent. */
-  readForModel(scope: OrgScope, locationId: string, fileId: string): Promise<ItemForModel>;
+  /**
+   * A reference file attached to a message (spec D36): what its record and first bytes say, so a turn can refuse or list
+   * it before anything is claimed, and for one it can send, how to read it.
+   */
+  readForModel(scope: OrgScope, locationId: string, fileId: string, viewer: ItemViewer): Promise<ItemForModel>;
 }
 
 async function bytesOf(body: AsyncIterable<unknown>): Promise<Buffer> {
@@ -207,29 +237,61 @@ export function createItemReader(stores: Pick<TownwiseStores, 'files'>, blobs: F
         throw err;
       }
     },
-    async readForModel(scope, locationId, fileId) {
+    async readForModel(scope, locationId, fileId, viewer) {
       if (blobs === null) return { status: 'files_off' };
       if (!OBJECT_ID.test(fileId) || !OBJECT_ID.test(locationId)) return { status: 'not_found' };
       const file = await stores.files.get(scope, locationId, fileId);
       if (file === null || file.status === 'deleting') return { status: 'not_found' };
+      // The right to download the original (handlers/files.ts isUploaderOrAdmin).
+      const allowed = viewer.role === 'org_admin' || viewer.userId === file.uploadedBy;
+      // Your data lists a file still uploading only to the person adding it: to anyone else it is no file at all.
+      if (!allowed && file.status === 'uploading') return { status: 'not_found' };
       if (file.purpose !== 'reference') return { status: 'not_reference' };
       if (file.status !== 'kept') return { status: 'not_ready' };
+      if (!allowed) return { status: 'not_allowed' };
       const kind = ATTACHMENT_KINDS[file.kind];
       // A deleted original never comes back, so it is said before a turned-off item's state.
       if (file.rawDeletedAt !== null) return { status: 'gone', kind };
       if (file.disabledAt !== null) return { status: 'turned_off', kind };
+      if (file.kind === 'text') {
+        return { status: 'readable', kind: 'text', bytes: Math.min(file.sizeBytes, READ_ITEM_BYTES), read: () => contentOf(blobs, scope, file, null) };
+      }
+      if (file.kind !== 'other') return { status: 'not_readable', kind };
+      let mediaType: PictureType | null;
       try {
-        if (file.kind === 'text') return { status: 'text', ...await textOf(blobs, scope, file) };
-        if (file.kind !== 'other') return { status: 'not_readable', kind };
         // Known by its bytes, never its name.
-        const mediaType = pictureType(await rawBytes(blobs, scope, file, Math.min(file.sizeBytes, PICTURE_HEAD_BYTES)));
-        if (mediaType === null) return { status: 'not_readable', kind };
-        if (file.sizeBytes > MODEL_PICTURE_BYTES) return { status: 'too_large', kind: 'picture' };
-        return { status: 'picture', mediaType, base64: (await rawBytes(blobs, scope, file, file.sizeBytes)).toString('base64') };
+        mediaType = pictureType(await rawBytes(blobs, scope, file, Math.min(file.sizeBytes, PICTURE_HEAD_BYTES)));
       } catch (err) {
         if (err instanceof BlobMissingError) return { status: 'gone', kind };
         throw err;
       }
+      if (mediaType === null) return { status: 'not_readable', kind };
+      if (file.sizeBytes > MODEL_PICTURE_BYTES) return { status: 'too_large', kind: 'picture' };
+      const picture = mediaType;
+      return { status: 'readable', kind: 'picture', bytes: file.sizeBytes, read: () => contentOf(blobs, scope, file, picture) };
     },
   };
+}
+
+/**
+ * A picture's bytes as the model gets them: only when its header gives a size within MODEL_PICTURE_MAX_SIDE, and
+ * without its metadata (picture.ts).
+ */
+export function pictureContent(bytes: Uint8Array, mediaType: PictureType): ItemContent {
+  const size = pictureSize(bytes, mediaType);
+  if (size === null) return { status: 'not_readable', kind: 'picture' };
+  if (size.width > MODEL_PICTURE_MAX_SIDE || size.height > MODEL_PICTURE_MAX_SIDE) return { status: 'too_many_pixels', kind: 'picture' };
+  const clean = withoutMetadata(bytes, mediaType);
+  return clean === null ? { status: 'not_readable', kind: 'picture' } : { status: 'picture', mediaType, base64: clean.toString('base64') };
+}
+
+/** A checked file's content: a text file's first characters (`picture` null), or a picture's. Its original deleted since is gone. */
+async function contentOf(blobs: FileBlobs, scope: OrgScope, file: FileRecord, picture: PictureType | null): Promise<ItemContent> {
+  try {
+    if (picture === null) return { status: 'text', ...await textOf(blobs, scope, file) };
+    return pictureContent(await rawBytes(blobs, scope, file, file.sizeBytes), picture);
+  } catch (err) {
+    if (err instanceof BlobMissingError) return { status: 'gone', kind: picture === null ? 'text' : 'picture' };
+    throw err;
+  }
 }

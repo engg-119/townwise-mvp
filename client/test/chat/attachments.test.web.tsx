@@ -159,6 +159,57 @@ test('a picture the person may not download, or one turned off, shows the chip a
   expect(offServed.downloads()).toBe(0);
 });
 
+test('a picture over 3.75 MB, which TownwiseAI never reads, gets no thumbnail and no download', async () => {
+  const api = fakeChatApi();
+  carrying(api, [{ ref: PICTURE, kind: 'picture', name: 'patio.png', state: 'on' }]);
+  const served = servePicture(api, { sizeBytes: 3_750_001 });
+  renderAt('/locations/l1/agent', api);
+  const files = await openEarlierChat();
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+  expect(within(files).queryByTestId('attachment-thumb')).toBeNull();
+  expect(served.downloads()).toBe(0);
+});
+
+test('a thumbnail is read once for the page’s life: showing the message again reads nothing', async () => {
+  const api = fakeChatApi();
+  carrying(api, [{ ref: PICTURE, kind: 'picture', name: 'patio.png', state: 'on' }]);
+  const served = servePicture(api);
+  let itemReads = 0;
+  const read = api.reads[ITEM_PATH(PICTURE)];
+  api.reads[ITEM_PATH(PICTURE)] = () => {
+    itemReads += 1;
+    return read?.();
+  };
+  renderAt('/locations/l1/agent', api);
+  const files = await openEarlierChat();
+  await within(files).findByTestId('attachment-thumb');
+  fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+  await waitFor(() => { expect(screen.queryByText('We close for the holidays.')).toBeNull(); });
+  const again = await openEarlierChat();
+  expect(within(again).getByTestId('attachment-thumb')).toBeTruthy();
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+  expect(itemReads).toBe(1);
+  expect(served.downloads()).toBe(1);
+});
+
+test('a ref that isn’t a well-formed file ref is no link, and nothing is read for it', async () => {
+  const api = fakeChatApi();
+  const odd = '../../files/f_0123456789abcdef01234567';
+  carrying(api, [{ ref: odd, kind: 'picture', name: 'patio.png', state: 'on' }]);
+  let reads = 0;
+  api.reads[ITEM_PATH(odd)] = () => {
+    reads += 1;
+    return undefined;
+  };
+  renderAt('/locations/l1/agent', api);
+  const files = await openEarlierChat();
+  expect(within(files).queryByRole('link')).toBeNull();
+  expect(within(files).getByRole('listitem', { name: 'patio.png, Picture' })).toBeTruthy();
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+  expect(within(files).queryByTestId('attachment-thumb')).toBeNull();
+  expect(reads).toBe(0);
+});
+
 test('under view-as a chip shows the kind alone, with no thumbnail and nothing read', async () => {
   const api = fakeChatApi();
   // The server sends no name under view-as.

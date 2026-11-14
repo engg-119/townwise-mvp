@@ -80,9 +80,10 @@ export interface TurnInput {
   /** Null for a regenerate: the history already ends with the person's message. */
   readonly userMessage: BetaMessageParam | null;
   /**
-   * The person's message as every request of this turn sends it, when it carries attachments (chat/attachments.ts):
-   * with the files' content, which is never saved. It stands in for `userMessage`, or for a regenerate for the
-   * history's last message. Null when the message carries none.
+   * The person's message as every request of this turn sends it, when that differs from the stored one
+   * (chat/attachments.ts expandedMessage): with its files' content, which is never saved, or a regenerate's block
+   * written again. It stands in for `userMessage`, or for a regenerate for the history's last message. Null when the
+   * message is sent as stored; then the turn's thinking is saved as usual.
    */
   readonly expanded: BetaMessageParam | null;
   /** The nodes the turn's messages are stored under: `user` is null for a regenerate, and `reply.parentId` is the user node. */
@@ -254,8 +255,8 @@ export function echoable(content: readonly BetaContentBlock[]): BetaContentBlock
  * purged. A thinking block's signature binds everything before it (preserved thinking), so every thinking block after
  * the first stubbed result is dropped too; blocks before it stay valid, and an assistant message left with nothing is
  * dropped. The turn's own later calls already read the whole result. The saved history is append-only from then on.
- * `expanded` (the turn sent the person's message with its attachments' content, D36): every thinking block of the
- * turn comes after content that is never saved, so none is.
+ * `expanded` (the turn sent the person's message other than as stored, D36): every thinking block of the turn comes
+ * after content that is never saved, so none is.
  */
 export function savedTurn(turn: readonly TurnMessage[], expanded = false): StoredMessage[] {
   const names = new Map<string, string>();

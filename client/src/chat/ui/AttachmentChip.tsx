@@ -5,19 +5,21 @@ import { itemHref } from '../../portal/routing';
 import { useHover } from '../../portal/ui/hover';
 import { theme } from '../../theme';
 import type { MessageAttachment } from '../api';
-import { chipWords } from '../attachments';
+import { chipWords, isFileRef } from '../attachments';
 import { AttachmentThumb } from './AttachmentThumb';
 
 // A file the person's message carries (spec P25, D36), as a chip over their bubble: the file's name and its kind, or
 // the kind alone under view-as and once the file is gone, and in words whether it is turned off or no longer on Your
 // data. Pressing it opens the file's item page on Your data (P27); a file that is gone has no page, so its chip is no
-// link. On web a picture that is on shows a thumbnail above its words (AttachmentThumb.web.tsx), never under view-as.
+// link, and neither is one whose ref isn't a well-formed file ref, which never becomes a path. On web a picture that is
+// on shows a thumbnail above its words (AttachmentThumb.web.tsx), never under view-as.
 
 export function AttachmentChip(props: { attachment: MessageAttachment; locationId: string; viewAs: boolean }): React.JSX.Element {
   const { attachment } = props;
   const hover = useHover();
   const { title, line } = chipWords(attachment);
-  const thumb = attachment.kind === 'picture' && attachment.state === 'on' && !props.viewAs
+  const linked = attachment.state !== 'gone' && isFileRef(attachment.ref);
+  const thumb = linked && attachment.kind === 'picture' && attachment.state === 'on' && !props.viewAs
     ? <AttachmentThumb locationId={props.locationId} fileRef={attachment.ref} />
     : null;
   const words = (
@@ -28,7 +30,7 @@ export function AttachmentChip(props: { attachment: MessageAttachment; locationI
     </>
   );
   const label = line === null ? title : `${title}, ${line}`;
-  if (attachment.state === 'gone') {
+  if (!linked) {
     return <View role="listitem" accessible accessibilityLabel={label} style={styles.chip}>{words}</View>;
   }
   return (

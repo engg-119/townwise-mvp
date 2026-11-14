@@ -6,8 +6,6 @@ export interface ChatDropProps {
   blocked: string | null;
   /** The files dropped on the page, when they can be attached. */
   onFiles: (files: File[]) => void;
-  /** A drop that couldn't attach anything: the page shows `blocked` as an alert. */
-  onRefused?: () => void;
 }
 
 export const ChatDrop: (props: ChatDropProps) => React.JSX.Element | null = () => null;

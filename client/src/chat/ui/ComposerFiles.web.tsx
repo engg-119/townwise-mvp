@@ -17,7 +17,9 @@ import { Close, Plus } from './icons';
 // The composer's files on web (spec P25, D28, D36). "Attach files", the + at the composer's left, opens the file
 // picker; each file (or one dropped on the page, ChatDrop.web.tsx) goes to Your data as a reference file through the
 // queue Your data's "Add a file" uses (the same chunks, caps and retries), and shows as a chip in the composer:
-// uploading with its percent, ready, or failed. A message carries at most 5. The x on a chip takes it off the message
+// uploading with its percent, ready, or failed. A file Your data already has (409 file_duplicate) is ready too: the
+// server kept the first copy, so the chip attaches that one (the send then says if it is off, gone, or a teammate's
+// that only they or an org admin may attach). A message carries at most 5. The x on a chip takes it off the message
 // and stops an upload still running; a file that finished uploading stays on Your data, and the chips say so once.
 // Send puts the ready chips' refs on the message (`take`); a turn taken back puts them back (`restore`). Each
 // conversation keeps its own chips while the page is open. The + shows only while stored files are on, asked of the
@@ -44,9 +46,18 @@ export interface ComposerChip {
   fileId: string | null;
 }
 
+/** The file Your data already has, when the upload was refused as a copy of it (409 file_duplicate), else null. */
+function duplicateOf(item: QueuedUpload): string | null {
+  if (item.state !== 'refused' || item.error?.code !== 'file_duplicate') return null;
+  const id = item.error.detail?.fileId;
+  return typeof id === 'string' && id !== '' ? id : null;
+}
+
 export function chipOf(item: QueuedUpload): ComposerChip {
   const base = { key: item.key, name: item.name, kind: kindOfFile(item.name, item.file?.kind ?? null), fileId: item.file?.id ?? item.fileId };
   if (item.state === 'done') return { ...base, state: 'ready', percent: 100 };
+  const duplicate = duplicateOf(item);
+  if (duplicate !== null) return { ...base, fileId: duplicate, state: 'ready', percent: 100 };
   if (item.state === 'refused' || item.state === 'failed') return { ...base, state: 'failed', percent: 0 };
   const percent = item.sizeBytes > 0 ? Math.min(99, Math.floor((item.sentBytes / item.sizeBytes) * 100)) : 0;
   return { ...base, state: 'uploading', percent };
@@ -203,11 +214,11 @@ export function useComposerFiles(locationId: string, readOnlyId: string | null, 
   function remove(key: string): void {
     const was = now();
     const item = byKey.get(key);
+    const kept = item !== undefined && chipOf(item).state === 'ready';
     // An upload still running stops, and the server deletes what it has; a failed one just goes.
-    if (item !== undefined && item.state !== 'done') cancel(key);
-    const kept = item?.state === 'done';
+    if (item !== undefined && !kept) cancel(key);
     set({ ...was, shown: { keys: was.shown.keys.filter((other) => other !== key), removed: was.shown.removed || kept, over: null } });
-    if (item?.state === 'done') setNotice({ key: `removed:${key}`, text: `Removed ${item.name} from this message. It stays on Your data.` });
+    if (kept) setNotice({ key: `removed:${key}`, text: `Removed ${item.name} from this message. It stays on Your data.` });
     refocus.current = true;
   }
 
@@ -216,9 +227,10 @@ export function useComposerFiles(locationId: string, readOnlyId: string | null, 
     const sent: QueuedUpload[] = [];
     const staying: string[] = [];
     for (const item of itemsOf(was.shown)) {
-      if (item.state === 'done') sent.push(item);
+      const { state } = chipOf(item);
+      if (state === 'ready') sent.push(item);
       // Send waits for uploads, so none should be running; one that is stays on the composer.
-      else if (item.state === 'refused' || item.state === 'failed') cancel(item.key);
+      else if (state === 'failed') cancel(item.key);
       else staying.push(item.key);
     }
     set({ ...was, shown: { keys: staying, removed: false, over: null } });
@@ -254,7 +266,7 @@ export function useComposerFiles(locationId: string, readOnlyId: string | null, 
   const chips = shownItems.map(chipOf);
   const uploading = chips.some((chip) => chip.state === 'uploading');
   const alerts: FilesLine[] = [
-    ...shownItems.flatMap((item) => (item.state === 'refused' || item.state === 'failed' ? [{ key: `failed:${item.key}`, text: `${item.name}: ${queueLine(item)}` }] : [])),
+    ...shownItems.flatMap((item) => (chipOf(item).state === 'failed' ? [{ key: `failed:${item.key}`, text: `${item.name}: ${queueLine(item)}` }] : [])),
     ...(shown.over === null ? [] : [{ key: 'over', text: shown.over }]),
   ];
   const news: FilesLine[] = [

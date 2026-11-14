@@ -15,10 +15,12 @@ import { filesFake } from '../portal/files/fakes';
 import { serveAbout } from './about-fakes';
 
 // The TownwiseAI page's drop overlay (spec P25, D36): only a drag of files shows it; it goes on the drop, when the
-// drag leaves the window, on dragend, Escape, window blur and after WATCHDOG_MS with no dragover, so it can't stick;
-// it takes no pointer events and no focus, is aria-hidden, and fades and scales in unless motion is reduced. When
-// files can't be attached it says why, shows no drop, and a drop opens nothing. On the page, it is drawn outside the
-// dock, so the dock and the thread's end padding never change, and dropped files become the composer's chips.
+// drag leaves the window, on dragend, window blur and Escape while it shows (until that drag ends), and hides after
+// WATCHDOG_MS with no dragover until the next, so it can't stick; it takes no pointer events and no focus, is
+// aria-hidden, and fades and scales in unless motion is reduced. When files can't be attached it says why and shows no
+// drop, so a browser fires none, and a drop that comes anyway opens nothing and does nothing. On the page, it is drawn
+// outside the dock, so the dock and the thread's end padding never change, and dropped files become the composer's
+// chips.
 
 /** Every observer made, and what it watches, so a test can lay an element out as a browser would. */
 const observers: { callback: ResizeObserverCallback; targets: Set<Element> }[] = [];
@@ -74,11 +76,10 @@ function reduceMotion(reduce: boolean): void {
 }
 
 describe('the overlay', () => {
-  function mount(blocked: string | null = null): { onFiles: jest.Mock; onRefused: jest.Mock } {
+  function mount(blocked: string | null = null): { onFiles: jest.Mock } {
     const onFiles = jest.fn();
-    const onRefused = jest.fn();
-    render(<ChatDrop blocked={blocked} onFiles={onFiles} onRefused={onRefused} />);
-    return { onFiles, onRefused };
+    render(<ChatDrop blocked={blocked} onFiles={onFiles} />);
+    return { onFiles };
   }
 
   test('is absent while nothing is dragged, and a drag of anything but files never shows it', () => {
@@ -138,18 +139,17 @@ describe('the overlay', () => {
   });
 
   test('a drop hides it, never lets the browser open the file, and gives the files to the page', () => {
-    const { onFiles, onRefused } = mount();
+    const { onFiles } = mount();
     const dropped = new File(['Closed Mondays.'], 'hours.txt');
     drag('dragenter');
     const event = drag('drop', { files: [dropped] });
     expect(event.defaultPrevented).toBe(true);
     expect(overlay()).toBeNull();
     expect(onFiles).toHaveBeenCalledWith([dropped]);
-    expect(onRefused).not.toHaveBeenCalled();
   });
 
-  test('dragend, window blur and Escape hide it; after Escape it stays hidden until that drag ends', () => {
-    mount();
+  test('dragend, window blur and Escape hide it; after Escape the drag shows no drop and a drop does nothing, until that drag ends', () => {
+    const { onFiles } = mount();
     drag('dragenter');
     drag('dragend');
     expect(overlay()).toBeNull();
@@ -159,23 +159,62 @@ describe('the overlay', () => {
     drag('dragenter');
     act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
     expect(overlay()).toBeNull();
-    drag('dragover');
+    const over = drag('dragover');
     expect(overlay()).toBeNull();
-    drag('drop');
+    expect(over.defaultPrevented).toBe(true);
+    expect(over.dataTransfer.dropEffect).toBe('none');
+    // A browser fires no drop on 'none'; one that comes anyway is caught and attaches nothing.
+    expect(drag('drop', { files: [new File(['x'], 'a.txt')] }).defaultPrevented).toBe(true);
+    expect(onFiles).not.toHaveBeenCalled();
     drag('dragenter');
+    expect(overlay()).not.toBeNull();
+    expect(drag('dragover').dataTransfer.dropEffect).toBe('copy');
+  });
+
+  test('Escape counts only while it shows: pressed before a drag, the next drag of files still shows it', () => {
+    jest.useFakeTimers();
+    mount();
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+    drag('dragenter');
+    expect(overlay()).not.toBeNull();
+    expect(drag('dragover').dataTransfer.dropEffect).toBe('copy');
+    // Hidden by the watchdog, it is not showing either: Escape then changes nothing.
+    act(() => { jest.advanceTimersByTime(WATCHDOG_MS); });
+    expect(overlay()).toBeNull();
+    act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })); });
+    drag('dragover');
     expect(overlay()).not.toBeNull();
   });
 
-  test('a watchdog hides it once no dragover has come for 400 ms', () => {
+  test('a watchdog hides it once no dragover has come for 2 seconds, and the next dragover shows it again, keeping the depth', () => {
+    expect(WATCHDOG_MS).toBe(2000);
     jest.useFakeTimers();
     mount();
-    drag('dragenter');
-    act(() => { jest.advanceTimersByTime(WATCHDOG_MS - 1); });
-    drag('dragover');
-    act(() => { jest.advanceTimersByTime(WATCHDOG_MS - 1); });
-    expect(overlay()).not.toBeNull();
-    act(() => { jest.advanceTimersByTime(1); });
-    expect(overlay()).toBeNull();
+    const inner = document.createElement('div');
+    document.body.append(inner);
+    try {
+      drag('dragenter');
+      drag('dragenter', {}, inner);
+      // A browser sends dragovers every few hundred ms while the pointer is still: no flicker.
+      for (let i = 0; i < 5; i += 1) {
+        act(() => { jest.advanceTimersByTime(550); });
+        drag('dragover', {}, inner);
+        expect(overlay()).not.toBeNull();
+      }
+      act(() => { jest.advanceTimersByTime(WATCHDOG_MS - 1); });
+      expect(overlay()).not.toBeNull();
+      act(() => { jest.advanceTimersByTime(1); });
+      expect(overlay()).toBeNull();
+      drag('dragover', {}, inner);
+      expect(overlay()).not.toBeNull();
+      // The depth was kept: leaving the inner element is not leaving the page.
+      drag('dragleave', { relatedTarget: document.body }, inner);
+      expect(overlay()).not.toBeNull();
+      drag('dragleave', { relatedTarget: null, x: 300, y: 300 });
+      expect(overlay()).toBeNull();
+    } finally {
+      inner.remove();
+    }
   });
 
   test('a drag that started on the page (a picture, a link) is not a drop of files', () => {
@@ -191,7 +230,7 @@ describe('the overlay', () => {
   });
 
   test('when files can’t be attached it says why, shows no drop, and a drop opens nothing and attaches nothing', () => {
-    const { onFiles, onRefused } = mount(DROP_BLOCKED.viewAs);
+    const { onFiles } = mount(DROP_BLOCKED.viewAs);
     drag('dragenter');
     const shown = overlay();
     if (shown === null) throw new Error('no overlay');
@@ -200,10 +239,10 @@ describe('the overlay', () => {
     const over = drag('dragover');
     expect(over.defaultPrevented).toBe(true);
     expect(over.dataTransfer.dropEffect).toBe('none');
+    // A browser fires no drop on 'none'; one that comes anyway is caught and does nothing.
     const event = drag('drop', { files: [new File(['x'], 'a.txt')] });
     expect(event.defaultPrevented).toBe(true);
     expect(onFiles).not.toHaveBeenCalled();
-    expect(onRefused).toHaveBeenCalledTimes(1);
   });
 
   test('fades and scales in over theme.motion.select, and appears at once under reduced motion', async () => {
@@ -323,7 +362,7 @@ describe('on the TownwiseAI page', () => {
     expect(await screen.findByText('A message can carry 5 files, so 2 weren’t added.')).toBeTruthy();
   });
 
-  test('under view-as the overlay says why, and a drop attaches nothing and says so as an alert', async () => {
+  test('under view-as the overlay says why during the drag, and a drop attaches nothing and shows no alert', async () => {
     const api = fakeChatApi();
     const files = renderAgent(api, viewAsMe(ACCESS.member));
     await screen.findByRole('button', { name: 'Attach files' });
@@ -332,8 +371,8 @@ describe('on the TownwiseAI page', () => {
     expect(drag('dragover').dataTransfer.dropEffect).toBe('none');
     expect(drag('drop', { files: [new File(['x'], 'a.txt')] }).defaultPrevented).toBe(true);
     expect(overlay()).toBeNull();
-    const alert = await screen.findByText(DROP_BLOCKED.viewAs);
-    expect(alert.getAttribute('role')).toBe('alert');
+    await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    expect(screen.queryByText(DROP_BLOCKED.viewAs)).toBeNull();
     expect(files.calls.filter((call) => call.method === 'POST')).toEqual([]);
   });
 

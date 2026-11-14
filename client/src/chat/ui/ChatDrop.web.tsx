@@ -9,17 +9,20 @@ import type { ChatDropProps } from './ChatDrop';
 // drag of files from outside the page (dataTransfer.types holds 'Files'; a drag that started on the page is not one),
 // and only then is the overlay mounted: a fixed layer over the whole viewport, drawn after the page's body and outside
 // the composer's dock, so the dock's measured height, the thread's end padding, Latest and scroll-padding never
-// change. It takes no pointer events, so even a drag the page lost track of can't block a scroll or a press, and it
-// unmounts on the drop, when the drag leaves the window (a depth counter, or a leave to nothing outside the
-// viewport), on dragend, Escape and window blur, and when no dragover has come for WATCHDOG_MS. Dropped files go to
-// the composer's chips, as the + adds them. When files can't be attached, the overlay says why, the drag shows no
-// drop ('none'), and a drop is prevented, so the browser never opens the file in the tab. It is aria-hidden and never
-// takes focus: the labelled + is the keyboard's way to attach, and the page announces what a drop did.
+// change. It takes no pointer events, so even a drag the page lost track of can't block a scroll or a press. The drag
+// ends on the drop, when it leaves the window (a depth counter, or a leave to nothing outside the viewport), on
+// dragend and on window blur; Escape while the overlay shows hides it until then, the drag showing no drop ('none') and
+// a drop then ignored. With no dragover for WATCHDOG_MS (a browser sends them while the pointer is still), the overlay
+// hides until the next one, keeping the depth. Dropped files go to the composer's chips, as the + adds them. When
+// files can't be attached, the overlay says why, the drag shows no drop ('none'), so a browser never fires the drop,
+// and any drop that comes anyway is prevented, so the browser never opens the file in the tab, and does nothing else.
+// It is aria-hidden and never takes focus: the labelled + is the keyboard's way to attach, and the page announces
+// what a drop did.
 
 export const DROP_TITLE = 'Drop files to attach them to your message';
 export const DROP_KEPT = 'They’re kept on Your data.';
-/** With no dragover for this long, the drag ended where the page couldn't hear it. */
-export const WATCHDOG_MS = 400;
+/** With no dragover for this long, the drag ended where the page couldn't hear it, or left without a leave event. */
+export const WATCHDOG_MS = 2000;
 
 const c = theme.color;
 
@@ -83,21 +86,31 @@ export function ChatDrop(props: ChatDropProps): React.JSX.Element | null {
     // Escape hides the overlay until this drag ends; a drag from the page itself is never a drop of files.
     let dismissed = false;
     let inside = false;
+    // Whether the overlay shows now, for Escape.
+    let showing = false;
     let watchdog: ReturnType<typeof setTimeout> | null = null;
     const stopWatching = (): void => {
       if (watchdog !== null) clearTimeout(watchdog);
       watchdog = null;
     };
+    const hide = (): void => {
+      stopWatching();
+      showing = false;
+      setDragging(false);
+    };
+    // The drag is over: only these reset the depth and Escape.
     const end = (): void => {
       depth = 0;
       dismissed = false;
-      stopWatching();
-      setDragging(false);
+      hide();
     };
     const over = (): void => {
       stopWatching();
-      watchdog = setTimeout(end, WATCHDOG_MS);
-      if (!dismissed) setDragging(true);
+      if (dismissed) return;
+      // The overlay hides when dragovers stop, but the drag may not be over: the depth stays for its leave.
+      watchdog = setTimeout(hide, WATCHDOG_MS);
+      showing = true;
+      setDragging(true);
     };
     const ours = (event: DragEvent): boolean => !inside && hasFiles(event);
     const onEnter = (event: DragEvent): void => {
@@ -109,7 +122,7 @@ export function ChatDrop(props: ChatDropProps): React.JSX.Element | null {
     const onOver = (event: DragEvent): void => {
       if (!ours(event)) return;
       event.preventDefault();
-      if (event.dataTransfer !== null) event.dataTransfer.dropEffect = latest.current.blocked === null ? 'copy' : 'none';
+      if (event.dataTransfer !== null) event.dataTransfer.dropEffect = latest.current.blocked === null && !dismissed ? 'copy' : 'none';
       over();
     };
     const onLeave = (event: DragEvent): void => {
@@ -119,12 +132,14 @@ export function ChatDrop(props: ChatDropProps): React.JSX.Element | null {
     };
     const onDrop = (event: DragEvent): void => {
       if (!ours(event)) return;
-      // Never the browser's own drop, which would open the file in place of the page.
+      // Never the browser's own drop, which would open the file in place of the page. A drop the drag refused
+      // ('none': files can't be attached, or Escape hid the overlay) is one a browser never fires; if one comes, it
+      // does nothing.
       event.preventDefault();
+      const refused = latest.current.blocked !== null || dismissed;
       end();
       const files = Array.from(event.dataTransfer?.files ?? []);
-      if (latest.current.blocked !== null) latest.current.onRefused?.();
-      else if (files.length > 0) latest.current.onFiles(files);
+      if (!refused && files.length > 0) latest.current.onFiles(files);
     };
     const onStart = (): void => { inside = true; };
     const onDragEnd = (): void => {
@@ -132,10 +147,9 @@ export function ChatDrop(props: ChatDropProps): React.JSX.Element | null {
       end();
     };
     const onKey = (event: KeyboardEvent): void => {
-      if (event.key !== 'Escape') return;
+      if (event.key !== 'Escape' || !showing) return;
       dismissed = true;
-      stopWatching();
-      setDragging(false);
+      hide();
     };
     const drags: [string, (event: DragEvent) => void][] = [
       ['dragenter', onEnter], ['dragover', onOver], ['dragleave', onLeave], ['drop', onDrop], ['dragstart', onStart], ['dragend', onDragEnd],

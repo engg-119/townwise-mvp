@@ -1154,7 +1154,8 @@ describe('files on the message (D36)', () => {
     expect(chips()).toBeNull();
     const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
     const bubbleFiles = within(log).getByRole('list', { name: 'Files attached' });
-    expect(within(bubbleFiles).getByRole('link', { name: 'hours.txt, Text file. Open on Your data' })).toBeTruthy();
+    // The fake's file ids are no real file refs, so the chip is no link (attachments.test.web.tsx links a real one).
+    expect(within(bubbleFiles).getByRole('listitem', { name: 'hours.txt, Text file' })).toBeTruthy();
     await stream(() => {
       turn(api).emit('conversation', { id: 'c2', title: 'What does this say', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
       turn(api).emit('text', { delta: 'It says you close Mondays.' });
@@ -1175,6 +1176,9 @@ describe('files on the message (D36)', () => {
       [chatRefusal(404, 'not_found'), 'An attached file isn’t on Your data for this location anymore, or this conversation was deleted.'],
       [chatRefusal(400, 'invalid_request'), 'That message couldn’t be sent with these files. Only files kept on Your data can be attached.'],
       [chatRefusal(503, 'files_unavailable'), 'File storage is off right now, so files can’t be attached. Remove them to send your message.'],
+      // A teammate's file (here, one already on Your data that the upload found again).
+      [chatRefusal(403, 'attachment_not_allowed'), 'Only the person who added a file to Your data, or an org admin, can attach it. Remove the files a teammate added to send your message.'],
+      [chatRefusal(503, 'attachments_busy'), 'TownwiseAI is reading a lot of files right now. Try again in a moment.'],
     ];
     for (const [error, words] of refusals) {
       api.refuse = error;

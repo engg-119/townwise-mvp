@@ -97,6 +97,8 @@ export const DOCX_MAX_DOCUMENT_BYTES = 50 * MIB;
  * picture, about 150k tokens in all]
  */
 export const MODEL_PICTURE_BYTES = 3_750_000;
+/** The most pixels on a side of a picture sent to the model: the API refuses a larger one, and the turn would fail. */
+export const MODEL_PICTURE_MAX_SIDE = 8_000;
 
 /** The AI column step (spec 11A): calls per file, per ZIP (at most one a family of its tables) and per import. */
 export const MODEL_CALLS_PER_FILE = 2;

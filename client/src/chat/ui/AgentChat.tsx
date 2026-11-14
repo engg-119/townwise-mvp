@@ -95,7 +95,7 @@ function announcementOf(chat: TuningChat, ctx: ToolContext, before: ReadonlySet<
   return reply.state === 'stopped' ? 'You stopped the reply' : 'TownwiseAI’s reply didn’t finish';
 }
 
-/** Why files can't be attached now: the drop overlay says so, and a refused drop shows it as an alert. */
+/** Why files can't be attached now: the drop overlay says so while the drag is over the page. */
 export const DROP_BLOCKED = {
   loading: 'TownwiseAI is still loading, so files can’t be attached yet.',
   off: 'TownwiseAI isn’t available here, so files can’t be attached.',
@@ -132,8 +132,6 @@ export function AgentChat(props: {
   // The composer's + and the page's drop (web, stored files on): the files on the message, and the lines about them.
   const files = useComposerFiles(ctx.locationId, props.readOnlyId, () => { composer.current?.focus(); });
   const toldFiles = useRef(new Set<string>());
-  // A drop that couldn't attach anything, and why.
-  const [dropError, setDropError] = useState<string | null>(null);
   // The pin lives in a ref (every scroll event moves it); only whether Latest shows is drawn.
   const pin = useRef<PinState>(INITIAL_PIN);
   const [behind, setBehind] = useState(false);
@@ -214,7 +212,6 @@ export function AgentChat(props: {
 
   /** The composer's Send or Stop and send: the message's ready files go with it, and come back if it is taken back. */
   function sendFromComposer(go: (attachments: MessageAttachment[], returned: () => void) => void): void {
-    setDropError(null);
     const taken = files.take();
     send(() => { go(taken.attachments, taken.restore); }, 'composer');
   }
@@ -269,14 +266,12 @@ export function AgentChat(props: {
     <ChatDrop
       blocked={blocked}
       onFiles={(dropped) => {
-        setDropError(null);
         // Past the 5 a message carries, the alert says how many weren't added.
         const taken = files.add(dropped);
         const [only] = dropped;
         if (taken === 1 && only !== undefined) announce(`Attaching ${only.name} to your message.`);
         else if (taken > 1) announce(`Attaching ${String(taken)} files to your message.`);
       }}
-      onRefused={() => { setDropError(blocked); }}
     />
   );
 
@@ -387,7 +382,6 @@ export function AgentChat(props: {
     <>
       {warning === null ? null : <Text style={styles.warning}>{warning}</Text>}
       {files.alerts.map((line) => <ErrorNotice key={line.key} message={line.text} />)}
-      {dropError === null ? null : <ErrorNotice message={dropError} />}
       {state.error === null ? null : (
         <View style={styles.error}>
           <ErrorNotice message={state.error} />
@@ -399,7 +393,7 @@ export function AgentChat(props: {
       {readOnlyLine}
     </>
   );
-  const noticed = warning !== null || files.alerts.length > 0 || dropError !== null || state.error !== null || props.readOnlyLine !== '';
+  const noticed = warning !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
 
   function composerAt(placement: 'landing' | 'dock'): React.JSX.Element {
     if (exhausted) {

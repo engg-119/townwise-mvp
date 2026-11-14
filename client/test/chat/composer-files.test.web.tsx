@@ -7,6 +7,7 @@ import type { ComposerFiles } from '../../src/chat/ui/ComposerFiles';
 import {
   ATTACH_FILES, chipLine, chipOf, REMOVED_LINE, useComposerFiles, WAIT_ID, WAIT_LINE,
 } from '../../src/chat/ui/ComposerFiles.web';
+import { ApiError } from '../../src/api/client';
 import type { QueuedUpload } from '../../src/portal/files/uploadQueue';
 import { ACCESS, meOf, refusal } from '../helpers/portal';
 import { fileViewOf, filesFake, type FilesFake } from '../portal/files/fakes';
@@ -36,6 +37,15 @@ test('a chip is uploading with its percent, then ready with its kind, or failed'
   expect(chipLine(ready)).toBe('Text file');
   expect(chipLine(chipOf(upload('refused')))).toBe('Couldn’t add it');
   expect(chipOf(upload('failed')).state).toBe('failed');
+});
+
+test('a file Your data already has is ready, as the copy the server kept (409 file_duplicate)', () => {
+  const duplicate = upload('refused', { error: { code: 'file_duplicate', detail: { fileId: '0123456789abcdef01234567' } } });
+  expect(chipOf(duplicate)).toMatchObject({ state: 'ready', percent: 100, fileId: '0123456789abcdef01234567', kind: 'text' });
+  expect(chipLine(chipOf(duplicate))).toBe('Text file');
+  // Without the kept copy's id it is a refusal like any other.
+  expect(chipOf(upload('refused', { error: { code: 'file_duplicate' } })).state).toBe('failed');
+  expect(chipOf(upload('refused', { error: { code: 'storage_full', detail: { fileId: 'x' } } })).state).toBe('failed');
 });
 
 test('a kind TownwiseAI can’t read yet still attaches, and its chip says so', () => {
@@ -226,6 +236,28 @@ describe('in the composer', () => {
     act(() => { taken?.restore(); });
     expect(chips()).toHaveLength(1);
     expect(screen.getByText('hours.txt')).toBeTruthy();
+  });
+
+  test('a file already on Your data attaches the copy kept there, with no alert, and its x deletes nothing', async () => {
+    const KEPT = '0123456789abcdef01234567';
+    fake.answers['POST /files/f1/complete'] = () => new ApiError('http', 'The request was refused.', { status: 409, code: 'file_duplicate', detail: { fileId: KEPT } });
+    const files = await mount();
+    pick(file('hours.txt'), file('menu.txt'));
+    await waitFor(() => { expect(fake.puts).toHaveLength(2); });
+    await act(async () => {
+      for (const put of fake.puts) put.ok();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    });
+    await waitFor(() => { expect(screen.getAllByText('Text file')).toHaveLength(2); });
+    expect(files.current?.alerts).toEqual([]);
+    expect(files.current?.news.map((line) => line.text)).toContain('hours.txt is attached.');
+    let taken: ReturnType<ComposerFiles['take']> | undefined;
+    act(() => { taken = files.current?.take(); });
+    expect(taken?.attachments.map((attachment) => attachment.ref)).toEqual([`f_${KEPT}`, 'f_f2']);
+    act(() => { taken?.restore(); });
+    fireEvent.click(screen.getByRole('button', { name: 'Remove hours.txt from this message' }));
+    expect(screen.getAllByText(REMOVED_LINE)).toHaveLength(1);
+    expect(fake.calls.filter((call) => call.method === 'DELETE')).toEqual([]);
   });
 
   test('each conversation keeps its own files', async () => {

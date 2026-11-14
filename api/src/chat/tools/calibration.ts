@@ -29,8 +29,11 @@ const NOT_ADMIN = 'Only an org admin can calibrate forecasts or see calibrations
 const NOT_FOUND = 'There is no such calibration for this location.';
 const NONE_YET = 'This location has no calibration yet.';
 const NOT_FINISHED = 'The calibration hasn’t finished yet.';
-/** D36: a turn that read an attached file never starts a calibration, so a file's words can't start one. */
-const ATTACHMENT_TURN = 'A calibration can’t start in a turn that read an attached file. Ask the owner to confirm in a new message.';
+/**
+ * D36: a turn that read a file's content (attached to the message, or read with read_data_item) never starts a
+ * calibration, so a file's words can't start one.
+ */
+const FILE_TURN = 'A calibration can’t start in a turn that read a file from Your data. Ask the owner to confirm in a new message.';
 
 const startInput = z.strictObject({ regimeStart: isoDate.optional() });
 const namedInput = z.strictObject({ calibrationId: objectId.optional() });
@@ -103,7 +106,7 @@ export const startCalibrationTool: ChatTool<StartInput> = {
   })),
   async run(tc, input) {
     if (tc.role !== 'org_admin') return json({ started: false, code: 'org_admin_only', message: NOT_ADMIN });
-    if (tc.attachedContent) return json({ started: false, code: 'attachment_turn', message: ATTACHMENT_TURN });
+    if (tc.turn.readUntrusted) return json({ started: false, code: 'file_turn', message: FILE_TURN });
     const { ctx, scope, location } = tc;
     const request: StartRequest = {
       id: new Types.ObjectId().toHexString(), scope, location,

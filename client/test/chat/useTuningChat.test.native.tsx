@@ -1148,8 +1148,8 @@ test('keeps text batching at FLUSH_MS: a burst of deltas draws within 32ms, with
   }
 });
 
-// Files on a message (D36): the composer hands them to send; a turn taken back gives them back; an edit sends the
-// edited message's again, all but one gone from Your data; Try again sends its message's; a regenerate sends none.
+// Files on a message (D36): the composer hands them to send; a turn taken back gives them back with its text (and only
+// then); an edit and Try again send the message's again, all but one gone from Your data; a regenerate sends none.
 describe('attachments', () => {
   const MENU = { ref: 'f_1111111111111111aaaaaaaa', kind: 'pdf', name: 'menu.pdf', state: 'on' } as const;
   const OLD = { ref: 'f_2222222222222222bbbbbbbb', kind: 'text', name: null, state: 'gone' } as const;
@@ -1192,6 +1192,34 @@ describe('attachments', () => {
     await act(() => { chat.current.send([PATIO], busy); });
     expect(busy).toHaveBeenCalledTimes(1);
     expect(api.turns).toHaveLength(1);
+  });
+
+  test('a turn taken back while the person typed something new keeps their text and gives no files back', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    const returned = jest.fn();
+    await act(() => { chat.current.setDraft('Read this'); });
+    await act(() => { chat.current.send([MENU], returned); });
+    await act(() => { chat.current.setDraft('Something else'); });
+    await act(() => { turn(api).fail(refusal(409, 'attachment_not_ready')); });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(chat.current.state).toMatchObject({ messages: [], draft: 'Something else' });
+    expect(returned).not.toHaveBeenCalled();
+  });
+
+  test('Try again sends its message’s files again, but not one gone from Your data', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    await act(() => { chat.current.setDraft('Read these'); });
+    await act(() => { chat.current.send([MENU, OLD, PATIO]); });
+    await act(() => {
+      turn(api).emit('text', { delta: 'Partly' });
+      turn(api).emit('error', { code: 'provider_overloaded' });
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    await act(() => { chat.current.retry(at(chat, 1).key); });
+    expect(turn(api, 1).body).toEqual({ content: 'Read these', attachments: [MENU.ref, PATIO.ref] });
   });
 
   test('a reply that fails after it started keeps the message, and Try again sends its files again', async () => {
