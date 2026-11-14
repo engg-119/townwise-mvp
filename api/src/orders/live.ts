@@ -11,9 +11,10 @@ import { computeOrders } from './engine.ts';
 
 /** Weekday means read 8 weeks back; past windows for the cushion add 26 weeks before that. */
 const ITEM_SALES_DAYS = 238;
-const MEAN_DAYS = 56;
+/** The 8 weeks the weekday means, the coverage and the guest index read. */
+export const MEAN_DAYS = 56;
 /** Counts older than this are not read: the board would order the par for them anyway. */
-const COUNT_DAYS = 90;
+export const COUNT_DAYS = 90;
 const FRESH_COUNT_DAYS = 7;
 /** The forecast window read: today and the 30 days after, the reader's 31-day limit. */
 const FORECAST_DAYS = 30;

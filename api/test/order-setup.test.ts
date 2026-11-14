@@ -31,6 +31,11 @@ describe('setupInput', () => {
     expect(input.items[0]).toMatchObject({ name: 'Lager', posNames: [{ name: 'Lager 12oz', perSale: 1 }, { name: 'Lager pitcher', perSale: 4 }] });
   });
 
+  it('lowercases a stored row’s id, so an item id is always a field name item sales and counts accept', () => {
+    const input = parsed(body({ items: [item({ id: 'B'.repeat(24) })] }));
+    expect(input.items[0]?.id).toBe(ITEM_ID);
+  });
+
   it('refuses rows past the limits, unknown keys, and bad times or weekdays', () => {
     const many = <T>(n: number, make: (i: number) => T): T[] => Array.from({ length: n }, (_, i) => make(i));
     const bad: unknown[] = [

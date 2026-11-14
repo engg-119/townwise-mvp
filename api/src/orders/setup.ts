@@ -62,8 +62,11 @@ const deliveryInput = z.strictObject({
   cutoffTime: z.string().regex(/^(?:[01]\d|2[0-3]):[0-5]\d$/),
 });
 
+/** A stored row's id, lowercased: item ids become field names in item sales and counts, which take lowercase hex only. */
+const rowId = objectId.transform((id) => id.toLowerCase());
+
 const supplierInput = z.strictObject({
-  id: objectId.optional(),
+  id: rowId.optional(),
   /** A new supplier's name for itself in this request, for its items' `supplierId`. */
   key: z.string().trim().min(1).max(40).optional(),
   name: z.string().trim().min(1).max(60),
@@ -71,7 +74,7 @@ const supplierInput = z.strictObject({
 });
 
 const itemInput = z.strictObject({
-  id: objectId.optional(),
+  id: rowId.optional(),
   name: z.string().trim().min(1).max(80),
   /** The supplier's `id`, or a new supplier's `key`. */
   supplierId: z.string().trim().min(1).max(40),

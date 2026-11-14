@@ -20,6 +20,7 @@ import { actOnProposal } from '../handlers/chat-proposals.ts';
 import { getDataItem, listData, removeDataItem, replaceDataItem, updateDataItem } from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
+import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
 import { getOrders, saveOrderDecision, saveOrderRule, turnOffOrderRule } from '../handlers/orders.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
@@ -44,7 +45,7 @@ import { resolveAccess } from './resolve.ts';
 
 export interface TownwiseRoute {
   readonly id: string;
-  /** PUT only with bodyLimit 'stream'. */
+  /** PUT only with bodyLimit 'stream' (the file chunk) or '1mb' (the ordering setup, saved whole). */
   readonly method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
   /** Under /api. */
   readonly path: `/${string}`;
@@ -54,11 +55,12 @@ export interface TownwiseRoute {
    * edit and an order rule's turn-off;
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
    * switch, the order decisions and rules, and the item and order change cards;
-   * '8kb' on a TownwiseAI proposal; '256kb' only on the upload routes (the member one and, D23, staff setup's) and
-   * (U13B) the staff forecast import; 'stream' only on the chunk route, whose handler reads the raw body itself after
-   * the policy has passed.
+   * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, an order count among them; '256kb' only on the upload routes (the member one,
+   * D23 staff setup's, and the item sales upload) and (U13B) the staff forecast import; '1mb' only on the ordering
+   * setup's save (300 items with 10 point-of-sale names each can pass 256kb); 'stream' only on the chunk route, whose
+   * handler reads the raw body itself after the policy has passed.
    */
-  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | 'stream';
+  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads';
   /**
@@ -336,6 +338,28 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.orders.rule_off', method: 'POST', path: '/org/locations/:locationId/orders/rules/off', policy: 'member',
     bodyLimit: '1kb', openAsAdmin: true, handler: turnOffOrderRule,
   },
+  // Ordering setup, item sales and counts (design Decisions 3, 4 and 8): every member edits the setup, uploads item
+  // sales and counts; only an org admin deletes item sales. The setup is saved whole, under compare-and-set.
+  {
+    id: 'org.orders.setup.get', method: 'GET', path: '/org/locations/:locationId/orders/setup', policy: 'member',
+    bodyLimit: 'none', openAsAdmin: true, handler: getOrderSetup,
+  },
+  {
+    id: 'org.orders.setup.save', method: 'PUT', path: '/org/locations/:locationId/orders/setup', policy: 'member',
+    bodyLimit: '1mb', openAsAdmin: true, handler: saveOrderSetup,
+  },
+  {
+    id: 'org.orders.item_sales.upload', method: 'POST', path: '/org/locations/:locationId/orders/item-sales', policy: 'member',
+    bodyLimit: '256kb', limiter: 'uploads', openAsAdmin: true, handler: uploadItemSales,
+  },
+  {
+    id: 'org.orders.item_sales.remove', method: 'DELETE', path: '/org/locations/:locationId/orders/item-sales', policy: 'org_admin',
+    bodyLimit: 'none', openAsAdmin: true, handler: deleteItemSales,
+  },
+  {
+    id: 'org.orders.counts.save', method: 'POST', path: '/org/locations/:locationId/orders/counts', policy: 'member',
+    bodyLimit: '32kb', openAsAdmin: true, handler: saveOrderCount,
+  },
   {
     id: 'org.chat.order_proposal.get', method: 'GET',
     path: '/org/locations/:locationId/chat/:conversationId/order-proposals/:proposalId', policy: 'member', bodyLimit: 'none',
@@ -497,7 +521,7 @@ const STREAM_ROUTE = 'org.files.chunk';
 
 /**
  * Boot refuses a duplicate method and path, a GET with a body limit, staff_self on any other route, a PUT without a
- * streamed body, a streamed body on any route but the chunk route, and `openAsAdmin` on a staff or staff_self route.
+ * streamed or 1 MB body, a streamed body on any route but the chunk route, and `openAsAdmin` on a staff or staff_self route.
  */
 export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
   const seen = new Set<string>();
@@ -511,7 +535,9 @@ export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
     if (route.policy === 'staff_self' && (route.method !== VIEW_AS_END.method || route.path !== VIEW_AS_END.path)) {
       throw new ConfigError('routes', `${route.id} uses staff_self, which only POST /admin/view-as/end may use`);
     }
-    if (route.method === 'PUT' && route.bodyLimit !== 'stream') throw new ConfigError('routes', `${route.id} is a PUT without a streamed body`);
+    if (route.method === 'PUT' && route.bodyLimit !== 'stream' && route.bodyLimit !== '1mb') {
+      throw new ConfigError('routes', `${route.id} is a PUT without a streamed or 1 MB body`);
+    }
     if (route.bodyLimit === 'stream' && (route.id !== STREAM_ROUTE || route.method !== 'PUT')) {
       throw new ConfigError('routes', `${route.id} streams its body, which only ${STREAM_ROUTE} may`);
     }
