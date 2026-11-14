@@ -8,6 +8,7 @@ import type { TreeNode } from '../tree';
 import { messageText, type ChatMessage, type TuningChat } from '../useTuningChat';
 import { MAX_MESSAGE } from './Composer';
 import { copyText } from '../copyText';
+import { AttachmentChip } from './AttachmentChip';
 import { ChatButton, Hidden, type ChatButtonHandle } from './controls';
 import { described } from './described';
 import { Check, CopyIcon, Pencil } from './icons';
@@ -19,7 +20,9 @@ import { useVersionNav, VersionNav } from './VersionNav';
 // Edit and, when the message has other versions, the version navigator. Edit swaps the bubble for a field, "Edit your
 // message" (4,000 characters; on web Enter sends and Escape cancels), with Save and send and Cancel; focus moves into
 // the field, and back to Edit when it is canceled. Save and send sends the edit as a new version of the message
-// (useTuningChat's editMessage), which takes this message and everything after it off the page.
+// (useTuningChat's editMessage), which takes this message and everything after it off the page. Files the message
+// carries (D36) show as chips over the bubble (AttachmentChip), and over the field while it is edited, since the edit
+// sends them again.
 
 const web = Platform.OS === 'web';
 // react-native-web passes overflowWrap through; the native style types don't list it.
@@ -36,6 +39,8 @@ export function UserMessage(props: {
   message: ChatMessage;
   tree: readonly TreeNode[];
   chat: TuningChat;
+  /** Where the message's files are on Your data, for their chips' links. */
+  locationId: string;
   readOnlyId: string | null;
   /** A reply streams or a version or conversation loads: Edit and the version navigator are off. */
   busy: boolean;
@@ -124,6 +129,13 @@ export function UserMessage(props: {
   return (
     <View style={styles.message} {...messageMark()}>
       <Hidden>You said</Hidden>
+      {message.attachments.length === 0 ? null : (
+        <View role="list" accessibilityLabel="Files attached" style={[styles.files, { maxWidth: phone ? '85%' : '70%' }]}>
+          {message.attachments.map((attachment, index) => (
+            <AttachmentChip key={`${attachment.ref}:${String(index)}`} attachment={attachment} locationId={props.locationId} viewAs={props.readOnlyId !== null} />
+          ))}
+        </View>
+      )}
       {editing ? (
         <View style={styles.editor}>
           <TextInput
@@ -201,6 +213,7 @@ const styles = StyleSheet.create({
     borderWidth: theme.stroke.hairline, borderColor: c.border, borderRadius: 16, minWidth: 0,
   },
   text: { ...theme.type.sub, color: c.white },
+  files: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: theme.space[2], minWidth: 0 },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', columnGap: theme.space[4] },
   editor: { alignSelf: 'stretch', gap: theme.space[2] },
   field: {
