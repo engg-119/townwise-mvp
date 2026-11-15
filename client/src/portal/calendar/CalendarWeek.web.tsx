@@ -32,7 +32,6 @@ const CSS = [
 const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', fontVariantNumeric: 'tabular-nums' } as const;
 const small = { fontFamily: theme.font.mono, fontSize: 10, lineHeight: '14px' } as const;
 const sans = { fontFamily: theme.font.sans, fontSize: 12, lineHeight: '16px' } as const;
-const oneLine = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 
 /** How long a pointer may rest over no head before the tooltip clears, as the month grid's. */
 const CLEAR_DELAY_MS = 80;
@@ -44,8 +43,9 @@ function dateOf(target: EventTarget | null): string | null {
 
 /**
  * One card: its hours first when timed (mono 10), the title in full (sans 12/16), then its kind words (mono 10,
- * `text3`), on a `panel` fill with a 2px left rule in its mark's token. A term or season is one line. The spaces
- * between the parts aren't drawn (the card is a grid) but keep the words apart in the column's description.
+ * `text3`), on a `panel` fill with a 2px left rule in its mark's token. A term or season keeps its title and kind
+ * words on one run, which wraps as every card's words do, so nothing is cut. The spaces between the parts aren't
+ * drawn (the card is a grid) but keep the words apart in the column's description.
  */
 function Card(props: { card: WeekCard }): React.JSX.Element {
   const { card } = props;
@@ -53,7 +53,7 @@ function Card(props: { card: WeekCard }): React.JSX.Element {
   if (periodCard(card)) {
     return (
       <div role="listitem" style={frame}>
-        <span style={{ ...sans, ...oneLine, color: C.text2 }}>{card.title}{' '}<span style={{ ...small, color: C.text3 }}>{card.sub}</span></span>
+        <span style={{ ...sans, color: C.text2, overflowWrap: 'anywhere' }}>{card.title}{' '}<span style={{ ...small, color: C.text3 }}>{card.sub}</span></span>
       </div>
     );
   }

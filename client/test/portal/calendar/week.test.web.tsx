@@ -240,9 +240,31 @@ describe('the day columns at 1280', () => {
     expect(onSelect).toHaveBeenLastCalledWith('2026-11-19');
   });
 
-  test('the box is at least as tall as the month grid, and aria-busy while busy', () => {
+  test('a term card shows its whole title and kind words, wrapping: nothing in it is cut or kept to one line', () => {
+    const finals = townEvent({ id: 'hanover-nh:2026-11-19:term', start: '2026-11-19', end: '2026-11-24', title: 'Fall term finals', kind: 'term' });
+    renderWeek({ reads: input({ events: [finals] }) });
+    const card = within(cell(SATURDAY)).getAllByRole('listitem').find((item) => item.textContent.startsWith('Fall term finals'));
+    if (card === undefined) throw new Error('no term card');
+    expect(card.textContent).toBe('Fall term finals Term, Nov 19 to 24');
+    // jsdom does no layout, so the styles say it: no ellipsis, no single line, nothing clipped.
+    for (const element of [card, ...card.querySelectorAll<HTMLElement>('*')]) {
+      expect(element.style.textOverflow).not.toBe('ellipsis');
+      expect(element.style.whiteSpace).not.toBe('nowrap');
+      expect(element.style.overflow).not.toBe('hidden');
+    }
+  });
+
+  test('the box is at least as tall as the month grid (658px at 1280) and can grow, and aria-busy while busy', () => {
     const { grid } = renderWeek({ busy: true });
     expect(grid.style.minHeight).toBe(`${String(gridHeight(1280))}px`);
+    expect(grid.style.minHeight).toBe('658px');
+    // No fixed height and nothing hidden, from the view's box down to its columns, so a column with more cards grows it.
+    const box = grid.closest<HTMLElement>('.tw-cw');
+    if (box === null) throw new Error('no week box');
+    for (const element of [box, grid, ...within(grid).getAllByRole('row'), ...within(grid).getAllByRole('gridcell')]) {
+      expect(element.style.height).toBe('');
+      expect(element.style.overflow).toBe('');
+    }
     expect(grid.getAttribute('aria-busy')).toBe('true');
   });
 

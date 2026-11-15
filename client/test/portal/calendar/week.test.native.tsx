@@ -20,21 +20,22 @@ const TODAY = '2026-11-11';
 const SATURDAY = '2026-11-21';
 const BOUNDS = monthBounds(TODAY);
 
-function input(): CalendarInput {
+function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   return {
     today: TODAY, month: '2026-11', forecast: forecastOf([forecastDay({ date: SATURDAY })]) as ForecastWindow, salesDays: [],
     events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })],
     notes: [note({ startDate: SATURDAY, expectedGuests: 70, startTime: '18:00', endTime: '21:00' })],
     imported: [{ calendarId: 'c1', uid: 'i1', title: 'Wine delivery', startDate: SATURDAY, endDate: SATURDAY, startTime: '09:00', endTime: '10:00' }],
     filters: ALL_FILTERS,
+    ...fields,
   };
 }
 
-async function renderWeek(width: number, onSelect: jest.Mock = jest.fn()): Promise<jest.Mock> {
+async function renderWeek(width: number, onSelect: jest.Mock = jest.fn(), reads: CalendarInput = input()): Promise<jest.Mock> {
   jest.spyOn(Dimensions, 'get').mockReturnValue({ width, height: 800, scale: 2, fontScale: 1 });
   await render(
     <CalendarWeek
-      days={buildWeek(SATURDAY, '2026-11', input(), BOUNDS)}
+      days={buildWeek(SATURDAY, '2026-11', reads, BOUNDS)}
       selected={SATURDAY}
       month="2026-11"
       bounds={BOUNDS}
@@ -90,4 +91,15 @@ test('each row is its head line over the day’s full cards, all day first, then
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(within(saturday).getAllByText('Your note')).toHaveLength(1);
   expect(within(saturday).getByText('Your calendar')).toBeTruthy();
+});
+
+test('a term card shows its whole title, wrapping: no text in the row is cut to a number of lines', async () => {
+  const finals = townEvent({ id: 'hanover-nh:2026-11-19:term', start: '2026-11-19', end: '2026-11-24', title: 'Fall term finals', kind: 'term' });
+  await renderWeek(375, jest.fn(), input({ events: [finals] }));
+  const saturday = screen.getAllByRole('button')[5];
+  if (saturday === undefined) throw new Error('no Saturday');
+  const card = within(saturday).getByText('Fall term finals Term, Nov 19 to 24');
+  expect(card.props.numberOfLines).toBeUndefined();
+  // Every card's text, the head's too: nothing in the agenda row is cut.
+  for (const text of within(saturday).getAllByText(/./)) expect(text.props.numberOfLines).toBeUndefined();
 });

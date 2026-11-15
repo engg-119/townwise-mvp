@@ -8,8 +8,8 @@ import { statusWord, type TooltipLines } from './model';
 // grid's rows, so it reads nothing of its own (grid.ts buildWeek). On native it is an agenda at every width: 7 rows,
 // each a Pressable labeled as its month cell, with its selected state, holding the day's head line (the day, a Today
 // tag under today, the status word, the figure with "+70", and the range, "guests" or "No forecast") over the day's
-// full-width cards (hours first when timed, the title in full, the kind words; a term or season one line), each on a
-// `panel` fill with a 2px left rule in its mark's token. Pressing a row selects its day; the selected row is outlined
+// full-width cards (hours first when timed, the title in full, the kind words; a term or season its title and kind
+// words on one run), each on a `panel` fill with a 2px left rule in its mark's token, every card's words wrapping. Pressing a row selects its day; the selected row is outlined
 // `mint`. An inert day (outside the 25 months) is a disabled row with its head line only; a pending one (its reads in
 // flight) shows its head line only. Web has its own file (CalendarWeek.web.tsx): day columns from 641px and an agenda
 // below, with the keys and the tooltip. Only types are shared with it, since on web './CalendarWeek' is that file
@@ -43,7 +43,7 @@ function Card(props: { card: WeekCard }): React.JSX.Element {
   if (periodCard(card)) {
     return (
       <View style={[styles.card, rule]}>
-        <Text numberOfLines={1} style={styles.period}>{card.title} <Text style={styles.sub}>{card.sub}</Text></Text>
+        <Text style={styles.period}>{card.title} <Text style={styles.sub}>{card.sub}</Text></Text>
       </View>
     );
   }
