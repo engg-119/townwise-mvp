@@ -1,4 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { createRef } from 'react';
+import type { View } from 'react-native';
 
 import { Button } from '../../src/portal/ui/Button';
 import { ConfirmDialog, type ConfirmDialogProps } from '../../src/portal/ui/ConfirmDialog';
@@ -49,6 +51,31 @@ test('a disclosure button has aria-expanded and aria-controls, and a button with
   const plain = screen.getByRole('button', { name: 'Check again' });
   expect(plain.hasAttribute('aria-expanded')).toBe(false);
   expect(plain.hasAttribute('aria-controls')).toBe(false);
+});
+
+test('a popover’s button has aria-haspopup="dialog" and aria-controls only while its popover is open; a plain button has no aria-haspopup', () => {
+  const view = render(<Button variant="outline" label="Your calendars" expanded={false} hasPopup="dialog" onPress={() => undefined} />);
+  const button = screen.getByRole('button', { name: 'Your calendars' });
+  expect([button.getAttribute('aria-haspopup'), button.getAttribute('aria-expanded'), button.hasAttribute('aria-controls')]).toEqual(['dialog', 'false', false]);
+  view.rerender(<Button variant="outline" label="Your calendars" expanded hasPopup="dialog" controls="p1" onPress={() => undefined} />);
+  expect([button.getAttribute('aria-haspopup'), button.getAttribute('aria-expanded'), button.getAttribute('aria-controls')]).toEqual(['dialog', 'true', 'p1']);
+  cleanup();
+  render(<Button variant="outline" label="Check again" onPress={() => undefined} />);
+  expect(screen.getByRole('button', { name: 'Check again' }).hasAttribute('aria-haspopup')).toBe(false);
+});
+
+test('a button hands its pressable host to the ref it is given, which a popover measures, and keeps its disabled state on it', () => {
+  const ref = createRef<React.ComponentRef<typeof View>>();
+  const view = render(<Button ref={ref} variant="outline" label="Add an event" onPress={() => undefined} />);
+  const button = screen.getByRole('button', { name: 'Add an event' });
+  expect(ref.current).toBe(button);
+  expect(typeof (ref.current as unknown as { measureInWindow?: unknown }).measureInWindow).toBe('function');
+  view.rerender(<Button ref={ref} variant="outline" label="Add an event" disabled onPress={() => undefined} />);
+  expect(button.getAttribute('aria-disabled')).toBe('true');
+  view.rerender(<Button ref={ref} variant="outline" label="Add an event" onPress={() => undefined} />);
+  expect(button.getAttribute('aria-disabled')).toBeNull();
+  view.unmount();
+  expect(ref.current).toBeNull();
 });
 
 test('a button with focusOnMount takes focus as it mounts, and one already showing never takes it back', () => {

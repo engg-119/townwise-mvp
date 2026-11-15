@@ -14,6 +14,7 @@ export interface WebAria {
   'aria-pressed'?: boolean | undefined;
   'aria-expanded'?: boolean | undefined;
   'aria-controls'?: string | undefined;
+  'aria-haspopup'?: 'dialog' | undefined;
 }
 
 /** Spread into a React Native element: `<View {...webAria({ 'aria-current': 'page' })} />`. */
