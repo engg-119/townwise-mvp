@@ -13,10 +13,10 @@ import { FILTER_KEYS, FILTER_LABEL, type FilterKey, type Filters } from './model
 // pointer, and from 641px the label has a fixed width that holds the longest week label, so nothing after it moves
 // either, in either view. Then the "Calendar view" switch, Month and Week as one segmented pair of `.tgl` buttons
 // (aria-pressed on web, a checked state on native, as ToggleGroup's), and `trailing`: what the page passes, as the
-// row's own items, which is the "Your calendars" button and its panel (YourCalendars.tsx), a full-width item that is
-// the row's last, so it opens under the row. From 1024px the switch and the button sit at the right of the row (the
+// row's own items, which is the "Your calendars" button alone (YourCalendars.tsx): its popover floats over the page, so
+// it takes no line of the row or under it. From 1024px the switch and the button sit at the right of the row (the
 // arrows' group takes the free space), on a line they wrap to as well; below that they start their own line at the
-// left, together. No item but the open panel is taller than 44px.
+// left, together. No item is taller than 44px.
 // Previous and Next are disabled in place at the 25 months' ends. The filters are their own group (CalendarFilters),
 // which the page places by width.
 
@@ -40,7 +40,7 @@ export function Toolbar(props: {
   onToday: () => void;
   view: CalendarView;
   onView: (view: CalendarView) => void;
-  /** After the switch, as the row's own flex items: the "Your calendars" button and its full-width panel, the last item. */
+  /** After the switch, as the row's own flex items: the "Your calendars" button, the row's last item. */
   trailing: React.ReactNode;
 }): React.JSX.Element {
   const { desktop, phone } = useBreakpoint();

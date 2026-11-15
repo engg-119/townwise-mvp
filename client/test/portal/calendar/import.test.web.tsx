@@ -3,11 +3,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import { CALENDARS_COPY } from '../../../src/portal/calendar/calendars';
 import { IcsImport } from '../../../src/portal/calendar/IcsImport.web';
 
-// The calendar file picker on web (P28; connect-owner-calendar design decision 11), inside the "Your calendars" panel:
-// "Import a calendar file" is described by the id the panel gives it and opens a hidden file input for .ics files,
-// cleared after each choice. A file over 1 MB is refused unread; any other is read with File.text() and handed to the
-// panel as its name and text, which the API parses. "Importing…" shows while the panel posts it. Made-up file names
-// only.
+// The calendar file picker on web (P28; connect-owner-calendar design decision 11), inside the "Your calendars" popover
+// (refine-calendar-and-home design decision 1): "Import a calendar file" is described by the id the popover gives it and
+// opens a hidden file input for .ics files, cleared after each choice. A file over 1 MB is refused unread; any other is
+// read with File.text() and handed to the popover as its name and text, which the API parses. "Importing…" shows while
+// the popover posts it, which holds the popover open (test/portal/calendar/your-calendars.test.web.tsx). Made-up file
+// names only.
 
 afterEach(cleanup);
 
@@ -91,7 +92,7 @@ test('under view-as the button is disabled in place, described by the help and t
   expect(opened).not.toHaveBeenCalled();
 });
 
-test('while the panel posts a file the button reads “Importing…”, disabled in place', () => {
+test('while the popover posts a file the button reads “Importing…”, disabled in place', () => {
   const { input } = renderPicker(true);
   const button = screen.getByRole('button', { name: 'Importing…' });
   expect(button.getAttribute('aria-disabled')).toBe('true');

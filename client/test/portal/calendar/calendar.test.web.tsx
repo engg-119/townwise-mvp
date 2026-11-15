@@ -157,9 +157,15 @@ const DINNER = ownerEvent({
 });
 const AWAY = ownerEvent({ calendarId: 'c1', calendar: 'kitchen', uid: 'i2', title: 'Owner away', startDate: '2026-11-24', endDate: '2026-11-25' });
 
-/** The panel "Your calendars", which must be showing. */
+/** The "Your calendars" popover, which must be open. */
 function calendarsPanel(): HTMLElement {
-  return screen.getByRole('region', { name: 'Your calendars' });
+  return screen.getByRole('dialog', { name: 'Your calendars' });
+}
+
+/** Closes the "Your calendars" popover, which floats over the page, before the page is used again. */
+function closeCalendars(): void {
+  fireEvent.click(within(calendarsPanel()).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
 }
 
 function storedReads(fake: CalendarFake): string[] {
@@ -176,7 +182,7 @@ function icsFile(text: string, name = 'kitchen.ics', size?: number): File {
   return file;
 }
 
-/** Opens the "Your calendars" panel when it is closed, then chooses the file in its import. */
+/** Opens the "Your calendars" popover when it is closed, then chooses the file in its import. */
 function chooseFile(file: File): void {
   const calendars = screen.getByRole('button', { name: /^Your calendars/ });
   if (calendars.getAttribute('aria-expanded') !== 'true') fireEvent.click(calendars);
@@ -418,11 +424,11 @@ test('a calendar file is posted and kept, its events show once read again, and M
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
-  expect(screen.getByText(HELP)).toBeTruthy();
   const answer = deferred<unknown>();
   api.answers[CALENDARS_PATH] = () => answer.promise;
   const reads = fake.paths.length;
   chooseFile(icsFile(ICS, 'kitchen.ics'));
+  expect(within(calendarsPanel()).getByText(HELP)).toBeTruthy();
   expect(await within(calendarsPanel()).findByRole('button', { name: 'Importing…' })).toBeTruthy();
   expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'kitchen', ics: ICS } }]);
   // The API keeps the calendar and its two events.
@@ -443,6 +449,7 @@ test('a calendar file is posted and kept, its events show once read again, and M
   expect(again).toContain(NOVEMBER_EVENTS);
   expect(again.filter((path) => path.includes('/forecast?') || path === NOTES_PATH || path === RULES_PATH)).toEqual([]);
   expect(writes(api)).toHaveLength(1);
+  closeCalendars();
   const chip = screen.getByRole('button', { name: 'Your calendar' });
   expect(chip.getAttribute('aria-pressed')).toBe('true');
   expect(cell('2026-11-25').textContent).toContain('Owner away');
@@ -627,7 +634,7 @@ test('view-as: Add, Edit, Delete, Make a note and the calendars panel’s action
   expect(document.getElementById('calendar-ro')?.textContent).toBe('Read-only while viewing as gm@example.org.');
   expect(within(panel()).queryByRole('button', { name: 'Save note' })).toBeNull();
 
-  // The panel opens and lists the calendars; its writes stay in place, disabled, described by its own read-only line.
+  // The popover opens and lists the calendars; its writes stay in place, disabled, described by its own read-only line.
   fireEvent.click(screen.getByRole('button', { name: 'Your calendars (2)' }));
   const calendars = calendarsPanel();
   expect(within(calendars).getByText('kitchen')).toBeTruthy();
@@ -647,7 +654,7 @@ test('view-as: Add, Edit, Delete, Make a note and the calendars panel’s action
   }
   expect(picked).not.toHaveBeenCalled();
   expect(within(calendars).queryByLabelText('Calendar link')).toBeNull();
-  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull();
   // How importing works is no write: it still shows the help.
   const toggle = within(calendars).getByRole('button', { name: 'How importing works' });
   expect(toggle.getAttribute('aria-disabled')).toBeNull();
@@ -721,23 +728,27 @@ test('Try again and a month change while the forecast still fails keep the calen
   const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': offline(), '2026-12': offline() } });
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   expect(await screen.findByText('Couldn’t load the forecast for November. Try again.')).toBeTruthy();
-  // The panel's message is the header row's state: it would be gone if the page swapped to its loader and back.
+  // The popover's message is the header row's state: it would be gone if the page swapped to its loader and back.
   api.answers[CALENDARS_PATH] = () => refusal(400, 'not_calendar');
   chooseFile(icsFile('date,guests\n2026-11-01,120\n', 'sales.csv'));
   expect(await within(calendarsPanel()).findByText(NOT_CALENDAR)).toBeTruthy();
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`POST ${CALENDARS_PATH}`]);
+  closeCalendars();
 
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(screen.queryByText('Loading the calendar')).toBeNull();
   expect(screen.getByRole('grid', { name: 'November 2026' }).getAttribute('aria-busy')).toBe('true');
   expect(await screen.findByText('Couldn’t load the forecast for November. Try again.')).toBeTruthy();
   expect(screen.getByRole('grid', { name: 'November 2026' }).getAttribute('aria-busy')).toBe('false');
+  fireEvent.click(screen.getByRole('button', { name: /^Your calendars/ }));
   expect(within(calendarsPanel()).getByText(NOT_CALENDAR)).toBeTruthy();
+  closeCalendars();
 
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   expect(screen.queryByText('Loading the calendar')).toBeNull();
   expect(await screen.findByText('Couldn’t load the forecast for December. Try again.')).toBeTruthy();
   expect(screen.getByRole('grid', { name: 'December 2026' })).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /^Your calendars/ }));
   expect(within(calendarsPanel()).getByText(NOT_CALENDAR)).toBeTruthy();
 });
 

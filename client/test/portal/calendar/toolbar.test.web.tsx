@@ -4,8 +4,9 @@ import { CalendarFilters, Toolbar } from '../../../src/portal/calendar/Toolbar';
 import { ALL_FILTERS } from '../../../src/portal/calendar/model';
 
 // The Calendar's header row on web (P28, spec 16.3): Today, Previous and Next, then the label (aria-live, 216px from
-// 641px so the controls after it never move), then the trailing slot's controls as the row's own items. The filters
-// are their own group, which the page places by width.
+// 641px so the controls after it never move), then the trailing slot's "Your calendars" button as the row's last item,
+// whose popover floats over the page, so no line follows the row. The filters are their own group, which the page
+// places by width.
 
 let width = 1280;
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => width });
@@ -81,13 +82,17 @@ test('Previous and Next are disabled in place at the 25 months’ ends', () => {
   expect(before(screen.getByRole('button', { name: 'Previous month' }), screen.getByText('November 2026'))).toBe(true);
 });
 
-test('the trailing controls come after the label, as the header row’s own items', () => {
+test('the trailing button comes after the label as the header row’s last item, and nothing follows the row', () => {
   renderToolbar();
   const label = screen.getByText('November 2026');
   const trailing = screen.getByRole('button', { name: 'Your calendars' });
   expect(before(label, trailing)).toBe(true);
   const row = label.parentElement?.parentElement;
   expect(trailing.parentElement).toBe(row);
+  expect(row?.lastElementChild).toBe(trailing);
+  expect(row?.nextElementSibling).toBeNull();
+  // Every item of the row is one of its own: the arrows' group, the switch and the button.
+  expect(row?.children).toHaveLength(3);
 });
 
 // jsdom does no layout, so the styles that place the trailing controls are checked (7.2 measures them).

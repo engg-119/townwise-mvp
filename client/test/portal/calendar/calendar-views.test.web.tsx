@@ -364,22 +364,29 @@ test('an import refusal shown before a switch is still shown after it', async ()
   const { api } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   const calendars = screen.getByRole('button', { name: 'Your calendars' });
+  /** The "Your calendars" popover, which floats over the page: it is closed for a switch and opened again after. */
+  const popover = (): HTMLElement => screen.getByRole('dialog', { name: 'Your calendars' });
+  const close = (): void => { fireEvent.click(within(popover()).getByRole('button', { name: 'Close' })); };
   fireEvent.click(calendars);
   chooseLargeFile();
-  expect(await within(screen.getByRole('region', { name: 'Your calendars' })).findByText(TOO_LARGE)).toBeTruthy();
+  expect(await within(popover()).findByText(TOO_LARGE)).toBeTruthy();
+  close();
   fireEvent.click(viewButton('Week'));
   expect(await screen.findByRole('grid', { name: 'Nov 16 to 22, 2026' })).toBeTruthy();
-  // The panel stays open across the switch: getByRole finds only a region that shows.
-  expect(within(screen.getByRole('region', { name: 'Your calendars' })).getByText(TOO_LARGE)).toBeTruthy();
-  expect(calendars.getAttribute('aria-expanded')).toBe('true');
+  // The button is never remounted by a switch, so the popover's message is kept.
+  expect(screen.getByRole('button', { name: 'Your calendars' })).toBe(calendars);
+  fireEvent.click(calendars);
+  expect(within(popover()).getByText(TOO_LARGE)).toBeTruthy();
+  close();
   fireEvent.click(viewButton('Month'));
   expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
-  expect(within(screen.getByRole('region', { name: 'Your calendars' })).getByText(TOO_LARGE)).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Your calendars' })).toBe(calendars);
+  fireEvent.click(calendars);
+  expect(within(popover()).getByText(TOO_LARGE)).toBeTruthy();
   expect(calendars.getAttribute('aria-expanded')).toBe('true');
 });
 
-test('at 1280 the header row holds Today, Previous month, Next month, the label, the view switch and Your calendars, in that order, and the closed panel is its last item', async () => {
+test('at 1280 the header row holds Today, Previous month, Next month, the label, the view switch and Your calendars, in that order, the button its last item', async () => {
   const { api } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   const label = screen.getByText('November 2026');
@@ -392,14 +399,10 @@ test('at 1280 the header row holds Today, Previous month, Next month, the label,
   order.slice(1).forEach((element, index) => { expect(before(order[index] as Element, element)).toBe(true); });
   const button = screen.getByRole('button', { name: 'Your calendars' });
   expect(button.parentElement).toBe(row);
-  // A closed panel's accessible name is empty, so it is found as the button's aria-controls names it.
-  const panel = document.getElementById(button.getAttribute('aria-controls') ?? '');
-  if (panel === null) throw new Error('no panel');
-  expect([panel.getAttribute('role'), panel.getAttribute('aria-label')]).toEqual(['region', 'Your calendars']);
-  expect(panel.parentElement).toBe(row);
-  expect(panel.nextElementSibling).toBeNull();
-  expect(before(button, panel)).toBe(true);
-  expect(window.getComputedStyle(panel).display).toBe('none');
+  // Its popover floats over the page, so nothing follows the button in the row, and closed it is not in the document.
+  expect(row.lastElementChild).toBe(button);
+  expect(button.hasAttribute('aria-controls')).toBe(false);
+  expect(screen.queryByRole('dialog')).toBeNull();
 });
 
 test('at 1280 the header label is 216px wide in both views', async () => {
