@@ -214,21 +214,21 @@ describe('P4 Waiting for approval', () => {
     expect(screen.getByText('Once you’re approved, Townwise sets up Sample Mountain Tavern, with you as its admin and its first location in Stowe, VT. Then you upload your sales history and see your town.')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'While you wait: Stowe, VT' })).toBeTruthy();
     expect(screen.getByText('Seasonal town')).toBeTruthy();
-    expect(screen.getByText('Measured across Lamoille County, 2024.')).toBeTruthy();
-    expect(screen.getByText('Busiest month: January. Quietest: May.')).toBeTruthy();
+    expect(screen.getByText('Measured across Lamoille County, 2025.')).toBeTruthy();
+    expect(screen.getByText('Busiest month: August. Quietest: April.')).toBeTruthy();
     // Native has no chart (D21): the summary, the table and where to see the chart.
     expect(screen.getByText('See the chart at townwise.tech.')).toBeTruthy();
-    expect(screen.queryByLabelText('Numbers: Lamoille County and the Northeast, 2024')).toBeNull();
+    expect(screen.queryByLabelText('Numbers: Lamoille County and the Northeast, 2025')).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: /Show the numbers/ }));
-    const table = screen.getByLabelText('Numbers: Lamoille County and the Northeast, 2024');
+    const table = screen.getByLabelText('Numbers: Lamoille County and the Northeast, 2025');
     expect(within(table).getByText('May')).toBeTruthy();
-    expect(within(table).getByText('−15.9')).toBeTruthy();
+    expect(within(table).getByText('−17.4')).toBeTruthy();
   });
 
   test('the town’s biggest gap prints its index delta in mono', async () => {
     await renderApp('/waiting', fakePortalApi({ me: meOf(ACCESS.pending) }));
-    expect(await screen.findByText(/biggest gap with the region in May, −15\.9 index points\.$/)).toBeTruthy();
-    const delta = screen.getByText('−15.9');
+    expect(await screen.findByText(/biggest gap with the region in May, −17\.4 index points\.$/)).toBeTruthy();
+    const delta = screen.getByText('−17.4');
     expect(styleOf(delta)).toMatchObject({ ...theme.type.mono, fontVariant: ['tabular-nums'] });
   });
 
@@ -257,6 +257,22 @@ describe('P4 Waiting for approval', () => {
     await renderApp('/waiting', fakePortalApi({ me: meOf(access) }));
     expect(await screen.findByText('Townwise hasn’t researched Norwich, VT yet. Profiles cover twelve Northeast towns today.')).toBeTruthy();
     expect(screen.queryByText('See the chart at townwise.tech.')).toBeNull();
+  });
+
+  // BLS withheld Nantucket County for April to June 2025: the profile keeps its tag and note, says why in place of the
+  // measured line and the pattern, and has no chart line, numbers or sentences.
+  test('a town whose county BLS did not publish for the year: the reason, and no pattern, numbers or curve', async () => {
+    const access: Access = { state: 'pending', request: { ...REQUEST, town: { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' } } };
+    await renderApp('/waiting', fakePortalApi({ me: meOf(access) }));
+    expect(await screen.findByText('BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.')).toBeTruthy();
+    expect(screen.getByText('Seasonal town')).toBeTruthy();
+    expect(screen.getByText('An island with a summer season.')).toBeTruthy();
+    expect(screen.queryByText(/^Measured across /)).toBeNull();
+    expect(screen.queryByText(/with the region|Busiest month/)).toBeNull();
+    expect(screen.queryByRole('button', { name: /Show the numbers/ })).toBeNull();
+    expect(screen.queryByText('See the chart at townwise.tech.')).toBeNull();
+    expect(screen.queryByText('Curve: 2025 employment.')).toBeNull();
+    expect(screen.getByText('Source: U.S. Bureau of Labor Statistics, QCEW, private food services and drinking places (NAICS 722), Nantucket County, 2025.')).toBeTruthy();
   });
 
   test('view-as: Check again still reads; Sign out is disabled', async () => {

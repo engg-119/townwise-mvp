@@ -130,7 +130,7 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   const order = [
     'Townwise can’t put a number on how many people are in Hanover yet.', 'This week', 'Fall term classes until Tue, Nov 17.',
     'Later in November', 'Nov 18 to 19', 'Nov 20 to 25', 'Fall term finals', 'From Nov 26', 'Source: Dartmouth Registrar',
-    'Food-service jobs in Grafton County', '2.6% fewer jobs in November 2024 than in an average month that year.',
+    'Food-service jobs in Grafton County', '4.5% fewer jobs in November 2025 than in an average month that year.',
   ].map((text) => people.textContent.indexOf(text));
   expect(order.every((at) => at >= 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);

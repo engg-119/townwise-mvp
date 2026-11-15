@@ -248,7 +248,7 @@ test('Waiting draws the town’s chart on web, with its summary and the numbers'
   expect(screen.queryByText('See the chart at townwise.tech.')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /Show the numbers/ }));
   expect(screen.getByRole('button', { name: /Show the numbers/ }).getAttribute('aria-expanded')).toBe('true');
-  expect(screen.getByRole('region', { name: 'Numbers: Lamoille County and the Northeast, 2024' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Numbers: Lamoille County and the Northeast, 2025' })).toBeTruthy();
 });
 
 test('Request access on web: the Town field is a select grouped as the homepage lists the towns', async () => {

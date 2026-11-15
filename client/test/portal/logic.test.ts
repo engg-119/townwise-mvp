@@ -343,14 +343,18 @@ describe('towns (spec 13)', () => {
     ]);
   });
 
-  test('the pattern matches the homepage map for every town', () => {
-    for (const town of mapTowns) expect(patternOf(town.series)).toBe(town.pattern);
+  test('the pattern matches the homepage map for every town, and neither has one without a series', () => {
+    for (const town of mapTowns) {
+      expect(town.series === null ? null : patternOf(town.series)).toBe(town.pattern);
+      expect(townProfile(town.id)?.pattern).toBe(town.pattern);
+    }
   });
 
   test('what Townwise has on a town, in words', () => {
     expect(townResearchLine('hanover-nh')).toMatch(/^2 drivers and \d key dates?, from public sources$/);
     expect(townResearchLine('conway-nh')).toBe('1 driver and no key dates, from public sources');
-    expect(townResearchLine('nantucket-ma')).toBe('Employment pattern only. Drivers aren’t researched yet.');
+    // Nantucket has no drivers, and BLS withheld its county for April to June 2025, so it has no pattern either.
+    expect(townResearchLine('nantucket-ma')).toBe('No 2025 jobs index. Drivers aren’t researched yet.');
     expect(townResearchLine(null)).toBe('Not researched yet');
     expect(townProfile('nowhere')).toBeNull();
   });

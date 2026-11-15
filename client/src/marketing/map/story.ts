@@ -1,7 +1,7 @@
 import { fmt1, fmtSigned, side } from '../format';
 import { DATA_YEAR, northeastSeries } from './countyData';
 import { VIEW_HEIGHT, VIEW_WIDTH, type LabelSide } from './geometry';
-import { mapTowns, markerScale, MONTH_NAMES, type MapTown } from './mapState';
+import { gapOf, mapTowns, markerScale, measuredTowns, MONTH_NAMES, type MapTown, type MeasuredTown } from './mapState';
 
 // What the map story shows at each month (ConsoleV2.dc.html), derived from the bundled data with the mockup's
 // formulas. Pure, with no DOM: the homepage map renders it and the tests pin it.
@@ -22,10 +22,11 @@ export function largest<T extends { delta: number }>(moves: readonly T[]): T | n
   return moves.reduce<T | null>((best, move) => (best === null || Math.abs(move.delta) > Math.abs(best.delta) ? move : best), null);
 }
 
-// The town that moved most against the Northeast since last month; the first in town order wins a tie.
-export function biggestMove(month: number): { town: MapTown; delta: number } | null {
+// The town that moved most against the Northeast since last month; the first in town order wins a tie. Only towns
+// with a series move.
+export function biggestMove(month: number): { town: MeasuredTown; delta: number } | null {
   if (month <= 0) return null;
-  return largest(mapTowns.map((town) => ({ town, delta: moveAt(town.series.gap, month) })));
+  return largest(measuredTowns.map((town) => ({ town, delta: moveAt(town.series.gap, month) })));
 }
 
 // The panel's sentence for a month.
@@ -36,8 +37,8 @@ export function moveSentence(month: number): string {
 }
 
 // The month's three biggest movers (a move that rounds to zero is none), largest first, town order on a tie.
-export function topMovers(month: number, count = 3): { town: MapTown; delta: number }[] {
-  return mapTowns
+export function topMovers(month: number, count = 3): { town: MeasuredTown; delta: number }[] {
+  return measuredTowns
     .map((town) => ({ town, delta: moveAt(town.series.gap, month) }))
     .filter((move) => rounds(move.delta))
     .sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta))
@@ -86,17 +87,29 @@ export function railFill(month: number): number {
   return (month + 1) / 12;
 }
 
+// The map's screen-reader caption. Only a town whose county has an index for the data year has a dot sized by its
+// gap; the caption names any town without one (`unmeasured`, by name) and says its dot is a grey ring.
+export function mapCaption(unmeasured: readonly string[], year: number): string {
+  const head = 'Map of the nine Northeast states with twelve featured towns, each dot';
+  const tail = 'Use the town list below the map to explore each one.';
+  if (unmeasured.length === 0) return `${head} sized by its county’s gap from the Northeast in the month shown. ${tail}`;
+  const one = unmeasured.length === 1;
+  return `${head} with a ${String(year)} index sized by its county’s gap from the Northeast in the month shown. `
+    + `${unmeasured.join(' and ')} ${one ? 'has' : 'have'} no ${String(year)} index, so ${one ? 'its dot is a grey ring' : 'their dots are grey rings'}. ${tail}`;
+}
+
 // The final step: the reader's month in the data year, with the counties furthest above and below the Northeast.
-// Every month of the data has a county on each side, so the line reads true for any month.
+// Every month of the data has a county on each side, so the line reads true for any month. Only towns with a
+// series count.
 export function finale(month: number): { title: string; line: string } {
-  const gapOf = (town: MapTown): number => town.series.gap[month] ?? 0;
-  const hi = mapTowns.reduce<MapTown | null>((best, town) => (best === null || gapOf(town) > gapOf(best) ? town : best), null);
-  const lo = mapTowns.reduce<MapTown | null>((best, town) => (best === null || gapOf(town) < gapOf(best) ? town : best), null);
+  const gapAt = (town: MeasuredTown): number => town.series.gap[month] ?? 0;
+  const hi = measuredTowns.reduce<MeasuredTown | null>((best, town) => (best === null || gapAt(town) > gapAt(best) ? town : best), null);
+  const lo = measuredTowns.reduce<MeasuredTown | null>((best, town) => (best === null || gapAt(town) < gapAt(best) ? town : best), null);
   const title = `${MONTH_NAMES[month] ?? ''}, this month in ${String(DATA_YEAR)}.`;
   if (hi === null || lo === null) return { title, line: '' };
   return {
     title,
-    line: `${hi.county} sat ${fmt1(Math.abs(gapOf(hi)))} index points ${side(gapOf(hi))} the Northeast; ${lo.county}, ${fmt1(Math.abs(gapOf(lo)))} ${side(gapOf(lo))}.`,
+    line: `${hi.county} sat ${fmt1(Math.abs(gapAt(hi)))} index points ${side(gapAt(hi))} the Northeast; ${lo.county}, ${fmt1(Math.abs(gapAt(lo)))} ${side(gapAt(lo))}.`,
   };
 }
 
@@ -140,11 +153,12 @@ export interface Tag {
   box: Box;
 }
 
-// A town's marker in map px: its dot (24px) and the ring 3px outside it (2px), scaled with the month's gap.
+// A town's marker in map px: its dot (24px) and the ring 3px outside it (2px), scaled with the month's gap (the
+// smallest size for a town without a series).
 export function markerBox(town: MapTown, month: number, width: number): Box {
   const x = (town.shape.centroid[0] / VIEW_WIDTH) * width;
   const y = (town.shape.centroid[1] / VIEW_HEIGHT) * width * 0.87;
-  const r = 17 * markerScale(town.series.gap[month] ?? 0);
+  const r = 17 * markerScale(gapOf(town, month) ?? 0);
   return [x - r, y - r, x + r, y + r];
 }
 

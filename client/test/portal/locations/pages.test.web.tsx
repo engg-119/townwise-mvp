@@ -13,7 +13,7 @@ import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeChatApi } from '../../helpers/chat';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, orgOf, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { daysOf, locationsFake, noteOf, salesOf, uploadOf } from './fakes';
 
 // The location pages on web: the daily sales chart drawn as aria-hidden SVG beside its text and numbers (D21),
@@ -93,6 +93,18 @@ test('Sales data draws the daily chart as aria-hidden SVG, with its scale, ticks
   expect(screen.getByRole('link', { name: 'Add a closure note.' }).getAttribute('href')).toBe('/locations/l1/notes?new=closure');
 });
 
+// BLS withheld Nantucket County for April to June 2025: on web too, no chart, scrubber or numbers, only the reason.
+test('Town on web for a town whose county BLS did not publish for the year: the reason, and no chart or numbers', async () => {
+  const api = portal(meOf(ACCESS.member));
+  api.org = orgOf('member', [locationOf('l1', 'Harbor Grill', { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' })]);
+  renderAt('/locations/l1/town', api);
+  expect(await screen.findByText('BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.')).toBeTruthy();
+  expect(screen.queryByRole('radiogroup', { name: 'Month' })).toBeNull();
+  expect(screen.queryByText('Scale fitted to this town. Index: 100 = an average month')).toBeNull();
+  expect(screen.queryByRole('button', { name: /Show the numbers/ })).toBeNull();
+  expect(document.body.textContent).not.toMatch(/Measured across|with the region|index points|Curve: /);
+});
+
 test('Town on web: the month scrubber starts at this month and moves the chart’s cursor and readout, by click and key', async () => {
   // Only Date is faked, so "today" is Thu, Nov 5, 2026 and every timer stays real.
   jest.useFakeTimers({
@@ -102,9 +114,9 @@ test('Town on web: the month scrubber starts at this month and moves the chart�
       'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
     ],
   });
-  const profile = townProfile('hanover-nh');
-  if (profile === null) throw new Error('no profile');
-  const { index, gap } = profile.series;
+  const series = townProfile('hanover-nh')?.series ?? null;
+  if (series === null) throw new Error('no series');
+  const { index, gap } = series;
   renderAt('/locations/l1/town', portal(meOf(ACCESS.member)));
   const group = await screen.findByRole('radiogroup', { name: 'Month' });
   const radios = within(group).getAllByRole('radio');
@@ -124,14 +136,14 @@ test('Town on web: the month scrubber starts at this month and moves the chart�
   // The readout above the chart, a polite live region: the month's gap, its label, and both index values.
   const readout = (month: number): void => {
     const value = gap[month] ?? 0;
-    const box = screen.getByText(`${side(value)} the Northeast, index points, ${MONTHS[month] ?? ''} 2024`).parentElement;
+    const box = screen.getByText(`${side(value)} the Northeast, index points, ${MONTHS[month] ?? ''} 2025`).parentElement;
     expect(box?.getAttribute('aria-live')).toBe('polite');
     expect(box?.firstElementChild?.textContent).toBe(fmtSigned(value));
     expect(box?.lastElementChild?.textContent).toBe(`Grafton County ${fmt1(index[month] ?? 0)} · Northeast ${fmt1(northeastSeries.index[month] ?? 0)}`);
   };
   // It starts at this month (November), not the year's biggest gap (May), the one tab stop.
   const start = 10;
-  expect(profile.series.largestGap.monthIndex).not.toBe(start);
+  expect(series.largestGap.monthIndex).not.toBe(start);
   expect(checked()).toEqual([MONTHS[start]]);
   expect(radios.filter((item) => item.tabIndex === 0)).toEqual([radio(start)]);
   readout(start);

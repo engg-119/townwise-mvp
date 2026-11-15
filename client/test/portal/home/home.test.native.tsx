@@ -184,7 +184,7 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Veterans Day. Federal holiday.')).toBeTruthy();
   // The county's jobs under their own heading, more or fewer said in words, the unit named.
   expect(screen.getByRole('heading', { name: 'Food-service jobs in Grafton County' })).toBeTruthy();
-  expect(screen.getByText('2.6% fewer jobs in November 2024 than in an average month that year.')).toBeTruthy();
+  expect(screen.getByText('4.5% fewer jobs in November 2025 than in an average month that year.')).toBeTruthy();
   expect(screen.getByText('County, not town. Employment is a stand-in for demand.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
   expect(screen.queryByText(/average = 100/)).toBeNull();
@@ -361,6 +361,7 @@ test('show the numbers lists last year, two years ago and usual', async () => {
 });
 
 test('the coverage line for Nantucket and for a town outside the twelve, with no county line for the latter', async () => {
+  // BLS withheld Nantucket County for April to June 2025: its jobs block says so, with no figure and no stale number.
   const nantucket = [locationOf('l1', 'Main Street Bar', { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' }, { coverage: HAS_DAYS })];
   await renderApp('/locations/l1', portal({
     locations: nantucket, calendar: { town: { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' }, researched: false, covers: null, events: [] },
@@ -369,6 +370,10 @@ test('the coverage line for Nantucket and for a town outside the twelve, with no
   expect(screen.getByText('From your sales through Wed, Nov 4, 2026 and US federal holidays.')).toBeTruthy();
   expect(screen.getByText('Nothing on the calendar this week.')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Food-service jobs in Nantucket County' })).toBeTruthy();
+  expect(screen.getByText('BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.')).toBeTruthy();
+  expect(screen.queryByText(/% (fewer|more) jobs|About as many jobs/)).toBeNull();
+  expect(screen.queryByText('County, not town. Employment is a stand-in for demand.')).toBeNull();
+  expect(screen.getByRole('link', { name: 'Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
   await cleanup();
 
   const norwich = [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Norwich', state: 'VT' }, { coverage: HAS_DAYS })];

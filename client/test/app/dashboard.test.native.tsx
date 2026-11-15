@@ -76,11 +76,24 @@ test('the towns of the locations, from the bundled public data', async () => {
   expect(await screen.findByRole('heading', { name: 'Your towns' })).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Hanover, NH' })).toBeTruthy();
   expect(screen.getByText('College town')).toBeTruthy();
-  expect(screen.getByText('Measured across Grafton County, 2024.')).toBeTruthy();
+  expect(screen.getByText('Measured across Grafton County, 2025.')).toBeTruthy();
   // Norwich is not one of the twelve, so it has no panel.
   expect(screen.queryByRole('heading', { name: 'Norwich, VT' })).toBeNull();
   await fireEvent.press(screen.getByRole('link', { name: 'Hanover’s town profile' }));
   expect(router.getPathname()).toBe('/locations/l1/town');
+});
+
+// BLS withheld Nantucket County for April to June 2025: its panel says why in place of the measured line and the
+// pattern, and the research line names no employment pattern.
+test('a town whose county BLS did not publish for the year shows the reason, with no pattern', async () => {
+  const nantucket = locationOf('l3', 'Harbor Grill', { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' });
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [nantucket, LOCATIONS[1] ?? nantucket]) });
+  await renderApp('/dashboard', api);
+  expect(await screen.findByRole('heading', { name: 'Nantucket, MA' })).toBeTruthy();
+  expect(screen.getByText('BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.')).toBeTruthy();
+  expect(screen.getByText('No 2025 jobs index. Drivers aren’t researched yet.')).toBeTruthy();
+  expect(screen.queryByText(/^Measured across /)).toBeNull();
+  expect(screen.queryByText(/with the region/)).toBeNull();
 });
 
 test('org admins get Add location, and the line about the locations their request mentioned', async () => {

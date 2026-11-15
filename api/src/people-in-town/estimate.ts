@@ -236,8 +236,10 @@ export function peopleInTownWindow(input: WindowInput): PeopleInTownWindow {
     previousKey = key;
   }
 
-  const season: SeasonMonth[] = profile === undefined ? [] : monthsOf(range).flatMap((month) => {
-    const index = profile.series.index[Number(month.slice(5, 7)) - 1];
+  // No season for a county BLS did not publish for the whole year (its profile's series is null): no index to give.
+  const series = profile?.series ?? null;
+  const season: SeasonMonth[] = profile === undefined || series === null ? [] : monthsOf(range).flatMap((month) => {
+    const index = series.index[Number(month.slice(5, 7)) - 1];
     return index === undefined ? [] : [{
       month, countyFoodServiceJobsIndex: index, baseYear: TOWN_DATA_YEAR, county: profile.county, sourceIds: [book.jobs()],
     }];

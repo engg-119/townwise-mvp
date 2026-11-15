@@ -150,7 +150,7 @@ test('the first screen is the map story’s title with both actions; the lead fo
   const [early, earlyAgain] = within(hero).getAllByRole('link', { name: 'Request early access' });
   const [signIn, signInAgain] = within(hero).getAllByRole('link', { name: 'Sign in' });
   const map = within(hero).getByRole('img', { name: /^Map of the nine Northeast states/ });
-  const steps = ['The Northeast, as one pattern.', 'Now the towns.', 'November, this month in 2024.'].map((name) => within(hero).getByRole('heading', { level: 2, name }));
+  const steps = ['The Northeast, as one pattern.', 'Now the towns.', 'November, this month in 2025.'].map((name) => within(hero).getByRole('heading', { level: 2, name }));
   const pick = within(hero).getByRole('heading', { level: 2, name: 'Pick a town to compare it with the Northeast' });
   const list = within(hero).getByRole('button', { name: /^Hanover, NH/ });
   if (early === undefined || earlyAgain === undefined || signIn === undefined || signInAgain === undefined) throw new Error('missing actions');
