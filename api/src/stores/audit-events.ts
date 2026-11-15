@@ -86,8 +86,9 @@ export const AUDIT_DETAIL_KEYS = {
   'org.forecasts_switched': ['on'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
-  // D25, open as admin: ids only. The grant is the target and the organization the event's orgId; no name, email or reason.
-  'open_as_admin.started': [],
+  // D25, open as admin: the grant is the target and the organization the event's orgId; no name or email. `reason`, the
+  // staff member's own words as view-as's, only once someone has joined the organization (2026-11-15).
+  'open_as_admin.started': ['reason'],
   'open_as_admin.ended': ['endReason'],
   'people.signed_out_everywhere': [],
   'person.deleted': ['userId'],

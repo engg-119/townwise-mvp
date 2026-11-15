@@ -79,7 +79,7 @@ export const viewAsSchema = z.object({
 });
 export type ViewAs = z.infer<typeof viewAsSchema>;
 
-/** Staff set up an organization nobody has joined as its admin (D25). The access is then that organization's admin. */
+/** Staff open an organization as its admin, joined or not (D25). The access is then that organization's admin. */
 export const openAsAdminSchema = z.object({ id: z.string(), org: orgRef, startedAt: z.string() });
 export type OpenAsAdmin = z.infer<typeof openAsAdminSchema>;
 

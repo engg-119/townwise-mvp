@@ -20,7 +20,7 @@ const PATH = '/api/admin/orgs/o1';
 const SETUP = `${PATH}/locations`;
 const HEADING = 'Set up before anyone joins';
 const BODY = `Nobody has joined ${NAME} yet. You can add its locations and upload their daily totals so its first admin finds a ready page. Use this only with ${NAME}’s consent. Each change is listed in ${NAME}’s Townwise staff activity, and setup closes for good when the first person joins.`;
-const CLOSED = `Someone joined ${NAME}, so setup is closed. Use View as to see their page.`;
+const CLOSED = `Someone joined ${NAME}, so setup is closed. Use Open as admin to keep working in it, or View as to see their page.`;
 
 const HANOVER_TOWN = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
 
@@ -732,7 +732,7 @@ function openWrites(api: ConsoleApi): { method: string; path: string; body: unkn
   return api.calls.filter((call) => call.method !== 'GET' && call.path === OPEN);
 }
 
-test('Open as admin shows only in setup, posts the start route with no body, and opens the dashboard under the banner', async () => {
+test('Open as admin shows in setup, posts the start route with no body, and opens the dashboard under the banner', async () => {
   const api = consoleApi();
   serve(api, () => inSetup([hanover()]));
   api.routes[`POST ${OPEN}`] = () => {
@@ -746,23 +746,43 @@ test('Open as admin shows only in setup, posts the start route with no body, and
   expect(openWrites(api)).toEqual([{ method: 'POST', path: OPEN, body: undefined }]);
   await waitFor(() => { expect(window.location.pathname).toBe('/dashboard'); });
   const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
-  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. This ends when someone joins.')).toBeTruthy();
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. Its admins see each change you make in their Townwise staff activity.')).toBeTruthy();
 });
 
-test('Open as admin answering 409 org_not_in_setup closes setup and says someone joined', async () => {
+test('Open as admin answering 409 org_suspended closes setup, hides the button and says it was suspended', async () => {
+  const api = consoleApi();
+  let detail = inSetup([hanover()]);
+  serve(api, () => detail);
+  api.routes[`POST ${OPEN}`] = () => {
+    detail = orgDetail({ org: { fromRequestId: null, status: 'suspended', inSetup: false }, locations: [hanover()], recent: [] });
+    return refusal(409, 'org_suspended');
+  };
+  renderAt('/admin/orgs/o1', api);
+  await screen.findByRole('heading', { name: HEADING });
+  await click('Open as admin');
+  expect(await screen.findByText(`${NAME} is suspended, so it can’t be opened as its admin.`)).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
+  expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
+  expect(screen.queryByText(CLOSED)).toBeNull();
+  expect(window.location.pathname).toBe('/admin/orgs/o1');
+});
+
+test('Open as admin in setup answering 400 reason_required (someone joined meanwhile) reads the page again and asks the reason', async () => {
   const api = consoleApi();
   let detail = inSetup([hanover()]);
   serve(api, () => detail);
   api.routes[`POST ${OPEN}`] = () => {
     detail = orgDetail({ org: { fromRequestId: null, inSetup: false }, locations: [hanover()], recent: [] });
-    return refusal(409, 'org_not_in_setup');
+    return refusal(400, 'reason_required');
   };
   renderAt('/admin/orgs/o1', api);
   await screen.findByRole('heading', { name: HEADING });
   await click('Open as admin');
-  expect(await screen.findByText(CLOSED)).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
+  const dialog = await screen.findByRole('dialog', { name: `Open ${NAME} as its admin` });
+  expect(within(dialog).getByRole('textbox', { name: 'Reason' })).toBeTruthy();
   expect(screen.queryByRole('heading', { name: HEADING })).toBeNull();
+  expect(gets(api)).toBe(2);
+  expect(openWrites(api)).toEqual([{ method: 'POST', path: OPEN, body: undefined }]);
   expect(window.location.pathname).toBe('/admin/orgs/o1');
 });
 
@@ -788,11 +808,10 @@ test('Open as admin answering anything else shows the error under the header fac
   expect(screen.getByRole('heading', { name: HEADING })).toBeTruthy();
 });
 
-test('the Locations line names Open as admin while in setup', async () => {
+test('the Locations line names Open as admin, in setup as after it', async () => {
   const api = consoleApi();
   serve(api, () => inSetup([]));
   renderAt('/admin/orgs/o1', api);
   await screen.findByRole('heading', { name: HEADING });
-  expect(screen.getByText('Sales figures and notes are visible through Open as admin until someone joins, then only through View as.')).toBeTruthy();
-  expect(screen.queryByText('Sales figures and notes are visible only through View as.')).toBeNull();
+  expect(screen.getByText('Sales figures and notes are visible only through Open as admin or View as.')).toBeTruthy();
 });
