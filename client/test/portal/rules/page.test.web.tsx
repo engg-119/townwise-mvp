@@ -9,6 +9,7 @@ import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, ADMIN_EMAIL, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { openMore } from '../../helpers/topBar';
 import { manyRules, ruleOf, rulesFake, type RulesFake } from './fakes';
 
 // P29 Business rules on web (spec 16.3, 10.16): the lead, the add form, the list with who added each rule, inline
@@ -78,8 +79,8 @@ test('lists rules oldest first with who added them, and the lead says they never
   renderAt('/locations/l1/rules', api);
   expect(await screen.findByText('Closed Mondays')).toBeTruthy();
   expect(screen.getByRole('heading', { level: 1, name: 'Business rules' })).toBeTruthy();
-  // The page is the top bar's Rules section.
-  expect(screen.getByRole('link', { name: 'Rules' }).getAttribute('aria-current')).toBe('page');
+  // The page is the top bar's Rules section, under More (D38).
+  expect(within(openMore()).getByRole('link', { name: 'Rules' }).getAttribute('aria-current')).toBe('page');
   expect(screen.getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBeNull();
   // Two locations, so the lead names this one. A rule changes the forecast only with a schedule, and the lead says which.
   expect(screen.getByText(
