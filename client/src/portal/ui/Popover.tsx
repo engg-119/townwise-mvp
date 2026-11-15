@@ -60,8 +60,8 @@ const ROOM = 320;
  * 16px margin); its right edge on the opener's when the opener's center is in the window's right half, else its left
  * edge on the opener's; at least 16px from either window edge, and at most `min(maxWidth, window width - 32)` wide.
  * Above an opener the keyboard covers, it ends 16px above the keyboard's top instead, so no part of it is under the
- * keyboard. Below 641px, or before the opener is measured, it is pinned 16px from the usable top and either side, at
- * most the usable height less 32px tall; below 641px it is the window's width less 32px.
+ * keyboard. Below 641px, or with no opener to measure, it is pinned 16px from the usable top and either side, at most
+ * the usable height less 32px tall; below 641px it is the window's width less 32px.
  */
 export function placePopover(anchor: PopoverRect | null, window: PopoverWindow, maxWidth: number): PopoverPlacement {
   const anchored = window.width >= ANCHORED_FROM;
@@ -182,6 +182,9 @@ function readKeyboardTop(): number | null {
 
 const NO_INSETS = { top: 0, bottom: 0 };
 
+/** In place of the opener's box when the popover opened with no opener to measure: the card is pinned at the top. */
+const NOTHING = 'nothing';
+
 function Card(props: PopoverProps): React.JSX.Element {
   const { anchor, onClose } = props;
   const busy = props.busy === true;
@@ -195,7 +198,8 @@ function Card(props: PopoverProps): React.JSX.Element {
   const keyboardTop = useKeyboardTop();
   const bottom = Math.min(height - insets.bottom, keyboardTop ?? height);
   const anchored = width >= ANCHORED_FROM;
-  const [rect, setRect] = useState<PopoverRect | null>(null);
+  // The card mounts as the popover opens, so this is whether it opened with an opener to measure.
+  const [rect, setRect] = useState<PopoverRect | typeof NOTHING | null>(() => (anchor.current === null ? NOTHING : null));
   // Measured again whenever the window or the keyboard changes; the last place holds until the new one answers.
   useEffect(() => {
     if (!anchored) return;
@@ -203,7 +207,8 @@ function Card(props: PopoverProps): React.JSX.Element {
     anchor.current?.measureInWindow((x, y, w, h) => { if (live) setRect({ x, y, width: w, height: h }); });
     return () => { live = false; };
   }, [anchor, anchored, width, height, bottom]);
-  const placement = placePopover(anchored ? rect : null, { width, height, top: insets.top, bottom }, props.maxWidth);
+  const measured = anchored && rect !== NOTHING ? rect : null;
+  const placement = placePopover(measured, { width, height, top: insets.top, bottom }, props.maxWidth);
   // From 641px the card shows once its opener is measured, so it never flashes at the window's top first.
   const unplaced = anchored && rect === null;
   const outside = props.dismissOnOutsidePress && !busy;

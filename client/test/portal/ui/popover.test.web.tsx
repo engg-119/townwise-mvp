@@ -234,6 +234,16 @@ test('at 1280 by 900 the card is placed from its opener’s measureInWindow, and
   expect([style.opacity, style.position, style.top, style.left, style.width, style.maxHeight]).toEqual(['', 'absolute', '252px', '760px', '440px', '632px']);
 });
 
+test('from 641px with no opener to measure, the card shows pinned 16px from the top', () => {
+  render(
+    <Popover visible anchor={{ current: null }} label="Your calendars" maxWidth={440} dismissOnOutsidePress onClose={() => undefined}>
+      <Text>Kind</Text>
+    </Popover>,
+  );
+  const style = window.getComputedStyle(screen.getByRole('dialog', { name: 'Your calendars' }));
+  expect([style.opacity, style.top, style.left, style.width, style.maxHeight]).toEqual(['', '16px', '16px', '440px', '868px']);
+});
+
 /** A phone or tablet browser's visual viewport, which jsdom lacks: the keyboard shrinks it and a pan moves its top. */
 class FakeViewport extends EventTarget {
   width = 1180;
