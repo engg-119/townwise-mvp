@@ -12,6 +12,7 @@ import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { choicesOf, choose } from '../../helpers/select';
+import { openMore } from '../../helpers/topBar';
 import { documentBytes, para, workbookBytes } from '../../viewer/fixtures';
 import { locationsFake } from '../locations/fakes';
 import { dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
@@ -132,8 +133,7 @@ describe('an upload', () => {
     expect(screen.getByText('Days: 2 of 3 in use, May 1, 2026 to May 3, 2026')).toBeTruthy();
     expect(screen.queryByText(/^Edited /)).toBeNull();
     expect(screen.getByRole('link', { name: 'Back to Your data' }).getAttribute('href')).toBe('/locations/l1/data');
-    const main = screen.getByRole('navigation', { name: 'Main' });
-    expect(within(main).getByRole('link', { name: 'Your data' }).getAttribute('aria-current')).toBe('true');
+    expect(within(openMore()).getByRole('link', { name: 'Your data' }).getAttribute('aria-current')).toBe('true');
 
     const table = await screen.findByRole('region', { name: 'Days in Daily totals, May 1, 2026 to May 3, 2026' });
     expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual(['Date', 'Guests', 'Net sales']);
