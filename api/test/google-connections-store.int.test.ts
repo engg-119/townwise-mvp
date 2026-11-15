@@ -102,6 +102,18 @@ describe('storing a connection', () => {
     expect(await rows({ orgId: new Types.ObjectId(orgId) })).toHaveLength(1);
   });
 
+  it('a null token never clears a revocation: a connection revoked since connect checked it is left as it is, and null answered', async () => {
+    const { orgId, scope } = await orgScope();
+    const first = await connect(scope, 'user-0001');
+    const revokedAt = server.clock.now();
+    expect(await connections.markRevoked(scope, first.id, revokedAt)).toBe(true);
+    const before = await snapshotOf(orgId);
+    server.clock.advance(MINUTE);
+    expect(await connections.upsert(scope, 'user-0001', { sealedRefreshToken: null, scopes: SCOPES, now: server.clock.now() })).toBeNull();
+    expect(await snapshotOf(orgId)).toBe(before);
+    expect(await connections.find(scope, first.id)).toMatchObject({ revokedAt });
+  });
+
   it('two first connects at once keep one row, and the unique index refuses a second row for the same person', async () => {
     const { orgId, scope } = await orgScope();
     const [one, two] = await Promise.all([connect(scope, 'user-0001', SEALED), connect(scope, 'user-0001', RESEALED)]);

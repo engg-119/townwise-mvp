@@ -85,7 +85,8 @@ export interface GoogleConnectionStore {
   /**
    * Stores the person's connection after a connect: the sealed refresh token, the scopes, agreedAt and connectedAt
    * `now`, revokedAt cleared and the check 24 hours on, inserting it or replacing the one there. A null token keeps the
-   * stored one (Google sent none, design decision 8) and only updates an existing row: null when there is none.
+   * stored one (Google sent none, design decision 8) and only updates an existing row that is not revoked: null when
+   * there is none, or when it was revoked since the caller checked it.
    */
   upsert(scope: OrgScope, userId: string, input: { sealedRefreshToken: string | null; scopes: readonly string[]; now: Date }): Promise<GoogleConnectionRecord | null>;
   findForUser(scope: OrgScope, userId: string): Promise<GoogleConnectionRecord | null>;
@@ -139,7 +140,8 @@ export function createGoogleConnectionStore(connection: Connection): GoogleConne
         scopes: [...input.scopes], agreedAt: now, connectedAt: now, updatedAt: now, revokedAt: null, checkAt: nextCheck(now),
       };
       if (input.sealedRefreshToken === null) {
-        const kept = await GoogleConnection.findOneAndUpdate(filter, { $set: set }, { returnDocument: 'after' }).lean();
+        // Compare-and-set on revokedAt: a refusal recorded since connect checked the row stays, over a token that fails.
+        const kept = await GoogleConnection.findOneAndUpdate({ ...filter, revokedAt: null }, { $set: set }, { returnDocument: 'after' }).lean();
         return kept === null ? null : toRecord(kept);
       }
       const update = { $set: { ...set, sealedRefreshToken: input.sealedRefreshToken }, $setOnInsert: { leaseUntil: null } };
