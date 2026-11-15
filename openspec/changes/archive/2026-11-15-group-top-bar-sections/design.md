@@ -59,6 +59,10 @@ More is white when open, hovered or holding the current section. The link inside
 
 On phones the scroll row keeps More in view when a grouped section is current, as it does for the current link.
 
+### 5. Link spacing
+
+With a location's sections the client bar's links sit `space-5` (20px) apart, as in the second row, not `space-6`. The browser check at 1280px found the organization name and the email 19px short with 24px gaps; 20px saves 28px over the seven gaps. Bars without a location's sections, the gate bar and the console bar keep 24px.
+
 ## Risks / Trade-offs
 
 - **Four sections need a second press:** Notes, Rules, Town and Your data. This is mitigated by the choice being `[CONFIRM]` and one line to change.
