@@ -112,6 +112,18 @@ export function zipOf(entries: readonly TestEntry[], options: ZipOptions = {}): 
   return Buffer.concat([...locals, directory, record, locator, end]);
 }
 
+/** A minimal Word document: one paragraph for each of `paragraphs`. */
+export function docxOf(paragraphs: readonly string[]): Buffer {
+  const body = paragraphs.map((text) => `<w:p><w:r><w:t xml:space="preserve">${text.replace(/&/g, '&amp;').replace(/</g, '&lt;')}</w:t></w:r></w:p>`).join('');
+  return zipOf([
+    { name: '[Content_Types].xml', data: '<?xml version="1.0"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"/>' },
+    {
+      name: 'word/document.xml',
+      data: `<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body>${body}</w:body></w:document>`,
+    },
+  ]);
+}
+
 function cellXml(value: string | number, column: number, row: number, dated: boolean): string {
   const ref = `${String.fromCharCode(65 + column)}${String(row)}`;
   if (typeof value === 'number') return `<c r="${ref}"${dated ? ' s="1"' : ''}><v>${String(value)}</v></c>`;

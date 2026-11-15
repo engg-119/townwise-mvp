@@ -116,7 +116,7 @@ beforeAll(async () => {
   model = scriptedModel();
   blobs = createMemoryFileBlobs();
   server = await startTownwiseServer({ chat: model, files: blobs });
-  reader = createItemReader(createTownwiseStores(server.connection), blobs);
+  reader = createItemReader(createTownwiseStores(server.connection), blobs, { logger: { warn: () => undefined } });
   orgId = await createOrg(server, { name: 'Keeping Tavern' });
   l1 = await addLocation(server, { orgId, name: 'Taproom' });
   ({ session: member, email: memberEmail } = await person('member'));

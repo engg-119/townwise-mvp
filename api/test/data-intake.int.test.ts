@@ -230,7 +230,7 @@ describe('reference items (D28)', () => {
   });
 
   it('readText gives a reference text item’s first 64 KiB, decoded, at most 20,000 characters', async () => {
-    const reader = createItemReader(createTownwiseStores(server.connection), blobs);
+    const reader = createItemReader(createTownwiseStores(server.connection), blobs, { logger: { warn: () => undefined } });
     expect(reader.on).toBe(true);
     const long = await seedItem(l1, Buffer.from('a'.repeat(30_000), 'latin1'));
     const out = await reader.readText(scope(), l1, long);
@@ -243,7 +243,7 @@ describe('reference items (D28)', () => {
   });
 
   it('readText drops a character cut at the edge of the bytes read', async () => {
-    const reader = createItemReader(createTownwiseStores(server.connection), blobs);
+    const reader = createItemReader(createTownwiseStores(server.connection), blobs, { logger: { warn: () => undefined } });
     const id = await seedItem(l1, Buffer.from(`${'a'.repeat(READ_ITEM_BYTES - 1)}é`, 'utf8'));
     const out = await reader.readText(scope(), l1, id);
     expect(out).toMatchObject({ status: 'ok', truncated: true });
@@ -251,7 +251,7 @@ describe('reference items (D28)', () => {
   });
 
   it('readText refuses a history file, a PDF kept for reference, a turned-off item, a deleted original and another location’s id', async () => {
-    const reader = createItemReader(createTownwiseStores(server.connection), blobs);
+    const reader = createItemReader(createTownwiseStores(server.connection), blobs, { logger: { warn: () => undefined } });
     const historyCsvId = await seedItem(l1, Buffer.from('Date,Guests\n'), { purpose: 'history', importId: new Types.ObjectId(), status: 'read' });
     const refPdfId = await seedItem(l1, pdf, { kind: 'pdf' });
     const offTextId = await seedItem(l1, Buffer.from('hello'), { disabledAt: server.clock.now() });
@@ -264,7 +264,7 @@ describe('reference items (D28)', () => {
     expect(await reader.readText(scope(), l2, textId)).toEqual({ status: 'not_found' });
     expect(await reader.readText(scope(), l1, 'not-an-id')).toEqual({ status: 'not_found' });
     expect(await reader.readText({ orgId: new Types.ObjectId().toHexString() } as unknown as OrgScope, l1, textId)).toEqual({ status: 'not_found' });
-    expect(await createItemReader(createTownwiseStores(server.connection), null).readText(scope(), l1, textId)).toEqual({ status: 'files_off' });
+    expect(await createItemReader(createTownwiseStores(server.connection), null, { logger: { warn: () => undefined } }).readText(scope(), l1, textId)).toEqual({ status: 'files_off' });
   });
 
   it('a retried save with the same id answers the stored item and reserves no more bytes', async () => {

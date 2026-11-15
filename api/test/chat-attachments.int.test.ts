@@ -1,8 +1,8 @@
 // Files attached to a person's message from Your data (spec D36, docs/portal/tuning-chat.md section 3) against a
 // scripted model (helpers/chat-model.ts) and memory blobs: the send body, the refusals before anything is claimed, what
 // the model is sent, what the conversation stores, regenerates and edits, the conversation view's attachments, a typed
-// tag, who may attach a file, the bytes a replica holds, and start_calibration's refusal in a turn that read a file.
-// Synthetic files only.
+// tag, who may attach a file, the bytes a replica holds, PDF, Word and Excel files as their text, read_data_item reading
+// an attached file again, and start_calibration's refusal in a turn that read a file. Synthetic files only.
 import { randomUUID } from 'node:crypto';
 
 import type { BetaContentBlockParam, BetaMessageParam, BetaToolResultBlockParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
@@ -10,14 +10,17 @@ import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import type { FileBlobs } from '../src/files/blobs.ts';
 import { ATTACHMENT_BYTES_IN_FLIGHT, attachmentsBlock } from '../src/chat/attachments.ts';
 import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { attachmentBytes, type ConversationView } from '../src/handlers/chat.ts';
 import { message, messagesOf, scriptedModel, text, thinking, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
 import { addGrant, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { pdfOf } from './helpers/pdf.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
+import { docxOf, xlsxOf, zipOf } from './helpers/zip.ts';
 
 const blobs = createMemoryFileBlobs();
 let server: TownwiseTestServer;
@@ -49,6 +52,11 @@ const PNG = pngOf(2, 2, pngChunk('tEXt', Buffer.from('Comment\0Sentinel-png-meta
 /** PNG as the model gets it: without its metadata. */
 const PNG_SENT = pngOf(2, 2);
 const FILE_TEXT = 'Sentinel-file-text: the catering list for Dec 12';
+const PDF_TEXT = 'Sentinel-pdf-text: closed Dec 24';
+const PDF = pdfOf([{ texts: [{ text: PDF_TEXT, x: 72, y: 700 }] }]);
+const WORD_TEXT = 'Sentinel-word-text: a party of 40 on Dec 19';
+const BOOK = xlsxOf([{ name: 'Sentinel-sheet', rows: [['Date', 'Guests'], ['2026-12-19', 140]] }]);
+const BOOK_TEXT = 'Sheet: Sentinel-sheet\nDate\tGuests\n2026-12-19\t140';
 
 /** A file of Your data at `at`, its original in the memory blobs. Resolves its ref. */
 async function seed(bytes: Buffer, over: Record<string, unknown> = {}, at = locationId): Promise<string> {
@@ -241,6 +249,36 @@ describe('with stored files on', () => {
       expect(await refused({ content: 'Hi', attachments: [picture] }, teammate)).toEqual({ status: 403, error: 'attachment_not_allowed' });
       expect(attachmentBytes.held).toBe(0);
     });
+
+    it('a document\'s bytes go back once its text is made, so another person\'s file fits while the first turn still runs', async () => {
+      const mine = await seed(PDF, { kind: 'pdf' });
+      const theirs = await seed(PDF, { kind: 'pdf', uploadedBy: teammate.userId });
+      // Room for one of the two and no more.
+      const others = ATTACHMENT_BYTES_IN_FLIGHT - PDF.length;
+      expect(attachmentBytes.reserve(others)).toBe(true);
+      let open: () => void = () => undefined;
+      const gate = new Promise<void>((resolve) => { open = resolve; });
+      try {
+        model.script({ kind: 'message', message: message([text('Noted.')]), gate });
+        const first = call(server, turnsPath(), { session: author, json: { content: 'What is on it?', attachments: [mine] } });
+        // The first turn has read its file and is waiting on its model call.
+        for (let waited = 0; model.calls.length === 0 && waited < 20_000; waited += 25) await new Promise((resolve) => { setTimeout(resolve, 25); });
+        expect(model.calls).toHaveLength(1);
+        expect(attachmentBytes.held).toBe(others);
+        model.script({ kind: 'message', message: message([text('Noted.')]) });
+        const second = await call(server, turnsPath(), { session: teammate, json: { content: 'And mine?', attachments: [theirs] } });
+        expect(second.status).toBe(200);
+        expect(parseSse(await second.text()).at(-1)?.event).toBe('done');
+        open();
+        const done = await first;
+        expect(done.status).toBe(200);
+        await done.text();
+      } finally {
+        open();
+        attachmentBytes.release(others);
+      }
+      expect(attachmentBytes.held).toBe(0);
+    }, 60_000);
   });
 
   describe('what the model is sent and what is stored', () => {
@@ -272,7 +310,7 @@ describe('with stored files on', () => {
       expect(JSON.stringify(history)).not.toContain('Sentinel-file-text');
     });
 
-    it('a file turned off or whose original is gone is listed as not read; a PDF, another file, a picture too large and an empty file are listed too', async () => {
+    it('a file turned off or whose original is gone is listed as not read; a PDF that can\'t be opened, another file, a picture too large and an empty file are listed too', async () => {
       const off = await seed(Buffer.from('Off'), { disabledAt: server.clock.now(), disabledBy: author.userId });
       const gone = await seed(Buffer.from('Gone'), { rawDeletedAt: server.clock.now() });
       const pdf = await seed(Buffer.from('%PDF-1.4\n'), { name: 'menu.pdf', kind: 'pdf' });
@@ -282,7 +320,7 @@ describe('with stored files on', () => {
       expect(blockLines(sentPerson())).toEqual([
         `- ${off}: a text file, not read: turned off in Your data`,
         `- ${gone}: a text file, not read: its original was deleted`,
-        `- ${pdf}: a PDF, which TownwiseAI can't read yet`,
+        `- ${pdf}: a PDF, not read: it couldn't be opened`,
         `- ${heic}: a file, which TownwiseAI can't read yet`,
         `- ${big}: a picture, not read: over 3.75 MB`,
       ]);
@@ -346,6 +384,218 @@ describe('with stored files on', () => {
       expect(sentPerson()).toEqual({ role: 'user', content: typed });
       const shown = await view(first.id);
       expect(shown.messages[0]).toMatchObject({ text: typed, attachments: [] });
+    });
+  });
+
+  describe('PDF, Word and Excel files, read as their text', () => {
+    it('each reaches the request as its text, a document titled by its ref after the block; the stored message, the logs and the audit keep refs and counts only', async () => {
+      server.logs.length = 0;
+      const pdf = await seed(PDF, { name: 'Sentinel-menu.pdf', kind: 'pdf' });
+      const word = await seed(docxOf([WORD_TEXT]), { name: 'Sentinel-rota.docx', kind: 'docx' });
+      const book = await seed(BOOK, { name: 'Sentinel-book.xlsx', kind: 'xlsx' });
+      const first = await turn({ content: 'What is on these?', attachments: [pdf, word, book] }, author, [thinking('sig-documents'), text('Noted.')]);
+      const sent = blocksOf(sentPerson());
+      expect(sent.map((b) => b.type)).toEqual(['text', 'document', 'document', 'document', 'text']);
+      expect(blockLines(sentPerson())).toEqual([`- ${pdf}: a PDF`, `- ${word}: a Word file`, `- ${book}: an Excel file`]);
+      expect(sent.slice(1, 4)).toEqual([
+        { type: 'document', source: { type: 'text', media_type: 'text/plain', data: PDF_TEXT }, title: pdf },
+        { type: 'document', source: { type: 'text', media_type: 'text/plain', data: WORD_TEXT }, title: word },
+        { type: 'document', source: { type: 'text', media_type: 'text/plain', data: BOOK_TEXT }, title: book },
+      ]);
+      // Never the bytes: no request holds the files' base64.
+      expect(JSON.stringify(model.calls)).not.toContain(PDF.toString('base64').slice(0, 40));
+      const stored = await storedJson(first.id);
+      for (const sentinel of ['Sentinel-pdf-text', 'Sentinel-word-text', 'Sentinel-sheet', 'Sentinel-menu', 'Sentinel-rota', 'Sentinel-book', 'sig-documents']) {
+        expect(stored).not.toContain(sentinel);
+      }
+      expect(stored).toContain(`- ${book}: an Excel file`);
+      const line = logLines(server).find((l) => l.msg === 'townwise.chat_turn' && l.conversationId === first.id);
+      expect(line?.attachments).toEqual({ pdf: 1, word: 1, excel: 1 });
+      const event = (await auditEvents(server)).find((e) => e.action === 'chat.turn_completed' && (e.target as { id: string }).id === first.id);
+      expect(event?.details).toMatchObject({ attachments: 3 });
+      const everything = JSON.stringify(await auditEvents(server)) + server.logs.join('\n');
+      for (const sentinel of ['Sentinel-pdf-text', 'Sentinel-word-text', 'Sentinel-sheet', 'Sentinel-menu', 'Sentinel-rota', 'Sentinel-book']) {
+        expect(everything).not.toContain(sentinel);
+      }
+      // The next turn sends the stored message: refs and kinds, no text.
+      await turn({ conversationId: first.id, content: 'And the date?' });
+      expect(JSON.stringify(messagesOf(model.calls.at(-1)))).not.toMatch(/Sentinel-(pdf|word)-text|Sentinel-sheet/);
+    }, 60_000);
+
+    it('sends at most a file\'s first 20,000 characters and says it was cut, as for a text file', async () => {
+      const long = await seed(docxOf(Array.from({ length: 1000 }, (_, index) => `Paragraph ${String(index)} of the catering list`)), { kind: 'docx' });
+      await turn({ content: 'What is on it?', attachments: [long] });
+      expect(blockLines(sentPerson())).toEqual([`- ${long}: a Word file, only its first 20,000 characters`]);
+      const document = blocksOf(sentPerson())[1];
+      expect(document?.type === 'document' && document.source.type === 'text' ? document.source.data.length : 0).toBe(20_000);
+    }, 60_000);
+
+    it('lists a scan, a file with a password, one that can\'t be opened and one too large as not read with the reason; old Word and Excel files and a ZIP stay not readable', async () => {
+      const scan = await seed(pdfOf([{ drawing: true }]), { kind: 'pdf' });
+      const locked = await seed(pdfOf([{ texts: [{ text: 'Sentinel-locked', x: 72, y: 700 }] }], { encrypted: true }), { kind: 'pdf' });
+      const broken = await seed(Buffer.from('not a word file'), { kind: 'docx' });
+      const big = await seed(PDF, { kind: 'pdf', sizeBytes: 10 * 1024 * 1024 + 1 });
+      const doc = await seed(Buffer.from('Sentinel-old-word'), { name: 'old.doc', kind: 'doc' });
+      await turn({ content: 'Read these', attachments: [scan, locked, broken, big, doc] });
+      expect(blockLines(sentPerson())).toEqual([
+        `- ${scan}: a PDF, not read: it has no text, so it may be a scan`,
+        `- ${locked}: a PDF, not read: it has a password`,
+        `- ${broken}: a Word file, not read: it couldn't be opened`,
+        `- ${big}: a PDF, not read: too large`,
+        `- ${doc}: a Word file, which TownwiseAI can't read yet`,
+      ]);
+      expect(blocksOf(sentPerson()).map((b) => b.type)).toEqual(['text', 'text']);
+      const xls = await seed(Buffer.from('Sentinel-old-excel'), { name: 'old.xls', kind: 'xls' });
+      const zip = await seed(zipOf([{ name: 'a.csv', data: 'Date,Guests\n2026-12-19,140\n' }]), { name: 'week.zip', kind: 'zip' });
+      await turn({ content: 'And these', attachments: [xls, zip] });
+      expect(blockLines(sentPerson())).toEqual([`- ${xls}: an Excel file, which TownwiseAI can't read yet`, `- ${zip}: a ZIP file, which TownwiseAI can't read yet`]);
+      expect(JSON.stringify(model.calls)).not.toMatch(/Sentinel-(locked|old)|2026-12-19,140/);
+    }, 60_000);
+  });
+
+  describe('read_data_item reading an attached file again', () => {
+    it('reads a picture as an image and a PDF or Excel file as its text, only a file the path attached, and later turns get only stubs', async () => {
+      const picture = await seed(PNG, { kind: 'other' });
+      const pdf = await seed(PDF, { kind: 'pdf' });
+      const book = await seed(BOOK, { kind: 'xlsx' });
+      const unattached = await seed(PDF, { kind: 'pdf' });
+      const first = await turn({ content: 'What is on these?', attachments: [picture, pdf, book] });
+      model.script(
+        {
+          kind: 'message',
+          message: message([
+            toolUse('r1', 'read_data_item', { ref: picture }), toolUse('r2', 'read_data_item', { ref: pdf }),
+            toolUse('r3', 'read_data_item', { ref: book }), toolUse('r4', 'read_data_item', { ref: unattached }),
+          ]),
+        },
+        { kind: 'message', message: message([text('Done.')]) },
+      );
+      const res = await call(server, turnsPath(), { session: author, json: { conversationId: first.id, content: 'Look at them again' } });
+      expect(res.status).toBe(200);
+      await res.text();
+      const results = blocksOf(messagesOf(model.calls.at(-1)).at(-1)).filter((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
+      expect(results.map((r) => r.content)).toEqual([
+        [
+          { type: 'text', text: JSON.stringify({ ref: picture, picture: true }) },
+          { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG_SENT.toString('base64') } },
+        ],
+        JSON.stringify({ ref: pdf, text: PDF_TEXT, truncated: false }),
+        JSON.stringify({ ref: book, text: BOOK_TEXT, truncated: false }),
+        JSON.stringify({
+          available: false,
+          reason: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+        }),
+      ]);
+      // Saved as stubs: no picture's bytes, no file's text.
+      const stored = await storedJson(first.id);
+      expect(stored).not.toContain(PNG_SENT.toString('base64'));
+      expect(stored).not.toMatch(/Sentinel-pdf-text|Sentinel-sheet/);
+      await turn({ conversationId: first.id, content: 'Thanks' });
+      const later = messagesOf(model.calls.at(-1)).flatMap((param) => blocksOf(param)).filter((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
+      expect(later.map((r) => JSON.parse(r.content as string) as unknown).slice(0, 3)).toEqual([
+        { ref: picture, picture: true, elided: true, reason: 'Seen in an earlier turn; call read_data_item again to see it.' },
+        { ref: pdf, chars: PDF_TEXT.length, truncated: false, elided: true, reason: 'Read in an earlier turn; call read_data_item again for its current text.' },
+        { ref: book, chars: BOOK_TEXT.length, truncated: false, elided: true, reason: 'Read in an earlier turn; call read_data_item again for its current text.' },
+      ]);
+      // The conversation view shows each read as its card.
+      const shown = await view(first.id);
+      expect(shown.messages[3]?.parts.flatMap((part) => (part.type === 'tool' ? [part.result] : []))).toEqual([
+        { ref: picture, available: true, picture: true },
+        { ref: pdf, available: true, chars: PDF_TEXT.length, truncated: false },
+        { ref: book, available: true, chars: BOOK_TEXT.length, truncated: false },
+        { available: false, chars: 0, truncated: false },
+      ]);
+    }, 60_000);
+
+    it('reads no file a message attached on another branch, only on the path the turn continues', async () => {
+      const pdf = await seed(PDF, { kind: 'pdf' });
+      const first = await turn({ content: 'What is on it?', attachments: [pdf] });
+      // An edit of that message: a branch whose path never attached the PDF.
+      model.script(
+        { kind: 'message', message: message([toolUse('r1', 'read_data_item', { ref: pdf })]) },
+        { kind: 'message', message: message([text('Done.')]) },
+      );
+      const res = await call(server, turnsPath(), { session: author, json: { conversationId: first.id, parentId: null, content: 'Something else' } });
+      expect(res.status).toBe(200);
+      await res.text();
+      const result = blocksOf(messagesOf(model.calls.at(-1)).at(-1)).find((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
+      expect(JSON.parse(result?.content as string)).toEqual({
+        available: false,
+        reason: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+      });
+      expect(JSON.stringify(model.calls.at(-1))).not.toContain(PDF_TEXT);
+    }, 60_000);
+
+    it('keeps the turn\'s pictures, the message\'s and the re-read ones, within 7.5 MB: past it a re-read is too much at once', async () => {
+      // Kept chunks, so each picture sends its bytes: two of 3.6 MB attached now, one of 0.4 MB attached earlier.
+      const large = (bytes: number): Buffer => pngOf(2, 2, pngChunk('pHYs', Buffer.alloc(bytes)));
+      const earlier = await seed(large(400_000), { kind: 'other' });
+      const first = await turn({ content: 'What is this?', attachments: [earlier] });
+      const one = await seed(large(3_600_000), { kind: 'other' });
+      const two = await seed(large(3_600_000), { kind: 'other' });
+      model.script(
+        { kind: 'message', message: message([toolUse('r1', 'read_data_item', { ref: earlier })]) },
+        { kind: 'message', message: message([text('Done.')]) },
+      );
+      const res = await call(server, turnsPath(), { session: author, json: { conversationId: first.id, content: 'And these?', attachments: [one, two] } });
+      expect(res.status).toBe(200);
+      await res.text();
+      const last = messagesOf(model.calls.at(-1));
+      const result = blocksOf(last.at(-1)).find((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
+      expect(JSON.parse(result?.content as string)).toEqual({
+        available: false, reason: 'Too much at once: this reply already has as many pictures as one message can carry. Ask about it in a new message.',
+      });
+      // The message's two pictures went; the earlier one wasn't sent again.
+      expect(last.flatMap((param) => blocksOf(param)).filter((b) => b.type === 'image')).toHaveLength(2);
+      expect(attachmentBytes.held).toBe(0);
+    }, 60_000);
+
+    it('holds a re-read\'s bytes against the replica\'s 64 MB: past it nothing is read, and a turn gives back what it held', async () => {
+      const picture = await seed(PNG, { kind: 'other' });
+      const first = await turn({ content: 'What is this?', attachments: [picture] });
+      const again = async (): Promise<unknown> => {
+        model.script(
+          { kind: 'message', message: message([toolUse('r1', 'read_data_item', { ref: picture })]) },
+          { kind: 'message', message: message([text('Done.')]) },
+        );
+        const res = await call(server, turnsPath(), { session: author, json: { conversationId: first.id, content: 'Look again' } });
+        expect(res.status).toBe(200);
+        await res.text();
+        const result = blocksOf(messagesOf(model.calls.at(-1)).at(-1)).find((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
+        return result?.content;
+      };
+      expect(attachmentBytes.reserve(ATTACHMENT_BYTES_IN_FLIGHT)).toBe(true);
+      try {
+        expect(JSON.parse(await again() as string)).toEqual({ available: false, reason: 'TownwiseAI is reading a lot of files right now. Try again in a moment.' });
+      } finally {
+        attachmentBytes.release(ATTACHMENT_BYTES_IN_FLIGHT);
+      }
+      expect(await again()).toEqual([
+        { type: 'text', text: JSON.stringify({ ref: picture, picture: true }) },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG_SENT.toString('base64') } },
+      ]);
+      expect(attachmentBytes.held).toBe(0);
+    });
+
+    it('refuses a file of a teammate\'s that the caller may no longer attach', async () => {
+      const picture = await seed(PNG, { kind: 'other', uploadedBy: teammate.userId });
+      const first = await turn({ content: 'What is this?', attachments: [picture] }, admin);
+      await server.connection.collection('tw_members').updateOne({ userId: admin.userId, orgId: new Types.ObjectId(orgId) }, { $set: { role: 'member' } });
+      try {
+        model.script(
+          { kind: 'message', message: message([toolUse('r1', 'read_data_item', { ref: picture })]) },
+          { kind: 'message', message: message([text('Done.')]) },
+        );
+        const res = await call(server, turnsPath(), { session: admin, json: { conversationId: first.id, content: 'Again?' } });
+        expect(res.status).toBe(200);
+        await res.text();
+        const result = blocksOf(messagesOf(model.calls.at(-1)).at(-1)).find((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
+        expect(JSON.parse(result?.content as string)).toEqual({
+          available: false, reason: 'Only the person who added that file or an org admin can have TownwiseAI read it.',
+        });
+      } finally {
+        await server.connection.collection('tw_members').updateOne({ userId: admin.userId, orgId: new Types.ObjectId(orgId) }, { $set: { role: 'org_admin' } });
+      }
     });
   });
 
@@ -441,7 +691,61 @@ describe('with stored files on', () => {
         expect(await calibrate({ conversationId: first.id }, toolUse('r3', 'read_data_item', { ref: injected }))).toEqual(FILE_TURN);
         expect(await calibrations()).toBe(0);
       });
+
+      it('is refused in a later turn that read an attached picture or PDF again', async () => {
+        const picture = await seed(PNG, { kind: 'other' });
+        const pdf = await seed(PDF, { kind: 'pdf' });
+        const first = await turn({ content: 'What is on these?', attachments: [picture, pdf] }, admin);
+        expect(await calibrate({ conversationId: first.id }, toolUse('r4', 'read_data_item', { ref: picture }))).toEqual(FILE_TURN);
+        expect(await calibrate({ conversationId: first.id }, toolUse('r5', 'read_data_item', { ref: pdf }))).toEqual(FILE_TURN);
+        expect(await calibrations()).toBe(0);
+      }, 60_000);
     });
+  });
+});
+
+describe('reading the files counts toward the turn\'s time limit', () => {
+  let slowServer: TownwiseTestServer;
+  let slowModel: ScriptedModel;
+  let session: TestSession;
+  let org: string;
+  let place: string;
+  const memory = createMemoryFileBlobs();
+  // Every read of an original takes longer than the whole turn may.
+  const slow: FileBlobs = {
+    ...memory,
+    openRaw: async (...args: Parameters<FileBlobs['openRaw']>) => {
+      await new Promise((resolve) => { setTimeout(resolve, 800); });
+      return memory.openRaw(...args);
+    },
+  };
+
+  beforeAll(async () => {
+    slowModel = scriptedModel();
+    slowServer = await startTownwiseServer({ chat: slowModel, files: slow, chatTurnTimeLimitMs: 300 });
+    org = await createOrg(slowServer, { name: 'Slow Files Tavern' });
+    session = await signIn(slowServer, `member-${randomUUID().slice(0, 8)}@example.test`);
+    await addSeat(slowServer, { orgId: org, userId: session.userId, email: `member-${session.userId}@example.test`, role: 'member' });
+    place = await addLocation(slowServer, { orgId: org, name: 'Taproom' });
+  });
+  afterAll(async () => { await slowServer.close(); });
+
+  it('a turn whose files take longer than its limit ends with timeout before any model call', async () => {
+    const _id = new Types.ObjectId();
+    const bytes = Buffer.from(FILE_TEXT);
+    await slowServer.connection.collection('tw_files').insertOne({
+      _id, orgId: new Types.ObjectId(org), locationId: new Types.ObjectId(place), importId: null, purpose: 'reference',
+      uploadedBy: session.userId, uploaderRole: 'member', uploadedAt: slowServer.clock.now(), name: 'Catering.txt', kind: 'text',
+      sizeBytes: bytes.length, fingerprint: _id.toHexString().padStart(64, '0'), upload: null, status: 'kept', outcome: 'reference',
+      progress: null, readStartedAt: null, readMs: null, answers: {}, uploadId: null, result: null, report: null, cleanBytes: null,
+      rawDeletedAt: null, attempts: 0,
+    });
+    await memory.writeRaw({ orgId: org } as unknown as OrgScope, { locationId: place, fileId: _id.toHexString() }, bytes, 'text/plain');
+    const res = await call(slowServer, `/api/org/locations/${place}/chat/turns`, { session, json: { content: 'What is on it?', attachments: [`f_${_id.toHexString()}`] } });
+    expect(res.status).toBe(200);
+    const events = parseSse(await res.text());
+    expect(events.at(-1)).toEqual({ event: 'error', data: { code: 'timeout' } });
+    expect(slowModel.calls).toHaveLength(0);
   });
 });
 
