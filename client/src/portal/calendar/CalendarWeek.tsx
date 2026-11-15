@@ -4,12 +4,13 @@ import { theme } from '../../theme';
 import { CARD_MARK, cardWords, headLine, periodCard, weekHead, type InertCell, type MonthBounds, type WeekCard, type WeekDay, type WeekSlot } from './grid';
 import { statusWord, type TooltipLines } from './model';
 
-// The Calendar's week view (P28, spec 16.3, step 2): the selected day's week, Monday to Sunday, always one of the shown
-// grid's rows, so it reads nothing of its own (grid.ts buildWeek). On native it is an agenda at every width: 7 rows,
-// each a Pressable labeled as its month cell, with its selected state, holding the day's head line (the day, a Today
-// tag under today, the status word, the figure with "+70", and the range, "guests" or "No forecast") over the day's
-// full-width cards (hours first when timed, the title in full, the kind words; a term or season its title and kind
-// words on one run), each on a `panel` fill with a 2px left rule in its mark's token, every card's words wrapping.
+// The Calendar's week view (P28, spec 16.3, step 2): the 7-day block counted from today that holds the selected day,
+// which reads its own days when it runs past the grid (grid.ts buildWeek, readRangeFor). On native it is an agenda at
+// every width: 7 rows, each a Pressable labeled as its month cell, with its selected state, holding the day's head
+// line (the day, a Today tag under today, the status word, the figure with "+70", and the range, "guests" or "No
+// forecast") over the day's full-width cards (hours first when timed, the title in full, the kind words; a term or
+// season its title and kind words on one run), each on a `panel` fill with a 2px left rule in its mark's token, every
+// card's words wrapping.
 // Pressing a row selects its day; the selected row is outlined `mint`. An inert day (outside the 25 months) is a
 // disabled row with its head line only; a pending one (its reads in flight) shows its head line only. Web has its own
 // file (CalendarWeek.web.tsx): day columns from 641px and an agenda below, with the keys and the tooltip. Only types
@@ -20,8 +21,8 @@ export interface CalendarWeekProps {
   days: readonly WeekSlot[];
   /** The selected day. */
   selected: string;
-  /** The grid's month ('YYYY-MM'); the week view's PageUp and PageDown step from the selected day's own month (web). */
-  month: string;
+  /** The block's first day (grid.ts weekStartFor), where Home and End go from (web). */
+  weekStart: string;
   /** The 25 months the page shows: a key past them is consumed (web). */
   bounds: MonthBounds;
   /**
@@ -31,7 +32,7 @@ export interface CalendarWeekProps {
   onSelect: (date: string, moved?: boolean, month?: string | null) => void;
   /** Dimmed and aria-busy while the grid's reads load again. */
   busy: boolean;
-  /** “Nov 16 to 22, 2026”: the week's name. */
+  /** “Nov 15 to 21, 2026”: the week's name. */
   label: string;
   /** Web only: the hover tooltip's lines for a day; null for none. */
   tooltip: (date: string) => TooltipLines | null;

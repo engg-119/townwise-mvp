@@ -6,7 +6,7 @@ import type { ApiClient } from '../../api/client';
 import { theme } from '../../theme';
 import { fetchCalendar } from '../analytics/api';
 import { noteCovers } from '../analytics/days';
-import { dayMonthRange, mondayOf } from '../analytics/week';
+import { dayMonthRange } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
 import { hasCode } from '../errors';
 import { fetchForecast } from '../estimates/api';
@@ -30,7 +30,9 @@ import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
 import { CalendarWeek } from './CalendarWeek';
 import { fetchOwnerCalendarEvents, fetchOwnerCalendars, type OwnerCalendarEvent } from './api';
-import { buildGrid, buildWeek, gridMonthFor, gridRange, pastRangeFor, shownFor, stepWeek, weekLabel } from './grid';
+import {
+  buildGrid, buildWeek, gridMonthFor, pastRangeFor, readRangeFor, shownFor, stepWeek, weekLabel, weekStartFor, type DateRange,
+} from './grid';
 import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
   ALL_FILTERS, dayView, monthBounds, monthLabel, savedNotice, selectedDay, stepMonth, tooltipLines,
@@ -41,21 +43,23 @@ import { YourCalendars } from './YourCalendars';
 // P28 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): a month grid of 6 weeks (grid.ts), each
 // day with the published forecast's guests, what drives each day, and the location's notes, which a member adds,
 // edits and deletes from the day. `?day=YYYY-MM-DD` is the selected day (an invalid day, or one outside the 12 months
-// either side of today's, is today). `?view=week` shows the selected day's week instead (CalendarWeek: day columns of
-// cards, an agenda on phones and native), any other value the month; the switch sets only the URL, and the week is
-// always a row of the shown grid, so it reads nothing of its own and Month, Week, Month returns to the same grid. Its
-// Previous and Next move the day a week (grid.ts stepWeek). The grid's month is this page's own state, not the URL's:
-// a leading or trailing day is selected in place, and the grid moves only on Previous, Next, Today, PageUp and
-// PageDown, or when `?day=` leaves its 42 days (a key past the first or last row, browser back or forward, a link).
-// It reads the notes with the business rules (D31; the day lists the rules whose schedule covers it, edited on Rules),
-// the location's calendars for "Your calendars" (spec 10.18, YourCalendars.tsx: part of the first load, so the button's
-// name never changes after the page shows, and its failure leaves the page showing), and over the grid's range
-// (gridRange) its town calendar, its stored days (the past part only), its calendars' stored events and its forecast
-// (one read of at most 42 days each). On a month change the new grid shows at once, dimmed, with the days the kept
-// reads cover and the rest pending until the new reads land. The forecast read stands alone, and the stored events'
-// failure is caught inside the grid's read: either failing leaves the page showing, without them, with Try again for
-// that read only. A failed list read shows its own notice, whose Try again reads the list and the stored events again,
-// and the stored events' notice shows only while the list answered with a calendar, so at most one of the two shows.
+// either side of today's, is today). `?view=week` shows a week instead (CalendarWeek: day columns of cards, an agenda
+// on phones and native), any other value the month; the switch sets only the URL, and Month, Week, Month returns to
+// the same grid. The week is the 7-day block counted from today that holds the selected day (grid.ts weekStartFor:
+// with no `?day=` it starts on today), and its Previous and Next move the day a week, so a whole block (stepWeek). The
+// grid's month is this page's own state, not the URL's: a leading or trailing day is selected in place, and the grid
+// moves only on Previous, Next, Today, PageUp and PageDown, or when `?day=` leaves its 42 days (a key past the first
+// or last row, browser back or forward, a link). It reads the notes with the business rules (D31; the day lists the
+// rules whose schedule covers it, edited on Rules), the location's calendars for "Your calendars" (spec 10.18,
+// YourCalendars.tsx: part of the first load, so the button's name never changes after the page shows, and its failure
+// leaves the page showing), and over the shown view's range (grid.ts readRangeFor: the grid's, and the week's own days
+// only when they run past the grid's) its town calendar, its stored days (the past part only), its calendars' stored
+// events and its forecast (one read of at most 42 days each), keyed by the range, so a switch or a day inside it reads
+// nothing. On a change of range the new grid or week shows at once, dimmed, with the days the kept reads cover and
+// the rest pending until the new reads land. The forecast read stands alone, and the stored events' failure is caught
+// inside the range's read: either failing leaves the page showing, without them, with Try again for that read only. A
+// failed list read shows its own notice, whose Try again reads the list and the stored events again, and the stored
+// events' notice shows only while the list answered with a calendar, so at most one of the two shows.
 // The day panel's Add an event, a note's Edit and an event's Make a note open the note form (C6) in a popover anchored
 // to the pressed button (refine-calendar-and-home design decision 2), headed "Add an event", "Edit note" or "Make a
 // note": a press outside leaves it open; a save, Cancel, Escape, Android's back button, a 404 and any change of the
@@ -66,7 +70,7 @@ import { YourCalendars } from './YourCalendars';
 // stay, dimmed and aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day.
 // Under view-as the page shows in full with its writes disabled in place. The location's own calendars (spec 16.3 P28
 // and 17, D33) are kept by the API, each an imported .ics file or a link, and their events show as "Your calendar"
-// on web and native; after one is added the list and the grid's stored events read again (never the forecast: stored
+// on web and native; after one is added the list and the range's stored events read again (never the forecast: stored
 // events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
 // events with its dates and hours but never its title; it is disabled under view-as. "Today" is the device's date.
 
@@ -127,6 +131,11 @@ async function storedEventsOf(
   } catch {
     return { events: [], failed: true };
   }
+}
+
+/** Whether a read was made for the days of `range`: the page keys its reads by their range. */
+function sameRange(read: DateRange | undefined, range: DateRange): boolean {
+  return read?.from === range.from && read.to === range.to;
 }
 
 /** The panel's notice: words, or the note just saved, whose notice waits for the forecast read again (savedNotice). */
@@ -194,24 +203,28 @@ function CalendarView(): React.JSX.Element {
   const [chosen, setChosen] = useState(0);
   const locationName = shownLocationName(location, org);
 
+  // The week view's block, and what every read covers for the shown view (readRangeFor): the reads are keyed by its days.
+  const weekStart = weekStartFor(selected, today);
+  const range = useMemo(() => readRangeFor(view, month, weekStart, bounds), [view, month, weekStart, bounds]);
+  const { from, to } = range;
   // The notes and the business rules, read and read again together: a write reads both again with the forecast.
   const notes = useKept(useCallback(async () => {
     const [list, rules] = await Promise.all([fetchNotes(api, location.id), fetchRules(api, location.id)]);
     return { list, rules: rules.rules };
   }, [api, location.id]));
   const monthData = useKept(useCallback(async () => {
-    const range = gridRange(month, bounds);
-    const past = pastRangeFor(range, today);
+    const read: DateRange = { from, to };
+    const past = pastRangeFor(read, today);
     const [calendar, days, stored] = await Promise.all([
-      fetchCalendar(api, location.id, range),
+      fetchCalendar(api, location.id, read),
       past === null ? Promise.resolve([]) : fetchSalesDays(api, location.id, past),
-      storedEventsOf(api, location.id, range),
+      storedEventsOf(api, location.id, read),
     ]);
-    return { month, calendar, days, stored: stored.events, storedFailed: stored.failed };
-  }, [api, location.id, month, today, bounds]));
+    return { range: read, calendar, days, stored: stored.events, storedFailed: stored.failed };
+  }, [api, location.id, from, to, today]));
   const forecast = useKept(useCallback(
-    async () => ({ month, window: await fetchForecast(api, location.id, gridRange(month, bounds)) }),
-    [api, location.id, month, bounds],
+    async () => ({ range: { from, to }, window: await fetchForecast(api, location.id, { from, to }) }),
+    [api, location.id, from, to],
   ));
   const calendars = useKept(useCallback(() => fetchOwnerCalendars(api, location.id), [api, location.id]));
 
@@ -234,19 +247,19 @@ function CalendarView(): React.JSX.Element {
   });
 
   const shown = monthData.data;
-  const forecastFailed = forecast.error !== null && shown?.month === month;
-  const forecastWindow = forecastFailed || forecast.data === null || forecast.data.month !== shown?.month ? null : forecast.data.window;
+  const forecastFailed = forecast.error !== null && sameRange(shown?.range, range);
+  const forecastWindow = forecastFailed || forecast.data === null || !sameRange(shown?.range, forecast.data.range) ? null : forecast.data.window;
   // The stored events and "Your calendar" show only while the list's last read answered with a calendar: a failed list
   // read leaves the grid without them (design decision 11), as the button then reads "Your calendars".
   const hasCalendars = calendars.error === null && (calendars.data ?? []).length > 0;
   const input = useMemo<CalendarInput | null>(() => (shown === null || notes.data === null ? null : {
-    today, month: shown.month, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data.list,
+    today, covered: shown.range, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data.list,
     rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], filters,
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
-  const week = useMemo(() => (input === null || view !== 'week' ? [] : buildWeek(selected, month, input, bounds)), [input, view, selected, month, bounds]);
-  // The days the kept reads cover: their own grid's, which lags the shown grid's while a month change reads.
-  const covered = useMemo(() => (input === null ? null : gridRange(input.month, bounds)), [input, bounds]);
+  const week = useMemo(() => (input === null || view !== 'week' ? [] : buildWeek(selected, today, input, bounds)), [input, view, selected, today, bounds]);
+  // The days the kept reads cover: their own range, which lags the shown one while a new range reads.
+  const covered = input?.covered ?? null;
   const covers = useCallback((date: string) => covered !== null && date >= covered.from && date <= covered.to, [covered]);
   const dayPanel = useMemo(() => (input !== null && covers(selected) ? dayView(selected, input) : null), [input, covers, selected]);
 
@@ -349,30 +362,29 @@ function CalendarView(): React.JSX.Element {
     return <CalendarSkeleton label="Loading the calendar" />;
   }
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
-  const busy = monthData.busy || notes.busy || forecast.busy || shown.month !== month;
+  const busy = monthData.busy || notes.busy || forecast.busy || !sameRange(shown.range, range);
   // After a save the forecast reads again; until it answers, the old read can't say what the note did.
   const noticeText = notice === null || typeof notice === 'string' ? notice
-    : forecast.busy || input.month !== month ? 'Saved.' : savedNotice(selected, input, notice.savedId);
+    : forecast.busy || !sameRange(input.covered, range) ? 'Saved.' : savedNotice(selected, input, notice.savedId);
   const unpublished = forecastWindow !== null && !forecastWindow.available && forecastWindow.reason === 'no_published_forecast';
-  const monday = mondayOf(selected);
-  // The week view's Previous and Next move the day a week, disabled in place once that week is past the 25 months;
+  // The week view's Previous and Next move the day a week, disabled in place once that block is past the 25 months;
   // the month view's step from the grid's month.
-  const back = stepWeek(selected, -1, bounds);
-  const on = stepWeek(selected, 1, bounds);
+  const back = stepWeek(selected, -1, bounds, today);
+  const on = stepWeek(selected, 1, bounds, today);
   const nav = view === 'week'
     ? {
-      label: weekLabel(monday), canPrevious: back !== null, canNext: on !== null,
+      label: weekLabel(weekStart), canPrevious: back !== null, canNext: on !== null,
       onPrevious: () => { if (back !== null) select(back, true); }, onNext: () => { if (on !== null) select(on, true); },
     }
     : {
       label: monthLabel(month), canPrevious: month > bounds.first, canNext: month < bounds.last,
       onPrevious: () => { toMonth(stepMonth(month, -1)); }, onNext: () => { toMonth(stepMonth(month, 1)); },
     };
-  const failedFor = view === 'week' ? dayMonthRange(monday, addDays(monday, 6)) : MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? '';
+  const failedFor = view === 'week' ? dayMonthRange(weekStart, addDays(weekStart, 6)) : MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? '';
   // One calendars notice at a time: a failed list read says so (the popover says it too, when open); a failed
   // stored-events read only while the list answered with a calendar, since with none there are no events to miss.
   const listFailed = calendars.error !== null;
-  const storedFailed = hasCalendars && shown.storedFailed && shown.month === month;
+  const storedFailed = hasCalendars && shown.storedFailed && sameRange(shown.range, range);
 
   const filtersNode = <CalendarFilters filters={filters} onFilter={toggle} imported={hasCalendars} />;
   const formNode = form === null ? null : (
@@ -468,11 +480,11 @@ function CalendarView(): React.JSX.Element {
               <CalendarWeek
                 days={week}
                 selected={selected}
-                month={month}
+                weekStart={weekStart}
                 bounds={bounds}
                 onSelect={select}
                 busy={busy}
-                label={weekLabel(monday)}
+                label={weekLabel(weekStart)}
                 tooltip={tooltip}
               />
             ) : (

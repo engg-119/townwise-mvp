@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react';
 
 import { CalendarGrid } from '../../../src/portal/calendar/CalendarGrid.web';
-import { buildGrid } from '../../../src/portal/calendar/grid';
+import { buildGrid, gridRange } from '../../../src/portal/calendar/grid';
 import { ALL_FILTERS, monthBounds, monthLabel, type CalendarInput, type ImportedEvent } from '../../../src/portal/calendar/model';
 import type { ForecastWindow } from '../../../src/portal/estimates/api';
 import { theme } from '../../../src/theme';
@@ -29,6 +29,7 @@ afterEach(() => {
 });
 
 const TODAY = '2026-11-11';
+const BOUNDS = monthBounds(TODAY);
 const C = theme.color;
 
 /** Saturdays Sep 19 to Oct 31 at 140 guests, then Nov 7 with 1: likely closed (spec D32). */
@@ -43,7 +44,7 @@ function imported(date: string, title: string): ImportedEvent {
 
 function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   return {
-    today: TODAY, month: '2026-11',
+    today: TODAY, covered: gridRange('2026-11', BOUNDS),
     forecast: forecastOf([
       forecastDay({ date: '2026-11-21', low: 250, mid: 282, high: 310, noteGuests: 70 }),
       forecastDay({
@@ -67,7 +68,7 @@ function input(fields: Partial<CalendarInput> = {}): CalendarInput {
 
 function renderGrid(options: { reads?: CalendarInput; month?: string; selected?: string; onSelect?: jest.Mock } = {}): { onSelect: jest.Mock; grid: HTMLElement } {
   const reads = options.reads ?? input();
-  const month = options.month ?? reads.month;
+  const month = options.month ?? '2026-11';
   const onSelect = options.onSelect ?? jest.fn();
   render(
     <CalendarGrid
@@ -172,7 +173,7 @@ test('a likely-closed day shows its status word where the figure goes, and no fi
 
 test('today keeps its own number style in a trailing cell', () => {
   const today = '2026-11-03';
-  renderGrid({ reads: input({ today, month: '2026-10' }), selected: '2026-10-15' });
+  renderGrid({ reads: input({ today, covered: gridRange('2026-10', monthBounds(today)) }), month: '2026-10', selected: '2026-10-15' });
   expect(cell(today).getAttribute('data-outside')).toBe('1');
   const number = rowsOf(today)[0]?.firstElementChild as HTMLElement | null;
   expect(number?.style.color).toBe(C.white);
@@ -215,7 +216,7 @@ test('at 375 cells are 52px, every status takes the figure’s place, and “+70
 
 test('days outside the 25 months are inert: no data-date, aria-disabled, and click, keys and hover do nothing', () => {
   const onSelect = jest.fn();
-  const { grid } = renderGrid({ reads: input({ month: '2027-11' }), selected: '2027-11-30', onSelect });
+  const { grid } = renderGrid({ reads: input({ covered: gridRange('2027-11', BOUNDS) }), month: '2027-11', selected: '2027-11-30', onSelect });
   const inert = screen.getByRole('gridcell', { name: 'Sun, Dec 5, 2027. Outside the months the calendar shows.' });
   expect(inert.getAttribute('aria-disabled')).toBe('true');
   expect(inert.hasAttribute('data-date')).toBe(false);
@@ -260,7 +261,7 @@ test('keys move across months: ArrowRight past the last row, and PageDown from t
 });
 
 test('a key past the 25 months is consumed: its default is prevented and nothing is selected', () => {
-  const { onSelect } = renderGrid({ reads: input({ month: '2027-11' }), selected: '2027-11-30' });
+  const { onSelect } = renderGrid({ reads: input({ covered: gridRange('2027-11', BOUNDS) }), month: '2027-11', selected: '2027-11-30' });
   expect(fireEvent.keyDown(cell('2027-11-30'), { key: 'ArrowRight' })).toBe(false);
   expect(fireEvent.keyDown(cell('2027-11-30'), { key: 'PageDown' })).toBe(false);
   expect(onSelect).not.toHaveBeenCalled();

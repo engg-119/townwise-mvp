@@ -193,7 +193,7 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
       onSelect(from);
       return;
     }
-    const next = gridMove(from, event.key, event.ctrlKey || event.metaKey, { layout, month: props.month, bounds: props.bounds });
+    const next = gridMove(from, event.key, event.ctrlKey || event.metaKey, { layout, weekStart: props.weekStart, bounds: props.bounds });
     if (next === null) return;
     event.preventDefault();
     // Consumed: the move would leave the 25 months.

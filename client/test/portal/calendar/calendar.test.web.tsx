@@ -565,7 +565,7 @@ test('stored events show on load: the cells, the tooltip, the day panel and the 
     expect(within(panel()).getAllByText('From your calendar: Smith rehearsal dinner')).toHaveLength(2);
     expect(within(panel()).getAllByRole('button', { name: 'Make a note from Smith rehearsal dinner' })).toHaveLength(2);
     fireEvent.click(within(screen.getByRole('group', { name: 'Calendar view' })).getByRole('button', { name: 'Week' }));
-    expect(await screen.findByRole('grid', { name: 'Nov 16 to 22, 2026' })).toBeTruthy();
+    expect(await screen.findByRole('grid', { name: 'Nov 18 to 24, 2026' })).toBeTruthy();
     expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(3);
     // Each item keeps its own key: {calendarId}:{uid}.
     expect(errors.mock.calls.filter((call) => String(call[0]).includes('same key'))).toEqual([]);
@@ -578,11 +578,12 @@ test('one stored-events read per grid: none on selecting a day or switching to W
   const { api, fake } = setup(meOf(ACCESS.member), { calendars: [KITCHEN], ownerEvents: [DINNER, AWAY] });
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   expect(storedReads(fake)).toEqual([NOVEMBER_EVENTS]);
-  fireEvent.click(cell('2026-12-03'));
-  await waitFor(() => { expect(within(panel()).getByRole('heading', { name: 'Thu, Dec 3, 2026' })).toBeTruthy(); });
+  // Dec 1's block, Nov 25 to Dec 1, lies inside November's grid.
+  fireEvent.click(cell('2026-12-01'));
+  await waitFor(() => { expect(within(panel()).getByRole('heading', { name: 'Tue, Dec 1, 2026' })).toBeTruthy(); });
   const views = screen.getByRole('group', { name: 'Calendar view' });
   fireEvent.click(within(views).getByRole('button', { name: 'Week' }));
-  expect(await screen.findByRole('grid', { name: 'Nov 30 to Dec 6, 2026' })).toBeTruthy();
+  expect(await screen.findByRole('grid', { name: 'Nov 25 to Dec 1, 2026' })).toBeTruthy();
   fireEvent.click(within(views).getByRole('button', { name: 'Month' }));
   expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
   expect(storedReads(fake)).toEqual([NOVEMBER_EVENTS]);

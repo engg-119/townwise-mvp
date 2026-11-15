@@ -11,6 +11,7 @@ import { MONTH_NAMES, type Metric } from '../analytics/words';
 import { ALL_FILTERS, tooltipLines, type CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import type { Note } from '../locations/api';
+import { monthRange } from '../locations/dates';
 import type { Rule } from '../rules/api';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint, type LoadState } from '../hooks';
@@ -52,7 +53,7 @@ export function ThisMonth(props: {
   // The Calendar's own tooltip words, with the same business rules as the grid (D31, D32); nothing is imported on Home
   // and no filter is off.
   const tipInput = useMemo<CalendarInput>(() => ({
-    today, month: today.slice(0, 7), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported: [],
+    today, covered: monthRange(today.slice(0, 7)), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported: [],
     filters: ALL_FILTERS,
   }), [today, forecast, input.byDate, calendar.events, notes, rules]);
   const tooltip = useCallback((date: string) => tooltipLines(date, tipInput), [tipInput]);

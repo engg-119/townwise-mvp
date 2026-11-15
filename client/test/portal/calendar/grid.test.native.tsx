@@ -2,7 +2,7 @@ import { Dimensions, StyleSheet } from 'react-native';
 import { render, screen, within } from '@testing-library/react-native';
 
 import { CalendarGrid } from '../../../src/portal/calendar/CalendarGrid';
-import { buildGrid } from '../../../src/portal/calendar/grid';
+import { buildGrid, gridRange } from '../../../src/portal/calendar/grid';
 import { ALL_FILTERS, monthBounds, monthLabel, type CalendarInput } from '../../../src/portal/calendar/model';
 import { note, townEvent } from '../analytics/fakes';
 
@@ -19,10 +19,11 @@ function widthOf(width: number): void {
 }
 
 const TODAY = '2026-11-11';
+const BOUNDS = monthBounds(TODAY);
 
 function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   return {
-    today: TODAY, month: '2026-11', forecast: null, salesDays: [],
+    today: TODAY, covered: gridRange('2026-11', BOUNDS), forecast: null, salesDays: [],
     events: [townEvent({ start: '2026-11-21', title: 'Dartmouth home football' }), townEvent({ start: '2026-12-03', title: 'Tree lighting' })],
     notes: [note({ startDate: '2026-11-21', expectedGuests: 70 })],
     imported: [{ calendarId: 'c1', uid: 'i1', title: 'Wine delivery', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null }],
@@ -31,16 +32,16 @@ function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   };
 }
 
-async function renderGrid(reads: CalendarInput = input(), selected = TODAY): Promise<void> {
+async function renderGrid(reads: CalendarInput = input(), selected = TODAY, month = '2026-11'): Promise<void> {
   await render(
     <CalendarGrid
-      rows={buildGrid(reads.month, reads, monthBounds(TODAY))}
+      rows={buildGrid(month, reads, BOUNDS)}
       selected={selected}
-      month={reads.month}
-      bounds={monthBounds(TODAY)}
+      month={month}
+      bounds={BOUNDS}
       onSelect={() => undefined}
       busy={false}
-      label={monthLabel(reads.month)}
+      label={monthLabel(month)}
       tooltip={() => null}
     />,
   );
@@ -74,7 +75,7 @@ test('an outside day keeps its full-date label and its own entries', async () =>
 
 test('a day outside the 25 months is disabled, with a label that says so', async () => {
   widthOf(1280);
-  await renderGrid(input({ month: '2027-11' }), '2027-11-30');
+  await renderGrid(input({ covered: gridRange('2027-11', BOUNDS) }), '2027-11-30', '2027-11');
   const inert = screen.getByLabelText('Sun, Dec 5, 2027. Outside the months the calendar shows.');
   expect(inert.props.accessibilityState).toMatchObject({ disabled: true });
   expect(within(inert).getByText('5')).toBeTruthy();

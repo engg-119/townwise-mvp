@@ -162,7 +162,7 @@ test('stored events show on native: in the week’s agenda and the day panel', a
     ownerEvents: [ownerEvent({ calendarId: 'c1', uid: 'e1', title: 'Wine delivery', startDate: SATURDAY, startTime: '09:00', endTime: '10:00' })],
   });
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}&view=week`, api);
-  const agenda = await screen.findByLabelText('Nov 16 to 22, 2026');
+  const agenda = await screen.findByLabelText('Nov 18 to 24, 2026');
   expect(within(agenda).getByText('Wine delivery')).toBeTruthy();
   expect(within(panel()).getByText('From your calendar: Wine delivery')).toBeTruthy();
   expect(within(panel()).getByRole('button', { name: 'Make a note from Wine delivery' })).toBeTruthy();
@@ -194,7 +194,7 @@ test('adds a note from the day and reloads the forecast', async () => {
   }]);
 });
 
-test('the Month and Week switch: Week shows the agenda of the selected day’s week, a row selects its day, Month the grid again', async () => {
+test('the Month and Week switch: Week shows the agenda of the block from today that holds the selected day, a row selects its day, Month the grid again', async () => {
   const { api, fake } = setup();
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   expect(await screen.findByLabelText('November 2026')).toBeTruthy();
@@ -202,22 +202,23 @@ test('the Month and Week switch: Week shows the agenda of the selected day’s w
   expect(screen.getByRole('button', { name: 'Week' }).props.accessibilityState).toMatchObject({ checked: false });
   const reads = fake.paths.length;
   await fireEvent.press(screen.getByRole('button', { name: 'Week' }));
-  const agenda = await screen.findByLabelText('Nov 16 to 22, 2026');
+  const agenda = await screen.findByLabelText('Nov 18 to 24, 2026');
   expect(screen.getByRole('button', { name: 'Week' }).props.accessibilityState).toMatchObject({ checked: true });
   expect(screen.getByRole('button', { name: 'Month' }).props.accessibilityState).toMatchObject({ checked: false });
   const rows = within(agenda).getAllByRole('button');
   expect(rows).toHaveLength(7);
-  expect(rows[5]?.props.accessibilityLabel).toBe(LABEL);
-  expect(rows[5]?.props.accessibilityState).toMatchObject({ selected: true });
+  // Today is Wed, Nov 11: the block of Nov 18 to 24, Saturday its fourth row.
+  expect(rows[3]?.props.accessibilityLabel).toBe(LABEL);
+  expect(rows[3]?.props.accessibilityState).toMatchObject({ selected: true });
   expect(within(agenda).getByText('Dartmouth home football')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Previous week' })).toBeTruthy();
-  const tuesday = rows[1];
-  if (tuesday === undefined) throw new Error('no Tuesday');
-  await fireEvent.press(tuesday);
-  expect(await within(panel()).findByText('Tue, Nov 17, 2026')).toBeTruthy();
-  expect(screen.getByLabelText('Nov 16 to 22, 2026')).toBeTruthy();
+  const thursday = rows[1];
+  if (thursday === undefined) throw new Error('no Thursday');
+  await fireEvent.press(thursday);
+  expect(await within(panel()).findByText('Thu, Nov 19, 2026')).toBeTruthy();
+  expect(screen.getByLabelText('Nov 18 to 24, 2026')).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: 'Month' }));
   expect(await screen.findByLabelText('November 2026')).toBeTruthy();
-  expect(screen.queryByLabelText('Nov 16 to 22, 2026')).toBeNull();
+  expect(screen.queryByLabelText('Nov 18 to 24, 2026')).toBeNull();
   expect(fake.paths.slice(reads)).toEqual([]);
 });

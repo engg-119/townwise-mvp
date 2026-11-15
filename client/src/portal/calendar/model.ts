@@ -8,6 +8,7 @@ import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
 import { KIND_LABEL } from '../locations/noteRules';
 import type { Rule } from '../rules/api';
+import type { DateRange } from './grid';
 
 // The Calendar's pure model (P28, spec 16.3): the month as week rows with each day's figure,
 // status, chips, corner marks and screen-reader label; the selected day's panel (its forecast, the reasons, and what
@@ -56,17 +57,17 @@ export interface ImportedEvent {
 
 export interface CalendarInput {
   today: string;
-  /** 'YYYY-MM': the month whose grid the reads cover (grid.ts gridRange). */
-  month: string;
-  /** The grid's forecast read; null while it loads or when it failed. */
+  /** The range the reads were made for (grid.ts readRangeFor): the days they cover, which lag the shown ones while a new range reads. */
+  covered: DateRange;
+  /** The range's forecast read; null while it loads or when it failed. */
   forecast: ForecastWindow | null;
-  /** The stored days of the grid's past part, and of the 8 weeks before it that likely closed reads (grid.ts pastRangeFor). */
+  /** The stored days of the range's past part, and of the 8 weeks before it that likely closed reads (grid.ts pastRangeFor). */
   salesDays: readonly SalesDay[];
   events: readonly TownEvent[];
   notes: readonly Note[];
   /** The location's business rules (D31); Home passes the same rules for its tooltip. */
   rules?: readonly Rule[];
-  /** The grid's stored events from the location's own calendars; none when their read failed. */
+  /** The range's stored events from the location's own calendars; none when their read failed. */
   imported: readonly ImportedEvent[];
   filters: Filters;
 }
@@ -198,7 +199,7 @@ function figureOf(date: string, input: CalendarInput): FigureOf {
   return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
 }
 
-/** One day's cell from the reads in `input`, whichever month they were made for; today's week comes from `input.today`. */
+/** One day's cell from the reads in `input`, whichever range they were made for; today's week comes from `input.today`. */
 export function dayCell(date: string, input: CalendarInput): CalendarCell {
   const monday = mondayOf(input.today);
   const events = eventsOn(date, input).filter(marksCell);
@@ -229,9 +230,9 @@ export function dayCell(date: string, input: CalendarInput): CalendarCell {
   };
 }
 
-/** The month as week rows, Monday first; null where a row's day is in another month. */
-export function calendarMonth(input: CalendarInput): (CalendarCell | null)[][] {
-  const { from, to } = monthRange(input.month);
+/** The month ('YYYY-MM') as week rows, Monday first; null where a row's day is in another month. */
+export function calendarMonth(month: string, input: CalendarInput): (CalendarCell | null)[][] {
+  const { from, to } = monthRange(month);
   const rows: (CalendarCell | null)[][] = [];
   for (let start = mondayOf(from); start <= to; start = addDays(start, 7)) {
     rows.push(weekDates(start).map((date) => (date < from || date > to ? null : dayCell(date, input))));
