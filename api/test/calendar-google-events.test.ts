@@ -1,7 +1,7 @@
 // Reading a Google calendar (src/calendar/google-events.ts, openspec change connect-google-calendar: the google-calendar
 // spec's "A Google calendar is read with a fixed, minimal request", design decision 7): the mapping by ics.ts's rules,
-// the window ahead read first and the window before only with what is left, paging, the cut, an aborted read, and the
-// statuses by the client's codes. Tests never call Google; every title, id and token here is made up.
+// the window ahead read first and the window before, newest slice first, only with what is left, paging, the cut, an
+// aborted read, and the statuses by the client's codes. Tests never call Google; every title, id and token here is made up.
 import { describe, expect, it } from 'vitest';
 
 import { MAX_EVENT_PAGES, eventsOfGoogle, readGoogleCalendar } from '../src/calendar/google-events.ts';
@@ -86,17 +86,30 @@ async function eventsRead(fake: FakeClient): Promise<IcsEvent[]> {
 }
 
 const AHEAD = { timeMin: '2026-11-14T00:00:00Z', timeMax: '2027-12-21T00:00:00Z' };
-const BEFORE = { timeMin: '2025-10-10T00:00:00Z', timeMax: '2026-11-15T00:00:00Z' };
+/** The window before, newest slice first: back 30 days from today, then to 90, 210 and 401 days. */
+const BEFORE = [
+  { timeMin: '2026-10-16T00:00:00Z', timeMax: '2026-11-15T00:00:00Z' },
+  { timeMin: '2026-08-17T00:00:00Z', timeMax: '2026-10-16T00:00:00Z' },
+  { timeMin: '2026-04-19T00:00:00Z', timeMax: '2026-08-17T00:00:00Z' },
+  { timeMin: '2025-10-10T00:00:00Z', timeMax: '2026-04-19T00:00:00Z' },
+] as const;
 
 /** `perDay` all-day events on each day of a window's days, by start, as Google would answer them. */
-function busyDays(prefix: string, perDay: number) {
+function busyDays(prefix: string, perDay: number | ((day: string) => number)) {
   return (query: GoogleEventsQuery): GoogleEventItem[] => {
     const items: GoogleEventItem[] = [];
     for (let day = query.timeMin.slice(0, 10); day < query.timeMax.slice(0, 10); day = plusDays(day, 1)) {
-      for (let n = 0; n < perDay; n += 1) items.push(allDay(`${prefix}${day}-${String(n)}`, day));
+      const count = typeof perDay === 'number' ? perDay : perDay(day);
+      for (let n = 0; n < count; n += 1) items.push(allDay(`${prefix}${day}-${String(n)}`, day));
     }
     return items;
   };
+}
+
+/** Of these all-day items, those Google answers a window with: ending after its timeMin and starting before its timeMax. */
+function within(items: readonly GoogleEventItem[]) {
+  return (query: GoogleEventsQuery): GoogleEventItem[] => items.filter((item) =>
+    (item.end?.date ?? '') > query.timeMin.slice(0, 10) && (item.start?.date ?? '') < query.timeMax.slice(0, 10));
 }
 
 describe('the events request (the google-calendar spec scenario)', () => {
@@ -106,7 +119,7 @@ describe('the events request (the google-calendar spec scenario)', () => {
       { access_token: ACCESS, expires_in: 3599, token_type: 'Bearer' },
       // As Google answers: an absent field is left out, never null.
       { items: [{ id: 'evt1', status: 'confirmed', summary: 'evt1', start: { date: '2026-11-20' }, end: { date: '2026-11-21' } }] },
-      { items: [] },
+      { items: [] }, { items: [] }, { items: [] }, { items: [] },
     ];
     const client = createGoogleCalendarClient({
       clientId: 'test-client.apps.googleusercontent.com', clientSecret: 'test-secret',
@@ -122,8 +135,7 @@ describe('the events request (the google-calendar spec scenario)', () => {
     });
     expect(calls.map((call) => call.url.split('?')[0])).toEqual([
       'https://oauth2.googleapis.com/token',
-      'https://www.googleapis.com/calendar/v3/calendars/bookings.team%40group.calendar.example.test/events',
-      'https://www.googleapis.com/calendar/v3/calendars/bookings.team%40group.calendar.example.test/events',
+      ...Array.from({ length: 5 }, () => 'https://www.googleapis.com/calendar/v3/calendars/bookings.team%40group.calendar.example.test/events'),
     ]);
     expect(new URLSearchParams(calls[0]?.body ?? '').get('refresh_token')).toBe(REFRESH);
     const query = (index: number): [string, string][] => [...new URL(calls[index]?.url ?? '').searchParams.entries()];
@@ -133,8 +145,8 @@ describe('the events request (the google-calendar spec scenario)', () => {
       ['fields', 'nextPageToken,items(id,status,summary,start,end)'],
     ];
     expect(query(1)).toEqual(fixed({ timeMin: '2026-11-14T00:00:00Z', timeMax: '2027-12-21T00:00:00Z' }));
-    // Then the window before, with what is left.
-    expect(query(2)).toEqual(fixed({ timeMin: '2025-10-10T00:00:00Z', timeMax: '2026-11-15T00:00:00Z' }));
+    // Then the window before with what is left, newest slice first.
+    expect([2, 3, 4, 5].map(query)).toEqual(BEFORE.map(fixed));
     for (const call of calls) expect(call.url).not.toMatch(/description|location|attendee|organizer/i);
   });
 });
@@ -232,22 +244,28 @@ describe('mapping, by ics.ts’s rules', () => {
   });
 });
 
-describe('the read: ahead first, then before with what is left', () => {
+describe('the read: ahead first, then before with what is left, newest first', () => {
   it('reads ahead, then before, following pages, and counts an event in both windows once', async () => {
     const spanning = allDay('spanning', plusDays(TODAY, -3), plusDays(TODAY, 2));
     const fake = fakeClient({
       pageSize: 2,
-      events: (query) => (query.timeMin === AHEAD.timeMin
-        ? [spanning, allDay('a1', plusDays(TODAY, 1)), allDay('a2', plusDays(TODAY, 2)), allDay('a3', plusDays(TODAY, 3))]
-        : [allDay('b1', plusDays(TODAY, -30)), spanning, allDay('b2', plusDays(TODAY, -1))]),
+      events: (query) => {
+        if (query.timeMin === AHEAD.timeMin) {
+          return [spanning, allDay('a1', plusDays(TODAY, 1)), allDay('a2', plusDays(TODAY, 2)), allDay('a3', plusDays(TODAY, 3))];
+        }
+        return query.timeMin === BEFORE[0].timeMin ? [allDay('b1', plusDays(TODAY, -30)), spanning, allDay('b2', plusDays(TODAY, -1))] : [];
+      },
     });
     const events = await eventsRead(fake);
     expect(fake.refreshes).toEqual([REFRESH]);
     expect(fake.queries).toEqual([
       { ...AHEAD, timeZone: 'America/New_York', pageToken: null },
       { ...AHEAD, timeZone: 'America/New_York', pageToken: '2' },
-      { ...BEFORE, timeZone: 'America/New_York', pageToken: null },
-      { ...BEFORE, timeZone: 'America/New_York', pageToken: '2' },
+      { ...BEFORE[0], timeZone: 'America/New_York', pageToken: null },
+      { ...BEFORE[0], timeZone: 'America/New_York', pageToken: '2' },
+      { ...BEFORE[1], timeZone: 'America/New_York', pageToken: null },
+      { ...BEFORE[2], timeZone: 'America/New_York', pageToken: null },
+      { ...BEFORE[3], timeZone: 'America/New_York', pageToken: null },
     ]);
     expect(events.map((event) => event.uid)).toEqual(['b1', 'spanning', 'b2', 'a1', 'a2', 'a3']);
   });
@@ -262,19 +280,48 @@ describe('the read: ahead first, then before with what is left', () => {
   });
 
   it('reads the window before only with room left, and the cut keeps the next events ahead of the earlier ones', async () => {
-    // 1,990 ahead; the before read brings 500 more, of which the 10 latest fit.
+    // 1,990 ahead; the newest slice before brings 30 more, of which the 10 latest fit, and no older slice is read.
     const ahead = Array.from({ length: 1_990 }, (_, index) => allDay(`ahead-${String(index)}`, plusDays(TODAY, Math.floor(index / 5))));
     const before = Array.from({ length: 500 }, (_, index) => allDay(`before-${String(index)}`, plusDays(TODAY, index - 500)));
-    const fake = fakeClient({ events: (query) => (query.timeMin === AHEAD.timeMin ? ahead : before) });
+    const fake = fakeClient({ events: (query) => (query.timeMin === AHEAD.timeMin ? ahead : within(before)(query)) });
     const events = await eventsRead(fake);
     expect(fake.queries.map((query) => [query.timeMin, query.pageToken])).toEqual([
-      [AHEAD.timeMin, null], [AHEAD.timeMin, '500'], [AHEAD.timeMin, '1000'], [AHEAD.timeMin, '1500'], [BEFORE.timeMin, null],
+      [AHEAD.timeMin, null], [AHEAD.timeMin, '500'], [AHEAD.timeMin, '1000'], [AHEAD.timeMin, '1500'], [BEFORE[0].timeMin, null],
     ]);
     expect(events).toHaveLength(MAX_EVENTS);
     const uids = new Set(events.map((event) => event.uid));
     for (const item of ahead) expect(uids.has(item.id)).toBe(true);
     expect(events.filter((event) => event.uid.startsWith('before-')).map((event) => event.uid))
       .toEqual(Array.from({ length: 10 }, (_, index) => `before-${String(490 + index)}`));
+  });
+
+  it('a busy past keeps the days just before today, not the oldest, when it is larger than the room left (the google-calendar spec scenario)', async () => {
+    // 4 a day ahead (1,604 kept) and 3 a day before: the 396 left are the 132 days just before today, whole.
+    const fake = fakeClient({ events: busyDays('day-', (day) => (day >= TODAY ? 4 : 3)) });
+    const events = await eventsRead(fake);
+    expect(fake.queries.map((query) => [query.timeMin, query.pageToken])).toEqual([
+      [AHEAD.timeMin, null], [AHEAD.timeMin, '500'], [AHEAD.timeMin, '1000'], [AHEAD.timeMin, '1500'],
+      [BEFORE[0].timeMin, null], [BEFORE[1].timeMin, null], [BEFORE[2].timeMin, null],
+    ]);
+    expect(events).toHaveLength(MAX_EVENTS);
+    expect(events.filter((event) => event.endDate >= TODAY)).toHaveLength(401 * 4);
+    const past = events.filter((event) => event.endDate < TODAY);
+    expect(past).toHaveLength(132 * 3);
+    expect([...new Set(past.map((event) => event.startDate))].sort()).toEqual(Array.from({ length: 132 }, (_, index) => plusDays(TODAY, index - 132)));
+  });
+
+  it('leaves out a slice before that the page budget cuts short, so the past kept runs back from today with no gap', async () => {
+    // Nothing ahead and 20 a day before: the 30 and 60 days before today take 5 pages, and the 120 days before those
+    // would take 5 more where 2 are left, so their oldest 1,000 are read and dropped.
+    const fake = fakeClient({ events: busyDays('day-', (day) => (day >= TODAY ? 0 : 20)) });
+    const events = await eventsRead(fake);
+    expect(fake.queries.map((query) => [query.timeMin, query.pageToken])).toEqual([
+      [AHEAD.timeMin, null], [BEFORE[0].timeMin, null], [BEFORE[0].timeMin, '500'],
+      [BEFORE[1].timeMin, null], [BEFORE[1].timeMin, '500'], [BEFORE[1].timeMin, '1000'],
+      [BEFORE[2].timeMin, null], [BEFORE[2].timeMin, '500'],
+    ]);
+    expect(events).toHaveLength(90 * 20);
+    expect([...new Set(events.map((event) => event.startDate))].sort()).toEqual(Array.from({ length: 90 }, (_, index) => plusDays(TODAY, index - 90)));
   });
 
   it('stops at 8 pages in all, whatever Google still offers', async () => {
@@ -327,7 +374,7 @@ describe('stopping', () => {
 
   it('a signal aborted as the last page arrives is still stopped', async () => {
     const controller = new AbortController();
-    const fake = fakeClient({ events: () => [], onPage: (query) => { if (query.timeMin === BEFORE.timeMin) controller.abort(); } });
+    const fake = fakeClient({ events: () => [], onPage: (query) => { if (query.timeMin === BEFORE[3].timeMin) controller.abort(); } });
     expect(await read(fake, controller.signal)).toEqual({ ok: false, code: 'stopped' });
   });
 });
@@ -348,7 +395,7 @@ describe('failures', () => {
 
   it.each(statuses)('an events page failing %s records %s, with the client’s error', async (code, status) => {
     const error = new GoogleCalendarError(code, 403);
-    const fake = fakeClient({ fail: (query) => (query.pageToken === null && query.timeMin === BEFORE.timeMin ? error : null) });
+    const fake = fakeClient({ fail: (query) => (query.pageToken === null && query.timeMin === BEFORE[0].timeMin ? error : null) });
     expect(await read(fake)).toEqual({ ok: false, code: status, op: 'events', error });
   });
 

@@ -119,7 +119,7 @@ The system SHALL store a connection's refresh token and each Google calendar's i
 - **THEN** the add answers 503 `google_unavailable` and nothing is stored
 
 ### Requirement: A Google calendar is read with a fixed, minimal request
-The system SHALL read a Google calendar by refreshing access once and listing its events with `singleEvents=true`, `orderBy=startTime`, `showDeleted=false`, `eventTypes=default`, the town's `timeZone`, `maxResults=500` and `fields=nextPageToken,items(id,status,summary,start,end)`, first the events ahead (`timeMin` the town's today less 1 day, `timeMax` today plus 401 days) and then, with what is left of 2,000 events and 8 pages in all, the events before (`timeMin` today less 401 days, `timeMax` today), each at 00:00Z and following its pages, an event in both counted once. It SHALL keep each event's id as its UID, its title cut to 200 characters, its dates and its hours by the rules of `calendar/ics.ts` (an all-day event's end date exclusive, a timed event in the town's wall time, hours only when it ends on its start date or by 06:00 the next morning), skip canceled events, keep events within 400 days of the town's today, at most 2,000: those that end on or after the town's today first, by start, then the earlier ones read, the latest first. It SHALL keep each instance of a repeating event, and report no repeating events not imported.
+The system SHALL read a Google calendar by refreshing access once and listing its events with `singleEvents=true`, `orderBy=startTime`, `showDeleted=false`, `eventTypes=default`, the town's `timeZone`, `maxResults=500` and `fields=nextPageToken,items(id,status,summary,start,end)`, first the events ahead (`timeMin` the town's today less 1 day, `timeMax` today plus 401 days), following its pages up to 2,000 events, and then, with what is left of 2,000 events and 8 pages in all, the events before, newest first, in slices that begin 30, 90, 210 and 401 days before today (the first ending today, each other where the newer one begins), each read to its last page and left out when the page budget cuts it short, every bound at 00:00Z and an event read twice counted once. It SHALL keep each event's id as its UID, its title cut to 200 characters, its dates and its hours by the rules of `calendar/ics.ts` (an all-day event's end date exclusive, a timed event in the town's wall time, hours only when it ends on its start date or by 06:00 the next morning), skip canceled events, keep events within 400 days of the town's today, at most 2,000: those that end on or after the town's today first, by start, then the earlier ones read, the latest first. It SHALL keep each instance of a repeating event, and report no repeating events not imported.
 
 #### Scenario: The events query
 - **WHEN** a Google calendar of a Hanover location is read on 2026-11-15
@@ -128,6 +128,10 @@ The system SHALL read a Google calendar by refreshing access once and listing it
 #### Scenario: A busy calendar keeps what is ahead
 - **WHEN** a Google calendar holds 20 events a day across the whole window
 - **THEN** 2,000 events are stored, none of them ending more than 2 days before the town's today, and no page of the events before was requested
+
+#### Scenario: A busy past keeps the days just before today
+- **WHEN** a Google calendar holds 4 events a day ahead and 3 a day before the town's today
+- **THEN** 2,000 events are stored: the 1,604 ahead, and the 396 of the 132 days just before today, none older
 
 #### Scenario: A weekly event
 - **WHEN** a calendar holds a weekly event and Google answers 3 of its instances in the window
