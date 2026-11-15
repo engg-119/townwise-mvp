@@ -140,7 +140,7 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByRole('heading', { name: 'What’s on the calendar, and how this week went before' })).toBeTruthy();
   expect(screen.getByText('740')).toBeTruthy();
   expect(screen.getByText('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.')).toBeTruthy();
-  expect(screen.getByText('Busiest last year: Sat, Nov 8, 2025.')).toBeTruthy();
+  expect(screen.getByText('Busiest last year: Sat, Nov 8, 2025 (140 guests).')).toBeTruthy();
   expect(screen.getByText('On the calendar this week: Sample game (Saturday), and 1 more.')).toBeTruthy();
   // On Saturday's row, and as the next event at a glance.
   expect(screen.getAllByText('Sample game')).toHaveLength(2);

@@ -1,7 +1,8 @@
 import { dayContext, EMPTY_CONTEXT, type DayContext } from '../../../src/portal/analytics/days';
 import { byDate, decodeHistory, type DayRecord } from '../../../src/portal/analytics/history';
+import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, homeCalendarRange, lastWeekComparison, lastWeekLine,
+  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, homeCalendarRange, lastWeekComparison, lastWeekLine, lastYearDayPhrase,
   lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
   nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
@@ -68,7 +69,11 @@ describe('this week', () => {
 
   test('the summary needs 5 days of last year’s week and names its day count', () => {
     const week = thisWeek(input(DAYS));
-    expect(week.summary).toMatchObject({ from: '2025-11-06', to: '2025-11-12', days: 7, total: 740, busiest: '2025-11-08' });
+    expect(week.summary).toMatchObject({ from: '2025-11-06', to: '2025-11-12', days: 7, total: 740, busiest: '2025-11-08', busiestValue: 140, quietestValue: 100 });
+    // Busiest and quietest say their figure in brackets, the figure strong (owner request, 2026-11-15).
+    const busiest = lastYearDayPhrase('Busiest', '2025-11-08', 140, 'guests');
+    expect(plainOf(busiest)).toBe('Busiest last year: Sat, Nov 8, 2025 (140 guests).');
+    expect(busiest.filter((part) => typeof part !== 'string')).toEqual([{ strong: '140 guests' }]);
     if (week.summary === null) throw new Error('no summary');
     expect(summaryLabel(week.summary)).toBe('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.');
     // Every day matches its usual exactly.

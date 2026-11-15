@@ -157,6 +157,9 @@ export interface WeekSummary {
   vsUsual: { change: number; days: number } | null;
   busiest: string | null;
   quietest: string | null;
+  /** Their figures, shown beside them (owner request, 2026-11-15). */
+  busiestValue: number | null;
+  quietestValue: number | null;
 }
 
 /** This week in {Town}: the seven days from today, today first (owner request, 2026-11-15). */
@@ -196,6 +199,7 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
   return {
     from: first.date, to: last.date, days: kept.length, total: sum(kept.map((each) => each.value)), vsUsual,
     busiest: busiest?.date ?? null, quietest: quietest?.date ?? null,
+    busiestValue: busiest?.value ?? null, quietestValue: quietest?.value ?? null,
   };
 }
 
@@ -248,6 +252,11 @@ export function summaryLabel(summary: WeekSummary): string {
   const range = `${shortDate(summary.from).replace(/, \d{4}$/, '')} to ${shortDate(summary.to)}`;
   const days = summary.days === 7 ? 'From all 7 days.' : `From ${formatCount(summary.days)} of its 7 days.`;
   return `Same 7 days last year, ${range}. ${days}`;
+}
+
+/** "Busiest last year: Sat, Nov 22, 2025 (253 guests).", the figure strong. */
+export function lastYearDayPhrase(which: 'Busiest' | 'Quietest', date: string, value: number, metric: Metric): Phrase {
+  return [`${which} last year: ${shortDate(date)} (`, strong(metricText(value, metric)), ').'];
 }
 
 /** "+9% against that year’s usual for those days, compared over 7 days.", the change strong. */
