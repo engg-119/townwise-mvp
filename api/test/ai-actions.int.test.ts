@@ -130,6 +130,11 @@ afterAll(async () => {
   await noLab.close();
 });
 beforeEach(async () => {
+  // A read route nudges the reader itself, so a test that asks for a read without awaiting it (one that asks again at
+  // its end) leaves a drain running. Let it end first: on a loaded runner it otherwise reached the fake model after the
+  // next test had scripted its answer, took it, and left that test's read the default answer (develop CI, 2026-11-15).
+  await server.aiReader?.settled();
+  await noLab.aiReader?.settled();
   answers = [];
   requests.length = 0;
   failRawWrites = 0;
@@ -973,6 +978,8 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     await server.connection.collection('tw_files').updateOne({ _id: oid(queued) }, { $set: { 'ai.status': 'reading' } });
     expect((await undo(team.member, l1, `f_${queued}`)).status).toBe(409);
     await server.connection.collection('tw_files').updateOne({ _id: oid(queued) }, { $set: { 'ai.status': 'skipped' } });
+    // The request above nudged the reader: let that drain end before the rest, so it can't land in the middle of it.
+    await server.aiReader?.settled();
 
     const never = await seedStored(l1);
     const failed = await seedStored(l1);
