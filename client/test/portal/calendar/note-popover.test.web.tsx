@@ -26,8 +26,10 @@ if (typeof globalThis.ResizeObserver !== 'function') {
   globalThis.ResizeObserver = ResizeObserverPolyfill;
 }
 
-// jsdom's document is 0px wide, which is a phone to react-native-web; these tests cover the desktop layout.
+// jsdom's document is 0px wide and tall, which is a phone to react-native-web; these tests cover the desktop layout,
+// 1280 by 900, so a card anchored to its opener has room under or over it.
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => 1280 });
+Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, get: () => 900 });
 
 // Only Date is faked, so "today" is Wed, Nov 11, 2026 and every timer stays real.
 beforeEach(() => {
@@ -224,6 +226,42 @@ test('Make a note opens a dialog “Make a note” from the event, without its t
   expect(within(card).getByLabelText<HTMLInputElement>('Details (optional)').value).toBe('');
   escape();
   expect(document.activeElement).toBe(make);
+});
+
+type Measured = HTMLElement & { measureInWindow: (callback: (...box: number[]) => void) => void };
+
+/** Gives the panel's button `name` the box x, y, width, height in the window, which jsdom's layout leaves 0 by 0. */
+function placeAt(name: string, box: [number, number, number, number]): void {
+  within(panel()).getByRole<Measured>('button', { name }).measureInWindow = (callback) => { callback(...box); };
+}
+
+/** The card's top, bottom, left, width and maxHeight, from its own style. */
+function placeOf(card: HTMLElement): string[] {
+  const style = window.getComputedStyle(card);
+  return [style.top, style.bottom, style.left, style.width, style.maxHeight];
+}
+
+test('each opener anchors the popover to itself: Edit, Make a note and Add an event each place it by their own box', async () => {
+  const { api } = setup({ notes: [PARTY], forecasts: { '2026-11': november({ guests: 40, id: 'n1' }) }, calendars: [KITCHEN], ownerEvents: [DINNER] });
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  // Three boxes down the panel's column, each centered in the window's right half, so the 400px card's right edge
+  // lines up with its opener's.
+  placeAt(EDIT, [900, 300, 40, 20]);
+  placeAt('Make a note from Smith rehearsal dinner', [920, 500, 100, 20]);
+  placeAt('Add an event', [900, 640, 160, 44]);
+  // 580px below Edit: under it, 8px down, at most 580 less 24px tall.
+  press(EDIT);
+  expect(placeOf(dialog('Edit note'))).toEqual(['328px', '', '540px', '400px', '556px']);
+  escape();
+  // 380px below Make a note: under it too.
+  press('Make a note from Smith rehearsal dinner');
+  expect(placeOf(dialog('Make a note'))).toEqual(['528px', '', '620px', '400px', '356px']);
+  escape();
+  // 216px below Add an event, less than 320 and than the 640 above: over it, its bottom edge 8px above the button.
+  press('Add an event');
+  expect(placeOf(dialog('Add an event'))).toEqual(['', '268px', '660px', '400px', '616px']);
+  escape();
+  expect(writes(api)).toEqual([]);
 });
 
 /** Edits the note, which the API then answers 404 for: the popover closes and the panel says so. */
