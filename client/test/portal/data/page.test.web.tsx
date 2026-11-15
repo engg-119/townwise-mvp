@@ -10,6 +10,7 @@ import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
 import { choicesOf, choose, shownChoice } from '../../helpers/select';
+import { openMore } from '../../helpers/topBar';
 import { aiOf, dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
 // Your data (P26, D28) on web: the table of everything a location received, Turn off and on at once, the deletes
@@ -508,7 +509,10 @@ test('after Turn off, the organization is read again once the page closes, not b
   fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
   await screen.findByText(/^Turned off Daily totals, May 1, 2026 to May 10, 2026\./);
   expect(orgReads()).toBe(before);
-  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  // The page hands focus to its notice; once that lands, More opens and stays open (focus leaving it closes it).
+  await settle(() => undefined);
+  const notes = within(openMore()).getByRole('link', { name: 'Notes' });
+  await settle(() => { fireEvent.click(notes); });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
   await waitFor(() => { expect(orgReads()).toBe(before + 1); });
 });
@@ -521,7 +525,10 @@ test('after an upload is deleted, the organization is read again once the page c
   const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
   fireEvent.click(within(dialog).getByRole('button', { name: 'Delete upload' }));
   await screen.findByText('Deleted the upload and 5 days.');
-  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  // The page hands focus to its notice; once that lands, More opens and stays open (focus leaving it closes it).
+  await settle(() => undefined);
+  const notes = within(openMore()).getByRole('link', { name: 'Notes' });
+  await settle(() => { fireEvent.click(notes); });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
   await waitFor(() => { expect(orgReads()).toBe(before + 1); });
 });
@@ -530,7 +537,8 @@ test('leaving with nothing changed reads the organization no more', async () => 
   setup(meOf(ACCESS.admin));
   await table();
   const before = orgReads();
-  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  const notes = within(openMore()).getByRole('link', { name: 'Notes' });
+  await settle(() => { fireEvent.click(notes); });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
   await settle(() => undefined);
   expect(orgReads()).toBe(before);
