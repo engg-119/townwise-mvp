@@ -1,14 +1,17 @@
 import { Link, type Href } from 'expo-router';
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import type { Calendar, TownEvent } from '../analytics/api';
 import { noteWords } from '../analytics/panel';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase, vsUsualDayPhrase,
+  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, forecastPhrase, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase,
+  vsUsualDayPhrase,
   type PastDay, type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
+import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { useBreakpoint } from '../hooks';
 import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
@@ -25,6 +28,9 @@ import { Block } from './Block';
 // left out and only the calendar shows. Term and season periods span weeks, so they show once under the headline
 // with their whole span and sources, not in each day.
 //
+// With a published forecast, the first row is each day's Forecast, as This month's grid gives it (owner request,
+// 2026-11-15): "About 90 guests, 68 to 112", Closed or Booked, or "No forecast" for a day the run doesn't cover; with
+// none published there is no Forecast row, so Home still never shows a guess of its own.
 // From 1024px the week is a strip, one column a day, with today's column, the first, raised: the day (and its own figure), then
 // rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
 // figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
@@ -73,6 +79,12 @@ function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
   return <View style={styles.cell}><EventLines events={row.events} /><NoteLines notes={row.notes} /></View>;
 }
 
+/** A day's published forecast, its figure bold, or "No forecast". */
+function ForecastCell(props: { day: ForecastDay | undefined }): React.JSX.Element {
+  const phrase = forecastPhrase(props.day);
+  return phrase === null ? <Mono tone="text3">No forecast</Mono> : <Mono tone="white"><PhraseParts phrase={phrase} /></Mono>;
+}
+
 /** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */
 export function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
   const { day, metric } = props;
@@ -117,10 +129,11 @@ function Bar(props: { value: number | null; top: number }): React.JSX.Element {
 }
 
 /** The week as a strip of seven columns (from 1024px). */
-function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
-  const { week, metric, history } = props;
+function WeekStrip(props: { week: Week; metric: Metric; history: boolean; forecast: ReadonlyMap<string, ForecastDay> | null }): React.JSX.Element {
+  const { week, metric, history, forecast } = props;
   const top = Math.max(0, ...week.rows.map((row) => row.lastYear.value ?? 0));
   const rows: { key: string; label: string; cell: (row: WeekRow) => React.ReactNode }[] = [
+    ...(forecast === null ? [] : [{ key: 'forecast', label: 'Forecast', cell: (row: WeekRow) => <ForecastCell day={forecast.get(row.date)} /> }]),
     { key: 'calendar', label: 'On the calendar', cell: (row) => <CalendarCell row={row} /> },
     ...(history ? [{
       key: 'lastYear', label: 'Last year',
@@ -153,10 +166,11 @@ function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): Rea
 }
 
 /** The week as a table, a row a day (below 1024px). */
-function WeekTable(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
-  const { week, metric, history } = props;
+function WeekTable(props: { week: Week; metric: Metric; history: boolean; forecast: ReadonlyMap<string, ForecastDay> | null }): React.JSX.Element {
+  const { week, metric, history, forecast } = props;
   const columns: Column[] = [
     { key: 'day', label: 'Day', flex: 0.8 },
+    ...(forecast === null ? [] : [{ key: 'forecast', label: 'Forecast', flex: 1.4 }]),
     { key: 'calendar', label: 'On the calendar', flex: 2 },
     ...(history ? [{ key: 'lastYear', label: 'Last year', flex: 1.6 }] : []),
     ...(history && week.twoYears ? [{ key: 'twoYears', label: 'Two years ago', flex: 1.6 }] : []),
@@ -166,6 +180,7 @@ function WeekTable(props: { week: Week; metric: Metric; history: boolean }): Rea
     selected: row.isToday,
     cells: {
       day: <DayHead row={row} metric={metric} />,
+      forecast: forecast === null ? null : <ForecastCell day={forecast.get(row.date)} />,
       calendar: <CalendarCell row={row} />,
       lastYear: <PastCell day={row.lastYear} metric={metric} />,
       twoYears: <PastCell day={row.twoYearsAgo} metric={metric} />,
@@ -174,9 +189,17 @@ function WeekTable(props: { week: Week; metric: Metric; history: boolean }): Rea
   return <DataTable label="This week, day by day" columns={columns} rows={rows} />;
 }
 
-export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric; history: boolean }): React.JSX.Element {
+export function ThisWeek(props: {
+  week: Week; calendar: Calendar; metric: Metric; history: boolean;
+  /** The published forecast, when there is one; null while it loads, if it fails, or with none published. */
+  forecast: ForecastWindow | null;
+}): React.JSX.Element {
   const { week, calendar, metric, history } = props;
   const { desktop } = useBreakpoint();
+  const forecast = useMemo(
+    () => (props.forecast === null ? null : new Map(props.forecast.days.map((day): [string, ForecastDay] => [day.date, day]))),
+    [props.forecast],
+  );
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
 
   return (
@@ -190,7 +213,9 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
           </View>
         ))}
       </Stack>
-      {desktop ? <WeekStrip week={week} metric={metric} history={history} /> : <WeekTable week={week} metric={metric} history={history} />}
+      {desktop
+        ? <WeekStrip week={week} metric={metric} history={history} forecast={forecast} />
+        : <WeekTable week={week} metric={metric} history={history} forecast={forecast} />}
       <Stack gap={8}>
         {history ? <Mono tone="text3">{LAST_YEAR_FOOTNOTE}</Mono> : null}
         {history && desktop ? <Mono tone="text3">Bars show last year’s days, scaled to the busiest of them.</Mono> : null}

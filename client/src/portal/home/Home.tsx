@@ -7,11 +7,13 @@ import { fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } fr
 import { dayContext, ruleSchedules } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { byDate, decodeHistory } from '../analytics/history';
-import { homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput } from '../analytics/week';
+import {
+  forecastRange, homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
+} from '../analytics/week';
 import { fetchForecast } from '../estimates/api';
 import { useBreakpoint, useLoad } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
-import { localToday, monthRange } from '../locations/dates';
+import { localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
 import { formatCount } from '../format';
 import { LoadFailure } from '../locations/parts';
@@ -100,7 +102,8 @@ function HomeView(props: {
   const { api } = usePortal();
   // This month's published forecast, on its own: while it loads or when it fails, Home shows no forecast figure and
   // the lead keeps the not-published line.
-  const forecastRead = useLoad(useCallback(() => fetchForecast(api, locationId, monthRange(today.slice(0, 7))), [api, locationId, today])).state;
+  // It covers This week's seven days too, which can run into next month.
+  const forecastRead = useLoad(useCallback(() => fetchForecast(api, locationId, forecastRange(today)), [api, locationId, today])).state;
   const forecast = forecastRead.status === 'ready' ? forecastRead.data : null;
   // A published run that doesn't cover this month is still published, so the line would be wrong there.
   const notPublished = forecast === null || (!forecast.available && forecast.reason === 'no_published_forecast');
@@ -147,7 +150,7 @@ function HomeView(props: {
           readOnlyId={readOnlyId}
         />
       )}
-      <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
+      <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} />
       <BlockRow
         items={[
           {

@@ -2,12 +2,14 @@ import { dayContext, EMPTY_CONTEXT, type DayContext } from '../../../src/portal/
 import { byDate, decodeHistory, type DayRecord } from '../../../src/portal/analytics/history';
 import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, homeCalendarRange, lastWeekComparison, lastWeekLine, lastYearDayPhrase,
+  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, forecastPhrase, forecastRange, homeCalendarRange, lastWeekComparison, lastWeekLine,
+  lastYearDayPhrase,
   lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
   nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import { addDays } from '../../../src/portal/locations/dates';
 import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { forecastDay } from '../calendar/fakes';
 
 // Home's computations (home.md 2, 5.6), on synthetic days only. Explainability: every comparison says how many days
 // it is over, and "last year" is the same weekday 52 weeks earlier. Honesty: no figure for a day after the last day
@@ -39,6 +41,27 @@ describe('weeks', () => {
     // This week's seven days from Nov 30, 2026 end in December, and from Sunday, Nov 29 too.
     expect(homeCalendarRange('2026-11-30').to).toBe('2026-12-06');
     expect(homeCalendarRange('2026-11-29').to).toBe('2026-12-05');
+  });
+
+  test('the forecast is read for this month and This week’s seven days, which can run into next month', () => {
+    expect(forecastRange('2026-11-05')).toEqual({ from: '2026-11-01', to: '2026-11-30' });
+    expect(forecastRange('2026-11-29')).toEqual({ from: '2026-11-01', to: '2026-12-05' });
+  });
+
+  test('a day’s published forecast in This week, its figure strong, as This month gives it (owner request)', () => {
+    expect(forecastPhrase(undefined)).toBeNull();
+    const open = forecastPhrase(forecastDay({ date: '2026-11-05', low: 67.6, mid: 90.4, high: 112.2 }));
+    if (open === null) throw new Error('no phrase');
+    expect(plainOf(open)).toBe('About 90 guests, 67 to 113');
+    expect(open[0]).toEqual({ strong: 'About 90 guests' });
+    expect(forecastPhrase(forecastDay({ date: '2026-11-15', status: 'closed', low: null, mid: null, high: null }))).toEqual(['Closed']);
+    const yours = forecastDay({
+      date: '2026-11-16', status: 'booked', low: null, mid: null, high: null, noteGuests: 40,
+      reasons: [{ kind: 'note', label: 'Your buyout', effectPct: null, sources: [], note: { id: 'n1', guests: 40, outcome: 'booked' } }],
+    });
+    expect(forecastPhrase(yours)).toEqual(['Booked: a private buyout, ', { strong: '40 guests' }]);
+    expect(forecastPhrase({ ...yours, reasons: [] })).toEqual(['Booked for a private event']);
+    expect(forecastPhrase(forecastDay({ date: '2026-11-17', low: null, mid: null, high: null }))).toBeNull();
   });
 
   test('ranges without a year', () => {

@@ -71,6 +71,13 @@ export function homeCalendarRange(today: string): { from: string; to: string } {
   return { from, to: monthEnd > last ? monthEnd : last };
 }
 
+/** The days Home reads the forecast for: this month, and This week's seven days from today when they run past it. */
+export function forecastRange(today: string): { from: string; to: string } {
+  const month = monthRange(today.slice(0, 7));
+  const last = addDays(today, 6);
+  return { from: month.from, to: month.to > last ? month.to : last };
+}
+
 export interface HomeInput {
   today: string;
   byDate: ReadonlyMap<string, DayRecord>;
@@ -252,6 +259,23 @@ export function summaryLabel(summary: WeekSummary): string {
   const range = `${shortDate(summary.from).replace(/, \d{4}$/, '')} to ${shortDate(summary.to)}`;
   const days = summary.days === 7 ? 'From all 7 days.' : `From ${formatCount(summary.days)} of its 7 days.`;
   return `Same 7 days last year, ${range}. ${days}`;
+}
+
+/**
+ * A day's published forecast in This week (owner request, 2026-11-15), as This month's grid reads it, the figure strong:
+ * "About 90 guests, 68 to 112", "Closed", "Booked: a private buyout, 40 guests"; null when the run has no figure for it.
+ */
+export function forecastPhrase(day: ForecastDay | undefined): Phrase | null {
+  if (day === undefined) return null;
+  if (day.status === 'closed') return ['Closed'];
+  if (day.status === 'booked') {
+    if (!yoursDid(day, 'booked')) return ['Booked for a private event'];
+    return day.noteGuests > 0 ? ['Booked: a private buyout, ', strong(plural(day.noteGuests, 'guest', 'guests'))] : ['Booked: a private buyout'];
+  }
+  if (day.low === null || day.mid === null || day.high === null) return null;
+  const mid = Math.round(day.mid);
+  // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
+  return [strong(`About ${plural(mid, 'guest', 'guests')}`), `, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`];
 }
 
 /** "Busiest last year: Sat, Nov 22, 2025 (253 guests).", the figure strong. */
