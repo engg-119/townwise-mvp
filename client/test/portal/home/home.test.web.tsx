@@ -137,7 +137,7 @@ test('the last week chart prints its key and scale; the history heatmap is one p
 test('honesty: with history ending before this week, no day of this week carries a figure, and nothing reads as a forecast', async () => {
   const setItem = jest.spyOn(Storage.prototype, 'setItem');
   await renderAt(portal(meOf(ACCESS.member), DAYS.filter((day) => day.date <= '2026-10-24')));
-  for (const date of weekDates('2026-11-02')) {
+  for (const date of weekDates('2026-11-05')) {
     const cell = document.querySelector(`[data-testid="home-day-${date}"]`);
     if (cell === null) throw new Error(`no row for ${date}`);
     expect(cell.textContent.replace(dayMonth(date), '')).not.toMatch(/\d/);
@@ -151,25 +151,29 @@ test('honesty: with history ending before this week, no day of this week carries
   expect(setItem).not.toHaveBeenCalled();
 });
 
-test('with this week partly in, only its past days carry a figure', async () => {
+test('this week starts today, and none of its days carries a figure before its data is in', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
-  const figures = weekDates('2026-11-02').map((date) => {
+  const strip = screen.getByRole('table', { name: 'This week, day by day' });
+  const heads = within(strip).getAllByRole('columnheader').map((cell) => cell.textContent);
+  expect(heads[0]).toMatch(/^Thu.*Nov 5.*Today/);
+  expect(heads[6]).toMatch(/^Wed.*Nov 11/);
+  // Yesterday is history, not this week.
+  expect(document.querySelector('[data-testid="home-day-2026-11-04"]')).toBeNull();
+  const figures = weekDates('2026-11-05').map((date) => {
     const cell = document.querySelector(`[data-testid="home-day-${date}"]`);
     return /\d+ guests/.test(cell?.textContent ?? '');
   });
-  expect(figures).toEqual([true, true, true, false, false, false, false]);
+  expect(figures).toEqual([false, false, false, false, false, false, false]);
   expect(pageText()).not.toMatch(FORECAST_WORDING);
 });
 
 // Tue, Nov 3, 2026 had 1 guest: a tenth of its Tuesdays' typical guests or fewer (spec D32).
 const NEAR_EMPTY = DAYS.map((day) => (day.date === '2026-11-03' ? { ...day, guests: 1, netSalesCents: 2000 } : day));
 
-test('this week’s own near-empty day reads Likely closed (spec D32), in This month’s words', async () => {
+test('a near-empty day before today reads Likely closed (spec D32) in This month; This week starts today, without it', async () => {
   await renderAt(portal(meOf(ACCESS.member), NEAR_EMPTY));
-  const tuesday = screen.getByTestId('home-day-2026-11-03');
-  expect(within(tuesday).getByText('Likely closed (1 guest recorded)')).toBeTruthy();
-  expect(within(tuesday).queryByText(/^1 guests?$/)).toBeNull();
-  expect(cellOf('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. This week. Likely closed (1 guest recorded).');
+  expect(screen.queryByTestId('home-day-2026-11-03')).toBeNull();
+  expect(cellOf('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. Likely closed (1 guest recorded).');
 });
 
 test('today’s partial upload is never likely closed (D32): only a day before the town’s today can be', async () => {
@@ -187,7 +191,6 @@ test('a business rule’s schedule with fewer guests (D31) says a near-empty day
   await renderAt(api);
   await waitFor(() => { expect(cellOf('2026-11-03').getAttribute('aria-label')).not.toMatch(/Likely closed/); });
   expect(cellOf('2026-11-03').textContent).toBe('31');
-  expect(within(screen.getByTestId('home-day-2026-11-03')).queryByText(/Likely closed/)).toBeNull();
   expect(api.calls.filter((call) => call.path === `${PATH}/rules`)).toHaveLength(1);
   // The hover tooltip reads the same rules, so it agrees with the cell.
   fireEvent(cellOf('2026-11-03'), pointer('pointerover', 'mouse'));
@@ -198,7 +201,7 @@ test('at a glance: last year’s same week, last week against it, and the next e
   await renderAt(portal(meOf(ACCESS.member)));
   const glance = screen.getByRole('region', { name: 'At a glance' });
   expect(within(glance).getByText('740')).toBeTruthy();
-  expect(within(glance).getByText('Same week last year, Mon, Nov 3 to Sun, Nov 9, 2025. From all 7 days.')).toBeTruthy();
+  expect(within(glance).getByText('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.')).toBeTruthy();
   expect(within(glance).getByText('814')).toBeTruthy();
   expect(within(glance).getByText('+10% against the same week last year (740), over all 7 days.')).toBeTruthy();
   expect(within(glance).getByText('Sample game')).toBeTruthy();
@@ -229,9 +232,9 @@ test('the month calendar: the arrow keys and a pointer preview the days beside t
   expect(within(detail).getByRole('link', { name: 'Open this day on Orders' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-05');
   expect(cell('2026-11-05').getAttribute('aria-selected')).toBe('true');
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-  expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. Veterans Day.');
+  expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. This week. Veterans Day.');
   // A past day says its stored figure; a later one, with no published forecast, has none.
-  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. This week. 110 guests.');
+  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. 110 guests.');
   expect(cell('2026-11-03').textContent).toBe('3110');
   expect(cell('2026-11-11').textContent).toBe('11');
 

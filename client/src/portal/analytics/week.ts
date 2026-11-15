@@ -36,9 +36,9 @@ export function mondayOf(date: string): string {
   return addDays(date, -rowOf(date));
 }
 
-/** Monday to Sunday. */
-export function weekDates(monday: string): string[] {
-  return Array.from({ length: 7 }, (_, index) => addDays(monday, index));
+/** Seven days from `start`, in order: Monday to Sunday from a Monday. */
+export function weekDates(start: string): string[] {
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
 }
 
 export function sameWeekdayYearsAgo(date: string, years: number): string {
@@ -58,16 +58,16 @@ export function dayMonthRange(start: string, end: string): string {
 }
 
 /**
- * The calendar range Home asks for: from two years before this week's Monday, less the 4 weeks either side that
- * "usual" reads, to the later of this month's last day and this week's Sunday.
+ * The calendar range Home asks for: from two years before this week's Monday (Last week and the late-week share read
+ * Monday weeks), less the 4 weeks either side that "usual" reads, to the later of this month's last day and This
+ * week's last day, six days from today.
  */
 export function homeCalendarRange(today: string): { from: string; to: string } {
-  const monday = mondayOf(today);
-  const back = addDays(monday, -(2 * YEAR_DAYS + 28));
+  const back = addDays(mondayOf(today), -(2 * YEAR_DAYS + 28));
   const from = back < EARLIEST_DATE ? EARLIEST_DATE : back;
   const monthEnd = monthRange(today.slice(0, 7)).to;
-  const sunday = addDays(monday, 6);
-  return { from, to: monthEnd > sunday ? monthEnd : sunday };
+  const last = addDays(today, 6);
+  return { from, to: monthEnd > last ? monthEnd : last };
 }
 
 export interface HomeInput {
@@ -158,13 +158,16 @@ export interface WeekSummary {
   quietest: string | null;
 }
 
+/** This week in {Town}: the seven days from today, today first (owner request, 2026-11-15). */
 export interface ThisWeek {
-  monday: string;
-  sunday: string;
+  /** Today. */
+  from: string;
+  /** Six days from today. */
+  to: string;
   rows: WeekRow[];
   /** Whether any of the seven days two years ago has data, so the column shows. */
   twoYears: boolean;
-  /** Null when last year's week has fewer than 5 days of data. */
+  /** Null when fewer than 5 of the same 7 days last year have data. */
   summary: WeekSummary | null;
   /** The first town event or holiday of the week, and how many others there are. */
   firstEvent: { title: string; date: string; more: number } | null;
@@ -196,8 +199,7 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
 }
 
 export function thisWeek(input: HomeInput): ThisWeek {
-  const monday = mondayOf(input.today);
-  const dates = weekDates(monday);
+  const dates = weekDates(input.today);
   const rows = dates.map((date): WeekRow => {
     const value = figureOf(date, input);
     return {
@@ -230,8 +232,8 @@ export function thisWeek(input: HomeInput): ThisWeek {
     }
   }
   return {
-    monday,
-    sunday: addDays(monday, 6),
+    from: input.today,
+    to: addDays(input.today, 6),
     rows,
     twoYears: rows.some((row) => row.twoYearsAgo.value !== null),
     summary: summaryOf(rows.map((row) => row.lastYear)),
@@ -240,11 +242,11 @@ export function thisWeek(input: HomeInput): ThisWeek {
   };
 }
 
-/** "Same week last year, Mon, Nov 3 to Sun, Nov 9, 2025. From all 7 days." */
+/** "Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days." */
 export function summaryLabel(summary: WeekSummary): string {
   const range = `${shortDate(summary.from).replace(/, \d{4}$/, '')} to ${shortDate(summary.to)}`;
   const days = summary.days === 7 ? 'From all 7 days.' : `From ${formatCount(summary.days)} of its 7 days.`;
-  return `Same week last year, ${range}. ${days}`;
+  return `Same 7 days last year, ${range}. ${days}`;
 }
 
 /** "+9% against that year’s usual for those days, compared over 7 days." */
@@ -547,18 +549,18 @@ function monthCellLabel(date: string, events: readonly TownEvent[], notes: numbe
 /**
  * This month as week rows, Monday first; null where a row's day is in another month. Without `figures` no cell has a
  * figure; with them, a day before today has its stored figure and a day from today on only the published forecast's.
+ * "This week" marks This week in {Town}'s days: the seven from today.
  */
 export function monthGrid(today: string, context: DayContext, figures?: MonthFigures): (MonthCell | null)[][] {
   const { from, to } = monthRange(today.slice(0, 7));
-  const monday = mondayOf(today);
-  const sunday = addDays(monday, 6);
+  const last = addDays(today, 6);
   const rows: (MonthCell | null)[][] = [];
   for (let start = mondayOf(from); start <= to; start = addDays(start, 7)) {
     rows.push(weekDates(start).map((date) => {
       if (date < from || date > to) return null;
       const events = dayEventsOf(context, date);
       const notes = notesOf(context, date).length;
-      const inWeek = date >= monday && date <= sunday;
+      const inWeek = date >= today && date <= last;
       const isToday = date === today;
       const found = cellFigure(date, figures);
       return {

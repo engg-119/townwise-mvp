@@ -14,7 +14,8 @@ import { Eyebrow, Small } from '../ui/text';
 import { BlockRow } from './Block';
 
 // At a glance (spec P11): the three answers Home leads with on a Monday, each a tile with one big figure or title.
-// This week, last year: the same week last year's total, against that year's usual, its busiest and quietest days.
+// This week, last year: the total of the same 7 days last year (This week's days, today first), against that year's
+// usual, and their busiest and quietest days.
 // Last week: its total against the same days last year. Next on the calendar: the next holiday or town event from
 // today. Every figure is history, never a guess; the cards below carry the detail, the chart and the tables.
 
@@ -43,7 +44,7 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric }): React.JSX.Elem
   if (summary === null) {
     return (
       <Tile eyebrow="This week, last year">
-        <Small>Fewer than 5 days of the same week last year have data, so there is no total to show.</Small>
+        <Small>Fewer than 5 of the same 7 days last year have data, so there is no total to show.</Small>
       </Tile>
     );
   }

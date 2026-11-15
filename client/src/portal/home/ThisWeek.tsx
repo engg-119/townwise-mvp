@@ -17,14 +17,14 @@ import { Stack } from '../ui/layout';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 
-// This week (spec P11): Monday to Sunday of the viewer's week, each day with what is on the town calendar and the
-// location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
+// This week (spec P11): the seven days from today, today first (owner request, 2026-11-15), each day with what is on
+// the town calendar and the location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
 // tile At a glance. No figure is ever shown for a day after the last day of data: a day prints its own figure only
 // when it is past and has data, or “Likely closed (1 guest recorded)” when it was near empty (spec D32), as This month says. With no history at all (`history` false) the past-year rows and the footnote are
 // left out and only the calendar shows. Term and season periods span weeks, so they show once under the headline
 // with their whole span and sources, not in each day.
 //
-// From 1024px the week is a strip, one column a day, with today's column raised: the day (and its own figure), then
+// From 1024px the week is a strip, one column a day, with today's column, the first, raised: the day (and its own figure), then
 // rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
 // figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
 // day-by-day table, which stacks at 640px and below.

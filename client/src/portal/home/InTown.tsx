@@ -4,7 +4,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { fmt1, side } from '../../marketing/format';
 import { theme } from '../../theme';
-import { dayMonth, dayMonthRange, mondayOf } from '../analytics/week';
+import { dayMonth, dayMonthRange } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
 import { fetchPeopleInTown, monthRange, type PeopleInTown, type PeoplePeriod, type TermState, type Weekday } from '../estimates/api';
 import { dayText, historyLine, noNumberLine, rangeText } from '../estimates/format';
@@ -47,9 +47,9 @@ export interface TownRun {
 export interface InTownReading {
   /** The run with today in it. */
   now: TownRun | null;
-  /** Runs that start after today and by this week's Sunday. */
+  /** Runs that start after today and within This week's seven days from today. */
   thisWeek: TownRun[];
-  /** Runs that start after this week. */
+  /** Runs that start after those seven days. */
   later: TownRun[];
   /** False for a town with no term dates at all (not a college town): there is no term to read. */
   termed: boolean;
@@ -85,14 +85,14 @@ function runsOf(periods: readonly PeoplePeriod[]): TownRun[] {
 /** The month's people in town from today on, grouped by time. */
 export function inTownReading(window: PeopleInTown, today: string): InTownReading {
   const runs = runsOf(window.periods);
-  const sunday = addDays(mondayOf(today), 6);
+  const last = addDays(today, 6);
   const now = runs.find((run) => run.from <= today && today <= run.to) ?? null;
   const ahead = runs.filter((run) => run.from > today);
   const ids = [...new Set([...(now?.sourceIds ?? []), ...ahead.flatMap((run) => run.sourceIds)])];
   return {
     now,
-    thisWeek: ahead.filter((run) => run.from <= sunday),
-    later: ahead.filter((run) => run.from > sunday),
+    thisWeek: ahead.filter((run) => run.from <= last),
+    later: ahead.filter((run) => run.from > last),
     termed: window.town.kind === 'college' || runs.some((run) => run.state !== 'unknown'),
     counted: window.periods.some((period) => period.headcount !== null),
     sources: ids.flatMap((id) => {

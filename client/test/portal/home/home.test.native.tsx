@@ -136,12 +136,12 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Ask TownwiseAI' })).toBeTruthy();
 
-  // This week: the summary of last year's same week, then each day.
+  // This week: the summary of the same 7 days last year, then each day from today.
   expect(screen.getByRole('heading', { name: 'What’s on the calendar, and how this week went before' })).toBeTruthy();
   expect(screen.getByText('740')).toBeTruthy();
-  expect(screen.getByText('Same week last year, Mon, Nov 3 to Sun, Nov 9, 2025. From all 7 days.')).toBeTruthy();
+  expect(screen.getByText('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.')).toBeTruthy();
   expect(screen.getByText('Busiest last year: Sat, Nov 8, 2025.')).toBeTruthy();
-  expect(screen.getByText('On the calendar this week: Sample game (Saturday).')).toBeTruthy();
+  expect(screen.getByText('On the calendar this week: Sample game (Saturday), and 1 more.')).toBeTruthy();
   // On Saturday's row, and as the next event at a glance.
   expect(screen.getAllByText('Sample game')).toHaveLength(2);
   expect(screen.getByText('Sat, Nov 7, 2026, in 2 days')).toBeTruthy();
@@ -155,8 +155,8 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getAllByText('Nothing listed').length).toBeGreaterThan(0);
   expect(screen.getByText(LAST_YEAR_FOOTNOTE)).toBeTruthy();
   expect(screen.getByText('Hanover’s researched calendar covers Sep 14, 2026 to Jan 5, 2027 so far, plus US federal holidays.')).toBeTruthy();
-  // This week's own days carry a figure only up to the last day of data.
-  expect(screen.getAllByText('110 guests')).toHaveLength(3);
+  // This week starts today, after the last day of data, so none of its days has a figure of its own.
+  expect(screen.queryByText('110 guests')).toBeNull();
 
   // Bar order: how many items the soonest order holds, its supplier and deadline, how many orders there are, what the
   // board lacks, no inputs, and one line of history.
@@ -233,7 +233,7 @@ test('tapping a day opens the calendar at that day', async () => {
   expect(await screen.findByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
   expect(screen.getByText('Tap a day to open it in the Calendar.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Open the calendar' })).toBeTruthy();
-  await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. Veterans Day.'));
+  await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. This week. Veterans Day.'));
   expect(router.getPathname()).toBe('/locations/l1/calendar');
   expect(router.getSearchParams()).toMatchObject({ day: '2026-11-11' });
 });
@@ -242,7 +242,7 @@ test('with a published forecast, each day from today shows its figure and the le
   const days = [];
   for (let day = 5; day <= 30; day += 1) days.push(forecastDay({ date: `2026-11-${String(day).padStart(2, '0')}` }));
   await renderApp('/locations/l1', portal({ forecast: forecastOf(days) }));
-  expect(await screen.findByLabelText('Wed, Nov 11, 2026. Forecast about 212 guests, 180 to 240. Veterans Day.')).toBeTruthy();
+  expect(await screen.findByLabelText('Wed, Nov 11, 2026. This week. Forecast about 212 guests, 180 to 240. Veterans Day.')).toBeTruthy();
   expect(screen.queryByText(FORECAST_LINE)).toBeNull();
   expect(screen.queryByText('In progress')).toBeNull();
   // The selected day (today) gives its forecast.
@@ -257,7 +257,7 @@ test('a term period shows once with its span and source; the one-day event takes
   await renderApp('/locations/l1', portal({
     calendar: { events: [term('2024-09-16', '2024-11-19'), term('2025-09-15', '2025-11-18'), term('2026-09-14', '2026-11-17'), ...EVENTS] },
   }));
-  expect(await screen.findByText('On the calendar this week: Sample game (Saturday).')).toBeTruthy();
+  expect(await screen.findByText('On the calendar this week: Sample game (Saturday), and 1 more.')).toBeTruthy();
   expect(screen.getByText('Fall term classes. Term, Sep 14 to Nov 17, 2026.')).toBeTruthy();
   // Not in any day's cell, this year or past years: the bare title appears nowhere.
   expect(screen.queryByText('Fall term classes')).toBeNull();
@@ -388,7 +388,7 @@ test('last week: no recent days, no last year, and a partial week that names its
   await renderApp('/locations/l1', portal({ days: DAYS.filter((day) => day.date >= '2026-01-01') }));
   expect(await screen.findByText('No data for the same week last year, so there is nothing to compare yet.')).toBeTruthy();
   // No past year, so no summary and no "two years ago" column; the footnote still defines the terms.
-  expect(screen.queryByText(/^Same week last year/)).toBeNull();
+  expect(screen.queryByText(/^Same 7 days last year/)).toBeNull();
   expect(screen.queryByText('Two years ago')).toBeNull();
   await cleanup();
 
