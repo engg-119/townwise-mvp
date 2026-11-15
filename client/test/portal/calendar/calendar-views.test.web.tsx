@@ -450,6 +450,35 @@ test('a block past the grid’s last day reads its own days, keeps the covered d
   await waitFor(() => { expect(forecastReads(fake).filter((path) => path === NOVEMBER_FORECAST)).toHaveLength(2); });
 });
 
+test('a day past the grid’s edge inside a block that crosses it moves the grid’s month, read once with the block dimmed', async () => {
+  setToday('2026-11-15');
+  const { api, fake } = setup();
+  await renderAt('/locations/l1/calendar?view=week', api, 'Nov 15 to 21, 2026');
+  for (const label of ['Nov 22 to 28, 2026', 'Nov 29 to Dec 5, 2026', 'Dec 6 to 12, 2026']) {
+    fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
+    expect(await screen.findByRole('grid', { name: label })).toBeTruthy();
+  }
+  await waitFor(() => { expect(screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' }).getAttribute('aria-busy')).toBe('false'); });
+  expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-12-06&to=2026-12-12`]);
+  const releases = (['calendar', 'forecast', 'owner-calendars/events'] as const).map((route) => fake.hold(route, '2026-11-30'));
+  const reads = fake.paths.length;
+  // Dec 9 is past November's grid (Oct 26 to Dec 6), so the grid's month becomes December, whose grid holds the block.
+  fireEvent.click(cell('2026-12-09'));
+  await waitFor(() => { expect(day()).toBe('2026-12-09'); });
+  await waitFor(() => { expect(fake.paths.length).toBe(reads + 3); });
+  expect([...fake.paths.slice(reads)].sort()).toEqual([
+    `${PATH}/calendar?from=2026-11-30&to=2027-01-10`, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`,
+    `${PATH}/owner-calendars/events?from=2026-11-30&to=2027-01-10`,
+  ]);
+  // The same days stay on screen, with the kept reads' data, dimmed while December's grid reads.
+  const grid = screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' });
+  expect(grid.getAttribute('aria-busy')).toBe('true');
+  expect(cell('2026-12-09').textContent).toContain('212');
+  await act(async () => { for (const release of releases) release(); await Promise.resolve(); });
+  await waitFor(() => { expect(screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' }).getAttribute('aria-busy')).toBe('false'); });
+  expect(fake.paths).toHaveLength(reads + 3);
+});
+
 test('Week inside the grid reads nothing more: the block shows its data at once', async () => {
   setToday('2026-11-15');
   const { api, fake } = setup();

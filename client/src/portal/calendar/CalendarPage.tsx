@@ -54,7 +54,7 @@ import { YourCalendars } from './YourCalendars';
 // YourCalendars.tsx: part of the first load, so the button's name never changes after the page shows, and its failure
 // leaves the page showing), and over the shown view's range (grid.ts readRangeFor: the grid's, and the week's own days
 // only when they run past the grid's) its town calendar, its stored days (the past part only), its calendars' stored
-// events and its forecast (one read of at most 42 days each), keyed by the range, so a switch or a day inside it reads
+// events and its forecast (one read of at most 42 days each), keyed by the range, so a switch or a day keeping it reads
 // nothing. On a change of range the new grid or week shows at once, dimmed, with the days the kept reads cover and
 // the rest pending until the new reads land. The forecast read stands alone, and the stored events' failure is caught
 // inside the range's read: either failing leaves the page showing, without them, with Try again for that read only. A
