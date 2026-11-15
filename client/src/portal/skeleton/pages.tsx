@@ -182,6 +182,7 @@ export function SalesSkeleton(props: LabelProps): React.JSX.Element {
         <Columns
           main={(
             <Stack>
+              {Platform.OS === 'web' ? <SkeletonChart height={340} /> : null}
               <SkeletonTable columns={[{ flex: 1.4 }, { numeric: true }, { numeric: true }, { numeric: true }]} rows={6} stack={false} />
               <SkeletonText width="80%" />
             </Stack>
