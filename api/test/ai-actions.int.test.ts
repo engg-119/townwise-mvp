@@ -868,7 +868,11 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     const fileId = await seedStored(locationId, { raw: salesCsv(days), by: who });
     answers = [salesAnswer(days, { events: [EVENT, { ...EVENT, title: 'Brunch', startDate: '2026-06-15', endDate: '2026-06-15' }] })];
     await readAs(who, locationId, fileId);
-    return { fileId, outcome: await outcomeOf(fileId) };
+    const outcome = await outcomeOf(fileId);
+    // The read wrote its days and its summary item. Should it ever not (two CI runs on 2026-11-15 found no uploadId, on a
+    // laptop runner short of memory), the failure shows the read's record rather than a BSON error at the first oid().
+    expect(typeof outcome.uploadId === 'string' && typeof outcome.itemId === 'string', JSON.stringify(await aiOf(fileId))).toBe(true);
+    return { fileId, outcome };
   }
 
   it('removes the notes (an edited one too), the upload with the days it still holds, and the summary item; leaves a started calibration', async () => {
