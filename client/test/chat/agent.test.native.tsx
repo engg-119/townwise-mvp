@@ -406,7 +406,9 @@ describe('the side panel', () => {
   });
 
   test('questions with what each answer does; an answer saves and says what it did', async () => {
-    at(1280);
+    // The sheet below 1024px keeps the questions over the landing (from 1024px the column beside the landing leaves
+    // them to it), so the panel's own heading, count and Planned tag show here.
+    at(800);
     const { chat } = await renderAgent(meOf(ACCESS.member));
     const side = await openPanel();
     expect(within(side).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
@@ -527,7 +529,10 @@ describe('the side panel', () => {
     expect(await within(side).findByText('Couldn’t load TownwiseAI’s questions.')).toBeTruthy();
     chat.panelError = null;
     await fireEvent.press(first(within(side).getAllByRole('button', { name: 'Try again' })));
-    expect(await within(side).findByText('Are you closed on Mondays?')).toBeTruthy();
+    // Read, they show under the landing's chips, and the column beside it leaves them out.
+    expect(await within(await screen.findByTestId('chat-landing-questions')).findByText('Are you closed on Mondays?')).toBeTruthy();
+    expect(within(side).queryByText('Couldn’t load TownwiseAI’s questions.')).toBeNull();
+    expect(within(side).queryByText('Are you closed on Mondays?')).toBeNull();
   });
 });
 
@@ -755,9 +760,10 @@ describe('view-as', () => {
     disabled('New chat');
     disabled('Which days last month were unusual?');
     await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
-    const side = await openPanel();
+    await openPanel();
     disabled('Yes, closed Mondays');
-    await fireEvent.press(within(side).getByRole('button', { name: 'Yes, closed Mondays' }));
+    // Beside the landing, the cards are under its chips; the panel's column leaves them out.
+    await fireEvent.press(within(screen.getByTestId('chat-landing-questions')).getByRole('button', { name: 'Yes, closed Mondays' }));
     // Reading is allowed: the target's past conversation opens, and its actions are disabled too.
     await fireEvent.press(screen.getByRole('button', { name: 'History' }));
     disabled('Delete Earlier chat');
