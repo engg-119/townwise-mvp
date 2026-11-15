@@ -1,5 +1,5 @@
 import { Link, type Href } from 'expo-router';
-import { Fragment } from 'react';
+import { Fragment, useRef } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
@@ -9,8 +9,9 @@ import { eventLine } from '../analytics/week';
 import type { Note } from '../locations/api';
 import { Loading } from '../locations/parts';
 import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/noteRules';
-import { Actions, Button, LinkButton } from '../ui/Button';
+import { Actions, Button, LinkButton, type ButtonProps } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
+import type { PopoverAnchor } from '../ui/Popover';
 import { Heading, Mono, Small } from '../ui/text';
 import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLine } from './model';
 
@@ -22,9 +23,10 @@ import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLin
 // Source link, InlineSources, which Home's day detail shares); On the calendar (the holidays, town events and term dates Why doesn't already name, with their
 // sources, the day's notes with Edit and Delete where the API allows, the business rules whose schedule covers the day
 // with their summary and a link to Rules, where they are changed (D31), events from the location's calendars (D33) with
-// Make a note); then
-// Add an event, or the note form open in its place. Under view-as the writes are disabled in place with the
-// read-only line. It reads and writes nothing itself: the page owns the reads, the form and the dialog.
+// Make a note); then Add an event. Add an event, a note's Edit and an event's Make a note each hand the page the button
+// that was pressed, which anchors the page's note form popover (refine-calendar-and-home design decision 2), so the
+// panel never changes shape while the form is open. Under view-as the writes are disabled in place with the read-only
+// line. It reads and writes nothing itself: the page owns the reads, the form and the dialog.
 
 export const PANEL_ID = 'calendar-day';
 
@@ -71,6 +73,13 @@ export function InlineSources(props: { sources: readonly { label: string; url: s
   );
 }
 
+/** A button that hands its own host to `onPress`, so the popover it opens is anchored to it. */
+function Opener(props: Omit<ButtonProps, 'ref' | 'onPress'> & { onPress: (anchor: PopoverAnchor) => void }): React.JSX.Element {
+  const { onPress, ...button } = props;
+  const ref = useRef<React.ComponentRef<typeof View>>(null);
+  return <Button {...button} ref={ref} onPress={() => { onPress(ref); }} />;
+}
+
 /**
  * One reason under Why: its label, then what it does in words (the mark before them is hidden from screen readers,
  * which hear the same words), ending in its small inline Source links.
@@ -107,13 +116,13 @@ export function CalendarDay(props: {
   notice: string | null;
   readOnlyId: string | null;
   readOnlyText: string;
-  /** The note form, open in the panel; null when closed. */
-  form: React.ReactNode;
-  onAdd: () => void;
-  onEdit: (note: Note) => void;
+  /** Opens the note form for a new note, anchored to "Add an event". */
+  onAdd: (anchor: PopoverAnchor) => void;
+  /** Opens the note form on `note`, anchored to its Edit. */
+  onEdit: (note: Note, anchor: PopoverAnchor) => void;
   onDelete: (note: Note) => void;
-  /** Opens the note form from an event in one of the location's calendars (D33). */
-  onMakeNote: (event: ImportedEvent) => void;
+  /** Opens the note form from an event in one of the location's calendars (D33), anchored to its Make a note. */
+  onMakeNote: (event: ImportedEvent, anchor: PopoverAnchor) => void;
 }): React.JSX.Element {
   const { view, readOnlyId } = props;
   if (view === null) {
@@ -165,7 +174,7 @@ export function CalendarDay(props: {
               {note.detail === null ? null : <Small>{note.detail}</Small>}
               {note.canEdit ? (
                 <Actions>
-                  <Button variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={() => { props.onEdit(note); }} />
+                  <Opener variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={(anchor) => { props.onEdit(note, anchor); }} />
                   <Button variant="link" label="Delete" accessibilityLabel={`Delete ${name}`} {...ro} onPress={() => { props.onDelete(note); }} />
                 </Actions>
               ) : null}
@@ -188,18 +197,22 @@ export function CalendarDay(props: {
             <Small white>{`From your calendar: ${event.title}`}</Small>
             <Mono>{importedLine(event)}</Mono>
             <Actions>
-              <Button variant="link" label="Make a note" accessibilityLabel={`Make a note from ${event.title}`} {...ro} onPress={() => { props.onMakeNote(event); }} />
+              <Opener
+                variant="link"
+                label="Make a note"
+                accessibilityLabel={`Make a note from ${event.title}`}
+                {...ro}
+                onPress={(anchor) => { props.onMakeNote(event, anchor); }}
+              />
             </Actions>
           </View>
         ))}
         {view.imported.length === 0 ? null : <Small>Events from your calendar don’t change the forecast until you make a note from them.</Small>}
       </Part>
       {readOnlyId === null ? null : <ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} />}
-      {props.form ?? (
-        <Actions>
-          <Button label="Add an event" {...ro} onPress={props.onAdd} />
-        </Actions>
-      )}
+      <Actions>
+        <Opener label="Add an event" {...ro} onPress={props.onAdd} />
+      </Actions>
     </View>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocalSearchParams, useRouter } from 'expo-router';
 import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 
@@ -23,6 +23,8 @@ import { useLocation } from '../shell/LocationShell';
 import { CalendarSkeleton } from '../skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, Notice } from '../ui/feedback';
+import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
+import { Popover, type PopoverAnchor, type PopoverProps } from '../ui/Popover';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
 import { CalendarWeek } from './CalendarWeek';
@@ -53,9 +55,14 @@ import { YourCalendars } from './YourCalendars';
 // failure is caught inside the grid's read: either failing leaves the page showing, without them, with Try again for
 // that read only. A failed list read shows its own notice, whose Try again reads the list and the stored events again,
 // and the stored events' notice shows only while the list answered with a calendar, so at most one of the two shows.
-// After a note is saved or deleted the notes and the forecast read again, since the API adjusts the
-// forecast from notes on read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures
-// stay, dimmed and aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day.
+// The day panel's Add an event, a note's Edit and an event's Make a note open the note form (C6) in a popover anchored
+// to the pressed button (refine-calendar-and-home design decision 2), headed "Add an event", "Edit note" or "Make a
+// note": a press outside leaves it open; a save, Cancel, Escape, Android's back button, a 404 and any change of the
+// selected day close it; while a save runs it waits for the answer. Focus returns to the opener, or after a 404 moves
+// to the panel's notice (MessageFocus, around the panel and the popover only). After a note is saved or deleted the
+// notes and the forecast read again, since the API adjusts the forecast from notes on read (spec 14.5) and the client
+// never adds a note's guests itself; meanwhile the old figures stay, dimmed and aria-busy, and a save's notice says
+// “Saved.” until the new read says what the note did to the day.
 // Under view-as the page shows in full with its writes disabled in place. The location's own calendars (spec 16.3 P28
 // and 17, D33) are kept by the API, each an imported .ics file or a link, and their events show as "Your calendar"
 // on web and native; after one is added the list and the grid's stored events read again (never the forecast: stored
@@ -70,8 +77,17 @@ const NOTE_GONE = 'This note isn’t available.';
 /** The desktop panel beside the grid, sticky as Analytics' is. */
 const sticky = (Platform.OS === 'web' ? { position: 'sticky', top: 16 } : {}) as unknown as ViewStyle;
 
-/** A new note's `source` keys its form, so the form starts again from each stored event (`{calendarId}:{uid}`). */
+/**
+ * A new note's `source` keys its form, so the form starts again from each stored event (`{calendarId}:{uid}`); 'add' is
+ * Add an event's.
+ */
 type FormState = { mode: 'new'; draft: NoteDraft; source: string } | { mode: 'edit'; note: Note } | null;
+
+/** The note form popover's heading, which names it: by the button that opened it. */
+function formLabel(form: NonNullable<FormState>): string {
+  if (form.mode === 'edit') return 'Edit note';
+  return form.source === 'add' ? 'Add an event' : 'Make a note';
+}
 
 interface Kept<T> {
   /** The newest answer, or the last one while a read runs again; null before the first. */
@@ -115,6 +131,17 @@ async function storedEventsOf(
 /** The panel's notice: words, or the note just saved, whose notice waits for the forecast read again (savedNotice). */
 type PanelNotice = string | { savedId: string } | null;
 
+/**
+ * The note form's popover. It sits with the day panel inside a MessageFocus of their own, so once it has gone after a
+ * 404 (`takeOpenerGone`), the panel's notice, the only message there, takes focus; a page notice above the grid (no
+ * published forecast, a failed read) never does.
+ */
+function NotePopover(props: Omit<PopoverProps, 'onDismiss'> & { takeOpenerGone: () => boolean }): React.JSX.Element {
+  const { takeOpenerGone, ...popover } = props;
+  const focusMessage = useFocusMessage();
+  return <Popover {...popover} onDismiss={() => { if (takeOpenerGone()) focusMessage(); }} />;
+}
+
 export function CalendarPage(): React.JSX.Element {
   const { location } = useLocation();
   // Keyed by the location, so nothing kept from one location's reads ever shows under another's header.
@@ -141,12 +168,23 @@ function CalendarView(): React.JSX.Element {
   const [seen, setSeen] = useState(selected);
   const [rendered, setRendered] = useState(shownMonth);
   const nextShown = shownFor(shownMonth, seen, selected);
-  if (seen !== selected) setSeen(selected);
+  const [form, setForm] = useState<FormState>(null);
+  // Any change of the selected day closes the note form, including one that doesn't come through `select` (browser
+  // back or forward to another Calendar entry, or a link), so a draft never shows over another day.
+  if (seen !== selected) {
+    setSeen(selected);
+    setForm(null);
+  }
   if (nextShown !== shownMonth) setShownMonth(nextShown);
   const month = gridMonthFor(selected, nextShown, rendered);
   if (month !== rendered) setRendered(month);
   const [filters, setFilters] = useState<Filters>(ALL_FILTERS);
-  const [form, setForm] = useState<FormState>(null);
+  // The button that opened the note form, which its popover is anchored to.
+  const anchor = useRef<PopoverAnchor['current']>(null);
+  // A save is out: the popover waits for its answer.
+  const [saving, setSaving] = useState(false);
+  // A save answered 404: once the popover has gone, focus moves to the panel's notice.
+  const openerGone = useRef(false);
   const [notice, setNotice] = useState<PanelNotice>(null);
   const [deleting, setDeleting] = useState<Note | null>(null);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
@@ -239,12 +277,17 @@ function CalendarView(): React.JSX.Element {
 
   const editing = form?.mode === 'edit' ? form.note : null;
   const save = useCallback(async (body: NoteInput): Promise<Note | null> => {
+    setSaving(true);
     try {
       return editing === null ? await createNote(api, location.id, body) : await updateNote(api, location.id, editing.id, body);
     } catch (error) {
       if (!hasCode(error, 404, 'not_found')) throw error;
+      // The note's Edit goes with it once the notes read again.
+      openerGone.current = true;
       gone(NOTE_GONE);
       return null;
+    } finally {
+      setSaving(false);
     }
   }, [api, location.id, editing, gone]);
 
@@ -336,29 +379,52 @@ function CalendarView(): React.JSX.Element {
       save={save}
       onSaved={onSaved}
       onCancel={() => { setForm(null); }}
+      bare
     />
   );
+  /** Opens the note form from `pressed`, which anchors its popover. */
+  const openForm = (next: NonNullable<FormState>, pressed: PopoverAnchor): void => {
+    anchor.current = pressed.current;
+    openerGone.current = false;
+    setNotice(null);
+    setForm(next);
+  };
 
   const panel = (
-    <CalendarDay
-      view={dayPanel}
-      locationName={locationName}
-      rulesHref={locationHref(location.id, 'rules')}
-      notice={noticeText}
-      readOnlyId={readOnlyId}
-      readOnlyText={line}
-      form={formNode}
-      onAdd={() => {
-        setNotice(null);
-        setForm({ mode: 'new', draft: { ...emptyDraft('private_event'), startDate: selected, endDate: selected }, source: 'add' });
-      }}
-      onEdit={(note) => { setNotice(null); setForm({ mode: 'edit', note }); }}
-      onDelete={(note) => { setStaleError(remove.error); setDeleting(note); }}
-      onMakeNote={(event: ImportedEvent) => {
-        setNotice(null);
-        setForm({ mode: 'new', draft: draftOfImported(event), source: `${event.calendarId}:${event.uid}` });
-      }}
-    />
+    <MessageFocus>
+      <CalendarDay
+        view={dayPanel}
+        locationName={locationName}
+        rulesHref={locationHref(location.id, 'rules')}
+        notice={noticeText}
+        readOnlyId={readOnlyId}
+        readOnlyText={line}
+        onAdd={(pressed) => {
+          openForm({ mode: 'new', draft: { ...emptyDraft('private_event'), startDate: selected, endDate: selected }, source: 'add' }, pressed);
+        }}
+        onEdit={(note, pressed) => { openForm({ mode: 'edit', note }, pressed); }}
+        onDelete={(note) => { setStaleError(remove.error); setDeleting(note); }}
+        onMakeNote={(event: ImportedEvent, pressed) => {
+          openForm({ mode: 'new', draft: draftOfImported(event), source: `${event.calendarId}:${event.uid}` }, pressed);
+        }}
+      />
+      <NotePopover
+        visible={form !== null}
+        anchor={anchor}
+        label={form === null ? '' : formLabel(form)}
+        maxWidth={400}
+        dismissOnOutsidePress={false}
+        busy={saving}
+        onClose={() => { setForm(null); }}
+        takeOpenerGone={() => {
+          const went = openerGone.current;
+          openerGone.current = false;
+          return went;
+        }}
+      >
+        {formNode}
+      </NotePopover>
+    </MessageFocus>
   );
 
   return (

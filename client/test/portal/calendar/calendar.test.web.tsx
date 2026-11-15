@@ -119,6 +119,11 @@ function panel(): HTMLElement {
   return screen.getByRole('region', { name: 'Selected day' });
 }
 
+/** The note form's popover, which must be open: the dialog its heading names ("Add an event", "Edit note", "Make a note"). */
+function noteForm(name: string): HTMLElement {
+  return screen.getByRole('dialog', { name });
+}
+
 /** An element whose whole text is `text` (the day's figure nests its number in its own span). */
 function whole(text: string): (content: string, element: Element | null) => boolean {
   return (_content, element) => element?.textContent === text && [...element.children].every((child) => child.textContent !== text);
@@ -313,22 +318,23 @@ test('adding a private event of 70 posts the note, reloads the forecast and the 
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   fireEvent.click(within(panel()).getByRole('button', { name: 'Add an event' }));
-  expect(within(panel()).getByRole('button', { name: 'Private event' }).getAttribute('aria-pressed')).toBe('true');
-  expect(within(panel()).getByRole('button', { name: 'More guests than usual' }).getAttribute('aria-pressed')).toBe('true');
-  expect(within(panel()).getByLabelText<HTMLInputElement>('Starts').value).toBe('2026-11-21');
+  const form = noteForm('Add an event');
+  expect(within(form).getByRole('button', { name: 'Private event' }).getAttribute('aria-pressed')).toBe('true');
+  expect(within(form).getByRole('button', { name: 'More guests than usual' }).getAttribute('aria-pressed')).toBe('true');
+  expect(within(form).getByLabelText<HTMLInputElement>('Starts').value).toBe('2026-11-21');
   // Forecasts are daily, so the guests count toward the whole day, whatever the hours (spec 12).
-  expect(within(panel()).getByText(GUESTS_HELP)).toBeTruthy();
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Opening' }));
-  expect(within(panel()).queryByText(GUESTS_HELP)).toBeNull();
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Private event' }));
-  fireEvent.change(within(panel()).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
+  expect(within(form).getByText(GUESTS_HELP)).toBeTruthy();
+  fireEvent.click(within(form).getByRole('button', { name: 'Opening' }));
+  expect(within(form).queryByText(GUESTS_HELP)).toBeNull();
+  fireEvent.click(within(form).getByRole('button', { name: 'Private event' }));
+  fireEvent.change(within(form).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
   api.answers[NOTES_PATH] = (body) => {
     const saved = savedNote('n9', body);
     fake.notes = [saved.note];
     fake.forecasts['2026-11'] = november({ guests: 70, id: 'n9' });
     return saved;
   };
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: NOTES_PATH,
@@ -362,7 +368,7 @@ test('a saved note that changes nothing says so, from the day read again: no gue
     fake.forecasts['2026-11'] = forecastOf(days as Parameters<typeof forecastOf>[0]);
     return saved;
   };
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(noteForm('Add an event')).getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved. Add a guest count to change the forecast.')).toBeTruthy();
   expect(screen.queryByText(/now includes/)).toBeNull();
   expect(within(panel()).getByText('No guest count, so the forecast is unchanged')).toBeTruthy();
@@ -374,15 +380,16 @@ test('editing and deleting a note reload the forecast', async () => {
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   expect(within(panel()).getByText('Adds 40 guests')).toBeTruthy();
   fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Private event note, Nov 21, 2026' }));
-  expect(within(panel()).getByRole('heading', { name: 'Edit this note' })).toBeTruthy();
-  fireEvent.change(within(panel()).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
+  const form = noteForm('Edit note');
+  expect(within(form).getByLabelText<HTMLInputElement>('Expected guests (optional)').value).toBe('40');
+  fireEvent.change(within(form).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
   api.answers[`${NOTES_PATH}/n1`] = (body) => {
     const saved = savedNote('n1', body);
     fake.notes = [saved.note];
     fake.forecasts['2026-11'] = november({ guests: 70, id: 'n1' });
     return saved;
   };
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await within(panel()).findByText('Adds 70 guests')).toBeTruthy();
   expect(forecastReads(fake)).toHaveLength(2);
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`]);
@@ -467,7 +474,7 @@ test('a calendar file is posted and kept, its events show once read again, and M
   fireEvent.click(chip);
 
   fireEvent.click(within(panel()).getByRole('button', { name: 'Make a note from Smith rehearsal dinner' }));
-  const form = panel();
+  const form = noteForm('Make a note');
   expect(within(form).getByRole('button', { name: 'Private event' }).getAttribute('aria-pressed')).toBe('true');
   expect(within(form).getByRole('button', { name: 'More guests than usual' }).getAttribute('aria-pressed')).toBe('true');
   expect(within(form).getByLabelText<HTMLInputElement>('Starts').value).toBe('2026-11-21');
@@ -632,7 +639,8 @@ test('view-as: Add, Edit, Delete, Make a note and the calendars panel’s action
     fireEvent.click(control);
   }
   expect(document.getElementById('calendar-ro')?.textContent).toBe('Read-only while viewing as gm@example.org.');
-  expect(within(panel()).queryByRole('button', { name: 'Save note' })).toBeNull();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
 
   // The popover opens and lists the calendars; its writes stay in place, disabled, described by its own read-only line.
   fireEvent.click(screen.getByRole('button', { name: 'Your calendars (2)' }));
@@ -759,11 +767,12 @@ test('a note gone in the meantime: Save and Delete answer 404, say so, close and
   const notesReads = (): number => fake.paths.filter((path) => path === NOTES_PATH).length;
   expect(notesReads()).toBe(1);
   fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Private event note, Nov 21, 2026' }));
-  fireEvent.change(within(panel()).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
+  const form = noteForm('Edit note');
+  fireEvent.change(within(form).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
   api.answers[`${NOTES_PATH}/n1`] = () => refusal(404, 'not_found');
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await within(panel()).findByText('This note isn’t available.')).toBeTruthy();
-  expect(within(panel()).queryByRole('heading', { name: 'Edit this note' })).toBeNull();
+  expect(screen.queryByRole('dialog', { name: 'Edit note' })).toBeNull();
   await waitFor(() => { expect(forecastReads(fake)).toHaveLength(2); });
   expect(notesReads()).toBe(2);
 
