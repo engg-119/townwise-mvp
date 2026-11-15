@@ -59,7 +59,7 @@
 ## 8. Verify and land
 
 - [x] 8.1 `npm run verify`, API integration tests, `uv run pytest` in `reorder/`
-- [ ] 8.2 Browser check with `/browse` on synthetic data: setup, import, item sales upload, count, board, edit, rule, turn off, Home card
+- [x] 8.2 Browser check with `/browse` on synthetic data: setup, import, item sales upload, count, board, edit, rule, turn off, Home card (2026-11-15, on a local "Test bar" location deleted afterwards, every step as specified; one finding: a saved edit shows only in the line's edit fields, while the Order column keeps Townwise's quantity until a rule moves it)
 - [x] 8.3 `/review` on the branch diff and fix what it finds
 - [x] 8.4 Merge `develop` again (after #70 if it has landed), rerun 8.1
 - [x] 8.5 Push to `feat/inventory-management` and comment on #68 with what was added and the `[CONFIRM]` list
