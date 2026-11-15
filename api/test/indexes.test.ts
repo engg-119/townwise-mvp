@@ -41,6 +41,8 @@ describe('indexes', () => {
       'tw_business_rules',
       // The owner's own calendars.
       'tw_calendar_sources', 'tw_calendar_events',
+      // Google access for calendars (openspec change connect-google-calendar).
+      'tw_google_connections',
     ].sort());
   });
 
@@ -83,8 +85,8 @@ describe('indexes', () => {
       'TwForecastRun', 'TwForecast', 'TwCalibration',
       'TwOrderCard', 'TwOrderDecision', 'TwOrderRule', 'TwOrderSetup', 'TwItemSalesDay', 'TwOrderCount',
       'TwBusinessRule',
-      // The owner's own calendars.
-      'TwCalendarSource', 'TwCalendarEvent',
+      // The owner's own calendars, and Google access for them.
+      'TwCalendarSource', 'TwCalendarEvent', 'TwGoogleConnection',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);

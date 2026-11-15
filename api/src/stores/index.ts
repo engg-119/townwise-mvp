@@ -14,6 +14,7 @@ import { fileSweepModel } from './file-sweeps.ts';
 import { createFileStore, type FileStore } from './files.ts';
 import { createFilesUsageStore, type FilesUsageStore } from './files-usage.ts';
 import { createForecastStore, type ForecastStore } from './forecasts.ts';
+import { createGoogleConnectionStore, type GoogleConnectionStore } from './google-connections.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
 import { createItemSalesStore, type ItemSalesStore } from './item-sales.ts';
 import { createLocationStore, type LocationStore } from './locations.ts';
@@ -71,6 +72,8 @@ export interface TownwiseStores {
   readonly calibrations: CalibrationStore;
   /** The owner's own calendars and their events (openspec change connect-owner-calendar). */
   readonly ownerCalendars: OwnerCalendarStore;
+  /** A person's Google access for calendars, one per organization (openspec change connect-google-calendar). */
+  readonly googleConnections: GoogleConnectionStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -112,5 +115,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     calibrations: createCalibrationStore(connection),
     // The owner's own calendars.
     ownerCalendars: createOwnerCalendarStore(connection),
+    // Google access for calendars.
+    googleConnections: createGoogleConnectionStore(connection),
   };
 }
