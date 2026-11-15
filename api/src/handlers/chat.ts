@@ -436,6 +436,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   }
   // D36: a turn's log lines count its message's files by kind, never a name or anything from a file.
   const ids = { orgId: scope.orgId, locationId: location.id, conversationId, ...(attached === null ? {} : { attachments: attached.counts }) };
+  // D37: and its web searches, a count only, on a turn that made any: never a query, a URL or anything from a page.
+  const searched = (count: number): { webSearches?: number } => (count > 0 ? { webSearches: count } : {});
 
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream');
@@ -476,8 +478,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
       tools: {
         ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
-        // read_data_item sets it too, once it hands back an item's text.
-        turn: { readUntrusted: (attached?.content.length ?? 0) > 0 },
+        // read_data_item sets readUntrusted too, once it hands back an item's text; runTurn sets both for web pages.
+        turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false },
       },
       history: modelHistory,
       userMessage,
@@ -488,27 +490,29 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       emit: (event: TurnEvent) => { send(event.type, event.data); },
       charge: (cost) => ctx.stores.chatUsage.add(scope, monthOf(ctx.now()), cost, ctx.now()),
       budgetSpent: async () => (await budgetOf(ctx, scope)).exhausted,
+      webSearch: ctx.config.chatWebSearch,
     });
+    const counts = { calls: result.calls, ...searched(result.webSearches) };
     if (result.kind !== 'done') {
       // Nothing of the turn is saved: the claim goes, and a conversation that never finished a turn is deleted.
       await ctx.stores.chatConversations.release(scope, conversationId, turnId);
       if (result.kind === 'refused') {
-        ctx.logger.info({ ...ids, calls: result.calls, stopReason: 'refusal', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn');
-        send('done', { stopReason: 'refusal', costUsd: result.costMicroUsd / 1_000_000, leafId: null });
+        ctx.logger.info({ ...ids, ...counts, stopReason: 'refusal', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn');
+        send('done', { stopReason: 'refusal', costUsd: result.costMicroUsd / 1_000_000, leafId: null, sources: [] });
         return;
       }
       if (result.kind === 'aborted') {
         // Whichever aborted first decides: a closed connection sends nothing, the time limit ends with `timeout`.
         if (!(timeLimit.aborted && signal.reason === timeLimit.reason)) {
-          ctx.logger.info({ ...ids, calls: result.calls, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_aborted');
+          ctx.logger.info({ ...ids, ...counts, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_aborted');
           return;
         }
-        ctx.logger.warn({ ...ids, calls: result.calls, code: 'timeout', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_failed');
+        ctx.logger.warn({ ...ids, ...counts, code: 'timeout', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_failed');
         send('error', { code: 'timeout' });
         return;
       }
       ctx.logger.warn({
-        ...ids, calls: result.calls, code: result.code, errType: result.errType, status: result.status,
+        ...ids, ...counts, code: result.code, errType: result.errType, status: result.status,
         costMicroUsd: result.costMicroUsd,
       }, 'townwise.chat_turn_failed');
       send('error', { code: result.code });
@@ -519,7 +523,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     });
     if (!saved) {
       // Another turn took over the claim (this one ran past 3 minutes), or the conversation was deleted.
-      ctx.logger.warn({ ...ids, calls: result.calls, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_not_saved');
+      ctx.logger.warn({ ...ids, ...counts, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_not_saved');
       send('error', { code: 'internal' });
       return;
     }
@@ -529,13 +533,14 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       details: {
         locationId: location.id, conversationId, model: result.model, calls: result.calls,
         inputTokens: result.inputTokens, outputTokens: result.outputTokens, stopReason: result.stopReason,
-        ...(attached === null ? {} : { attachments: checks.length }),
+        ...(attached === null ? {} : { attachments: checks.length }), ...searched(result.webSearches),
       },
     });
     ctx.logger.info({
-      ...ids, calls: result.calls, stopReason: result.stopReason, costMicroUsd: result.costMicroUsd,
+      ...ids, ...counts, stopReason: result.stopReason, costMicroUsd: result.costMicroUsd,
     }, 'townwise.chat_turn');
-    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000, leafId: result.leafId });
+    // D37: the pages the reply's text cites, as the conversation view lists them under it.
+    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000, leafId: result.leafId, sources: result.sources });
   } catch (err) {
     // A store failure while saving: nothing was saved, and the claim goes if it can.
     ctx.logger.error({ ...ids, code: 'internal', errType: err instanceof Error ? err.constructor.name : typeof err }, 'townwise.chat_turn_failed');

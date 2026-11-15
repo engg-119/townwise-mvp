@@ -96,7 +96,7 @@ export function ReplyActions(props: {
   const describedBy = described(props.readOnlyId);
   return (
     <View style={styles.actions}>
-      <View style={styles.row} {...rowMark(props.show)}>
+      <View style={styles.icons} {...rowMark(props.show)}>
         {canCopy ? (
           <ChatButton
             variant="arrow"
@@ -169,6 +169,8 @@ const c = theme.color;
 const styles = StyleSheet.create({
   actions: { gap: theme.space[2] },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[4], rowGap: theme.space[2] },
+  // A compact row (spec P25): the 44px boxes side by side, so their 18px icons sit 26px apart.
+  icons: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', rowGap: theme.space[2] },
   reasons: { gap: theme.space[2] },
   question: { ...theme.type.small, color: c.text2 },
   error: { ...theme.type.small, color: c.white },

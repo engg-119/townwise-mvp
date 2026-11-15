@@ -370,6 +370,14 @@ The tuning chat (`docs/portal/tuning-chat.md`) is off until the API has `ANTHROP
 
 **Rotate** by seeding a new version with the same command and running `az containerapp revision restart`, then revoke the old key in the Console. **Turn it off** with `enable_chat = false` and apply, which removes the reference, the env var and the role assignment; the secret stays in Key Vault until you delete it.
 
+**Web search** (spec D37). `TOWNWISE_CHAT_WEB_SEARCH=true` in `api/production.env` makes every TownwiseAI request send Anthropic's web search tool; the code's default is off. [CONFIRM: web search on in production; off by default in code]
+
+1. **Check it is enabled in the Console first.** In Claude Console, Settings, Capabilities, web search must be on for the Anthropic organization that owns the `townwise-production` key (it is on unless an administrator turned it off; leave its domain restrictions empty). With it off there, Anthropic answers every request that sends the tool with a 400 `invalid_request_error`, so every turn fails (`error` `internal`, logged as `townwise.chat_turn_failed` with status 400).
+2. **Then release** `api/production.env` with the variable set. Each search costs $0.01 plus the tokens of its pages, inside the organization's monthly TownwiseAI budget; the system prompt asks for at most three a reply.
+3. **Check.** Ask TownwiseAI about a public event in the town: the stream has a `web_search` tool event and its `done` lists the sites the reply cites, and `ContainerAppConsoleLogs | where Log has "townwise.chat_turn"` shows `webSearches`, a count, and never a query or a URL.
+
+**Turn it off**, if turns fail after a change in the Console or for any other reason: set `TOWNWISE_CHAT_WEB_SEARCH=false` in `api/production.env` and release (or set the variable on the Container App, which starts a new revision; an environment variable wins over the file). Changing it changes the tools every request sends, so each conversation's prompt cache misses once and its earlier thinking blocks are dropped once (`drop_block`). Conversations that searched before keep their stored searches, and the API reads them back without the tool: on 2026-11-14 Anthropic's token count accepted a history of a search, its results, citations and thinking with the tool removed (given `drop_block`), and refused a search stored without its result, so it checks these blocks as a request does.
+
 **Shared developer key.** To run the chat locally, developers use one shared key that cannot reach production's workspace or budget:
 
 1. **Create it.** In the Anthropic Console, create a workspace used only for development, `townwise-dev` (the Default workspace cannot take a spend limit). Set its monthly spend limit to 50 dollars and create an API key named `townwise-dev` in it. A key stays in the workspace it was made in, so that limit caps everything the key spends.

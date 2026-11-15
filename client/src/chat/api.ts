@@ -4,6 +4,7 @@ import type { ApiClient } from '../api/client';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, noteSchema, type Note } from '../portal/locations/api';
 import type { SseEvent } from '../api/sse';
+import type { SourceLink } from './tools';
 import type { TreeNode } from './tree';
 import { visualSchema, type Visual } from './visuals/schema';
 
@@ -90,6 +91,15 @@ const attachmentSchema = z.object({
   state: z.enum(['on', 'off', 'gone']).catch('gone'),
 });
 
+// A reply's sources (D37): the pages its text cites from its web searches. Read one by one, keeping only an https
+// link; a list that is absent (an API before D37) or not a list reads as none, so it never drops a `done` or a load.
+const sourceSchema = z.object({ host: z.string(), url: z.string().startsWith('https://') });
+const sourcesSchema = z.array(z.unknown()).catch([]);
+
+function sourceLinks(raw: readonly unknown[]): SourceLink[] {
+  return known(raw, sourceSchema);
+}
+
 const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
 const conversationSummarySchema = z.object({ id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number() });
 const chatSummarySchema = z.object({
@@ -116,6 +126,7 @@ const conversationSchema = z.object({
     feedback: feedbackSchema.nullable().default(null),
     next: z.array(z.string()).nullable().default(null),
     attachments: z.array(z.unknown()).default([]),
+    sources: sourcesSchema,
   })),
 });
 
@@ -152,6 +163,8 @@ export interface StoredMessage {
   next: string[] | null;
   /** The files the person's message carries, in order (D36); [] for a reply. */
   attachments: MessageAttachment[];
+  /** The pages a reply cites from its web searches, in order (D37); [] for none and for the person's messages. */
+  sources: SourceLink[];
 }
 
 /** A conversation as the server shows it: the messages of one path, every node, and that path's leaf. */
@@ -172,9 +185,9 @@ export type ChatEvent =
   | { type: 'suggestions'; id: string; prompts: string[] }
   /**
    * `leafId`: the conversation's leaf after the turn (the last node it saved, else the node it hung under); null for a
-   * refusal, or from a server without trees.
+   * refusal, or from a server without trees. `sources`: the pages the reply cites from its web searches (D37).
    */
-  | { type: 'done'; stopReason: string; leafId: string | null }
+  | { type: 'done'; stopReason: string; leafId: string | null; sources: SourceLink[] }
   | { type: 'error'; code: string };
 
 const nodeIdOrNull = z.string().nullable().default(null);
@@ -189,7 +202,7 @@ const eventSchemas = {
   proposal: z.object({ id: z.string(), proposal: noteProposalSchema }),
   visual: z.object({ id: z.string(), visual: visualSchema }),
   suggestions: z.object({ id: z.string(), prompts: z.array(z.string()) }),
-  done: z.object({ stopReason: z.string(), leafId: nodeIdOrNull }),
+  done: z.object({ stopReason: z.string(), leafId: nodeIdOrNull, sources: sourcesSchema }),
   error: z.object({ code: z.string() }),
 };
 
@@ -232,7 +245,7 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
     }
     case 'done': {
       const parsed = eventSchemas.done.safeParse(data);
-      return parsed.success ? { type: 'done', ...parsed.data } : null;
+      return parsed.success ? { type: 'done', ...parsed.data, sources: sourceLinks(parsed.data.sources) } : null;
     }
     case 'error': {
       const parsed = eventSchemas.error.safeParse(data);
@@ -285,6 +298,7 @@ function conversationOf(conversation: z.infer<typeof conversationSchema>): Conve
       feedback: message.feedback,
       next: message.next,
       attachments: message.role === 'user' ? known(message.attachments, attachmentSchema) : [],
+      sources: message.role === 'assistant' ? sourceLinks(message.sources) : [],
     })),
   };
 }

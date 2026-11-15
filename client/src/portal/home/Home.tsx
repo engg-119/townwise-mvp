@@ -46,7 +46,8 @@ import { ThisWeek } from './ThisWeek';
 // (GET .../forecast; Home never waits for it or fails with it), the month's people in town (in Who's in town) and the
 // next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), and writes nothing,
 // so view-as shows it unchanged with its upload links disabled.
-// "Today" is the device's date; weeks run Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep
+// "Today" is the device's date; This week in {Town} is the seven days from today, today first, and Last week runs
+// Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep
 // takes the place of the blocks that need days, and when it has read the history Home loads again.
 
 const READ_ONLY_ID = 'home-ro';

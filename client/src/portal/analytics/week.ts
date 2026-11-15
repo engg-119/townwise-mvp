@@ -8,6 +8,7 @@ import { usual, type Usual } from './baseline';
 import { rowOf } from './cells';
 import { dayFlags, eventsOf, likelyClosedWords, notesOf, type DayContext } from './days';
 import type { DayRecord } from './history';
+import { plainOf, strong, type Phrase } from './phrase';
 import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPercent, WEEKDAY_NAMES, weekdayOf, type Metric } from './words';
 
 // Home's numbers (home.md 2 and 5.6): this week against the same weeks in past years, last week against the same
@@ -36,9 +37,9 @@ export function mondayOf(date: string): string {
   return addDays(date, -rowOf(date));
 }
 
-/** Monday to Sunday. */
-export function weekDates(monday: string): string[] {
-  return Array.from({ length: 7 }, (_, index) => addDays(monday, index));
+/** Seven days from `start`, in order: Monday to Sunday from a Monday. */
+export function weekDates(start: string): string[] {
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
 }
 
 export function sameWeekdayYearsAgo(date: string, years: number): string {
@@ -58,16 +59,16 @@ export function dayMonthRange(start: string, end: string): string {
 }
 
 /**
- * The calendar range Home asks for: from two years before this week's Monday, less the 4 weeks either side that
- * "usual" reads, to the later of this month's last day and this week's Sunday.
+ * The calendar range Home asks for: from two years before this week's Monday (Last week and the late-week share read
+ * Monday weeks), less the 4 weeks either side that "usual" reads, to the later of this month's last day and This
+ * week's last day, six days from today.
  */
 export function homeCalendarRange(today: string): { from: string; to: string } {
-  const monday = mondayOf(today);
-  const back = addDays(monday, -(2 * YEAR_DAYS + 28));
+  const back = addDays(mondayOf(today), -(2 * YEAR_DAYS + 28));
   const from = back < EARLIEST_DATE ? EARLIEST_DATE : back;
   const monthEnd = monthRange(today.slice(0, 7)).to;
-  const sunday = addDays(monday, 6);
-  return { from, to: monthEnd > sunday ? monthEnd : sunday };
+  const last = addDays(today, 6);
+  return { from, to: monthEnd > last ? monthEnd : last };
 }
 
 export interface HomeInput {
@@ -158,13 +159,16 @@ export interface WeekSummary {
   quietest: string | null;
 }
 
+/** This week in {Town}: the seven days from today, today first (owner request, 2026-11-15). */
 export interface ThisWeek {
-  monday: string;
-  sunday: string;
+  /** Today. */
+  from: string;
+  /** Six days from today. */
+  to: string;
   rows: WeekRow[];
   /** Whether any of the seven days two years ago has data, so the column shows. */
   twoYears: boolean;
-  /** Null when last year's week has fewer than 5 days of data. */
+  /** Null when fewer than 5 of the same 7 days last year have data. */
   summary: WeekSummary | null;
   /** The first town event or holiday of the week, and how many others there are. */
   firstEvent: { title: string; date: string; more: number } | null;
@@ -196,8 +200,7 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
 }
 
 export function thisWeek(input: HomeInput): ThisWeek {
-  const monday = mondayOf(input.today);
-  const dates = weekDates(monday);
+  const dates = weekDates(input.today);
   const rows = dates.map((date): WeekRow => {
     const value = figureOf(date, input);
     return {
@@ -230,8 +233,8 @@ export function thisWeek(input: HomeInput): ThisWeek {
     }
   }
   return {
-    monday,
-    sunday: addDays(monday, 6),
+    from: input.today,
+    to: addDays(input.today, 6),
     rows,
     twoYears: rows.some((row) => row.twoYearsAgo.value !== null),
     summary: summaryOf(rows.map((row) => row.lastYear)),
@@ -240,17 +243,22 @@ export function thisWeek(input: HomeInput): ThisWeek {
   };
 }
 
-/** "Same week last year, Mon, Nov 3 to Sun, Nov 9, 2025. From all 7 days." */
+/** "Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days." */
 export function summaryLabel(summary: WeekSummary): string {
   const range = `${shortDate(summary.from).replace(/, \d{4}$/, '')} to ${shortDate(summary.to)}`;
   const days = summary.days === 7 ? 'From all 7 days.' : `From ${formatCount(summary.days)} of its 7 days.`;
-  return `Same week last year, ${range}. ${days}`;
+  return `Same 7 days last year, ${range}. ${days}`;
 }
 
-/** "+9% against that year’s usual for those days, compared over 7 days." */
-export function vsUsualLine(summary: WeekSummary): string | null {
+/** "+9% against that year’s usual for those days, compared over 7 days.", the change strong. */
+export function vsUsualPhrase(summary: WeekSummary): Phrase | null {
   if (summary.vsUsual === null) return null;
-  return `${signedPercent(summary.vsUsual.change)} against that year’s usual for those days, compared over ${plural(summary.vsUsual.days, 'day', 'days')}.`;
+  return [strong(signedPercent(summary.vsUsual.change)), ` against that year’s usual for those days, compared over ${plural(summary.vsUsual.days, 'day', 'days')}.`];
+}
+
+export function vsUsualLine(summary: WeekSummary): string | null {
+  const phrase = vsUsualPhrase(summary);
+  return phrase === null ? null : plainOf(phrase);
 }
 
 function weekdayName(date: string): string {
@@ -288,13 +296,23 @@ export function calendarCoverageLine(calendar: Pick<Calendar, 'town' | 'research
 }
 
 /** "Sat, Nov 8, 2025: 241 guests". */
-export function pastDayLine(day: PastDay, metric: Metric): string | null {
-  return day.value === null ? null : `${shortDate(day.date)}: ${metricText(day.value, metric)}`;
+export function pastDayPhrase(day: PastDay, metric: Metric): Phrase | null {
+  return day.value === null ? null : [`${shortDate(day.date)}: `, strong(metricText(day.value, metric))];
 }
 
-/** "+31% vs usual". */
+export function pastDayLine(day: PastDay, metric: Metric): string | null {
+  const phrase = pastDayPhrase(day, metric);
+  return phrase === null ? null : plainOf(phrase);
+}
+
+/** "+31% vs usual", the change strong. */
+export function vsUsualDayPhrase(day: PastDay): Phrase | null {
+  return day.change === null ? null : [strong(signedPercent(day.change)), ' vs usual'];
+}
+
 export function vsUsualDay(day: PastDay): string | null {
-  return day.change === null ? null : `${signedPercent(day.change)} vs usual`;
+  const phrase = vsUsualDayPhrase(day);
+  return phrase === null ? null : plainOf(phrase);
 }
 
 // Last week
@@ -339,35 +357,40 @@ export function lastWeekComparison(input: HomeInput): LastWeek {
   };
 }
 
-function moreOrLess(change: number, metric: Metric): string {
+/** "10% more than" with "10% more" strong, or "about the same as". */
+function moreOrLess(change: number, metric: Metric): Phrase {
   const whole = Math.round(change * 100);
-  if (whole === 0) return 'about the same as';
+  if (whole === 0) return ['about the same as'];
   const word = whole > 0 ? 'more' : metric === 'guests' ? 'fewer' : 'less';
-  return `${formatCount(Math.abs(whole))}% ${word} than`;
+  return [strong(`${formatCount(Math.abs(whole))}% ${word}`), ' than'];
 }
 
-/** The card's text summary, in every state. */
-export function lastWeekLine(comparison: LastWeek, metric: Metric): string {
+/** The card's text summary, in every state; when compared, last week's total and the change strong. */
+export function lastWeekPhrase(comparison: LastWeek, metric: Metric): Phrase {
   switch (comparison.state) {
-    case 'no_history': return 'No sales history yet, so there is nothing to compare.';
-    case 'uploads_off': return 'Every sales upload is turned off, so there is nothing to compare.';
-    case 'no_recent': return `Your history ends ${formatDate(comparison.lastDate)}. Upload the days since to compare last week.`;
-    case 'no_days': return `No ${METRIC_NOUN[metric]} stored for last week, so there is nothing to compare yet.`;
-    case 'no_last_year': return 'No data for the same week last year, so there is nothing to compare yet.';
-    case 'no_overlap': return 'Last week and the same week last year have no day with data in common, so there is nothing to compare yet.';
+    case 'no_history': return ['No sales history yet, so there is nothing to compare.'];
+    case 'uploads_off': return ['Every sales upload is turned off, so there is nothing to compare.'];
+    case 'no_recent': return [`Your history ends ${formatDate(comparison.lastDate)}. Upload the days since to compare last week.`];
+    case 'no_days': return [`No ${METRIC_NOUN[metric]} stored for last week, so there is nothing to compare yet.`];
+    case 'no_last_year': return ['No data for the same week last year, so there is nothing to compare yet.'];
+    case 'no_overlap': return ['Last week and the same week last year have no day with data in common, so there is nothing to compare yet.'];
     case 'compared': {
-      const total = metricText(comparison.total, metric);
+      const total = strong(metricText(comparison.total, metric));
       const before = metricNumber(comparison.lastYearTotal, metric);
       if (comparison.change === null) {
-        return `Last week: ${total}, against ${before} on the same days last year, compared over ${plural(comparison.comparedDays, 'day', 'days')}.`;
+        return ['Last week: ', total, `, against ${before} on the same days last year, compared over ${plural(comparison.comparedDays, 'day', 'days')}.`];
       }
       const against = moreOrLess(comparison.change, metric);
       if (comparison.comparedDays === 7) {
-        return `Last week: ${total}, ${against} the same week last year (${before}), compared over 7 days.`;
+        return ['Last week: ', total, ', ', ...against, ` the same week last year (${before}), compared over 7 days.`];
       }
-      return `Last week: ${total} on the ${formatCount(comparison.comparedDays)} days both weeks have, ${against} the same days last year (${before}).`;
+      return ['Last week: ', total, ` on the ${formatCount(comparison.comparedDays)} days both weeks have, `, ...against, ` the same days last year (${before}).`];
     }
   }
+}
+
+export function lastWeekLine(comparison: LastWeek, metric: Metric): string {
+  return plainOf(lastWeekPhrase(comparison, metric));
 }
 
 // Bar order helper
@@ -387,10 +410,15 @@ export function lateWeekShare(input: HomeInput): { share: number; days: number }
   return { share: sum(late.filter((value): value is number => value !== null)) / total, days: known.length };
 }
 
-export function lateWeekLine(found: { share: number; days: number }, metric: Metric): string {
+/** "Last year this week, Thursday to Sunday brought 59% of the week’s guests.", the share strong. */
+export function lateWeekPhrase(found: { share: number; days: number }, metric: Metric): Phrase {
   const share = `${formatCount(Math.round(found.share * 100))}%`;
   const days = found.days === 7 ? '' : ` (${formatCount(found.days)} days of that week have data)`;
-  return `Last year this week, Thursday to Sunday brought ${share} of the week’s ${METRIC_NOUN[metric]}${days}.`;
+  return ['Last year this week, Thursday to Sunday brought ', strong(share), ` of the week’s ${METRIC_NOUN[metric]}${days}.`];
+}
+
+export function lateWeekLine(found: { share: number; days: number }, metric: Metric): string {
+  return plainOf(lateWeekPhrase(found, metric));
 }
 
 // This month
@@ -433,14 +461,19 @@ export function monthFacts(input: HomeInput): MonthFact[] {
 }
 
 /** "118 guests a day over 30 days in 2025, 9% below your 2025 daily average over 364 days." */
-export function monthFactLine(fact: MonthFact, metric: Metric): string {
+/** "170 guests a day over 25 days in 2025, 16% above your 2025 daily average over 315 days.", the figure and change strong. */
+export function monthFactPhrase(fact: MonthFact, metric: Metric): Phrase {
   const value = metric === 'guests' ? `${metricNumber(fact.mean, metric)} guests a day` : `${metricNumber(fact.mean, metric)} a day`;
-  const head = `${value} over ${plural(fact.days, 'day', 'days')} in ${String(fact.year)}`;
-  if (fact.change === null) return `${head}.`;
+  const head: Phrase = [strong(value), ` over ${plural(fact.days, 'day', 'days')} in ${String(fact.year)}`];
+  if (fact.change === null) return [...head, '.'];
   const whole = Math.round(fact.change * 100);
   const average = `your ${String(fact.year)} daily average over ${plural(fact.yearDays, 'day', 'days')}`;
-  if (whole === 0) return `${head}, level with ${average}.`;
-  return `${head}, ${formatCount(Math.abs(whole))}% ${whole > 0 ? 'above' : 'below'} ${average}.`;
+  if (whole === 0) return [...head, `, level with ${average}.`];
+  return [...head, ', ', strong(`${formatCount(Math.abs(whole))}% ${whole > 0 ? 'above' : 'below'}`), ` ${average}.`];
+}
+
+export function monthFactLine(fact: MonthFact, metric: Metric): string {
+  return plainOf(monthFactPhrase(fact, metric));
 }
 
 /** "Your November in past years". */
@@ -547,18 +580,18 @@ function monthCellLabel(date: string, events: readonly TownEvent[], notes: numbe
 /**
  * This month as week rows, Monday first; null where a row's day is in another month. Without `figures` no cell has a
  * figure; with them, a day before today has its stored figure and a day from today on only the published forecast's.
+ * "This week" marks This week in {Town}'s days: the seven from today.
  */
 export function monthGrid(today: string, context: DayContext, figures?: MonthFigures): (MonthCell | null)[][] {
   const { from, to } = monthRange(today.slice(0, 7));
-  const monday = mondayOf(today);
-  const sunday = addDays(monday, 6);
+  const last = addDays(today, 6);
   const rows: (MonthCell | null)[][] = [];
   for (let start = mondayOf(from); start <= to; start = addDays(start, 7)) {
     rows.push(weekDates(start).map((date) => {
       if (date < from || date > to) return null;
       const events = dayEventsOf(context, date);
       const notes = notesOf(context, date).length;
-      const inWeek = date >= monday && date <= sunday;
+      const inWeek = date >= today && date <= last;
       const isToday = date === today;
       const found = cellFigure(date, figures);
       return {
@@ -627,9 +660,14 @@ export function monthDay(date: string, input: HomeInput): MonthDay {
 }
 
 /** The day detail's “This day” and This week's own day: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
+/** A day's own figure, strong, or what stands in for it. */
+export function thisDayPhrase(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): Phrase {
+  if (day.value === null) return ['No sales stored for this day.'];
+  return day.likelyClosed ? [likelyClosedWords(recordedText(day.value, metric))] : [strong(metricText(day.value, metric))];
+}
+
 export function thisDayLine(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): string {
-  if (day.value === null) return 'No sales stored for this day.';
-  return day.likelyClosed ? likelyClosedWords(recordedText(day.value, metric)) : metricText(day.value, metric);
+  return plainOf(thisDayPhrase(day, metric));
 }
 
 /** The next holiday or town event on the calendar, from today to the end of what Home reads. */

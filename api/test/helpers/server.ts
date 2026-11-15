@@ -34,6 +34,7 @@ import { createTownwiseStores } from '../../src/stores/index.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 import type { StaticMapSigner } from '../../src/places/static-map.ts';
 import { testLabCaller } from './lab.ts';
+import { waitForRedis } from './redis-ready.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
 export const STAFF_EMAIL = 'staff@townwise.test';
@@ -171,12 +172,7 @@ export async function startTownwiseServer(opts?: {
   const clock = createClock();
   const mail: MagicLinkMessage[] = [];
   try {
-    // One ping gives up near 1 s (the client's commandTimeout), and on the laptop runner a first connection to the
-    // test Valkey (through host.docker.internal) now and then takes longer, which failed a whole suite. Up to three
-    // pings while the client goes on connecting.
-    let ready = false;
-    for (let attempt = 0; attempt < 3 && !ready; attempt += 1) ready = await redis.ready(3000);
-    if (!ready) throw new Error('redis not ready');
+    await waitForRedis(redis);
     await mongo.connection.dropDatabase();
     await redis.client.flushdb();
     const authStores = createMongoAuthStores(mongo.connection);

@@ -5,7 +5,7 @@ import { theme } from '../../theme';
 import type { Calendar, TownEvent } from '../analytics/api';
 import { noteWords } from '../analytics/panel';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayLine, periodLine, thisDayLine, vsUsualDay,
+  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase, vsUsualDayPhrase,
   type PastDay, type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
@@ -14,17 +14,18 @@ import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
 import { DataTable, type Column } from '../ui/DataTable';
 import { Stack } from '../ui/layout';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 
-// This week (spec P11): Monday to Sunday of the viewer's week, each day with what is on the town calendar and the
-// location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
+// This week (spec P11): the seven days from today, today first (owner request, 2026-11-15), each day with what is on
+// the town calendar and the location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
 // tile At a glance. No figure is ever shown for a day after the last day of data: a day prints its own figure only
 // when it is past and has data, or “Likely closed (1 guest recorded)” when it was near empty (spec D32), as This month says. With no history at all (`history` false) the past-year rows and the footnote are
 // left out and only the calendar shows. Term and season periods span weeks, so they show once under the headline
 // with their whole span and sources, not in each day.
 //
-// From 1024px the week is a strip, one column a day, with today's column raised: the day (and its own figure), then
+// From 1024px the week is a strip, one column a day, with today's column, the first, raised: the day (and its own figure), then
 // rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
 // figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
 // day-by-day table, which stacks at 640px and below.
@@ -75,14 +76,14 @@ function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
 /** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */
 export function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
   const { day, metric } = props;
-  const line = pastDayLine(day, metric);
+  const line = pastDayPhrase(day, metric);
   if (line === null) return <Mono tone="text3">No data</Mono>;
-  const change = vsUsualDay(day);
+  const change = vsUsualDayPhrase(day);
   return (
     <View style={styles.item}>
-      <Mono tone="white">{line}</Mono>
+      <Mono tone="white"><PhraseParts phrase={line} /></Mono>
       {day.closed ? <Mono>{day.likelyClosed ? 'Likely closed' : 'Closed'}</Mono> : null}
-      {change === null ? null : <Mono>{change}</Mono>}
+      {change === null ? null : <Mono><PhraseParts phrase={change} /></Mono>}
       {day.events.map((title) => <Small key={title}>{title}</Small>)}
     </View>
   );
@@ -98,7 +99,7 @@ function DayHead(props: { row: WeekRow; metric: Metric }): React.JSX.Element {
       </View>
       <Mono>{dayMonth(row.date)}</Mono>
       {row.isToday ? <Mono tone="text3">Today</Mono> : null}
-      {row.value === null ? null : <Mono tone="white">{thisDayLine(row, props.metric)}</Mono>}
+      {row.value === null ? null : <Mono tone="white"><PhraseParts phrase={thisDayPhrase(row, props.metric)} /></Mono>}
     </View>
   );
 }

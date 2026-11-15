@@ -53,6 +53,8 @@ interface ToolRow {
   terms?: Readonly<Record<string, string>>;
   /** Words for the codes a view field carries; a code with no words here is left out of the opened card. */
   values?: Readonly<Record<string, Readonly<Record<string, string>>>>;
+  /** The status word and the rest for a call still running when its reply ended, so it never finished (D37). */
+  unfinished?: readonly [status: string, object: string];
 }
 
 function text(view: ToolView | null, key: string): string | null {
@@ -84,6 +86,11 @@ function sourcesOf(result: ToolView): SourceLink[] {
     const { host, url } = source as { host?: unknown; url?: unknown };
     return typeof host === 'string' && typeof url === 'string' && url.startsWith('https://') ? [{ host, url }] : [];
   }).slice(0, 5);
+}
+
+/** A host as the page shows it, without `www.`: the link still goes to the URL as the server sent it. */
+export function shownHost(host: string): string {
+  return host.replace(/^www\./, '');
 }
 
 function hostsOf(result: ToolView | null): string {
@@ -119,6 +126,8 @@ const START_REFUSAL: Readonly<Record<string, string>> = {
   start_failed: 'It couldn’t start',
   // D36 (api/src/chat/tools/calibration.ts FILE_TURN): a file's words can't start one, attached or read by ref.
   file_turn: 'It can’t start in a reply that read a file from Your data',
+  // D37 (calibration.ts WEB_TURN): a web page's words can't start one, in any later turn of that conversation either.
+  web_turn: 'It can’t start in a conversation that read web pages',
 };
 
 function wordsFor(words: Readonly<Record<string, string>>, code: string | null): string | null {
@@ -433,6 +442,23 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     object: () => 'a rule to remember',
     hidden: true,
   },
+  // D37: Anthropic's web search (api/src/chat/web-search.ts searchCard), not in the registry: the API runs it, and only
+  // while it is turned on, so it adds nothing to what TownwiseAI reads. The card never shows the query (its input is
+  // always null), names a failure in general words, never its code, and says when the reply ended before its result.
+  web_search: {
+    object: () => 'the web',
+    status: (state) => (state === 'running' ? 'Searching' : state === 'done' ? 'Searched' : 'Couldn’t search'),
+    detail: (result) => {
+      const pages = count(result, 'pages');
+      if (pages === null || pages === 0) return null;
+      const hosts = [...new Set(sourcesOf(result).map((source) => shownHost(source.host)))];
+      const found = plural(pages, 'page', 'pages');
+      return hosts.length === 0 ? found : `${found}: ${hosts.join(', ')}`;
+    },
+    // A search that found nothing read nothing.
+    basedOn: (_input, _ctx, result) => (count(result, 'pages') === 0 ? null : 'public web pages'),
+    unfinished: ['Stopped', 'before the search finished'],
+  },
 };
 
 const GENERIC = { running: 'Looking something up', done: 'Looked something up', error: 'Couldn’t look something up' } as const;
@@ -457,12 +483,19 @@ export interface ToolLine {
   sources: SourceLink[];
 }
 
-/** A card's words for a call in its current state. */
-export function toolLine(step: ToolStep, ctx: ToolContext): ToolLine {
+/**
+ * A card's words for a call in its current state. `ended`: its reply is no longer streaming, so a web search still
+ * running never finished (D37: one cut off is never saved).
+ */
+export function toolLine(step: ToolStep, ctx: ToolContext, ended = false): ToolLine {
   const row = Object.hasOwn(TOOLS, step.name) ? TOOLS[step.name] : undefined;
   if (row === undefined) {
     const sentence = GENERIC[step.state];
     return { status: '', object: sentence, sentence, detail: null, sources: [] };
+  }
+  if (ended && step.state === 'running' && row.unfinished !== undefined) {
+    const [status, object] = row.unfinished;
+    return { status, object, sentence: `${status} ${object}`, detail: null, sources: [] };
   }
   const status = row.status?.(step.state, step.result)
     ?? (step.state === 'running' ? 'Reading' : step.state === 'done' ? 'Read' : 'Couldn’t read');

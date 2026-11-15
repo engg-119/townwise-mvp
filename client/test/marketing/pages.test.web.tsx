@@ -277,6 +277,20 @@ test('Privacy names Anthropic as TownwiseAI’s provider, says nothing is sent u
   expect(anthropic.querySelectorAll('.chip')).toHaveLength(0);
 });
 
+test('Privacy says what TownwiseAI’s web searches send, find and keep, as spec 17 does (D37)', () => {
+  renderAt('/privacy');
+  const items = within(screen.getByRole('region', { name: 'Your organization and team' })).getAllByRole('listitem');
+  const web = items.find((item) => item.textContent.startsWith('Web searches by TownwiseAI.'));
+  if (web === undefined) throw new Error('no web search item');
+  expect(web.querySelector('strong')?.textContent).toBe('Web searches by TownwiseAI.');
+  expect(web.textContent).toBe('Web searches by TownwiseAI. TownwiseAI can search the web, through Anthropic, for public facts about your town that Townwise doesn’t have, such as an event’s dates or a road closure. Anthropic runs each search and sends it to its search provider; Townwise never opens the pages. TownwiseAI is told to put only your town’s name and the public fact in a search, never a guest’s or staff member’s name, your sales or other figures, or words from your notes, business rules, files or messages, but Townwise can’t check a search before it is sent. The pages it finds are public, and Townwise didn’t check them. Each reply that cites them lists them as its sources. A web page never changes your forecast, and TownwiseAI is told to suggest a note from one only when you confirm the event affects you. What a search found is kept with the conversation: each page’s title, web address and age, its text in a form only Anthropic can read, and the short passages a reply cites, up to 150 characters each. It goes back to Anthropic with each later message in that conversation and is deleted with it. Our logs and audit record count searches and never hold what was searched for or found.');
+  // It sits with the conversations it is kept in.
+  const conversations = items.findIndex((item) => item.textContent.startsWith('TownwiseAI conversations.'));
+  expect(items.indexOf(web)).toBe(conversations + 1);
+  const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
+  expect(anthropic?.textContent).toContain('Townwise never sends it your team’s names or email addresses, apart from any in a file you let it read. When TownwiseAI searches the web, Anthropic sends the search TownwiseAI wrote to its search provider (see Web searches by TownwiseAI, under Your organization and team). Separately,');
+});
+
 test('Privacy describes how forecasts are built and what Townwise keeps', () => {
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;

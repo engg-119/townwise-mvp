@@ -57,7 +57,10 @@ export const AUDIT_DETAIL_KEYS = {
   'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
   'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
   // `attachments` (D36): how many files the person's message carried, only on a turn whose message carried any.
-  'chat.turn_completed': ['locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason', 'attachments'],
+  // `webSearches` (D37): how many web searches the turn was billed for, only on a turn that made any; never a query or URL.
+  'chat.turn_completed': [
+    'locationId', 'conversationId', 'model', 'calls', 'inputTokens', 'outputTokens', 'stopReason', 'attachments', 'webSearches',
+  ],
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
   'agent.question_answered': ['locationId', 'questionId', 'answer'],
