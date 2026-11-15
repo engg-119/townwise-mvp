@@ -102,15 +102,20 @@ function setup(timeoutMs?: number): { fake: ReturnType<typeof fakeGoogle>; clien
   return { fake, client };
 }
 
-/** Every error a test saw, for the check that none carries a secret. */
-const seen: GoogleCalendarError[] = [];
+/** No error carries a code, token, secret, client id or calendar id, nor any field but its code and status. */
+function expectNothingLeaks(err: GoogleCalendarError): void {
+  const shown = `${err.message} ${err.stack ?? ''} ${JSON.stringify(err)}`;
+  for (const secret of [...SECRETS, CLIENT_ID]) expect(shown).not.toContain(secret);
+  expect(Object.keys(err).sort()).toEqual(['code', 'name', 'status']);
+}
 
+/** The error a call failed with, checked where it is caught, so every test checks the errors it makes. */
 async function failureOf(run: () => Promise<unknown>): Promise<GoogleCalendarError> {
   try {
     await run();
   } catch (err) {
     if (err instanceof GoogleCalendarError) {
-      seen.push(err);
+      expectNothingLeaks(err);
       return err;
     }
     throw err;
@@ -529,7 +534,7 @@ describe('revokeGoogleGrant', () => {
 describe('what leaves the client', () => {
   it('no error carries a code, token, secret or calendar id, and no URL carries a code, token or secret', async () => {
     const { fake, client } = setup();
-    // One more run of each call failing, so every kind of error is among those seen.
+    // Each call failing with Google's answer quoting a code, token or id; failureOf checks every error any test makes.
     fake.script(
       { kind: 'json', status: 400, body: { error: 'invalid_grant', error_description: `code ${CODE} for ${SHARED_ID}` } },
       { kind: 'json', status: 400, body: { error: 'invalid_grant', error_description: `token ${REFRESH}` } },
@@ -537,17 +542,15 @@ describe('what leaves the client', () => {
       { kind: 'json', status: 404, body: { error: { message: `${SHARED_ID} not found` } } },
       { kind: 'text', status: 500, body: `${ACCESS} ${SHARED_ID}` },
     );
-    await failureOf(() => client.exchangeCode(CODE));
-    await failureOf(() => client.refreshAccess(REFRESH));
-    await failureOf(() => client.listCalendars(ACCESS));
-    await failureOf(() => client.getCalendar(ACCESS, SHARED_ID));
-    await failureOf(() => client.listEvents(ACCESS, SHARED_ID, { timeMin: 'a', timeMax: 'b', timeZone: 'UTC', pageToken: null }));
-    expect(seen.length).toBeGreaterThan(40);
-    for (const err of seen) {
-      const shown = `${err.message} ${err.stack ?? ''} ${JSON.stringify(err)}`;
-      for (const secret of [...SECRETS, CLIENT_ID]) expect(shown).not.toContain(secret);
-      expect(Object.keys(err).sort()).toEqual(['code', 'name', 'status']);
-    }
+    const errors = [
+      await failureOf(() => client.exchangeCode(CODE)),
+      await failureOf(() => client.refreshAccess(REFRESH)),
+      await failureOf(() => client.listCalendars(ACCESS)),
+      await failureOf(() => client.getCalendar(ACCESS, SHARED_ID)),
+      await failureOf(() => client.listEvents(ACCESS, SHARED_ID, { timeMin: 'a', timeMax: 'b', timeZone: 'UTC', pageToken: null })),
+    ];
+    expect(errors.map((err) => err.code)).toEqual(['invalid_grant', 'invalid_grant', 'forbidden', 'not_found', 'unavailable']);
+    expect(fake.calls).toHaveLength(5);
     for (const call of fake.calls) {
       for (const secret of [CLIENT_SECRET, CODE, REFRESH, ACCESS, NEW_REFRESH]) expect(call.url).not.toContain(secret);
       expect(call.url).not.toContain('token=');
