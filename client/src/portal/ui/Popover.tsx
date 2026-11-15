@@ -17,9 +17,11 @@ import { Heading } from './text';
 // that. Placement (placePopover) is measured on open, on every window size change and every keyboard show or hide: from
 // 641px wide the card opens 8px under its opener, or 8px above it when the room below is short, edge-aligned with it;
 // below 641px it is pinned to the top of the window, since its text fields would sit under the keyboard lower down. The
-// window's bottom is the keyboard's top while it shows, so the card never runs under it. `busy` holds it open (Close
-// disabled in place, Escape, back and outside presses doing nothing) while an action runs, so its answer always lands
-// in the open popover. Nothing animates.
+// window's bottom is the keyboard's top while it shows, so the card never runs under it. Card and backdrop sit in a box
+// as tall as the height placement used (on web the layout viewport's, which a phone's keyboard does not shrink, though
+// react-native-web's window height is the visual viewport's), so a card placed by its `bottom` lands where placePopover
+// put it whatever size the Modal is. `busy` holds it open (Close disabled in place, Escape, back and outside presses
+// doing nothing) while an action runs, so its answer always lands in the open popover. Nothing animates.
 
 /** The opener's box in window coordinates, from its measureInWindow. */
 export interface PopoverRect {
@@ -32,6 +34,7 @@ export interface PopoverRect {
 /** The window: its size, and the band a card may use, between the safe area's top and the keyboard's top or the bottom. */
 export interface PopoverWindow {
   width: number;
+  /** The height of the box the card is placed in, from whose bottom a card above its opener is placed. */
   height: number;
   /** The usable top: the safe area's top inset (0 on web). */
   top: number;
@@ -56,8 +59,9 @@ const ROOM = 320;
  * is at least 320px or at least the room above, else above it by 8px; at most that room less 24px tall (the gap and a
  * 16px margin); its right edge on the opener's when the opener's center is in the window's right half, else its left
  * edge on the opener's; at least 16px from either window edge, and at most `min(maxWidth, window width - 32)` wide.
- * Below 641px, or before the opener is measured, it is pinned 16px from the usable top and either side, at most the
- * usable height less 32px tall; below 641px it is the window's width less 32px.
+ * Above an opener the keyboard covers, it ends 16px above the keyboard's top instead, so no part of it is under the
+ * keyboard. Below 641px, or before the opener is measured, it is pinned 16px from the usable top and either side, at
+ * most the usable height less 32px tall; below 641px it is the window's width less 32px.
  */
 export function placePopover(anchor: PopoverRect | null, window: PopoverWindow, maxWidth: number): PopoverPlacement {
   const anchored = window.width >= ANCHORED_FROM;
@@ -73,7 +77,8 @@ export function placePopover(anchor: PopoverRect | null, window: PopoverWindow, 
   if (below >= ROOM || below >= above) {
     return { width, left, top: anchor.y + anchor.height + GAP, maxHeight: Math.max(0, below - GAP - MARGIN) };
   }
-  return { width, left, bottom: window.height - anchor.y + GAP, maxHeight: Math.max(0, above - GAP - MARGIN) };
+  const end = Math.min(anchor.y - GAP, window.bottom - MARGIN);
+  return { width, left, bottom: window.height - end, maxHeight: Math.max(0, end - window.top - MARGIN) };
 }
 
 /** What a popover's anchor must have: a host view (a Button's `ref`), measured in window coordinates. */
@@ -127,7 +132,7 @@ export function Popover(props: PopoverProps): React.JSX.Element {
 
 /**
  * The keyboard's top in window coordinates while it shows (native's keyboard events, both iOS and Android), or the
- * visual viewport's height (web, which shrinks while a phone's keyboard shows); null without either.
+ * visual viewport's bottom (web, which a phone's keyboard raises); null without either.
  */
 function useKeyboardTop(): number | null {
   const [top, setTop] = useState<number | null>(readKeyboardTop);
@@ -135,9 +140,14 @@ function useKeyboardTop(): number | null {
     if (Platform.OS === 'web') {
       const viewport = visualViewport();
       if (viewport === null) return;
-      const onResize = (): void => { setTop(viewport.height); };
-      viewport.addEventListener('resize', onResize);
-      return () => { viewport.removeEventListener('resize', onResize); };
+      // A resize when the keyboard shows or hides; a scroll when the browser pans the visual viewport to a field.
+      const onChange = (): void => { setTop(viewportBottom(viewport)); };
+      viewport.addEventListener('resize', onChange);
+      viewport.addEventListener('scroll', onChange);
+      return () => {
+        viewport.removeEventListener('resize', onChange);
+        viewport.removeEventListener('scroll', onChange);
+      };
     }
     const shown = Keyboard.addListener('keyboardDidShow', (event) => { setTop(event.endCoordinates.screenY); });
     const hidden = Keyboard.addListener('keyboardDidHide', () => { setTop(null); });
@@ -154,8 +164,19 @@ function visualViewport(): VisualViewport | null {
   return 'visualViewport' in window ? window.visualViewport : null;
 }
 
+/**
+ * The visual viewport's bottom in the layout viewport's coordinates, which the opener is measured in and the card is
+ * placed in: its pan plus its height, scaled as react-native-web scales the window, so a pinch zoom shrinks nothing.
+ */
+function viewportBottom(viewport: VisualViewport): number {
+  return viewport.offsetTop + viewport.height * viewport.scale;
+}
+
 function readKeyboardTop(): number | null {
-  if (Platform.OS === 'web') return visualViewport()?.height ?? null;
+  if (Platform.OS === 'web') {
+    const viewport = visualViewport();
+    return viewport === null ? null : viewportBottom(viewport);
+  }
   return Keyboard.isVisible() ? Keyboard.metrics()?.screenY ?? null : null;
 }
 
@@ -164,7 +185,11 @@ const NO_INSETS = { top: 0, bottom: 0 };
 function Card(props: PopoverProps): React.JSX.Element {
   const { anchor, onClose } = props;
   const busy = props.busy === true;
-  const { width, height } = useWindowDimensions();
+  const dimensions = useWindowDimensions();
+  const { width } = dimensions;
+  // The box the card is placed in. On web react-native-web's window height is the visual viewport's, which a phone's
+  // keyboard shrinks while the Modal stays the layout viewport's size, so the layout viewport's height is used.
+  const height = Platform.OS === 'web' ? document.documentElement.clientHeight : dimensions.height;
   // Outside a SafeAreaProvider (a unit test) there are no insets.
   const insets = useContext(SafeAreaInsetsContext) ?? NO_INSETS;
   const keyboardTop = useKeyboardTop();
@@ -183,7 +208,7 @@ function Card(props: PopoverProps): React.JSX.Element {
   const unplaced = anchored && rect === null;
   const outside = props.dismissOnOutsidePress && !busy;
   return (
-    <>
+    <View style={[styles.frame, { height }]}>
       <View
         role="dialog"
         aria-modal
@@ -207,13 +232,15 @@ function Card(props: PopoverProps): React.JSX.Element {
         onResponderRelease={() => { if (outside) onClose(); }}
         style={styles.backdrop}
       />
-    </>
+    </View>
   );
 }
 
 const c = theme.color;
 
 const styles = StyleSheet.create({
+  // The box placement measures in: the window's width, `height` tall from its top.
+  frame: { position: 'absolute', top: 0, left: 0, right: 0 },
   card: {
     position: 'absolute', zIndex: 1, backgroundColor: c.panel, borderWidth: 1, borderColor: c.border, borderRadius: 0,
     boxShadow: `0 12px 32px ${c.shadow}`,

@@ -72,6 +72,12 @@ describe('placePopover', () => {
     expect(16 + placed.maxHeight).toBeLessThanOrEqual(367 - 16);
   });
 
+  test('above an opener the keyboard covers, it ends 16px above the keyboard’s top', () => {
+    // 1180 by 820 with a 400px keyboard: the opener at y 500 is under it, so the card ends at 404, not at 492.
+    const placed = placePopover({ x: 900, y: 500, width: 160, height: 44 }, { width: 1180, height: 820, top: 0, bottom: 420 }, 400);
+    expect(placed).toEqual({ width: 400, left: 660, bottom: 820 - 404, maxHeight: 388 });
+  });
+
   test('below a safe area’s top inset it keeps 16px from the inset', () => {
     expect(placePopover(null, { width: 390, height: 844, top: 47, bottom: 810 }, 440)).toEqual({ width: 358, left: 16, top: 63, maxHeight: 810 - 47 - 32 });
   });
@@ -226,6 +232,59 @@ test('at 1280 by 900 the card is placed from its opener’s measureInWindow, and
   act(() => { answer?.(1040, 200, 160, 44); });
   const style = window.getComputedStyle(card);
   expect([style.opacity, style.position, style.top, style.left, style.width, style.maxHeight]).toEqual(['', 'absolute', '252px', '760px', '440px', '632px']);
+});
+
+/** A phone or tablet browser's visual viewport, which jsdom lacks: the keyboard shrinks it and a pan moves its top. */
+class FakeViewport extends EventTarget {
+  width = 1180;
+  height = 746;
+  offsetTop = 0;
+  scale = 1;
+
+  change(type: 'resize' | 'scroll', next: Partial<Pick<FakeViewport, 'height' | 'offsetTop' | 'scale'>>): void {
+    Object.assign(this, next);
+    act(() => {
+      this.dispatchEvent(new Event(type));
+      // react-native-web, loaded before this viewport existed, listens on the window; in a browser it listens here,
+      // so its window height follows the visual viewport's, as it does under a keyboard.
+      window.dispatchEvent(new Event('resize'));
+    });
+  }
+}
+
+test('with the keyboard up the card is placed in the layout viewport, so above its opener it ends above the keyboard', () => {
+  // iPad landscape Safari: a 746px layout viewport, which the keyboard does not shrink; only the visual viewport does.
+  const viewport = new FakeViewport();
+  Object.defineProperty(window, 'visualViewport', { configurable: true, value: viewport });
+  try {
+    setWindow(1180, 746);
+    render(<Harness />);
+    const opener = screen.getByRole<HTMLElement & { measureInWindow: (callback: (...box: number[]) => void) => void }>('button', { name: 'Open' });
+    opener.measureInWindow = (callback) => { callback(1000, 200, 160, 44); };
+    open();
+    const card = screen.getByRole('dialog', { name: 'Your calendars' });
+    // The box the card is placed in is the layout viewport's height, whatever the visual viewport is.
+    const frame = card.parentElement;
+    if (frame === null) throw new Error('no frame');
+    const place = (): string[] => {
+      const style = window.getComputedStyle(card);
+      return [window.getComputedStyle(frame).height, style.top, style.bottom, style.maxHeight];
+    };
+    expect(place()).toEqual(['746px', '252px', '', '478px']);
+    // A 400px keyboard: 102px below the opener is less than the 200 above, so the card opens above it, its bottom
+    // edge 8px over the opener (746 - 554 = 192) and its top 16px under the window's, all above the keyboard's 346.
+    viewport.change('resize', { height: 346 });
+    expect(place()).toEqual(['746px', '', '554px', '176px']);
+    // The browser pans the visual viewport 100px down: the keyboard's top is at 446, leaving 202px below the opener.
+    viewport.change('scroll', { offsetTop: 100 });
+    expect(place()).toEqual(['746px', '252px', '', '178px']);
+    // With the keyboard gone, a pinch zoom (half the height at twice the scale) shrinks nothing.
+    viewport.change('resize', { height: 373, offsetTop: 0, scale: 2 });
+    expect(place()).toEqual(['746px', '252px', '', '478px']);
+  } finally {
+    cleanup();
+    Reflect.deleteProperty(window, 'visualViewport');
+  }
 });
 
 test('at 375 the card is pinned 16px from the top and either side without measuring its opener', () => {
