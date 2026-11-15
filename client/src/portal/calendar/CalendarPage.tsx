@@ -120,7 +120,7 @@ function useKept<T>(load: () => Promise<T>): Kept<T> {
 }
 
 /**
- * The grid's stored events from the location's calendars. A failure is no events and a flag, so the grid still shows
+ * The range's stored events from the location's calendars. A failure is no events and a flag, so the grid still shows
  * without them (connect-owner-calendar design decision 11), as it does without a forecast.
  */
 async function storedEventsOf(
@@ -267,7 +267,7 @@ function CalendarView(): React.JSX.Element {
   const { reload: reloadForecast } = forecast;
   const { reload: reloadCalendars } = calendars;
   const { reload: reloadMonth } = monthData;
-  // After a calendar is added, refreshed or removed, and on the popover's Try again: the list and the grid's stored
+  // After a calendar is added, refreshed or removed, and on the popover's Try again: the list and the range's stored
   // events. Stored events change the forecast only through notes, so neither the forecast nor the notes read again.
   const readCalendarsAgain = useCallback(() => {
     reloadCalendars();

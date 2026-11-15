@@ -30,7 +30,7 @@ export interface CalendarWeekProps {
    * then shows, after PageUp or PageDown; null otherwise.
    */
   onSelect: (date: string, moved?: boolean, month?: string | null) => void;
-  /** Dimmed and aria-busy while the grid's reads load again. */
+  /** Dimmed and aria-busy while the reads of the shown range (grid.ts readRangeFor) load again. */
   busy: boolean;
   /** “Nov 15 to 21, 2026”: the week's name. */
   label: string;

@@ -14,10 +14,11 @@ import { statusWord } from './model';
 // 1" on a month's 1st, a Today tag under today), the status word, the figure with "+70", and one line (the range,
 // "guests" under a past figure, "No forecast"). Then every item on the day as a card (grid.ts buildWeek), not
 // focusable; the panel keeps the actions. The box is at least as tall as the month grid at the same width, so
-// switching views keeps the page height. Keys are the month grid's (grid.ts gridMove, layout 'week'), and the moved-to
-// column takes focus without scrolling. A mouse or pen over a column head shows the day's tooltip; cards and touch
-// show none. An inert day (outside the 25 months) is its head line only, with no data-date; a pending day (its
-// reads in flight) is its head line only, still the tab stop when selected, with no description and no tooltip.
+// switching views keeps the page height. Keys are grid.ts gridMove's in its 'week' layout, Home and End going to the
+// block's first and last day, and the moved-to column takes focus without scrolling. A mouse or pen over a column head
+// shows the day's tooltip; cards and touch show none. An inert day (outside the 25 months) is its head line only, with
+// no data-date; a pending day (its reads in flight) is its head line only, still the tab stop when selected, with no
+// description and no tooltip.
 // At 640px and below the week is an agenda: the same grid with 7 rows of one gridcell each, every day's head on one
 // line above its full-width cards, so Up and Down move a day, as a screen reader hears the next row; its height
 // follows what it holds.
