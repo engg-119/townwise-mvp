@@ -17,7 +17,9 @@ import { useBreakpoint } from '../hooks';
 // keeps its rows and cells, and the row shows `raised` while that link has focus, as on hover. A control of its own
 // in such a row (a ZIP's “See what's inside”) still does only what it says: the innermost press wins. On web a press
 // that ends a text selection (a drag across the row) selects and opens nothing. The link's name is underlined, as the
-// portal's other links are, so a phone's stacked card shows it opens. A row with no `href` keeps the default cursor
+// portal's other links are, so a phone's stacked card shows it opens. A row with an `onPress` instead does that in
+// place (a driver's days under Biggest drivers), the same way: a press anywhere on it, its way in a control the caller
+// puts in a cell, which raises the row while focused through useRowFocus. A row with neither keeps the default cursor
 // and is no tab stop.
 
 /**
@@ -52,10 +54,20 @@ export interface Row {
   selected?: boolean;
   /** Where a press anywhere on the row leads. Give one of its cells a <RowLink> to the same place. */
   href?: string;
+  /**
+   * What a press anywhere on the row does in place, when it has no `href`. Give one of its cells a control that does the
+   * same for the keyboard and screen readers, and let it raise the row while focused (useRowFocus).
+   */
+  onPress?: () => void;
 }
 
 /** Tells a linked row that its link took or lost focus. */
 const RowFocus = createContext<((focused: boolean) => void) | null>(null);
+
+/** For a row's own control (a row with `onPress`): call with true on focus and false on blur to raise the row. */
+export function useRowFocus(): ((focused: boolean) => void) | null {
+  return useContext(RowFocus);
+}
 
 /**
  * A linked row's link: the row's one focusable element, named `accessibilityLabel` when given (else `label`), and
@@ -79,9 +91,10 @@ export function RowLink(props: { href: string; label: string; accessibilityLabel
   );
 }
 
-/** A row that opens `href` from a press anywhere on it, raised on hover and while its RowLink has focus. */
+/** A row that opens `href`, or runs `onPress`, from a press anywhere on it, raised on hover and while its control has focus. */
 function LinkedRow(props: {
-  href: string;
+  href: string | undefined;
+  onPress: (() => void) | undefined;
   role: 'row' | 'listitem';
   style: (raised: boolean) => StyleProp<ViewStyle>;
   children: React.ReactNode;
@@ -95,7 +108,11 @@ function LinkedRow(props: {
         // Pressable makes itself a tab stop on web unless told otherwise; the row's RowLink is its one.
         tabIndex={-1}
         focusable={false}
-        onPress={() => { if (!selecting()) router.push(props.href); }}
+        onPress={() => {
+          if (selecting()) return;
+          if (props.href !== undefined) router.push(props.href);
+          else props.onPress?.();
+        }}
         style={(state) => props.style(focused || hovered(state))}
       >
         {props.children}
@@ -144,10 +161,10 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
                 <View style={styles.pairValue}><Cell value={row.cells[column.key]} numeric={false} first={index === 0} /></View>
               </View>
             )));
-            return row.href === undefined ? (
+            return row.href === undefined && row.onPress === undefined ? (
               <View key={row.key} role="listitem" style={style(false)}>{pairs}</View>
             ) : (
-              <LinkedRow key={row.key} href={row.href} role="listitem" style={style}>{pairs}</LinkedRow>
+              <LinkedRow key={row.key} href={row.href} onPress={row.onPress} role="listitem" style={style}>{pairs}</LinkedRow>
             );
           })}
         </View>
@@ -188,10 +205,10 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
               <Cell value={row.cells[column.key]} numeric={column.numeric === true} first={index === 0} />
             </View>
           ));
-          return row.href === undefined ? (
+          return row.href === undefined && row.onPress === undefined ? (
             <Pressable key={row.key} role="row" tabIndex={-1} focusable={false} style={(state) => [style(hovered(state)), styles.plainRow]}>{cells}</Pressable>
           ) : (
-            <LinkedRow key={row.key} href={row.href} role="row" style={style}>{cells}</LinkedRow>
+            <LinkedRow key={row.key} href={row.href} onPress={row.onPress} role="row" style={style}>{cells}</LinkedRow>
           );
         })}
       </View>

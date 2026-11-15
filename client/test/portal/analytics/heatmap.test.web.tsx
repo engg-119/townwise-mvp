@@ -372,6 +372,20 @@ test('a driver’s name opens its days under Biggest drivers, row selected, each
   fireEvent.click(name);
   fireEvent.click(within(await screen.findByRole('region', { name: 'Home football, day by day' })).getByRole('button', { name: 'Close' }));
   expect(screen.queryByRole('region', { name: 'Home football, day by day' })).toBeNull();
+  // A press anywhere on the row opens it too, and again shuts it; the name's own press counts once, not twice.
+  const row = name.closest('[role="row"]');
+  if (row === null) throw new Error('no row');
+  const effect = within(row as HTMLElement).getByText('+50%');
+  fireEvent.click(effect);
+  expect(await screen.findByRole('region', { name: 'Home football, day by day' })).toBeTruthy();
+  expect(name.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.click(effect);
+  expect(screen.queryByRole('region', { name: 'Home football, day by day' })).toBeNull();
+  // A press that ends a text selection across the row selects and opens nothing.
+  const selection = jest.spyOn(window, 'getSelection').mockReturnValue({ toString: () => 'Home football' } as Selection);
+  fireEvent.click(effect);
+  selection.mockRestore();
+  expect(screen.queryByRole('region', { name: 'Home football, day by day' })).toBeNull();
 });
 
 test('F9: “How Townwise estimates” sits above Your data, says there is no forecast yet, and names what it reads', async () => {
