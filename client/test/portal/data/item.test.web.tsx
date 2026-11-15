@@ -1,16 +1,16 @@
 import '../../viewer/setup';
 
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
-import { ExpoRoot } from 'expo-router';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { ExpoRoot, router } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import type { HistoryUpload, SalesHistory } from '../../../src/portal/analytics/api';
 import type { DataItem } from '../../../src/portal/data/api';
-import type { MeResponse } from '../../../src/portal/schemas';
+import type { MeResponse, OrgResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { choicesOf, choose } from '../../helpers/select';
 import { openMore } from '../../helpers/topBar';
 import { documentBytes, para, workbookBytes } from '../../viewer/fixtures';
@@ -19,7 +19,8 @@ import { dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
 // One item of Your data on web (P27, D28): its details, an upload's days, and a stored file drawn in the browser by
 // kind (text, a CSV grid, a workbook's sheets, a PDF opened in a new tab, a Word document, a picture), with every
-// case that shows nothing saying why. All files are synthetic.
+// case that shows nothing saying why, and the actions Your data's rows used to carry (Turn off, Delete original,
+// Delete), a delete going back to Your data with its outcome. All files are synthetic.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -75,14 +76,18 @@ interface Setup { fake: DataFake; api: FakePortalApi }
 
 function setup(
   items: DataItem[], ref: string,
-  opts: { me?: MeResponse; history?: SalesHistory; downloads?: Record<string, () => Blob | ReturnType<typeof refusal>> } = {},
+  opts: {
+    me?: MeResponse; org?: OrgResponse; history?: SalesHistory; downloads?: Record<string, () => Blob | ReturnType<typeof refusal>>;
+    /** Where the app opens; the item's page by default. */
+    path?: string;
+  } = {},
 ): Setup {
   const fake = dataFake({ inner: locationsFake(), items });
   if (opts.history !== undefined) fake.history.l1 = opts.history;
   Object.assign(fake.files.downloads, opts.downloads ?? {});
-  const api = fakePortalApi({ me: opts.me ?? meOf(ACCESS.admin), org: orgOf('org_admin'), fallback: fake });
+  const api = fakePortalApi({ me: opts.me ?? meOf(ACCESS.admin), org: opts.org ?? orgOf('org_admin'), fallback: fake });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
-  const path = `/locations/l1/data/${ref}`;
+  const path = opts.path ?? `/locations/l1/data/${ref}`;
   window.history.replaceState(null, '', path);
   render(
     <Head.Provider>
@@ -148,7 +153,7 @@ describe('an upload', () => {
     const ref = refOf('u', 2);
     const { api } = setup([dailyTotalsOf(ref, { enabled: false })], ref, { history: historyOf(ref.slice(2)) });
     expect(await screen.findByText(
-      'This upload is turned off, so its days are left out of your numbers and aren’t shown here. Turn it on in Your data to see them.',
+      'This upload is turned off, so its days are left out of your numbers and aren’t shown here. Turn it on above to see them.',
     )).toBeTruthy();
     expect(screen.getByText('Off · Used')).toBeTruthy();
     expect(screen.queryByRole('table')).toBeNull();
@@ -370,6 +375,16 @@ describe('what shows nothing says why', () => {
     expect(screen.getByRole('heading', { level: 2, name: 'CSV or text file' })).toBeTruthy();
     expect(screen.queryByRole('button', { name: /^Download/ })).toBeNull();
     expect(rawRequests(fake)).toEqual([]);
+    // Turn off and Delete show, disabled in place under the read-only line, named by the kind and when it was added.
+    expect(document.getElementById('item-ro')?.textContent).toMatch(/^Read-only while viewing as /);
+    for (const name of ['Turn off: CSV or text file, added Nov 5, 2026', 'Delete: CSV or text file, added Nov 5, 2026']) {
+      const button = screen.getByRole('button', { name });
+      expect({ name, state: [button.getAttribute('aria-disabled'), button.getAttribute('aria-describedby')] }).toEqual({ name, state: ['true', 'item-ro'] });
+    }
+    expect(screen.queryByRole('button', { name: /^Delete original/ })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete: CSV or text file, added Nov 5, 2026' }));
+    expect(screen.queryByRole('dialog')).toBeNull();
+    expect(fake.patches).toEqual([]);
   });
 
   test('a file over 25 MB is not fetched, and says its size', async () => {
@@ -406,5 +421,205 @@ describe('what shows nothing says why', () => {
     setup([], refOf('f', 36));
     expect(await screen.findByText('This item isn’t here anymore. It may have been deleted, or replaced when someone saved an edit of it.')).toBeTruthy();
     expect(screen.getByRole('link', { name: 'Back to Your data' }).getAttribute('href')).toBe('/locations/l1/data');
+  });
+});
+
+describe('the actions Your data’s rows used to carry', () => {
+  /** The sales file an upload was read from: both downloads, and an original that can be deleted on its own. */
+  function salesUpload(ref: string): DataItem {
+    return itemOf(ref, {
+      name: 'toast.csv', kind: 'text', days: { count: 2, inUse: 2, firstDate: '2026-05-01', lastDate: '2026-05-02' },
+      file: { id: 'file-sales', hasClean: true, rawAvailable: true, rawExpiresAt: null, entries: null, canDownloadRaw: true, canDownloadClean: true, canDeleteRaw: true },
+    });
+  }
+
+  /** The labels of the buttons in the item's row of actions, which holds `one`. */
+  function actionsBeside(one: HTMLElement): string[] {
+    const row = one.parentElement;
+    if (row === null) throw new Error('no actions row');
+    return within(row).getAllByRole('button').map((button) => button.textContent);
+  }
+
+  function noticeHasFocus(notice: HTMLElement): boolean {
+    return document.activeElement !== document.body && document.activeElement?.contains(notice) === true;
+  }
+
+  function orgReads(api: FakePortalApi): number {
+    return api.calls.filter((call) => call.method === 'GET' && call.path === '/api/org').length;
+  }
+
+  async function settle(fire: () => void): Promise<void> {
+    await act(async () => {
+      fire();
+      await new Promise((resolve) => { setTimeout(resolve, 0); });
+    });
+  }
+
+  /** The Delete section's heading and its buttons, which follow the item's content. */
+  function deleteSection(): { heading: HTMLElement; buttons: string[] } {
+    const heading = screen.getByRole('heading', { level: 2, name: 'Delete this item' });
+    const section = heading.parentElement?.parentElement;
+    if (section === null || section === undefined) throw new Error('no Delete section');
+    return { heading, buttons: within(section).getAllByRole('button').map((button) => button.textContent) };
+  }
+
+  test('a sales file’s upload has Turn off and both downloads, then Delete original and Delete in a Delete section of their own; one kept for reference has no Delete original', async () => {
+    const ref = refOf('u', 50);
+    setup([salesUpload(ref)], ref, { history: historyOf(ref.slice(2)) });
+    const turn = await screen.findByRole('button', { name: 'Turn off: toast.csv' });
+    expect(actionsBeside(turn)).toEqual(['Turn off', 'Download original', 'Download cleaned CSV']);
+    const { heading, buttons } = deleteSection();
+    expect(buttons).toEqual(['Delete original', 'Delete']);
+    // Below the item: after its actions in the page's order.
+    expect(turn.compareDocumentPosition(heading) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    cleanup();
+    const kept = refOf('f', 51);
+    setup([storedFile(kept, { name: 'menu-notes.txt' })], kept);
+    // The original is the whole item: Delete removes it whole.
+    expect(actionsBeside(await screen.findByRole('button', { name: 'Turn off: menu-notes.txt' }))).toEqual(['Turn off', 'Download original']);
+    expect(deleteSection().buttons).toEqual(['Delete']);
+  });
+
+  test('opening a delete’s dialog clears the last action’s notice', async () => {
+    const ref = refOf('f', 62);
+    setup([storedFile(ref, { name: 'menu-notes.txt' })], ref);
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off: menu-notes.txt' }));
+    expect(await screen.findByText(/^Turned off menu-notes\.txt\./)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Delete: menu-notes.txt' }));
+    expect(await screen.findByRole('dialog', { name: 'Delete this file' })).toBeTruthy();
+    expect(screen.queryByText(/^Turned off menu-notes\.txt\./)).toBeNull();
+  });
+
+  test('a delete opened from Your data goes back to that entry, so Your data is in the history once, and its notice takes focus', async () => {
+    const ref = refOf('f', 63);
+    setup([storedFile(ref, { name: 'menu-notes.txt' }), storedFile(refOf('f', 64), { name: 'other.txt' })], ref, { path: '/locations/l1/data' });
+    const list = await screen.findByRole('region', { name: 'Your data for Main Street Bar' });
+    await settle(() => { fireEvent.click(within(list).getByRole('link', { name: 'menu-notes.txt' })); });
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete: menu-notes.txt' }));
+    await settle(() => { fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete this file' })).getByRole('button', { name: 'Delete file' })); });
+    await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/data'); });
+    const notice = await screen.findByText('Deleted menu-notes.txt.');
+    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    // The item's entry was taken off, not replaced by a second Your data: nothing is left to go back to.
+    expect(router.canGoBack()).toBe(false);
+  });
+
+  test('Turn off acts at once, says so, takes focus and shows Off; Turn on puts it back', async () => {
+    const ref = refOf('u', 52);
+    const { fake } = setup([dailyTotalsOf(ref)], ref, { history: historyOf(ref.slice(2)) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
+    expect(fake.patches).toEqual([{ ref, body: { enabled: false } }]);
+    const notice = await screen.findByText(/^Turned off Daily totals, May 1, 2026 to May 10, 2026\./);
+    expect(notice.textContent).toBe('Turned off Daily totals, May 1, 2026 to May 10, 2026. Main Street Bar’s numbers, forecasts and TownwiseAI leave it out until it’s turned on.');
+    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    expect(await screen.findByText('Off · Used')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Turn on: Daily totals, May 1, 2026 to May 10, 2026' }));
+    expect(fake.patches.at(-1)).toEqual({ ref, body: { enabled: true } });
+    expect(await screen.findByText('Turned on Daily totals, May 1, 2026 to May 10, 2026.')).toBeTruthy();
+    expect(await screen.findByText('On · Used')).toBeTruthy();
+  });
+
+  test('Delete on an upload says in words which days go and what stays, then goes back to Your data, which says how it ended', async () => {
+    const ref = refOf('u', 53);
+    const { fake, api } = setup([dailyTotalsOf(ref), storedFile(refOf('f', 54), { name: 'menu-notes.txt' })], ref, { history: historyOf(ref.slice(2)) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
+    expect(within(dialog).getByText(
+      'This deletes the 5 days this upload still holds for Main Street Bar, May 1, 2026 to May 10, 2026, and its file, if it has one. Days a later upload replaced stay, and so do notes. To keep the days out of your numbers without deleting them, turn it off instead. This can’t be undone.',
+    )).toBeTruthy();
+    const before = orgReads(api);
+    await settle(() => { fireEvent.click(within(dialog).getByRole('button', { name: 'Delete upload' })); });
+    expect(fake.removed).toEqual([{ locationId: 'l1', ref }]);
+    await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/data'); });
+    expect(await screen.findByText('Deleted the upload and 5 days.')).toBeTruthy();
+    const rows = within(await screen.findByRole('region', { name: 'Your data for Main Street Bar' })).getAllByRole('row').slice(1);
+    expect(rows.map((row) => within(row).getByRole('link').textContent)).toEqual(['menu-notes.txt']);
+    // The item's page closed, so the organization's day counts are read again.
+    await waitFor(() => { expect(orgReads(api)).toBe(before + 1); });
+  });
+
+  test('Delete on a stored file says it goes for everyone on the team, and Your data says it went', async () => {
+    const ref = refOf('f', 55);
+    const { fake } = setup([storedFile(ref, { name: 'menu-notes.txt' })], ref);
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete: menu-notes.txt' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete this file' });
+    expect(within(dialog).getByText('This deletes menu-notes.txt for everyone on your team. This can’t be undone.')).toBeTruthy();
+    await settle(() => { fireEvent.click(within(dialog).getByRole('button', { name: 'Delete file' })); });
+    expect(fake.removed).toEqual([{ locationId: 'l1', ref }]);
+    const notice = await screen.findByText('Deleted menu-notes.txt.');
+    expect(window.location.pathname).toBe('/locations/l1/data');
+    // Opened straight at the item, Your data takes its place, and the notice takes focus there too.
+    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    expect(await screen.findByText('Nothing here yet. What your team uploads or adds for Main Street Bar shows here.')).toBeTruthy();
+  });
+
+  test('Delete original says what stays, deletes only the original and stays on the page', async () => {
+    const ref = refOf('u', 56);
+    const { fake } = setup([salesUpload(ref)], ref, { history: historyOf(ref.slice(2)) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete original: toast.csv' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete original' });
+    expect(within(dialog).getByText('This deletes the original of toast.csv. The cleaned copy and the days it added stay. This can’t be undone.')).toBeTruthy();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Delete original' }));
+    const notice = await screen.findByText('Deleted the original. The cleaned copy and its days stay.');
+    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    expect(fake.files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/file-sales/raw']);
+    expect(fake.removed).toEqual([]);
+    expect(window.location.pathname).toBe(`/locations/l1/data/${ref}`);
+  });
+
+  test('a member sees Turn off and Delete only where the API gives the right', async () => {
+    const mine = refOf('f', 57);
+    setup([storedFile(mine, { name: 'mine.txt' })], mine, { me: meOf(ACCESS.member) });
+    expect(await screen.findByRole('button', { name: 'Turn off: mine.txt' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Delete: mine.txt' })).toBeTruthy();
+    cleanup();
+    const theirs = refOf('f', 58);
+    setup([storedFile(theirs, { name: 'theirs.txt', canTurnOff: false, canDelete: false })], theirs, { me: meOf(ACCESS.member) });
+    expect(await screen.findByRole('heading', { level: 2, name: 'theirs.txt' })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /^(Turn off|Delete)/ })).toBeNull();
+  });
+
+  test('a refused action says why in Your data’s words, and a 404 reads the item again, which says it is gone', async () => {
+    const ref = refOf('f', 59);
+    const { fake } = setup([storedFile(ref, { name: 'menu-notes.txt' })], ref);
+    fake.answers[`PATCH ${ref}`] = () => refusal(409, 'item_busy');
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off: menu-notes.txt' }));
+    expect(await screen.findByText('Townwise is still reading this file. Try again when it’s done.')).toBeTruthy();
+    fake.answers[`DELETE ${ref}`] = () => refusal(503, 'files_unavailable');
+    fireEvent.click(screen.getByRole('button', { name: 'Delete: menu-notes.txt' }));
+    fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete this file' })).getByRole('button', { name: 'Delete file' }));
+    expect(await screen.findByText('File storage is off right now, so this can’t be done.')).toBeTruthy();
+    // A failed delete stays here.
+    expect(window.location.pathname).toBe(`/locations/l1/data/${ref}`);
+    fake.answers[`PATCH ${ref}`] = () => refusal(404, 'not_found');
+    fake.items = [];
+    fireEvent.click(screen.getByRole('button', { name: 'Turn off: menu-notes.txt' }));
+    expect(await screen.findByText('This item isn’t here anymore. It may have been deleted, or replaced when someone saved an edit of it.')).toBeTruthy();
+  });
+
+  test('with one location the Turned off notice and the upload’s delete dialog name the organization (D29)', async () => {
+    const one = orgOf('org_admin', LOCATIONS.slice(0, 1));
+    const ref = refOf('u', 60);
+    setup([dailyTotalsOf(ref)], ref, { org: one, history: historyOf(ref.slice(2)) });
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
+    expect((await screen.findByText(/^Turned off Daily totals/)).textContent).toBe(
+      'Turned off Daily totals, May 1, 2026 to May 10, 2026. Test Group’s numbers, forecasts and TownwiseAI leave it out until it’s turned on.',
+    );
+    fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
+    expect(within(dialog).getByText(/^This deletes the 5 days this upload still holds for Test Group, May 1, 2026 to May 10, 2026,/)).toBeTruthy();
+  });
+
+  test('after Turn off the organization is read again once the page closes, not before', async () => {
+    const ref = refOf('f', 61);
+    const { api } = setup([storedFile(ref, { name: 'menu-notes.txt' })], ref);
+    fireEvent.click(await screen.findByRole('button', { name: 'Turn off: menu-notes.txt' }));
+    await screen.findByText(/^Turned off menu-notes\.txt\./);
+    const before = orgReads(api);
+    await settle(() => undefined);
+    expect(orgReads(api)).toBe(before);
+    await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Back to Your data' })); });
+    await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/data'); });
+    await waitFor(() => { expect(orgReads(api)).toBe(before + 1); });
   });
 });

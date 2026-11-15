@@ -9,7 +9,7 @@ import { clientNav } from '../../src/portal/routing';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles';
 import { TopBar } from '../../src/portal/shell/TopBar';
 import { LinkButton } from '../../src/portal/ui/Button';
-import { DataTable, MIN_FLEX_WIDTH, type Column } from '../../src/portal/ui/DataTable';
+import { DataTable, MIN_FLEX_WIDTH, RowLink, type Column } from '../../src/portal/ui/DataTable';
 import { Notice } from '../../src/portal/ui/feedback';
 import { Select } from '../../src/portal/ui/Select';
 import { theme } from '../../src/theme';
@@ -309,6 +309,23 @@ test('from 641px to 1023px a table keeps a minimum width, so its focusable regio
   const rows = within(region).getAllByRole('row');
   expect(style(nth(rows, -2)).borderBottomWidth).toBe('1px');
   expect(style(nth(rows, -1)).borderBottomWidth).toBe('0px');
+});
+
+test('a row with an href opens it from a press anywhere on it, on phones too, and its RowLink is its one tab stop', async () => {
+  const rows = ROWS.map((row, index) => (index === 0 ? { ...row, href: '/other', cells: { ...row.cells, name: <RowLink href="/other" label={row.cells.name} /> } } : row));
+  renderLinked(<DataTable label="Organizations" columns={COLUMNS} rows={rows} />);
+  const items = within(screen.getByRole('region', { name: 'Organizations' })).getAllByRole('listitem');
+  const link = within(nth(items, 0)).getByRole('link', { name: 'Harbor Light Chowder House' });
+  expect([link.tagName, link.getAttribute('href'), nth(items, 0).tabIndex]).toEqual(['A', '/other', -1]);
+  // A row with no href is as it was: no link.
+  expect(within(nth(items, 1)).queryByRole('link')).toBeNull();
+  fireEvent.focus(link);
+  expect(style(nth(items, 0)).backgroundColor).toBe(RAISED);
+  await act(async () => {
+    fireEvent.click(within(nth(items, 0)).getByText('445'));
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+  });
+  expect(window.location.pathname).toBe('/other');
 });
 
 test('a selected last row keeps its whole outline', () => {
