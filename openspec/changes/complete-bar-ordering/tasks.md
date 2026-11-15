@@ -63,5 +63,5 @@
 - [x] 8.3 `/review` on the branch diff and fix what it finds
 - [x] 8.4 Merge `develop` again (after #70 if it has landed), rerun 8.1
 - [x] 8.5 Push to `feat/inventory-management` and comment on #68 with what was added and the `[CONFIRM]` list
-- [ ] 8.6 After #68 merges, remove the scratch worktree
+- [x] 8.6 After #68 merges, remove the scratch worktree
 - [x] 8.7 Merge `develop` after #70 landed (88f2db5): Orders moves to spec 10.17 (10.16 is Business rules); the top bar is Home, Calendar, Orders, Analytics, TownwiseAI, Notes, Rules, Town, Your data; Home's selected day keeps develop's Forecast and Why and gains the Reorder part in place of `BesideCalendar`; the root README goes back to develop's; the reorder semgrep finding is suppressed with its reason; rerun 8.1 and semgrep
