@@ -9,7 +9,7 @@ import {
   type ItemProposal, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
-import { isHiddenTool, type ToolStep } from './tools';
+import { isHiddenTool, type SourceLink, type ToolStep } from './tools';
 import { siblingAt, withTurn, type TreeNode } from './tree';
 import type { Visual } from './visuals/schema';
 
@@ -114,6 +114,11 @@ export interface ChatMessage {
   at: number | null;
   /** The files the person's message carries (D36): as sent, or as the server shows them now; [] for a reply. */
   attachments: MessageAttachment[];
+  /**
+   * The pages a reply cites from its web searches (D37), from its `done` or the conversation's GET: listed under it
+   * as its Sources. [] for none, for a reply still streaming and for the person's messages.
+   */
+  sources: SourceLink[];
 }
 
 /** The path a conversation shows: its messages, every node, and the path's leaf. */
@@ -371,7 +376,7 @@ function hasContent(message: ChatMessage): boolean {
 function blankMessage(key: string, role: ChatMessage['role']): ChatMessage {
   return {
     key, role, parts: [], state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null, request: null,
-    startedAt: null, endedAt: null, at: null, attachments: [],
+    startedAt: null, endedAt: null, at: null, attachments: [], sources: [],
   };
 }
 
@@ -609,7 +614,9 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       const budget = event.stopReason === 'budget' && state.budget !== null ? { ...state.budget, exhausted: true } : state.budget;
       const saved = SAVED_STOP_REASONS.includes(event.stopReason);
       if (!saved && state.turn?.earlier) return putBack({ ...state, budget }, state.turn.earlier, REGENERATE_FAILED);
-      const complete = (message: ChatMessage): ChatMessage => settleCards({ ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now, at: now }, saved ? 'kept' : 'lost');
+      const complete = (message: ChatMessage): ChatMessage => settleCards({
+        ...message, state: 'complete', note: doneNote(event.stopReason), endedAt: now, at: now, sources: event.sources,
+      }, saved ? 'kept' : 'lost');
       if (saved) return savedTurn({ ...state, budget }, event, complete);
       return { ...state, budget, turn: null, messages: withLive(state, complete) };
     }
@@ -952,6 +959,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     const message: ChatMessage = {
       ...blankMessage(nextKey(), stored.role), nodeId: stored.nodeId, parentId, feedback: stored.feedback, next: stored.next,
       at: stored.role === 'user' ? stored.at : stored.endedAt, attachments: stored.role === 'user' ? stored.attachments : [],
+      sources: stored.sources,
     };
     if (stored.role === 'assistant') {
       // Time worked runs from the person's message to the reply's end. Only a message's first reply can say so: a

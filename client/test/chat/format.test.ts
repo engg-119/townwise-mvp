@@ -36,7 +36,7 @@ test('stream events are read by type; unknown events and data that does not matc
   // Views may be left out on running: they read as null.
   expect(chatEventOf({ event: 'tool', data: '{"id":"t1","name":"list_notes","state":"running"}' }))
     .toEqual({ type: 'tool', id: 't1', name: 'list_notes', state: 'running', input: null, result: null });
-  expect(chatEventOf({ event: 'done', data: '{"stopReason":"end_turn","costUsd":0.01}' })).toEqual({ type: 'done', stopReason: 'end_turn', leafId: null });
+  expect(chatEventOf({ event: 'done', data: '{"stopReason":"end_turn","costUsd":0.01}' })).toEqual({ type: 'done', stopReason: 'end_turn', leafId: null, sources: [] });
   expect(chatEventOf({ event: 'tool', data: '{"id":"t1","name":"list_notes","state":"later"}' })).toBeNull();
   expect(chatEventOf({ event: 'text', data: 'not json' })).toBeNull();
   expect(chatEventOf({ event: 'message', data: '{}' })).toBeNull();

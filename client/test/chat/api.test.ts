@@ -20,8 +20,8 @@ it('reads the new event fields with old-server defaults, and drops a visual that
   // A regenerate has no new message of the person's.
   expect(chatEventOf(sse('conversation', { id: 'c', title: 't', userNodeId: null, replyNodeId: 'a2b', parentId: 'u2' })))
     .toMatchObject({ userNodeId: null, replyNodeId: 'a2b', parentId: 'u2' });
-  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01 }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: null });
-  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01, leafId: 'a2' }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2' });
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01 }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: null, sources: [] });
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.01, leafId: 'a2' }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2', sources: [] });
 
   expect(chatEventOf(sse('visual', { id: 'toolu_v1', visual: daily }))).toEqual({ type: 'visual', id: 'toolu_v1', visual: daily });
   expect(chatEventOf(sse('visual', { id: 'toolu_v1' }))).toBeNull();
@@ -167,4 +167,61 @@ it('sends a message’s files as refs only when there are any, and a regenerate 
   ]);
   for (const turn of api.turns) turn.end();
   await Promise.all(sent);
+});
+
+// D37: the shapes B1's API sends (api/src/chat/web-search.ts, docs/portal/tuning-chat.md 2 and 3). Synthetic pages.
+const FOUND = { pages: 9, sources: [{ host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road' }] };
+const CITED = [{ host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road?day=2' }];
+// Anything but an https source is left out: an http or javascript link, and an entry missing its host.
+const NOT_LINKS = [{ host: 'example.net', url: 'http://example.net/a' }, { host: 'example.net', url: 'javascript:alert(1)' }, { url: 'https://example.net/b' }, 'https://example.net/c'];
+
+it('reads a web search’s card events as tool events, never with an input (D37)', () => {
+  expect(chatEventOf(sse('tool', { id: 'srvtoolu_01', name: 'web_search', state: 'running', input: null, result: null })))
+    .toEqual({ type: 'tool', id: 'srvtoolu_01', name: 'web_search', state: 'running', input: null, result: null });
+  expect(chatEventOf(sse('tool', { id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null, result: FOUND })))
+    .toEqual({ type: 'tool', id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null, result: FOUND });
+  expect(chatEventOf(sse('tool', { id: 'srvtoolu_02', name: 'web_search', state: 'error', input: null, result: { code: 'max_uses_exceeded' } })))
+    .toEqual({ type: 'tool', id: 'srvtoolu_02', name: 'web_search', state: 'error', input: null, result: { code: 'max_uses_exceeded' } });
+});
+
+it('reads done’s sources (D37): https links only, none from an API before them, and a list that isn’t one never drops the done', () => {
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', costUsd: 0.026, leafId: 'a2', sources: CITED })))
+    .toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2', sources: CITED });
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', leafId: 'a2', sources: [...NOT_LINKS, ...CITED] })))
+    .toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2', sources: CITED });
+  expect(chatEventOf(sse('done', { stopReason: 'refusal', leafId: null, sources: [] }))).toEqual({ type: 'done', stopReason: 'refusal', leafId: null, sources: [] });
+  expect(chatEventOf(sse('done', { stopReason: 'end_turn', leafId: 'a2', sources: 'none' }))).toEqual({ type: 'done', stopReason: 'end_turn', leafId: 'a2', sources: [] });
+});
+
+it('loads each reply’s sources and its search parts (D37); the person’s entry has none, and an API before them sends none', async () => {
+  const api = fakeChatApi();
+  const [asked, answered] = CONVERSATION.messages;
+  api.conversation = {
+    ...CONVERSATION,
+    messages: [
+      // The person's entry never lists sources, whatever the answer says.
+      { ...asked, sources: CITED },
+      {
+        ...answered,
+        sources: [...NOT_LINKS, ...CITED],
+        parts: [
+          { type: 'tool', id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null, result: FOUND },
+          { type: 'tool', id: 'srvtoolu_02', name: 'web_search', state: 'error', input: null, result: { code: 'unavailable' } },
+          { type: 'text', text: 'The fair is on Saturday.' },
+        ],
+      },
+    ],
+  };
+  const load = await loadConversation(api, 'l1', 'c1');
+  expect(load.messages.map((message) => message.sources)).toEqual([[], CITED]);
+  expect(load.messages[1]?.parts).toEqual([
+    { type: 'tool', id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null, result: FOUND },
+    { type: 'tool', id: 'srvtoolu_02', name: 'web_search', state: 'error', input: null, result: { code: 'unavailable' } },
+    { type: 'text', text: 'The fair is on Saturday.' },
+  ]);
+  // A list that isn't one reads as none and the conversation still loads.
+  api.conversation = { ...CONVERSATION, messages: [asked, { ...answered, sources: { url: 'https://example.org/road' } }] };
+  expect((await loadConversation(api, 'l1', 'c1')).messages.map((message) => message.sources)).toEqual([[], []]);
+  api.conversation = CONVERSATION;
+  expect((await loadConversation(api, 'l1', 'c1')).messages.map((message) => message.sources)).toEqual([[], []]);
 });

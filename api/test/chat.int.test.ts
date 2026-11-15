@@ -165,7 +165,7 @@ describe('a plain answer', () => {
     });
     expect(streamedText(events)).toBe('May was steady, with two busy Fridays.');
     // 1000 x $4 + 500 x $20 + 10,000 x $0.20 + 2000 x $5 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026, leafId: replyNodeId });
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'end_turn', costUsd: 0.026, leafId: replyNodeId, sources: [] });
     expect(await usedMicroUsd()).toBe(26_000);
 
     const params = model.calls[0]?.params;
@@ -207,11 +207,11 @@ describe('a plain answer', () => {
         { id: replyNodeId, parentId: userNodeId, role: 'assistant' },
       ],
       messages: [
-        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at, attachments: [] },
+        { nodeId: userNodeId, role: 'user', text: 'What changed in May?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at, attachments: [], sources: [] },
         {
           nodeId: replyNodeId, role: 'assistant', text: 'May was steady, with two busy Fridays.', proposals: [],
           parts: [{ type: 'text', text: 'May was steady, with two busy Fridays.' }], feedback: null, next: null, at, endedAt: at,
-          attachments: [],
+          attachments: [], sources: [],
         },
       ],
     });
@@ -442,7 +442,7 @@ describe('tools', () => {
     const { events } = await turn({ content: 'Keep checking.' });
     expect(model.calls).toHaveLength(8);
     expect(events.at(-1)).toEqual({
-      event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown, leafId: expect.any(String) as unknown },
+      event: 'done', data: { stopReason: 'tool_limit', costUsd: expect.any(Number) as unknown, leafId: expect.any(String) as unknown, sources: [] },
     });
     expect(eventData(events, 'tool')).toHaveLength(16);
     const id = conversationIdOf(events);
@@ -480,7 +480,7 @@ describe('stop reasons', () => {
     const { events } = await turn({ content: 'Refuse me.' });
     expect(shape(events)).toEqual(['conversation', 'text', 'done']);
     // 1000 x $4 + 500 x $20 per million tokens.
-    expect(events.at(-1)?.data).toEqual({ stopReason: 'refusal', costUsd: 0.014, leafId: null });
+    expect(events.at(-1)?.data).toEqual({ stopReason: 'refusal', costUsd: 0.014, leafId: null, sources: [] });
     expect(await usedMicroUsd()).toBe(14_000);
     expect(await conversationDoc(conversationIdOf(events))).toBeNull();
   });

@@ -44,10 +44,11 @@ function Sources(props: { sources: readonly SourceLink[] }): React.JSX.Element {
   );
 }
 
-function Row(props: { step: ToolStep; ctx: ToolContext }): React.JSX.Element {
+/** `ended`: the reply is no longer streaming, so a web search still running never finished (D37). */
+function Row(props: { step: ToolStep; ctx: ToolContext; ended: boolean }): React.JSX.Element {
   const { step, ctx } = props;
   const [open, setOpen] = useState(false);
-  const line = toolLine(step, ctx);
+  const line = toolLine(step, ctx, props.ended);
   const rows = step.state === 'done' ? viewRows(step.input, step.result, step.name) : [];
   const expandable = rows.length > 0 || line.sources.length > 0;
   const tone = step.state === 'running' ? styles.statusRunning : step.state === 'error' ? styles.statusError : styles.statusDone;
@@ -84,13 +85,15 @@ function Row(props: { step: ToolStep; ctx: ToolContext }): React.JSX.Element {
   );
 }
 
-/** One row per call, each fading in as it starts while the reply streams. */
+/** One row per call, each fading in as it starts while the reply streams; `live` false once the reply has ended. */
 export function ToolGroup(props: { steps: readonly ToolStep[]; live: boolean; ctx: ToolContext }): React.JSX.Element | null {
   const { steps, live, ctx } = props;
   if (steps.length === 0) return null;
   return (
     <View style={styles.group} testID="tool-group">
-      {steps.map((step) => (live ? <FadeIn key={step.id}><Row step={step} ctx={ctx} /></FadeIn> : <Row key={step.id} step={step} ctx={ctx} />))}
+      {steps.map((step) => (live
+        ? <FadeIn key={step.id}><Row step={step} ctx={ctx} ended={false} /></FadeIn>
+        : <Row key={step.id} step={step} ctx={ctx} ended />))}
     </View>
   );
 }
