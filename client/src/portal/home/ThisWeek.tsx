@@ -5,7 +5,7 @@ import { theme } from '../../theme';
 import type { Calendar, TownEvent } from '../analytics/api';
 import { noteWords } from '../analytics/panel';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayLine, periodLine, thisDayLine, vsUsualDay,
+  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase, vsUsualDayPhrase,
   type PastDay, type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
@@ -14,6 +14,7 @@ import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
 import { DataTable, type Column } from '../ui/DataTable';
 import { Stack } from '../ui/layout';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 
@@ -75,14 +76,14 @@ function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
 /** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */
 export function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
   const { day, metric } = props;
-  const line = pastDayLine(day, metric);
+  const line = pastDayPhrase(day, metric);
   if (line === null) return <Mono tone="text3">No data</Mono>;
-  const change = vsUsualDay(day);
+  const change = vsUsualDayPhrase(day);
   return (
     <View style={styles.item}>
-      <Mono tone="white">{line}</Mono>
+      <Mono tone="white"><PhraseParts phrase={line} /></Mono>
       {day.closed ? <Mono>{day.likelyClosed ? 'Likely closed' : 'Closed'}</Mono> : null}
-      {change === null ? null : <Mono>{change}</Mono>}
+      {change === null ? null : <Mono><PhraseParts phrase={change} /></Mono>}
       {day.events.map((title) => <Small key={title}>{title}</Small>)}
     </View>
   );
@@ -98,7 +99,7 @@ function DayHead(props: { row: WeekRow; metric: Metric }): React.JSX.Element {
       </View>
       <Mono>{dayMonth(row.date)}</Mono>
       {row.isToday ? <Mono tone="text3">Today</Mono> : null}
-      {row.value === null ? null : <Mono tone="white">{thisDayLine(row, props.metric)}</Mono>}
+      {row.value === null ? null : <Mono tone="white"><PhraseParts phrase={thisDayPhrase(row, props.metric)} /></Mono>}
     </View>
   );
 }

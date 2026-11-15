@@ -6,7 +6,7 @@ import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
 import type { DayContext } from '../analytics/days';
 import { noteWords } from '../analytics/panel';
-import { eventLine, monthDay, monthFactLine, monthFactsHead, monthGrid, monthItems, type HomeInput, type MonthFact } from '../analytics/week';
+import { eventLine, monthDay, monthFactPhrase, monthFactsHead, monthGrid, monthItems, type HomeInput, type MonthFact } from '../analytics/week';
 import { MONTH_NAMES, type Metric } from '../analytics/words';
 import { ALL_FILTERS, tooltipLines, type CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
@@ -18,6 +18,7 @@ import type { OrderBoard } from '../orders/api';
 import { calendarHref } from '../routing';
 import { LinkButton } from '../ui/Button';
 import { Stack } from '../ui/layout';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 import { DayDetail } from './DayDetail';
@@ -136,7 +137,7 @@ export function PastYears(props: { today: string; facts: readonly MonthFact[]; m
   return (
     <Block label={monthFactsHead(props.today)} eyebrow={`Past ${monthNameOf(props.today)}s`} title={monthFactsHead(props.today)}>
       <Stack gap={8}>
-        {props.facts.map((fact) => <Small key={fact.year} white>{monthFactLine(fact, props.metric)}</Small>)}
+        {props.facts.map((fact) => <Small key={fact.year} white><PhraseParts phrase={monthFactPhrase(fact, props.metric)} /></Small>)}
       </Stack>
       <Mono tone="text3">Averages leave out closed days.</Mono>
     </Block>

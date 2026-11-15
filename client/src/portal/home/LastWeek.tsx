@@ -1,8 +1,9 @@
-import { dayMonth, lastWeekLine, type LastWeek as Comparison } from '../analytics/week';
+import { dayMonth, lastWeekPhrase, type LastWeek as Comparison } from '../analytics/week';
 import { metricNumber, shortDate, signedPercent, type Metric } from '../analytics/words';
 import { ShowNumbers, UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Small } from '../ui/text';
 import { Block } from './Block';
 import { LastWeekChart } from './LastWeekChart';
@@ -25,7 +26,7 @@ export function LastWeek(props: {
   return (
     <Block label="Last week" eyebrow={range === null ? 'Last week' : `Last week, ${range}`} title="Against the same week last year">
       {comparison.state === 'compared' ? <LastWeekChart days={comparison.days} metric={metric} /> : null}
-      <Small white>{lastWeekLine(comparison, metric)}</Small>
+      <Small white><PhraseParts phrase={lastWeekPhrase(comparison, metric)} /></Small>
       {comparison.state === 'no_recent' || comparison.state === 'no_days' ? (
         <Actions><UploadAction locationId={props.locationId} variant="link" readOnlyId={props.readOnlyId} /></Actions>
       ) : null}

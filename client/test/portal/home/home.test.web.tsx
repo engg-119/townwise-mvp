@@ -92,6 +92,15 @@ async function renderAt(api: FakePortalApi, ready: string = NOT_PUBLISHED): Prom
   await screen.findByText(ready);
 }
 
+/**
+ * A sentence whose key figures are drawn bold (nested texts, owner request 2026-11-15): the innermost element whose
+ * whole text is `text`, as getByText would find it unbroken.
+ */
+function sentence(text: string): (content: string, element: Element | null) => boolean {
+  return (_content, element) => element !== null && element.textContent === text
+    && Array.from(element.children).every((child) => child.textContent !== text);
+}
+
 function pageText(): string {
   return document.body.textContent;
 }
@@ -203,7 +212,9 @@ test('at a glance: last year’s same week, last week against it, and the next e
   expect(within(glance).getByText('740')).toBeTruthy();
   expect(within(glance).getByText('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.')).toBeTruthy();
   expect(within(glance).getByText('814')).toBeTruthy();
-  expect(within(glance).getByText('+10% against the same week last year (740), over all 7 days.')).toBeTruthy();
+  expect(within(glance).getByText(sentence('+10% against the same week last year (740), over all 7 days.'))).toBeTruthy();
+  // The change is its own bold part of the sentence.
+  expect(within(glance).getByText('+10%')).toBeTruthy();
   expect(within(glance).getByText('Sample game')).toBeTruthy();
   expect(within(glance).getByText('Sat, Nov 7, 2026, in 2 days')).toBeTruthy();
   expect(within(glance).queryByText(FORECAST_WORDING)).toBeNull();
@@ -214,7 +225,8 @@ test('this week is a strip of seven days from 1024px, today’s column raised, l
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
   expect(within(strip).getAllByRole('columnheader')).toHaveLength(7);
   expect(within(strip).getAllByRole('rowheader').map((cell) => cell.textContent)).toEqual(['On the calendar', 'Last year', 'Two years ago']);
-  expect(within(strip).getByText('Sat, Nov 8, 2025: 140 guests')).toBeTruthy();
+  expect(within(strip).getByText(sentence('Sat, Nov 8, 2025: 140 guests'))).toBeTruthy();
+  expect(within(strip).getAllByText('140 guests').length).toBeGreaterThan(0);
   expect(screen.getByText('Bars show last year’s days, scaled to the busiest of them.')).toBeTruthy();
 });
 
@@ -251,7 +263,7 @@ test('the month calendar: the arrow keys and a pointer preview the days beside t
   // A later day: its holiday and sources, last year's same weekday, and no figure of its own.
   expect(within(detail).getByText('Veterans Day. Federal holiday.')).toBeTruthy();
   expect(within(detail).getByRole('link', { name: 'Source: U.S. Office of Personnel Management' })).toBeTruthy();
-  expect(within(detail).getByText('Wed, Nov 12, 2025: 100 guests')).toBeTruthy();
+  expect(within(detail).getByText(sentence('Wed, Nov 12, 2025: 100 guests'))).toBeTruthy();
   expect(within(detail).queryByText('This day')).toBeNull();
   expect(within(detail).queryByText('Forecast')).toBeNull();
   expect(cell('2026-11-11').getAttribute('tabindex')).toBe('0');
