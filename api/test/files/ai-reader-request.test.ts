@@ -44,7 +44,7 @@ describe('the request', () => {
     expect(whole).toContain('--- FILE CONTENT ---\\nDate,Guests\\n2025-01-01,40"');
     expect(whole).not.toContain('too long');
     const cut = JSON.stringify(readerRequest({ type: 'text', form: 'workbook', text: 'Sheet: A', cut: true }, CONTEXT));
-    expect(cut).toContain('only its start follows (at most 300,000 characters, from at most its first 10 sheets)');
+    expect(cut).toContain('only its start follows (at most 300,000 characters, from at most its first 30 sheets)');
     expect(cut).toContain('only the start of the file was read');
   });
 

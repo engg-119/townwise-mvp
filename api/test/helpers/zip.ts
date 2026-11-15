@@ -24,9 +24,16 @@ function crc32(data: Buffer): number {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-/** `zip64` writes every size and offset in the ZIP64 extra field and ends with a ZIP64 directory record. */
-export function zipOf(entries: readonly TestEntry[], options: { zip64?: boolean } = {}): Buffer {
+/**
+ * `zip64` writes every size and offset in the ZIP64 extra field and ends with a ZIP64 directory record.
+ * `descriptor64` writes each entry as Toast's exports (Apache POI) do: flag bit 3, a local header with no CRC or sizes,
+ * then a 24-byte data descriptor with 8-byte sizes and no ZIP64 extra field. The central directory is as usual.
+ */
+export interface ZipOptions { readonly zip64?: boolean; readonly descriptor64?: boolean }
+
+export function zipOf(entries: readonly TestEntry[], options: ZipOptions = {}): Buffer {
   const zip64 = options.zip64 === true;
+  const descriptor64 = options.descriptor64 === true;
   const locals: Buffer[] = [];
   const centrals: Buffer[] = [];
   let offset = 0;
@@ -34,20 +41,30 @@ export function zipOf(entries: readonly TestEntry[], options: { zip64?: boolean 
     const raw = Buffer.isBuffer(entry.data) ? entry.data : Buffer.from(entry.data, 'utf8');
     const data = entry.store === true ? raw : deflateRawSync(raw);
     const method = entry.method ?? (entry.store === true ? 0 : 8);
-    const flags = entry.flags ?? 0x800;
+    const flags = (entry.flags ?? 0x800) | (descriptor64 ? 0x8 : 0);
     const name = Buffer.from(entry.name, 'utf8');
     const crc = crc32(raw);
     const size = entry.declaredSize ?? raw.length;
     const local = Buffer.alloc(30);
     local.writeUInt32LE(0x04034b50, 0);
-    local.writeUInt16LE(20, 4);
+    local.writeUInt16LE(descriptor64 ? 45 : 20, 4);
     local.writeUInt16LE(flags, 6);
     local.writeUInt16LE(method, 8);
-    local.writeUInt32LE(crc, 14);
-    local.writeUInt32LE(data.length, 18);
-    local.writeUInt32LE(size, 22);
+    local.writeUInt32LE(descriptor64 ? 0 : crc, 14);
+    local.writeUInt32LE(descriptor64 ? 0 : data.length, 18);
+    local.writeUInt32LE(descriptor64 ? 0 : size, 22);
     local.writeUInt16LE(name.length, 26);
     locals.push(local, name, data);
+    let trailer = 0;
+    if (descriptor64) {
+      const descriptor = Buffer.alloc(24);
+      descriptor.writeUInt32LE(0x08074b50, 0);
+      descriptor.writeUInt32LE(crc, 4);
+      descriptor.writeBigUInt64LE(BigInt(data.length), 8);
+      descriptor.writeBigUInt64LE(BigInt(size), 16);
+      locals.push(descriptor);
+      trailer = descriptor.length;
+    }
     const central = Buffer.alloc(46);
     central.writeUInt32LE(0x02014b50, 0);
     central.writeUInt16LE(20, 4);
@@ -71,7 +88,7 @@ export function zipOf(entries: readonly TestEntry[], options: { zip64?: boolean 
     } else {
       centrals.push(central, name);
     }
-    offset += local.length + name.length + data.length;
+    offset += local.length + name.length + data.length + trailer;
   }
   const directory = Buffer.concat(centrals);
   const end = Buffer.alloc(22);
@@ -106,7 +123,9 @@ function cellXml(value: string | number, column: number, row: number, dated: boo
  * A minimal workbook: one sheet per entry of `sheets`, cells as given (numbers in `dateColumns` carry the built-in
  * date format, so they read as dates: Excel serial 45658 is 2025-01-01).
  */
-export function xlsxOf(sheets: readonly { name: string; rows: (string | number)[][]; dateColumns?: number[] }[]): Buffer {
+export function xlsxOf(
+  sheets: readonly { name: string; rows: (string | number)[][]; dateColumns?: number[] }[], options: ZipOptions = {},
+): Buffer {
   const sheetEntries = sheets.map((sheet, index) => ({
     name: `xl/worksheets/sheet${String(index + 1)}.xml`,
     data: `<?xml version="1.0" encoding="UTF-8" standalone="yes"?><worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData>${
@@ -141,5 +160,5 @@ export function xlsxOf(sheets: readonly { name: string; rows: (string | number)[
       data: '<?xml version="1.0" encoding="UTF-8"?><styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><cellXfs count="2"><xf numFmtId="0"/><xf numFmtId="14" applyNumberFormat="1"/></cellXfs></styleSheet>',
     },
     ...sheetEntries,
-  ]);
+  ], options);
 }

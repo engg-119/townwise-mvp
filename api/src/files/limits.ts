@@ -39,7 +39,8 @@ export const XLSX_MAX_DECLARED_BYTES = 200 * MIB;
 export const XLSX_MAX_RATIO = 100;
 export const MAX_ROWS = 2_000_000;
 export const MAX_COLUMNS = 200;
-export const MAX_SHEETS = 10;
+/** A Toast Sales Summary has 22 sheets, its daily one the 20th. */
+export const MAX_SHEETS = 30;
 /** Rows searched for the header row. */
 export const HEADER_SEARCH_ROWS = 30;
 /** A file that takes longer is kept as too_complex. */
