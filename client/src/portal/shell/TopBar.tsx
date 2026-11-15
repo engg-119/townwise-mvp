@@ -144,9 +144,13 @@ function entries(items: readonly NavItem[], group: MoreGroup | null, onMeasure?:
   });
 }
 
-/** The nav, with the items from the first `end` one on as a group at the row's far end. */
-function Nav(props: { items: readonly NavItem[]; wrapped: boolean; group: MoreGroup | null }): React.JSX.Element {
-  const gap = { columnGap: props.wrapped ? 20 : 24 };
+/**
+ * The nav, with the items from the first `end` one on as a group at the row's far end. Links sit `space-6` (24px)
+ * apart, or `space-5` (20px) in the second row and in the client app's one-row bar with a location's sections, so
+ * from 1280px the organization name and the email keep their room (D38).
+ */
+function Nav(props: { items: readonly NavItem[]; wrapped: boolean; sections?: boolean; group: MoreGroup | null }): React.JSX.Element {
+  const gap = { columnGap: props.wrapped || props.sections === true ? 20 : 24 };
   const split = props.items.findIndex((item) => item.end === true);
   if (split <= 0) {
     return (
@@ -352,7 +356,7 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
       <Wrap>
         <View style={[styles.row, tight]}>
           {stackedConsole ? <View style={styles.stacked}>{identity}<View style={styles.verifiedRow}>{verified}</View></View> : identity}
-          {nav !== null && !wrapped ? <Nav items={nav} wrapped={false} group={group} /> : null}
+          {nav !== null && !wrapped ? <Nav items={nav} wrapped={false} sections={sections} group={group} /> : null}
           {me}
         </View>
         {navRow}

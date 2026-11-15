@@ -19,6 +19,7 @@
 
 ## 4. Verify and land
 
-- [ ] 4.1 `npm run verify` on the branch; an independent review of the diff
-- [ ] 4.2 PR to develop; merge only after #74 is merged and deployed (session 64 says when) and every check on the head is green
-- [ ] 4.3 A browser look at 1440, 1280, 1024, 768 and 375px once the owner signs in
+- [x] 4.1 `npm run verify` on the branch; an independent review of the diff
+- [x] 4.2 PR to develop; merge only after #74 is merged and deployed (session 64 says when) and every check on the head is green (#77, df3dec3)
+- [x] 4.3 A browser look at 1440, 1280, 1024, 768 and 375px once the owner signs in (2026-11-14: as designed at every width, but at 1280px the organization name and email were 19px short)
+- [x] 4.4 The client bar's links `space-5` (20px) apart with a location's sections, so they fit at 1280px; `phone-ui.test.web.tsx` pins 20px and 24px without a location
