@@ -283,6 +283,33 @@ test('a 404 on an edit closes the popover, the panel says so, and focus moves to
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`]);
 });
 
+test('a saved edit gives focus back to its Edit, or to the panel’s “Saved.” when the note no longer covers the day', async () => {
+  const { api, fake } = setup({ notes: [PARTY], forecasts: { '2026-11': november({ guests: 40, id: 'n1' }) } });
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  api.answers[`${NOTES_PATH}/n1`] = (body) => {
+    const saved = savedNote('n1', body);
+    fake.notes = [saved.note];
+    fake.forecasts['2026-11'] = november(saved.note.startDate === SATURDAY ? { guests: 70, id: 'n1' } : undefined);
+    return saved;
+  };
+  // Still on Nov 21: its Edit stays, and has focus.
+  const edit = press(EDIT);
+  fireEvent.change(guests(dialog('Edit note')), { target: { value: '70' } });
+  fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
+  expect(await within(panel()).findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(within(panel()).getByRole('button', { name: EDIT })).toBe(edit);
+  expect(document.activeElement).toBe(edit);
+  // Moved to Nov 22: its Edit goes from this day once the notes read again, so focus moves to the notice instead.
+  press(EDIT);
+  fireEvent.change(within(dialog('Edit note')).getByLabelText('Starts'), { target: { value: '2026-11-22' } });
+  fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(within(panel()).queryByRole('button', { name: EDIT })).toBeNull(); });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => { expect(focusOnNotice('Saved.')).toBe(true); });
+  expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`, `PATCH ${NOTES_PATH}/n1`]);
+});
+
 test('after a 404 focus goes to the panel’s notice, not to a page notice above the grid', async () => {
   // No published forecast: its notice heads the page, before the panel.
   const { api } = setup({ notes: [PARTY], forecasts: {} });

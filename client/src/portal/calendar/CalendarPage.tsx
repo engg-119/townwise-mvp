@@ -5,6 +5,7 @@ import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 import type { ApiClient } from '../../api/client';
 import { theme } from '../../theme';
 import { fetchCalendar } from '../analytics/api';
+import { noteCovers } from '../analytics/days';
 import { dayMonthRange, mondayOf } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
 import { hasCode } from '../errors';
@@ -58,11 +59,11 @@ import { YourCalendars } from './YourCalendars';
 // The day panel's Add an event, a note's Edit and an event's Make a note open the note form (C6) in a popover anchored
 // to the pressed button (refine-calendar-and-home design decision 2), headed "Add an event", "Edit note" or "Make a
 // note": a press outside leaves it open; a save, Cancel, Escape, Android's back button, a 404 and any change of the
-// selected day close it; while a save runs it waits for the answer. Focus returns to the opener, or after a 404 moves
-// to the panel's notice (MessageFocus, around the panel and the popover only). After a note is saved or deleted the
-// notes and the forecast read again, since the API adjusts the forecast from notes on read (spec 14.5) and the client
-// never adds a note's guests itself; meanwhile the old figures stay, dimmed and aria-busy, and a save's notice says
-// “Saved.” until the new read says what the note did to the day.
+// selected day close it; while a save runs it waits for the answer. Focus returns to the opener, or when the opener goes
+// (a 404, or an edit that moves the note off the day) moves to the panel's notice (MessageFocus, around the panel and
+// the popover only). After a note is saved or deleted the notes and the forecast read again, since the API adjusts the
+// forecast from notes on read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures
+// stay, dimmed and aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day.
 // Under view-as the page shows in full with its writes disabled in place. The location's own calendars (spec 16.3 P28
 // and 17, D33) are kept by the API, each an imported .ics file or a link, and their events show as "Your calendar"
 // on web and native; after one is added the list and the grid's stored events read again (never the forecast: stored
@@ -132,9 +133,9 @@ async function storedEventsOf(
 type PanelNotice = string | { savedId: string } | null;
 
 /**
- * The note form's popover. It sits with the day panel inside a MessageFocus of their own, so once it has gone after a
- * 404 (`takeOpenerGone`), the panel's notice, the only message there, takes focus; a page notice above the grid (no
- * published forecast, a failed read) never does.
+ * The note form's popover. It sits with the day panel inside a MessageFocus of their own, so once it has gone with its
+ * opener (`takeOpenerGone`: a 404, or an edit that moved the note off the day), the panel's notice, the only message
+ * there, takes focus; a page notice above the grid (no published forecast, a failed read) never does.
  */
 function NotePopover(props: Omit<PopoverProps, 'onDismiss'> & { takeOpenerGone: () => boolean }): React.JSX.Element {
   const { takeOpenerGone, ...popover } = props;
@@ -183,7 +184,8 @@ function CalendarView(): React.JSX.Element {
   const anchor = useRef<PopoverAnchor['current']>(null);
   // A save is out: the popover waits for its answer.
   const [saving, setSaving] = useState(false);
-  // A save answered 404: once the popover has gone, focus moves to the panel's notice.
+  // The save took the opener away (a 404, or an edit off the selected day): once the popover has gone, focus moves to
+  // the panel's notice.
   const openerGone = useRef(false);
   const [notice, setNotice] = useState<PanelNotice>(null);
   const [deleting, setDeleting] = useState<Note | null>(null);
@@ -292,10 +294,12 @@ function CalendarView(): React.JSX.Element {
   }, [api, location.id, editing, gone]);
 
   const onSaved = useCallback((note: Note) => {
+    // An edit that moved the note off the selected day: its Edit goes once the notes read again.
+    if (editing !== null && !noteCovers(note, selected)) openerGone.current = true;
     setForm(null);
     setNotice({ savedId: note.id });
     reloadDay();
-  }, [reloadDay]);
+  }, [editing, selected, reloadDay]);
 
   const remove = useAction(useCallback(async (note: Note) => {
     try {
