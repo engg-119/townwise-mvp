@@ -1,9 +1,9 @@
 // Reading a Google calendar's events (openspec change connect-google-calendar: the google-calendar spec's "A Google
 // calendar is read with a fixed, minimal request", design decision 7). One refresh of access, then the calendar's
 // single events through the Google client (calendar/google.ts, which fixes the minimal fields): first the window ahead,
-// from the town's today less 1 day to today plus 401 days, then, with what is left of 2,000 events and 8 pages, the
-// window before, from today less 401 days to today, each at 00:00Z (a day of margin each side of the 400-day window)
-// and each followed page by page. Google orders by start ascending only and bounds a window's end by an event's end, so
+// from the town's today less 1 day to a day past the 400-day window ahead, then, with what is left of 2,000 events and
+// 8 pages, the window before, from a day before the 400-day window back to today, each at 00:00Z (a day of margin
+// each side of the window) and each followed page by page. Google orders by start ascending only and bounds a window's end by an event's end, so
 // reading the window ahead first is what lets a busy calendar keep what is coming. An event read in both windows counts
 // once, by its id. A caller's signal is checked before each page, and an aborted read answers `stopped`, writing
 // nothing.
