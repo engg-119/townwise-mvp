@@ -1,7 +1,10 @@
 // The owner's calendars store (src/stores/owner-calendars.ts, openspec change connect-owner-calendar, design decisions 1
 // and 2): a link's address kept only sealed and never in a record, replace by generation (a reader never sees a mix,
 // and a crash before the switch leaves rows the next replace or the removal deletes), 5 calendars per location against
-// concurrent adds, 2,000 events per calendar, range reads, removal and tenant scoping. Every title here is made up.
+// concurrent adds, 2,000 events per calendar, range reads, removal and tenant scoping. Google calendars (openspec change
+// connect-google-calendar, design decision 6): a slot each, their sealed ids and connections read only by googleSource
+// and googleSources, a connection's calendars counted, made due and removed, and "Refresh now" for them. Every title
+// here is made up.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -10,7 +13,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import { MAX_EVENTS, type IcsEvent } from '../src/calendar/ics.ts';
 import {
-  createOwnerCalendarStore, MAX_CALENDARS, REFRESH_INTERVAL_MS, type OwnerCalendarRecord, type OwnerCalendarStore, type ParsedCalendar,
+  createOwnerCalendarStore, MANUAL_REFRESH_INTERVAL_MS, MAX_CALENDARS, REFRESH_INTERVAL_MS, type OwnerCalendarRecord, type OwnerCalendarStore,
+  type ParsedCalendar,
 } from '../src/stores/owner-calendars.ts';
 import { addLocation, createOrg } from './helpers/fixtures.ts';
 import { holdCalls } from './helpers/hold.ts';
@@ -435,5 +439,147 @@ describe('removal and isolation', () => {
     expect(await count('tw_calendar_events', org)).toBe(0);
     expect(await count('tw_calendar_sources', org)).toBe(0);
     expect(await snapshotOf(b.orgId)).toBe(bBefore);
+  });
+});
+
+describe('Google calendars (connect-google-calendar)', () => {
+  /** What calendar/secret.ts would hand the store for a Google calendar id: opaque here. */
+  const SEALED_ID = 'sealed-google-calendar-id-placeholder-0001';
+  const connection = (): string => new Types.ObjectId().toHexString();
+
+  async function addGoogle(t: Tenant, label: string, events: IcsEvent[], googleConnectionId: string, opts: { locationId?: string; sealed?: string } = {}): Promise<OwnerCalendarRecord> {
+    const added = await calendars.add(t.scope, opts.locationId ?? t.locationId, { kind: 'google', label, sealedAddress: opts.sealed ?? SEALED_ID, googleConnectionId },
+      parsed(events), { createdBy: 'user-0001', now: server.clock.now() });
+    if (added === 'calendar_limit') throw new Error('calendar_limit');
+    return added;
+  }
+
+  function rawSource(calendarId: string) {
+    return server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(calendarId) });
+  }
+
+  it('a Google calendar takes a slot and is due like a link, with no host, and its sealed id and connection in no record', async () => {
+    const t = await tenant();
+    const conn = connection();
+    const now = server.clock.now();
+    for (const label of ['File one', 'File two']) await addFile(t, label, [event(label, '2026-11-05')]);
+    const links: (OwnerCalendarRecord | 'calendar_limit')[] = [];
+    for (const label of ['Link one', 'Link two']) {
+      links.push(await calendars.add(t.scope, t.locationId, { kind: 'link', label, sealedAddress: SEALED, host: 'calendar.google.com' }, parsed([]), { createdBy: 'user-0001', now }));
+    }
+    const google = await addGoogle(t, 'Google calendar', [event('g1', '2026-11-06', { title: 'Private party' })], conn);
+    expect(google).toEqual({
+      id: expect.any(String) as string, locationId: t.locationId, kind: 'google', label: 'Google calendar', host: null, eventCount: 1, skippedRepeating: 0,
+      status: 'ok', lastSuccessAt: now, lastAttemptAt: now, nextRefreshAt: new Date(now.getTime() + REFRESH_INTERVAL_MS), leaseUntil: null,
+      consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now,
+    });
+    // The sixth calendar, a Google one, finds no slot.
+    const before = await snapshotOf(t.orgId);
+    expect(await calendars.add(t.scope, t.locationId, { kind: 'google', label: 'Another', sealedAddress: SEALED_ID, googleConnectionId: conn },
+      parsed([event('g2', '2026-11-07')]), { createdBy: 'user-0001', now })).toBe('calendar_limit');
+    expect(await snapshotOf(t.orgId)).toBe(before);
+
+    const listed = await calendars.list(t.scope, t.locationId);
+    expect(listed).toHaveLength(MAX_CALENDARS);
+    expect(JSON.stringify([google, listed, await calendars.find(t.scope, t.locationId, google.id)])).not.toMatch(new RegExp(`${SEALED_ID}|${conn}`));
+    expect(await rawSource(google.id)).toMatchObject({ kind: 'google', sealedAddress: SEALED_ID, host: null, googleConnectionId: new Types.ObjectId(conn) });
+    // Files and links carry no connection, and sealedAddress stays a link's.
+    const link = links[0];
+    if (link === undefined || link === 'calendar_limit') throw new Error('no link');
+    expect(await rawSource(link.id)).toMatchObject({ kind: 'link', googleConnectionId: null });
+    expect(await calendars.sealedAddress(t.scope, t.locationId, google.id)).toBeNull();
+    expect(await calendars.sealedAddress(t.scope, t.locationId, link.id)).toBe(SEALED);
+  });
+
+  it('googleSource and googleSources answer only this location’s Google calendars, oldest first', async () => {
+    const a = await tenant();
+    const b = await tenant();
+    const patio = await addLocation(server, { orgId: a.orgId, name: 'Patio' });
+    const [x, y] = [connection(), connection()];
+    const first = await addGoogle(a, 'Bookings', [], x, { sealed: 'sealed-1' });
+    server.clock.advance(MINUTE);
+    const second = await addGoogle(a, 'Shared', [], y, { sealed: 'sealed-2' });
+    const onPatio = await addGoogle(a, 'Patio bookings', [], x, { locationId: patio, sealed: 'sealed-3' });
+    const file = await addFile(a, 'File', []);
+    const theirs = await addGoogle(b, 'Theirs', [], x, { sealed: 'sealed-4' });
+
+    expect(await calendars.googleSource(a.scope, a.locationId, first.id)).toEqual({ calendarId: first.id, connectionId: x, sealedCalendarId: 'sealed-1' });
+    expect(await calendars.googleSources(a.scope, a.locationId)).toEqual([
+      { calendarId: first.id, connectionId: x, sealedCalendarId: 'sealed-1' },
+      { calendarId: second.id, connectionId: y, sealedCalendarId: 'sealed-2' },
+    ]);
+    expect(await calendars.googleSources(a.scope, patio)).toEqual([{ calendarId: onPatio.id, connectionId: x, sealedCalendarId: 'sealed-3' }]);
+    // A file, another location's, another organization's and an unknown id answer null.
+    for (const [locationId, calendarId] of [[a.locationId, file.id], [a.locationId, onPatio.id], [b.locationId, theirs.id], [a.locationId, theirs.id], [a.locationId, new Types.ObjectId().toHexString()]] as const) {
+      expect(await calendars.googleSource(a.scope, locationId, calendarId)).toBeNull();
+    }
+    expect(await calendars.googleSources(a.scope, b.locationId)).toEqual([]);
+  });
+
+  it('countForConnection, markDueForConnection and removeForConnection reach only that connection’s Google calendars in the organization', async () => {
+    const a = await tenant();
+    const b = await tenant();
+    const patio = await addLocation(server, { orgId: a.orgId, name: 'Patio' });
+    const [x, y] = [connection(), connection()];
+    const main = await addGoogle(a, 'Bookings', [event('m1', '2026-11-05'), event('m2', '2026-11-06')], x);
+    const onPatio = await addGoogle(a, 'Patio bookings', [event('p1', '2026-11-05')], x, { locationId: patio });
+    // A crash before a switch leaves unused rows, which the removal deletes too.
+    await crashBeforeSwitch({ ...a, locationId: patio }, onPatio.id, [event('p2', '2026-11-07')]);
+    expect(await rowsOf(onPatio.id)).toHaveLength(2);
+    const other = await addGoogle(a, 'Shared', [event('o1', '2026-11-05')], y);
+    const link = await calendars.add(a.scope, a.locationId, { kind: 'link', label: 'Link', sealedAddress: SEALED, host: 'calendar.google.com' },
+      parsed([event('l1', '2026-11-05')]), { createdBy: 'user-0001', now: server.clock.now() });
+    if (link === 'calendar_limit') throw new Error('calendar_limit');
+    // Another organization's calendar under the same connection id still is not this organization's.
+    const theirs = await addGoogle(b, 'Theirs', [event('t1', '2026-11-05')], x);
+    const bBefore = await snapshotOf(b.orgId);
+
+    expect(await calendars.countForConnection(a.scope, x)).toBe(2);
+    expect(await calendars.countForConnection(a.scope, y)).toBe(1);
+    expect(await calendars.countForConnection(b.scope, x)).toBe(1);
+    expect(await calendars.countForConnection(a.scope, connection())).toBe(0);
+
+    server.clock.advance(MINUTE);
+    const later = server.clock.now();
+    expect(await calendars.markDueForConnection(a.scope, x, later)).toBe(2);
+    for (const id of [main.id, onPatio.id]) expect(await calendars.find(a.scope, id === main.id ? a.locationId : patio, id)).toMatchObject({ nextRefreshAt: later });
+    expect((await calendars.find(a.scope, a.locationId, other.id))?.nextRefreshAt).toEqual(other.nextRefreshAt);
+    expect((await calendars.find(a.scope, a.locationId, link.id))?.nextRefreshAt).toEqual(link.nextRefreshAt);
+
+    let removed: number | undefined;
+    const writes = await writesDuring(server, async () => { removed = await calendars.removeForConnection(a.scope, x); });
+    expect(removed).toBe(2);
+    expect(writes).toEqual(['delete tw_calendar_events', 'delete tw_calendar_sources', 'delete tw_calendar_events']);
+    expect(await rowsOf(main.id)).toEqual([]);
+    expect(await rowsOf(onPatio.id)).toEqual([]);
+    expect(await calendars.find(a.scope, a.locationId, main.id)).toBeNull();
+    expect(await calendars.find(a.scope, patio, onPatio.id)).toBeNull();
+    expect((await calendars.list(a.scope, a.locationId)).map((each) => each.id)).toEqual([other.id, link.id]);
+    expect(await rowsOf(other.id)).toHaveLength(1);
+    expect(await rowsOf(link.id)).toHaveLength(1);
+    expect(await snapshotOf(b.orgId)).toBe(bBefore);
+    expect(await calendars.find(b.scope, b.locationId, theirs.id)).not.toBeNull();
+
+    // Nothing left: no write at all.
+    expect(await writesDuring(server, async () => { expect(await calendars.removeForConnection(a.scope, x)).toBe(0); })).toEqual([]);
+    expect(await calendars.markDueForConnection(a.scope, x, later)).toBe(0);
+  });
+
+  it('"Refresh now" claims a Google calendar once per 5 minutes, as a link, and never a file', async () => {
+    const t = await tenant();
+    const google = await addGoogle(t, 'Google calendar', [], connection());
+    const file = await addFile(t, 'File', []);
+    const claim = (calendarId: string): Promise<boolean> => calendars.claimManualRefresh(t.scope, t.locationId, calendarId, server.clock.now());
+    expect(await claim(google.id)).toBe(true);
+    expect(await calendars.find(t.scope, t.locationId, google.id)).toMatchObject({ lastManualRefreshAt: server.clock.now() });
+    server.clock.advance(MANUAL_REFRESH_INTERVAL_MS - 1);
+    expect(await claim(google.id)).toBe(false);
+    server.clock.advance(1);
+    expect(await claim(google.id)).toBe(true);
+    // Two at once: one wins.
+    server.clock.advance(MANUAL_REFRESH_INTERVAL_MS);
+    expect((await Promise.all([claim(google.id), claim(google.id)])).sort()).toEqual([false, true]);
+    expect(await claim(file.id)).toBe(false);
+    expect(await calendars.find(t.scope, t.locationId, file.id)).toMatchObject({ lastManualRefreshAt: null });
   });
 });

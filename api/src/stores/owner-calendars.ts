@@ -1,9 +1,13 @@
 // tw_calendar_sources and tw_calendar_events (openspec change connect-owner-calendar: the owner-calendar and
-// calendar-subscription specs, design decisions 1 and 2): a location's own calendars, each an imported .ics file or a
-// subscription link, and their single events. An event keeps its UID, title, dates and hours only (calendar/ics.ts).
+// calendar-subscription specs, design decisions 1 and 2): a location's own calendars, each an imported .ics file, a
+// subscription link or a Google calendar (openspec change connect-google-calendar, design decision 6), and their single
+// events. An event keeps its UID, title, dates and hours only (calendar/ics.ts, calendar/google-events.ts).
 // A link's address is a credential: it is stored only as the opaque string calendar/secret.ts seals, read back only by
-// sealedAddress() for server code, and never part of a record; its host is kept in plain text for display. Titles name
-// customers: nothing here logs, and no label, host, address or title belongs in a log line or an audit event.
+// sealedAddress() for server code, and never part of a record; its host is kept in plain text for display. A Google
+// calendar's sealedAddress holds its Google calendar id sealed the same way (a primary or shared calendar's id is an
+// email address), read back only through googleSource() and googleSources(), never sealedAddress(), with the
+// googleConnectionId of the tw_google_connections row whose access reads it; its host is null. Titles name customers:
+// nothing here logs, and no label, host, address, calendar id or title belongs in a log line or an audit event.
 //
 // At most 5 calendars per location, safe against concurrent adds without a transaction: each calendar holds one of 5
 // slots under a unique index on (orgId, locationId, slot), and an add inserts into a slot it saw free, trying the next
@@ -18,9 +22,12 @@
 // compare-and-set) before the switch leaves rows of an unused generation that no read returns; the next replace or the
 // removal deletes them. Removal deletes the events, then the calendar, then the events again (removeWhere). "Refresh
 // now" is held to one per calendar per 5 minutes by a compare-and-set on lastManualRefreshAt, so two requests at once
-// cannot both pass. The refresh loop claims a due link across organizations (stores/cross-tenant.ts claimDueCalendar,
-// by nextRefreshAt) with a lease, and ends its refresh here: releaseRefresh sets the next refresh and lets the lease go
-// only while the lease is still the one it took. Ids are checked by the caller.
+// cannot both pass, for a link or a Google calendar alike. The refresh loop claims a due link across organizations
+// (stores/cross-tenant.ts claimDueCalendar, by nextRefreshAt) with a lease, and ends its refresh here: releaseRefresh
+// sets the next refresh and lets the lease go only while the lease is still the one it took. A Google calendar is due
+// as a link is. Removing a connection's calendars (removeForConnection) deletes the events, then those calendars, then
+// their events again, as removeWhere does; a calendar added for the connection meanwhile is not among them, and its
+// add checks the connection again after storing. Ids are checked by the caller.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -39,14 +46,16 @@ export const REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
 /** "Refresh now" runs at most once per calendar in this long (the calendar-subscription spec). */
 export const MANUAL_REFRESH_INTERVAL_MS = 5 * 60_000;
 
-export type CalendarKind = 'file' | 'link';
+export type CalendarKind = 'file' | 'link' | 'google';
 
 /**
  * `ok`, or the code of the last failed refresh (design decisions 4 and 5). `bad_link` is a redirect to an address that
- * is not https on port 443.
+ * is not https on port 443. The `google_` codes are a Google calendar's (connect-google-calendar, design decision 7);
+ * `key_mismatch` is also a Google token or calendar id the key no longer opens.
  */
 export const CALENDAR_STATUSES = [
   'ok', 'bad_link', 'blocked_address', 'unreachable', 'timeout', 'too_large', 'http_error', 'not_calendar', 'key_mismatch',
+  'google_revoked', 'google_not_found', 'google_forbidden', 'google_rate_limited', 'google_unavailable',
 ] as const;
 export type CalendarStatus = typeof CALENDAR_STATUSES[number];
 export type CalendarFailure = Exclude<CalendarStatus, 'ok'>;
@@ -58,10 +67,12 @@ interface SourceFields {
   slot: number;
   kind: CalendarKind;
   label: string;
-  /** A link's address as calendar/secret.ts sealed it; null for a file. */
+  /** A link's address, or a Google calendar's id, as calendar/secret.ts sealed it; null for a file. */
   sealedAddress: string | null;
-  /** A link's host, in plain text; null for a file. */
+  /** A link's host, in plain text; null for a file or a Google calendar. */
   host: string | null;
+  /** The tw_google_connections row that reads a Google calendar; null for a file or a link. */
+  googleConnectionId: Types.ObjectId | null;
   /** The generation reads return; 0 before the first events are written. */
   generation: number;
   /** The highest generation handed to a replace. */
@@ -71,7 +82,7 @@ interface SourceFields {
   status: CalendarStatus;
   lastSuccessAt: Date | null;
   lastAttemptAt: Date | null;
-  /** When the refresh loop next fetches a link; null for a file, which is never fetched. */
+  /** When the refresh loop next reads a link or a Google calendar; null for a file, which is never fetched. */
   nextRefreshAt: Date | null;
   /** A refresh's claim on the calendar, until this time. */
   leaseUntil: Date | null;
@@ -101,10 +112,11 @@ function sourceSchema(): Schema<SourceFields> {
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     slot: { type: Number, required: true, min: 0, max: MAX_CALENDARS - 1 },
-    kind: { type: String, required: true, enum: ['file', 'link'] },
+    kind: { type: String, required: true, enum: ['file', 'link', 'google'] },
     label: { type: String, required: true, maxlength: MAX_LABEL_CHARS },
     sealedAddress: { type: String, default: null },
     host: { type: String, default: null },
+    googleConnectionId: { type: Schema.Types.ObjectId, default: null },
     generation: { type: Number, required: true },
     reservedGeneration: { type: Number, required: true },
     eventCount: { type: Number, required: true },
@@ -161,7 +173,7 @@ export interface OwnerCalendarRecord {
   readonly locationId: string;
   readonly kind: CalendarKind;
   readonly label: string;
-  /** A link's host (`calendar.google.com`); null for a file. */
+  /** A link's host (`calendar.google.com`); null for a file or a Google calendar. */
   readonly host: string | null;
   readonly eventCount: number;
   readonly skippedRepeating: number;
@@ -190,10 +202,21 @@ export interface OwnerCalendarEvent {
   readonly endTime: string | null;
 }
 
-/** A calendar to add: a link carries its sealed address and its host. */
+/**
+ * A calendar to add: a link carries its sealed address and its host; a Google calendar its sealed Google calendar id
+ * and the connection that reads it.
+ */
 export type NewCalendar =
   | { readonly kind: 'file'; readonly label: string }
-  | { readonly kind: 'link'; readonly label: string; readonly sealedAddress: string; readonly host: string };
+  | { readonly kind: 'link'; readonly label: string; readonly sealedAddress: string; readonly host: string }
+  | { readonly kind: 'google'; readonly label: string; readonly sealedAddress: string; readonly googleConnectionId: string };
+
+/** A Google calendar as server code reads it: its sealed Google calendar id and its connection. Never answered. */
+export interface GoogleSource {
+  readonly calendarId: string;
+  readonly connectionId: string;
+  readonly sealedCalendarId: string;
+}
 
 /** What calendar/ics.ts parsed: the single events by start, and the repeating ones it counted. */
 export interface ParsedCalendar {
@@ -207,8 +230,24 @@ export interface OwnerCalendarStore {
   list(scope: OrgScope, locationId: string): Promise<OwnerCalendarRecord[]>;
   /** One calendar of this location, else null (another location's or organization's id included). */
   find(scope: OrgScope, locationId: string, calendarId: string): Promise<OwnerCalendarRecord | null>;
-  /** A link calendar's sealed address, for server code only (the refresh); null for a file or a missing calendar. */
+  /**
+   * A link calendar's sealed address, for server code only (the refresh); null for a file, a Google calendar or a
+   * missing calendar.
+   */
   sealedAddress(scope: OrgScope, locationId: string, calendarId: string): Promise<string | null>;
+  /** One Google calendar of this location, for server code only (a refresh); null for any other kind or a missing one. */
+  googleSource(scope: OrgScope, locationId: string, calendarId: string): Promise<GoogleSource | null>;
+  /** The location's Google calendars, oldest first, for server code only (the duplicate check, the picker, deletion). */
+  googleSources(scope: OrgScope, locationId: string): Promise<GoogleSource[]>;
+  /** How many Google calendars of the organization the connection reads. */
+  countForConnection(scope: OrgScope, connectionId: string): Promise<number>;
+  /**
+   * Every Google calendar of the organization the connection reads, with their events (events, then calendars, then
+   * events). Resolves the number of calendars deleted.
+   */
+  removeForConnection(scope: OrgScope, connectionId: string): Promise<number>;
+  /** The connection's Google calendars in the organization are due at `now` (a reconnect heals them). Resolves how many. */
+  markDueForConnection(scope: OrgScope, connectionId: string, now: Date): Promise<number>;
   /**
    * Stores the calendar, then its events (the first 2,000), as one replace. 'calendar_limit' when the location already
    * has 5, and nothing is stored. When the events are not switched in, the calendar is removed and the add throws.
@@ -221,8 +260,8 @@ export interface OwnerCalendarStore {
   replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<boolean>;
   /**
    * "Refresh now"'s one per 5 minutes, safe against concurrent requests: one compare-and-set sets lastManualRefreshAt to
-   * `now` on a link whose last one is at least 5 minutes old, or that has none. False when another request took it
-   * first, or the link is gone.
+   * `now` on a link or a Google calendar whose last one is at least 5 minutes old, or that has none. False when another
+   * request took it first, or the calendar is gone or a file.
    */
   claimManualRefresh(scope: OrgScope, locationId: string, calendarId: string, now: Date): Promise<boolean>;
   /** A failed refresh: its code and the attempt, counted. The events stay. False when the calendar is gone. */
@@ -243,6 +282,9 @@ export interface OwnerCalendarStore {
 }
 
 type SourceDoc = SourceFields & { _id: Types.ObjectId };
+
+/** What googleSource and googleSources read: nothing a record shows. */
+const SECRET_FIELDS = { _id: 1, googleConnectionId: 1, sealedAddress: 1 } as const;
 
 function toCalendar(doc: SourceDoc): OwnerCalendarRecord {
   return {
@@ -278,6 +320,13 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
   const ofCalendar = (scope: OrgScope, locationId: string, calendarId: string) => ({
     ...ofLocation(scope, locationId), _id: new Types.ObjectId(calendarId),
   });
+  const ofConnection = (scope: OrgScope, connectionId: string) => ({
+    orgId: new Types.ObjectId(scope.orgId), kind: 'google' as const, googleConnectionId: new Types.ObjectId(connectionId),
+  });
+  const googleSourceOf = (doc: Pick<SourceDoc, '_id' | 'googleConnectionId' | 'sealedAddress'>): GoogleSource | null =>
+    doc.googleConnectionId === null || doc.sealedAddress === null ? null : {
+      calendarId: doc._id.toHexString(), connectionId: doc.googleConnectionId.toHexString(), sealedCalendarId: doc.sealedAddress,
+    };
 
   /**
    * Events, then calendars, then events again. A replace that switched before its calendar went had written all its
@@ -338,17 +387,39 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       const doc = await Source.findOne({ ...ofCalendar(scope, locationId, calendarId), kind: 'link' }).lean();
       return doc?.sealedAddress ?? null;
     },
+    async googleSource(scope, locationId, calendarId) {
+      const doc = await Source.findOne({ ...ofCalendar(scope, locationId, calendarId), kind: 'google' }, SECRET_FIELDS).lean();
+      return doc === null ? null : googleSourceOf(doc);
+    },
+    async googleSources(scope, locationId) {
+      const docs = await Source.find({ ...ofLocation(scope, locationId), kind: 'google' }, SECRET_FIELDS).sort({ createdAt: 1, _id: 1 }).lean();
+      return docs.flatMap((doc) => googleSourceOf(doc) ?? []);
+    },
+    countForConnection(scope, connectionId) {
+      return Source.countDocuments(ofConnection(scope, connectionId));
+    },
+    async removeForConnection(scope, connectionId) {
+      // Only the calendars found here go, each after its events, so no calendar leaves rows behind.
+      const ids = (await Source.find(ofConnection(scope, connectionId), { _id: 1 }).lean()).map((doc) => doc._id);
+      if (ids.length === 0) return 0;
+      const orgId = new Types.ObjectId(scope.orgId);
+      return removeWhere({ orgId, sourceId: trusted({ $in: ids }) }, { ...ofConnection(scope, connectionId), _id: trusted({ $in: ids }) });
+    },
+    async markDueForConnection(scope, connectionId, now) {
+      return (await Source.updateMany(ofConnection(scope, connectionId), { $set: { nextRefreshAt: now } })).matchedCount;
+    },
     async add(scope, locationId, calendar, parsed, input) {
       const location = ofLocation(scope, locationId);
       const taken = new Set(await Source.distinct('slot', location));
       const free = Array.from({ length: MAX_CALENDARS }, (_, slot) => slot).filter((slot) => !taken.has(slot));
       const fields: Omit<SourceDoc, 'slot'> = {
         _id: new Types.ObjectId(), ...location, kind: calendar.kind, label: calendar.label,
-        sealedAddress: calendar.kind === 'link' ? calendar.sealedAddress : null,
+        sealedAddress: calendar.kind === 'file' ? null : calendar.sealedAddress,
         host: calendar.kind === 'link' ? calendar.host : null,
+        googleConnectionId: calendar.kind === 'google' ? new Types.ObjectId(calendar.googleConnectionId) : null,
         generation: 0, reservedGeneration: 0, eventCount: 0, skippedRepeating: 0, status: 'ok',
         lastSuccessAt: null, lastAttemptAt: input.now,
-        nextRefreshAt: calendar.kind === 'link' ? new Date(input.now.getTime() + REFRESH_INTERVAL_MS) : null,
+        nextRefreshAt: calendar.kind === 'file' ? null : new Date(input.now.getTime() + REFRESH_INTERVAL_MS),
         leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: input.createdBy, createdAt: input.now,
       };
       let added: SourceDoc | null = null;
@@ -382,7 +453,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     async claimManualRefresh(scope, locationId, calendarId, now) {
       const due = new Date(now.getTime() - MANUAL_REFRESH_INTERVAL_MS);
       const claimed = await Source.updateOne({
-        ...ofCalendar(scope, locationId, calendarId), kind: 'link',
+        ...ofCalendar(scope, locationId, calendarId), kind: trusted({ $in: ['link', 'google'] }),
         $or: [{ lastManualRefreshAt: null }, { lastManualRefreshAt: trusted({ $lte: due }) }],
       }, { $set: { lastManualRefreshAt: now } });
       return claimed.matchedCount === 1;
