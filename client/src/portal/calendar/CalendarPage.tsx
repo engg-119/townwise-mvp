@@ -252,7 +252,7 @@ function CalendarView(): React.JSX.Element {
   const { reload: reloadForecast } = forecast;
   const { reload: reloadCalendars } = calendars;
   const { reload: reloadMonth } = monthData;
-  // After a calendar is added, refreshed or removed, and on the panel's Try again: the list and the grid's stored
+  // After a calendar is added, refreshed or removed, and on the popover's Try again: the list and the grid's stored
   // events. Stored events change the forecast only through notes, so neither the forecast nor the notes read again.
   const readCalendarsAgain = useCallback(() => {
     reloadCalendars();
@@ -365,7 +365,7 @@ function CalendarView(): React.JSX.Element {
       onPrevious: () => { toMonth(stepMonth(month, -1)); }, onNext: () => { toMonth(stepMonth(month, 1)); },
     };
   const failedFor = view === 'week' ? dayMonthRange(monday, addDays(monday, 6)) : MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? '';
-  // One calendars notice at a time: a failed list read says so (the panel says it too, when open); a failed
+  // One calendars notice at a time: a failed list read says so (the popover says it too, when open); a failed
   // stored-events read only while the list answered with a calendar, since with none there are no events to miss.
   const listFailed = calendars.error !== null;
   const storedFailed = hasCalendars && shown.storedFailed && shown.month === month;
@@ -456,8 +456,9 @@ function CalendarView(): React.JSX.Element {
         {/* From 641px the filters head the grid's column, so from 1024px the panel beside it starts level with them. */}
         <View style={[styles.column, desktop ? styles.wide : null]}>
           {phone ? null : filtersNode}
-          {/* Both views render in this slot, so the focus restore covers a switch of views too; "Your calendars" and its
-              panel in the header row are outside it, so a switch never remounts them and a shown result or refusal stays. */}
+          {/* Both views render in this slot, so the focus restore covers a switch of views too; "Your calendars" in the
+              header row is outside it, and its popover floats over the page, so a switch never remounts them and a shown
+              result or refusal stays. */}
           <View nativeID={SLOT_ID}>
             {view === 'week' ? (
               <CalendarWeek
