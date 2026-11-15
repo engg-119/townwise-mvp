@@ -451,6 +451,18 @@ test('beside the list the card and its notes share the right column once the car
   expect(mapCss).toContain('@container card (min-width:680px){.twmap .cb{');
 });
 
+test('from 1160px each town row is one line, so the list is about as tall as the card and notes beside it', () => {
+  // Two-line rows made the twelve-town list 942px beside about 675px of card and notes, leaving ~267px blank under
+  // the notes. One line: the name left, its sparkline and value right; a long name narrows its sparkline first.
+  const oneLine = '@media (min-width:1160px){.twmap .rows{grid-template-columns:minmax(0,1fr)}.twmap .row{display:flex;align-items:center;gap:8px}.twmap .row-n{flex:0 1 auto}.twmap .row-d{flex:1 1 0;justify-content:flex-end;padding-left:0}';
+  expect(mapCss).toContain(oneLine);
+  // It overrides the base row rules, so it comes after them.
+  expect(mapCss.indexOf('.twmap .row-d{display:flex')).toBeLessThan(mapCss.indexOf(oneLine));
+  // 36px rows with a mouse only; touch screens keep the base 44px target.
+  expect(mapCss).toContain('@media (min-width:1160px) and (pointer:fine){.twmap .row{min-height:36px}}');
+  expect(mapCss).toMatch(/\.twmap \.row\{display:grid;[^}]*min-height:44px/);
+});
+
 test('on phones the pinned caption takes the map’s width, so it lines up with the month strip', () => {
   expect(storyCss).toMatch(/@media \(max-width:1023px\)\{[^@]*\.twmap \.story\.is-on \.pin-cap\{max-width:var\(--story-mw,100%\);margin-inline:auto\}/);
 });

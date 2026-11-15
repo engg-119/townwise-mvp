@@ -11,7 +11,9 @@ const easeInOut = `cubic-bezier(${m.easeInOut.join(',')})`;
 
 // The town list, card and notes: stacked on phones; from 900px the list beside the card with the notes across the
 // bottom. From 1160px the card has its two columns (its container is 680px or more) and is short beside the list's
-// twelve towns, so the notes move under it, beside the list.
+// twelve towns, so the notes move under it, beside the list, and each town row goes onto one line (36px with a
+// mouse, 44px for touch) so the list is about as tall as the card and the Northeast notes together. On those rows a
+// long name narrows its sparkline before it is cut short.
 const frame = `
 .twmap{--eio:${easeInOut}}
 .twmap button{font-family:inherit}
@@ -119,6 +121,8 @@ const panel = `
 .twmap .row-d{display:flex;align-items:center;gap:8px;padding-left:12px;min-height:20px;transition:opacity ${m.fade}ms var(--eo)}
 .twmap .app:not(.is-local) .row-d{opacity:0}
 @media (max-width:899px){.twmap .row-d{padding-left:0}}
+@media (min-width:1160px){.twmap .rows{grid-template-columns:minmax(0,1fr)}.twmap .row{display:flex;align-items:center;gap:8px}.twmap .row-n{flex:0 1 auto}.twmap .row-d{flex:1 1 0;justify-content:flex-end;padding-left:0}.twmap .row-v{margin-left:0}.twmap .sp{width:40px}}
+@media (min-width:1160px) and (pointer:fine){.twmap .row{min-height:36px}}
 .twmap .sp{flex:0 1 64px;min-width:40px;height:20px;overflow:visible}
 .twmap .sp path{vector-effect:non-scaling-stroke}
 .twmap .sp-ne{fill:none;stroke:${c.seriesNortheast};stroke-width:${s.hairline};stroke-dasharray:2 2}
