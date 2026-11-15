@@ -170,6 +170,10 @@ test('from 1280px the nav sits in the bar, the sections then Team and Settings, 
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
     'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Team', 'Settings',
   ]);
+  // The links sit `space-5` (20px) apart, not `space-6`, so at 1280px the organization name and the email keep
+  // their room (D38); Team and Settings follow suit.
+  expect(style(nav).columnGap).toBe('20px');
+  expect(style(parentOf(within(nav).getByRole('link', { name: 'Team' }))).columnGap).toBe('20px');
 });
 
 test('from 641px More is a dropdown: a square panel box over the page, inside the nav, that closes on Escape, a press or focus outside', () => {
@@ -231,6 +235,8 @@ test('without a location the bar keeps its 900px wrap: Team and Settings sit in 
   const nav = within(screen.getByRole('banner')).getByRole('navigation', { name: 'Main' });
   expect(style(parentOf(nav)).borderTopWidth).not.toBe('1px');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Team', 'Settings']);
+  // Without a location's sections the links keep `space-6`.
+  expect(style(nav).columnGap).toBe('24px');
 });
 
 test('the console’s status filters: 44px links in a row, the selected one filled, inside the margins', () => {
