@@ -8,7 +8,8 @@ import { Small } from '../ui/text';
 import { Block } from './Block';
 import { LastWeekChart } from './LastWeekChart';
 
-// Last week (home.md 2.4): last week, Monday to Sunday, against the same weekdays 52 weeks earlier. Until a
+// Last week (home.md 2.4): the seven days before today, This week's weekdays a week earlier (owner request,
+// 2026-11-15), against the same weekdays 52 weeks earlier. Until a
 // forecast exists this is history against history, never against a prediction. The totals and the change are over
 // the days that have the metric in both weeks, and the summary says how many. Web draws the pairs; native has the
 // text and the table (D21).
@@ -20,7 +21,7 @@ export function LastWeek(props: {
   readOnlyId: string | null;
 }): React.JSX.Element {
   const { comparison, metric } = props;
-  const range = comparison.state === 'no_history' || comparison.state === 'uploads_off' ? null : `${dayMonth(comparison.monday)} to ${dayMonth(comparison.sunday)}`;
+  const range = comparison.state === 'no_history' || comparison.state === 'uploads_off' ? null : `${dayMonth(comparison.from)} to ${dayMonth(comparison.to)}`;
   const days = comparison.state === 'compared' || comparison.state === 'no_last_year' || comparison.state === 'no_overlap' ? comparison.days : null;
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
   return (

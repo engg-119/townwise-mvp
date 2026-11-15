@@ -59,7 +59,7 @@ export function dayMonthRange(start: string, end: string): string {
 }
 
 /**
- * The calendar range Home asks for: from two years before this week's Monday (Last week and the late-week share read
+ * The calendar range Home asks for: from two years before this week's Monday (the late-week share reads
  * Monday weeks), less the 4 weeks either side that "usual" reads, to the later of this month's last day and This
  * week's last day, six days from today.
  */
@@ -357,35 +357,38 @@ export type LastWeek =
   /** Every upload holding days is turned off on Your data. */
   | { state: 'uploads_off' }
   /** The history ends before last week. */
-  | { state: 'no_recent'; monday: string; sunday: string; lastDate: string }
+  | { state: 'no_recent'; from: string; to: string; lastDate: string }
   /** Last week has no day with the metric, though the history reaches it: a gap, or days without this metric. */
-  | { state: 'no_days'; monday: string; sunday: string }
-  | { state: 'no_last_year'; monday: string; sunday: string; days: ComparedDay[] }
-  | { state: 'no_overlap'; monday: string; sunday: string; days: ComparedDay[] }
+  | { state: 'no_days'; from: string; to: string }
+  | { state: 'no_last_year'; from: string; to: string; days: ComparedDay[] }
+  | { state: 'no_overlap'; from: string; to: string; days: ComparedDay[] }
   | {
-    state: 'compared'; monday: string; sunday: string; days: ComparedDay[];
+    state: 'compared'; from: string; to: string; days: ComparedDay[];
     /** Days with the metric in both weeks; the totals and the change are over these days only. */
     comparedDays: number; total: number; lastYearTotal: number; change: number | null;
   };
 
-/** Last week (Monday to Sunday before this one) against the days 364 days earlier. */
+/**
+ * Last week: the seven days before today, This week's weekdays a week earlier (owner request, 2026-11-15), against the
+ * days 364 days earlier.
+ */
 export function lastWeekComparison(input: HomeInput): LastWeek {
   if (input.lastDate === null) return input.uploadsOff === true ? { state: 'uploads_off' } : { state: 'no_history' };
-  const monday = addDays(mondayOf(input.today), -7);
-  const sunday = addDays(monday, 6);
-  const days = weekDates(monday).map((date) => ({
+  const from = addDays(input.today, -7);
+  const to = addDays(input.today, -1);
+  const days = weekDates(from).map((date) => ({
     date, value: figureOf(date, input), lastYear: figureOf(sameWeekdayYearsAgo(date, 1), input),
   }));
   if (days.every((each) => each.value === null)) {
-    return input.lastDate < monday ? { state: 'no_recent', monday, sunday, lastDate: input.lastDate } : { state: 'no_days', monday, sunday };
+    return input.lastDate < from ? { state: 'no_recent', from, to, lastDate: input.lastDate } : { state: 'no_days', from, to };
   }
-  if (days.every((each) => each.lastYear === null)) return { state: 'no_last_year', monday, sunday, days };
+  if (days.every((each) => each.lastYear === null)) return { state: 'no_last_year', from, to, days };
   const both = days.filter((each): each is ComparedDay & { value: number; lastYear: number } => each.value !== null && each.lastYear !== null);
-  if (both.length === 0) return { state: 'no_overlap', monday, sunday, days };
+  if (both.length === 0) return { state: 'no_overlap', from, to, days };
   const total = sum(both.map((each) => each.value));
   const lastYearTotal = sum(both.map((each) => each.lastYear));
   return {
-    state: 'compared', monday, sunday, days, comparedDays: both.length, total, lastYearTotal,
+    state: 'compared', from, to, days, comparedDays: both.length, total, lastYearTotal,
     change: lastYearTotal === 0 ? null : total / lastYearTotal - 1,
   };
 }
