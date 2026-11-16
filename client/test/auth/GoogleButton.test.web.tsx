@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 
+import { gisLoaded, loadGis } from '../../src/auth/gis.web';
 import { GoogleButton, resetGoogleButtonState } from '../../src/auth/GoogleButton';
 import { REVEAL_MS, SWAP_GRACE_MS } from '../../src/auth/GoogleButton.web';
 
@@ -18,6 +19,26 @@ test('script injected once across remounts', async () => {
   first.unmount();
   render(<GoogleButton {...props} />);
   expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+});
+
+test('the button and the Calendar’s Google connect share one loader: one script tag whichever runs first', async () => {
+  const props = { google, onIdToken: jest.fn(), onError: jest.fn() };
+  render(<GoogleButton {...props} />);
+  await waitFor(() => { expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1); });
+  const shared = loadGis();
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+  document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+  await expect(shared).resolves.toBeUndefined();
+  expect(gisLoaded()).toBe(true);
+
+  resetGoogleButtonState();
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(0);
+  expect(gisLoaded()).toBe(false);
+  const first = loadGis();
+  render(<GoogleButton {...props} />);
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+  document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+  await expect(first).resolves.toBeUndefined();
 });
 
 test('initialize called once', async () => {

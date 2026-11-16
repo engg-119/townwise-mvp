@@ -1,55 +1,20 @@
 import { createElement, useEffect, useState } from 'react';
 
 import { Message } from '../ui';
+import { gis, loadGis, resetGis } from './gis.web';
 import type { GoogleButtonProps } from './GoogleButton';
 
-const GIS_SRC = 'https://accounts.google.com/gsi/client';
+// Google's script loads through gis.web.ts, the one loader it shares with the Calendar's Google connect, so the page
+// holds one script tag whichever ran first.
 
-interface Gis {
-  accounts: {
-    id: {
-      initialize: (config: { client_id: string; callback: (response: { credential?: string }) => void }) => void;
-      renderButton: (parent: HTMLElement, options: { text: 'continue_with'; width?: number }) => void;
-    };
-  };
-}
-
-let loader: Promise<void> | null = null;
 let initialized = false;
 let handler: ((idToken: string) => void) | null = null;
 
+/** For tests: forgets the button's own state and, through resetGis, removes Google's script. */
 export function resetGoogleButtonState(): void {
-  loader = null;
+  resetGis();
   initialized = false;
   handler = null;
-  document.querySelectorAll(`script[src="${GIS_SRC}"]`).forEach((node) => { node.remove(); });
-}
-
-function gis(): Gis | undefined {
-  return (window as Window & { google?: Gis }).google;
-}
-
-function loadGis(): Promise<void> {
-  if (loader !== null) return loader;
-  loader = new Promise<void>((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = GIS_SRC;
-    script.async = true;
-    const timer = setTimeout(() => { fail(new Error('timeout')); }, 10_000);
-    function fail(error: Error): void {
-      clearTimeout(timer);
-      script.remove();
-      loader = null;
-      reject(error);
-    }
-    script.addEventListener('load', () => {
-      clearTimeout(timer);
-      resolve();
-    });
-    script.addEventListener('error', () => { fail(new Error('load')); });
-    document.head.append(script);
-  });
-  return loader;
 }
 
 // Google first draws a placeholder as wide as the container, then swaps in its own button in an iframe: the plain

@@ -5,6 +5,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import { Dimensions } from 'react-native';
 
 import { AuthProvider } from '../../src/auth/AuthProvider';
+import { loadGis } from '../../src/auth/gis.web';
 import { resetGoogleButtonState } from '../../src/auth/GoogleButton';
 import SignIn from '../../app/(gate)/sign-in';
 import { fakeAuth } from '../helpers/fakes';
@@ -30,9 +31,8 @@ afterEach(() => {
   cleanup();
 });
 
-// Renders /sign-in with Google's script stubbed and loaded; returns the card.
-async function renderSignIn(): Promise<{ card: HTMLElement; renderButton: jest.Mock<undefined, [HTMLElement, unknown]> }> {
-  const renderButton = jest.fn<undefined, [HTMLElement, unknown]>();
+// Renders /sign-in with Google's script stubbed; returns the container.
+function mountSignIn(renderButton: jest.Mock<undefined, [HTMLElement, unknown]>): HTMLElement {
   (window as { google?: unknown }).google = { accounts: { id: { initialize: jest.fn(), renderButton } } };
   const auth = fakeAuth({ status: 'signedOut' }, {
     config: { apiUrl: 'https://api.example.com', webUrl: 'https://app.example.com', google },
@@ -48,6 +48,13 @@ async function renderSignIn(): Promise<{ card: HTMLElement; renderButton: jest.M
       />
     </Head.Provider>,
   );
+  return container;
+}
+
+// Renders /sign-in with Google's script stubbed and loaded; returns the card.
+async function renderSignIn(): Promise<{ card: HTMLElement; renderButton: jest.Mock<undefined, [HTMLElement, unknown]> }> {
+  const renderButton = jest.fn<undefined, [HTMLElement, unknown]>();
+  const container = mountSignIn(renderButton);
   document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
   await waitFor(() => { expect(renderButton).toHaveBeenCalled(); });
   const card = container.querySelector<HTMLElement>('.pg-signin .card');
@@ -155,4 +162,28 @@ test('a window resize resizes the lines under the button without drawing Google�
   });
   expect(line.style.fontSize).toBe('16px');
   expect(renderButton).toHaveBeenCalledTimes(1);
+});
+
+test('through the shared loader (auth/gis.web.ts) sign-in is unchanged: one script tag when the Calendar’s loader ran first', async () => {
+  const shared = loadGis();
+  const renderButton = jest.fn<undefined, [HTMLElement, unknown]>();
+  const container = mountSignIn(renderButton);
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+  document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+  await shared;
+  await waitFor(() => { expect(renderButton).toHaveBeenCalledTimes(1); });
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+  const card = container.querySelector<HTMLElement>('.pg-signin .card');
+  for (const [parent, options] of renderButton.mock.calls) {
+    expect(card?.contains(parent)).toBe(true);
+    expect(options).toEqual({ text: 'continue_with' });
+  }
+});
+
+test('a script that fails to load still says sign-in’s own words on /sign-in', async () => {
+  mountSignIn(jest.fn<undefined, [HTMLElement, unknown]>());
+  document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('error'));
+  const alert = await screen.findByRole('alert');
+  expect(alert.textContent).toBe('Google sign-in didn’t load. Check your connection, turn off any blocker for accounts.google.com, and reload.');
+  expect(document.querySelector(`script[src="${GIS}"]`)).toBeNull();
 });
