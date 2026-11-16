@@ -46,7 +46,7 @@ export const READ_COPY = {
 } as const;
 
 export function readingLine(from: ReadFrom): string {
-  return `TownwiseAI is reading the ${from}. This can take up to two minutes.`;
+  return `TownwiseAI is reading the ${from}. This can take up to three minutes.`;
 }
 
 function extensionOf(name: string): string {

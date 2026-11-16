@@ -191,7 +191,7 @@ test('pasted text goes as the text; while TownwiseAI reads the page says so with
   await screen.findByRole('heading', { name: HEADING });
   fireEvent.change(screen.getByRole('textbox', { name: 'Or paste text' }), { target: { value: 'Sample IPA, 1 half-barrel, Tuesdays' } });
   await click('Read the text');
-  expect(screen.getByText('TownwiseAI is reading the text. This can take up to two minutes.')).toBeTruthy();
+  expect(screen.getByText('TownwiseAI is reading the text. This can take up to three minutes.')).toBeTruthy();
   expect(reads(api)).toEqual([{ source: { type: 'text', text: 'Sample IPA, 1 half-barrel, Tuesdays' } }]);
   expect(screen.getByRole('button', { name: 'Read the text' }).getAttribute('aria-disabled')).toBe('true');
   await click('Cancel');

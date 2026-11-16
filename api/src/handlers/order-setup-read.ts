@@ -127,7 +127,7 @@ const REFUSED: Readonly<Record<InputRefusal | 'mismatch' | 'empty', { code: stri
  * (422 extract_answer_too_long) or an answer that is not JSON (422 extract_invalid_answer) is charged. A call that
  * fails is charged what its stream had reported, else nothing for an API error and the whole reservation for a call
  * that was ended (charged()): 503 extract_failed for an API error, 503 extract_timed_out past SETUP_READ_TIME_MS from
- * the request's start, and extract_left (logged; nobody is left to answer) when the person left. A read already past
+ * this handler's start (after the body has arrived), and extract_left (logged; nobody is left to answer) when the person left. A read already past
  * its time, or whose person has left, makes no call and is charged nothing. Text past 100,000 characters is cut and the
  * answer says so (`partial`). 200 { read }: the checked suggestions (setup-prompt.ts setupResult) and `partial`. Every
  * call is audited (order.setup_read) with its outcome.
@@ -193,7 +193,7 @@ export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Re
   });
   const reserved = setupCeilingMicroUsd(request, input, prepared.pages);
   if (!await ctx.stores.filesUsage.reserve(scope, month, reserved, budget, ctx.now())) throw spent();
-  // The call ends at the read's time limit from the request's start, or when the person leaves. Checked right before
+  // The call ends at the read's time limit from this handler's start, or when the person leaves. Checked right before
   // it: when either came first, no call is made and the reservation is given back. A response destroyed before this
   // handler ran never emits 'close' to it (Node does not replay it), hence `res.destroyed`.
   const remaining = started + ctx.setupReadTimeMs - Date.now();

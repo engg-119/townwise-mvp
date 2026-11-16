@@ -172,10 +172,12 @@ const POSTED_NAMES: Readonly<Record<PostedKind, string>> = {
 
 /**
  * The kind to read a file posted as `claimed` as, from its first bytes (sniff.ts, as a stored file's kind is told), or
- * why it is refused: `kind_not_read` for a ZIP that is not the workbook or Word document it says it is, an old Excel
- * or Word file, or a picture of a kind the model does not read (HEIC); `encrypted` for a password-protected workbook or
- * Word document; `mismatch` for bytes of another kind than the one claimed (a PDF posted as a workbook, a binary file as
- * text). A picture is `other`, which prepareInput reads by its bytes.
+ * why it is refused: `kind_not_read` for a ZIP that is not the workbook or Word document it says it is, or a picture of
+ * a kind the model does not read (HEIC); `encrypted` for a password-protected workbook or Word document, and for an old
+ * Excel or Word file posted as `.xlsx` or `.docx` (sniff tells it from the name, so it reads as an encrypted OLE file);
+ * `mismatch` for bytes of another kind than the one claimed (a PDF posted as a workbook, a binary file as text). A
+ * picture is `other`, which prepareInput reads by its bytes. The `xls` and `doc` cases keep the switch exhaustive: the
+ * names posted here never end in `.xls` or `.doc`, so sniff never answers them.
  */
 function postedKind(claimed: PostedKind, head: Uint8Array): FileKind | 'kind_not_read' | 'encrypted' | 'mismatch' {
   const sniffed = sniff(POSTED_NAMES[claimed], head.subarray(0, HEAD_BYTES));
