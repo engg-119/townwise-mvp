@@ -158,13 +158,13 @@ run "rbac_scopes" {
   assert {
     condition = (
       toset([for key, role in local.team_roles : role.scope if role.group == "developers" && role.role == "Key Vault Secrets User"]) == toset([
-        for name in ["anthropic-dev-key", "google-places-api-key", "google-maps-static-key", "google-maps-signing-secret"] :
+        for name in ["anthropic-dev-key", "google-places-api-key", "google-maps-static-key", "google-maps-signing-secret", "townwise-calendar-key"] :
         "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/${name}"
       ]) &&
       !contains([for key, role in local.team_roles : role.role if role.group == "developers"], "Key Vault Secrets Officer") &&
       !contains([for key, role in local.team_roles : role.role if role.group == "developers"], "Contributor")
     )
-    error_message = "Developers read four secrets (the shared dev Anthropic key and the Places search's three), and cannot change resources."
+    error_message = "Developers read five secrets (the shared dev Anthropic key, the Places search's three and the calendar key), and cannot change resources."
   }
 }
 

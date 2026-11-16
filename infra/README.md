@@ -494,6 +494,14 @@ A location keeps its own calendars, each an imported file or a link (`api/README
 2. **Turn it on.** Add `enable_calendar_links = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds one role assignment (the app's identity reads `townwise-calendar-key` only) and changes the Container App (the `townwise-calendar-key` Key Vault reference and the `TOWNWISE_CALENDAR_KEY` env var), which starts a new revision. A value that is not 32 bytes of base64 stops the revision at boot with a `ConfigError` naming `TOWNWISE_CALENDAR_KEY`: seed it again and restart.
 3. **Check.** Signed in as a member of a test organization, add a public test calendar's `.ics` link to a location (`POST /api/org/locations/<id>/owner-calendars` with `kind: 'link'`): it answers 201 with the link's host and event count, and no answer shows the address. About 6 hours later, `ContainerAppConsoleLogs | where Log has "townwise.calendar_refreshed"` shows its refresh, with the calendar id, the status code, counts and the duration only.
 
+**Use it locally.** Developers use production's key (owner decision, 2026-11-16): `townwise-developers` has Key Vault Secrets User on `townwise-calendar-key` (only that secret, never the vault), granted by `infra/terraform/bootstrap`. The key unseals every stored link's address in production's database and, with Google calendars on, every Google connection's refresh token, so a laptop's `api/.env.local` holding it is as sensitive as that database: never copy it anywhere else, and treat a lost laptop as a leaked key (below). Each developer, signed in with `az login`, removes any earlier `TOWNWISE_CALENDAR_KEY` line from `api/.env.local`, writes the key there without it reaching the terminal, and restarts the API:
+
+```sh
+printf 'TOWNWISE_CALENDAR_KEY=%s\n' "$(az keyvault secret show --vault-name kv-townwise-2d2c15bf --name townwise-calendar-key --query value -o tsv)" >> api/.env.local
+```
+
+A local link or Google calendar sealed under a different key fails its next refresh with `key_mismatch` until it is added again.
+
 **Never change the key.** A link sealed under one key opens under no other, so a new key makes every stored calendar link unreadable: each fails its next refresh with status `key_mismatch` until its owner adds it again (the events already stored stay). The key also seals every Google connection's refresh token and every Google calendar's id (step 22), so a new key breaks those too: each Google calendar fails with `key_mismatch` until its person removes it and adds it again, and a token the old key sealed can no longer be revoked from Townwise (the person can remove Townwise at myaccount.google.com/connections). Change it only if it leaks: seed a new one with the same command, run `az containerapp revision restart`, and ask the owners to add their links and Google calendars again.
 
 ### 22. Google calendars
