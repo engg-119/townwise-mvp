@@ -22,6 +22,12 @@ const dark = {
   scrim: 'rgba(8, 10, 13, 0.8)', shadow: 'rgba(0, 0, 0, 0.6)',
   cta: '#eff2f6', ctaHover: '#b5bbc2', onCta: '#080a0d', onMint: '#080a0d', focusRing: '#7bd2b4',
   seriesNortheast: '#9a9fa6', seriesCounty: '#7bd2b4', deltaAbove: '#7bd2b4', deltaBelow: '#7b8187',
+  // The effect ramp: the color of Why's ▲ and ▼ by the size of a reason's effect on guests, step 1 to 3 (10 to 15%, 20
+  // to 35%, 40% and over), each step greener or redder (more saturated) at about one hue, each at least 4.5:1 on ground,
+  // panel and raised (refine-calendar-and-home design decision 8). Its own set of tokens: effectDown3 shares error's
+  // value, but error stays unadopted and field messages stay white (spec 15.7's [CONFIRM], CONFIRM index item 34).
+  effectUp1: '#9cc9ae', effectUp2: '#86cfa4', effectUp3: '#5fd98f',
+  effectDown1: '#d1a39e', effectDown2: '#e09a93', effectDown3: '#f2716a',
   // The light backing of a source chip's logo, the same in both palettes, so a dark logo shows on the dark ground.
   logoGround: '#f5f6f8',
 } as const;
@@ -43,6 +49,8 @@ const light: Palette = {
   scrim: 'rgba(13, 16, 20, 0.4)', shadow: 'rgba(13, 16, 20, 0.18)',
   cta: '#0d1014', ctaHover: '#3e444b', onCta: '#f5f6f8', onMint: '#ffffff', focusRing: '#136a53',
   seriesNortheast: '#7a8088', seriesCounty: '#136a53', deltaAbove: '#136a53', deltaBelow: '#7a8088',
+  effectUp1: '#426c54', effectUp2: '#2f6e4a', effectUp3: '#137a3a',
+  effectDown1: '#7d504a', effectDown2: '#93453f', effectDown3: '#b42d25',
   logoGround: '#f5f6f8',
 };
 
