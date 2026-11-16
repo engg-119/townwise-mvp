@@ -45,6 +45,19 @@ export function canReadWithAi(ctx: TownwiseContext): boolean {
   return ctx.setupReader !== null && ctx.config.filesMonthlyBudgetUsd > 0;
 }
 
+/**
+ * What a call is charged against the files AI budget: what it cost when it answered, refused or was cut. A failed call
+ * whose stream had begun is charged what the stream had reported (its input tokens, and its output estimated from the
+ * characters streamed), as Anthropic may bill what it generated before the end; one with no stream event is charged
+ * the whole reservation when it was `ended` (the time limit, or the person leaving), as it may have run without a word
+ * back, and nothing for an API error.
+ */
+function charged(reply: ReaderAnswer | undefined, ended: boolean, reserved: number): number {
+  if (reply === undefined) return 0;
+  if (reply.kind !== 'failed') return reply.costMicroUsd;
+  return reply.streamedMicroUsd ?? (ended ? reserved : 0);
+}
+
 /** What each refusal of the content answers (400). */
 const REFUSED: Readonly<Record<InputRefusal | 'mismatch' | 'empty', { code: string; message: string }>> = {
   too_large: { code: 'extract_too_large', message: 'That file is too large for TownwiseAI to read: at most 5 MB, 30 pages, or a picture of 3.75 MB and 8,000 pixels a side.' },
@@ -67,8 +80,9 @@ const REFUSED: Readonly<Record<InputRefusal | 'mismatch' | 'empty', { code: stri
  * extract_kind_mismatch, extract_encrypted, extract_not_readable, extract_empty); 409 files_ai_budget_exhausted when
  * the rest of the budget cannot cover the most the call may cost; then one call. A refusal (422 extract_refused), an
  * answer cut at max_tokens (422 extract_answer_too_long) or an answer that is not JSON (422 extract_invalid_answer) is
- * charged; an API error or a call past SETUP_READ_TIME_MS from the request's start (503 extract_failed) is charged
- * nothing. Text past 100,000 characters is cut and the answer says so (`partial`). 200 { read }: the checked
+ * charged. A call that fails (503 extract_failed: an API error, or a call past SETUP_READ_TIME_MS from the request's
+ * start) is charged what its stream had reported, else nothing for an API error and the whole reservation for a call
+ * that was ended (charged()). Text past 100,000 characters is cut and the answer says so (`partial`). 200 { read }: the checked
  * suggestions (setup-prompt.ts setupResult) and `partial`. Every call is audited (order.setup_read) with its outcome.
  */
 export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
@@ -133,9 +147,8 @@ export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Re
     try {
       reply = await model.readFile(request, signal);
     } finally {
-      // The reservation becomes what the call cost (nothing for a call that gave no answer).
-      const cost = reply === undefined || reply.kind === 'failed' ? 0 : reply.costMicroUsd;
-      await ctx.stores.filesUsage.add(scope, month, cost - reserved, ctx.now());
+      // The reservation becomes what the call is charged.
+      await ctx.stores.filesUsage.add(scope, month, charged(reply, signal.aborted, reserved) - reserved, ctx.now());
     }
     const result = reply.kind === 'answered' ? setupResult(reply.output, prepared.sourceText) : null;
     const outcome = reply.kind === 'failed' ? 'failed' : reply.kind === 'answered' ? (result === null ? 'invalid_answer' : 'read') : reply.kind;

@@ -1,7 +1,7 @@
 // Reading the ordering setup with TownwiseAI (spec D39) end to end against the database, over a scripted model (no call
 // leaves the test): each input kind and what the request holds (the content and the saved names, never a point-of-sale,
 // organization, location or file name), the answer, `canReadWithAi`, off, the files AI budget (spent, reserved before
-// the call, corrected after it, a failure charged nothing, a refusal charged), the time limit, who may read (view-as,
+// the call, corrected after it, a failed call charged what its stream reported, a refusal charged), the time limit, who may read (view-as,
 // staff opened as admin, another organization), the 400s and the body limit, the bytes a replica holds, nothing stored,
 // and logs and audit that carry no name. Synthetic content only.
 import { randomUUID } from 'node:crypto';
@@ -65,12 +65,14 @@ const model: FileReaderModel = {
     return answers.shift() ?? { kind: 'answered', output: ANSWER, costMicroUsd: 3000 };
   },
 };
+/** What the slow model answers once its signal ends the call: by default, a call whose stream reported nothing. */
+let endedAnswer: ReaderAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null };
 /** Answers only once its signal ends the call, as the real client does. */
 const slowModel: FileReaderModel = {
   readFile(request, signal) {
     requests.push(request);
     return new Promise((resolve) => {
-      signal.addEventListener('abort', () => { resolve({ kind: 'failed', errType: 'APIUserAbortError', status: null }); }, { once: true });
+      signal.addEventListener('abort', () => { resolve(endedAnswer); }, { once: true });
     });
   },
 };
@@ -129,6 +131,7 @@ beforeEach(async () => {
   requests.length = 0;
   gate = null;
   started = null;
+  endedAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null };
   await server.redis.flushdb();
   await server.connection.collection('tw_files_usage').deleteMany({});
 });
@@ -346,12 +349,13 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       expect(await usage()).toBe(5_000_000 - reserved + 1);
     });
 
-    it('charges a refusal, an answer cut at max_tokens and an answer that is not JSON (422), and nothing for a failed call (503 extract_failed)', async () => {
+    it('charges a refusal, an answer cut at max_tokens and an answer that is not JSON (422), nothing for an API error before the stream, and what the stream reported for one during it (503 extract_failed)', async () => {
       answers = [
         { kind: 'refused', costMicroUsd: 700 },
         { kind: 'too_long', costMicroUsd: 900 },
         { kind: 'answered', output: 'not an answer', costMicroUsd: 1100 },
         { kind: 'failed', errType: 'InternalServerError', status: 529 },
+        { kind: 'failed', errType: 'APIError', status: null, streamedMicroUsd: 400 },
       ];
       expect(await errorOf(await read(pasted()))).toEqual({ status: 422, error: 'extract_refused' });
       expect(await usage()).toBe(700);
@@ -364,16 +368,25 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       expect(await usage()).toBe(2700);
       expect(logLines(server).slice(before).find((line) => line.msg === 'townwise.setup_read_failed'))
         .toMatchObject({ code: 'extract_failed', errType: 'InternalServerError', status: 529 });
-      expect((await readEvents()).slice(-4).map((event) => (event.details as { outcome: unknown }).outcome))
-        .toEqual(['refused', 'too_long', 'invalid_answer', 'failed']);
+      expect(await errorOf(await read(pasted()))).toEqual({ status: 503, error: 'extract_failed' });
+      expect(await usage()).toBe(3100);
+      expect((await readEvents()).slice(-5).map((event) => (event.details as { outcome: unknown }).outcome))
+        .toEqual(['refused', 'too_long', 'invalid_answer', 'failed', 'failed']);
     });
 
-    it('ends the call at the read’s time limit, charging nothing (503 extract_failed)', async () => {
+    it('ends the call at the read’s time limit, charging what its stream reported (503)', async () => {
+      endedAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null, streamedMicroUsd: 2500 };
       const session = await signIn(slow, member.email);
-      const res = await read(pasted(), session, slow);
-      expect(await errorOf(res)).toEqual({ status: 503, error: 'extract_failed' });
+      expect((await errorOf(await read(pasted(), session, slow))).status).toBe(503);
       expect(requests).toHaveLength(1);
-      expect(await usage()).toBe(0);
+      expect(await usage()).toBe(2500);
+    });
+
+    it('keeps the whole reservation for a call the time limit ends before its stream reported anything', async () => {
+      const session = await signIn(slow, member.email);
+      expect((await errorOf(await read(pasted(), session, slow))).status).toBe(503);
+      expect(requests).toHaveLength(1);
+      expect(await usage()).toBe(ceilingOf(requests[0]));
     });
   });
 

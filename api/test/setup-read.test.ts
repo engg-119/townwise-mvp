@@ -320,4 +320,63 @@ describe('the model’s client', () => {
       output_config: { effort: 'low', format: SETUP_FORMAT }, fallbacks: 'default', stream: true,
     }]);
   });
+
+  describe('a call that ends before its answer', () => {
+    const start = (model = 'claude-opus-5-5'): string => sse({
+      type: 'message_start',
+      message: {
+        id: 'msg_test', type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null,
+        usage: { input_tokens: 1000, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    });
+    const textDelta = (text: string): string => sse({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } });
+    const aborted = (): DOMException => new DOMException('The operation was aborted.', 'AbortError');
+    /** A stream that sends `events`, then stays open until the call's signal ends it, as the API's does mid-answer. */
+    const hanging = (events: string): typeof globalThis.fetch => (_input, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(events));
+          init?.signal?.addEventListener('abort', () => { controller.error(aborted()); }, { once: true });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    };
+    const request = setupRequest({ type: 'text', form: 'text', text: 'Vorlan IPA', cut: false }, NAMES);
+    async function readUntilAborted(fetch: typeof globalThis.fetch): Promise<unknown> {
+      const left = new AbortController();
+      const pending = createAnthropicSetupReaderModel('test-key', fetch).readFile(request, left.signal);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      left.abort();
+      return pending;
+    }
+
+    it('says what the stream had reported: the input tokens from message_start and the output streamed, a token for every 3 characters', async () => {
+      const fetch = hanging(start() + sse({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }) + textDelta('x'.repeat(1500)) + textDelta('y'.repeat(1500)));
+      // 1,000 input tokens at $4 a million (4,000) and 3,000 characters as 1,000 output tokens at $20 a million (20,000).
+      expect(await readUntilAborted(fetch)).toEqual({ kind: 'failed', errType: 'APIUserAbortError', status: null, streamedMicroUsd: 24_000 });
+    });
+
+    it('prices it at the answering model’s rates once a refusal fallback takes over', async () => {
+      const fallback = sse({
+        type: 'content_block_start', index: 0,
+        content_block: { type: 'fallback', from: { model: 'claude-opus-5-5' }, to: { model: 'claude-opus-5' }, trigger: { type: 'refusal' } },
+      });
+      const fetch = hanging(start() + fallback + sse({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } })
+        + sse({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'z'.repeat(3000) } }));
+      // At $5 and $25 a million: 5,000 + 25,000.
+      expect(await readUntilAborted(fetch)).toEqual({ kind: 'failed', errType: 'APIUserAbortError', status: null, streamedMicroUsd: 30_000 });
+    });
+
+    it('says nothing when it ends before any stream event, aborted or refused by the API', async () => {
+      const waiting: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { reject(aborted()); }, { once: true });
+      });
+      expect(await readUntilAborted(waiting)).toEqual({ kind: 'failed', errType: 'APIUserAbortError', status: null });
+      const refused: typeof globalThis.fetch = () => Promise.resolve(new Response(
+        JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Zqxj' } }), { status: 400, headers: { 'content-type': 'application/json' } },
+      ));
+      expect(await createAnthropicSetupReaderModel('test-key', refused).readFile(request, new AbortController().signal))
+        .toEqual({ kind: 'failed', errType: 'BadRequestError', status: 400 });
+    });
+  });
 });

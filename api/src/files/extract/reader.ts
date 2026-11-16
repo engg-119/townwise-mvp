@@ -40,8 +40,12 @@ export type ReaderAnswer =
   | { readonly kind: 'refused'; readonly costMicroUsd: number }
   /** Stopped at max_tokens: the answer is cut, so none is kept; the call still cost what it cost. */
   | { readonly kind: 'too_long'; readonly costMicroUsd: number }
-  /** No answer: the error's class and HTTP status, never its message or the request. */
-  | { readonly kind: 'failed'; readonly errType: string; readonly status: number | null };
+  /**
+   * No answer: the error's class and HTTP status, never its message or the request. `streamedMicroUsd`, once the
+   * call's stream had begun (it was aborted, or failed mid-stream), is what the stream had reported at list prices: its
+   * input tokens and its output so far (model.ts streamTally); absent when no stream event had arrived.
+   */
+  | { readonly kind: 'failed'; readonly errType: string; readonly status: number | null; readonly streamedMicroUsd?: number };
 
 export interface FileReaderModel {
   readFile(request: ReaderRequest, signal: AbortSignal): Promise<ReaderAnswer>;
