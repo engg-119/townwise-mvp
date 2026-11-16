@@ -6,6 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import { ApiError } from '../../../src/api/client';
 import { GIS_SRC, resetGis, type CodeClientConfig, type CodeResponse } from '../../../src/auth/gis.web';
 import type { GoogleCalendars, GoogleChoice } from '../../../src/portal/calendar/api';
+import { GOOGLE_COPY } from '../../../src/portal/calendar/calendars';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
@@ -185,14 +186,18 @@ test('no script from accounts.google.com is in the document until “Add a Googl
   expect(scripts()).toHaveLength(1);
   const loading = within(panel).getByRole('button', { name: 'Loading Google…' });
   expect(loading.getAttribute('aria-disabled')).toBe('true');
-  // The explainer shows meanwhile, and focus moved to the button that took "Add a Google calendar"'s place.
+  // The explainer shows meanwhile, and focus moved to the button that took "Add a Google calendar"'s place, which the
+  // explainer describes, since pressing it is the person's agreement.
   expect(within(panel).getByText(/^Sign in with Google to pick calendars from your Google account\./)).toBeTruthy();
   expect(document.activeElement).toBe(loading);
+  const explainer = (button: HTMLElement): string | null | undefined => document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent;
+  expect(explainer(loading)).toBe(GOOGLE_COPY.explainer);
   finishLoad();
   const go = await within(panel).findByRole('button', { name: 'Continue to Google' });
   expect(go).toBe(loading);
   expect(go.getAttribute('aria-disabled')).toBeNull();
   expect(document.activeElement).toBe(go);
+  expect(explainer(go)).toBe(GOOGLE_COPY.explainer);
 });
 
 test('the press sets up the code client with exactly the three scopes, a popup, include_granted_scopes false, the person’s email and a fresh state, and calls requestCode inside the press', async () => {

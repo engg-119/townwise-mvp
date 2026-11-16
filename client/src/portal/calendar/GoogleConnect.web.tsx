@@ -24,7 +24,9 @@ import type { GoogleConnectProps } from './GoogleConnect';
 // (`onCancel`); `popup_failed_to_open` says the pop-up words; any other error, from the callback or the error
 // callback's `unknown`, says "Google didn’t connect Townwise. Try again." and never Google's own `error_description`
 // (`onRefusal`). While Google's window is open it shows "Waiting for Google…" and "Stop waiting", which forgets the
-// press, so a window that never answers can't hold the popover. Native has its own file (GoogleConnect.tsx).
+// press, so a window that never answers can't hold the popover. "Continue to Google" (and "Loading Google…" before it)
+// is described by the explainer, since its press is the person's agreement and focus lands on it past the explainer.
+// Native has its own file (GoogleConnect.tsx).
 
 const SCOPES = [
   'openid',
@@ -148,6 +150,7 @@ export function GoogleConnect(props: GoogleConnectProps): React.JSX.Element {
         variant="outline"
         label={load === 'ready' ? GOOGLE_COPY.continue : GOOGLE_COPY.loadingGoogle}
         disabled={load !== 'ready'}
+        describedBy={props.describedBy}
         focusOnMount={props.focusContinue}
         onPress={press}
       />

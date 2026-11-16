@@ -56,10 +56,11 @@ import { IcsImport } from './IcsImport';
 // The Google section (google-calendar's "The Your calendars popover connects and picks Google calendars"): for a person
 // the list says is connected it first reads their choices ("Loading your Google calendars…"), and a 409
 // google_not_connected or google_reconnect (with "Connect your Google account again to add calendars.") falls back to
-// the explainer; for anyone else it opens on the explainer, then "Continue to Google" and Cancel (GoogleConnect.web.tsx,
-// which loads Google's script only now and opens Google's window in the press). While Google's window is open it says
-// "Waiting for Google…" with "Stop waiting"; a code is posted as `{ code, agreed: true }` ("Connecting your Google
-// account…"), and the answer's choices open the picker; any refusal shows the explainer again with its words. The picker
+// the explainer; for anyone else it opens on the explainer, then "Continue to Google", described by the explainer since
+// its press is the agreement, and Cancel (GoogleConnect.web.tsx, which loads Google's script only now and opens
+// Google's window in the press). While Google's window is open it says "Waiting for Google…" with "Stop waiting"; a
+// code is posted as `{ code, agreed: true }` ("Connecting your Google account…"), and the answer's choices open the
+// picker; any refusal shows the explainer again with its words. The picker
 // says "Choose the calendars to add to {location}.", then a checkbox row per calendar (the primary first, with "Your
 // main calendar"; one already on the location checked, disabled and "Added"), "This location can add {k} more." with
 // the checks capped at k, the line on sharing another account's calendar, and "Add {n} calendars" ("Add calendar" for
@@ -95,6 +96,8 @@ const HELP_ID = 'your-calendars-help';
 const READ_ONLY_ID = 'your-calendars-ro';
 /** The picker rows' second lines, by row. */
 const GOOGLE_CHOICE_ID = 'your-calendars-google';
+/** The explainer, which describes "Continue to Google": its press is the person's agreement. */
+const EXPLAINER_ID = 'your-calendars-google-explainer';
 
 export interface YourCalendarsProps {
   /** The location's calendars, oldest first; null before the list's first answer. */
@@ -664,13 +667,14 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
         {googleClientId === null || googleStep === 'closed' ? null : (
           <View style={styles.form}>
             {googleStep === 'loading' ? <Small>{GOOGLE_COPY.loadingChoices}</Small> : null}
-            {googleStep === 'explaining' ? <Small>{GOOGLE_COPY.explainer}</Small> : null}
+            {googleStep === 'explaining' ? <Small nativeID={EXPLAINER_ID}>{GOOGLE_COPY.explainer}</Small> : null}
             {googleStep === 'explaining' || googleStep === 'waiting' ? (
               <GoogleConnect
                 clientId={googleClientId}
                 loginHint={me.user.email}
                 expectedStateRef={expectedStateRef}
                 waiting={googleStep === 'waiting'}
+                describedBy={EXPLAINER_ID}
                 focusContinue={googleFocus === 'continue'}
                 onWait={() => {
                   setMessage(null);

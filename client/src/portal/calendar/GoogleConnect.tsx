@@ -21,6 +21,8 @@ export interface GoogleConnectProps {
   expectedStateRef: { current: string | null };
   /** Google's window is open: "Waiting for Google…" and "Stop waiting" in place of "Continue to Google" and Cancel. */
   waiting: boolean;
+  /** The explainer's id: it describes "Continue to Google", whose press is the person's agreement. */
+  describedBy: string;
   /** "Continue to Google" takes focus as it mounts: the section just opened, or a wait just ended. */
   focusContinue: boolean;
   /** Inside the press of "Continue to Google", before Google's window opens: the section waits. */
