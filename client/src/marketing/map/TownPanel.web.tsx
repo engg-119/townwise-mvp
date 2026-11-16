@@ -292,8 +292,9 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
           </div>
           <div className="nt-c">
             {/* Each source's label stays text above its chip, so the two Census layers and the us-atlas file (which
-                jsDelivr serves) read apart without a hover. */}
-            <ul>{SOURCES.map((source) => <li key={source.url}><span className="fine">{source.label}</span><SourceChips sources={[source]} /></li>)}</ul>
+                jsDelivr serves) read apart without a hover. The label is a block, so a wrapped one keeps the fine
+                print's line height (inline, its lines took the page's 28px). */}
+            <ul>{SOURCES.map((source) => <li key={source.url}><p className="fine">{source.label}</p><SourceChips sources={[source]} /></li>)}</ul>
           </div>
         </div>
       </div>

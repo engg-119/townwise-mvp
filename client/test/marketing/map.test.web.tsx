@@ -493,6 +493,8 @@ test('the map’s data and geometry sources show their labels as text, each abov
   // One chip per item, so the two Census layers are told apart by their labels, not numbered.
   expect(items.map((item) => item.querySelectorAll('a').length)).toEqual(SOURCES.map(() => 1));
   expect(items.map((item) => item.querySelector('a')?.getAttribute('href'))).toEqual(SOURCES.map((source) => source.url));
+  // Each label is a block of its own, so a wrapped label keeps the fine print's line height, not the item's 28px.
+  expect(items.map((item) => window.getComputedStyle(item.querySelector('.fine') ?? item).display)).toEqual(SOURCES.map(() => 'block'));
 });
 
 test('the map figure fills the pane on phones instead of collapsing to zero width', () => {
