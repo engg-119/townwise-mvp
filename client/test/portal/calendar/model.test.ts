@@ -628,6 +628,13 @@ test('a buyout’s words say how its party compares with Townwise’s model when
   ]);
   // Within 5% of the model, no mark and no comparison.
   expect(whyOf(buyout(205), booked(205))).toEqual([['Your private buyout, 205 guests', null, null, 'Books the day']]);
+  // An exact half step rounds away from 0, as the API rounds an effect: 215 on 200 is +7.5, so +10, and 185 is -10.
+  expect(whyOf(buyout(215), booked(215))).toEqual([
+    ['Your private buyout, 215 guests', '▲', 'up1', 'Books the day: about 10% more guests than Townwise’s model'],
+  ]);
+  expect(whyOf(buyout(185), booked(185))).toEqual([
+    ['Your private buyout, 185 guests', '▼', 'down1', 'Books the day: about 10% fewer guests than Townwise’s model'],
+  ]);
   expect(reasonOutcomeWords('booked', 70, -65)).toBe('Books the day: about 65% fewer guests than Townwise’s model');
   expect(reasonOutcomeWords('booked', 260, 30)).toBe('Books the day: about 30% more guests than Townwise’s model');
 });

@@ -471,7 +471,8 @@ export function reasonSize(reason: ForecastReason, day: Pick<ForecastDay, 'model
   switch (applied.outcome) {
     case 'added': return middle === null ? 100 : stepped((100 * (applied.guests ?? 0)) / middle);
     case 'closed': return -100;
-    case 'booked': return middle === null || applied.guests === null ? 0 : stepped(100 * (applied.guests / middle - 1));
+    // One division, so an exact half step stays exact: 100 × (215 ÷ 200 - 1) is 7.4999... in floating point, not 7.5.
+    case 'booked': return middle === null || applied.guests === null ? 0 : stepped((100 * (applied.guests - middle)) / middle);
     default: return 0;
   }
 }
