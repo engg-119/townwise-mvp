@@ -167,10 +167,19 @@ describe('periods, season and sources', () => {
   it('gives each month the county jobs index from the town profile, with the county caveats', () => {
     const window = windowOf({ range: { from: '2026-10-25', to: '2026-11-05' } });
     expect(window.season.map((month) => [month.month, month.countyFoodServiceJobsIndex, month.baseYear, month.county])).toEqual([
-      ['2026-10', HANOVER_PROFILE?.series.index[9], 2024, 'Grafton County'],
-      ['2026-11', HANOVER_PROFILE?.series.index[10], 2024, 'Grafton County'],
+      ['2026-10', HANOVER_PROFILE?.series?.index[9], 2025, 'Grafton County'],
+      ['2026-11', HANOVER_PROFILE?.series?.index[10], 2025, 'Grafton County'],
     ]);
     expect(window.caveats).toEqual(expect.arrayContaining([CAVEATS.county, CAVEATS.employment]));
+  });
+
+  it('gives no season for a county BLS did not publish for the whole year, and no county caveats', () => {
+    const nantucket = TOWN_PROFILES.find((profile) => profile.townId === 'nantucket-ma');
+    expect(nantucket?.series).toBeNull();
+    const window = windowOf({ profile: nantucket, range: { from: '2026-06-01', to: '2026-07-31' } });
+    expect(window.season).toEqual([]);
+    expect(window.caveats).not.toContain(CAVEATS.employment);
+    expect(window.sources.some((source) => source.id === 'bls-qcew')).toBe(false);
   });
 
   it('gives visitors as a per-day average of a researched monthly count, with its caveat', () => {

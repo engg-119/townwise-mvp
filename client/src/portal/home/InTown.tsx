@@ -122,8 +122,8 @@ export function runWhen(run: TownRun, window: Pick<PeopleInTown, 'to'>): string 
 
 /**
  * The county's jobs for the month against its average month of the data year, in words, as the figure and the rest of
- * the sentence: ["2.6% fewer", " jobs in November 2024 than in an average month that year."]. The index is each
- * month's jobs over the year's monthly average, times 100, so 97.4 is 2.6% fewer.
+ * the sentence: ["4.5% fewer", " jobs in November 2025 than in an average month that year."]. The index is each
+ * month's jobs over the year's monthly average, times 100, so 95.5 is 4.5% fewer.
  */
 export function jobsWords(index: number, monthName: string): [string, string] {
   const gap = index - 100;
@@ -231,10 +231,21 @@ function People(props: { window: PeopleInTown; today: string }): React.JSX.Eleme
   );
 }
 
-/** The county's food-service jobs this month, for one of the twelve towns; nothing for another town. */
+/**
+ * The county's food-service jobs this month, for one of the twelve towns; nothing for another town. A county BLS did
+ * not publish for the whole data year has no index, so it says why instead, with no figure.
+ */
 function Jobs(props: { townId: string | null; today: string }): React.JSX.Element | null {
   const profile = townProfile(props.townId);
   if (profile === null) return null;
+  if (profile.series === null) {
+    return (
+      <Group title={`Food-service jobs in ${profile.county}`}>
+        <Small white>{profile.seriesUnavailable}</Small>
+        {BLS === undefined ? null : <SourceLink label="U.S. Bureau of Labor Statistics, QCEW" url={BLS.url} />}
+      </Group>
+    );
+  }
   const index = profile.series.index[Number(props.today.slice(5, 7)) - 1];
   if (index === undefined) return null;
   const [figure, rest] = jobsWords(index, monthNameOf(props.today));

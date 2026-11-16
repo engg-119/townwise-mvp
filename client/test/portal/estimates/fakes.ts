@@ -33,7 +33,7 @@ export const NOVEMBER: PeopleInTown = {
     period({ from: '2026-11-20', fromWeekday: 'Fri', to: '2026-11-25', toWeekday: 'Wed', termState: 'finals', termLabel: 'Fall term finals' }),
     period({ from: '2026-11-26', fromWeekday: 'Thu', to: '2026-11-30', toWeekday: 'Mon', termState: 'unknown', termLabel: null, termSourceIds: [], headcountWhy: 'no_term_dates' }),
   ],
-  season: [{ month: '2026-11', countyFoodServiceJobsIndex: 100, baseYear: 2024, county: 'Grafton County', sourceIds: ['bls-qcew'] }],
+  season: [{ month: '2026-11', countyFoodServiceJobsIndex: 100, baseYear: 2025, county: 'Grafton County', sourceIds: ['bls-qcew'] }],
   visitors: [],
   yourHistory: { metric: 'guests', cells: [], first: null, last: null },
   sources: [

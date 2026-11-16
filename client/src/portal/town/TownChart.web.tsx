@@ -3,10 +3,10 @@ import { useState } from 'react';
 import { fmt1, fmtSigned, side } from '../../marketing/format';
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
-import { DATA_YEAR, MONTHS, northeastSeries, type TownProfileData } from '../towns';
+import { DATA_YEAR, MONTHS, northeastSeries, type MeasuredProfile } from '../towns';
 import { MonthScrubber } from './MonthScrubber.web';
 
-// The town's 2024 food-service employment curve against the Northeast, with the monthly gap as bars (the design
+// The town's 2025 food-service employment curve against the Northeast, with the monthly gap as bars (the design
 // system's DeltaChart, as on the homepage panel and the Waiting board), and its MonthScrubber. Inline SVG,
 // aria-hidden: the text summary and “Show the numbers” carry the data. The county is mint and solid, the Northeast
 // dashed, the scale fitted to the town. The scrubber picks a month, starting at the viewer's current calendar month:
@@ -34,7 +34,7 @@ function line(values: readonly number[], y: (value: number) => number): string {
   return values.map((value, month) => `${month === 0 ? 'M' : 'L'}${String(r2(x(month)))} ${String(r2(y(value)))}`).join(' ');
 }
 
-export function TownChart(props: { profile: TownProfileData }): React.JSX.Element {
+export function TownChart(props: { profile: MeasuredProfile }): React.JSX.Element {
   const { series, county } = props.profile;
   const { phone } = useBreakpoint();
   const [chosen, setChosen] = useState(() => new Date().getMonth());

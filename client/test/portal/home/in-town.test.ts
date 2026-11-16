@@ -68,9 +68,10 @@ test('a town with no term dates at all has no term to read', () => {
 });
 
 test('county jobs say more or fewer in words, against the year’s average month', () => {
-  expect(jobsWords(97.43, 'November').join('')).toBe('2.6% fewer jobs in November 2024 than in an average month that year.');
-  expect(jobsWords(104.24, 'June').join('')).toBe('4.2% more jobs in June 2024 than in an average month that year.');
-  expect(jobsWords(100.04, 'October').join('')).toBe('About as many jobs in October 2024 as in an average month that year.');
+  // Grafton County's 2025 November (95.52) and June (105.66), and a month that rounds to the average.
+  expect(jobsWords(95.52, 'November').join('')).toBe('4.5% fewer jobs in November 2025 than in an average month that year.');
+  expect(jobsWords(105.66, 'June').join('')).toBe('5.7% more jobs in June 2025 than in an average month that year.');
+  expect(jobsWords(100.04, 'October').join('')).toBe('About as many jobs in October 2025 as in an average month that year.');
   // The figure is the part printed large.
-  expect(jobsWords(97.43, 'November')[0]).toBe('2.6% fewer');
+  expect(jobsWords(95.52, 'November')[0]).toBe('4.5% fewer');
 });
