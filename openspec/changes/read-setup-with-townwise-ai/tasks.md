@@ -31,11 +31,11 @@
 - [x] 5.3 `SetupRead.web.tsx`: drop, choose or paste; Read; loading with Cancel; the summary; each error; disabled under view-as; files over the caps refused in the browser; the file name never sent
 - [x] 5.4 Field marks in `SetupEditor.tsx` and `SetupRows.tsx` (estimated servings, not in the file), cleared on edit or Save
 - [x] 5.5 The native line on Ordering setup
-- [ ] 5.6 Tests: `template.test.ts`, `setupRead.test.web.tsx`, `setup.test.native.tsx`, the privacy page test
+- [x] 5.6 Tests: `template.test.ts`, `setupRead.test.web.tsx`, `setup.test.native.tsx`, the privacy page test
 
 ## 6. Privacy and console
 
-- [ ] 6.1 The privacy page's "Files and text you give TownwiseAI for ordering" and the Anthropic paragraph's sentence
+- [x] 6.1 The privacy page's "Files and text you give TownwiseAI for ordering" and the Anthropic paragraph's sentence
 - [ ] 6.2 A staff console label for `order.setup_read`
 
 ## 7. Docs
