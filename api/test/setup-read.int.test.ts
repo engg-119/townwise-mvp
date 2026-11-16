@@ -6,6 +6,8 @@
 // organization), the 400s and the body limit, the bytes a replica holds, nothing stored, and logs and audit that carry
 // no name. Synthetic content only.
 import { randomUUID } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
+import { gzipSync } from 'node:zlib';
 
 import { createRateLimiter } from '@ckeith26/rate-limit';
 import { Types } from 'mongoose';
@@ -15,7 +17,7 @@ import type { FileReaderModel, ReaderAnswer, ReaderRequest } from '../src/files/
 import type { AiTextInput, AiTextOutcome } from '../src/files/parse/ai-text.ts';
 import { SlotBusy } from '../src/files/parse/thread-slot.ts';
 import { setupCeilingMicroUsd } from '../src/files/extract/setup-reader.ts';
-import { SETUP_FILE_BYTES, SETUP_READ_BYTES_IN_FLIGHT } from '../src/files/limits.ts';
+import { SETUP_FILE_BYTES, SETUP_READ_BODY_BYTES, SETUP_READ_BYTES_IN_FLIGHT } from '../src/files/limits.ts';
 import { setupReadBytes } from '../src/handlers/order-setup-read.ts';
 import { addGrant, addInvite, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { pdfOf } from './helpers/pdf.ts';
@@ -190,6 +192,34 @@ function readLeaving(on: TownwiseTestServer, session: TestSession, json: unknown
   }).catch((err: unknown) => (err instanceof Error ? err.name : 'error'));
 }
 
+/** Once the replica's byte gate holds `bytes` again (each read gives back what it held when its response is done). */
+async function gateHolds(bytes = 0): Promise<void> {
+  await vi.waitFor(() => { expect(setupReadBytes.held).toBe(bytes); });
+}
+
+/** A request over a bare socket, for headers fetch always sets: `body` sent chunked unless `headers` has a length. */
+function rawRead(session: TestSession, headers: Record<string, string>, body?: string): Promise<{ status: number; error: string }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(readPath(), server.url);
+    const req = httpRequest(url, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${session.accessToken}`, ...headers },
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { text += chunk; });
+      res.on('end', () => {
+        req.destroy();
+        resolve({ status: res.statusCode ?? 0, error: (JSON.parse(text) as { error: string }).error });
+      });
+    });
+    req.on('error', reject);
+    if (body !== undefined) req.write(body);
+    // A declared length with no body: the headers go now, and the answer comes before the body would.
+    if (headers['content-length'] === undefined) req.end();
+    else req.flushHeaders();
+  });
+}
+
 /** The last townwise.setup_read_failed line `on` logged since `from`, once there is one. */
 async function failedLine(on: TownwiseTestServer, from: number): Promise<Record<string, unknown>> {
   let line: Record<string, unknown> | undefined;
@@ -206,9 +236,10 @@ async function usage(org = orgId): Promise<number> {
 }
 
 async function setUsage(costMicroUsd: number): Promise<void> {
-  await server.connection.collection('tw_files_usage').insertOne({
-    orgId: new Types.ObjectId(orgId), month: server.clock.now().toISOString().slice(0, 7), costMicroUsd, updatedAt: server.clock.now(),
-  });
+  await server.connection.collection('tw_files_usage').updateOne(
+    { orgId: new Types.ObjectId(orgId), month: server.clock.now().toISOString().slice(0, 7) },
+    { $set: { costMicroUsd, updatedAt: server.clock.now() } }, { upsert: true },
+  );
 }
 
 async function readEvents(): Promise<Record<string, unknown>[]> {
@@ -268,7 +299,7 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       partial: false, costMicroUsd: 3000,
     });
     expect(typeof line?.durationMs).toBe('number');
-    expect(setupReadBytes.held).toBe(0);
+    await gateHolds(0);
   });
 
   it('sends each kind of file as the model reads it: a PDF as a document, a workbook, a Word file and a text file as text, a picture without its metadata', async () => {
@@ -582,7 +613,7 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       }
       expect(requests).toHaveLength(0);
       expect(await usage()).toBe(0);
-      expect(setupReadBytes.held).toBe(0);
+      await gateHolds(0);
     });
 
     it('refuses a malformed body (400 invalid_request) and one over 8 MB (413)', async () => {
@@ -606,7 +637,117 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
         setupReadBytes.release(SETUP_READ_BYTES_IN_FLIGHT);
       }
       expect((await read(pasted())).status).toBe(200);
-      expect(setupReadBytes.held).toBe(0);
+      await gateHolds(0);
+    });
+  });
+
+  describe('the bytes a replica holds, counted before the body is parsed', () => {
+    afterEach(async () => {
+      setupReadBytes.release(SETUP_READ_BYTES_IN_FLIGHT);
+      await gateHolds(0);
+    });
+
+    it('holds two full bodies at most (16 MiB)', () => {
+      expect(SETUP_READ_BODY_BYTES).toBe(8 * 1024 * 1024);
+      expect(SETUP_READ_BYTES_IN_FLIGHT).toBe(2 * SETUP_READ_BODY_BYTES);
+    });
+
+    it('refuses a read by its Content-Length before parsing it when the gate is full: 503 extract_busy, even for a body that is not JSON', async () => {
+      const body = JSON.stringify(pasted());
+      expect(setupReadBytes.reserve(SETUP_READ_BYTES_IN_FLIGHT - Buffer.byteLength(body) + 1)).toBe(true);
+      const before = logLines(server).length;
+      const notJson = await call(server, readPath(), { session: member.session, rawBody: 'not json'.padEnd(body.length, ' ') });
+      expect(notJson.headers.get('retry-after')).toBe('5');
+      expect(await errorOf(notJson)).toEqual({ status: 503, error: 'extract_busy' });
+      expect(await errorOf(await call(server, readPath(), { session: member.session, rawBody: body }))).toEqual({ status: 503, error: 'extract_busy' });
+      expect(logLines(server).slice(before).find((line) => line.msg === 'townwise.setup_read_failed')).toEqual(expect.objectContaining({
+        code: 'extract_busy', locationId: null, inputKind: null, fileKind: null,
+      }));
+      expect(requests).toHaveLength(0);
+      // One byte more room, and the same body is read.
+      setupReadBytes.release(1);
+      expect((await call(server, readPath(), { session: member.session, rawBody: body })).status).toBe(200);
+      await gateHolds(SETUP_READ_BYTES_IN_FLIGHT - Buffer.byteLength(body));
+    });
+
+    it('refuses a body with no length or one longer than 8 MiB as the parser does (413), before reading it', async () => {
+      expect(await rawRead(member.session, { 'transfer-encoding': 'chunked' }, JSON.stringify(pasted()))).toEqual({ status: 413, error: 'payload_too_large' });
+      expect(await rawRead(member.session, { 'content-length': String(SETUP_READ_BODY_BYTES + 1) })).toEqual({ status: 413, error: 'payload_too_large' });
+      expect(requests).toHaveLength(0);
+      await gateHolds(0);
+    });
+
+    it('holds the whole 8 MiB for a compressed body, which may inflate to it', async () => {
+      expect(setupReadBytes.reserve(SETUP_READ_BYTES_IN_FLIGHT - SETUP_READ_BODY_BYTES + 1)).toBe(true);
+      const json = JSON.stringify(pasted());
+      const gzipped = await fetch(new URL(readPath(), server.url), {
+        method: 'POST', body: gzipSync(json),
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip', authorization: `Bearer ${member.session.accessToken}` },
+      });
+      expect(await errorOf(gzipped)).toEqual({ status: 503, error: 'extract_busy' });
+      expect((await call(server, readPath(), { session: member.session, rawBody: json })).status).toBe(200);
+      setupReadBytes.release(SETUP_READ_BYTES_IN_FLIGHT - SETUP_READ_BODY_BYTES + 1);
+      expect((await fetch(new URL(readPath(), server.url), {
+        method: 'POST', body: gzipSync(json),
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip', authorization: `Bearer ${member.session.accessToken}` },
+      })).status).toBe(200);
+    });
+
+    it('gives back exactly what each read held, once, on every answer', async () => {
+      // Held by "another read" throughout: giving back twice would take from it.
+      const other = 1000;
+      expect(setupReadBytes.reserve(other)).toBe(true);
+      const offSession = await signIn(off, member.email);
+      const scriptedSession = await signIn(scripted, member.email);
+      const slowSession = await signIn(slow, member.email);
+      const answersTo: [() => Promise<Response>, number, string | null][] = [
+        [() => read(pasted()), 200, null],
+        [() => read(pasted(), otherMember.session), 404, 'not_found'],
+        [() => read(pasted(), offSession, off), 503, 'ai_unavailable'],
+        [() => read({ source: { type: 'text', text: '' } }), 400, 'invalid_request'],
+        [() => call(server, readPath(), { session: member.session, rawBody: '{not json' }), 400, 'malformed_json'],
+        [() => read(file('text', zipOf([{ name: 'a.txt', data: 'x' }]))), 400, 'extract_kind_not_read'],
+        [() => { answers = [{ kind: 'refused', costMicroUsd: 1 }]; return read(pasted()); }, 422, 'extract_refused'],
+        [() => { answers = [{ kind: 'failed', errType: 'InternalServerError', status: 500 }]; return read(pasted()); }, 503, 'extract_failed'],
+        [() => { textThrows = new SlotBusy(); return read(file('docx', docxOf(['x'])), scriptedSession, scripted); }, 503, 'extract_busy'],
+        [() => read(pasted(), slowSession, slow), 503, 'extract_timed_out'],
+        [() => call(server, readPath(), { session: member.session, rawBody: JSON.stringify({ source: { type: 'text', text: 'x'.repeat(8.5 * 1024 * 1024) } }) }), 413, 'payload_too_large'],
+        [async () => { await setUsage(5_000_000); return read(pasted()); }, 409, 'files_ai_budget_exhausted'],
+        [async () => {
+          const limiter = createRateLimiter({ redis: server.redis, name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600 });
+          for (let index = 0; index < 30; index += 1) await limiter.consume(`acct:${member.session.userId}`);
+          return read(pasted());
+        }, 429, 'rate_limited'],
+      ];
+      for (const [send, status, error] of answersTo) {
+        const res = await send();
+        expect(error === null ? { status: res.status } : await errorOf(res)).toEqual(error === null ? { status } : { status, error });
+        await gateHolds(other);
+      }
+      setupReadBytes.release(other);
+    });
+
+    it('gives back what a read held when the person leaves, during the parse and during the call', async () => {
+      const session = await signIn(scripted, member.email);
+      let release: () => void = () => undefined;
+      textGate = new Promise<void>((resolve) => { release = resolve; });
+      const parsing = new Promise<void>((resolve) => { textBegun = resolve; });
+      const leaving = new AbortController();
+      const pending = readLeaving(scripted, session, file('docx', docxOf(['x'])), leaving.signal);
+      await parsing;
+      expect(setupReadBytes.held).toBeGreaterThan(0);
+      leaving.abort();
+      await pending;
+      await gateHolds(0);
+      release();
+      const calling = new Promise<void>((resolve) => { started = resolve; });
+      const leavingCall = new AbortController();
+      const pendingCall = readLeaving(scripted, session, pasted(), leavingCall.signal);
+      await calling;
+      expect(setupReadBytes.held).toBeGreaterThan(0);
+      leavingCall.abort();
+      await pendingCall;
+      await gateHolds(0);
     });
   });
 });
