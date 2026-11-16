@@ -4,8 +4,10 @@
 // attached to (and a regenerate of that message), right after the block, through ctx.items.readForModel (chat/*
 // imports no file code): before the turn's claim only each file's record and first bytes are checked, and its bytes are
 // read after it, within a cap on the pictures a message sends and on the bytes this replica holds for turns at once. A
-// later turn reads a file again with read_data_item. What a conversation stores never holds a file's text or a
-// picture's bytes, and none of it is logged: the turn's log line has counts by kind only.
+// PDF, Word (.docx) or Excel (.xlsx) file is sent as its text, made in the parse thread shared with the file readers,
+// which a turn waits for only so long (the file is then listed busy): a message's documents one after another, each
+// only while the turn has time for it. A later turn reads a file again with read_data_item. What a conversation stores never holds a file's text or a picture's bytes, and none of it is logged:
+// the turn's log line has counts by kind only.
 import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 import type { OrgScope } from '../access/policy.ts';
@@ -26,6 +28,11 @@ export const PICTURE_TOKENS = 5_000;
 export const MESSAGE_PICTURE_BYTES = 7_500_000;
 /** The most bytes of attached files one replica holds for turns at once; past it a send answers 503 attachments_busy. */
 export const ATTACHMENT_BYTES_IN_FLIGHT = 64_000_000;
+/**
+ * How long before its time limit a turn's file reads must be done (a message's documents, and read_data_item's), so it
+ * still has time to answer. [CONFIRM: a turn's file reads end at least 30 seconds before its time limit]
+ */
+export const ANSWER_TIME_MS = 30_000;
 
 /** A file of Your data: `f_` and its id. A sales upload (`u_`) is never attached. */
 export const ATTACHMENT_REF = /^f_[0-9a-f]{24}$/;
@@ -60,8 +67,16 @@ const NOT_SENT = {
   too_much: ', not read: too much at once',
   not_allowed: ', not read: only the person who added it or an org admin can attach it',
   too_many_pixels: ', not read: too large in pixels',
+  // A PDF, Word or Excel file: over its byte cap, or one the parse thread refused or couldn't get to.
+  too_large_file: ', not read: too large',
+  encrypted: ', not read: it has a password',
+  damaged: ', not read: it couldn\'t be opened',
+  too_complex: ', not read: too complex to turn into text',
+  busy: ', not read: TownwiseAI was busy reading another file; try again in a moment',
+  // A PDF with no text: a scan, which is read only as its text.
+  no_text: ', not read: it has no text, so it may be a scan',
 } as const;
-/** What follows a text file's kind word when only its first characters are sent. */
+/** What follows the kind word of a file sent as text (a text, PDF, Word or Excel file) when only its first characters are. */
 const CUT = ', only its first 20,000 characters';
 
 /** `- f_…: a picture`, then anything after a comma. */
@@ -80,9 +95,9 @@ export interface AttachmentCheck {
   readonly check: ItemForModel;
 }
 
-/** A file as this turn read it: its content, or why none is sent (one past a cap is `too_much`). */
+/** A file as this turn read it: its content, or why none is sent (one past a cap, or past the turn's time, is `too_much`). */
 export type FileRead =
-  | ItemContent
+  | Exclude<ItemContent, { readonly status: 'no_time' }>
   | Exclude<ItemForModel, { readonly status: 'readable' }>
   | { readonly status: 'too_much'; readonly kind: AttachmentKind };
 
@@ -107,6 +122,8 @@ export interface TurnAttachments {
   readonly content: BetaContentBlockParam[];
   /** How many files of each kind the message carries, for the turn's log line. */
   readonly counts: Readonly<Partial<Record<AttachmentKind, number>>>;
+  /** The bytes of the pictures sent, which count toward the turn's MESSAGE_PICTURE_BYTES (read_data_item adds to them). */
+  readonly pictureBytes: number;
 }
 
 function attachmentsBlockAt(content: readonly BetaContentBlockParam[]): number {
@@ -173,20 +190,60 @@ function taken(checks: readonly AttachmentCheck[]): boolean[] {
   });
 }
 
-/** How many bytes reading these files takes (readAttachments reads them). */
+/** How many bytes reading these files takes (readAttachments reads them, and gives a document's back once it is read). */
 export function bytesToRead(checks: readonly AttachmentCheck[]): number {
   const take = taken(checks);
   return checks.reduce((sum, { check }, index) => sum + (check.status === 'readable' && take[index] === true ? check.bytes : 0), 0);
 }
 
-/** Reads the files this turn sends, after its claim; one past the pictures' cap is `too_much`, one not sent stays as checked. */
-export async function readAttachments(checks: readonly AttachmentCheck[]): Promise<AttachmentRead[]> {
+/**
+ * Reads the files this turn sends, after its claim, each done by `by` (Date.now() milliseconds); one past the pictures'
+ * cap is `too_much`, one not sent stays as checked. Text files and pictures are read at once. A PDF, Word or Excel file
+ * is read in the shared parse thread, one after another in the message's order, so a message's documents never wait on
+ * each other: one the turn hasn't the time for is `too_much`, and once one found the thread busy (another turn's or a
+ * file reader's), the rest are listed busy without waiting again. Only a document's text is kept, so the bytes the turn
+ * held for it (bytesToRead) go back through `bytes` once it is read, or once it won't be; a picture's and a text file's
+ * stay held for the turn. Once any read fails (the reads reject, and the send with them), no later document is read.
+ */
+export async function readAttachments(
+  checks: readonly AttachmentCheck[], by: number, bytes: Pick<ByteGate, 'release'>,
+): Promise<AttachmentRead[]> {
   const take = taken(checks);
+  let documents: Promise<unknown> = Promise.resolve();
+  let busy = false;
+  let failed = false;
+  const reading = async <T>(read: Promise<T>): Promise<T> => {
+    try {
+      return await read;
+    } catch (err) {
+      failed = true;
+      throw err;
+    }
+  };
   return Promise.all(checks.map(async ({ ref, kind, check }, index): Promise<AttachmentRead> => {
     if (check.status !== 'readable') return { ref, kind, read: check };
     if (take[index] !== true) return { ref, kind, read: { status: 'too_much', kind: check.kind } };
-    return { ref, kind, read: await check.read() };
+    if (check.kind === 'text' || check.kind === 'picture') return { ref, kind, read: asSent(await reading(check.read(by))) };
+    const mine = documents.then(async (): Promise<AttachmentRead> => {
+      try {
+        // The send already failed: what this returns is never used.
+        if (failed) return { ref, kind, read: { status: 'too_much', kind: check.kind } };
+        if (busy) return { ref, kind, read: { status: 'busy', kind: check.kind } };
+        const read = await reading(check.read(by));
+        if (read.status === 'busy') busy = true;
+        return { ref, kind, read: asSent(read) };
+      } finally {
+        bytes.release(check.bytes);
+      }
+    });
+    documents = mine.catch(() => undefined);
+    return mine;
   }));
+}
+
+/** A read as the turn lists it: one there wasn't the time for is too much at once. */
+function asSent(read: ItemContent): FileRead {
+  return read.status === 'no_time' ? { status: 'too_much', kind: read.kind } : read;
 }
 
 /** Counts the bytes of attached files a replica holds for turns now (ATTACHMENT_BYTES_IN_FLIGHT). */
@@ -221,7 +278,7 @@ export function estimatedTokens(read: FileRead): number {
 }
 
 function kindOf({ kind, read }: AttachmentRead): AttachmentKind {
-  if (read.status === 'text' || read.status === 'picture') return read.status;
+  if (read.status === 'picture') return 'picture';
   return 'kind' in read ? read.kind : kind ?? 'file';
 }
 
@@ -230,20 +287,22 @@ function noteOf(read: FileRead): string {
     case 'text': return read.truncated ? CUT : '';
     case 'picture': return '';
     case 'not_found': case 'not_reference': case 'not_ready': return NOT_SENT.missing;
+    case 'too_large': return read.kind === 'picture' ? NOT_SENT.too_large : NOT_SENT.too_large_file;
     default: return NOT_SENT[read.status];
   }
 }
 
 /**
- * The block and content for these files. Text is sent as a document titled by its ref, a picture as a line naming its
- * ref and then the image. The first file that would take the estimate past ATTACHMENT_TOKEN_CAP, and every file with
- * content after it, is listed "not read: too much at once".
+ * The block and content for these files. Text (a text file's, or a PDF's, Word file's or workbook's) is sent as a
+ * document titled by its ref, a picture as a line naming its ref and then the image. The first file that would take the
+ * estimate past ATTACHMENT_TOKEN_CAP, and every file with content after it, is listed "not read: too much at once".
  */
 export function turnAttachments(reads: readonly AttachmentRead[]): TurnAttachments {
   const lines: string[] = [];
   const content: BetaContentBlockParam[] = [];
   const counts: Partial<Record<AttachmentKind, number>> = {};
   let tokens = 0;
+  let pictureBytes = 0;
   let full = false;
   for (const file of reads) {
     const { ref, read } = file;
@@ -252,7 +311,7 @@ export function turnAttachments(reads: readonly AttachmentRead[]): TurnAttachmen
     const line = (note: string): void => { lines.push(`- ${ref}: ${KIND_WORDS[kind]}${note}`); };
     // The API refuses a document with no text in it.
     if (read.status === 'text' && read.text.trim() === '') {
-      line(NOT_SENT.empty);
+      line(read.kind === 'pdf' ? NOT_SENT.no_text : NOT_SENT.empty);
       continue;
     }
     const cost = estimatedTokens(read);
@@ -266,13 +325,14 @@ export function turnAttachments(reads: readonly AttachmentRead[]): TurnAttachmen
     if (read.status === 'text') {
       content.push({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: read.text }, title: ref });
     } else if (read.status === 'picture') {
+      pictureBytes += Buffer.byteLength(read.base64, 'base64');
       content.push(
         { type: 'text', text: `The picture ${ref}:` },
         { type: 'image', source: { type: 'base64', media_type: read.mediaType, data: read.base64 } },
       );
     }
   }
-  return { block: attachmentsBlock(lines), content, counts };
+  return { block: attachmentsBlock(lines), content, counts, pictureBytes };
 }
 
 /**

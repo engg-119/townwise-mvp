@@ -67,7 +67,7 @@ export function chipOf(item: QueuedUpload): ComposerChip {
 export function chipLine(chip: ComposerChip): string {
   if (chip.state === 'uploading') return `Uploading ${String(chip.percent)}%`;
   if (chip.state === 'failed') return 'Couldn’t add it';
-  return readable(chip.kind) ? KIND_WORD[chip.kind] : unreadLine(chip.kind);
+  return readable(chip.kind, chip.name) ? KIND_WORD[chip.kind] : unreadLine(chip.kind);
 }
 
 function overLine(left: number): string {
@@ -271,7 +271,7 @@ export function useComposerFiles(locationId: string, readOnlyId: string | null, 
   ];
   const news: FilesLine[] = [
     ...chips.flatMap((chip) => (chip.state === 'ready'
-      ? [{ key: `ready:${chip.key}`, text: readable(chip.kind) ? `${chip.name} is attached.` : `${chip.name} is attached. ${unreadLine(chip.kind)}.` }]
+      ? [{ key: `ready:${chip.key}`, text: readable(chip.kind, chip.name) ? `${chip.name} is attached.` : `${chip.name} is attached. ${unreadLine(chip.kind)}.` }]
       : [])),
     ...(notice === null ? [] : [notice]),
   ];
