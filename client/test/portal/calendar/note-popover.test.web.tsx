@@ -119,12 +119,16 @@ function escape(): void {
   act(() => { document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape' })); });
 }
 
-/** A press on the page around the popover, which lands on its transparent backdrop. */
-function pressOutside(card: HTMLElement): void {
+/**
+ * A press on the page around the popover, which lands on its transparent backdrop; true when its mousedown was
+ * cancelled, which in a browser keeps focus where it was.
+ */
+function pressOutside(card: HTMLElement): boolean {
   const backdrop = card.nextElementSibling;
   if (backdrop === null) throw new Error('no backdrop');
-  fireEvent.mouseDown(backdrop);
+  const kept = !fireEvent.mouseDown(backdrop);
   fireEvent.mouseUp(backdrop);
+  return kept;
 }
 
 function guests(card: HTMLElement): HTMLInputElement {
@@ -163,15 +167,17 @@ test('Add an event opens a dialog of that name, prefilled for the day, with focu
   expect(writes(api)).toEqual([]);
 });
 
-test('a press outside keeps the popover open with what was typed; Cancel closes it and focus goes back to the opener', async () => {
+test('a press outside keeps the popover open with what was typed and focus in it; Cancel closes it and focus goes back to the opener', async () => {
   const { api } = setup();
   await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
   const button = press('Add an event');
   const card = dialog('Add an event');
+  focus(guests(card));
   fireEvent.change(guests(card), { target: { value: '70' } });
-  pressOutside(card);
+  expect(pressOutside(card)).toBe(true);
   expect(dialog('Add an event')).toBe(card);
   expect(guests(card).value).toBe('70');
+  expect(document.activeElement).toBe(guests(card));
   // The press selected no day either.
   expect(window.location.search).toBe(`?day=${SATURDAY}`);
   fireEvent.click(within(card).getByRole('button', { name: 'Cancel' }));

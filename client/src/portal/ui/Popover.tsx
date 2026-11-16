@@ -17,7 +17,7 @@ import { Heading } from './text';
 // take focus and the trap would otherwise give it to that unnamed region before Close or the note form's Kind.
 // The backdrop under it is transparent and is neither a tab stop nor a screen reader stop (a plain View, never a
 // Pressable, which is always focusable on web); it takes presses and closes the popover only where the popover allows
-// that. Placement (placePopover) is measured on open, on every window size change and every keyboard show or hide: from
+// that, and on web a press on it keeps focus in the card. Placement (placePopover) is measured on open, on every window size change and every keyboard show or hide: from
 // 641px wide the card opens 8px under its opener, or 8px above it when the room below is short, edge-aligned with it;
 // below 641px it is pinned to the top of the window, since its text fields would sit under the keyboard lower down. The
 // window's bottom is the keyboard's top while it shows, so the card never runs under it. Card and backdrop sit in a box
@@ -205,6 +205,12 @@ function readKeyboardTop(): number | null {
 
 const NO_INSETS = { top: 0, bottom: 0 };
 
+/**
+ * On web, the backdrop's mousedown is cancelled, so a press outside a popover that stays open (the note form's) keeps
+ * focus where it was in the card instead of moving it to the body, as a press on a plain element would.
+ */
+const KEEP_FOCUS = Platform.OS === 'web' ? { onMouseDown: (event: { preventDefault: () => void }) => { event.preventDefault(); } } : {};
+
 /** In place of the opener's box when the popover opened with no opener to measure: the card is pinned at the top. */
 const NOTHING = 'nothing';
 
@@ -259,6 +265,7 @@ function Card({ ref, ...props }: PopoverProps & { ref: RefObject<Host | null> })
         importantForAccessibility="no-hide-descendants"
         onStartShouldSetResponder={() => true}
         onResponderRelease={() => { if (outside) onClose(); }}
+        {...KEEP_FOCUS}
         style={styles.backdrop}
       />
     </View>

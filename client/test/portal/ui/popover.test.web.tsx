@@ -266,6 +266,20 @@ test('a press outside closes it only when the popover allows one', () => {
   expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
 });
 
+test('a press outside one that stays open keeps focus in the card: the backdrop’s mousedown is cancelled, so it never moves to the body', () => {
+  render(<Harness dismissOnOutsidePress={false} closeButton={false} />);
+  open();
+  const card = screen.getByRole('dialog', { name: 'Your calendars' });
+  const control = within(card).getByRole('button', { name: 'Add a link' });
+  expect(document.activeElement).toBe(control);
+  const outside = backdrop();
+  // fireEvent answers false when a listener cancelled the event, which in a browser stops the move of focus.
+  expect(fireEvent.mouseDown(outside)).toBe(false);
+  fireEvent.mouseUp(outside);
+  expect(screen.getByRole('dialog', { name: 'Your calendars' })).toBe(card);
+  expect(document.activeElement).toBe(control);
+});
+
 test('while busy, Close is disabled in place, and Escape and a press outside do nothing', () => {
   const onClose = jest.fn();
   render(<Harness onClose={onClose} busy />);
