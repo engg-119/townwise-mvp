@@ -1,5 +1,6 @@
 import { createSecretKey, type KeyObject } from 'node:crypto';
 
+import type { AuthConfig } from '@ckeith26/auth';
 import { ConfigError, type ServerConfig } from '@ckeith26/server-core';
 import { z } from 'zod';
 
@@ -9,6 +10,8 @@ const MAX_STAFF = 20;
 const ACS_HOST = /^[a-z0-9-]+(\.[a-z0-9-]+)*\.communication\.azure\.com$/;
 const LAB_JOB_ID = /^\/subscriptions\/[0-9a-f-]{36}\/resourceGroups\/[\w.()-]{1,90}\/providers\/Microsoft\.App\/jobs\/[a-z0-9-]{2,32}$/i;
 const CALENDAR_KEY_BYTES = 32;
+/** Google's OAuth client id format, as the auth kit reads each entry of AUTH_GOOGLE_CLIENT_IDS. */
+const GOOGLE_CLIENT_ID = /^\d+-[a-z0-9]+\.apps\.googleusercontent\.com$/;
 
 /** Canonical base64 of exactly 32 bytes, as a secret key (calendar/secret.ts). The message never holds the value. */
 const calendarKeySchema = z.string().transform((raw, ctx): KeyObject => {
@@ -82,11 +85,23 @@ export const configSchema = z.object({
   /** `azure` only: the Entra tenant the lab job's token comes from. */
   TOWNWISE_LAB_TENANT_ID: z.guid({ message: 'expected a GUID' }).optional(),
   /**
-   * Seals owner calendar links (openspec change connect-owner-calendar, design decision 4). Absent turns calendar links
-   * off (503 calendar_links_unavailable) while calendar files still import; anything but 32 bytes of base64 refuses
-   * boot. main.ts takes it out of the config it passes around and hands it only to what reads links.
+   * Seals owner calendar links (openspec change connect-owner-calendar, design decision 4), and Google connections'
+   * refresh tokens and Google calendars' ids (connect-google-calendar, design decision 5). Absent turns calendar links
+   * and Google calendars off (503 calendar_links_unavailable, google_calendar_unavailable) while calendar files still
+   * import; anything but 32 bytes of base64 refuses boot. main.ts takes it out of the config it passes around and hands
+   * it only to what reads links and Google calendars.
    */
   TOWNWISE_CALENDAR_KEY: calendarKeySchema.optional(),
+  /**
+   * The public OAuth web client id Google calendars connect with (openspec change connect-google-calendar, design
+   * decision 14). It must be one of AUTH_GOOGLE_CLIENT_IDS, or boot is refused (googleCalendarOf).
+   */
+  TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: z.string().regex(GOOGLE_CLIENT_ID, { message: 'expected <digits>-<id>.apps.googleusercontent.com' }).optional(),
+  /**
+   * That client's secret, the Key Vault secret townwise-google-calendar-secret. Absent turns Google calendars off.
+   * main.ts takes it out of the config it passes around and hands it only to the Google client.
+   */
+  TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: z.string().meta({ secret: true }).optional(),
 });
 
 export type TownwiseConfig = z.infer<typeof configSchema>;
@@ -175,6 +190,34 @@ export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys> & Partial<Pick
       return { kind: 'azure', jobId, caller: { audience, objectId, tenantId } };
     }
   }
+}
+
+/** The OAuth client Google calendars exchange codes and read calendars with, while they are on. */
+export interface GoogleCalendarConfig {
+  readonly clientId: string;
+  readonly clientSecret: string;
+}
+
+type GoogleCalendarKeys = 'TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID' | 'TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET' | 'TOWNWISE_CALENDAR_KEY';
+
+/**
+ * Google calendars are on only with the client id, its secret and TOWNWISE_CALENDAR_KEY all set; any other combination
+ * is off, so neither the release (which adds the id) nor Terraform (which adds the secret) can stop a revision by
+ * arriving first (design decision 14). A client id that is not one of AUTH_GOOGLE_CLIENT_IDS refuses boot whether or not
+ * the rest is set: it must be sign-in's web client, in the same Google Cloud project, so consent and Google's
+ * project-wide revoke are one project's. No message holds the secret.
+ */
+export function googleCalendarOf(
+  config: Pick<TownwiseConfig, GoogleCalendarKeys> & Pick<AuthConfig, 'AUTH_GOOGLE_CLIENT_IDS'>,
+): GoogleCalendarConfig | null {
+  const clientId = config.TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID;
+  const signIn = (config.AUTH_GOOGLE_CLIENT_IDS ?? '').split(',').map((part) => part.trim());
+  if (clientId !== undefined && !signIn.includes(clientId)) {
+    throw new ConfigError('TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID', 'must be one of AUTH_GOOGLE_CLIENT_IDS (the sign-in web client)');
+  }
+  const clientSecret = config.TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET;
+  if (clientId === undefined || clientSecret === undefined || config.TOWNWISE_CALENDAR_KEY === undefined) return null;
+  return { clientId, clientSecret };
 }
 
 /**
