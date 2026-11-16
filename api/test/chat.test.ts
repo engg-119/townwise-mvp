@@ -539,3 +539,61 @@ describe('the saved turn, an item’s text (D28)', () => {
     expect(stored).toContain('sig-after');
   });
 });
+
+describe('the saved turn, the owner’s calendar (connect-google-calendar, design decision 16)', () => {
+  const TITLE = 'Sentinel-booking holiday party';
+  const CALENDAR = 'Sentinel-calendar bookings';
+  const STUB = JSON.stringify({
+    calendars: 1, eventCount: 1, truncated: false, skippedRepeating: 0, elided: true,
+    reason: 'Read in an earlier turn; call get_owner_calendar again for the current events.',
+  });
+
+  const tools = {
+    ctx: {
+      stores: {
+        ownerCalendars: {
+          list: () => Promise.resolve([{ id: 'c1', skippedRepeating: 0 }]),
+          eventsBetween: () => Promise.resolve([{
+            calendarId: 'c1', calendar: CALENDAR, uid: 'u1', title: TITLE, startDate: '2026-06-05', endDate: '2026-06-05', startTime: null, endTime: null,
+          }]),
+        },
+      },
+    },
+    scope: {}, location: { id: 'l1' }, today: '2026-06-01', timeZone: 'America/New_York', turn: { readUntrusted: false },
+  } as unknown as ToolContext;
+
+  function turnInput(model: ReturnType<typeof scriptedModel>, history: BetaMessageParam[], content: string) {
+    return {
+      model, tools, history, userMessage: { role: 'user' as const, content }, expanded: null,
+      nodes: { user: { id: `u${String(history.length)}`, parentId: null }, reply: { id: `a${String(history.length)}`, parentId: `u${String(history.length)}` } },
+      signal: new AbortController().signal, now: () => new Date('2026-06-01T12:00:00.000Z'), emit: () => undefined,
+      charge: () => Promise.resolve(), budgetSpent: () => Promise.resolve(false),
+    };
+  }
+
+  it('the turn that read the events sends their titles; the saved turn keeps the stub and drops the thinking after it, and a later turn sends the stub', async () => {
+    const first = scriptedModel();
+    first.script(
+      { kind: 'message', message: message([thinking('sig-before'), toolUse('t1', 'get_owner_calendar', { from: '2026-06-01', to: '2026-06-30' })]) },
+      { kind: 'message', message: message([thinking('sig-after'), text('There is one booking on the 5th.')]) },
+    );
+    const result = await runTurn(turnInput(first, [], 'Any bookings in June?'));
+    expect(JSON.stringify(messagesOf(first.calls[1]))).toContain(TITLE);
+    expect(result.kind).toBe('done');
+    const saved = result.kind === 'done' ? result.messages.map((m) => JSON.parse(m.param) as BetaMessageParam) : [];
+    const stored = JSON.stringify(saved);
+    expect(stored).not.toContain(TITLE);
+    expect(stored).not.toContain(CALENDAR);
+    expect(stored).toContain('sig-before');
+    expect(stored).not.toContain('sig-after');
+    expect(saved[2]).toEqual({ role: 'user', content: [{ type: 'tool_result', tool_use_id: 't1', content: STUB }] });
+
+    const next = scriptedModel();
+    next.script({ kind: 'message', message: message([text('Call me again for the current events.')]) });
+    await runTurn(turnInput(next, saved, 'And what about that one?'));
+    const sent = JSON.stringify(messagesOf(next.calls[0]));
+    expect(sent).toContain(JSON.stringify(STUB));
+    expect(sent).not.toContain(TITLE);
+    expect(sent).not.toContain(CALENDAR);
+  });
+});

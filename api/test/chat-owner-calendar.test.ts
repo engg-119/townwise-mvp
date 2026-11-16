@@ -1,14 +1,16 @@
 // get_owner_calendar (openspec change connect-owner-calendar: the townwise-ai-owner-calendar spec), without Docker: it
 // takes get_town_calendar's ranges, refuses any other before reading, lists the location's stored events with their
 // calendars' names, titles, dates, weekdays and hours, answers available false when the location has no calendar,
-// and its cards show the dates and counts only, never a title or a calendar's name. Synthetic data only.
+// and its cards show the dates and counts only, never a title or a calendar's name. The saved conversation keeps a
+// stub of a read that listed events, with its counts only (connect-google-calendar, design decision 16). Synthetic
+// data only.
 import type { BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
 import type { TownwiseContext } from '../src/app.ts';
 import type { OrgScope } from '../src/access/policy.ts';
 import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
-import { inputViewOf, resultViewOf, runTool, toolNamed, type ToolContext } from '../src/chat/tools/registry.ts';
+import { inputViewOf, resultViewOf, runTool, savedResultOf, toolNamed, type ToolContext } from '../src/chat/tools/registry.ts';
 import type { OwnerCalendarEvent, OwnerCalendarRecord, OwnerCalendarStore } from '../src/stores/owner-calendars.ts';
 
 const TODAY = '2026-11-05';
@@ -196,6 +198,47 @@ describe('get_owner_calendar cards', () => {
     expect(resultViewOf('get_owner_calendar', ok('not json'))).toBeNull();
     expect(resultViewOf('get_owner_calendar', ok(JSON.stringify({ events: [] })))).toBeNull();
     expect(resultViewOf('get_owner_calendar', ok(JSON.stringify({ events: [], truncated: false, calendars: -1, skippedRepeating: 0 })))).toBeNull();
+  });
+});
+
+describe('get_owner_calendar in the saved conversation', () => {
+  const REASON = 'Read in an earlier turn; call get_owner_calendar again for the current events.';
+
+  async function listed(): Promise<string> {
+    const { tc } = context([calendar(), calendar({ id: '0000000000000000000000a2', label: 'Events', skippedRepeating: 2 })], EVENTS);
+    return (await toolNamed('get_owner_calendar')?.run(tc, { from: '2026-11-16', to: '2026-11-30' }))?.content ?? '';
+  }
+
+  it('keeps a read that listed events as a stub with its counts only, never a title or a calendar’s name', async () => {
+    const content = await listed();
+    expect(content).toContain(SENTINEL_TITLE);
+    const stub = savedResultOf('get_owner_calendar', ok(content));
+    expect(stub).toEqual(ok(JSON.stringify({ calendars: 2, eventCount: 2, truncated: false, skippedRepeating: 5, elided: true, reason: REASON })));
+    expect(JSON.stringify(stub)).not.toMatch(/Sentinel|Trivia|Events|sentinel-uid/);
+  });
+
+  it('keeps a result with no calendar, an error and an unreadable result as they are', () => {
+    const none = ok(JSON.stringify({ available: false, reason: 'No calendar is connected to this location.' }));
+    expect(savedResultOf('get_owner_calendar', none)).toBe(none);
+    const failed = { ...ok('Invalid input: from and to are dates'), is_error: true };
+    expect(savedResultOf('get_owner_calendar', failed)).toBe(failed);
+    expect(savedResultOf('get_owner_calendar', ok('not json'))).toEqual(ok('not json'));
+  });
+
+  it('shows the stub with the counts the read showed', async () => {
+    const content = await listed();
+    const stub = savedResultOf('get_owner_calendar', ok(content));
+    expect(resultViewOf('get_owner_calendar', stub)).toEqual(resultViewOf('get_owner_calendar', ok(content)));
+    expect(resultViewOf('get_owner_calendar', stub)).toEqual({ available: true, calendars: 2, eventCount: 2, truncated: false, skippedRepeating: 5 });
+  });
+
+  it('leaves the tool’s name, description and input as they were (its frozen prefix)', () => {
+    const tool = toolNamed('get_owner_calendar');
+    expect(tool?.definition.name).toBe('get_owner_calendar');
+    expect(tool?.definition.description).toContain('(imported files and subscribed links)');
+    expect(tool?.definition.input_schema).toEqual({
+      type: 'object', properties: { from: expect.any(Object) as unknown, to: expect.any(Object) as unknown }, required: ['from', 'to'], additionalProperties: false,
+    });
   });
 });
 
