@@ -40,7 +40,7 @@
 
 ## 7. Docs
 
-- [ ] 7.1 `docs/portal/spec.md`: D41 in 22, the privacy rule's second exception, 10.17's route row and audit action, P31's bullet, 11A.9's shared budget, the changelog
+- [x] 7.1 `docs/portal/spec.md`: D41 in 22, the privacy rule's second exception, 10.17's route row and audit action, P31's bullet, 11A.9's shared budget, the changelog
 - [ ] 7.2 `api/README.md`: Ordering, the Orders table, the `ai-reads` row, audit and logs, the budget's description
 - [ ] 7.3 `client/MODULE.md`: the Ordering setup entry
 
