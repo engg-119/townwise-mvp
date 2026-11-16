@@ -10,8 +10,9 @@ import { dayFlags, eventsOf, likelyClosedWords, notesOf, type DayContext } from 
 import type { DayRecord } from './history';
 import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPercent, WEEKDAY_NAMES, weekdayOf, type Metric } from './words';
 
-// Home's numbers (home.md 2 and 5.6): this week against the same weeks in past years, last week against the same
-// week last year, the late-week share for the bar order, and this month in past years. Every figure is a sum, an
+// Home's numbers (home.md 2 and 5.6): the next 7 days (today and the 6 after it) against the same days in past years,
+// last week (Monday to Sunday) against the same week last year, the late-week share for the bar order (last year's
+// Monday-to-Sunday week), and this month in past years. Every figure is a sum, an
 // average or a share of the location's own stored days, and every one is of a past day: no function here returns a
 // figure for a day after the last day of data or after today, and nothing here estimates. The one exception is the
 // month grid's cells from today on, which show a published forecast day's own figures when Home passes the month's
@@ -22,7 +23,7 @@ import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPe
 
 /** 52 weeks: the same weekday a year earlier. */
 export const YEAR_DAYS = 364;
-/** The fewest days of last year's week that Home sums or compares (home.md 2.2). */
+/** The fewest days of last year's 7 that Home sums or compares (home.md 2.2). */
 export const SUMMARY_MIN_DAYS = 5;
 /** Past years of this month that Home lists, newest first (home.md 2.5). */
 export const MONTH_YEARS = 3;
@@ -36,9 +37,9 @@ export function mondayOf(date: string): string {
   return addDays(date, -rowOf(date));
 }
 
-/** Monday to Sunday. */
-export function weekDates(monday: string): string[] {
-  return Array.from({ length: 7 }, (_, index) => addDays(monday, index));
+/** The 7 days from `first`: Monday to Sunday from a Monday, today and the next 6 from today. */
+export function weekDates(first: string): string[] {
+  return Array.from({ length: 7 }, (_, index) => addDays(first, index));
 }
 
 export function sameWeekdayYearsAgo(date: string, years: number): string {
@@ -59,15 +60,15 @@ export function dayMonthRange(start: string, end: string): string {
 
 /**
  * The calendar range Home asks for: from two years before this week's Monday, less the 4 weeks either side that
- * "usual" reads, to the later of this month's last day and this week's Sunday.
+ * "usual" reads (the month's day detail needs it for its earlier days' "Two years ago"), to the later of this month's
+ * last day and the next 7 days' last, today plus 6.
  */
 export function homeCalendarRange(today: string): { from: string; to: string } {
-  const monday = mondayOf(today);
-  const back = addDays(monday, -(2 * YEAR_DAYS + 28));
+  const back = addDays(mondayOf(today), -(2 * YEAR_DAYS + 28));
   const from = back < EARLIEST_DATE ? EARLIEST_DATE : back;
   const monthEnd = monthRange(today.slice(0, 7)).to;
-  const sunday = addDays(monday, 6);
-  return { from, to: monthEnd > sunday ? monthEnd : sunday };
+  const last = addDays(today, 6);
+  return { from, to: monthEnd > last ? monthEnd : last };
 }
 
 export interface HomeInput {
@@ -84,7 +85,7 @@ export interface HomeInput {
 /** A stored figure, only for a day that is past: on or before the last day of data and today. */
 /**
  * A holiday or a town event marks its day. Term and season periods span weeks or months, so they are context
- * (days.ts, home.md 4.3): This week names them once, and no day cell, headline or month grid square repeats them.
+ * (days.ts, home.md 4.3): the next 7 days name them once, and no day cell, headline or month grid square repeats them.
  */
 export function marksDay(event: Pick<TownEvent, 'kind'>): boolean {
   return event.kind === 'holiday' || event.kind === 'event';
@@ -100,7 +101,7 @@ function figureOf(date: string, input: HomeInput): number | null {
   return day === undefined ? null : valueOf(day, input.metric);
 }
 
-// This week
+// The next 7 days
 
 export interface PastDay {
   date: string;
@@ -137,7 +138,7 @@ export interface WeekRow {
   /** The day's holidays and town events; term and season periods are in ThisWeek.periods. */
   events: readonly TownEvent[];
   notes: readonly Note[];
-  /** This week's own stored figure; null for any day after the last day of data. */
+  /** The day's own stored figure; null for any day after the last day of data or after today. */
   value: number | null;
   /** The day's figure was so few guests for its weekday that it was likely closed (spec D32), as monthDay says. */
   likelyClosed: boolean;
@@ -146,10 +147,10 @@ export interface WeekRow {
 }
 
 export interface WeekSummary {
-  /** Last year's same week, Monday and Sunday. */
+  /** The same 7 days last year (52 weeks earlier), the first and the last. */
   from: string;
   to: string;
-  /** Days of that week with the metric, and their total. */
+  /** Days of those 7 with the metric, and their total. */
   days: number;
   total: number;
   /** The days' total against the sum of their usuals, over the days that have both. */
@@ -158,17 +159,20 @@ export interface WeekSummary {
   quietest: string | null;
 }
 
+/** The next 7 days: today and the 6 after it, today first. */
 export interface ThisWeek {
-  monday: string;
-  sunday: string;
+  /** Today. */
+  first: string;
+  /** Today plus 6. */
+  last: string;
   rows: WeekRow[];
   /** Whether any of the seven days two years ago has data, so the column shows. */
   twoYears: boolean;
-  /** Null when last year's week has fewer than 5 days of data. */
+  /** Null when fewer than 5 of the same days last year have data. */
   summary: WeekSummary | null;
-  /** The first town event or holiday of the week, and how many others there are. */
+  /** The first town event or holiday of the 7 days, and how many others there are. */
   firstEvent: { title: string; date: string; more: number } | null;
-  /** Term and season periods covering any day of the week, each once, in calendar order. */
+  /** Term and season periods covering any of the 7 days, each once, in calendar order. */
   periods: TownEvent[];
 }
 
@@ -196,8 +200,7 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
 }
 
 export function thisWeek(input: HomeInput): ThisWeek {
-  const monday = mondayOf(input.today);
-  const dates = weekDates(monday);
+  const dates = weekDates(input.today);
   const rows = dates.map((date): WeekRow => {
     const value = figureOf(date, input);
     return {
@@ -230,8 +233,8 @@ export function thisWeek(input: HomeInput): ThisWeek {
     }
   }
   return {
-    monday,
-    sunday: addDays(monday, 6),
+    first: input.today,
+    last: addDays(input.today, 6),
     rows,
     twoYears: rows.some((row) => row.twoYearsAgo.value !== null),
     summary: summaryOf(rows.map((row) => row.lastYear)),
@@ -240,11 +243,11 @@ export function thisWeek(input: HomeInput): ThisWeek {
   };
 }
 
-/** "Same week last year, Mon, Nov 3 to Sun, Nov 9, 2025. From all 7 days." */
+/** "Same days last year, Sun, Nov 16 to Sat, Nov 22, 2025. From all 7 days." */
 export function summaryLabel(summary: WeekSummary): string {
   const range = `${shortDate(summary.from).replace(/, \d{4}$/, '')} to ${shortDate(summary.to)}`;
   const days = summary.days === 7 ? 'From all 7 days.' : `From ${formatCount(summary.days)} of its 7 days.`;
-  return `Same week last year, ${range}. ${days}`;
+  return `Same days last year, ${range}. ${days}`;
 }
 
 /** "+9% against that year’s usual for those days, compared over 7 days." */
@@ -257,21 +260,23 @@ function weekdayName(date: string): string {
   return WEEKDAY_NAMES[weekdayOf(date)] ?? '';
 }
 
-/** "On the calendar this week: Veterans Day (Wednesday), and 1 more." Term and season periods are periodLine's. */
+/** "On the calendar in the next 7 days: Veterans Day (Wednesday), and 1 more." Term and season periods are periodLine's. */
 export function calendarWeekLine(week: Pick<ThisWeek, 'firstEvent' | 'periods'>, calendar: Pick<Calendar, 'town' | 'researched' | 'covers'>): string {
   const first = week.firstEvent;
   if (first === null) {
     const researched = calendar.town.townId !== null && calendar.researched && calendar.covers !== null;
     if (week.periods.length > 0) {
-      return researched ? `No holiday or town event on ${calendar.town.name}’s researched calendar this week.` : 'No holiday or town event this week.';
+      return researched
+        ? `No holiday or town event on ${calendar.town.name}’s researched calendar in the next 7 days.`
+        : 'No holiday or town event in the next 7 days.';
     }
-    return researched ? `Nothing on ${calendar.town.name}’s researched calendar this week.` : 'Nothing on the calendar this week.';
+    return researched ? `Nothing on ${calendar.town.name}’s researched calendar in the next 7 days.` : 'Nothing on the calendar in the next 7 days.';
   }
   const more = first.more === 0 ? '' : `, and ${formatCount(first.more)} more`;
-  return `On the calendar this week: ${first.title} (${weekdayName(first.date)})${more}.`;
+  return `On the calendar in the next 7 days: ${first.title} (${weekdayName(first.date)})${more}.`;
 }
 
-/** "Fall term classes. Term, Sep 14 to Nov 17, 2026." A period, with its whole span, said once for the week. */
+/** "Fall term classes. Term, Sep 14 to Nov 17, 2026." A period, with its whole span, said once for the 7 days. */
 export function periodLine(event: Pick<TownEvent, 'title' | 'kind' | 'start' | 'end'>): string {
   const span = event.start.slice(0, 4) === event.end.slice(0, 4)
     ? `${dayMonthRange(event.start, event.end)}, ${event.end.slice(0, 4)}`
@@ -279,7 +284,7 @@ export function periodLine(event: Pick<TownEvent, 'title' | 'kind' | 'start' | '
   return `${event.title}. ${EVENT_WORDS[event.kind]}, ${span}.`;
 }
 
-/** What the town calendar covers (home.md 2.2), always under This week. */
+/** What the town calendar covers (home.md 2.2), always under the next 7 days. */
 export function calendarCoverageLine(calendar: Pick<Calendar, 'town' | 'researched' | 'covers'>): string {
   const { town, covers } = calendar;
   if (town.townId === null) return `Townwise hasn’t researched ${town.name}, ${town.state} yet. Only US federal holidays and your notes show here.`;
@@ -626,7 +631,7 @@ export function monthDay(date: string, input: HomeInput): MonthDay {
   };
 }
 
-/** The day detail's “This day” and This week's own day: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
+/** The day detail's “This day” and the next 7 days' own day: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
 export function thisDayLine(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): string {
   if (day.value === null) return 'No sales stored for this day.';
   return day.likelyClosed ? likelyClosedWords(recordedText(day.value, metric)) : metricText(day.value, metric);

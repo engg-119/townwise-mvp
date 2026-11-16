@@ -321,7 +321,7 @@ function SkeletonMonth(props: { cellTestID: string; cellHeight: number }): React
 }
 
 /**
- * P11 Home: the lead line with Ask TownwiseAI, At a glance's three tiles, This week, This month's grid beside its
+ * P11 Home: the lead line with Ask TownwiseAI, At a glance's three tiles, The next 7 days, This month's grid beside its
  * day and Last week, then On the calendar and Who's in town (the blocks of Home.tsx, in its 12-column rows).
  */
 export function HomeSkeleton(props: LabelProps): React.JSX.Element {

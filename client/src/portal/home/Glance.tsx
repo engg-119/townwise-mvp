@@ -14,9 +14,10 @@ import { Eyebrow, Small } from '../ui/text';
 import { BlockRow } from './Block';
 
 // At a glance (spec P11): the three answers Home leads with on a Monday, each a tile with one big figure or title.
-// This week, last year: the same week last year's total, against that year's usual, its busiest and quietest days.
-// Last week: its total against the same days last year. Next on the calendar: the next holiday or town event from
-// today. Every figure is history, never a guess; the cards below carry the detail, the chart and the tables.
+// The next 7 days, last year: the total of the strip's 7 days 52 weeks earlier (the same rows' last-year days, so the
+// tile and the strip agree), against that year's usual, its busiest and quietest days. Last week (Monday to Sunday):
+// its total against the same days last year. Next on the calendar: the next holiday or town event from today. Every
+// figure is history, never a guess; the cards below carry the detail, the chart and the tables.
 
 function Tile(props: { eyebrow: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -42,14 +43,14 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric }): React.JSX.Elem
   const { summary } = props.week;
   if (summary === null) {
     return (
-      <Tile eyebrow="This week, last year">
-        <Small>Fewer than 5 days of the same week last year have data, so there is no total to show.</Small>
+      <Tile eyebrow="The next 7 days, last year">
+        <Small>Fewer than 5 of the same days last year have data, so there is no total to show.</Small>
       </Tile>
     );
   }
   const usualLine = vsUsualLine(summary);
   return (
-    <Tile eyebrow="This week, last year">
+    <Tile eyebrow="The next 7 days, last year">
       <Figure value={metricNumber(summary.total, props.metric)} unit={unitOf(props.metric)} />
       <View style={styles.lines}>
         <Small white>{summaryLabel(summary)}</Small>

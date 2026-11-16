@@ -17,17 +17,21 @@ import { Stack } from '../ui/layout';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 
-// This week (spec P11): Monday to Sunday of the viewer's week, each day with what is on the town calendar and the
-// location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
-// tile At a glance. No figure is ever shown for a day after the last day of data: a day prints its own figure only
-// when it is past and has data, or “Likely closed (1 guest recorded)” when it was near empty (spec D32), as This month says. With no history at all (`history` false) the past-year rows and the footnote are
-// left out and only the calendar shows. Term and season periods span weeks, so they show once under the headline
-// with their whole span and sources, not in each day.
+// The next 7 days in {Town} (spec P11 and D40; refine-calendar-and-home design decision 4): today and the 6 days
+// after it, today first, not Monday to Sunday, each day with what is on the town calendar and the location's notes,
+// beside the same weekday last year and two years ago. Last year's total for those days is the first tile At a
+// glance. No figure is ever shown for a day after the last day of data or after today: a day prints its own figure
+// only when it has data and is not after today, so here only today with its upload does, in This month's words
+// (thisDayLine; today is never likely closed, spec D32, since its upload may be partial). With no history at all
+// (`history` false) the past-year rows and the footnote are left out and only the calendar shows. Term and season
+// periods span weeks, so they show once under the headline with their whole span and sources, not in each day. Last
+// week and the month grid's This week outline stay Monday to Sunday, so this week's days before today show in
+// neither this block nor Last week, only in the month grid.
 //
-// From 1024px the week is a strip, one column a day, with today's column raised: the day (and its own figure), then
-// rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
-// figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
-// day-by-day table, which stacks at 640px and below.
+// From 1024px the 7 days are a strip, one column a day, with today's column first and raised: the day (and its own
+// figure), then rows for the calendar, last year (a bar scaled to the busiest of the 7 days last year, aria-hidden,
+// beside the printed figure) and two years ago. It is a table, so each cell is read with its day and its row. Below
+// 1024px it is the day-by-day table, which stacks at 640px and below.
 
 function Sources(props: { event: TownEvent }): React.JSX.Element {
   return (
@@ -105,7 +109,7 @@ function DayHead(props: { row: WeekRow; metric: Metric }): React.JSX.Element {
 
 const BAR_ZONE = 40;
 
-/** Last year's figure as a bar, scaled to the week's busiest day last year; aria-hidden, the cell prints it. */
+/** Last year's figure as a bar, scaled to the busiest of the 7 days last year; aria-hidden, the cell prints it. */
 function Bar(props: { value: number | null; top: number }): React.JSX.Element {
   const height = props.value === null || props.top <= 0 ? 0 : Math.max(1, Math.round((props.value / props.top) * BAR_ZONE));
   return (
@@ -115,7 +119,7 @@ function Bar(props: { value: number | null; top: number }): React.JSX.Element {
   );
 }
 
-/** The week as a strip of seven columns (from 1024px). */
+/** The 7 days as a strip of seven columns, today's first (from 1024px). */
 function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
   const { week, metric, history } = props;
   const top = Math.max(0, ...week.rows.map((row) => row.lastYear.value ?? 0));
@@ -130,7 +134,7 @@ function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): Rea
     }] : []),
   ];
   return (
-    <View role="table" aria-label="This week, day by day" style={styles.strip}>
+    <View role="table" aria-label="The next 7 days, day by day" style={styles.strip}>
       <View role="row" style={styles.stripRow}>
         <View role="cell" style={styles.corner} />
         {week.rows.map((row) => (
@@ -151,7 +155,7 @@ function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): Rea
   );
 }
 
-/** The week as a table, a row a day (below 1024px). */
+/** The 7 days as a table, a row a day, today's first (below 1024px). */
 function WeekTable(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
   const { week, metric, history } = props;
   const columns: Column[] = [
@@ -170,7 +174,7 @@ function WeekTable(props: { week: Week; metric: Metric; history: boolean }): Rea
       twoYears: <PastCell day={row.twoYearsAgo} metric={metric} />,
     },
   }));
-  return <DataTable label="This week, day by day" columns={columns} rows={rows} />;
+  return <DataTable label="The next 7 days, day by day" columns={columns} rows={rows} />;
 }
 
 export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric; history: boolean }): React.JSX.Element {
@@ -179,7 +183,7 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
 
   return (
-    <Block label={`This week in ${calendar.town.name}`} eyebrow={`This week in ${calendar.town.name}`} title="What’s on the calendar, and how this week went before">
+    <Block label={`The next 7 days in ${calendar.town.name}`} eyebrow={`The next 7 days in ${calendar.town.name}`} title="What’s on the calendar, and how these days went before">
       <Stack gap={8}>
         <Small white>{calendarWeekLine(week, calendar)}</Small>
         {week.periods.map((period) => (
@@ -198,7 +202,7 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
       {history ? (
         <ShowNumbers>
           <DataTable
-            label="This week’s days in past years"
+            label="These days in past years"
             columns={[
               { key: 'day', label: 'Day' }, { key: 'lastYear', label: 'Last year', numeric: true },
               { key: 'twoYears', label: 'Two years ago', numeric: true }, { key: 'usual', label: 'Usual (last year)', numeric: true },

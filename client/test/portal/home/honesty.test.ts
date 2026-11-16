@@ -40,9 +40,9 @@ const ENDINGS = ['2026-11-04', '2026-11-02', '2026-10-28', '2026-10-20', '2025-1
 describe.each(ENDINGS)('history ending %s', (end) => {
   const home = input(end);
 
-  test('this week gives no figure after the last day of data', () => {
+  test('the next 7 days give no figure after the last day of data or after today', () => {
     for (const row of thisWeek(home).rows) {
-      if (row.date > end) expect(row.value).toBeNull();
+      if (row.date > end || row.date > TODAY) expect(row.value).toBeNull();
       for (const past of [row.lastYear, row.twoYearsAgo]) {
         if (past.date > end) expect([past.value, past.usual, past.change]).toEqual([null, null, null]);
       }
