@@ -13,7 +13,7 @@ import { problemOf } from '../../../../../../src/portal/console/problems';
 import type { OrgDetail, OrgLocation, StaffOrg } from '../../../../../../src/portal/console/schemas';
 import { SetupPanel } from '../../../../../../src/portal/console/SetupPanel';
 import { useRefreshable } from '../../../../../../src/portal/console/useRefreshable';
-import { ViewAsDialog, type ViewAsTarget } from '../../../../../../src/portal/console/ViewAsDialog';
+import { REASON_COPY, ViewAsDialog, type ViewAsTarget } from '../../../../../../src/portal/console/ViewAsDialog';
 import { hasCode } from '../../../../../../src/portal/errors';
 import { formatCount, formatDate, plural, townLabel } from '../../../../../../src/portal/format';
 import { useAction } from '../../../../../../src/portal/hooks';
@@ -32,15 +32,15 @@ import { theme } from '../../../../../../src/theme';
 // Every change here is a staff action its admins see (D9); after one the page reads the organization again in
 // place. A change that answers 404, or a read after one that does, means another staff member deleted the
 // organization meanwhile: the page shows its 404 state, as on load, with no “Saved.”, and focus moves to that line.
-// While nobody has joined the organization the header also offers Open as admin (D25): the portal as its admin, under
-// a banner, until someone joins or the staff sign-in ends.
+// While the organization is active the header also offers Open as admin (D25): the portal as its admin, under a
+// banner, before or after anyone joins it (owner call, 2026-11-15), until End, a suspension or the staff sign-in ends.
+// Once someone has joined (not `inSetup`) it first asks a reason, as View as does (OpenAsAdminDialog).
 // While nobody has joined the organization (`org.inSetup`, D23) the setup panel follows Locations (SetupPanel). When
 // any read finds setup closed that the page showed open (someone joined, or it was suspended), the notice says which.
 // A setup write that answers 409 org_not_in_setup hides the panel at once, until a newer read lets `inSetup` decide.
 
 const NAME_COPY = 'Enter the organization’s name, 2 to 120 characters.';
-const SALES_NOTES_LINE = 'Sales figures and notes are visible only through View as.';
-const SALES_NOTES_LINE_IN_SETUP = 'Sales figures and notes are visible through Open as admin until someone joins, then only through View as.';
+const SALES_NOTES_LINE = 'Sales figures and notes are visible only through Open as admin or View as.';
 const NO_LOCATIONS = 'No locations yet. The first admin adds one after joining.';
 const NO_LOCATIONS_IN_SETUP = 'No locations yet. Add the first one below.';
 /** A change went through, but reading the organization again didn't: what the page shows may be old. */
@@ -48,10 +48,17 @@ const REFRESH_COPY = 'This page couldn’t load the latest, so it may be out of 
 
 /** Why staff setup closed (D23): the organization was suspended, or else someone joined it. */
 function setupClosedCopy(name: string, suspended: boolean): string {
-  return suspended ? `${name} was suspended, so setup is closed.` : `Someone joined ${name}, so setup is closed. Use View as to see their page.`;
+  return suspended
+    ? `${name} was suspended, so setup is closed.`
+    : `Someone joined ${name}, so setup is closed. Use Open as admin to keep working in it, or View as to see their page.`;
 }
 
-type Open = 'rename' | 'suspend' | 'delete' | null;
+/** Open as admin's 409 org_suspended: another staff member suspended the organization meanwhile. */
+function suspendedCopy(name: string): string {
+  return `${name} is suspended, so it can’t be opened as its admin.`;
+}
+
+type Open = 'rename' | 'suspend' | 'delete' | 'open' | null;
 
 function missing(error: unknown): boolean {
   // A malformed id is 400 before the lookup; either way there is no such organization.
@@ -136,6 +143,47 @@ function SuspendDialog(props: { org: StaffOrg; onSaved: () => Promise<void>; onG
       onConfirm={suspend.run}
       onCancel={props.onClose}
     />
+  );
+}
+
+/**
+ * Open as admin once someone has joined (D25, owner call 2026-11-15): a reason of 5 to 200 characters, as View as asks,
+ * which the organization's admins read in their staff activity. The page runs the start (`onStart`) and its refusals.
+ */
+function OpenAsAdminDialog(props: {
+  org: StaffOrg; pending: boolean; error: unknown; onStart: (reason: string) => void; onClose: () => void;
+}): React.JSX.Element {
+  const { org } = props;
+  const [reason, setReason] = useState('');
+  const [invalid, setInvalid] = useState(false);
+  function submit(): void {
+    const text = reason.trim();
+    const bad = text.length < 5 || text.length > 200;
+    setInvalid(bad);
+    if (!bad) props.onStart(text);
+  }
+  return (
+    <Dialog
+      title={`Open ${org.name} as its admin`}
+      body={`Someone has joined ${org.name}, so give a reason. You’ll see and change what its admins can, except its team, until you end it or your staff sign-in ends. ${org.name}’s admins see your reason and every change you make in their Townwise staff activity.`}
+      confirmLabel="Open its portal"
+      pendingLabel="Opening…"
+      pending={props.pending}
+      problem={problemOf(props.error)}
+      onConfirm={submit}
+      onCancel={props.onClose}
+    >
+      <FormField
+        label="Reason"
+        helper="For example, what you’re helping with."
+        value={reason}
+        onChangeText={setReason}
+        onSubmitEditing={submit}
+        autoCapitalize="sentences"
+        maxLength={200}
+        messages={invalid ? [REASON_COPY] : []}
+      />
+    </Dialog>
   );
 }
 
@@ -260,22 +308,28 @@ export default function OrganizationPage(): React.JSX.Element {
     showNotice({ text: setupClosedCopy(shown.org.name, shown.org.status === 'suspended') }, pathname);
   }, [shown, focusMessage, showNotice, pathname]);
   // Open as admin (D25): the answer is the organization's admin access under the banner, and the portal routes to
-  // its dashboard. 409 org_not_in_setup is the setup panel's refusal, so it closes setup the same way.
-  const opening = useAction(useCallback(async () => {
+  // its dashboard. 409 org_suspended (suspended meanwhile) closes the reason dialog and reads the page again, which
+  // hides the button, and says so. 400 reason_required (someone joined since the page read) reads the page again and
+  // asks the reason.
+  const opening = useAction(useCallback(async (reason?: string) => {
     try {
-      applyMe(await openAsAdmin(api, orgId));
+      applyMe(await openAsAdmin(api, orgId, reason));
     } catch (error) {
       if (gone(error)) {
         onGone();
         return;
       }
-      if (hasCode(error, 409, 'org_not_in_setup') && shown !== null) {
-        await setupClosed(shown);
+      if (hasCode(error, 400, 'reason_required')) {
+        if (await refreshed()) setOpen('open');
         return;
+      }
+      if (hasCode(error, 409, 'org_suspended')) {
+        setOpen(null);
+        await refreshed();
       }
       throw error;
     }
-  }, [api, applyMe, orgId, onGone, setupClosed, shown]));
+  }, [api, applyMe, orgId, onGone, refreshed]));
   const savedAndClosed = useCallback(async () => {
     if (!await refreshed()) return;
     setOpen(null);
@@ -321,7 +375,14 @@ export default function OrganizationPage(): React.JSX.Element {
   const inSetup = org.inSetup === true && closedOn !== detail;
   const side = (
     <>
-      {inSetup ? <Button variant="outline" label={opening.pending ? 'Opening…' : 'Open as admin'} disabled={opening.pending} onPress={opening.run} /> : null}
+      {suspended ? null : (
+        <Button
+          variant="outline"
+          label={opening.pending && open !== 'open' ? 'Opening…' : 'Open as admin'}
+          disabled={opening.pending}
+          onPress={() => { if (inSetup) opening.run(); else setOpen('open'); }}
+        />
+      )}
       <Button variant="outline" label="Rename" onPress={() => { setOpen('rename'); }} />
       {suspended
         ? <Button variant="outline" label={reactivate.pending ? 'Reactivating…' : 'Reactivate'} disabled={reactivate.pending} onPress={reactivate.run} />
@@ -346,7 +407,8 @@ export default function OrganizationPage(): React.JSX.Element {
         <Small>{`What you change here is listed in ${org.name}’s Townwise staff activity, which its admins see.`}</Small>
         {suspended ? <Small>{`Members of ${org.name} see that access is paused. Data is kept.`}</Small> : null}
         {noAdmin ? <Small white>No admin yet. Add an admin email.</Small> : null}
-        {opening.error === null ? null : <ErrorNotice error={opening.error} />}
+        {opening.error === null || open === 'open' ? null
+          : <ErrorNotice {...(hasCode(opening.error, 409, 'org_suspended') ? { message: suspendedCopy(org.name) } : { error: opening.error })} />}
         {reactivate.error === null ? null : <ErrorNotice error={reactivate.error} />}
         {refreshError === null ? null : <ErrorNotice message={REFRESH_COPY} onRetry={() => { void refresh(); }} />}
       </Stack>
@@ -359,7 +421,7 @@ export default function OrganizationPage(): React.JSX.Element {
         {locations.length === 0
           ? <EmptyState text={inSetup ? NO_LOCATIONS_IN_SETUP : NO_LOCATIONS} />
           : <LocationTable locations={locations} />}
-        <Small>{inSetup ? SALES_NOTES_LINE_IN_SETUP : SALES_NOTES_LINE}</Small>
+        <Small>{SALES_NOTES_LINE}</Small>
       </Section>
 
       {inSetup ? <SetupPanel org={org} locations={locations} onChanged={refreshed} onClosed={() => { void setupClosed(detail); }} /> : null}
@@ -380,6 +442,15 @@ export default function OrganizationPage(): React.JSX.Element {
 
       {open === 'rename' ? <RenameDialog org={org} onSaved={savedAndClosed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
       {open === 'suspend' ? <SuspendDialog org={org} onSaved={savedAndClosed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
+      {open === 'open' ? (
+        <OpenAsAdminDialog
+          org={org}
+          pending={opening.pending}
+          error={opening.error}
+          onStart={opening.run}
+          onClose={() => { setOpen(null); }}
+        />
+      ) : null}
       {open === 'delete' ? <DeleteDialog detail={detail} onStale={refreshed} onGone={onGone} onClose={() => { setOpen(null); }} /> : null}
       {viewing === null ? null : <ViewAsDialog target={viewing} onClose={() => { setViewing(null); }} />}
     </Page>

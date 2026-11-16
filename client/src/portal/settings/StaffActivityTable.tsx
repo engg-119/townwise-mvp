@@ -8,7 +8,8 @@ import type { StaffActivity } from './api';
 import { SETTINGS_COPY } from './copy';
 
 // Townwise staff activity (spec P18, D9, 9.3): every staff action on the organization, newest first, with the
-// staff email. When, Staff, the server's summary as the Action, and Reason and Until for view-as rows. A refused
+// staff email. When, Staff, the server's summary as the Action, Reason and Until for view-as rows, and Reason for an
+// opening as admin after someone joined (D25). A refused
 // action is one row (`applied: false`): it adds “Didn’t take effect.” and the server's reason in plain words.
 
 /** The reason as a sentence: the server sends it without a full stop. */
@@ -46,7 +47,7 @@ export function StaffActivityTable(props: { org: string; events: readonly StaffA
           when: `${formatDate(event.at)}, ${formatTime(event.at)}`,
           staff: `Townwise staff (${event.staffEmail})`,
           action: actionCell(event),
-          reason: event.viewAs?.reason ?? '',
+          reason: event.viewAs?.reason ?? event.openAsAdmin?.reason ?? '',
           until: event.viewAs === null ? '' : formatTime(event.viewAs.endsAt),
         },
       }))}

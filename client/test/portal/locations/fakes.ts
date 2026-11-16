@@ -6,8 +6,8 @@ import { addDays, daysBetween } from '../../../src/portal/locations/dates';
 import type { Coverage } from '../../../src/portal/schemas';
 import { ADMIN_EMAIL, refusal } from '../../helpers/portal';
 
-// The location pages' reads, for fakePortalApi's `fallback`: GET .../sales, .../sales/days and .../notes answer
-// from these fields (a value, an ApiError, or a promise of either), and DELETE answers 204 unless `deletes` says
+// The location pages' reads, for fakePortalApi's `fallback`: GET .../sales, .../sales/days, .../sales/history (from
+// `days`, with no upload records) and .../notes answer from these fields (a value, an ApiError, or a promise of either), and DELETE answers 204 unless `deletes` says
 // otherwise. Writes the portal fake answers itself (POST, PATCH and DELETE through api.json) go in its `answers`.
 // The fixtures compute coverage and month sums the way api/src/stores/sales-days.ts does.
 
@@ -43,6 +43,18 @@ export function locationsFake(init?: Partial<Pick<LocationsFake, 'sales' | 'days
         const [, locationId, from, to] = days;
         fake.dayRanges.push({ locationId, from, to });
         return settle({ days: (fake.days[locationId] ?? []).filter((day) => day.date >= from && day.date <= to) }, schema);
+      }
+      const history = /^\/api\/org\/locations\/([^/]+)\/sales\/history$/.exec(path);
+      if (history?.[1] !== undefined) {
+        const days = fake.days[history[1]] ?? [];
+        return settle({
+          coverage: coverageOf(days),
+          days: {
+            date: days.map((day) => day.date), guests: days.map((day) => day.guests),
+            netSalesCents: days.map((day) => day.netSalesCents), upload: days.map(() => -1),
+          },
+          uploads: [],
+        }, schema);
       }
       const notes = /^\/api\/org\/locations\/([^/]+)\/notes$/.exec(path);
       if (notes?.[1] !== undefined) {

@@ -99,6 +99,12 @@ function adminApi(): FakePortalApi {
   return fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
 }
 
+/** Town, under the top bar's More (D38), opening More's row when it is closed. */
+async function townLink() {
+  if (screen.queryByLabelText('More') === null) await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('button', { name: 'More' }));
+  return within(screen.getByLabelText('More')).getByRole('link', { name: 'Town' });
+}
+
 test('the first load says “Loading this location”, then shows the header and the page', async () => {
   const api = adminApi();
   const held = holdOrg(api);
@@ -109,7 +115,7 @@ test('the first load says “Loading this location”, then shows the header and
   expect(await screen.findByText('Probe: Main Street Bar, org_admin')).toBeTruthy();
   expect(screen.getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Town' })).toBeTruthy();
-  expect(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Town' }).props.accessibilityState).toMatchObject({ selected: true });
+  expect((await townLink()).props.accessibilityState).toMatchObject({ selected: true });
 });
 
 test('on a phone the top bar’s sections scroll, without animating, to keep the current one in view, on mount and on a new route', async () => {
@@ -119,19 +125,24 @@ test('on a phone the top bar’s sections scroll, without animating, to keep the
     const router = await renderTab(adminApi());
     await screen.findByText('Probe: Main Street Bar, org_admin');
     const sections = screen.getByLabelText('Sections');
-    // A 320px region, and eleven links 90px wide and 4px apart in a nav that starts at the 16px margin: Town, the
-    // eighth, ends at 16 + 748 = 764px, and keeps 16px after it in view.
+    // A 320px region, and eight entries 90px wide and 4px apart in a nav that starts at the 16px margin. Town is
+    // under More (D38), the sixth, which ends at 16 + 560 = 576px and keeps 16px after it in view.
     await fireEvent(sections, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 45 } } });
-    const links = within(sections).getAllByRole('link');
-    expect(links).toHaveLength(11);
-    expect(within(sections).getByRole('link', { name: 'Town' }).props.accessibilityState).toMatchObject({ selected: true });
-    for (const [index, link] of links.entries()) {
-      await fireEvent(link, 'layout', { nativeEvent: { layout: { x: index * 94, y: 0, width: 90, height: 44 } } });
+    expect(within(sections).getAllByRole('link')).toHaveLength(7);
+    expect(within(sections).queryByRole('link', { name: 'Town' })).toBeNull();
+    const order = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'More', 'Team', 'Settings'];
+    for (const [index, name] of order.entries()) {
+      // More's layout is its box's, which a layout event on the button reaches.
+      const entry = within(sections).getByRole(name === 'More' ? 'button' : 'link', { name });
+      await fireEvent(entry, 'layout', { nativeEvent: { layout: { x: index * 94, y: 0, width: 90, height: 44 } } });
     }
-    expect(scrollTo).toHaveBeenLastCalledWith({ x: 764 + 16 - 320, animated: false });
+    expect(scrollTo).toHaveBeenLastCalledWith({ x: 576 + 16 - 320, animated: false });
+    scrollTo.mockClear();
     await fireEvent.press(within(sections).getByRole('link', { name: 'Home' }));
     expect(router.getPathname()).toBe('/locations/l1');
-    expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });
+    // The sections end at x 0, then the frame scrolls the new page to its top: a parent's effect runs after its
+    // children's in the same commit, and every ScrollView shares the one jest mock.
+    expect(scrollTo.mock.calls).toEqual([[{ x: 0, animated: false }], [{ x: 0, y: 0, animated: false }]]);
   } finally {
     spy.mockRestore();
     scrollTo.mockRestore();
@@ -181,7 +192,7 @@ test('a failed reload shows the error with Try again, which reads the organizati
   await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
   expect(screen.queryByText('Can’t reach Townwise. Check your connection and try again.')).toBeNull();
-  await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Town' }));
+  await fireEvent.press(await townLink());
   expect(await screen.findByText('Probe: Main Street Bar, org_admin')).toBeTruthy();
 });
 
@@ -199,7 +210,7 @@ test('after a new GET /api/me the answer before it is cleared, so the page never
   await held.release();
   await screen.findByText('Main Street Bar, Hanover, NH');
   expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
-  await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Town' }));
+  await fireEvent.press(await townLink());
   expect(await screen.findByText('Probe: Main Street Bar, member')).toBeTruthy();
 });
 
@@ -241,7 +252,7 @@ describe('Home’s title and TownwiseAI’s missing header', () => {
     expect(title.parent).toBe(eyebrow.parent);
     expect(screen.getByRole('link', { name: 'Location settings' })).toBeTruthy();
     // Every other tab keeps its own title.
-    await fireEvent.press(within(screen.getByLabelText('Main')).getByRole('link', { name: 'Town' }));
+    await fireEvent.press(await townLink());
     expect(await screen.findByRole('heading', { name: 'Town' })).toBeTruthy();
     expect(screen.queryByRole('heading', { name: /^Welcome back/ })).toBeNull();
   });

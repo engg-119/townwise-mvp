@@ -5,15 +5,18 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import type { DataItem } from '../../../src/portal/data/api';
 import type { MeResponse, OrgResponse } from '../../../src/portal/schemas';
+import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
 import { choicesOf, choose, shownChoice } from '../../helpers/select';
+import { openMore } from '../../helpers/topBar';
 import { aiOf, dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
-// Your data (P26, D28) on web: the table of everything a location received, Turn off and on at once, the deletes
-// with what each keeps, the downloads, All locations, Add a file and Paste text, and view-as and files-off.
+// Your data (P26, D28) on web: the table of everything a location received, each row opening its item's page (where
+// Turn off, the downloads and the deletes are: item.test.web.tsx), All locations, Add a file and Paste text, Delete
+// all originals, and view-as and files-off.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -22,20 +25,6 @@ class ResizeObserverPolyfill {
 }
 if (typeof globalThis.ResizeObserver !== 'function') globalThis.ResizeObserver = ResizeObserverPolyfill;
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1280 });
-
-const saved: { name: string; size: number }[] = [];
-let lastBlob: Blob | null = null;
-
-beforeEach(() => {
-  saved.length = 0;
-  Object.defineProperty(URL, 'createObjectURL', {
-    configurable: true, value: (blob: Blob) => { lastBlob = blob; return 'blob:https://townwise.tech/0000'; },
-  });
-  Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: () => undefined });
-  jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-    saved.push({ name: this.download, size: lastBlob?.size ?? -1 });
-  });
-});
 
 afterEach(() => {
   cleanup();
@@ -102,9 +91,8 @@ function at(rows: HTMLElement[], index: number): HTMLElement {
   return row;
 }
 
-function buttons(row: HTMLElement): string[] {
-  return within(row).queryAllByRole('button').map((button) => button.textContent);
-}
+// On web theme.color is var(--tw-<token>), which jsdom leaves unresolved, so a computed color names its token.
+const RAISED = theme.color.raised;
 
 function noticeHasFocus(notice: HTMLElement): boolean {
   return document.activeElement !== document.body && document.activeElement?.contains(notice) === true;
@@ -121,7 +109,7 @@ test('lists every item as a table row: item, added, kind, size, status and days'
   const rows = rowsOf(await table());
   expect(rows).toHaveLength(3);
   const head = within(screen.getByRole('table')).getAllByRole('columnheader').map((cell) => cell.textContent);
-  expect(head).toEqual(['Item', 'Added', 'Kind', 'Size', 'Status', 'Days', 'Actions']);
+  expect(head).toEqual(['Item', 'Added', 'Kind', 'Size', 'Status', 'Days']);
   expect(within(at(rows, 0)).getByText('menu-notes.txt')).toBeTruthy();
   expect(within(at(rows, 0)).getByText('Read by Townwise')).toBeTruthy();
   expect(within(at(rows, 0)).getByText('Kept for reference')).toBeTruthy();
@@ -169,102 +157,81 @@ test('Status says what TownwiseAI did with a row’s file after what Townwise di
   ]);
 });
 
-test('Open is each row’s first action and opens the item’s page; an item still uploading has none', async () => {
+test('a row opens its item’s page from a press anywhere on it; its name is its one link; an item still uploading has none', async () => {
   const ref = 'f_00000000000000000000000c';
+  const upload = 'u_00000000000000000000000d';
   setup(meOf(ACCESS.admin), [
     itemOf(ref, { name: 'menu-notes.txt', state: 'kept', outcome: 'reference' }),
     itemOf('f_up', { name: 'arriving.txt', state: 'uploading', canTurnOff: false }),
-    dailyTotalsOf('u_1'),
+    dailyTotalsOf(upload),
   ]);
   const rows = rowsOf(await table());
-  const open = within(at(rows, 0)).getByRole('link', { name: 'Open: menu-notes.txt' });
-  expect(open.getAttribute('href')).toBe(`/locations/l1/data/${ref}`);
-  expect(open.textContent).toBe('Open');
-  // First among the row's actions.
-  expect(within(at(rows, 0)).getAllByRole('cell').at(-1)?.textContent).toMatch(/^OpenTurn off/);
-  expect(within(at(rows, 1)).queryByRole('link', { name: /^Open/ })).toBeNull();
-  expect(within(at(rows, 2)).getByRole('link', { name: 'Open: Daily totals, May 1, 2026 to May 10, 2026' }).getAttribute('href')).toBe('/locations/l1/data/u_1');
-  await settle(() => { fireEvent.click(open); });
+  const link = within(at(rows, 0)).getByRole('link', { name: 'menu-notes.txt' });
+  expect([link.tagName, link.getAttribute('href'), link.textContent]).toEqual(['A', `/locations/l1/data/${ref}`, 'menu-notes.txt']);
+  // The actions are on the item's page: no Open, no Turn off, downloads or deletes, and nothing else focusable.
+  for (const row of rows) {
+    expect(within(row).queryAllByRole('button')).toEqual([]);
+    expect(within(row).queryByRole('link', { name: /^Open/ })).toBeNull();
+    const focusable = [...row.querySelectorAll<HTMLElement>('a[href], button, [tabindex]')].filter((element) => element.tabIndex >= 0);
+    expect(focusable).toEqual(within(row).queryAllByRole('link'));
+  }
+  // A linked row is not a tab stop of its own.
+  expect([at(rows, 0).tabIndex, at(rows, 2).tabIndex]).toEqual([-1, -1]);
+  // An item with no name is named by its kind and its days, as its page's actions name it.
+  expect(within(at(rows, 2)).getByRole('link', { name: 'Daily totals, May 1, 2026 to May 10, 2026' }).getAttribute('href')).toBe(`/locations/l1/data/${upload}`);
+  expect(within(at(rows, 1)).queryByRole('link')).toBeNull();
+  // The row is raised on hover and while its link has focus; an unlinked row goes nowhere when pressed.
+  fireEvent.focus(link);
+  expect(window.getComputedStyle(at(rows, 0)).backgroundColor).toBe(RAISED);
+  fireEvent.blur(link);
+  expect(window.getComputedStyle(at(rows, 0)).backgroundColor).not.toBe(RAISED);
+  fireEvent.mouseEnter(at(rows, 2));
+  expect(window.getComputedStyle(at(rows, 2)).backgroundColor).toBe(RAISED);
+  await settle(() => { fireEvent.click(within(at(rows, 1)).getByText('arriving.txt')); });
+  expect(window.location.pathname).toBe('/locations/l1/data');
+  // A press on another cell of a linked row opens its page.
+  await settle(() => { fireEvent.click(within(at(rows, 0)).getByText('Kept for reference')); });
   await waitFor(() => { expect(window.location.pathname).toBe(`/locations/l1/data/${ref}`); });
   expect(await screen.findByRole('heading', { level: 2, name: 'menu-notes.txt' })).toBeTruthy();
 });
 
-test('Turn off sends enabled false at once, the row reads Off, and the notice takes focus', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  await table();
-  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
-  expect(fake.patches).toEqual([{ ref: 'u_1', body: { enabled: false } }]);
-  const notice = await screen.findByText(/^Turned off Daily totals, May 1, 2026 to May 10, 2026\./);
-  expect(notice.textContent).toBe('Turned off Daily totals, May 1, 2026 to May 10, 2026. Main Street Bar’s numbers, forecasts and TownwiseAI leave it out until it’s turned on.');
-  await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
-  expect(within(at(rowsOf(await table()), 2)).getByText('Off')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Turn on: Daily totals, May 1, 2026 to May 10, 2026' }));
-  expect(fake.patches.at(-1)).toEqual({ ref: 'u_1', body: { enabled: true } });
-  expect(await screen.findByText('Turned on Daily totals, May 1, 2026 to May 10, 2026.')).toBeTruthy();
-  expect(within(at(rowsOf(await table()), 2)).getByText('On')).toBeTruthy();
-});
-
-test('Delete on an upload says in words which days go and what stays, then deletes it', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  await table();
-  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
-  expect(within(dialog).getByText(
-    'This deletes the 5 days this upload still holds for Main Street Bar, May 1, 2026 to May 10, 2026, and its file, if it has one. Days a later upload replaced stay, and so do notes. To keep the days out of your numbers without deleting them, turn it off instead. This can’t be undone.',
-  )).toBeTruthy();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete upload' }));
-  const notice = await screen.findByText('Deleted the upload and 5 days.');
-  expect(fake.removed).toEqual([{ locationId: 'l1', ref: 'u_1' }]);
-  await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
-  await waitFor(() => { expect(rowsOf(screen.getByRole('table'))).toHaveLength(2); });
-});
-
-test('Delete on a stored file says it goes for everyone on the team', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  await table();
-  fireEvent.click(screen.getByRole('button', { name: 'Delete: menu-notes.txt' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Delete this file' });
-  expect(within(dialog).getByText('This deletes menu-notes.txt for everyone on your team. This can’t be undone.')).toBeTruthy();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete file' }));
-  expect(await screen.findByText('Deleted menu-notes.txt.')).toBeTruthy();
-  expect(fake.removed).toEqual([{ locationId: 'l1', ref: 'f_ref' }]);
-});
-
-test('a member sees Turn off on their own items only, and no Delete on any upload', async () => {
-  setup(meOf(ACCESS.member), [
-    itemOf('f_mine', { name: 'mine.txt', file: null, sizeBytes: 10 }),
-    itemOf('f_theirs', { name: 'theirs.txt', file: null, sizeBytes: 10, canTurnOff: false, canDelete: false }),
-    dailyTotalsOf('u_1', { canDelete: false }),
+test('a linked row’s name is underlined, as links are, so a phone’s card shows it opens; an unlinked row keeps the default cursor', async () => {
+  setup(meOf(ACCESS.admin), [
+    itemOf('f_00000000000000000000000c', { name: 'menu-notes.txt', state: 'kept', outcome: 'reference' }),
+    itemOf('f_up', { name: 'arriving.txt', state: 'uploading', canTurnOff: false }),
   ]);
   const rows = rowsOf(await table());
-  expect(buttons(at(rows, 0))).toEqual(['Turn off', 'Delete']);
-  expect(buttons(at(rows, 1))).toEqual([]);
-  expect(buttons(at(rows, 2))).toEqual(['Turn off']);
-  expect(screen.queryByRole('button', { name: 'Delete all originals for this location' })).toBeNull();
+  const name = within(at(rows, 0)).getByText('menu-notes.txt');
+  expect(window.getComputedStyle(name).textDecorationLine || window.getComputedStyle(name).textDecoration).toContain('underline');
+  expect(window.getComputedStyle(within(at(rows, 1)).getByText('arriving.txt')).textDecorationLine || '').not.toContain('underline');
+  expect(window.getComputedStyle(at(rows, 0)).cursor).toBe('pointer');
+  expect(window.getComputedStyle(at(rows, 1)).cursor).toBe('auto');
+  expect(at(rows, 1).tabIndex).toBe(-1);
 });
 
-test('a refused action says why, in this page’s words', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  fake.answers['PATCH u_1'] = () => refusal(409, 'item_busy');
-  fake.answers['PATCH f_ref'] = () => refusal(503, 'files_unavailable');
-  await table();
-  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
-  expect(await screen.findByText('Townwise is still reading this file. Try again when it’s done.')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'Turn off: menu-notes.txt' }));
-  expect(await screen.findByText('File storage is off right now, so this can’t be done.')).toBeTruthy();
+test('a press that ends a text selection across a row selects and opens nothing', async () => {
+  setup(meOf(ACCESS.admin), [itemOf('f_00000000000000000000000c', { name: 'menu-notes.txt', state: 'kept', outcome: 'reference' })]);
+  const row = at(rowsOf(await table()), 0);
+  const selection = jest.spyOn(window, 'getSelection').mockReturnValue({ toString: () => 'Kept for' } as Selection);
+  await settle(() => { fireEvent.click(within(row).getByText('Kept for reference')); });
+  expect(window.location.pathname).toBe('/locations/l1/data');
+  selection.mockRestore();
+  await settle(() => { fireEvent.click(within(row).getByText('Kept for reference')); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/data/f_00000000000000000000000c'); });
 });
 
-test('a 404 says the item is gone and the list loads again', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  fake.answers['PATCH u_1'] = () => refusal(404, 'not_found');
-  await table();
-  const loads = fake.lists.length;
-  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
-  expect(await screen.findByText('This item isn’t available anymore.')).toBeTruthy();
-  await waitFor(() => { expect(fake.lists.length).toBeGreaterThan(loads); });
+test('pressing a row’s link opens its page once, not once for the link and again for the row', async () => {
+  const ref = 'f_00000000000000000000000c';
+  setup(meOf(ACCESS.admin), [itemOf(ref, { name: 'menu-notes.txt', state: 'kept', outcome: 'reference' })]);
+  const link = within(at(rowsOf(await table()), 0)).getByRole('link', { name: 'menu-notes.txt' });
+  const before = window.history.length;
+  await settle(() => { fireEvent.click(link); });
+  await waitFor(() => { expect(window.location.pathname).toBe(`/locations/l1/data/${ref}`); });
+  expect(await screen.findByRole('heading', { level: 2, name: 'menu-notes.txt' })).toBeTruthy();
+  expect(window.history.length).toBe(before + 1);
 });
 
-test('view-as: names hidden, every action disabled in place with the read-only line, no downloads', async () => {
+test('view-as: names hidden, rows still open their pages, and the page’s writes disabled in place with the read-only line', async () => {
   const hidden = { name: null, canTurnOff: false, canDelete: false } as const;
   setup(viewAsMe(ACCESS.admin), ITEMS.map((item) => ({
     ...item, ...hidden, file: item.file === null ? null : { ...item.file, canDownloadRaw: false, canDownloadClean: false, canDeleteRaw: false },
@@ -274,23 +241,15 @@ test('view-as: names hidden, every action disabled in place with the read-only l
   expect(within(at(rows, 0)).getAllByText('CSV or text file')).toHaveLength(2);
   expect(within(at(rows, 1)).getAllByText('Excel file')).toHaveLength(2);
   expect(document.body.textContent).not.toContain('menu-notes.txt');
-  for (const row of rows) {
-    for (const button of within(row).getAllByRole('button')) {
-      expect(button.getAttribute('aria-disabled')).toBe('true');
-      expect(button.getAttribute('aria-describedby')).toBe('data-ro');
-    }
-    expect(within(row).queryByRole('button', { name: /Download/ })).toBeNull();
-  }
+  for (const row of rows) expect(within(row).queryAllByRole('button')).toEqual([]);
   expect(document.getElementById('data-ro')?.textContent).toMatch(/^Read-only while viewing as /);
   expect(screen.getByRole('button', { name: 'Paste text' }).getAttribute('aria-disabled')).toBe('true');
   const all = screen.getByRole('button', { name: 'Delete all originals for this location' });
   expect([all.getAttribute('aria-disabled'), all.getAttribute('aria-describedby')]).toEqual(['true', 'data-ro']);
-  // With no name, each row's actions name it by its kind and its days, or when it was added.
-  expect(within(at(rows, 1)).getByRole('button', { name: 'Turn off: Excel file, Jan 1, 2024 to Dec 31, 2025' })).toBeTruthy();
-  // Opening is a read: Open stays a working link under view-as.
-  const open = within(at(rows, 0)).getByRole('link', { name: 'Open: CSV or text file, added Nov 5, 2026' });
+  // Opening is a read: each row stays a working link, named by its kind and its days, or when it was added.
+  const open = within(at(rows, 0)).getByRole('link', { name: 'CSV or text file, added Nov 5, 2026' });
   expect([open.getAttribute('href'), open.getAttribute('aria-disabled')]).toEqual(['/locations/l1/data/f_ref', null]);
-  expect(within(at(rows, 0)).getByRole('button', { name: 'Turn off: CSV or text file, added Nov 5, 2026' })).toBeTruthy();
+  expect(within(at(rows, 1)).getByRole('link', { name: 'Excel file, Jan 1, 2024 to Dec 31, 2025' })).toBeTruthy();
 });
 
 test('All locations lists every location’s items with a Location column', async () => {
@@ -330,21 +289,8 @@ test('with one location the lead, the table and the empty line name the organiza
   expect(screen.queryByText(/Main Street Bar/)).toBeNull();
 });
 
-test('with one location the Turned off notice and the delete dialogs name the organization (D29)', async () => {
+test('with one location the Delete all originals dialog names the organization (D29)', async () => {
   const one = { org: orgOf('org_admin', LOCATIONS.slice(0, 1)) };
-  setup(meOf(ACCESS.admin), ITEMS, one);
-  await table('Your data for Test Group');
-  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
-  expect((await screen.findByText(/^Turned off Daily totals/)).textContent).toBe(
-    'Turned off Daily totals, May 1, 2026 to May 10, 2026. Test Group’s numbers, forecasts and TownwiseAI leave it out until it’s turned on.',
-  );
-  cleanup();
-  setup(meOf(ACCESS.admin), ITEMS, one);
-  await table('Your data for Test Group');
-  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
-  const upload = await screen.findByRole('dialog', { name: 'Delete this upload' });
-  expect(within(upload).getByText(/^This deletes the 5 days this upload still holds for Test Group, May 1, 2026 to May 10, 2026,/)).toBeTruthy();
-  cleanup();
   setup(meOf(ACCESS.admin), ITEMS, one);
   await table('Your data for Test Group');
   fireEvent.click(screen.getByRole('button', { name: 'Delete all originals for this location' }));
@@ -354,10 +300,11 @@ test('with one location the Turned off notice and the delete dialogs name the or
 });
 
 test('stored files off: no Add a file or Paste text, and the list still shows uploads', async () => {
-  setup(meOf(ACCESS.admin), [dailyTotalsOf('u_1')], { files: 'off' });
+  const fake = setup(meOf(ACCESS.admin), [dailyTotalsOf('u_1')], { files: 'off' });
   const rows = rowsOf(await table());
   expect(rows).toHaveLength(1);
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' })).toBeTruthy(); });
+  expect(within(at(rows, 0)).getByRole('link', { name: 'Daily totals, May 1, 2026 to May 10, 2026' })).toBeTruthy();
+  await waitFor(() => { expect(fake.files.calls.some((call) => call.path === '/files')).toBe(true); });
   expect(screen.queryByRole('button', { name: 'Add a file' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Paste text' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Delete all originals for this location' })).toBeNull();
@@ -414,33 +361,6 @@ test('Add a file uploads with purpose reference', async () => {
   expect(created?.body).toMatchObject({ name: 'menu.pdf', purpose: 'reference' });
 });
 
-test('downloads follow each item’s flags and save through a blob link', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  fake.files.downloads['/files/file-u/clean'] = () => new Blob(['date,guests,net_sales\r\n']);
-  fake.files.downloads['/files/file-u/raw'] = () => new Blob(['abcd']);
-  const rows = rowsOf(await table());
-  // An item kept for reference is its original: Delete removes it whole, so it has no Delete original.
-  expect(buttons(at(rows, 0))).toEqual(['Turn off', 'Download original', 'Delete']);
-  expect(buttons(at(rows, 1))).toEqual(['Turn off', 'Download original', 'Download cleaned CSV', 'Delete original', 'Delete']);
-  fireEvent.click(screen.getByRole('button', { name: 'Download cleaned CSV: toast.xlsx' }));
-  await waitFor(() => { expect(saved).toEqual([{ name: 'toast-townwise.csv', size: 23 }]); });
-  // The button is enabled again once the save has finished.
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Download original: toast.xlsx' }).getAttribute('aria-disabled')).not.toBe('true'); });
-  fireEvent.click(screen.getByRole('button', { name: 'Download original: toast.xlsx' }));
-  await waitFor(() => { expect(saved.at(-1)).toEqual({ name: 'toast.xlsx', size: 4 }); });
-});
-
-test('Delete original says what stays, then deletes only the original', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  await table();
-  fireEvent.click(screen.getByRole('button', { name: 'Delete original: toast.xlsx' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Delete original' });
-  expect(within(dialog).getByText('This deletes the original of toast.xlsx. The cleaned copy and the days it added stay. This can’t be undone.')).toBeTruthy();
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete original' }));
-  expect(await screen.findByText('Deleted the original. The cleaned copy and its days stay.')).toBeTruthy();
-  expect(fake.files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/file-u/raw']);
-});
-
 test('an org admin deletes every sales file’s original at once, and is told first that items kept for reference stay', async () => {
   const fake = setup(meOf(ACCESS.admin));
   await table();
@@ -471,27 +391,6 @@ test('Delete all originals needs a sales file’s original at the one location s
   expect(screen.queryByRole('button', { name: 'Delete all originals for this location' })).toBeNull();
 });
 
-test('a download waits and fails in its own row: the other rows stay usable, and the error shows beside it', async () => {
-  const fake = setup(meOf(ACCESS.admin));
-  const request = fake.files.request.bind(fake.files);
-  let fail: (() => void) | null = null;
-  fake.files.request = (path, opts) => (path.endsWith('/files/file-u/clean')
-    ? new Promise<Response>((_resolve, reject) => { fail = () => { reject(refusal(404, 'not_found')); }; })
-    : request(path, opts));
-  await table();
-  fireEvent.click(screen.getByRole('button', { name: 'Download cleaned CSV: toast.xlsx' }));
-  await waitFor(() => { expect(screen.getByRole('button', { name: 'Download cleaned CSV: toast.xlsx' }).textContent).toBe('Downloading…'); });
-  expect(screen.getByRole('button', { name: 'Download original: toast.xlsx' }).getAttribute('aria-disabled')).toBe('true');
-  for (const name of ['Download original: menu-notes.txt', 'Turn off: menu-notes.txt', 'Turn off: toast.xlsx', 'Turn off: Daily totals, May 1, 2026 to May 10, 2026']) {
-    expect({ name, disabled: screen.getByRole('button', { name }).getAttribute('aria-disabled') }).toEqual({ name, disabled: null });
-  }
-  await settle(() => { fail?.(); });
-  const row = at(rowsOf(await table()), 1);
-  expect(within(row).getByRole('alert').textContent).toBe('This item isn’t available anymore.');
-  expect(within(row).getByRole('button', { name: 'Download cleaned CSV: toast.xlsx' }).textContent).toBe('Download cleaned CSV');
-  expect(within(at(rowsOf(await table()), 0)).queryByRole('alert')).toBeNull();
-});
-
 test('a sales file whose original was deleted says so; an item kept for reference claims no cleaned copy', async () => {
   const gone = { rawAvailable: false, canDownloadRaw: false, canDeleteRaw: false } as const;
   setup(meOf(ACCESS.admin), ITEMS.map((item) => ({ ...item, file: item.file === null ? null : { ...item.file, ...gone } })));
@@ -501,27 +400,19 @@ test('a sales file whose original was deleted says so; an item kept for referenc
   expect(within(at(rows, 2)).queryByText(/The original was deleted/)).toBeNull();
 });
 
-test('after Turn off, the organization is read again once the page closes, not before', async () => {
+test('after Delete all originals, the organization is read again once the page closes, not before', async () => {
   setup(meOf(ACCESS.admin));
   await table();
   const before = orgReads();
-  fireEvent.click(screen.getByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
-  await screen.findByText(/^Turned off Daily totals, May 1, 2026 to May 10, 2026\./);
+  fireEvent.click(screen.getByRole('button', { name: 'Delete all originals for this location' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Delete all originals for this location' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete all originals for this location' }));
+  await screen.findByText('Deleted 0 originals.');
   expect(orgReads()).toBe(before);
-  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
-  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
-  await waitFor(() => { expect(orgReads()).toBe(before + 1); });
-});
-
-test('after an upload is deleted, the organization is read again once the page closes', async () => {
-  setup(meOf(ACCESS.admin));
-  await table();
-  const before = orgReads();
-  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete upload' }));
-  await screen.findByText('Deleted the upload and 5 days.');
-  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  // The page hands focus to its notice; once that lands, More opens and stays open (focus leaving it closes it).
+  await settle(() => undefined);
+  const notes = within(openMore()).getByRole('link', { name: 'Notes' });
+  await settle(() => { fireEvent.click(notes); });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
   await waitFor(() => { expect(orgReads()).toBe(before + 1); });
 });
@@ -530,7 +421,8 @@ test('leaving with nothing changed reads the organization no more', async () => 
   setup(meOf(ACCESS.admin));
   await table();
   const before = orgReads();
-  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  const notes = within(openMore()).getByRole('link', { name: 'Notes' });
+  await settle(() => { fireEvent.click(notes); });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
   await settle(() => undefined);
   expect(orgReads()).toBe(before);
@@ -555,15 +447,15 @@ test('a list that fails to load again after a delete says so with Try again, in 
   const fake = setup(meOf(ACCESS.admin));
   await table();
   fake.answers['GET /api/org/data'] = () => refusal(503, 'unavailable');
-  fireEvent.click(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 10, 2026' }));
-  const dialog = await screen.findByRole('dialog', { name: 'Delete this upload' });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete upload' }));
-  expect(await screen.findByText('Deleted the upload and 5 days.')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: 'Delete all originals for this location' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Delete all originals for this location' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Delete all originals for this location' }));
+  expect(await screen.findByText('Deleted 0 originals.')).toBeTruthy();
   expect(await screen.findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
   expect(screen.queryByRole('table')).toBeNull();
   fake.answers = {};
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-  await waitFor(() => { expect(rowsOf(screen.getByRole('table'))).toHaveLength(2); });
+  await waitFor(() => { expect(rowsOf(screen.getByRole('table'))).toHaveLength(3); });
 });
 
 test('a ZIP lists the files inside it, a page at a time', async () => {
@@ -576,8 +468,14 @@ test('a ZIP lists the files inside it, a page at a time', async () => {
   fake.files.entries['file-zip:'] = { entries: [{ index: 0, path: 'a/day-0.csv', depth: 1, kind: 'text', sizeBytes: 512, status: 'kept', outcome: 'reference', dayCount: null }], next: null };
   await table();
   expect(screen.getByText('3 files inside: 0 used, 3 kept, not used')).toBeTruthy();
-  fireEvent.click(screen.getByRole('button', { name: 'See what’s inside' }));
+  // The row's own control only opens the list: the press doesn't also open the item's page.
+  await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'See what’s inside' })); });
   expect(await screen.findByText('a/day-0.csv')).toBeTruthy();
+  expect(window.location.pathname).toBe('/locations/l1/data');
+  // A press on an entry inside the list stays in the list too.
+  await settle(() => { fireEvent.click(screen.getByText('a/day-0.csv')); });
+  expect(window.location.pathname).toBe('/locations/l1/data');
+  expect(screen.getByText('a/day-0.csv')).toBeTruthy();
 });
 
 test('more than a page: Show older items loads the next page and appends it', async () => {

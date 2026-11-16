@@ -1,18 +1,20 @@
 import type { TownEvent } from '../analytics/api';
 import { TYPICAL_LOOKBACK_DAYS } from '../analytics/days';
-import { dayMonthRange, EVENT_WORDS, mondayOf, weekDates } from '../analytics/week';
+import { dayMonthRange, EVENT_WORDS, mondayOf } from '../analytics/week';
 import { shortDate } from '../analytics/words';
 import { formatDate } from '../format';
-import { addDays, monthRange } from '../locations/dates';
+import { addDays, daysBetween, monthRange } from '../locations/dates';
 import { hoursLine } from '../locations/noteRules';
 import {
   dayCell, dayView, eventsOn, noteChip, rangeWords, stepMonth, type CalendarCell, type CalendarDayView, type CalendarInput, type monthBounds,
 } from './model';
 
-// The Calendar's grid (P28, spec 16.3), pure: the one place that says which dates a month view shows and what the page
-// reads for them. A month is always 42 days in 6 rows, from the Monday on or before its 1st, so the grid never changes
-// height; the days before the 1st and after the last day are the months either side, shown muted with their own data.
-// Every date is a 'YYYY-MM-DD' string moved in UTC (locations/dates.ts), so a daylight saving change never shifts one.
+// The Calendar's grid (P28, spec 16.3), pure: the one place that says which dates a month view and a week view show
+// and what the page reads for them. A month is always 42 days in 6 rows, from the Monday on or before its 1st, so the
+// grid never changes height; the days before the 1st and after the last day are the months either side, shown muted
+// with their own data. A week is the 7-day block counted from today that holds the selected day, so it starts on any
+// weekday. Every date is a 'YYYY-MM-DD' string moved in UTC (locations/dates.ts), so a daylight saving change never
+// shifts one.
 
 /** Six weeks of seven days. */
 export const GRID_DAYS = 42;
@@ -64,15 +66,34 @@ export type MonthBounds = ReturnType<typeof monthBounds>;
 export interface DateRange { from: string; to: string }
 
 /**
- * What every read of the month's grid covers: its 42 days clamped to the first day of the first shown month and the last
- * day of the last, which keeps each read within 396 days of today, inside the API's 400. The town calendar, the forecast
- * (one request of at most 42 days) and any later read of a grid's days, such as stored calendar events, use this range.
+ * What a read of the month's grid covers: its 42 days clamped to the first day of the first shown month and the last
+ * day of the last, which keeps each read within 396 days of today, inside the API's 400.
  */
 export function gridRange(month: string, bounds: MonthBounds): DateRange {
   const first = firstOf(month);
   const last = addDays(first, GRID_DAYS - 1);
   const start = `${bounds.first}-01`;
   return { from: first < start ? start : first, to: last > bounds.lastDay ? bounds.lastDay : last };
+}
+
+/** A week's 7 days from `start`, clamped to the 25 months: the days of it the page can read. */
+export function weekRange(start: string, bounds: MonthBounds): DateRange {
+  const first = `${bounds.first}-01`;
+  const last = addDays(start, 6);
+  return { from: start < first ? first : start, to: last > bounds.lastDay ? bounds.lastDay : last };
+}
+
+/**
+ * What every read of the page covers (the town calendar, the sales days through pastRangeFor, the stored calendar
+ * events and the forecast, one request of at most 42 days each): the grid's range in the month view, and in the week
+ * view too while the week's days inside the 25 months (weekRange, not its raw 7 days, which at the range's ends run past
+ * the grid) lie inside it, so switching views reads nothing; else the week's own days, which run past the grid.
+ */
+export function readRangeFor(view: 'month' | 'week', month: string, weekStart: string, bounds: MonthBounds): DateRange {
+  const grid = gridRange(month, bounds);
+  if (view === 'month') return grid;
+  const week = weekRange(weekStart, bounds);
+  return week.from >= grid.from && week.to <= grid.to ? grid : week;
 }
 
 /**
@@ -114,8 +135,9 @@ export function entryLines(cell: Pick<CalendarCell, 'chips' | 'more'>): { lines:
 }
 
 /**
- * A day in the grid. `outside`: in the month before or after the grid's, shown muted with its own data. `pending`: the
- * kept reads don't cover it yet (a month change whose reads are in flight), so it shows its number only, still focusable.
+ * A day in the grid. `outside`: in the month before or after the grid's, shown muted with its own data (never in the
+ * week view, which shows no month). `pending`: the kept reads don't cover it yet (a month or week change whose reads are
+ * in flight), so it shows its number only, still focusable.
  */
 export interface DayCell extends CalendarCell { kind: 'day'; outside: boolean; pending: boolean }
 
@@ -138,21 +160,23 @@ function pendingCell(date: string, input: CalendarInput, outside: boolean): DayC
   };
 }
 
-/** One day of the grid for `month`: inert past the 25 months, pending outside `covered`, else the day from `input`. */
-function slotFor(date: string, month: string, input: CalendarInput, bounds: MonthBounds, covered: DateRange): GridSlot {
+/**
+ * One day of the grid for `month` (null in the week view, where no day is outside): inert past the 25 months, pending
+ * outside the range `input`'s reads cover, else the day from `input`.
+ */
+function slotFor(date: string, month: string | null, input: CalendarInput, bounds: MonthBounds): GridSlot {
   if (date < `${bounds.first}-01` || date > bounds.lastDay) return { kind: 'inert', date, label: `${shortDate(date)}. Outside the months the calendar shows.` };
-  const outside = date.slice(0, 7) !== month;
-  if (date < covered.from || date > covered.to) return pendingCell(date, input, outside);
+  const outside = month !== null && date.slice(0, 7) !== month;
+  if (date < input.covered.from || date > input.covered.to) return pendingCell(date, input, outside);
   return { ...dayCell(date, input), kind: 'day', outside, pending: false };
 }
 
 /**
- * The month's grid as 6 rows of 7 slots. The days `input`'s reads cover (gridRange of its own month, which lags the
- * grid's while a month change reads) show their data; the rest of the 25 months are pending; the days past them, inert.
+ * The month's grid as 6 rows of 7 slots. The days `input`'s reads cover (`input.covered`, which lags the grid's range
+ * while a month change reads) show their data; the rest of the 25 months are pending; the days past them, inert.
  */
 export function buildGrid(month: string, input: CalendarInput, bounds: MonthBounds): GridSlot[][] {
-  const covered = gridRange(input.month, bounds);
-  const slots = gridDays(month).map((date) => slotFor(date, month, input, bounds, covered));
+  const slots = gridDays(month).map((date) => slotFor(date, month, input, bounds));
   return Array.from({ length: 6 }, (_, row) => slots.slice(row * 7, row * 7 + 7));
 }
 
@@ -223,7 +247,10 @@ export const CARD_MARK: Readonly<Record<WeekCardKind, 'white' | 'text2' | 'mint'
   holiday: 'white', event: 'white', note: 'text2', rule: 'text2', imported: 'mint', term: 'line', season: 'line',
 };
 
-/** A term or season repeats on most days of its weeks, so its card is one line. */
+/**
+ * A term or season repeats on most days of its weeks, so its card is compact: its title and kind words on one run,
+ * which wraps as every card's words do (refine-calendar-and-home design decision 3).
+ */
 export function periodCard(card: Pick<WeekCard, 'kind'>): boolean {
   return card.kind === 'term' || card.kind === 'season';
 }
@@ -253,13 +280,13 @@ export function headLine(day: Pick<WeekDay, 'range' | 'figure' | 'noForecast'>):
 }
 
 /**
- * The selected day's week, Monday to Sunday, as the shown grid's slots (it is always one of the grid's rows, so
- * `month` is the grid's), each day with its cards. Inert and pending days have none.
+ * The week the page shows (weekStartFor: the 7-day block from today that holds `selected`), each day with its cards.
+ * The days `input`'s reads cover show their data, the rest of the 25 months are pending, the days past them inert;
+ * inert and pending days have no cards.
  */
-export function buildWeek(selected: string, month: string, input: CalendarInput, bounds: MonthBounds): WeekSlot[] {
-  const covered = gridRange(input.month, bounds);
-  return weekOf(selected).map((date): WeekSlot => {
-    const slot = slotFor(date, month, input, bounds, covered);
+export function buildWeek(selected: string, today: string, input: CalendarInput, bounds: MonthBounds): WeekSlot[] {
+  return weekDays(weekStartFor(selected, today)).map((date): WeekSlot => {
+    const slot = slotFor(date, null, input, bounds);
     if (slot.kind === 'inert') return slot;
     if (slot.pending) return { ...slot, cards: [], range: null, noForecast: false };
     const view = dayView(date, input);
@@ -271,29 +298,36 @@ export function buildWeek(selected: string, month: string, input: CalendarInput,
   });
 }
 
-// The week view (step 2): the selected day's week, always one of the shown grid's rows, so it reads nothing of its own.
+// The week view: 7-day blocks counted from today, so with no `?day=` the week starts on today (refine-calendar-and-home
+// design decision 4). The block shown is the one that holds the selected day, so a day click never moves the columns;
+// it reads over the grid's range while it lies inside it, and its own days when it runs past (readRangeFor).
 
-/** The selected day's week, Monday to Sunday. */
-export function weekOf(date: string): string[] {
-  return weekDates(mondayOf(date));
+/** The first day of the 7-day block from today that holds `selected`: today plus 7 times the whole weeks between. */
+export function weekStartFor(selected: string, today: string): string {
+  return addDays(today, 7 * Math.floor(daysBetween(today, selected) / 7));
 }
 
-/** “Nov 16 to 22, 2026”, “Nov 30 to Dec 6, 2026”, or across a new year “Dec 28, 2026 to Jan 3, 2027”. */
-export function weekLabel(monday: string): string {
-  const sunday = addDays(monday, 6);
-  if (monday.slice(0, 4) !== sunday.slice(0, 4)) return `${formatDate(monday)} to ${formatDate(sunday)}`;
-  return `${dayMonthRange(monday, sunday)}, ${sunday.slice(0, 4)}`;
+/** A week's 7 days from its first. */
+export function weekDays(start: string): string[] {
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+}
+
+/** “Nov 15 to 21, 2026”, “Nov 29 to Dec 5, 2026”, or across a new year “Dec 27, 2026 to Jan 2, 2027”. */
+export function weekLabel(start: string): string {
+  const last = addDays(start, 6);
+  if (start.slice(0, 4) !== last.slice(0, 4)) return `${formatDate(start)} to ${formatDate(last)}`;
+  return `${dayMonthRange(start, last)}, ${last.slice(0, 4)}`;
 }
 
 /**
- * Previous week and Next week: the selected day 7 days back or forward, clamped to the 25 months; null (the button
- * disabled in place) when that week lies wholly outside them.
+ * Previous week and Next week: the selected day 7 days back or forward, so a whole block, clamped to the 25 months;
+ * null (the button disabled in place) when that block lies wholly outside them.
  */
-export function stepWeek(selected: string, step: -1 | 1, bounds: MonthBounds): string | null {
+export function stepWeek(selected: string, step: -1 | 1, bounds: MonthBounds, today: string): string | null {
   const start = `${bounds.first}-01`;
   const target = addDays(selected, 7 * step);
-  const week = weekOf(target);
-  if ((week[6] ?? target) < start || (week[0] ?? target) > bounds.lastDay) return null;
+  const first = weekStartFor(target, today);
+  if (addDays(first, 6) < start || first > bounds.lastDay) return null;
   return target < start ? start : target > bounds.lastDay ? bounds.lastDay : target;
 }
 
@@ -305,16 +339,22 @@ export interface GridMove { date: string; month: string | null }
 /** The month grid, the week view's day columns, or its agenda (a row per day: the web week view at 640px and below). */
 export type GridLayout = 'month' | 'week' | 'agenda';
 
+/** Where a key moves from: the month grid with the grid's month, or the week view with its block's first day. */
+export type GridAt =
+  | { layout: 'month'; month: string; bounds: MonthBounds }
+  | { layout: 'week' | 'agenda'; weekStart: string; bounds: MonthBounds };
+
 /**
- * The keys of the month grid and the week view (spec 16.3 P28): Left and Right a day, across rows, weeks and months; Up
- * and Down a week (a day in the agenda, whose rows are days); Home and End the row's (the week's) Monday and Sunday;
- * with Ctrl or Cmd, in the month grid the grid month's first and last day, in the week view the same as without;
- * PageUp and PageDown a month before or after (as the APG date picker), on the same day number clamped to that month's
- * length: in the month grid from the grid's month, since the selected day can be a leading or trailing one, and in the
- * week view, which hides the grid's month, from the selected day's own. A move whose target is outside the 25 months is
- * consumed, `{ date: from, month: null }`; Home and End clamp to them instead. Null for a key it doesn't handle.
+ * The keys of the month grid and the week view (spec 16.3 P28): Left and Right a day, across rows, weeks, blocks and
+ * months; Up and Down a week (a day in the agenda, whose rows are days); Home and End the row's Monday and Sunday in
+ * the month grid and the block's first and last day in the week view; with Ctrl or Cmd, in the month grid the grid
+ * month's first and last day, in the week view the same as without; PageUp and PageDown a month before or after (as
+ * the APG date picker), on the same day number clamped to that month's length: in the month grid from the grid's
+ * month, since the selected day can be a leading or trailing one, and in the week view, which hides the grid's month,
+ * from the selected day's own. A move whose target is outside the 25 months is consumed, `{ date: from, month: null }`;
+ * Home and End clamp to them instead. Null for a key it doesn't handle.
  */
-export function gridMove(from: string, key: string, ctrl: boolean, at: { layout: GridLayout; month: string; bounds: MonthBounds }): GridMove | null {
+export function gridMove(from: string, key: string, ctrl: boolean, at: GridAt): GridMove | null {
   const start = `${at.bounds.first}-01`;
   const end = at.bounds.lastDay;
   const stay: GridMove = { date: from, month: null };
@@ -323,22 +363,23 @@ export function gridMove(from: string, key: string, ctrl: boolean, at: { layout:
     return date < start || date > end ? stay : { date, month: null };
   };
   const clamp = (date: string): GridMove => ({ date: date < start ? start : date > end ? end : date, month: null });
-  const monthKeys = at.layout === 'month';
   const page = (by: -1 | 1): GridMove => {
-    const month = stepMonth(monthKeys ? at.month : from.slice(0, 7), by);
+    const month = stepMonth(at.layout === 'month' ? at.month : from.slice(0, 7), by);
     if (month < at.bounds.first || month > at.bounds.last) return stay;
     const last = monthRange(month).to;
     const date = `${month}-${from.slice(8, 10)}`;
     return { date: date > last ? last : date, month };
   };
+  // The first day Home goes to and End's 6 days on: the month grid's row (its grid month with Ctrl or Cmd), or the block.
+  const home = at.layout !== 'month' ? at.weekStart : ctrl ? `${at.month}-01` : mondayOf(from);
   const row = at.layout === 'agenda' ? 1 : 7;
   switch (key) {
     case 'ArrowLeft': return step(-1);
     case 'ArrowRight': return step(1);
     case 'ArrowUp': return step(-row);
     case 'ArrowDown': return step(row);
-    case 'Home': return clamp(ctrl && monthKeys ? `${at.month}-01` : mondayOf(from));
-    case 'End': return clamp(ctrl && monthKeys ? monthRange(at.month).to : addDays(mondayOf(from), 6));
+    case 'Home': return clamp(home);
+    case 'End': return clamp(at.layout === 'month' && ctrl ? monthRange(at.month).to : addDays(home, 6));
     case 'PageUp': return page(-1);
     case 'PageDown': return page(1);
     default: return null;

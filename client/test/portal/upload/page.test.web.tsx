@@ -10,6 +10,7 @@ import {
   ACCESS, deferred, EMAIL, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, TARGET_EMAIL, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { choicesOf, choose as pick, shownChoice } from '../../helpers/select';
+import { openMore } from '../../helpers/topBar';
 
 // P13 on the web, through the whole app: choose a file, match columns, check the totals, send. Every file here is
 // synthetic. A sentinel name sits in the cells of every file and must never reach the screen (D11) or the request
@@ -537,7 +538,8 @@ test('a 404 that answers after the person left still reads the organization agai
   await toCheck(csvFile(FILE));
   await click('Send 3 days');
   await screen.findByText('Sending 3 days…');
-  await settle(() => { fireEvent.click(screen.getByRole('link', { name: 'Notes' })); });
+  const notes = within(openMore()).getByRole('link', { name: 'Notes' });
+  await settle(() => { fireEvent.click(notes); });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
   expect(orgReads(api)).toBe(1);
   await act(async () => { answer.resolve(refusal(404, 'not_found')); await answer.promise; });

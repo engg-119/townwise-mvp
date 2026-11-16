@@ -11,6 +11,7 @@ import {
   MONTHS,
   northeastSeries,
   SOURCES,
+  unavailableCounties,
 } from '../../src/marketing/map/countyData';
 
 const round2 = (v: number): number => Math.round(v * 100) / 100;
@@ -23,10 +24,11 @@ function county(townId: string) {
 }
 
 test('every series has 12 finite monthly values for the data year', () => {
-  expect(DATA_YEAR).toBe(2024);
+  expect(DATA_YEAR).toBe(2025);
   expect(MONTHS).toEqual(['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']);
-  expect(countySeries).toHaveLength(12);
-  expect(new Set(countySeries.map((c) => c.fips)).size).toBe(12);
+  // Eleven counties with a series and one BLS did not publish for the whole year: twelve, each once.
+  expect(countySeries).toHaveLength(11);
+  expect(new Set([...countySeries, ...unavailableCounties].map((c) => c.fips)).size).toBe(12);
   for (const s of series) {
     expect([s.label, s.index.length]).toEqual([s.label, 12]);
     expect(s.index.every(Number.isFinite)).toBe(true);
@@ -81,26 +83,49 @@ test('every month has a county above the Northeast and one below it', () => {
   expect(sides).toEqual(MONTHS.map(() => [true, true]));
 });
 
-test('the July gaps for Nantucket and State College match the data', () => {
+test('the July gaps for Bar Harbor and State College match the data', () => {
   const july = 6;
-  expect(northeastSeries.index[july]).toBe(103.51);
-  const nantucket = county('nantucket-ma');
-  expect([nantucket.label, nantucket.index[july], nantucket.gap[july]]).toEqual(['Nantucket County, MA', 197, 93.49]);
+  expect(northeastSeries.index[july]).toBe(103.35);
+  const barHarbor = county('bar-harbor-me');
+  expect([barHarbor.label, barHarbor.index[july], barHarbor.gap[july]]).toEqual(['Hancock County, ME', 159.64, 56.29]);
   const stateCollege = county('state-college-pa');
-  expect([stateCollege.label, stateCollege.index[july], stateCollege.gap[july]]).toEqual(['Centre County, PA', 88.07, -15.44]);
+  expect([stateCollege.label, stateCollege.index[july], stateCollege.gap[july]]).toEqual(['Centre County, PA', 89.24, -14.11]);
 });
 
-test('the provenance is BLS QCEW, NAICS 722, private ownership, 2024, county level', () => {
+test('the provenance is BLS QCEW, NAICS 722, private ownership, 2025, county level', () => {
   const header = readFileSync(join(__dirname, '../../src/marketing/map/countyData.ts'), 'utf8').split('\nexport ')[0] ?? '';
-  for (const fact of ['BLS', 'QCEW', 'NAICS 722', 'private ownership', '2024', 'county level']) expect(header).toContain(fact);
+  for (const fact of ['BLS', 'QCEW', 'NAICS 722', 'private ownership', '2025', 'county level']) expect(header).toContain(fact);
   expect(SOURCES[0]).toEqual({
-    label: 'BLS QCEW open data area slices, NAICS 722, private ownership, 2024',
+    label: 'BLS QCEW open data area slices, NAICS 722, private ownership, 2025 (Northeast: CT ME MA NH NJ NY PA; RI and VT withheld for January to March)',
     url: 'https://www.bls.gov/cew/additional-resources/open-data/',
   });
-  for (const c of countySeries) {
-    expect(c.sourceUrls).toEqual([1, 2, 3, 4].map((q) => `https://data.bls.gov/cew/data/api/2024/${String(q)}/area/${c.fips}.csv`));
+  for (const c of [...countySeries, ...unavailableCounties]) {
+    expect(c.sourceUrls).toEqual([1, 2, 3, 4].map((q) => `https://data.bls.gov/cew/data/api/2025/${String(q)}/area/${c.fips}.csv`));
   }
   for (const { url } of SOURCES) expect(new URL(url).protocol).toBe('https:');
+});
+
+// BLS withheld Rhode Island and Vermont for 2025 Q1, so the Northeast is the seven states it published all year,
+// and every place the definition is stated says so; the header carries the team's CONFIRM marker.
+test('the Northeast is the seven states BLS published for all of 2025, and says so', () => {
+  expect(northeastSeries.label).toBe('Northeast (sum of CT ME MA NH NJ NY PA)');
+  expect(INDEX_DEFINITION).toContain('Northeast: the sum of seven state series (CT ME MA NH NJ NY PA); BLS withheld Rhode Island and Vermont for January to March 2025.');
+  const header = readFileSync(join(__dirname, '../../src/marketing/map/countyData.ts'), 'utf8').split('\nexport ')[0] ?? '';
+  expect(header).toContain('[CONFIRM: the Northeast is the 7 states BLS published for all of 2025; RI and VT were withheld for Jan to Mar]');
+});
+
+// BLS withheld Nantucket County for 2025 Q2, so it has no annual mean and no index: no values at all, only the reason.
+test('a county BLS did not publish for the whole year has no series, only the reason', () => {
+  expect(unavailableCounties).toEqual([{
+    fips: '25019',
+    label: 'Nantucket County, MA',
+    townId: 'nantucket-ma',
+    group: 'seasonalEvent',
+    reason: 'BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.',
+    sourceUrls: [1, 2, 3, 4].map((q) => `https://data.bls.gov/cew/data/api/2025/${String(q)}/area/25019.csv`),
+  }]);
+  expect(countySeries.some((c) => c.townId === 'nantucket-ma')).toBe(false);
+  expect(unavailableCounties[0]?.reason).not.toMatch(/['"\u2013\u2014]/);
 });
 
 test('the notes copy uses typographic apostrophes and no dashes', () => {

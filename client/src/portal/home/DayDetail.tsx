@@ -3,23 +3,26 @@ import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
-import { eventLine, thisDayLine, type MonthDay } from '../analytics/week';
+import { eventLine, thisDayPhrase, type MonthDay } from '../analytics/week';
 import { shortDate, type Metric } from '../analytics/words';
-import { InlineSources } from '../calendar/CalendarDay';
-import { reasonShortLines } from '../calendar/model';
-import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason } from '../estimates/api';
+import { ReasonMark } from '../calendar/CalendarDay';
+import { shortReasons, type ShortReason } from '../calendar/model';
+import { appliedOf, guestsFromWords, yoursDid, type ForecastDay } from '../estimates/api';
 import { formatCount, plural } from '../format';
 import type { LoadState } from '../hooks';
 import type { OrderBoard } from '../orders/api';
 import { locationHref } from '../routing';
+import { PhraseParts } from '../ui/PhraseParts';
+import { SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
 import { orderCoverSentence, orderForDay, REORDER_OVERVIEW } from './beside';
 import { PastCell } from './ThisWeek';
 
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
 // from today on, the published forecast's day when there is one (its figure and range, the guests your notes and
-// business rules add, and its top three reasons in the Calendar's order and short words, “Saturday: usually more
-// guests”, a rule's among them, each ending in the Calendar's small inline Source links; spec 16.3 P11, 14.4, D31), how
+// business rules add, and its three reasons with the largest effect either way, in the Calendar's order and short words,
+// “Saturday: usually more guests” after the Calendar's colored mark, which a note's or a rule's line, its label alone,
+// goes without, a rule's among them, each with its sources as chips, ui/SourceChip.tsx; spec 16.3 P11, 14.4, D31), how
 // the next order relates to the day (P30, from Home's one read of the orders, with a link to the day on Orders), the
 // day's holidays and town events with their sources less those Why already names (as the Calendar's panel leaves
 // them out), your notes, then, with any history, the day's own figure (only for a past day with data; a day after today
@@ -43,24 +46,13 @@ export function forecastDayLines(day: ForecastDay): string[] {
   return [day.noteGuests > 0 ? `${range} Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : range];
 }
 
-/** A Why row: a reason's short line (reasonShortLines) and that reason. */
-export interface WhyRow {
-  line: string;
-  reason: ForecastReason;
-}
-
 /**
- * A forecast day's first `count` reasons in the Calendar's order and short words (reasonShortLines, from today on), each
- * with its reason for its sources. Each line is one reason's own words, so it is matched to the first reason not yet
- * taken whose line it is; two reasons with the same line read the same, so neither row can mislead.
+ * A forecast day's `count` reasons with the largest effect either way, in the Calendar's order and short words, each
+ * with its reason for its sources and, before a line whose words say the direction, Why's mark (shortReasons). Home
+ * passes a forecast day only from today on.
  */
-export function whyRows(day: Pick<ForecastDay, 'reasons'>, count: number): WhyRow[] {
-  const left = day.reasons.map((reason) => ({ reason, line: reasonShortLines({ reasons: [reason] }, false)[0] }));
-  return reasonShortLines(day, false).slice(0, count).flatMap((line) => {
-    const at = left.findIndex((each) => each.line === line);
-    const [taken] = at === -1 ? [] : left.splice(at, 1);
-    return taken === undefined ? [] : [{ line, reason: taken.reason }];
-  });
+export function whyRows(day: Pick<ForecastDay, 'reasons' | 'model'>, count: number): ShortReason[] {
+  return shortReasons(day, false, count);
 }
 
 /** The Reorder part's line: how the next order relates to `date`, or why Townwise can't say. */
@@ -101,7 +93,13 @@ export function DayDetail(props: {
       {why.length === 0 ? null : (
         <Part label="Why">
           {why.map((row, index) => (
-            <Small key={String(index)}>{row.line}<InlineSources sources={row.reason.sources} lead /></Small>
+            <View key={String(index)} style={styles.item}>
+              <View style={styles.line}>
+                {row.mark === null ? null : <ReasonMark mark={row.mark} grade={row.grade} />}
+                <Small style={styles.words}>{row.line}</Small>
+              </View>
+              <SourceChips sources={row.reason.sources} />
+            </View>
           ))}
         </Part>
       )}
@@ -115,9 +113,7 @@ export function DayDetail(props: {
         {events.map((event) => (
           <View key={event.id} style={styles.item}>
             <Small white>{eventLine(event)}</Small>
-            {event.sources.map((source) => (
-              <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-            ))}
+            <SourceChips sources={event.sources} />
           </View>
         ))}
         {day.notes.map((note) => (
@@ -129,7 +125,7 @@ export function DayDetail(props: {
       </Part>
       {history && !day.future ? (
         <Part label="This day">
-          <Mono tone={day.value === null ? 'text3' : 'white'}>{thisDayLine(day, metric)}</Mono>
+          <Mono tone={day.value === null ? 'text3' : 'white'}><PhraseParts phrase={thisDayPhrase(day, metric)} /></Mono>
         </Part>
       ) : null}
       {history ? <Part label="Same weekday last year"><PastCell day={day.lastYear} metric={metric} /></Part> : null}
@@ -144,5 +140,7 @@ const styles = StyleSheet.create({
   root: { gap: theme.space[4], minWidth: 0 },
   part: { gap: theme.space[1], minWidth: 0 },
   item: { gap: 0, minWidth: 0 },
+  line: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
+  words: { flex: 1, minWidth: 0 },
   source: { ...theme.type.mono, color: c.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

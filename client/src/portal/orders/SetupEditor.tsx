@@ -17,6 +17,7 @@ import { ErrorNotice, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import { Lead, Small } from '../ui/text';
 import { deleteItemSales, fetchOrderSetup, saveOrderSetup, type OrderSetup, type OrderSetupAnswer } from './api';
+import { pruneMarks, withMarks, type ProposalImport, type SetupMarks } from './proposal';
 import {
   checkDraft, draftOf, fieldId, newItem, newSupplier, normalizeName, SETUP_LIMITS, type ItemDraft, type SetupDraft, type SetupProblems,
   type SupplierDraft,
@@ -27,19 +28,30 @@ import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 // item-sales specs): the location's suppliers with their deliveries, its items, and the item sales coverage, read with
 // GET .../orders/setup and saved whole with PUT over the version it loaded. Someone else's save in between answers
 // 409 `setup_changed`: the page says so and offers their changes, which replace the draft after a confirm. Shared by
-// both platforms; the web adds the template, the sheet import and the item sales upload through the slots
-// (Setup.web.tsx). Removing an item with history (item sales, counts, saved edits or rules, as the GET's
-// `itemsWithHistory` names them) asks first, in the page. Under view-as every field and write is disabled in place,
-// described by the read-only line.
+// both platforms; the web adds the template, the sheet import, reading a file with TownwiseAI (D41, only while the
+// GET's `canReadWithAi` holds) and the item sales upload through the slots (Setup.web.tsx). Removing an item with
+// history (item sales, counts, saved edits or rules, as the GET's `itemsWithHistory` names them) asks first, in the
+// page. Under view-as every field and write is disabled in place, described by the read-only line. A read's marks
+// (an estimated servings value, a name not in the file) replace their field's helper until the field changes or a
+// save goes through.
 
 const READ_ONLY_ID = 'setup-ro';
 
-type Status = Pick<OrderSetupAnswer, 'today' | 'coverage' | 'itemCoverage' | 'counts' | 'itemsWithHistory'>;
+type Status = Pick<OrderSetupAnswer, 'today' | 'coverage' | 'itemCoverage' | 'counts' | 'itemsWithHistory' | 'canReadWithAi'>;
 
 /** What the sheet tools (web) work on: the draft, before anything saves. */
 export interface SheetSlot {
   readonly draft: SetupDraft;
   readonly setDraft: (next: SetupDraft) => void;
+  readonly locked: boolean;
+  readonly readOnlyId: string | null;
+}
+
+/** What reading with TownwiseAI (web, D41) works on: the draft its suggestions merge into, before anything saves. */
+export interface ReadSlot {
+  readonly draft: SetupDraft;
+  /** Puts a read's merge in the draft, with its marks. */
+  readonly apply: (result: ProposalImport) => void;
   readonly locked: boolean;
   readonly readOnlyId: string | null;
 }
@@ -64,6 +76,7 @@ export interface SalesSlot {
 
 export function SetupEditor(props: {
   sheet?: (slot: SheetSlot) => React.ReactNode;
+  read?: (slot: ReadSlot) => React.ReactNode;
   sales?: (slot: SalesSlot) => React.ReactNode;
 }): React.JSX.Element {
   const { api } = usePortal();
@@ -86,6 +99,7 @@ function saveFailure(error: unknown): string {
 function Editor(props: {
   initial: OrderSetupAnswer;
   sheet?: (slot: SheetSlot) => React.ReactNode;
+  read?: (slot: ReadSlot) => React.ReactNode;
   sales?: (slot: SalesSlot) => React.ReactNode;
 }): React.JSX.Element {
   const { api } = usePortal();
@@ -96,6 +110,7 @@ function Editor(props: {
   const [draft, setDraft] = useState<SetupDraft>(() => draftOf(props.initial.setup));
   const [problems, setProblems] = useState<SetupProblems>({});
   const [problemCount, setProblemCount] = useState(0);
+  const [marks, setMarks] = useState<SetupMarks>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<unknown>(null);
   const [conflict, setConflict] = useState(false);
@@ -114,6 +129,11 @@ function Editor(props: {
   const edit = (next: SetupDraft): void => {
     setDraft(next);
     setNotice(null);
+    setMarks((current) => pruneMarks(current, next));
+  };
+  const applyRead = (result: ProposalImport): void => {
+    edit(result.draft);
+    setMarks((current) => withMarks(current, result.marks));
   };
   const setSupplier = (key: string, next: SupplierDraft): void => {
     edit({ ...draft, suppliers: draft.suppliers.map((supplier) => (supplier.key === key ? next : supplier)) });
@@ -156,6 +176,7 @@ function Editor(props: {
       const stored = await saveOrderSetup(api, location.id, saved?.version ?? 0, check.input);
       setSaved(stored);
       setDraft(draftOf(stored));
+      setMarks({});
       setConflict(false);
       setNotice('Saved the ordering setup.');
     } catch (caught) {
@@ -184,6 +205,7 @@ function Editor(props: {
         setSaved(fresh.setup);
         setStatus(fresh);
         setDraft(draftOf(fresh.setup));
+        setMarks({});
         setProblems({});
         setProblemCount(0);
         setConflict(false);
@@ -230,8 +252,17 @@ function Editor(props: {
         ) : null}
       </View>
       {props.sheet === undefined
-        ? <Small>Use a computer to download the template, import a sheet or upload item sales.</Small>
+        ? (
+          <Small>
+            {status.canReadWithAi
+              ? 'Use a computer to download the template, import a sheet, read a file with TownwiseAI or upload item sales.'
+              : 'Use a computer to download the template, import a sheet or upload item sales.'}
+          </Small>
+        )
         : props.sheet({ draft, setDraft: edit, locked, readOnlyId })}
+      {status.canReadWithAi && props.read !== undefined
+        ? props.read({ draft, apply: applyRead, locked, readOnlyId })
+        : null}
 
       <Section title="Suppliers">
         {draft.suppliers.length === 0 ? <Small>No suppliers yet. Add each one you order from, with its delivery days.</Small> : null}
@@ -267,6 +298,7 @@ function Editor(props: {
             suppliers={draft.suppliers}
             problems={problems}
             status={status}
+            mark={marks[item.key]}
             lock={lock}
             onChange={(next) => { setItem(item.key, next); }}
             onRemove={() => { if (itemHasHistory(item, status)) setRemoving(item.key); else removeItem(item.key); }}

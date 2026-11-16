@@ -26,8 +26,10 @@ if (typeof globalThis.ResizeObserver !== 'function') {
   globalThis.ResizeObserver = ResizeObserverPolyfill;
 }
 
-// jsdom's document is 0px wide, which is a phone to react-native-web; these tests cover the desktop layout.
+// jsdom's document is 0px wide and tall, which is a phone to react-native-web; these tests cover the desktop layout,
+// 1280 by 900, so a card anchored to its opener has room under or over it.
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => 1280 });
+Object.defineProperty(document.documentElement, 'clientHeight', { configurable: true, get: () => 900 });
 
 // Only Date is faked, so "today" is Wed, Nov 11, 2026 and every timer stays real.
 beforeEach(() => {
@@ -117,12 +119,16 @@ function escape(): void {
   act(() => { document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape' })); });
 }
 
-/** A press on the page around the popover, which lands on its transparent backdrop. */
-function pressOutside(card: HTMLElement): void {
+/**
+ * A press on the page around the popover, which lands on its transparent backdrop; true when its mousedown was
+ * cancelled, which in a browser keeps focus where it was.
+ */
+function pressOutside(card: HTMLElement): boolean {
   const backdrop = card.nextElementSibling;
   if (backdrop === null) throw new Error('no backdrop');
-  fireEvent.mouseDown(backdrop);
+  const kept = !fireEvent.mouseDown(backdrop);
   fireEvent.mouseUp(backdrop);
+  return kept;
 }
 
 function guests(card: HTMLElement): HTMLInputElement {
@@ -161,15 +167,17 @@ test('Add an event opens a dialog of that name, prefilled for the day, with focu
   expect(writes(api)).toEqual([]);
 });
 
-test('a press outside keeps the popover open with what was typed; Cancel closes it and focus goes back to the opener', async () => {
+test('a press outside keeps the popover open with what was typed and focus in it; Cancel closes it and focus goes back to the opener', async () => {
   const { api } = setup();
   await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
   const button = press('Add an event');
   const card = dialog('Add an event');
+  focus(guests(card));
   fireEvent.change(guests(card), { target: { value: '70' } });
-  pressOutside(card);
+  expect(pressOutside(card)).toBe(true);
   expect(dialog('Add an event')).toBe(card);
   expect(guests(card).value).toBe('70');
+  expect(document.activeElement).toBe(guests(card));
   // The press selected no day either.
   expect(window.location.search).toBe(`?day=${SATURDAY}`);
   fireEvent.click(within(card).getByRole('button', { name: 'Cancel' }));
@@ -226,6 +234,42 @@ test('Make a note opens a dialog “Make a note” from the event, without its t
   expect(document.activeElement).toBe(make);
 });
 
+type Measured = HTMLElement & { measureInWindow: (callback: (...box: number[]) => void) => void };
+
+/** Gives the panel's button `name` the box x, y, width, height in the window, which jsdom's layout leaves 0 by 0. */
+function placeAt(name: string, box: [number, number, number, number]): void {
+  within(panel()).getByRole<Measured>('button', { name }).measureInWindow = (callback) => { callback(...box); };
+}
+
+/** The card's top, bottom, left, width and maxHeight, from its own style. */
+function placeOf(card: HTMLElement): string[] {
+  const style = window.getComputedStyle(card);
+  return [style.top, style.bottom, style.left, style.width, style.maxHeight];
+}
+
+test('each opener anchors the popover to itself: Edit, Make a note and Add an event each place it by their own box', async () => {
+  const { api } = setup({ notes: [PARTY], forecasts: { '2026-11': november({ guests: 40, id: 'n1' }) }, calendars: [KITCHEN], ownerEvents: [DINNER] });
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  // Three boxes down the panel's column, each centered in the window's right half, so the 400px card's right edge
+  // lines up with its opener's.
+  placeAt(EDIT, [900, 300, 40, 20]);
+  placeAt('Make a note from Smith rehearsal dinner', [920, 500, 100, 20]);
+  placeAt('Add an event', [900, 640, 160, 44]);
+  // 580px below Edit: under it, 8px down, at most 580 less 24px tall.
+  press(EDIT);
+  expect(placeOf(dialog('Edit note'))).toEqual(['328px', '', '540px', '400px', '556px']);
+  escape();
+  // 380px below Make a note: under it too.
+  press('Make a note from Smith rehearsal dinner');
+  expect(placeOf(dialog('Make a note'))).toEqual(['528px', '', '620px', '400px', '356px']);
+  escape();
+  // 216px below Add an event, less than 320 and than the 640 above: over it, its bottom edge 8px above the button.
+  press('Add an event');
+  expect(placeOf(dialog('Add an event'))).toEqual(['', '268px', '660px', '400px', '616px']);
+  escape();
+  expect(writes(api)).toEqual([]);
+});
+
 /** Edits the note, which the API then answers 404 for: the popover closes and the panel says so. */
 async function editGone(api: FakePortalApi): Promise<void> {
   press(EDIT);
@@ -243,6 +287,33 @@ test('a 404 on an edit closes the popover, the panel says so, and focus moves to
   await editGone(api);
   await waitFor(() => { expect(focusOnNotice(GONE)).toBe(true); });
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`]);
+});
+
+test('a saved edit gives focus back to its Edit, or to the panel’s “Saved.” when the note no longer covers the day', async () => {
+  const { api, fake } = setup({ notes: [PARTY], forecasts: { '2026-11': november({ guests: 40, id: 'n1' }) } });
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  api.answers[`${NOTES_PATH}/n1`] = (body) => {
+    const saved = savedNote('n1', body);
+    fake.notes = [saved.note];
+    fake.forecasts['2026-11'] = november(saved.note.startDate === SATURDAY ? { guests: 70, id: 'n1' } : undefined);
+    return saved;
+  };
+  // Still on Nov 21: its Edit stays, and has focus.
+  const edit = press(EDIT);
+  fireEvent.change(guests(dialog('Edit note')), { target: { value: '70' } });
+  fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
+  expect(await within(panel()).findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(within(panel()).getByRole('button', { name: EDIT })).toBe(edit);
+  expect(document.activeElement).toBe(edit);
+  // Moved to Nov 22: its Edit goes from this day once the notes read again, so focus moves to the notice instead.
+  press(EDIT);
+  fireEvent.change(within(dialog('Edit note')).getByLabelText('Starts'), { target: { value: '2026-11-22' } });
+  fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(within(panel()).queryByRole('button', { name: EDIT })).toBeNull(); });
+  expect(screen.queryByRole('dialog')).toBeNull();
+  await waitFor(() => { expect(focusOnNotice('Saved.')).toBe(true); });
+  expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`, `PATCH ${NOTES_PATH}/n1`]);
 });
 
 test('after a 404 focus goes to the panel’s notice, not to a page notice above the grid', async () => {

@@ -1,15 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Link, type Href } from 'expo-router';
 import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
 import { DefinitionList } from '../../portal/ui/DataTable';
+import { SourceChips } from '../../portal/ui/SourceChip';
 import { theme } from '../../theme';
-import { toolLine, viewRows, type SourceLink, type ToolContext, type ToolStep } from '../tools';
+import { toolLine, viewRows, type ToolContext, type ToolStep } from '../tools';
 
 // The tool calls of a reply (spec P25): one row per call, each fading in as it starts while the reply streams; the
 // "Worked for" disclosure (Worked.tsx) holds them once it is done. A done row opens to
-// what it read, as dates, counts and source links (never rows of figures or raw data). No icons: the mono status
+// what it read, as dates, counts and its sources as chips, opening in a new tab (never rows of figures or raw data). No
+// icons but the source chips' site logos (portal/ui/SourceChip.tsx, the chip every source link is): the mono status
 // word ("Reading", "Read", "Couldn’t read") carries the state, in `text2`, `text3` or the error color.
 
 /** Fades its child in over `duration` (easeOut), or shows it at once under reduced motion or until that is known. */
@@ -34,20 +35,11 @@ export function FadeIn(props: { children: React.ReactNode; duration?: number }):
   return <Animated.View style={{ opacity }}>{props.children}</Animated.View>;
 }
 
-function Sources(props: { sources: readonly SourceLink[] }): React.JSX.Element {
-  return (
-    <View style={styles.sources}>
-      {props.sources.map((source) => (
-        <Link key={source.url} href={source.url as Href} target="_blank" rel="noopener" style={styles.source}>{source.host}</Link>
-      ))}
-    </View>
-  );
-}
-
-function Row(props: { step: ToolStep; ctx: ToolContext }): React.JSX.Element {
+/** `ended`: the reply is no longer streaming, so a web search still running never finished (D37). */
+function Row(props: { step: ToolStep; ctx: ToolContext; ended: boolean }): React.JSX.Element {
   const { step, ctx } = props;
   const [open, setOpen] = useState(false);
-  const line = toolLine(step, ctx);
+  const line = toolLine(step, ctx, props.ended);
   const rows = step.state === 'done' ? viewRows(step.input, step.result, step.name) : [];
   const expandable = rows.length > 0 || line.sources.length > 0;
   const tone = step.state === 'running' ? styles.statusRunning : step.state === 'error' ? styles.statusError : styles.statusDone;
@@ -77,20 +69,22 @@ function Row(props: { step: ToolStep; ctx: ToolContext }): React.JSX.Element {
       {open ? (
         <View style={styles.expanded}>
           {rows.length === 0 ? null : <DefinitionList mono items={rows.map((row) => ({ term: row.term, value: row.value }))} />}
-          {line.sources.length === 0 ? null : <Sources sources={line.sources} />}
+          <SourceChips sources={line.sources} target="_blank" rel="noopener" />
         </View>
       ) : null}
     </View>
   );
 }
 
-/** One row per call, each fading in as it starts while the reply streams. */
+/** One row per call, each fading in as it starts while the reply streams; `live` false once the reply has ended. */
 export function ToolGroup(props: { steps: readonly ToolStep[]; live: boolean; ctx: ToolContext }): React.JSX.Element | null {
   const { steps, live, ctx } = props;
   if (steps.length === 0) return null;
   return (
     <View style={styles.group} testID="tool-group">
-      {steps.map((step) => (live ? <FadeIn key={step.id}><Row step={step} ctx={ctx} /></FadeIn> : <Row key={step.id} step={step} ctx={ctx} />))}
+      {steps.map((step) => (live
+        ? <FadeIn key={step.id}><Row step={step} ctx={ctx} ended={false} /></FadeIn>
+        : <Row key={step.id} step={step} ctx={ctx} ended />))}
     </View>
   );
 }
@@ -111,6 +105,4 @@ const styles = StyleSheet.create({
   objectError: { ...theme.type.small, color: c.error },
   detail: { ...theme.type.small, color: c.text2 },
   expanded: { gap: theme.space[2], paddingBottom: theme.space[2] },
-  sources: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[4] },
-  source: { ...theme.type.small, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line, paddingVertical: 12 },
 });

@@ -15,7 +15,8 @@ export interface TownProfile extends TownRecord {
   /** The county the employment series covers: county, not town. */
   county: string;
   year: number;
-  series: CountySeries; northeast: Series;
+  /** Null when BLS did not publish the county for the whole year; seriesUnavailable then says why, else it is null. */
+  series: CountySeries | null; seriesUnavailable: string | null; northeast: Series;
   drivers: readonly Driver[]; dates: readonly KeyDate[];
   caveats: readonly string[]; indexDefinition: string; sources: readonly Source[];
 }
@@ -25,7 +26,7 @@ const PROFILES: ReadonlyMap<string, TownProfile> = new Map(TOWNS.flatMap((town) 
   if (data === undefined) return [];
   return [[town.townId, {
     ...town, anchor: data.anchor, note: data.note, county: data.county, year: TOWN_DATA_YEAR,
-    series: data.series, northeast: NORTHEAST, drivers: data.drivers, dates: data.dates,
+    series: data.series, seriesUnavailable: data.seriesUnavailable, northeast: NORTHEAST, drivers: data.drivers, dates: data.dates,
     caveats: CAVEATS, indexDefinition: INDEX_DEFINITION, sources: SOURCES,
   }] as const];
 }));

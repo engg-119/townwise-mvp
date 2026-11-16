@@ -195,7 +195,7 @@ test('a reply that ends early says why', () => {
     let state: TuningChatState = { ...initialChatState(), status: 'ready', enabled: true };
     state = chatReducer(state, { type: 'send', content: 'x', attachments: [], userKey: 'u', replyKey: 'r', request: { conversationId: null, content: 'x' } }, 0);
     state = chatReducer(state, { type: 'event', event: { type: 'proposal', id: 'p1', proposal: PROPOSAL }, key: 'k', at: '' }, 0);
-    state = chatReducer(state, { type: 'event', event: { type: 'done', stopReason, leafId: null }, key: 'k', at: '' }, 0);
+    state = chatReducer(state, { type: 'event', event: { type: 'done', stopReason, leafId: null, sources: [] }, key: 'k', at: '' }, 0);
     expect(state.messages.at(-1)).toMatchObject({ state: 'complete', note });
     // A refused turn was never stored, so its proposal is not either.
     const last = state.messages.at(-1);
@@ -1271,4 +1271,47 @@ describe('attachments', () => {
     expect(turn(api, 1).body).toEqual({ content: 'Now read this', attachments: [PATIO.ref] });
     expect(second).not.toHaveBeenCalled();
   });
+});
+
+// D37: web search. Synthetic pages, in the shapes api/src/chat/web-search.ts sends.
+test('a web search is a tool step updated in place, and the reply keeps done’s sources, live and loaded from history', async () => {
+  const found = { pages: 9, sources: [{ host: 'www.example.com', url: 'https://www.example.com/fair' }] };
+  const cited = [{ host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road' }];
+  const api = fakeChatApi();
+  const chat = await ready(api);
+  await send(chat, 'When is the fair?');
+  await act(() => {
+    turn(api).emit('tool', { id: 'srvtoolu_01', name: 'web_search', state: 'running', input: null, result: null });
+    turn(api).emit('tool', { id: 'srvtoolu_02', name: 'web_search', state: 'running', input: null, result: null });
+    turn(api).emit('tool', { id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null, result: found });
+    turn(api).emit('text', { delta: 'The fair is on Saturday.' });
+  });
+  expect(stepsOf(reply(chat)).map((step) => [step.id, step.state])).toEqual([['srvtoolu_01', 'done'], ['srvtoolu_02', 'running']]);
+  expect(reply(chat).sources).toEqual([]);
+  await act(() => {
+    turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0.03, leafId: null, sources: [{ host: 'example.net', url: 'http://example.net/a' }, ...cited] });
+    turn(api).end();
+  });
+  // A step still running at done stays as it was: the card says it never finished (src/chat/tools.ts).
+  expect(stepsOf(reply(chat)).map((step) => [step.id, step.state])).toEqual([['srvtoolu_01', 'done'], ['srvtoolu_02', 'running']]);
+  expect(reply(chat)).toMatchObject({ state: 'complete', sources: cited });
+  expect(chat.current.state.messages.map((message) => message.sources)).toEqual([[], cited]);
+
+  const [asked, answered] = CONVERSATION.messages;
+  api.conversation = {
+    ...CONVERSATION,
+    messages: [
+      { ...asked, sources: [] },
+      { ...answered, sources: cited, parts: [{ type: 'tool', id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null, result: found }, { type: 'text', text: 'Saturday.' }] },
+    ],
+  };
+  await act(() => { chat.current.newConversation(); });
+  await opened(chat);
+  expect(chat.current.state.messages.map((message) => message.sources)).toEqual([[], cited]);
+  expect(stepsOf(reply(chat))).toEqual([{ id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null, result: found }]);
+  // A conversation from before D37 lists none.
+  api.conversation = CONVERSATION;
+  await act(() => { chat.current.newConversation(); });
+  await opened(chat);
+  expect(chat.current.state.messages.map((message) => message.sources)).toEqual([[], []]);
 });

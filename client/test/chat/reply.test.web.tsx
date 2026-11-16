@@ -69,7 +69,7 @@ function text(key: string, value: string): MessagePart {
 function msg(key: string, role: ChatMessage['role'], parts: MessagePart[], over: Partial<ChatMessage> = {}): ChatMessage {
   return {
     key, role, parts, state: 'complete', note: null, nodeId: null, parentId: null, feedback: null, ratingError: null, next: null,
-    request: null, startedAt: null, endedAt: null, at: null, attachments: [], ...over,
+    request: null, startedAt: null, endedAt: null, at: null, attachments: [], sources: [], ...over,
   };
 }
 
@@ -768,4 +768,73 @@ it('each message is marked data-msg and its row data-actions always or hover; th
   cleanup();
   render(<UserMessage {...userProps({ actions: 'hover' })} />);
   expect(button('Edit')).toBeTruthy();
+});
+
+// D37: a reply's web searches. Synthetic pages; the card's and the sources' shapes as api/src/chat/web-search.ts sends them.
+const SEARCHED: ToolStep = {
+  id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null,
+  result: { pages: 9, sources: [{ host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road' }] },
+};
+const CITED = [
+  { host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road?day=2' },
+  { host: 'home.dartmouth.edu', url: 'https://home.dartmouth.edu/events' },
+];
+
+it('shows a reply’s sources under its Based on line (D37) as source chips (D40) in a group named Sources, each opening in a new tab', () => {
+  const reply = msg('m2', 'assistant', [{ type: 'tools', key: 'b', steps: [SEARCHED] }, text('c', 'The fair is on Saturday.')], {
+    nodeId: 'a1', parentId: 'u1', sources: CITED,
+  });
+  const view = render(<ReplyView {...replyProps({ message: reply })} />);
+  const group = screen.getByRole('group', { name: 'Sources' });
+  expect(screen.getByText('Sources')).toBeTruthy();
+  const links = within(group).getAllByRole('link');
+  // Each chip shows its site's name, or for a site the manifest lacks the host without www.; the link goes to the URL
+  // as the server sent it, in a new tab, and its title is that URL.
+  expect(links.map((link) => [link.textContent, link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel'), link.getAttribute('title')])).toEqual([
+    ['example.com', 'https://www.example.com/fair', '_blank', 'noopener noreferrer', 'https://www.example.com/fair'],
+    ['example.org', 'https://example.org/road?day=2', '_blank', 'noopener noreferrer', 'https://example.org/road?day=2'],
+    ['Dartmouth', 'https://home.dartmouth.edu/events', '_blank', 'noopener noreferrer', 'https://home.dartmouth.edu/events'],
+  ]);
+  expect(screen.getByRole('link', { name: 'example.org. Source' })).toBe(links[1]);
+  expect(screen.getByRole('link', { name: 'Dartmouth. Source' })).toBe(links[2]);
+  // A site the manifest lacks shows the globe, a drawing; a known one its committed logo instead (jest's asset stub draws
+  // no image, test/portal/ui/source-chip.test.web.tsx checks the logo itself).
+  expect(links.map((link) => link.querySelector('[aria-hidden="true"] svg') !== null)).toEqual([true, true, false]);
+  const basedOn = screen.getByText('Based on public web pages.');
+  expect(before(basedOn, group)).toBe(true);
+  // No sources, no group; a reply that is streaming, failed or stopped shows none.
+  view.rerender(<ReplyView {...replyProps({ message: { ...reply, sources: [] } })} />);
+  expect(screen.queryByRole('group', { name: 'Sources' })).toBeNull();
+  expect(screen.queryByText('Sources')).toBeNull();
+  for (const state of ['streaming', 'failed', 'stopped'] as const) {
+    view.rerender(<ReplyView {...replyProps({ message: { ...reply, state } })} />);
+    expect(screen.queryByRole('group', { name: 'Sources' })).toBeNull();
+  }
+});
+
+it('a web search card reads Searching the web while the reply streams, and once it ended, what it found or that it never finished (D37)', () => {
+  const searching: ToolStep = { id: 'srvtoolu_02', name: 'web_search', state: 'running', input: null, result: null };
+  const live = msg('m2', 'assistant', [{ type: 'tools', key: 'b', steps: [SEARCHED, searching] }], { state: 'streaming' });
+  const view = render(<ReplyView {...replyProps({ message: live })} />);
+  expect(screen.getByText('Searching')).toBeTruthy();
+  expect(screen.getByText('Searched')).toBeTruthy();
+  expect(screen.getAllByText('the web')).toHaveLength(2);
+  // A card has no query to show and nothing to open.
+  expect(screen.getByText('9 pages: example.com, example.org')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /^Searched the web/ })).toBeNull();
+  for (const state of ['complete', 'stopped', 'failed'] as const) {
+    view.rerender(<ReplyView {...replyProps({ message: { ...live, state, parts: [...live.parts, text('c', 'Done.')] } })} />);
+    fireEvent.click(button('Worked'));
+    expect(screen.getByText('Stopped')).toBeTruthy();
+    expect(screen.getByText('before the search finished')).toBeTruthy();
+    expect(screen.queryByText('Searching')).toBeNull();
+    expect(screen.getByText('9 pages: example.com, example.org')).toBeTruthy();
+    fireEvent.click(button('Worked'));
+  }
+  const failed: ToolStep = { ...searching, state: 'error', result: { code: 'max_uses_exceeded' } };
+  view.rerender(<ReplyView {...replyProps({ message: { ...live, state: 'complete', parts: [{ type: 'tools', key: 'b', steps: [failed] }, text('c', 'Done.')] } })} />);
+  fireEvent.click(button('Worked'));
+  expect(screen.getByText('Couldn’t search')).toBeTruthy();
+  expect(screen.queryByText(/max_uses_exceeded/)).toBeNull();
+  expect(screen.getByText('Based on this conversation only.')).toBeTruthy();
 });

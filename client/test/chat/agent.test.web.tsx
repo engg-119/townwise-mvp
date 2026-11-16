@@ -510,7 +510,9 @@ test('the side panel is closed by default and opens as a column from 1024px and 
   const side = await screen.findByTestId('agent-side');
   expect(toggle.getAttribute('aria-expanded')).toBe('true');
   expect(toggle.isConnected).toBe(true);
-  expect(within(side).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
+  // Beside the empty conversation's landing, which lists the questions under its chips, the column leaves them out.
+  expect(within(side).queryByRole('heading', { name: 'Questions for you' })).toBeNull();
+  expect(within(screen.getByTestId('chat-landing-questions')).getByRole('heading', { name: 'Questions for you (2)' })).toBeTruthy();
   expect(within(side).getByRole('heading', { name: 'What it’s been doing' })).toBeTruthy();
   expect(within(side).getByRole('heading', { name: 'This month’s budget' })).toBeTruthy();
   expect(within(side).getByRole('button', { name: 'How TownwiseAI works' })).toBeTruthy();
@@ -846,7 +848,7 @@ test('no horizontal page scroll at 360px with a wide table and a chart', async (
   expect(style(first(Array.from(next.children))).overflowX).toBe('auto');
 });
 
-test('a town profile card’s sources open in a new tab', async () => {
+test('a town profile card’s sources are chips that open in a new tab, while the row’s words keep the host', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);
   await send(api, 'What drives Hanover?');
@@ -859,7 +861,9 @@ test('a town profile card’s sources open in a new tab', async () => {
   expect(screen.getByText('Based on Hanover’s town profile (dartmouth.edu).')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /^Worked for/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Read Hanover’s town profile. dartmouth.edu' }));
-  const link = screen.getByRole('link', { name: 'dartmouth.edu' });
+  // The chip names the site and shows its committed logo; the row's words above keep the host they print.
+  const link = screen.getByRole('link', { name: 'Dartmouth. Source' });
+  expect(link.textContent).toBe('Dartmouth');
   expect(link.getAttribute('href')).toBe('https://dartmouth.edu/calendar');
   expect(link.getAttribute('target')).toBe('_blank');
   expect(link.getAttribute('rel')).toContain('noopener');
@@ -877,9 +881,11 @@ test('under view-as every write is disabled in place and versions still switch b
   expect(input.getAttribute('aria-readonly')).toBe('true');
   expect(input.getAttribute('aria-describedby')).toBe('chat-ro composer-help');
   for (const name of ['Send', 'New chat', 'Which days last month were unusual?']) expectReadOnly(screen.getByRole('button', { name }));
-  const side = await openPanel();
-  expectReadOnly(await within(side).findByRole('button', { name: 'Yes, closed Mondays' }));
-  fireEvent.click(within(side).getByRole('button', { name: 'Yes, closed Mondays' }));
+  await openPanel();
+  // Beside the landing, the cards are under its chips; the panel's column leaves them out.
+  const cards = await screen.findByTestId('chat-landing-questions');
+  expectReadOnly(await within(cards).findByRole('button', { name: 'Yes, closed Mondays' }));
+  fireEvent.click(within(cards).getByRole('button', { name: 'Yes, closed Mondays' }));
   // Reading is allowed: the target's conversation opens, with every action in place and disabled.
   await openEarlierChat();
   // The docked composer shows no example to accept, so Tab can't fill it.

@@ -17,7 +17,8 @@ import { ModelCardSheet } from './ModelCardSheet';
 import { QuestionCard, type QuestionChat } from './QuestionCard';
 
 // The side panel (spec P25): Questions for you, What it's been doing, this month's budget, and How TownwiseAI
-// works. Every activity item is a real, dated event the server read from the location's own records; a kind this
+// works. Beside an empty conversation's landing, which lists the questions under its chips, the column leaves Questions
+// for you out (owner request, 2026-11-15), so they aren't drawn twice. Every activity item is a real, dated event the server read from the location's own records; a kind this
 // client doesn't know shows as nothing. The page shows the four as Questions and activity: a column from 1024px, a
 // sheet below. How TownwiseAI works says whether Townwise has a forecast for the location from
 // GET .../estimates/about (F10), and opens the model card in a sheet.
@@ -234,10 +235,14 @@ export function AgentSidePanel(props: {
   send: SendToChat;
   about: LoadState<EstimatesAbout>;
   onRetryAbout: () => void;
+  /** False while the chat beside the panel lists the questions itself (its landing), so they aren't drawn twice. */
+  showQuestions?: boolean;
 }): React.JSX.Element {
   return (
     <View style={styles.panel}>
-      <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
+      {props.showQuestions === false ? null : (
+        <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
+      )}
       <ActivitySection panel={props.panel} />
       <BudgetSection budget={props.budget} />
       <HowItWorks ctx={props.ctx} locationId={props.locationId} about={props.about} onRetryAbout={props.onRetryAbout} />

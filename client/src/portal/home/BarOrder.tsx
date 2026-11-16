@@ -1,4 +1,4 @@
-import { lateWeekLine, type lateWeekShare } from '../analytics/week';
+import { lateWeekPhrase, type lateWeekShare } from '../analytics/week';
 import { listText, type Metric } from '../analytics/words';
 import { plural } from '../format';
 import type { LoadState } from '../hooks';
@@ -6,6 +6,7 @@ import type { OrderBoard } from '../orders/api';
 import { itemsToOrder } from '../orders/words';
 import { locationHref } from '../routing';
 import { LinkButton } from '../ui/Button';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Small } from '../ui/text';
 import { Block } from './Block';
 
@@ -50,7 +51,7 @@ export function BarOrder(props: {
       {state.status === 'loading' ? <Small>Checking the next order.</Small> : null}
       {state.status === 'failed' ? <Small>Townwise couldn’t check the next order.</Small> : null}
       {words?.lines.map((line, index) => <Small key={line} white={index === 0}>{line}</Small>)}
-      {props.share === null ? null : <Small white>{lateWeekLine(props.share, props.metric)}</Small>}
+      {props.share === null ? null : <Small white><PhraseParts phrase={lateWeekPhrase(props.share, props.metric)} /></Small>}
       {words?.setUp === false
         ? <LinkButton href={locationHref(locationId, 'ordersSetup')} label="Set up ordering" />
         : <LinkButton href={locationHref(locationId, 'orders')} label="Open Orders" />}

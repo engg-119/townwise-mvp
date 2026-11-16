@@ -543,7 +543,7 @@ describe('isolation, case by case', () => {
   });
 
   it('TownwiseAI’s item reader, in A’s scope, finds none of B’s items by any mix of location ids', async () => {
-    const reader = createItemReader(createTownwiseStores(server.connection), blobs);
+    const reader = createItemReader(createTownwiseStores(server.connection), blobs, { logger: { warn: () => undefined } });
     const scope = { orgId: a.orgId } as unknown as OrgScope;
     expect(await reader.readText(scope, a.locationId, b.refFileId)).toEqual({ status: 'not_found' });
     expect(await reader.readText(scope, b.locationId, b.refFileId)).toEqual({ status: 'not_found' });

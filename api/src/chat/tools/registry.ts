@@ -3,13 +3,14 @@
 // blocks, and the prompt cache keys on the tool list, so a tool is never renamed, removed or moved. A new tool goes
 // at the end, in the PR that lands its data, and is then sent on every request; one whose data is missing answers
 // `{ available: false, reason }` instead of being left out. api/test/chat-tools.test.ts pins the names.
-import type { BetaTool, BetaToolResultBlockParam, BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+import type { BetaBase64ImageSource, BetaTool, BetaToolResultBlockParam, BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 
 import type { TownwiseContext } from '../../app.ts';
 import type { OrgScope } from '../../access/policy.ts';
 import type { LocationRecord } from '../../stores/locations.ts';
 import type { NoteContent } from '../../stores/notes.ts';
 import type { Role } from '../../access/resolve.ts';
+import type { ByteGate } from '../attachments.ts';
 import type { AuditEventInput } from '../../stores/audit-events.ts';
 import { compareForecastModelsTool, getCalibrationTool, startCalibrationTool } from './calibration.ts';
 import { dayTool } from './day.ts';
@@ -44,11 +45,33 @@ export interface ToolContext {
   /**
    * What this turn has read so far, shared by its tool calls (D36). `readUntrusted` is set from the start when the
    * turn's requests carry the content of files attached to the person's message, and by read_data_item once it hands
-   * back an item's text in this turn. While it is set, start_calibration (the one tool that acts at once) refuses, so
-   * words from a file of Your data can never start it. A read from an earlier turn is sent again only as a stub
-   * (savedTurn), so it never sets it.
+   * back an item's text or a picture in this turn. While it is set, start_calibration (the one tool that acts at once)
+   * refuses, so words from a file of Your data can never start it. A read from an earlier turn is sent again only as a
+   * stub (savedTurn), so it never sets it. D37: turn.ts sets both flags when the turn's requests carry a web search's
+   * results, which the API puts back in the model's context on every later request too: from the start when the history
+   * holds one, and otherwise before the client tools of the message that got one run. `readWeb` says which refusal.
+   * `pictureBytes` (D36) is the bytes of the pictures the turn's requests carry: the message's, then each picture
+   * read_data_item reads, which it refuses past MESSAGE_PICTURE_BYTES.
    */
-  readonly turn: { readUntrusted: boolean };
+  readonly turn: { readUntrusted: boolean; readWeb: boolean; pictureBytes: number };
+  readonly files: TurnFiles;
+}
+
+/** D36: what read_data_item may read again in this turn beyond text items, and within what. */
+export interface TurnFiles {
+  /**
+   * The refs of the files attached to the person's messages on the turn's path, this turn's message included.
+   * read_data_item reads a picture, PDF, Word or Excel file only when it is one of them: attaching and sending a file is
+   * consent to send it to Anthropic for that turn and later re-reads, and no other file of those kinds is sent.
+   */
+  readonly attached: ReadonlySet<string>;
+  /** When a file read must be done (Date.now() milliseconds): the turn's time limit less ANSWER_TIME_MS. */
+  readonly by: number;
+  /**
+   * The replica's bytes in flight for attached files (ATTACHMENT_BYTES_IN_FLIGHT), as this turn holds them: a read
+   * holds its file's bytes first, and whatever the turn still holds is given back when it ends.
+   */
+  readonly bytes: Pick<ByteGate, 'reserve' | 'release'>;
 }
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
@@ -66,6 +89,11 @@ export type ToolView = Readonly<Record<string, JsonValue>>;
  */
 export interface ToolRun {
   readonly content: string;
+  /**
+   * A picture read_data_item read (D36): sent as an image block after `content` in the tool result, in this turn's
+   * requests only, since the saved conversation keeps the tool's stub (`saved`).
+   */
+  readonly picture?: { readonly mediaType: BetaBase64ImageSource['media_type']; readonly base64: string };
   readonly proposal?: NoteContent;
   readonly visual?: Visual;
   readonly prompts?: string[];
@@ -157,8 +185,12 @@ export async function runTool(tc: ToolContext, block: BetaToolUseBlock): Promise
   const input = tool.parse(block.input, tc.today);
   if (input === null) return { result: failed(block, tool.invalidInput), ...NOTHING_SHOWN };
   const run = await tool.run(tc, input);
+  const content: BetaToolResultBlockParam['content'] = run.picture === undefined ? run.content : [
+    { type: 'text', text: run.content },
+    { type: 'image', source: { type: 'base64', media_type: run.picture.mediaType, data: run.picture.base64 } },
+  ];
   return {
-    result: { type: 'tool_result', tool_use_id: block.id, content: run.content },
+    result: { type: 'tool_result', tool_use_id: block.id, content },
     proposal: run.proposal ?? null, visual: run.visual ?? null, prompts: run.prompts ?? null,
   };
 }
@@ -174,17 +206,29 @@ export function inputViewOf(name: string, raw: unknown, today: string): ToolView
   return tool === undefined || input === null ? null : tool.inputView(input);
 }
 
-/** What the saved conversation keeps of one result: the tool's stub of a result that did not fail, else the same block. */
+/** A result's text: its content when that is a string, else its first block's when that is text (a picture read's). */
+function resultText(result: BetaToolResultBlockParam): string | null {
+  if (typeof result.content === 'string') return result.content;
+  const first = result.content?.[0];
+  return first?.type === 'text' ? first.text : null;
+}
+
+/**
+ * What the saved conversation keeps of one result: the tool's stub of a result that did not fail, else the same block.
+ * A stub is only text, so a picture read's image is never saved.
+ */
 export function savedResultOf(name: string, result: BetaToolResultBlockParam): BetaToolResultBlockParam {
   const tool = toolNamed(name);
-  if (tool?.saved === undefined || result.is_error === true || typeof result.content !== 'string') return result;
-  const content = tool.saved(result.content);
+  const text = resultText(result);
+  if (tool?.saved === undefined || result.is_error === true || text === null) return result;
+  const content = tool.saved(text);
   return content === result.content ? result : { ...result, content };
 }
 
 /** The result view of a call that did not fail; null for an unknown tool, an error result or an unreadable one. */
 export function resultViewOf(name: string, result: BetaToolResultBlockParam): ToolView | null {
   const tool = toolNamed(name);
-  if (tool === undefined || result.is_error === true || typeof result.content !== 'string') return null;
-  return tool.resultView(result.content);
+  const text = resultText(result);
+  if (tool === undefined || result.is_error === true || text === null) return null;
+  return tool.resultView(text);
 }

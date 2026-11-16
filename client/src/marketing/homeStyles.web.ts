@@ -80,8 +80,6 @@ export const homeCss = `
 .pg-home .step-body p{font-size:14px;line-height:20px;color:var(--text2);text-wrap:pretty}
 .pg-home .step-body .lbl{font-family:var(--mono);font-size:12px;color:var(--text3);text-transform:uppercase;letter-spacing:.04em}
 .pg-home .step-body .hw-src{display:flex;flex-wrap:wrap;align-items:center;column-gap:12px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
-.pg-home .hw-src a{display:inline-flex;align-items:center;min-height:44px;color:var(--text2)}
-@media (hover:hover){.pg-home .hw-src a:hover{color:var(--mint)}}
 .pg-home .hw.is-pin{grid-template-columns:repeat(12,minmax(0,1fr));column-gap:20px}
 .pg-home .hw.is-pin .steps{grid-column:1/6;grid-template-columns:minmax(0,1fr);gap:0}
 .pg-home .hw.is-pin .hw-s{min-height:560px;align-content:center}

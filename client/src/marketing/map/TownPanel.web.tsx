@@ -1,8 +1,9 @@
 import type { RefObject } from 'react';
 
 import { fmt0, fmt1, fmtSigned, side } from '../format';
+import { SourceChips } from '../SourceChip.web';
 import { CAVEATS, DATA_YEAR, INDEX_DEFINITION, MONTHS, northeastSeries, SOURCES } from './countyData';
-import { KIND_LABEL, MONTH_NAMES, monthLabel, PATTERN_LABEL, patternGap, valueAt, type MapTown } from './mapState';
+import { KIND_LABEL, MONTH_NAMES, monthLabel, PATTERN_LABEL, patternGap, valueAt, type MapTown, type MeasuredTown } from './mapState';
 
 export interface TownPanelProps {
   // The useId prefix of the map: the card is `${id}town-panel` and the notes row `${id}town-notes`.
@@ -52,7 +53,7 @@ interface Chart {
   ticks: { label: string; y: number }[];
 }
 
-function chartOf(town: MapTown | null): Chart {
+function chartOf(town: MeasuredTown | null): Chart {
   const height = town === null ? 136 : 196;
   const [lo, hi] = town === null ? NE_DOMAIN : town.series.domain;
   const y = (value: number): number => CYT + ((hi - value) / (hi - lo)) * (CYB - CYT);
@@ -87,26 +88,10 @@ function busiestAndQuietest(values: readonly number[]): string {
   return `Busiest month: ${busiest}. Quietest: ${quietest}.`;
 }
 
-// A source's link text is its host for a public institution (.edu, .gov) and "Source" otherwise, so no
-// business name becomes visible copy; repeats within one item are numbered.
-export function sourceLinks(urls: readonly string[]): { url: string; text: string }[] {
-  const texts = urls.map((url) => {
-    const host = new URL(url).hostname.replace(/^www\./, '');
-    return /\.(?:edu|gov)$/.test(host) ? host : 'Source';
-  });
-  return urls.map((url, index) => {
-    const text = texts[index] ?? 'Source';
-    if (texts.filter((other) => other === text).length < 2) return { url, text };
-    return { url, text: `${text} ${texts.slice(0, index + 1).filter((other) => other === text).length}` };
-  });
-}
-
-function Links(props: { urls: readonly string[] }): React.JSX.Element {
-  return (
-    <span className="lk">
-      {sourceLinks(props.urls).map((link, index) => <a key={index} href={link.url} rel="noopener">{link.text}</a>)}
-    </span>
-  );
+// A driver's or date's sources: the bundled data has their links only, so each chip is named by its site, as the
+// portal's Town profile names them (refine-calendar-and-home design decision 6).
+function Links(props: { urls: readonly string[] }): React.JSX.Element | null {
+  return <SourceChips sources={props.urls.map((url) => ({ url }))} />;
 }
 
 // Left and Up go back a month, Right and Down forward, wrapping; Home and End jump to January and December.
@@ -139,15 +124,17 @@ export function fmtRange(start: string, end: string | null): string {
   return `${monthLabel(Number(month) - 1)} ${Number(day)} to ${fmtDate(end)}`;
 }
 
-// The card (ConsoleV2's #town-panel) and the notes row (#town-notes): the region or the chosen town's 2024
+// The card (ConsoleV2's #town-panel) and the notes row (#town-notes): the region or the chosen town's 2025
 // curve against the Northeast, its gap for the month, the sentences and numbers behind it, then the drivers,
-// dates, caveats and sources.
+// dates, caveats and sources. A town without a series (BLS did not publish its county for the year) says why in
+// place of its pattern and shows the Northeast alone: no line, no gap, no pattern.
 export function TownPanel(props: TownPanelProps): React.JSX.Element {
   const { id, town, month, valueFade, cardFade, cardRef, onMonth, onBack } = props;
-  const chart = chartOf(town);
+  const measured = town !== null && town.series !== null ? town : null;
+  const chart = chartOf(measured);
   const mon = `${monthLabel(month)} ${DATA_YEAR}`;
   const ne = valueAt(NE, month);
-  const gap = town === null ? 0 : valueAt(town.series.gap, month);
+  const gap = measured === null ? 0 : valueAt(measured.series.gap, month);
   const datesFromCalendars = town !== null && town.kind === 'college' && town.dates.length > 0;
 
   function onScrubKey(event: React.KeyboardEvent<HTMLDivElement>): void {
@@ -173,18 +160,22 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
               <div className="stk">
                 <div className="ct-row"><h2 className="ct">{town.label}</h2><span className="tag">{KIND_LABEL[town.kind]}</span></div>
                 <p className="cp">{town.note}</p>
-                <p className="cp">Measured across {town.county}, {DATA_YEAR}.</p>
-                <p className="pat">
-                  <span className={`sw sw-${town.pattern}`} aria-hidden="true" />
-                  <span><span className="pat-l">{PATTERN_LABEL[town.pattern]}</span>{patternGap(town)}</span>
-                </p>
+                {measured === null ? <p className="cp">{town.seriesUnavailable}</p> : (
+                  <>
+                    <p className="cp">Measured across {measured.county}, {DATA_YEAR}.</p>
+                    <p className="pat">
+                      <span className={`sw sw-${measured.pattern}`} aria-hidden="true" />
+                      <span><span className="pat-l">{PATTERN_LABEL[measured.pattern]}</span>{patternGap(measured)}</span>
+                    </p>
+                  </>
+                )}
               </div>
             )}
           </div>
           <div className="cb-a">
             <div className="stk">
               <div className="bv">
-                {town === null ? (
+                {measured === null ? (
                   <>
                     <p className={['bv-v is-ne', valueFade].join(' ').trim()}>{fmt1(ne)}</p>
                     <p className="bv-l">Northeast, {mon}</p>
@@ -194,12 +185,12 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
                   <>
                     <p className={['bv-v', valueFade].join(' ').trim()}>{fmtSigned(gap)}</p>
                     <p className="bv-l">{side(gap)} the Northeast, index points, {mon}</p>
-                    <p className="bv-s">{town.county} {fmt1(valueAt(town.series.index, month))} · Northeast {fmt1(ne)}</p>
+                    <p className="bv-s">{measured.county} {fmt1(valueAt(measured.series.index, month))} · Northeast {fmt1(ne)}</p>
                   </>
                 )}
               </div>
               <div className="ch-key" aria-hidden="true">
-                <span className="ck"><span className={town === null ? 'ln-tw is-empty' : 'ln-tw'} />{town === null ? 'Town’s county' : town.county}</span>
+                <span className="ck"><span className={measured === null ? 'ln-tw is-empty' : 'ln-tw'} />{town === null ? 'Town’s county' : town.county}</span>
                 <span className="ck"><span className="ln-ne" />Northeast</span>
               </div>
               <div>
@@ -219,7 +210,7 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
                 </div>
                 <div className="ch-x" aria-hidden="true"><span>{monthLabel(0)}</span><span>{DATA_YEAR}</span><span>{monthLabel(11)}</span></div>
               </div>
-              <p className="ch-cap">{town === null ? '' : 'Scale fitted to this town. '}Index: 100 = an average month</p>
+              <p className="ch-cap">{measured === null ? '' : 'Scale fitted to this town. '}Index: 100 = an average month</p>
               <div className="scrub" role="radiogroup" aria-label="Month" onKeyDown={onScrubKey}>
                 {MONTHS.map((label, index) => (
                   <button
@@ -239,25 +230,25 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
           </div>
           <div className="cb-t">
             <div className="tx">
-              {town === null ? <p>{busiestAndQuietest(NE)}</p> : <TownSentences town={town} />}
+              {town === null ? <p>{busiestAndQuietest(NE)}</p> : measured === null ? null : <TownSentences town={measured} />}
             </div>
             <details className="nums">
               <summary><span>Show the numbers</span></summary>
-              <div className="tbl" role="region" tabIndex={0} aria-label={`Numbers: ${town === null ? 'the Northeast' : `${town.county} and the Northeast`}, ${DATA_YEAR}`}>
+              <div className="tbl" role="region" tabIndex={0} aria-label={`Numbers: ${measured === null ? 'the Northeast' : `${measured.county} and the Northeast`}, ${DATA_YEAR}`}>
                 <table>
                   <thead>
                     <tr>
                       <th scope="col">Month</th>
-                      {town === null ? <th scope="col">Northeast</th> : <><th scope="col">{town.county}</th><th scope="col">Northeast</th><th scope="col">Gap</th></>}
+                      {measured === null ? <th scope="col">Northeast</th> : <><th scope="col">{measured.county}</th><th scope="col">Northeast</th><th scope="col">Gap</th></>}
                     </tr>
                   </thead>
                   <tbody>
                     {MONTHS.map((label, index) => (
                       <tr key={label}>
                         <th scope="row">{label}</th>
-                        {town !== null && <td>{fmt1(valueAt(town.series.index, index))}</td>}
+                        {measured !== null && <td>{fmt1(valueAt(measured.series.index, index))}</td>}
                         <td>{fmt1(valueAt(NE, index))}</td>
-                        {town !== null && <td>{fmtSigned(valueAt(town.series.gap, index))}</td>}
+                        {measured !== null && <td>{fmtSigned(valueAt(measured.series.gap, index))}</td>}
                       </tr>
                     ))}
                   </tbody>
@@ -300,7 +291,10 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
             <p className="fine">{INDEX_DEFINITION}</p>
           </div>
           <div className="nt-c">
-            <ul className="srcs mono-s">{SOURCES.map((source) => <li key={source.url}><a href={source.url} rel="noopener">{source.label}</a></li>)}</ul>
+            {/* Each source's label stays text above its chip, so the two Census layers and the us-atlas file (which
+                jsDelivr serves) read apart without a hover. The label is a block, so a wrapped one keeps the fine
+                print's line height (inline, its lines took the page's 28px). */}
+            <ul>{SOURCES.map((source) => <li key={source.url}><p className="fine">{source.label}</p><SourceChips sources={[source]} /></li>)}</ul>
           </div>
         </div>
       </div>
@@ -309,7 +303,7 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
 }
 
 // The copy file's sentences for a town, read off its county's index and largest gap.
-function TownSentences(props: { town: MapTown }): React.JSX.Element {
+function TownSentences(props: { town: MeasuredTown }): React.JSX.Element {
   const { county, pattern, kind, series } = props.town;
   const { index, largestGap } = series;
   const gapMonth = MONTH_NAMES[largestGap.monthIndex] ?? '';

@@ -1,7 +1,7 @@
 import { cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
 import type { OrgDetail } from '../../../src/portal/console/schemas';
-import { ACCESS, offline, refusal, viewAsMe, writes } from '../../helpers/portal';
+import { ACCESS, offline, openAsAdminMe, refusal, viewAsMe, writes } from '../../helpers/portal';
 import {
   auditEvent, CHEF_EMAIL, consoleApi, emailOf, MANAGER_EMAIL, member, orgDetail, OWNER_EMAIL, renderAt, type ConsoleApi,
 } from './helpers';
@@ -71,8 +71,9 @@ test('the header, the team, the locations as metadata only, recent activity, and
   expect(within(rowOf(locations, 'Hanover, NH')).getAllByRole('cell').map((cell) => cell.textContent)).toEqual([
     'Hanover', 'Hanover, NH', '400', 'Jan 1, 2025', 'Feb 4, 2026', '2', 'Feb 5, 2026',
   ]);
-  expect(screen.getByText('Sales figures and notes are visible only through View as.')).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
+  expect(screen.getByText('Sales figures and notes are visible only through Open as admin or View as.')).toBeTruthy();
+  // Someone joined, and Open as admin still shows (owner call, 2026-11-15).
+  expect(screen.getByRole('button', { name: 'Open as admin' })).toBeTruthy();
 
   const activity = screen.getByRole('region', { name: 'Recent activity' });
   expect(within(activity).getByText(`Added ${CHEF_EMAIL} as member`)).toBeTruthy();
@@ -181,6 +182,8 @@ test('Suspend confirms first; once suspended, Reactivate and Delete organization
   fireEvent.click(within(dialog).getByRole('button', { name: 'Suspend' }));
   expect(await screen.findByRole('button', { name: 'Reactivate' })).toBeTruthy();
   expect(screen.getByText('Suspended')).toBeTruthy();
+  // Open as admin is closed while suspended.
+  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
   expect(screen.getByText(`Members of ${NAME} see that access is paused. Data is kept.`)).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Delete organization' })).toBeTruthy();
   expect(screen.queryByText(`Suspend ${NAME} before deleting it.`)).toBeNull();
@@ -191,6 +194,66 @@ test('Suspend confirms first; once suspended, Reactivate and Delete organization
     { method: 'PATCH', path: PATH, body: { status: 'suspended' } },
     { method: 'PATCH', path: PATH, body: { status: 'active' } },
   ]);
+});
+
+const OPEN_DIALOG = `Open ${NAME} as its admin`;
+const OPEN_BODY = `Someone has joined ${NAME}, so give a reason. You’ll see and change what its admins can, except its team, until you end it or your staff sign-in ends. ${NAME}’s admins see your reason and every change you make in their Townwise staff activity.`;
+
+test('Open as admin after someone joined asks a reason of 5 to 200 characters first, as View as does, and sends nothing until then', async () => {
+  const api = consoleApi();
+  serve(api, orgDetail());
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open as admin' }));
+  const dialog = screen.getByRole('dialog', { name: OPEN_DIALOG });
+  expect(within(dialog).getByText(OPEN_BODY)).toBeTruthy();
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Reason' }), { target: { value: '  abc ' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Open its portal' }));
+  expect(await within(dialog).findByText('Enter a reason, 5 to 200 characters.')).toBeTruthy();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(writes(api)).toEqual([]);
+});
+
+test('Open as admin after someone joined: posts the reason and opens the dashboard under the banner', async () => {
+  const api = consoleApi();
+  serve(api, orgDetail());
+  api.routes[`POST ${PATH}/open-as-admin`] = () => {
+    api.me = openAsAdminMe();
+    return api.me;
+  };
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open as admin' }));
+  const dialog = screen.getByRole('dialog', { name: OPEN_DIALOG });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Reason' }), { target: { value: '  Fixing their location settings ' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Open its portal' }));
+  await waitFor(() => { expect(window.location.pathname).toBe('/dashboard'); });
+  expect(writes(api)).toEqual([{ method: 'POST', path: `${PATH}/open-as-admin`, body: { reason: 'Fixing their location settings' } }]);
+  const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. Its admins see each change you make in their Townwise staff activity.')).toBeTruthy();
+});
+
+test('Open as admin answering 409 org_suspended reads the page again, hides the button and says why', async () => {
+  const api = consoleApi();
+  let status: 'active' | 'suspended' = 'active';
+  api.routes[`GET ${PATH}`] = () => orgDetail({ org: { status } });
+  api.routes[`GET ${PATH}/forecast-runs`] = () => ({ runs: [] });
+  api.routes[`GET ${PATH}/calibrations`] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
+  api.routes[`POST ${PATH}/open-as-admin`] = () => {
+    // Another staff member suspended it meanwhile.
+    status = 'suspended';
+    return refusal(409, 'org_suspended');
+  };
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Open as admin' }));
+  const dialog = screen.getByRole('dialog', { name: OPEN_DIALOG });
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Reason' }), { target: { value: 'Fixing their location settings' } });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Open its portal' }));
+  expect(await screen.findByText(`${NAME} is suspended, so it can’t be opened as its admin.`)).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByText('Suspended')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Open as admin' })).toBeNull();
+  expect(gets(api)).toBe(2);
+  expect(window.location.pathname).toBe('/admin/orgs/o1');
 });
 
 test('Delete organization (C7): only suspended, the typed name, then the list with “Deleted {org}.”', async () => {

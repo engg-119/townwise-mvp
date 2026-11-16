@@ -1,24 +1,23 @@
 import { useCallback, useEffect, useState } from 'react';
+import { usePathname } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
-import { ApiError } from '../../api/client';
 import { theme } from '../../theme';
 import { hasCode } from '../errors';
 import { useLoad } from '../hooks';
-import { downloadClean, downloadRaw, listFiles, removeOriginals, removeRaw } from '../files/api';
-import { cleanName, COPY as FILE_COPY, deleteAllRawBody, deletedOriginalsLine, deleteRawBody, formatSize } from '../files/copy';
-import { CAN_SAVE_FILES, saveFile } from '../files/download';
+import { listFiles, removeOriginals } from '../files/api';
+import { COPY as FILE_COPY, deleteAllRawBody, deletedOriginalsLine, formatSize } from '../files/copy';
 import { ZipEntries } from '../files/ZipEntries';
 import { shownLocationName } from '../locations/naming';
 import { LoadFailure, UploadAction, useOrgRefreshOnLeave } from '../locations/parts';
 import { CAN_DROP } from '../onboarding/HistoryStepDrop';
-import { usePortal, useReadOnly } from '../PortalProvider';
+import { noticeShowsAt, usePortal, useReadOnly } from '../PortalProvider';
 import { itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { TableSkeleton } from '../skeleton';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { DataTable, type Column } from '../ui/DataTable';
+import { DataTable, RowLink, type Column } from '../ui/DataTable';
 import { EmptyState, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
@@ -26,41 +25,36 @@ import { Select } from '../ui/Select';
 import { Lead, Small } from '../ui/text';
 import { AddFile } from './AddFile';
 import { rowAiLine } from './aiCopy';
-import { listData, removeItem, setEnabled, type DataItem } from './api';
+import { listData, type DataItem } from './api';
 import {
-  addedLine, COLUMNS, DATA, dataError, daysLine, deletedFileLine, deletedUploadLine, deleteFileBody, deleteUploadBody, empty, itemName,
-  kindLabel, lead, shownName, stateLine, tableLabel, turnedOffLine, turnedOnLine, VIA_LINE,
+  addedLine, COLUMNS, DATA, dataError, daysLine, empty, isReference, itemName, kindLabel, lead, shownName, stateLine, tableLabel, VIA_LINE,
 } from './copy';
 import { PasteText } from './PasteText';
 
 // P26 Your data (D28), /locations/[locationId]/data: every upload and stored file a location received, newest
-// first, with what Townwise did with it and the actions the person may take: Open (its own page, P27, ItemPage.tsx),
-// Turn off or on (acts at once), the downloads (web), and the deletes, each of which says in words what goes and what
-// stays. “Show” widens the list to every location. Under view-as the API sends no names and no rights: the rows show
-// kinds and dates, and every action but Open is disabled in place under the read-only line. Stored files off (503) hides Add a file, Paste text and
-// the file actions; uploads still list, turn off and delete. A delete takes its opener away, so focus moves to the
-// line that says how it ended (MessageFocus, as Your files did). Turning an item off or on and deleting one change
-// the location's day counts, so the organization (GET /api/org) is read again when the page closes. An item kept
-// for reference is its original, so it has Delete and no Delete original. Org admins also get "Delete all originals
-// for this location" (one location shown, a sales file's original stored), which leaves reference items whole. A
-// download keeps its state in its row, as Your files' rows did: only that row's downloads wait, and its error shows
-// there. Item sales, the ordering setup and counts are not listed here; one line points to Ordering setup.
+// first, with what Townwise did with it. A row opens the item's own page (P27, ItemPage.tsx) from a press anywhere on
+// it, its name being the row's one link (DataTable's RowLink); an item still uploading has nothing to open, so its row
+// is not linked. Turn off or on, the downloads and the deletes are on the item's page. Opening is a read, so rows stay
+// linked under view-as, where the API sends no names: the rows show kinds and dates. “Show” widens the list to every
+// location. Stored files off (503) hides Add a file and Paste text; uploads still list. Org admins also get "Delete
+// all originals for this location" (one location shown, a sales file's original stored), which leaves reference items
+// whole; it takes its opener away, so focus moves to the line that says how it ended (MessageFocus, as Your files
+// did), and it changes what the location holds, so the organization (GET /api/org) is read again when the page closes.
+// Opened with a page notice meant for it that hasn't shown yet (an item's page deleted the item and came back here), it
+// gives that notice focus, since the control that had focus went with the item's page.
+// Item sales, the ordering setup and counts are not listed here; one line points to Ordering setup.
 
 const READ_ONLY_ID = 'data-ro';
 const ALL = 'all';
 
-type Confirm =
-  | { kind: 'upload'; item: DataItem }
-  | { kind: 'file'; item: DataItem }
-  | { kind: 'raw'; item: DataItem }
-  | { kind: 'all'; locationId: string };
-
-/** A stored file kept for reference: the original is the whole item, with no cleaned copy and no days. */
-function isReference(item: Pick<DataItem, 'ref' | 'outcome'>): boolean {
-  return item.ref.startsWith('f_') && item.outcome === 'reference';
-}
-
 export function DataPage(): React.JSX.Element {
+  const { notice } = usePortal();
+  const pathname = usePathname();
+  // Read once, on arrival: the notice is marked shown as it first renders.
+  const [arrived] = useState(() => notice !== null && notice.shownAt === null && noticeShowsAt(notice.where, pathname));
+  // The location layout's MessageFocus, which holds its page notice; Data's own is inside.
+  const focusNotice = useFocusMessage();
+  useEffect(() => { if (arrived) focusNotice(); }, [arrived, focusNotice]);
   return <MessageFocus><Data /></MessageFocus>;
 }
 
@@ -97,14 +91,11 @@ function Data(): React.JSX.Element {
   const [older, setOlder] = useState<{ items: DataItem[]; next: string | null | undefined; pending: boolean; error: unknown }>({
     items: [], next: undefined, pending: false, error: null,
   });
-  // A row as the API last answered it, after Turn off or on, until the list loads again.
-  const [patched, setPatched] = useState<Readonly<Record<string, DataItem>>>({});
-  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  // The location whose originals "Delete all originals" is asking to delete.
+  const [confirm, setConfirm] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const [failure, setFailure] = useState<unknown>(null);
-  // The ref of the item a Turn off or on is running for.
-  const [busy, setBusy] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
 
   // Stored files on or off, asked of the first file list: off answers 503 files_unavailable. Web only.
@@ -121,31 +112,8 @@ function Data(): React.JSX.Element {
 
   const fresh = useCallback((): void => {
     setOlder({ items: [], next: undefined, pending: false, error: null });
-    setPatched({});
     reload();
   }, [reload]);
-
-  const toggle = (item: DataItem): void => {
-    if (busy !== null) return;
-    const enable = !item.enabled;
-    setBusy(item.ref);
-    setFailure(null);
-    setEnabled(api, item.locationId, item.ref, enable).then(
-      (updated) => {
-        markStale();
-        setBusy(null);
-        setPatched((value) => ({ ...value, [item.ref]: updated }));
-        setNotice(enable ? turnedOnLine(itemName(item)) : turnedOffLine(itemName(item), nameOf(item.locationId)));
-        setEnded((n) => n + 1);
-      },
-      (error: unknown) => {
-        setBusy(null);
-        setFailure(error);
-        setEnded((n) => n + 1);
-        if (error instanceof ApiError && error.kind === 'http' && error.status === 404) fresh();
-      },
-    );
-  };
 
   // A failed load (the first, after Show changed, or again after a write) shows in place of the list, with Try
   // again; the rest of the page stays, so Show can still switch back. Rows from before are not kept: they may be stale.
@@ -154,7 +122,7 @@ function Data(): React.JSX.Element {
   const first = state.status === 'ready' && state.data.scope === scope ? state.data.page.items : kept?.items ?? null;
   const firstNext = state.status === 'ready' && state.data.scope === scope ? state.data.page.next : kept?.next ?? null;
 
-  const items = first === null ? null : [...first, ...older.items].map((item) => patched[item.ref] ?? item);
+  const items = first === null ? null : [...first, ...older.items];
   const next = older.next === undefined ? firstNext : older.next;
 
   const showOlder = (): void => {
@@ -180,22 +148,8 @@ function Data(): React.JSX.Element {
       setEnded((n) => n + 1);
       fresh();
     };
-    if (confirm.kind === 'upload') {
-      const { item } = confirm;
-      removeItem(api, item.locationId, item.ref).then((result) => { done(deletedUploadLine(result.deletedDays)); }, failed);
-    } else if (confirm.kind === 'file') {
-      const { item } = confirm;
-      removeItem(api, item.locationId, item.ref).then(() => { done(deletedFileLine(itemName(item))); }, failed);
-    } else if (confirm.kind === 'raw') {
-      const { item } = confirm;
-      if (item.file === null) return;
-      removeRaw(api, item.locationId, item.file.id).then(() => { done(FILE_COPY.rawDeleted); }, failed);
-    } else {
-      removeOriginals(api, confirm.locationId).then((result) => { done(deletedOriginalsLine(result)); }, failed);
-    }
+    removeOriginals(api, confirm).then((result) => { done(deletedOriginalsLine(result)); }, failed);
   };
-
-  const dialog = confirm === null ? null : dialogOf(confirm, nameOf);
 
   const columns: Column[] = [
     { key: 'item', label: COLUMNS.item, flex: 1.6 },
@@ -205,11 +159,12 @@ function Data(): React.JSX.Element {
     { key: 'size', label: COLUMNS.size, flex: 0.8 },
     { key: 'status', label: COLUMNS.status, flex: 1.4 },
     { key: 'days', label: COLUMNS.days, flex: 1.4 },
-    { key: 'actions', label: COLUMNS.actions, flex: 1.6, hiddenLabel: true },
   ];
 
+  // An item still uploading has nothing to open yet.
   const rows = (items ?? []).map((item) => ({
     key: item.ref,
+    ...(item.state === 'uploading' ? {} : { href: itemHref(item.locationId, item.ref) }),
     cells: {
       item: <ItemCell item={item} />,
       location: nameOf(item.locationId),
@@ -218,9 +173,6 @@ function Data(): React.JSX.Element {
       size: item.sizeBytes === null ? DATA.noFileKept : formatSize(item.sizeBytes),
       status: <StatusCell item={item} />,
       days: daysLine(item.days),
-      actions: (
-        <RowActions item={item} readOnly={readOnly} toggling={busy !== null} onToggle={toggle} onConfirm={setConfirm} />
-      ),
     },
   }));
   // A sales file's original the reader is done with, at the one location shown: what "Delete all originals" deletes.
@@ -243,7 +195,7 @@ function Data(): React.JSX.Element {
             compact
             value={scope}
             items={[{ value: location.id, label: location.name }, { value: ALL, label: DATA.allLocations }]}
-            onChange={(value) => { setShowAll(value === ALL); setOlder({ items: [], next: undefined, pending: false, error: null }); setPatched({}); }}
+            onChange={(value) => { setShowAll(value === ALL); setOlder({ items: [], next: undefined, pending: false, error: null }); }}
           />
         ) : null}
         <Actions>
@@ -285,7 +237,7 @@ function Data(): React.JSX.Element {
               label={FILE_COPY.deleteAllRaw}
               disabled={readOnly}
               {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
-              onPress={() => { setConfirm({ kind: 'all', locationId: location.id }); }}
+              onPress={() => { setConfirm(location.id); }}
             />
           </Actions>
         ) : null}
@@ -300,10 +252,10 @@ function Data(): React.JSX.Element {
         )}
       </Stack>
       <ConfirmDialog
-        visible={dialog !== null}
-        title={dialog?.title ?? ''}
-        body={dialog?.body ?? ''}
-        confirmLabel={dialog?.label ?? ''}
+        visible={confirm !== null}
+        title={FILE_COPY.deleteAllRaw}
+        body={confirm === null ? '' : deleteAllRawBody(nameOf(confirm))}
+        confirmLabel={FILE_COPY.deleteAllRaw}
         pendingLabel={DATA.deleting}
         pending={pending}
         onConfirm={run}
@@ -313,130 +265,14 @@ function Data(): React.JSX.Element {
   );
 }
 
-function dialogOf(confirm: Confirm, nameOf: (locationId: string) => string): { title: string; body: string; label: string } {
-  switch (confirm.kind) {
-    case 'upload':
-      return { title: DATA.deleteUploadTitle, body: deleteUploadBody(confirm.item, nameOf(confirm.item.locationId)), label: DATA.deleteUploadConfirm };
-    case 'file':
-      return { title: DATA.deleteFileTitle, body: deleteFileBody(itemName(confirm.item)), label: DATA.deleteFileConfirm };
-    case 'raw':
-      return {
-        title: FILE_COPY.deleteRaw,
-        body: deleteRawBody({
-          name: confirm.item.name, kind: confirm.item.kind === 'daily_totals' ? 'other' : confirm.item.kind, uploadedAt: confirm.item.addedAt,
-        }),
-        label: FILE_COPY.deleteRaw,
-      };
-    case 'all':
-      return { title: FILE_COPY.deleteAllRaw, body: deleteAllRawBody(nameOf(confirm.locationId)), label: FILE_COPY.deleteAllRaw };
-  }
-}
-
-/**
- * One row's actions. Turn off and on act at once; a delete asks first. A download keeps its own state, so only this
- * row's download buttons wait for it, and a failed one says why here, beside the button the person pressed.
- */
-function RowActions(props: {
-  item: DataItem;
-  readOnly: boolean;
-  /** A Turn off or on is running, on this row or another. */
-  toggling: boolean;
-  onToggle: (item: DataItem) => void;
-  onConfirm: (confirm: Confirm) => void;
-}): React.JSX.Element {
-  const { item } = props;
-  const { api } = usePortal();
-  const [saving, setSaving] = useState<'raw' | 'clean' | null>(null);
-  const [error, setError] = useState<unknown>(null);
-  const file = item.file;
-  const name = itemName(item);
-  const named = (action: string): string => `${action}: ${name}`;
-  const action = item.enabled ? DATA.turnOff : DATA.turnOn;
-  // Opening is a read, so it stays under view-as. An item still uploading has nothing to open yet.
-  const open = item.state === 'uploading' ? null : (
-    <LinkButton variant="link" href={itemHref(item.locationId, item.ref)} label={DATA.open} accessibilityLabel={named(DATA.open)} />
-  );
-  if (props.readOnly) {
-    return (
-      <Actions>
-        {open}
-        <Button variant="link" label={action} accessibilityLabel={named(action)} disabled describedBy={READ_ONLY_ID} />
-        <Button variant="link" label={DATA.delete} accessibilityLabel={named(DATA.delete)} disabled describedBy={READ_ONLY_ID} />
-      </Actions>
-    );
-  }
-
-  const save = (which: 'raw' | 'clean'): void => {
-    if (file === null || saving !== null) return;
-    setSaving(which);
-    setError(null);
-    const blob = which === 'raw'
-      ? downloadRaw(api, item.locationId, { id: file.id, sizeBytes: item.sizeBytes ?? 0 })
-      : downloadClean(api, item.locationId, file.id);
-    blob.then(
-      (data) => { saveFile(data, which === 'raw' ? (item.name ?? 'file') : cleanName({ name: item.name })); setSaving(null); },
-      (caught: unknown) => { setError(caught); setSaving(null); },
-    );
-  };
-
-  const canRaw = file !== null && file.canDownloadRaw && file.rawAvailable;
-  const canClean = file !== null && file.canDownloadClean && file.hasClean;
-  // The API allows it on an item kept for reference, but there it would leave a row with nothing in it: Delete does that whole.
-  const canDeleteRaw = file !== null && file.canDeleteRaw && file.rawAvailable && !isReference(item);
-  return (
-    <View style={styles.actions}>
-      {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
-      <Actions>
-        {open}
-        {item.canTurnOff ? (
-          <Button variant="link" label={action} accessibilityLabel={named(action)} disabled={props.toggling} onPress={() => { props.onToggle(item); }} />
-        ) : null}
-        {canRaw && CAN_SAVE_FILES ? (
-          <Button
-            variant="link"
-            label={saving === 'raw' ? FILE_COPY.downloading : DATA.downloadRaw}
-            accessibilityLabel={named(DATA.downloadRaw)}
-            disabled={saving !== null}
-            onPress={() => { save('raw'); }}
-          />
-        ) : null}
-        {canClean && CAN_SAVE_FILES ? (
-          <Button
-            variant="link"
-            label={saving === 'clean' ? FILE_COPY.downloading : DATA.downloadClean}
-            accessibilityLabel={named(DATA.downloadClean)}
-            disabled={saving !== null}
-            onPress={() => { save('clean'); }}
-          />
-        ) : null}
-        {canDeleteRaw ? (
-          <Button
-            variant="link"
-            label={DATA.deleteOriginal}
-            accessibilityLabel={named(DATA.deleteOriginal)}
-            onPress={() => { props.onConfirm({ kind: 'raw', item }); }}
-          />
-        ) : null}
-        {item.canDelete ? (
-          <Button
-            variant="link"
-            label={DATA.delete}
-            accessibilityLabel={named(DATA.delete)}
-            onPress={() => { props.onConfirm({ kind: item.ref.startsWith('u_') ? 'upload' : 'file', item }); }}
-          />
-        ) : null}
-      </Actions>
-      {error === null ? null : <Messages live="alert" items={[dataError(error)]} />}
-    </View>
-  );
-}
-
 function ItemCell(props: { item: DataItem }): React.JSX.Element {
   const { item } = props;
   const entries = item.file?.entries ?? null;
   return (
     <View style={styles.cell}>
-      <Text style={styles.name}>{shownName(item)}</Text>
+      {item.state === 'uploading' ? <Text style={styles.name}>{shownName(item)}</Text> : (
+        <RowLink href={itemHref(item.locationId, item.ref)} label={shownName(item)} accessibilityLabel={itemName(item)} />
+      )}
       <Text style={styles.note}>{VIA_LINE[item.via]}</Text>
       {/* Deleted by a person or by retention. An item kept for reference has no cleaned copy or days to keep. */}
       {item.file === null || item.file.rawAvailable || item.state === 'uploading' || isReference(item) ? null : (
@@ -472,6 +308,5 @@ const styles = StyleSheet.create({
   name: { ...theme.type.mono, color: c.white },
   value: { ...theme.type.mono, fontVariant: ['tabular-nums'], color: c.text2 },
   note: { ...theme.type.small, color: c.text2 },
-  actions: { gap: theme.space[1], minWidth: 0 },
   ordering: { gap: theme.space[1] },
 });

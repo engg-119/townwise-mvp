@@ -1,6 +1,6 @@
 import {
-  buildGrid, buildWeek, cardWords, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, inGrid, pastRangeFor, shownFor,
-  stepWeek, weekLabel, weekOf, type DayCell, type GridSlot, type WeekCard, type WeekDay, type WeekSlot,
+  buildGrid, buildWeek, cardWords, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, inGrid, pastRangeFor,
+  readRangeFor, shownFor, stepWeek, weekDays, weekLabel, weekRange, weekStartFor, type DayCell, type GridSlot, type WeekCard, type WeekDay, type WeekSlot,
 } from '../../../src/portal/calendar/grid';
 import {
   ALL_FILTERS, calendarMonth, dayCell, dayView, monthBounds, stepMonth, tooltipLines, type CalendarInput, type ImportedEvent,
@@ -144,7 +144,7 @@ test('pastRangeFor reads the range’s past days and the 8 weeks before it, or n
 
 /** The model's reads with nothing in them but `fields`. */
 function reads(fields: Partial<CalendarInput> = {}): CalendarInput {
-  return { today: TODAY, month: '2026-11', forecast: null, salesDays: [], events: [], notes: [], imported: [], filters: ALL_FILTERS, ...fields };
+  return { today: TODAY, covered: gridRange('2026-11', monthBounds(TODAY)), forecast: null, salesDays: [], events: [], notes: [], imported: [], filters: ALL_FILTERS, ...fields };
 }
 
 test('entryLines shows every entry up to three, else the first two and “+N more”', () => {
@@ -189,7 +189,7 @@ test('buildGrid: 6 rows of 7, the month’s own days as calendarMonth builds the
   expect(rows).toHaveLength(6);
   expect(rows.every((row) => row.length === 7)).toBe(true);
   expect(rows.flat().map((slot) => slot.date)).toEqual(gridDays('2026-11'));
-  for (const cell of calendarMonth(input).flat()) {
+  for (const cell of calendarMonth('2026-11', input).flat()) {
     if (cell !== null) expect(slotOf(rows, cell.date)).toEqual({ ...cell, kind: 'day', outside: false, pending: false });
   }
   const outside = rows.flat().filter((slot) => slot.kind === 'day' && slot.outside).map((slot) => slot.date);
@@ -205,13 +205,13 @@ test('buildGrid: 6 rows of 7, the month’s own days as calendarMonth builds the
 
 test('days outside the 25 months are inert, with the number only and a label that says so', () => {
   const bounds = monthBounds(TODAY);
-  const last = buildGrid('2027-11', reads({ month: '2027-11' }), bounds);
+  const last = buildGrid('2027-11', reads({ covered: gridRange('2027-11', bounds) }), bounds);
   const inertLast = last.flat().filter((slot) => slot.kind === 'inert').map((slot) => slot.date);
   expect(inertLast).toEqual(gridDays('2027-11').filter((date) => date >= '2027-12-01'));
   expect(inertLast).toHaveLength(12);
   expect(slotOf(last, '2027-12-05')).toEqual({ kind: 'inert', date: '2027-12-05', label: 'Sun, Dec 5, 2027. Outside the months the calendar shows.' });
   expect(slotOf(last, '2027-11-30').kind).toBe('day');
-  const first = buildGrid('2025-11', reads({ month: '2025-11' }), bounds);
+  const first = buildGrid('2025-11', reads({ covered: gridRange('2025-11', bounds) }), bounds);
   expect(first.flat().filter((slot) => slot.kind === 'inert').map((slot) => slot.date)).toEqual(['2025-10-27', '2025-10-28', '2025-10-29', '2025-10-30', '2025-10-31']);
 });
 
@@ -232,7 +232,7 @@ test('a grid whose reads are still for the month before shows the days they cove
 
 test('today keeps its own cell in a leading or trailing row', () => {
   const today = '2026-11-03';
-  const rows = buildGrid('2026-10', reads({ today, month: '2026-10' }), monthBounds(today));
+  const rows = buildGrid('2026-10', reads({ today, covered: gridRange('2026-10', monthBounds(today)) }), monthBounds(today));
   expect(gridDays('2026-10')[0]).toBe('2026-09-28');
   expect(gridDays('2026-10')[41]).toBe('2026-11-08');
   expect(dayOf(rows, today)).toMatchObject({ isToday: true, outside: true, inWeek: true });
@@ -293,31 +293,87 @@ describe('gridMove in the month grid', () => {
   });
 });
 
-test('weekOf is the selected day’s Monday to Sunday', () => {
-  expect(weekOf('2026-11-18')).toEqual(['2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22']);
-  expect(weekOf('2026-11-16')[0]).toBe('2026-11-16');
-  expect(weekOf('2026-11-22')[0]).toBe('2026-11-16');
-  // Across a month and a year.
-  expect(weekOf('2027-01-01')).toEqual(['2026-12-28', '2026-12-29', '2026-12-30', '2026-12-31', '2027-01-01', '2027-01-02', '2027-01-03']);
-});
+describe('the week view’s 7-day blocks, counted from today', () => {
+  test('weekStartFor: today starts its own block, and every day is in the block of the whole weeks from today, rounded down', () => {
+    expect(weekStartFor(TODAY, TODAY)).toBe(TODAY);
+    // A day later in the same block, and the next block's first day.
+    expect(weekStartFor('2026-11-17', TODAY)).toBe(TODAY);
+    expect(weekStartFor('2026-11-18', TODAY)).toBe('2026-11-18');
+    expect(weekStartFor('2026-11-21', TODAY)).toBe('2026-11-18');
+    // A day before today is in the block before, not today's.
+    expect(weekStartFor('2026-11-10', TODAY)).toBe('2026-11-04');
+    expect(weekStartFor('2026-11-04', TODAY)).toBe('2026-11-04');
+    expect(weekStartFor('2026-10-28', TODAY)).toBe('2026-10-28');
+    // Across a year, either way.
+    expect(weekStartFor('2027-01-01', TODAY)).toBe('2026-12-30');
+    expect(weekStartFor('2026-01-01', '2026-01-04')).toBe('2025-12-28');
+    // Calendar dates only: Nov 1, 2026 ends daylight saving time in the US, and Mar 14, 2027 starts it.
+    expect(weekStartFor('2026-11-05', '2026-10-29')).toBe('2026-11-05');
+    expect(weekStartFor('2026-11-04', '2026-10-29')).toBe('2026-10-29');
+    expect(weekStartFor('2027-03-17', '2027-03-10')).toBe('2027-03-17');
+    expect(weekStartFor('2027-03-16', '2027-03-10')).toBe('2027-03-10');
+  });
 
-test('weekLabel names the week with its year once, or twice across a new year', () => {
-  expect(weekLabel('2027-01-04')).toBe('Jan 4 to 10, 2027');
-  expect(weekLabel('2026-11-16')).toBe('Nov 16 to 22, 2026');
-  expect(weekLabel('2026-11-30')).toBe('Nov 30 to Dec 6, 2026');
-  expect(weekLabel('2026-12-28')).toBe('Dec 28, 2026 to Jan 3, 2027');
-});
+  test('weekDays is the block’s 7 days from its first, across a month and a year', () => {
+    expect(weekDays('2026-11-15')).toEqual(['2026-11-15', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21']);
+    expect(weekDays('2026-12-30')).toEqual(['2026-12-30', '2026-12-31', '2027-01-01', '2027-01-02', '2027-01-03', '2027-01-04', '2027-01-05']);
+  });
 
-test('stepWeek moves the selected day a week, clamped to the 25 months, and null when that week is wholly past them', () => {
-  const bounds = monthBounds(TODAY);
-  expect(stepWeek('2026-11-18', 1, bounds)).toBe('2026-11-25');
-  expect(stepWeek('2026-11-18', -1, bounds)).toBe('2026-11-11');
-  // The week of Dec 2, 2027 (Nov 29 to Dec 5) still holds Nov 29 and 30.
-  expect(stepWeek('2027-11-25', 1, bounds)).toBe('2027-11-30');
-  expect(stepWeek('2027-11-30', 1, bounds)).toBeNull();
-  // The week of Oct 29, 2025 (Oct 27 to Nov 2) still holds Nov 1 and 2.
-  expect(stepWeek('2025-11-05', -1, bounds)).toBe('2025-11-01');
-  expect(stepWeek('2025-11-01', -1, bounds)).toBeNull();
+  test('weekLabel names the block with its year once, or twice across a new year', () => {
+    expect(weekLabel('2026-11-15')).toBe('Nov 15 to 21, 2026');
+    expect(weekLabel('2026-11-29')).toBe('Nov 29 to Dec 5, 2026');
+    expect(weekLabel('2026-12-27')).toBe('Dec 27, 2026 to Jan 2, 2027');
+  });
+
+  test('stepWeek moves the selected day a block, clamped to the 25 months, and null when that block lies wholly outside them', () => {
+    const bounds = monthBounds(TODAY);
+    expect(stepWeek('2026-11-18', 1, bounds, TODAY)).toBe('2026-11-25');
+    expect(stepWeek('2026-11-18', -1, bounds, TODAY)).toBe('2026-11-11');
+    // The last block, Nov 24 to 30, 2027, ends on the last day: the next one lies wholly past it.
+    expect(stepWeek('2027-11-24', 1, bounds, TODAY)).toBeNull();
+    expect(stepWeek('2027-11-30', 1, bounds, TODAY)).toBeNull();
+    expect(stepWeek('2027-11-20', 1, bounds, TODAY)).toBe('2027-11-27');
+    // The first block, Oct 29 to Nov 4, 2025, still holds Nov 1 to 4: a step into it clamps to Nov 1.
+    expect(stepWeek('2025-11-05', -1, bounds, TODAY)).toBe('2025-11-01');
+    expect(stepWeek('2025-11-08', -1, bounds, TODAY)).toBe('2025-11-01');
+    expect(stepWeek('2025-11-01', -1, bounds, TODAY)).toBeNull();
+    expect(stepWeek('2025-11-04', -1, bounds, TODAY)).toBeNull();
+  });
+
+  test('weekRange is the block clamped to the 25 months', () => {
+    const bounds = monthBounds(TODAY);
+    expect(weekRange('2026-11-18', bounds)).toEqual({ from: '2026-11-18', to: '2026-11-24' });
+    expect(weekRange('2025-10-29', bounds)).toEqual({ from: '2025-11-01', to: '2025-11-04' });
+    expect(weekRange('2027-11-28', bounds)).toEqual({ from: '2027-11-28', to: '2027-11-30' });
+  });
+
+  test('readRangeFor: the grid’s range in the month view, and in the week view while the clamped block lies inside it; else the block’s own days', () => {
+    const bounds = monthBounds(TODAY);
+    const november = { from: '2026-10-26', to: '2026-12-06' };
+    expect(readRangeFor('month', '2026-11', '2026-12-06', bounds)).toEqual(november);
+    // A block inside November's grid reads nothing of its own.
+    expect(readRangeFor('week', '2026-11', '2026-11-15', bounds)).toEqual(november);
+    expect(readRangeFor('week', '2026-11', '2026-11-29', bounds)).toEqual(november);
+    // Dec 6 to 12 runs past it (today Nov 15, with Dec 6 selected in November's grid).
+    expect(readRangeFor('week', '2026-11', '2026-12-06', monthBounds('2026-11-15'))).toEqual({ from: '2026-12-06', to: '2026-12-12' });
+    // At the first end, Oct 29 to Nov 4, 2025 clamps to Nov 1 to 4, which November 2025's grid covers.
+    expect(readRangeFor('week', '2025-11', '2025-10-29', bounds)).toEqual({ from: '2025-11-01', to: '2025-12-07' });
+  });
+
+  test('every week read stays within 7 days and 396 days of today, for every today from 2026 to 2029', () => {
+    let longest = 0;
+    let farthest = 0;
+    for (let today = '2026-01-01'; today <= '2029-12-31'; today = addDays(today, 1)) {
+      const bounds = monthBounds(today);
+      for (let start = weekStartFor(`${bounds.first}-01`, today); start <= bounds.lastDay; start = addDays(start, 7)) {
+        const range = weekRange(start, bounds);
+        longest = Math.max(longest, daysBetween(range.from, range.to) + 1);
+        farthest = Math.max(farthest, daysBetween(range.from, today), daysBetween(today, range.to));
+      }
+    }
+    expect(longest).toBe(7);
+    expect(farthest).toBeLessThanOrEqual(396);
+  });
 });
 
 describe('buildWeek', () => {
@@ -329,7 +385,7 @@ describe('buildWeek', () => {
   const schedule = (fields: Partial<RuleSchedule> = {}): RuleSchedule => ({
     kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null, ...fields,
   });
-  const week = (input: CalendarInput, selected = SATURDAY, month = '2026-11'): WeekSlot[] => buildWeek(selected, month, input, bounds);
+  const week = (input: CalendarInput, selected = SATURDAY, today = TODAY): WeekSlot[] => buildWeek(selected, today, input, bounds);
   const dayIn = (slots: readonly WeekSlot[], date: string): WeekDay => {
     const slot = slots.find((each) => each.date === date);
     if (slot?.kind !== 'day') throw new Error(`${date} is not a day`);
@@ -337,12 +393,15 @@ describe('buildWeek', () => {
   };
   const cards = (input: CalendarInput, date = SATURDAY): WeekCard[] => dayIn(week(input), date).cards;
 
-  test('the selected day’s week, Monday to Sunday, each day as the month grid’s cell', () => {
+  test('the block from today that holds the selected day, each day as the month grid’s cell', () => {
     const input = reads({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })] });
     const slots = week(input);
-    expect(slots.map((slot) => slot.date)).toEqual(weekOf(SATURDAY));
-    const row = buildGrid('2026-11', input, bounds).find((each) => each.some((slot) => slot.date === SATURDAY)) ?? [];
-    slots.forEach((slot, index) => { expect(slot).toMatchObject(row[index] ?? {}); });
+    // Today is Wed, Nov 11: Saturday Nov 21 is in the block of Nov 18 to 24, across two of the grid's rows.
+    expect(slots.map((slot) => slot.date)).toEqual(weekDays('2026-11-18'));
+    const grid = buildGrid('2026-11', input, bounds).flat();
+    slots.forEach((slot) => { expect(slot).toMatchObject(grid.find((each) => each.date === slot.date) ?? {}); });
+    // With no day chosen the block starts on today.
+    expect(week(input, TODAY).map((slot) => slot.date)).toEqual(weekDays(TODAY));
   });
 
   test('all-day cards first in their kinds’ order, then timed ones by start time; each with its hours and sub-line', () => {
@@ -419,13 +478,20 @@ describe('buildWeek', () => {
     expect(dayIn(week(past, '2026-11-10'), '2026-11-10')).toMatchObject({ range: null, noForecast: false, figure: { value: 138, kind: 'actual' } });
   });
 
-  test('the last week of the 25 months has inert days with no cards', () => {
-    const input = reads({ month: '2027-11', events: [townEvent({ start: '2027-12-03', title: 'Tree lighting' })] });
-    const slots = week(input, '2027-11-30', '2027-11');
-    expect(slots.map((slot) => [slot.date, slot.kind])).toEqual([
-      ['2027-11-29', 'day'], ['2027-11-30', 'day'], ['2027-12-01', 'inert'], ['2027-12-02', 'inert'], ['2027-12-03', 'inert'], ['2027-12-04', 'inert'], ['2027-12-05', 'inert'],
+  test('a block at the 25 months’ ends has inert days with no cards', () => {
+    // Today Nov 11, 2026: the first block, Oct 29 to Nov 4, 2025, starts before the first month.
+    const first = week(reads({ covered: gridRange('2025-11', bounds), events: [townEvent({ start: '2025-10-30', title: 'Harvest supper' })] }), '2025-11-01');
+    expect(first.map((slot) => [slot.date, slot.kind])).toEqual([
+      ['2025-10-29', 'inert'], ['2025-10-30', 'inert'], ['2025-10-31', 'inert'], ['2025-11-01', 'day'], ['2025-11-02', 'day'], ['2025-11-03', 'day'], ['2025-11-04', 'day'],
     ]);
-    expect(slots.find((slot) => slot.date === '2027-12-03')).toEqual({ kind: 'inert', date: '2027-12-03', label: 'Fri, Dec 3, 2027. Outside the months the calendar shows.' });
+    expect(first.find((slot) => slot.date === '2025-10-30')).toEqual({ kind: 'inert', date: '2025-10-30', label: 'Thu, Oct 30, 2025. Outside the months the calendar shows.' });
+    // Its last block, Nov 24 to 30, 2027, ends on the last day.
+    expect(week(reads({ covered: gridRange('2027-11', bounds) }), '2027-11-30').map((slot) => slot.kind)).toEqual(Array.from({ length: 7 }, () => 'day'));
+    // Today Nov 15, 2026: the last block, Nov 28 to Dec 4, 2027, runs past it.
+    const last = buildWeek('2027-11-30', '2026-11-15', reads({ today: '2026-11-15', covered: gridRange('2027-11', bounds) }), monthBounds('2026-11-15'));
+    expect(last.map((slot) => [slot.date, slot.kind])).toEqual([
+      ['2027-11-28', 'day'], ['2027-11-29', 'day'], ['2027-11-30', 'day'], ['2027-12-01', 'inert'], ['2027-12-02', 'inert'], ['2027-12-03', 'inert'], ['2027-12-04', 'inert'],
+    ]);
   });
 
   test('cardWords: each card’s hours when timed, its title, then its kind words, as short sentences; null with no cards', () => {
@@ -441,18 +507,21 @@ describe('buildWeek', () => {
     expect(cardWords([])).toBeNull();
   });
 
-  test('days the kept reads don’t cover are pending, with no cards', () => {
-    // November's reads cover Oct 26 to Dec 6; the week of Dec 7 is December's.
-    const input = reads({ events: [townEvent({ start: '2026-12-08', title: 'Craft fair' })] });
-    const slots = week(input, '2026-12-08', '2026-12');
-    for (const slot of slots) expect(slot).toMatchObject({ kind: 'day', pending: true, cards: [], range: null, noForecast: false });
+  test('days the kept reads don’t cover are pending, with no cards; the days they cover show theirs', () => {
+    // November's reads cover Oct 26 to Dec 6; the block of Dec 2 to 8 runs past them.
+    const input = reads({ events: [townEvent({ start: '2026-12-08', title: 'Craft fair' }), townEvent({ start: '2026-12-03', title: 'Tree lighting' })] });
+    const slots = week(input, '2026-12-08');
+    expect(slots.map((slot) => slot.date)).toEqual(weekDays('2026-12-02'));
+    for (const slot of slots.slice(5)) expect(slot).toMatchObject({ kind: 'day', pending: true, cards: [], range: null, noForecast: false });
+    for (const slot of slots.slice(0, 5)) expect(slot).toMatchObject({ kind: 'day', pending: false, outside: false });
+    expect(dayIn(slots, '2026-12-03').cards.map((card) => card.title)).toEqual(['Tree lighting']);
     expect(dayIn(slots, '2026-12-08').label).toBe('Tue, Dec 8, 2026. Loading.');
   });
 });
 
 describe('gridMove in the week view’s columns and its agenda', () => {
   const bounds = monthBounds(TODAY);
-  const move = (layout: 'week' | 'agenda', from: string, key: string, ctrl = false, month = '2026-11') => gridMove(from, key, ctrl, { layout, month, bounds });
+  const move = (layout: 'week' | 'agenda', from: string, key: string, ctrl = false, today = TODAY) => gridMove(from, key, ctrl, { layout, weekStart: weekStartFor(from, today), bounds });
 
   test('in the columns Up and Down move a week; in the agenda, where each day is a row, a day', () => {
     expect(move('week', '2026-11-18', 'ArrowDown')).toEqual({ date: '2026-11-25', month: null });
@@ -466,29 +535,35 @@ describe('gridMove in the week view’s columns and its agenda', () => {
     }
   });
 
-  test('Ctrl or Cmd with Home and End act as Home and End: the week’s Monday and Sunday', () => {
+  test('Home and End go to the block’s first and last day, and Ctrl or Cmd with them the same', () => {
+    // Today Sun, Nov 15: Wed, Nov 18 is in the block of Nov 15 to 21.
     for (const layout of ['week', 'agenda'] as const) {
-      expect(move(layout, '2026-11-18', 'Home', true)).toEqual({ date: '2026-11-16', month: null });
-      expect(move(layout, '2026-11-18', 'End', true)).toEqual({ date: '2026-11-22', month: null });
-      expect(move(layout, '2026-11-18', 'Home')).toEqual({ date: '2026-11-16', month: null });
-      expect(move(layout, '2026-11-18', 'End')).toEqual({ date: '2026-11-22', month: null });
+      expect(move(layout, '2026-11-18', 'Home', false, '2026-11-15')).toEqual({ date: '2026-11-15', month: null });
+      expect(move(layout, '2026-11-18', 'End', false, '2026-11-15')).toEqual({ date: '2026-11-21', month: null });
+      expect(move(layout, '2026-11-18', 'Home', true, '2026-11-15')).toEqual({ date: '2026-11-15', month: null });
+      expect(move(layout, '2026-11-18', 'End', true, '2026-11-15')).toEqual({ date: '2026-11-21', month: null });
     }
+    // Today Wed, Nov 11: the block of Nov 18 to 24, not Monday's week.
+    expect(move('week', '2026-11-21', 'Home')).toEqual({ date: '2026-11-18', month: null });
+    expect(move('week', '2026-11-21', 'End')).toEqual({ date: '2026-11-24', month: null });
   });
 
   test('PageUp and PageDown step from the selected day’s own month, since the week view hides the grid’s', () => {
     // The grid is on November, and Oct 28 is in its leading row.
     expect(move('week', '2026-10-28', 'PageDown')).toEqual({ date: '2026-11-28', month: '2026-11' });
     expect(move('week', '2026-10-28', 'PageUp')).toEqual({ date: '2026-09-28', month: '2026-09' });
-    expect(move('agenda', '2027-01-31', 'PageDown', false, '2027-01')).toEqual({ date: '2027-02-28', month: '2027-02' });
+    expect(move('agenda', '2027-01-31', 'PageDown')).toEqual({ date: '2027-02-28', month: '2027-02' });
     // The month view steps from the grid's month instead.
     expect(gridMove('2026-10-28', 'PageDown', false, { layout: 'month', month: '2026-11', bounds })).toEqual({ date: '2026-12-28', month: '2026-12' });
   });
 
   test('at the 25 months’ ends a key is consumed, and Home and End clamp', () => {
-    expect(move('week', '2027-11-30', 'ArrowRight', false, '2027-11')).toEqual({ date: '2027-11-30', month: null });
-    expect(move('agenda', '2027-11-30', 'ArrowDown', false, '2027-11')).toEqual({ date: '2027-11-30', month: null });
-    expect(move('week', '2027-11-15', 'PageDown', false, '2027-11')).toEqual({ date: '2027-11-15', month: null });
-    expect(move('week', '2027-11-29', 'End', true, '2027-11')).toEqual({ date: '2027-11-30', month: null });
-    expect(move('agenda', '2025-11-02', 'Home', false, '2025-11')).toEqual({ date: '2025-11-01', month: null });
+    expect(move('week', '2027-11-30', 'ArrowRight')).toEqual({ date: '2027-11-30', month: null });
+    expect(move('agenda', '2027-11-30', 'ArrowDown')).toEqual({ date: '2027-11-30', month: null });
+    expect(move('week', '2027-11-15', 'PageDown')).toEqual({ date: '2027-11-15', month: null });
+    // Today Nov 15, 2026: the block of Nov 28 to Dec 4, 2027 ends past the last day.
+    expect(move('week', '2027-11-29', 'End', true, '2026-11-15')).toEqual({ date: '2027-11-30', month: null });
+    // Today Nov 11, 2026: the block of Oct 29 to Nov 4, 2025 starts before the first.
+    expect(move('agenda', '2025-11-02', 'Home')).toEqual({ date: '2025-11-01', month: null });
   });
 });

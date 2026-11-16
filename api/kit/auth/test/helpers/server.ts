@@ -23,6 +23,7 @@ import { generateRecoveryCodes } from '../../src/totp/factor.ts';
 import { generateSecret } from '../../src/totp/totp.ts';
 import { call, CookieJar, WEB_ORIGIN } from './http.ts';
 import { createMailCapture, parseLink, type MailCapture } from './mail.ts';
+import { waitForRedis } from './redis-ready.ts';
 
 export interface TestDb {
   readonly connection: Connection;
@@ -136,12 +137,7 @@ export async function startAuthServer(opts?: {
   const clock = createClock();
   const mail = createMailCapture();
   try {
-    // One ping gives up near 1 s (the client's commandTimeout), and on the laptop runner a first connection to the
-    // test Valkey (through host.docker.internal) now and then takes longer, which failed a whole suite. Up to three
-    // pings while the client goes on connecting.
-    let ready = false;
-    for (let attempt = 0; attempt < 3 && !ready; attempt += 1) ready = await redis.ready(3000);
-    if (!ready) throw new Error('redis not ready');
+    await waitForRedis(redis);
     if (opts?.keepData !== true) {
       await mongo.connection.dropDatabase();
       await redis.client.flushdb();

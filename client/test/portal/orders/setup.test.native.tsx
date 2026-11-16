@@ -41,6 +41,7 @@ const ANSWER: OrderSetupAnswer = {
   counts: {},
   itemsWithHistory: [],
   today: '2026-11-13',
+  canReadWithAi: false,
 };
 
 function portal(answer: unknown = ANSWER, me = meOf(ACCESS.member)): FakePortalApi {
@@ -78,5 +79,16 @@ test('a failed read says so with Try again; view-as disables Save', async () => 
   const save = await screen.findByRole('button', { name: 'Save the setup' });
   expect(save.props.accessibilityState).toMatchObject({ disabled: true });
   expect(screen.getByRole('button', { name: 'Add an item' }).props.accessibilityState).toMatchObject({ disabled: true });
+  expect(writes(api)).toEqual([]);
+});
+
+test('with reading by TownwiseAI on, native has no control and says a file can be read with TownwiseAI on a computer (D41)', async () => {
+  const api = portal({ ...ANSWER, canReadWithAi: true });
+  await renderApp('/locations/l1/orders/setup', api);
+  expect(await screen.findByText('Use a computer to download the template, import a sheet, read a file with TownwiseAI or upload item sales.')).toBeTruthy();
+  expect(screen.queryByText('Read a file with TownwiseAI')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Choose a file' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Read the text' })).toBeNull();
+  expect(screen.queryByLabelText('Or paste text')).toBeNull();
   expect(writes(api)).toEqual([]);
 });

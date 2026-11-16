@@ -2,19 +2,22 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
+import { plainOf, strong, type Phrase } from '../analytics/phrase';
 import {
-  EVENT_WORDS, nextEventWhen, summaryLabel, vsUsualLine, type LastWeek, type NextEvent, type ThisWeek,
+  EVENT_WORDS, lastYearDayPhrase, nextEventWhen, summaryLabel, vsUsualPhrase, type LastWeek, type NextEvent, type ThisWeek,
 } from '../analytics/week';
 import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from '../analytics/words';
 import { plural } from '../format';
 import { UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
 import { Panel } from '../ui/layout';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Eyebrow, Small } from '../ui/text';
 import { BlockRow } from './Block';
 
 // At a glance (spec P11): the three answers Home leads with on a Monday, each a tile with one big figure or title.
-// This week, last year: the same week last year's total, against that year's usual, its busiest and quietest days.
+// This week, last year: the total of the same 7 days last year (This week's days, today first), against that year's
+// usual, and their busiest and quietest days.
 // Last week: its total against the same days last year. Next on the calendar: the next holiday or town event from
 // today. Every figure is history, never a guess; the cards below carry the detail, the chart and the tables.
 
@@ -43,39 +46,47 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric }): React.JSX.Elem
   if (summary === null) {
     return (
       <Tile eyebrow="This week, last year">
-        <Small>Fewer than 5 days of the same week last year have data, so there is no total to show.</Small>
+        <Small>Fewer than 5 of the same 7 days last year have data, so there is no total to show.</Small>
       </Tile>
     );
   }
-  const usualLine = vsUsualLine(summary);
+  const usualLine = vsUsualPhrase(summary);
   return (
     <Tile eyebrow="This week, last year">
       <Figure value={metricNumber(summary.total, props.metric)} unit={unitOf(props.metric)} />
       <View style={styles.lines}>
         <Small white>{summaryLabel(summary)}</Small>
-        {usualLine === null ? null : <Small>{usualLine}</Small>}
-        {summary.busiest === null ? null : <Small>{`Busiest last year: ${shortDate(summary.busiest)}.`}</Small>}
-        {summary.quietest === null ? null : <Small>{`Quietest last year: ${shortDate(summary.quietest)}.`}</Small>}
+        {usualLine === null ? null : <Small><PhraseParts phrase={usualLine} /></Small>}
+        {summary.busiest === null || summary.busiestValue === null ? null : (
+          <Small><PhraseParts phrase={lastYearDayPhrase('Busiest', summary.busiest, summary.busiestValue, props.metric)} /></Small>
+        )}
+        {summary.quietest === null || summary.quietestValue === null ? null : (
+          <Small><PhraseParts phrase={lastYearDayPhrase('Quietest', summary.quietest, summary.quietestValue, props.metric)} /></Small>
+        )}
       </View>
     </Tile>
   );
 }
 
-/** The tile's short line for each state of the comparison; the Last week card says it in full. */
-export function lastWeekGlance(comparison: LastWeek, metric: Metric): string {
+/** The tile's short line for each state of the comparison, the change strong; the Last week card says it in full. */
+export function lastWeekGlancePhrase(comparison: LastWeek, metric: Metric): Phrase {
   switch (comparison.state) {
-    case 'no_history': return 'No sales history yet.';
-    case 'uploads_off': return 'Every sales upload is turned off.';
-    case 'no_recent': return `Your sales stop at ${shortDate(comparison.lastDate)}.`;
-    case 'no_days': return `No ${METRIC_NOUN[metric]} stored for last week.`;
-    case 'no_last_year': return 'No data for the same week last year.';
-    case 'no_overlap': return 'No day has data in both weeks.';
+    case 'no_history': return ['No sales history yet.'];
+    case 'uploads_off': return ['Every sales upload is turned off.'];
+    case 'no_recent': return [`Your sales stop at ${shortDate(comparison.lastDate)}.`];
+    case 'no_days': return [`No ${METRIC_NOUN[metric]} stored for last week.`];
+    case 'no_last_year': return ['No data for the same week last year.'];
+    case 'no_overlap': return ['No day has data in both weeks.'];
     case 'compared': {
       const over = comparison.comparedDays === 7 ? 'over all 7 days' : `over the ${plural(comparison.comparedDays, 'day', 'days')} both weeks have`;
       const against = `the same week last year (${metricNumber(comparison.lastYearTotal, metric)})`;
-      return comparison.change === null ? `Against ${against}, ${over}.` : `${signedPercent(comparison.change)} against ${against}, ${over}.`;
+      return comparison.change === null ? [`Against ${against}, ${over}.`] : [strong(signedPercent(comparison.change)), ` against ${against}, ${over}.`];
     }
   }
+}
+
+export function lastWeekGlance(comparison: LastWeek, metric: Metric): string {
+  return plainOf(lastWeekGlancePhrase(comparison, metric));
 }
 
 function LastWeekTile(props: { comparison: LastWeek; metric: Metric; locationId: string; readOnlyId: string | null }): React.JSX.Element {
@@ -84,7 +95,7 @@ function LastWeekTile(props: { comparison: LastWeek; metric: Metric; locationId:
   return (
     <Tile eyebrow="Last week">
       {comparison.state === 'compared' ? <Figure value={metricNumber(comparison.total, metric)} unit={unitOf(metric)} /> : null}
-      <Small white>{lastWeekGlance(comparison, metric)}</Small>
+      <Small white><PhraseParts phrase={lastWeekGlancePhrase(comparison, metric)} /></Small>
       {stale ? (
         <Actions><UploadAction locationId={props.locationId} variant="link" readOnlyId={props.readOnlyId} /></Actions>
       ) : null}

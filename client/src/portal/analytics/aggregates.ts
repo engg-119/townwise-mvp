@@ -5,8 +5,9 @@ import { usual } from './baseline';
 import { classOf, closedDaysBetween, dayFlags, type DayClass, type DayContext } from './days';
 import { includedFn, type Filters, type Included } from './filters';
 import { byDate as indexByDate, type DayRecord } from './history';
+import { strong, type Phrase } from './phrase';
 import {
-  metricNumber, metricText, MONTH_NAMES, signedPercent, WEEK_ORDER, WEEKDAY_NAMES, weekdayOf, type Metric,
+  metricNumber, metricText, MONTH_NAMES, shortDate, signedPercent, WEEK_ORDER, WEEKDAY_NAMES, weekdayOf, type Metric,
 } from './words';
 
 // Analytics' charts as numbers (home.md 4.6, 5.5): weekly shape, by month, year over year, by type of night and
@@ -321,6 +322,19 @@ export const DRIVERS_FOOTNOTE = 'Each effect compares those days with your usual
 
 export const DRIVERS_EMPTY = 'Townwise needs each kind of day to happen at least twice before it can say how much it moves your numbers.';
 
+/** One day a driver was measured on: its figure, its usual and the effect, for the driver's detail. */
+export interface DriverDay {
+  date: string;
+  /** The event's own title that day ("Home football vs Cornell"); null for a note's day, whose words stay in Notes. */
+  title: string | null;
+  value: number;
+  /** The usual for that weekday in the 4 weeks around it (baseline.ts), and how many days it averages. */
+  usual: number;
+  usualDays: number;
+  /** value / usual - 1. */
+  effect: number;
+}
+
 export interface Driver {
   /** An event group ('us:thanksgiving'), or 'notes:private_event' and 'notes:opening'. */
   key: string;
@@ -329,6 +343,8 @@ export interface Driver {
   effect: number;
   /** Days with an effect, oldest first. */
   dates: string[];
+  /** The same days with their figures, oldest first (owner request, 2026-11-15: a driver's row opens them). */
+  days: DriverDay[];
   rough: boolean;
   firstYear: number;
   lastYear: number;
@@ -353,21 +369,22 @@ const DRIVER_KINDS: ReadonlySet<EventKind> = new Set(['holiday', 'event']);
  */
 export function drivers(input: AnalyticsInput): Driver[] {
   const { filters, context, byDate } = input;
-  const groups = new Map<string, { label: string; dates: Set<string> }>();
-  const add = (key: string, label: string, date: string): void => {
+  // Each group's days, with the event's own title that day (null for a note's day).
+  const groups = new Map<string, { label: string; dates: Map<string, string | null> }>();
+  const add = (key: string, label: string, date: string, title: string | null): void => {
     const group = groups.get(key);
-    if (group === undefined) groups.set(key, { label, dates: new Set([date]) });
-    else group.dates.add(date);
+    if (group === undefined) groups.set(key, { label, dates: new Map([[date, title]]) });
+    else if (!group.dates.has(date)) group.dates.set(date, title);
   };
   for (const [date, events] of context.eventsByDate) {
     for (const event of events) {
-      if (event.group !== null && DRIVER_KINDS.has(event.kind)) add(event.group, event.groupLabel ?? event.title, date);
+      if (event.group !== null && DRIVER_KINDS.has(event.kind)) add(event.group, event.groupLabel ?? event.title, date, event.title);
     }
   }
   for (const [date, notes] of context.notesByDate) {
     for (const note of notes) {
       const group = NOTE_GROUPS[note.kind];
-      if (group !== undefined) add(group.key, group.label, date);
+      if (group !== undefined) add(group.key, group.label, date, null);
     }
   }
   const years = new Set(filters.years);
@@ -375,7 +392,8 @@ export function drivers(input: AnalyticsInput): Driver[] {
   for (const [key, group] of groups) {
     const effects: number[] = [];
     const dates: string[] = [];
-    for (const date of [...group.dates].sort()) {
+    const days: DriverDay[] = [];
+    for (const [date, title] of [...group.dates].sort(([a], [b]) => a.localeCompare(b))) {
       const day = byDate.get(date);
       const value = day === undefined ? null : valueOf(day, filters.metric);
       if (value === null || !years.has(Number(date.slice(0, 4))) || dayFlags(date, day, context).closed) continue;
@@ -383,13 +401,14 @@ export function drivers(input: AnalyticsInput): Driver[] {
       if (base === null || base.mean === 0) continue;
       effects.push(value / base.mean - 1);
       dates.push(date);
+      days.push({ date, title, value, usual: base.mean, usualDays: base.days, effect: value / base.mean - 1 });
     }
     const effect = mean(effects);
     const first = dates[0];
     const last = dates.at(-1);
     if (effect === null || effects.length < DRIVER_MIN || first === undefined || last === undefined) continue;
     out.push({
-      key, label: group.label, effect, dates, rough: effects.length < DRIVER_SOLID,
+      key, label: group.label, effect, dates, days, rough: effects.length < DRIVER_SOLID,
       firstYear: Number(first.slice(0, 4)), lastYear: Number(last.slice(0, 4)),
     });
   }
@@ -404,6 +423,17 @@ export function seenText(driver: Driver): string {
     ? String(driver.firstYear)
     : `${String(driver.firstYear)} to ${String(driver.lastYear)}`;
   return `${plural(driver.dates.length, 'day', 'days')}, ${years}`;
+}
+
+/** The detail's lead: "+96% against usual, from 2 days, 2025 to 2026.", the effect strong; a rough one says why. */
+export function driverSummaryPhrase(driver: Driver): Phrase {
+  const rough = driver.rough ? ` Rough: fewer than ${String(DRIVER_SOLID)} days.` : '';
+  return [strong(signedPercent(driver.effect)), ` against usual, from ${seenText(driver)}.${rough}`];
+}
+
+/** "Mon, Feb 16, 2026: 214 guests against a usual 109, +96%", the figure and the effect strong. */
+export function driverDayPhrase(day: DriverDay, metric: Metric): Phrase {
+  return [`${shortDate(day.date)}: `, strong(metricText(day.value, metric)), ` against a usual ${metricNumber(day.usual, metric)}, `, strong(signedPercent(day.effect))];
 }
 
 /** "Thanksgiving: +27% against usual, 3 days, 2024 to 2026. Rough." */

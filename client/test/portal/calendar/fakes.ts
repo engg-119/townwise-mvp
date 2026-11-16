@@ -18,8 +18,9 @@ import { noteOf } from '../locations/fakes';
 // (the forecast after a note is saved). Any range's calendar answers with `events`, its stored events with the
 // `ownerEvents` that overlap it, its sales days from `days`, and its forecast from `forecasts` by month ('YYYY-MM'): a
 // grid's read spans the days of the months either side, so the grid's month (the month of the range's 7th day: a grid
-// has at most 6 leading days, and a clamped range starts on the 1st) decides an ApiError or no published forecast, and
-// the days come from every month's window within the range. `hold` keeps a route's read from one `from` waiting until
+// has at most 6 leading days, a clamped range starts on the 1st, and a week's own range ends on it) decides an
+// ApiError or no published forecast, and the days come from every month's window within the range. `setToday` moves
+// the page's today, for a test that runs with only Date faked. `hold` keeps a route's read from one `from` waiting until
 // the test releases it, so a test can see a grid whose reads are in flight. DELETE (through `request`) answers 204, or
 // the ApiError a test sets in `deletes` for its path. Writes the portal fake answers itself (POST and PATCH) go in its
 // `answers`. Every figure, name and title is made up.
@@ -123,6 +124,15 @@ function forecastFor(forecasts: Record<string, unknown>, from: string, to: strin
     .filter((day) => day.date >= from && day.date <= to)
     .sort((a, b) => a.date.localeCompare(b.date));
   return { ...(own as object), days };
+}
+
+/**
+ * Makes `date` ('YYYY-MM-DD') the device's today, at noon, before the page renders: the page reads its today once
+ * (locations/dates.ts localToday). Needs jest's fake Date (useFakeTimers).
+ */
+export function setToday(date: string): void {
+  const [year = 0, month = 1, day = 1] = date.split('-').map(Number);
+  jest.setSystemTime(new Date(year, month - 1, day, 12, 0, 0));
 }
 
 /** A published forecast day as GET .../forecast sends it: open, 180 to 240 around 212, with a weekday reason. */

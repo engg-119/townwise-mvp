@@ -1,4 +1,4 @@
-import { Link, useRouter, type Href } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
@@ -6,18 +6,21 @@ import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
 import type { DayContext } from '../analytics/days';
 import { noteWords } from '../analytics/panel';
-import { eventLine, monthDay, monthFactLine, monthFactsHead, monthGrid, monthItems, type HomeInput, type MonthFact } from '../analytics/week';
+import { eventLine, monthDay, monthFactPhrase, monthFactsHead, monthGrid, monthItems, type HomeInput, type MonthFact } from '../analytics/week';
 import { MONTH_NAMES, type Metric } from '../analytics/words';
 import { ALL_FILTERS, tooltipLines, type CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import type { Note } from '../locations/api';
+import { monthRange } from '../locations/dates';
 import type { Rule } from '../rules/api';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint, type LoadState } from '../hooks';
 import type { OrderBoard } from '../orders/api';
 import { calendarHref } from '../routing';
 import { LinkButton } from '../ui/Button';
+import { SourceChips } from '../ui/SourceChip';
 import { Stack } from '../ui/layout';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 import { DayDetail } from './DayDetail';
@@ -52,7 +55,7 @@ export function ThisMonth(props: {
   // The Calendar's own tooltip words, with the same business rules as the grid (D31, D32); nothing is imported on Home
   // and no filter is off.
   const tipInput = useMemo<CalendarInput>(() => ({
-    today, month: today.slice(0, 7), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported: [],
+    today, covered: monthRange(today.slice(0, 7)), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported: [],
     filters: ALL_FILTERS,
   }), [today, forecast, input.byDate, calendar.events, notes, rules]);
   const tooltip = useCallback((date: string) => tooltipLines(date, tipInput), [tipInput]);
@@ -102,9 +105,7 @@ export function MonthList(props: { today: string; context: DayContext }): React.
                 {item.kind === 'event' ? (
                   <>
                     <Small white>{eventLine(item.event)}</Small>
-                    {item.event.sources.map((source) => (
-                      <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-                    ))}
+                    <SourceChips sources={item.event.sources} />
                   </>
                 ) : (
                   <Small white>
@@ -136,7 +137,7 @@ export function PastYears(props: { today: string; facts: readonly MonthFact[]; m
   return (
     <Block label={monthFactsHead(props.today)} eyebrow={`Past ${monthNameOf(props.today)}s`} title={monthFactsHead(props.today)}>
       <Stack gap={8}>
-        {props.facts.map((fact) => <Small key={fact.year} white>{monthFactLine(fact, props.metric)}</Small>)}
+        {props.facts.map((fact) => <Small key={fact.year} white><PhraseParts phrase={monthFactPhrase(fact, props.metric)} /></Small>)}
       </Stack>
       <Mono tone="text3">Averages leave out closed days.</Mono>
     </Block>
@@ -156,5 +157,4 @@ const styles = StyleSheet.create({
   date: { ...theme.type.ui, color: c.white, fontWeight: '600' },
   dateWide: { width: 112 },
   body: { flex: 1, minWidth: 0, gap: 2 },
-  source: { ...theme.type.mono, color: c.text2, minHeight: 44, lineHeight: 44, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

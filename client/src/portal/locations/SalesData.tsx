@@ -15,6 +15,7 @@ import { EmptyState, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Lead, Small } from '../ui/text';
 import { deleteSales, fetchSales, fetchSalesDays } from './api';
+import { MonthChart } from './MonthChart';
 import { DaysTable, MonthsTable } from './MonthsTable';
 import { shownLocationName } from './naming';
 import { LoadFailure, ShowNumbers, UploadAction, useOrgRefreshOnLeave } from './parts';
@@ -22,7 +23,8 @@ import { chartRange, chartSummary, SERIES_TITLE, seriesOf, UPLOADS_OFF_LINE } fr
 import { SalesChart } from './SalesChart';
 
 // P12 Sales data (spec 16.3, 10.4): the coverage line, the daily chart (web; the text summary and “Show the
-// numbers” everywhere, D21), By month, the link to Your data (D28; uploads and files are listed there), and, for org admins, Delete all sales data behind a typed-name
+// numbers” everywhere, D21), By month (on web its chart of each year's months over January to December, then the
+// table), the link to Your data (D28; uploads and files are listed there), and, for org admins, Delete all sales data behind a typed-name
 // confirmation. A 404 on the delete means the location was deleted in the meantime: the organization reloads, and
 // the location layout says “This location isn’t available.” with the link to Locations (spec 10.9). Under view-as,
 // Upload, Delete and the closure-note link are disabled in place.
@@ -153,6 +155,7 @@ export function SalesData(): React.JSX.Element {
         <Columns
           main={(
             <Stack>
+              <MonthChart locationId={location.id} />
               <MonthsTable locationId={location.id} months={sales.months} />
               <Small>Totals count only the days with a value. Select a month to see its days.</Small>
             </Stack>

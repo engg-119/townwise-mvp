@@ -20,7 +20,8 @@ import { serveAbout } from './about-fakes';
 // TownwiseAI's questions on web (spec P25, 10.12; contract section 7): the evidence each one shows, the fourth answer
 // Something else… (a field of the card's own whose words go to the chat as a message, then answer `other`), the
 // questions inline under the landing's chips sharing their answers with the panel, and ?panel=questions (Home's
-// link) opening the panel on load.
+// link) opening the panel on load. Beside an empty conversation's landing, which lists the questions, the panel's
+// column leaves them out (owner request, 2026-11-15); the sheet below 1024px keeps them.
 
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
 
@@ -122,6 +123,20 @@ function card(scope: HTMLElement, heading: string): HTMLElement {
   return found;
 }
 
+/**
+ * The question cards from 1024px: under the landing's chips while the conversation is empty (the panel's column leaves
+ * them out then), else in the column. Read again at each step: a card's message leaves the landing, and a first turn
+ * refused outright brings it back.
+ */
+function cards(): HTMLElement {
+  return screen.queryByTestId('chat-landing-questions') ?? screen.getByTestId('agent-side');
+}
+
+/** Waits for `text` in the cards, wherever they are drawn at each try. */
+function findInCards(text: string): Promise<HTMLElement> {
+  return waitFor(() => within(cards()).getByText(text));
+}
+
 /** Opens the gap's Something else… in `scope`, types the words and sends them. */
 function tellGap(scope: HTMLElement): void {
   fireEvent.click(within(answers(scope, GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
@@ -153,15 +168,15 @@ function sent(api: FakeChatApi): { writes: string; turns: string } {
 describe('each card shows its evidence', () => {
   test('a weekday, a likely-closed day and a gap, with four answers and what they do', async () => {
     renderAt('/locations/l1/agent', chatApi());
-    const side = await openPanel(3);
-    expect(await within(side).findByText('Main Street Bar has no sales on 13 of the 13 Mondays in weeks with sales on other days.')).toBeTruthy();
-    expect(within(side).getByRole('heading', { level: 3, name: LIKELY_HEADING })).toBeTruthy();
-    expect(within(side).getByText('Only 1 guest was recorded. Saturdays usually have about 100.')).toBeTruthy();
-    expect(within(answers(side, LIKELY_HEADING)).getAllByRole('button').map((button) => button.textContent)).toEqual([
+    await openPanel(3);
+    expect(await findInCards('Main Street Bar has no sales on 13 of the 13 Mondays in weeks with sales on other days.')).toBeTruthy();
+    expect(within(cards()).getByRole('heading', { level: 3, name: LIKELY_HEADING })).toBeTruthy();
+    expect(within(cards()).getByText('Only 1 guest was recorded. Saturdays usually have about 100.')).toBeTruthy();
+    expect(within(answers(cards(), LIKELY_HEADING)).getAllByRole('button').map((button) => button.textContent)).toEqual([
       'Yes, it was just slow', 'No, we were closed', 'Not sure', 'Something else…',
     ]);
-    expect(within(side).getByText('There are no sales for these 2 days. You usually have about 100 guests on those days of the week.')).toBeTruthy();
-    expect(within(side).getByText('Yes saves a closure note for those days. If the data is missing, upload those days and TownwiseAI will use them. Something else lets you tell TownwiseAI in the chat.')).toBeTruthy();
+    expect(within(cards()).getByText('There are no sales for these 2 days. You usually have about 100 guests on those days of the week.')).toBeTruthy();
+    expect(within(cards()).getByText('Yes saves a closure note for those days. If the data is missing, upload those days and TownwiseAI will use them. Something else lets you tell TownwiseAI in the chat.')).toBeTruthy();
   });
 
   test('“Yes, it was just slow” saves the open-day note, and the card says Townwise now counts that day', async () => {
@@ -175,9 +190,9 @@ describe('each card shows its evidence', () => {
       },
     });
     renderAt('/locations/l1/agent', api);
-    const side = await openPanel(3);
-    fireEvent.click(within(answers(side, LIKELY_HEADING)).getByRole('button', { name: 'Yes, it was just slow' }));
-    expect(await within(side).findByText('Saved a note: you were open on Sat, May 23, 2026, with fewer guests than usual. Townwise now counts that day.')).toBeTruthy();
+    await openPanel(3);
+    fireEvent.click(within(answers(cards(), LIKELY_HEADING)).getByRole('button', { name: 'Yes, it was just slow' }));
+    expect(await findInCards('Saved a note: you were open on Sat, May 23, 2026, with fewer guests than usual. Townwise now counts that day.')).toBeTruthy();
     expect(api.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/likely_closed_2026-05-23', body: { answer: 'open' } }]);
   });
 });
@@ -185,44 +200,51 @@ describe('each card shows its evidence', () => {
 describe('Something else…', () => {
   test('opens a labeled field of the card’s own; Cancel closes it, drops the words and gives focus back', async () => {
     renderAt('/locations/l1/agent', chatApi());
-    const side = await openPanel(3);
-    const other = within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' });
+    await openPanel(3);
+    const other = within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' });
     expect(other.getAttribute('aria-expanded')).toBe('false');
-    expect(within(side).queryByLabelText(FIELD)).toBeNull();
+    expect(within(cards()).queryByLabelText(FIELD)).toBeNull();
     fireEvent.click(other);
     expect(other.getAttribute('aria-expanded')).toBe('true');
-    const field = within(side).getByLabelText(FIELD);
+    const field = within(cards()).getByLabelText(FIELD);
     expect(field.tagName).toBe('TEXTAREA');
     expect(document.activeElement).toBe(field);
-    expect(within(side).getByText('Leave out guest names. TownwiseAI answers in the chat.')).toBeTruthy();
+    expect(within(cards()).getByText('Leave out guest names. TownwiseAI answers in the chat.')).toBeTruthy();
     // Not the composer: that stays empty.
     expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('');
     // Send waits for words.
-    expect(within(side).getByRole('button', { name: 'Send to TownwiseAI' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(cards()).getByRole('button', { name: 'Send to TownwiseAI' }).getAttribute('aria-disabled')).toBe('true');
     fireEvent.change(field, { target: { value: '   ' } });
-    expect(within(side).getByRole('button', { name: 'Send to TownwiseAI' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(cards()).getByRole('button', { name: 'Send to TownwiseAI' }).getAttribute('aria-disabled')).toBe('true');
     fireEvent.change(field, { target: { value: WORDS } });
-    expect(within(side).getByRole('button', { name: 'Send to TownwiseAI' }).getAttribute('aria-disabled')).toBeNull();
+    expect(within(cards()).getByRole('button', { name: 'Send to TownwiseAI' }).getAttribute('aria-disabled')).toBeNull();
     // The field holds what fits in one chat message after the question's own words.
     expect(Number(field.getAttribute('maxlength'))).toBe(4000 - MESSAGE.length + WORDS.length);
-    fireEvent.click(within(side).getByRole('button', { name: 'Cancel' }));
-    expect(within(side).queryByLabelText(FIELD)).toBeNull();
+    fireEvent.click(within(cards()).getByRole('button', { name: 'Cancel' }));
+    expect(within(cards()).queryByLabelText(FIELD)).toBeNull();
     expect(other.getAttribute('aria-expanded')).toBe('false');
     expect(document.activeElement).toBe(other);
     fireEvent.click(other);
-    expect(within(side).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe('');
+    expect(within(cards()).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe('');
   });
 
+  // The sheet is a Modal; opening it, twice in the first, can pass 5 seconds on a loaded runner.
   test('the field takes focus in the card whose Something else… was pressed, and pressing it again folds the field and keeps the words', async () => {
+    // Below 1024px the sheet keeps the questions over the landing, so the card is drawn in both places.
+    setWidth(800);
     renderAt('/locations/l1/agent?panel=questions', chatApi());
-    const side = await screen.findByTestId('agent-side');
+    let sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
+    await waitFor(() => { expect(document.activeElement).toBe(within(sheet).getByRole('heading', { name: 'Questions and activity' })); });
     const landing = await screen.findByTestId('chat-landing-column');
     await within(landing).findByRole('heading', { name: 'Questions for you (3)' });
     const otherIn = (scope: HTMLElement): HTMLElement => within(answers(scope, GAP_HEADING)).getByRole('button', { name: 'Something else…' });
-    fireEvent.click(otherIn(side));
-    expect(document.activeElement).toBe(within(side).getByLabelText(FIELD));
-    fireEvent.click(within(side).getByRole('button', { name: 'Cancel' }));
-    // Opened from the landing next, the landing's field takes focus, not the panel's.
+    fireEvent.click(otherIn(sheet));
+    expect(document.activeElement).toBe(within(sheet).getByLabelText(FIELD));
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
+    const button = screen.getByRole('button', { name: 'Questions and activity (3)' });
+    await waitFor(() => { expect(document.activeElement).toBe(button); });
+    // Opened from the landing next, the landing's field takes focus, not the sheet's.
     fireEvent.click(otherIn(landing));
     expect(document.activeElement).toBe(within(landing).getByLabelText(FIELD));
     // Folded with Something else…, the field keeps its words, in both places; only Cancel drops them.
@@ -230,39 +252,47 @@ describe('Something else…', () => {
     fireEvent.click(otherIn(landing));
     expect(within(landing).queryByLabelText(FIELD)).toBeNull();
     expect(otherIn(landing).getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(otherIn(side));
-    expect(within(side).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
-    expect(document.activeElement).toBe(within(side).getByLabelText(FIELD));
-  });
+    fireEvent.click(button);
+    sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
+    await waitFor(() => { expect(document.activeElement).toBe(within(sheet).getByRole('heading', { name: 'Questions and activity' })); });
+    fireEvent.click(otherIn(sheet));
+    expect(within(sheet).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
+    expect(document.activeElement).toBe(within(sheet).getByLabelText(FIELD));
+  }, 15_000);
 
   test('sends the question with the person’s words to the chat, then answers other once the turn is saved; the words go nowhere else', async () => {
     const setItem = jest.spyOn(Storage.prototype, 'setItem');
     try {
       const api = chatApi();
       renderAt('/locations/l1/agent', api);
-      const side = await openPanel(3);
-      fireEvent.click(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
-      fireEvent.change(within(side).getByLabelText(FIELD), { target: { value: `  ${WORDS}\n` } });
-      fireEvent.click(within(side).getByRole('button', { name: 'Send to TownwiseAI' }));
+      const column = await openPanel(3);
+      // Beside the empty conversation's landing, the column leaves the questions to the landing.
+      expect(within(column).queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
+      fireEvent.click(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
+      fireEvent.change(within(cards()).getByLabelText(FIELD), { target: { value: `  ${WORDS}\n` } });
+      fireEvent.click(within(cards()).getByRole('button', { name: 'Send to TownwiseAI' }));
       // A message in the conversation shown (the landing starts one), exactly as the composer sends one.
       await waitFor(() => { expect(api.turns).toHaveLength(1); });
       expect(turn(api).body).toEqual({ content: MESSAGE });
       const log = await screen.findByRole('log', { name: 'Conversation with TownwiseAI' });
       expect(within(log).getByText(MESSAGE)).toBeTruthy();
+      // The landing has gone, so the column lists the questions again, the card with them.
+      expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
+      expect(within(column).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
       // Nothing is answered until the turn is saved; meanwhile no other answer can go.
       expect(api.writes).toEqual([]);
-      expect(within(side).getByText('Sending to TownwiseAI…')).toBeTruthy();
-      expect(within(answers(side, LIKELY_HEADING)).getByRole('button', { name: 'Not sure' }).getAttribute('aria-disabled')).toBe('true');
+      expect(within(cards()).getByText('Sending to TownwiseAI…')).toBeTruthy();
+      expect(within(answers(cards(), LIKELY_HEADING)).getByRole('button', { name: 'Not sure' }).getAttribute('aria-disabled')).toBe('true');
       // From 1024px the column stays open, and focus goes to the composer, as after a chip.
       expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL));
       await stream(() => { saved(api); });
       await waitFor(() => {
         expect(api.writes).toEqual([{ method: 'POST', path: `/api/org/locations/l1/agent/questions/${GAP_ID}`, body: { answer: 'other' } }]);
       });
-      expect(await within(side).findByText(SENT_LINE)).toBeTruthy();
-      expect(within(side).queryByLabelText(FIELD)).toBeNull();
+      expect(await findInCards(SENT_LINE)).toBeTruthy();
+      expect(within(cards()).queryByLabelText(FIELD)).toBeNull();
       expect(screen.getByRole('button', { name: 'Questions and activity (2)' })).toBeTruthy();
-      expect(screen.getByTestId('agent-side')).toBe(side);
+      expect(screen.getByTestId('agent-side')).toBe(column);
       // The words went once, in the turn; no write carries them, and nothing went to browser storage.
       const { writes, turns } = sent(api);
       expect(writes).not.toContain('Sentinel-typed-words');
@@ -293,17 +323,17 @@ describe('Something else…', () => {
     const api = chatApi();
     before?.(api);
     renderAt('/locations/l1/agent', api);
-    const side = await openPanel(3);
-    fireEvent.click(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
-    fireEvent.change(within(side).getByLabelText(FIELD), { target: { value: WORDS } });
-    fireEvent.click(within(side).getByRole('button', { name: 'Send to TownwiseAI' }));
+    await openPanel(3);
+    fireEvent.click(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
+    fireEvent.change(within(cards()).getByLabelText(FIELD), { target: { value: WORDS } });
+    fireEvent.click(within(cards()).getByRole('button', { name: 'Send to TownwiseAI' }));
     if (during !== null) {
       await waitFor(() => { expect(api.turns).toHaveLength(1); });
       await stream(() => { during(api); });
     }
-    expect(await within(side).findByText(words)).toBeTruthy();
+    expect(await findInCards(words)).toBeTruthy();
     expect(api.writes).toEqual([]);
-    expect(within(side).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
+    expect(within(cards()).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
     // The words stay in the card, never put in the composer.
     expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('');
     expect(screen.getByRole('button', { name: 'Questions and activity (3)' })).toBeTruthy();
@@ -316,17 +346,17 @@ describe('Something else…', () => {
       ? refusal(429, 'rate_limited')
       : { question: { id: GAP_ID, answer: 'other' }, note: null });
     renderAt('/locations/l1/agent', api);
-    const side = await openPanel(3);
-    fireEvent.click(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
-    fireEvent.change(within(side).getByLabelText(FIELD), { target: { value: WORDS } });
-    fireEvent.click(within(side).getByRole('button', { name: 'Send to TownwiseAI' }));
+    await openPanel(3);
+    fireEvent.click(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
+    fireEvent.change(within(cards()).getByLabelText(FIELD), { target: { value: WORDS } });
+    fireEvent.click(within(cards()).getByRole('button', { name: 'Send to TownwiseAI' }));
     await waitFor(() => { expect(api.turns).toHaveLength(1); });
     await stream(() => { saved(api); });
-    expect(await within(side).findByText('You’ve made a lot of changes. Try again later.')).toBeTruthy();
-    expect(within(side).getByText('Your message is in the chat.')).toBeTruthy();
+    expect(await findInCards('You’ve made a lot of changes. Try again later.')).toBeTruthy();
+    expect(within(cards()).getByText('Your message is in the chat.')).toBeTruthy();
     fail = false;
-    fireEvent.click(within(side).getByRole('button', { name: 'Try again' }));
-    expect(await within(side).findByText(SENT_LINE)).toBeTruthy();
+    fireEvent.click(within(cards()).getByRole('button', { name: 'Try again' }));
+    expect(await findInCards(SENT_LINE)).toBeTruthy();
     expect(api.turns).toHaveLength(1);
     expect(api.writes.map((write) => write.body)).toEqual([{ answer: 'other' }, { answer: 'other' }]);
   });
@@ -334,26 +364,26 @@ describe('Something else…', () => {
   test('Try again under its failed reply in the thread, refused, leaves the words in the card and never in the composer', async () => {
     const api = chatApi();
     renderAt('/locations/l1/agent?panel=questions', api);
-    const side = await screen.findByTestId('agent-side');
-    tellGap(side);
+    await screen.findByTestId('agent-side');
+    tellGap(cards());
     await failMidStream(api);
-    expect(await within(side).findByText('TownwiseAI is busy. Try again in a minute.')).toBeTruthy();
+    expect(await findInCards('TownwiseAI is busy. Try again in a minute.')).toBeTruthy();
     api.refuse = refusal(429, 'rate_limited');
     const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
     fireEvent.click(within(log).getByRole('button', { name: 'Try again' }));
-    expect(await within(side).findByText('You’ve sent a lot of messages. Try again later.')).toBeTruthy();
+    expect(await findInCards('You’ve sent a lot of messages. Try again later.')).toBeTruthy();
     expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('');
-    expect(within(side).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
+    expect(within(cards()).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
     expect(api.writes).toEqual([]);
   });
 
   test('Try again under its failed reply in the thread, saved, answers other once, as the card’s own Send would', async () => {
     const api = chatApi();
     renderAt('/locations/l1/agent?panel=questions', api);
-    const side = await screen.findByTestId('agent-side');
-    tellGap(side);
+    await screen.findByTestId('agent-side');
+    tellGap(cards());
     await failMidStream(api);
-    expect(await within(side).findByText('TownwiseAI is busy. Try again in a minute.')).toBeTruthy();
+    expect(await findInCards('TownwiseAI is busy. Try again in a minute.')).toBeTruthy();
     fireEvent.click(within(screen.getByRole('log', { name: 'Conversation with TownwiseAI' })).getByRole('button', { name: 'Try again' }));
     await waitFor(() => { expect(api.turns).toHaveLength(2); });
     expect(turn(api).body).toEqual({ content: MESSAGE });
@@ -361,32 +391,35 @@ describe('Something else…', () => {
     await waitFor(() => {
       expect(api.writes).toEqual([{ method: 'POST', path: `/api/org/locations/l1/agent/questions/${GAP_ID}`, body: { answer: 'other' } }]);
     });
-    expect(await within(side).findByText(SENT_LINE)).toBeTruthy();
-    expect(within(side).queryByText('TownwiseAI is busy. Try again in a minute.')).toBeNull();
-    expect(within(side).queryByRole('button', { name: 'Send to TownwiseAI' })).toBeNull();
+    expect(await findInCards(SENT_LINE)).toBeTruthy();
+    expect(within(cards()).queryByText('TownwiseAI is busy. Try again in a minute.')).toBeNull();
+    expect(within(cards()).queryByRole('button', { name: 'Send to TownwiseAI' })).toBeNull();
   });
 
   test('a message turned away because the month’s budget is used up says so once on its card', async () => {
     const api = chatApi();
     api.refuse = refusal(409, 'chat_budget_exhausted');
     renderAt('/locations/l1/agent?panel=questions', api);
-    const side = await screen.findByTestId('agent-side');
+    await screen.findByTestId('agent-side');
     await screen.findByLabelText(COMPOSER_LABEL);
     // Used up since the page read it: the chat reads it again after the turn.
     api.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 20, exhausted: true } };
-    tellGap(side);
-    expect(await within(card(side, GAP_HEADING)).findByText(BUDGET_USED)).toBeTruthy();
-    expect(within(card(side, GAP_HEADING)).getAllByText(BUDGET_USED)).toHaveLength(1);
-    expect(within(side).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
+    tellGap(cards());
+    expect(await waitFor(() => within(card(cards(), GAP_HEADING)).getByText(BUDGET_USED))).toBeTruthy();
+    expect(within(card(cards(), GAP_HEADING)).getAllByText(BUDGET_USED)).toHaveLength(1);
+    expect(within(cards()).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
     expect(api.writes).toEqual([]);
   });
 
+  // The sheet is a Modal; opening it, twice in the first, can pass 5 seconds on a loaded runner.
   test('a card in both places announces its error and its answer only from the one the person used', async () => {
     const api = chatApi();
     let fail = true;
     api.respond[`/api/org/locations/l1/agent/questions/${GAP_ID}`] = () => (fail
       ? refusal(429, 'rate_limited')
       : { question: { id: GAP_ID, answer: 'not_sure' }, note: null });
+    // Below 1024px the sheet keeps the questions over the landing, so the card is drawn in both places.
+    setWidth(800);
     renderAt('/locations/l1/agent?panel=questions', api);
     const side = await screen.findByTestId('agent-side');
     const landing = await screen.findByTestId('chat-landing-column');
@@ -403,45 +436,45 @@ describe('Something else…', () => {
     expect(await within(side).findByText(line)).toBeTruthy();
     expect(within(side).getByText(line).getAttribute('role')).toBe('status');
     expect(within(landing).getByText(line).getAttribute('role')).toBeNull();
-  });
+  }, 15_000);
 
   test('is disabled with its reason under view-as, while a reply streams and once the month’s budget is used up', async () => {
     renderAt('/locations/l1/agent', chatApi(), viewAsMe(ACCESS.member));
-    let side = await openPanel(3);
-    const viewed = within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' });
+    await openPanel(3);
+    const viewed = within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' });
     expect(viewed.getAttribute('aria-disabled')).toBe('true');
     expect(viewed.getAttribute('aria-describedby')?.split(' ')).toContain('chat-ro');
     fireEvent.click(viewed);
-    expect(within(side).queryByLabelText(FIELD)).toBeNull();
+    expect(within(cards()).queryByLabelText(FIELD)).toBeNull();
     cleanup();
 
     const spent = chatApi();
     spent.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 20, exhausted: true } };
     renderAt('/locations/l1/agent', spent);
-    side = await openPanel(3);
-    expectOff(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' }), BUDGET_USED);
+    await openPanel(3);
+    expectOff(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' }), BUDGET_USED);
     // The other answers don't need the chat.
-    expect(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Not sure' }).getAttribute('aria-disabled')).toBeNull();
+    expect(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Not sure' }).getAttribute('aria-disabled')).toBeNull();
     cleanup();
 
     const api = chatApi();
     renderAt('/locations/l1/agent', api);
     fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'How was May?' } });
     fireEvent.click(screen.getByRole('button', { name: 'Send' }));
-    side = await openPanel(3);
-    expect(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' }).getAttribute('aria-disabled')).toBe('true');
+    await openPanel(3);
+    expect(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' }).getAttribute('aria-disabled')).toBe('true');
     await stream(() => { saved(api); });
-    expect(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' }).getAttribute('aria-disabled')).toBeNull();
+    expect(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' }).getAttribute('aria-disabled')).toBeNull();
   });
 
   test('is not offered while TownwiseAI’s chat is off', async () => {
     const api = chatApi();
     api.summary = { ...SUMMARY, enabled: false };
     renderAt('/locations/l1/agent', api);
-    const side = await openPanel(3);
-    expect(await within(side).findAllByRole('button', { name: 'No, the data is missing' })).toHaveLength(2);
-    expect(within(side).queryByRole('button', { name: 'Something else…' })).toBeNull();
-    expect(within(side).queryByText(/Something else lets you/)).toBeNull();
+    await openPanel(3);
+    expect(await within(cards()).findAllByRole('button', { name: 'No, the data is missing' })).toHaveLength(2);
+    expect(within(cards()).queryByRole('button', { name: 'Something else…' })).toBeNull();
+    expect(within(cards()).queryByText(/Something else lets you/)).toBeNull();
   });
 });
 
@@ -510,7 +543,7 @@ describe('below 1024px', () => {
 });
 
 describe('inline on the landing', () => {
-  test('under the composer and the chips, Questions for you (N) shows the same cards, and an answer in one place shows in the other', async () => {
+  test('under the composer and the chips, Questions for you (N) shows the cards, once from 1024px, and an answer in one place shows in the other', async () => {
     const api = chatApi();
     renderAt('/locations/l1/agent', api);
     const landing = await screen.findByTestId('chat-landing-column');
@@ -520,14 +553,20 @@ describe('inline on the landing', () => {
     expect(within(landing).getAllByRole('heading', { level: 3 }).map((h) => h.textContent)).toEqual([
       'Are you closed on Mondays?', LIKELY_HEADING, GAP_HEADING,
     ]);
-    // Answered here, it shows what the answer did here and in the panel, and the counts follow.
+    // Answered here, it shows what the answer did, and the counts follow.
     fireEvent.click(within(answers(landing, GAP_HEADING)).getByRole('button', { name: 'Not sure' }));
     expect(await within(landing).findByText('Got it. TownwiseAI won’t ask about these days again.')).toBeTruthy();
     expect(within(landing).getByRole('heading', { level: 2, name: 'Questions for you (2)' })).toBeTruthy();
-    const side = await openPanel(2);
+    // From 1024px the column beside the landing leaves the questions out: they're drawn once, here.
+    const column = await openPanel(2);
+    expect(within(column).queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
+    expect(within(column).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
+    // Below 1024px the panel is a sheet over the landing and keeps them, with the same answers and counts.
+    setWidth(800);
+    const side = await screen.findByRole('dialog', { name: 'Questions and activity' });
     expect(within(side).getByText('Got it. TownwiseAI won’t ask about these days again.')).toBeTruthy();
     expect(within(side).getByText('2 open')).toBeTruthy();
-    // Answered in the panel, it shows on the landing too.
+    // Answered in the sheet, it shows on the landing too.
     fireEvent.click(within(answers(side, LIKELY_HEADING)).getByRole('button', { name: 'Not sure' }));
     expect(await within(landing).findByText('Got it. TownwiseAI won’t ask about this day again.')).toBeTruthy();
     expect(within(landing).getByRole('heading', { level: 2, name: 'Questions for you (1)' })).toBeTruthy();
@@ -581,11 +620,13 @@ describe('inline on the landing', () => {
 });
 
 describe('?panel=questions (Home’s link)', () => {
-  test('opens the panel as a column from 1024px, with Questions first, and drops the parameter', async () => {
+  test('opens the panel as a column from 1024px and drops the parameter; beside the landing the questions are under its chips', async () => {
     renderAt('/locations/l1/agent?panel=questions', chatApi());
     const side = await screen.findByTestId('agent-side');
     expect(screen.getByRole('button', { name: 'Questions and activity (3)' }).getAttribute('aria-expanded')).toBe('true');
-    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('Questions for you');
+    const landing = await screen.findByTestId('chat-landing-column');
+    await within(landing).findByRole('heading', { name: 'Questions for you (3)' });
+    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
     await waitFor(() => { expect(window.location.search).toBe(''); });
     expect(window.location.pathname).toBe('/locations/l1/agent');
     // Closed by the person, it stays closed.

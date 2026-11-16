@@ -163,7 +163,7 @@ export function UserMessage(props: {
           </View>
           {/* Only a saved message can be edited or have versions. */}
           {message.nodeId === null ? null : (
-            <View style={styles.row} {...rowMark(props.actions)}>
+            <View style={styles.icons} {...rowMark(props.actions)}>
               <MessageTime at={message.at} />
               <ChatButton
                 focusRef={editButton}
@@ -215,6 +215,8 @@ const styles = StyleSheet.create({
   text: { ...theme.type.sub, color: c.white },
   files: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'flex-end', gap: theme.space[2], minWidth: 0 },
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', columnGap: theme.space[4] },
+  // A compact row, as under a reply: the 44px boxes side by side.
+  icons: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' },
   editor: { alignSelf: 'stretch', gap: theme.space[2] },
   field: {
     ...theme.type.sub, minHeight: 88, paddingHorizontal: 12, paddingVertical: 10, color: c.white, backgroundColor: c.ground,

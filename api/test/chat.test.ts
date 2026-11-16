@@ -164,7 +164,7 @@ describe('the system prompt, estimates (U13A)', () => {
       'It gives the location\'s name, its town, today\'s date and weekday in the town\'s time zone, and how much sales history it has.',
       'Every date in tool results comes with its weekday; use it instead of working weekdays out yourself.',
       'get_town_calendar for the town\'s term dates, events and holidays with their sources, and get_people_in_town for who is likely in town each day',
-      'Townwise\'s figures come in kinds. Say which kind each figure is: the owner\'s own history (get_sales_days, get_location_overview), public town data (get_town_profile, get_town_calendar, get_people_in_town), and, when it exists, Townwise\'s forecast.',
+      'Townwise\'s figures come in kinds. Say which kind each figure is: the owner\'s own history (get_sales_days, get_location_overview), public town data (get_town_profile, get_town_calendar, get_people_in_town), public web pages (web_search), and, when it exists, Townwise\'s forecast.',
       'get_people_in_town gives a headcount range only where public counts support one. When it gives none, say so and describe what Townwise does know: the term, events, holidays and the season.',
       'Attendance at an event is not the number of extra people in town.',
       'When you say how the town affects this location, use the location\'s own history by term state from get_people_in_town, with its day counts.',
@@ -239,7 +239,7 @@ describe('the history view', () => {
       { role: 'user', content: 'Thanks' },
     ], [at, later, later, later, later, later, later])), '2026-06-01');
     expect(views).toEqual([
-      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null, attachments: [] },
+      { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null, attachments: [], sources: [] },
       {
         nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), endedAt: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
         proposals: [{ ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null }],
@@ -250,9 +250,9 @@ describe('the history view', () => {
           { type: 'proposal', proposal: { ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null } },
           { type: 'text', text: 'I proposed it.' },
         ],
-        feedback: null, next: null, attachments: [],
+        feedback: null, next: null, attachments: [], sources: [],
       },
-      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), endedAt: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null, next: null, attachments: [] },
+      { nodeId: 'legacy-6', role: 'user', at: later.toISOString(), endedAt: later.toISOString(), text: 'Thanks', proposals: [], parts: [], feedback: null, next: null, attachments: [], sources: [] },
     ]);
   });
 
@@ -497,7 +497,7 @@ describe('the saved turn, an item’s text (D28)', () => {
     );
     const tools = {
       ctx: { items: { on: true, readText: () => Promise.resolve(read) } }, scope: {}, location: { id: 'l1' }, today: '2026-06-01',
-      timeZone: 'America/New_York', turn: { readUntrusted: false },
+      timeZone: 'America/New_York', turn: { readUntrusted: false, readWeb: false },
     } as unknown as ToolContext;
     const result = await runTurn({
       model, tools, history: [], userMessage: { role: 'user', content: 'What is on the catering list?' }, expanded: null,

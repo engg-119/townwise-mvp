@@ -14,7 +14,7 @@ export interface ViewAsGrantFields {
   /** View-as only. */
   targetUserId?: string;
   orgId: Types.ObjectId | null;
-  /** View-as only. */
+  /** View-as; open as admin once someone has joined its organization (D25, 2026-11-15). */
   reason?: string;
   startedAt: Date;
   expiresAt: Date;
@@ -90,7 +90,7 @@ export interface ViewAsGrantStore {
     reason: string; startedAt: Date; expiresAt: Date;
   }): Promise<boolean>;
   /** Inserts an open-as-admin grant holding this session; false when the session already holds one of either kind. */
-  insertOpenAsAdmin(input: { id: string; actorUserId: string; sessionId: string; orgId: string; startedAt: Date; expiresAt: Date }): Promise<boolean>;
+  insertOpenAsAdmin(input: { id: string; actorUserId: string; sessionId: string; orgId: string; startedAt: Date; expiresAt: Date; reason?: string }): Promise<boolean>;
   /** Compare-and-set: ends the grant while it still holds this session, and releases the session. */
   end(grantId: string, sessionId: string, input: { endedAt: Date; endReason: GrantEndReason }): Promise<boolean>;
   /**
@@ -147,7 +147,7 @@ export function createViewAsGrantStore(connection: Connection): ViewAsGrantStore
         await Grant.create({
           _id: input.id, kind: 'open_as_admin', actorUserId: input.actorUserId, actorSessionId: input.sessionId,
           activeSessionId: input.sessionId, orgId: input.orgId, startedAt: input.startedAt, expiresAt: input.expiresAt,
-          endedAt: null, endReason: null,
+          endedAt: null, endReason: null, ...(input.reason === undefined ? {} : { reason: input.reason }),
         });
         return true;
       } catch (err) {

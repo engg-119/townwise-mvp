@@ -7,6 +7,7 @@ import type { AuthState } from '../../src/auth/store';
 import { homeCss } from '../../src/marketing/homeStyles.web';
 import { mapCss } from '../../src/marketing/map/mapStyles.web';
 import { storyCss } from '../../src/marketing/map/storyStyles.web';
+import { sourceChipCss } from '../../src/marketing/SourceChip.web';
 import { css } from '../../src/marketing/styles.web';
 import { resetThemeMode, THEME_STORAGE_KEY } from '../../src/portal/shell/themeMode';
 import { colorVar, theme } from '../../src/theme';
@@ -162,7 +163,7 @@ test('a pick made on one public page holds on the next, as a new page load reads
 // Every color in the public pages' CSS is a var() of a theme token (theme.color on web), so the pages switch palettes
 // with the page and nothing computes a color in JS.
 test('the public pages’ CSS has no color literal', () => {
-  for (const sheet of [css, homeCss, mapCss, storyCss]) {
+  for (const sheet of [css, homeCss, mapCss, storyCss, sourceChipCss]) {
     expect(sheet).not.toMatch(/#[0-9a-f]{3,8}(?![\w-])|\b(?:rgba?|hsla?)\(/i);
   }
 });

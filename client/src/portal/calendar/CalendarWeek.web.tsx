@@ -14,10 +14,11 @@ import { statusWord } from './model';
 // 1" on a month's 1st, a Today tag under today), the status word, the figure with "+70", and one line (the range,
 // "guests" under a past figure, "No forecast"). Then every item on the day as a card (grid.ts buildWeek), not
 // focusable; the panel keeps the actions. The box is at least as tall as the month grid at the same width, so
-// switching views keeps the page height. Keys are the month grid's (grid.ts gridMove, layout 'week'), and the moved-to
-// column takes focus without scrolling. A mouse or pen over a column head shows the day's tooltip; cards and touch
-// show none. An inert day (outside the 25 months) is its head line only, with no data-date; a pending day (its
-// reads in flight) is its head line only, still the tab stop when selected, with no description and no tooltip.
+// switching views keeps the page height. Keys are grid.ts gridMove's in its 'week' layout, Home and End going to the
+// block's first and last day, and the moved-to column takes focus without scrolling. A mouse or pen over a column head
+// shows the day's tooltip; cards and touch show none. An inert day (outside the 25 months) is its head line only, with
+// no data-date; a pending day (its reads in flight) is its head line only, still the tab stop when selected, with no
+// description and no tooltip.
 // At 640px and below the week is an agenda: the same grid with 7 rows of one gridcell each, every day's head on one
 // line above its full-width cards, so Up and Down move a day, as a screen reader hears the next row; its height
 // follows what it holds.
@@ -32,7 +33,6 @@ const CSS = [
 const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', fontVariantNumeric: 'tabular-nums' } as const;
 const small = { fontFamily: theme.font.mono, fontSize: 10, lineHeight: '14px' } as const;
 const sans = { fontFamily: theme.font.sans, fontSize: 12, lineHeight: '16px' } as const;
-const oneLine = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 
 /** How long a pointer may rest over no head before the tooltip clears, as the month grid's. */
 const CLEAR_DELAY_MS = 80;
@@ -44,8 +44,9 @@ function dateOf(target: EventTarget | null): string | null {
 
 /**
  * One card: its hours first when timed (mono 10), the title in full (sans 12/16), then its kind words (mono 10,
- * `text3`), on a `panel` fill with a 2px left rule in its mark's token. A term or season is one line. The spaces
- * between the parts aren't drawn (the card is a grid) but keep the words apart in the column's description.
+ * `text3`), on a `panel` fill with a 2px left rule in its mark's token. A term or season keeps its title and kind
+ * words on one run, which wraps as every card's words do, so nothing is cut. The spaces between the parts aren't
+ * drawn (the card is a grid) but keep the words apart in the column's description.
  */
 function Card(props: { card: WeekCard }): React.JSX.Element {
   const { card } = props;
@@ -53,7 +54,7 @@ function Card(props: { card: WeekCard }): React.JSX.Element {
   if (periodCard(card)) {
     return (
       <div role="listitem" style={frame}>
-        <span style={{ ...sans, ...oneLine, color: C.text2 }}>{card.title}{' '}<span style={{ ...small, color: C.text3 }}>{card.sub}</span></span>
+        <span style={{ ...sans, color: C.text2, overflowWrap: 'anywhere' }}>{card.title}{' '}<span style={{ ...small, color: C.text3 }}>{card.sub}</span></span>
       </div>
     );
   }
@@ -193,7 +194,7 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
       onSelect(from);
       return;
     }
-    const next = gridMove(from, event.key, event.ctrlKey || event.metaKey, { layout, month: props.month, bounds: props.bounds });
+    const next = gridMove(from, event.key, event.ctrlKey || event.metaKey, { layout, weekStart: props.weekStart, bounds: props.bounds });
     if (next === null) return;
     event.preventDefault();
     // Consumed: the move would leave the 25 months.

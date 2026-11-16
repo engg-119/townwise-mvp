@@ -39,7 +39,8 @@ export const XLSX_MAX_DECLARED_BYTES = 200 * MIB;
 export const XLSX_MAX_RATIO = 100;
 export const MAX_ROWS = 2_000_000;
 export const MAX_COLUMNS = 200;
-export const MAX_SHEETS = 10;
+/** A Toast Sales Summary has 22 sheets, its daily one the 20th. */
+export const MAX_SHEETS = 30;
 /** Rows searched for the header row. */
 export const HEADER_SEARCH_ROWS = 30;
 /** A file that takes longer is kept as too_complex. */
@@ -139,6 +140,34 @@ export const AI_READS_IN_FLIGHT = 10;
  */
 export const AI_ZIP_BYTES = 25 * MIB;
 export const AI_ZIP_ENTRIES = 20;
+
+/**
+ * A PDF, Word (.docx) or Excel (.xlsx) file attached to a TownwiseAI message (spec D36) is read as text in the AI text
+ * thread, within the caps above for its kind (AI_PDF_BYTES, DOCX_READ_BYTES, XLSX_READ_BYTES). The thread's slot is
+ * shared with the sales reader and the TownwiseAI reader, whose threads may run 2 minutes, and a chat turn has 150
+ * seconds, so a chat read waits at most 15 seconds for the slot (then the file is listed not read, busy) and its thread
+ * has 30 seconds (then `too_complex`). [CONFIRM: a chat read waits at most 15 seconds for the parse thread, then has 30
+ * seconds to make the text]
+ */
+export const CHAT_SLOT_WAIT_MS = 15_000;
+export const CHAT_TEXT_TIME_MS = 30_000;
+
+/**
+ * Reading the ordering setup with TownwiseAI (spec D41): one file or pasted text, sent in the request (an 8 MB body)
+ * and never stored. A file of at most 5 MiB, a PDF of at most 30 pages, a picture within the caps above
+ * (MODEL_PICTURE_BYTES, MODEL_PICTURE_MAX_SIDE), and text cut at 100,000 characters (the answer says so). A PDF's own
+ * text, kept in memory only to tell which names it holds, stops at AI_SOURCE_CHARS. Making text waits for the parse
+ * thread and runs as a chat read does (CHAT_SLOT_WAIT_MS, CHAT_TEXT_TIME_MS). The body is at most 8 MiB (the route's
+ * '8mb', as express.json reads it). One replica holds at most two full bodies of reads at once, counted by their
+ * Content-Length before they are parsed, since a read holds its content several times over (its JSON, its bytes, the
+ * request sent) on a 0.5 GiB replica; past it a read answers 503 extract_busy. [CONFIRM: 5 MB a file in an 8 MB body,
+ * 30 PDF pages, 3.75 MB and 8,000 px a picture, 100,000 characters of text]
+ */
+export const SETUP_FILE_BYTES = 5 * MIB;
+export const SETUP_PDF_PAGES = 30;
+export const SETUP_TEXT_CHARS = 100_000;
+export const SETUP_READ_BODY_BYTES = 8 * MIB;
+export const SETUP_READ_BYTES_IN_FLIGHT = 2 * SETUP_READ_BODY_BYTES;
 
 /**
  * Originals are deleted this long after upload by the daily sweep (FileView.rawExpiresAt); the storage lifecycle rule is

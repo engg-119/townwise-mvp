@@ -13,6 +13,7 @@ import { LinkButton } from '../ui/Button';
 import { Skeleton, SkeletonHeading, SkeletonText } from '../skeleton/kit';
 import { ErrorNotice, Notice } from '../ui/feedback';
 import { Content, Wrap } from '../ui/layout';
+import { MessageFocus } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
 import { PageHeader, PageNotice } from './Page';
 
@@ -24,7 +25,9 @@ import { PageHeader, PageNotice } from './Page';
 // switcher and “All locations” when the organization has more than one location, and “Location settings” for org
 // admins. TownwiseAI has no page header at all (D26): the chat fills the screen
 // under the top bar and draws its own hidden h1. The location's sections are in the top bar (Frame), so the pages
-// render only their content.
+// render only their content. The page notice and the page share a MessageFocus, so a page that opens with a notice
+// meant for it (Your data after an item's delete) can give that notice focus; a page with its own MessageFocus keeps
+// its messages to it.
 
 /** The organization the layout is showing (see LocationShell), for its pages. */
 const ShownOrgContext = createContext<OrgResponse | null>(null);
@@ -129,8 +132,10 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
     <Wrap>
       {head}
       <Content>
-        <PageNotice />
-        {page}
+        <MessageFocus>
+          <PageNotice />
+          {page}
+        </MessageFocus>
       </Content>
     </Wrap>
   );

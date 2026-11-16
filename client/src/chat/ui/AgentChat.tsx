@@ -18,7 +18,7 @@ import { nextFallback, suggestionsFor } from '../suggestions';
 import { readsLine, toolLine, type ToolContext } from '../tools';
 import { openQuestions, type AgentPanelState } from '../useAgentPanel';
 import type { MessageAttachment } from '../api';
-import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat } from '../useTuningChat';
+import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat, type TuningChatState } from '../useTuningChat';
 import { budgetLines } from './AgentSidePanel';
 import { ChatDrop } from './ChatDrop';
 import { ChatHeader, PanelButton } from './ChatHeader';
@@ -108,6 +108,16 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 /** The docked composer's last rotating example, once there are sales to tell about. */
 const SATURDAY = 'Tell me about last Saturday';
 
+/** An empty conversation, drawn as the landing: what to ask, the composer, the chips and TownwiseAI's questions. */
+function isLanding(state: TuningChatState): boolean {
+  return state.status === 'ready' && state.enabled && state.messages.length === 0 && !state.conversationLoading;
+}
+
+/** Whether the landing lists TownwiseAI's questions under its chips, so the panel's column beside it leaves them out. */
+export function landingShowsQuestions(state: TuningChatState, panel: AgentPanelState): boolean {
+  return isLanding(state) && panel.state.status === 'ready' && panel.state.data.questions.length > 0;
+}
+
 export function AgentChat(props: {
   chat: TuningChat;
   ctx: AgentChatContext;
@@ -153,7 +163,7 @@ export function AgentChat(props: {
   // A conversation opened, started or deleted by the person: if that swaps the landing and the thread, what is drawn
   // in both (the notices, and on phones the header) is drawn anew, and the control they used goes with it.
   const switched = useRef(false);
-  const landing = state.status === 'ready' && state.enabled && state.messages.length === 0 && !state.conversationLoading;
+  const landing = isLanding(state);
   const spoken = said ?? { words: announcementOf(chat, ctx, before), n: 0 };
 
   useEffect(() => {

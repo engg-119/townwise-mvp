@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 import { useState } from 'react';
 
 import { CalendarWeek } from '../../../src/portal/calendar/CalendarWeek.web';
-import { buildWeek, gridHeight, weekLabel, weekOf } from '../../../src/portal/calendar/grid';
+import { buildWeek, gridHeight, gridRange, weekDays, weekLabel, weekStartFor } from '../../../src/portal/calendar/grid';
 import { ALL_FILTERS, monthBounds, type CalendarInput, type ImportedEvent } from '../../../src/portal/calendar/model';
 import type { ForecastWindow } from '../../../src/portal/estimates/api';
 import { note, townEvent } from '../analytics/fakes';
@@ -13,7 +13,8 @@ import { forecastDay, forecastOf } from './fakes';
 // each the click target and the roving tab stop, labeled as its month cell and described by its card list; its head
 // (the day, the status word, the figure and the range); its cards in order with their hours; the keys; a box at least
 // as tall as the month grid; and the tooltip over a head only. At 640px and below the same week as an agenda of 7
-// rows. Today is Wed, Nov 11, 2026. Synthetic figures and made-up titles only.
+// rows. Today is Wed, Nov 11, 2026, so the weeks are 7-day blocks from a Wednesday: Saturday Nov 21 is in Nov 18 to 24.
+// Synthetic figures and made-up titles only.
 
 let width = 1280;
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => width });
@@ -44,7 +45,7 @@ const PATIO = ruleOf('r1', 'Patio closes at 8 pm', {
 
 function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   return {
-    today: TODAY, month: '2026-11',
+    today: TODAY, covered: gridRange('2026-11', BOUNDS),
     forecast: forecastOf([forecastDay({ date: SATURDAY })]) as ForecastWindow,
     salesDays: [],
     events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })],
@@ -59,19 +60,19 @@ function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   };
 }
 
-interface Options { reads?: CalendarInput; selected?: string; month?: string; busy?: boolean; onSelect?: jest.Mock }
+interface Options { reads?: CalendarInput; selected?: string; busy?: boolean; onSelect?: jest.Mock }
 
 function renderWeek(options: Options = {}): { onSelect: jest.Mock; grid: HTMLElement } {
   const reads = options.reads ?? input();
   const selected = options.selected ?? SATURDAY;
-  const month = options.month ?? reads.month;
   const onSelect = options.onSelect ?? jest.fn();
-  const label = weekLabel(weekOf(selected)[0] ?? selected);
+  const weekStart = weekStartFor(selected, reads.today);
+  const label = weekLabel(weekStart);
   render(
     <CalendarWeek
-      days={buildWeek(selected, month, reads, BOUNDS)}
+      days={buildWeek(selected, reads.today, reads, BOUNDS)}
       selected={selected}
-      month={month}
+      weekStart={weekStart}
       bounds={BOUNDS}
       onSelect={onSelect}
       busy={options.busy ?? false}
@@ -87,13 +88,13 @@ function Selecting(props: { start: string }): React.JSX.Element {
   const [selected, setSelected] = useState(props.start);
   return (
     <CalendarWeek
-      days={buildWeek(selected, '2026-11', input(), BOUNDS)}
+      days={buildWeek(selected, TODAY, input(), BOUNDS)}
       selected={selected}
-      month="2026-11"
+      weekStart={weekStartFor(selected, TODAY)}
       bounds={BOUNDS}
       onSelect={(date) => { setSelected(date); }}
       busy={false}
-      label={weekLabel(weekOf(selected)[0] ?? selected)}
+      label={weekLabel(weekStartFor(selected, TODAY))}
       tooltip={() => null}
     />
   );
@@ -139,7 +140,8 @@ describe('the day columns at 1280', () => {
     const rows = within(grid).getAllByRole('row');
     expect(rows).toHaveLength(1);
     const columns = within(at(rows, 0)).getAllByRole('gridcell');
-    expect(columns.map((column) => column.getAttribute('data-date'))).toEqual(weekOf(SATURDAY));
+    expect(grid.getAttribute('aria-label')).toBe('Nov 18 to 24, 2026');
+    expect(columns.map((column) => column.getAttribute('data-date'))).toEqual(weekDays('2026-11-18'));
     expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
     expect(cell(SATURDAY).getAttribute('tabindex')).toBe('0');
     expect(cell(SATURDAY).getAttribute('aria-selected')).toBe('true');
@@ -147,7 +149,7 @@ describe('the day columns at 1280', () => {
 
   test('each column is labeled as its month cell and described by its card list, hours included', () => {
     renderWeek();
-    const days = buildWeek(SATURDAY, '2026-11', input(), BOUNDS);
+    const days = buildWeek(SATURDAY, TODAY, input(), BOUNDS);
     for (const day of days) {
       if (day.kind !== 'day') throw new Error('an inert day in November');
       expect(cell(day.date).getAttribute('aria-label')).toBe(day.label);
@@ -168,9 +170,11 @@ describe('the day columns at 1280', () => {
     expect(head(SATURDAY).textContent).toContain('180 to 240');
     // A month's 1st names its month.
     cleanup();
-    renderWeek({ selected: '2026-12-01', month: '2026-12', reads: input({ month: '2026-12' }) });
+    renderWeek({ selected: '2026-12-01' });
     expect(head('2026-12-01').textContent).toContain('Tue Dec 1');
     expect(head('2026-11-30').textContent).toContain('Mon 30');
+    // The block of Nov 25 to Dec 1 starts on a Wednesday.
+    expect(head('2026-11-25').textContent).toContain('Wed 25');
   });
 
   test('today’s column has a Today tag', () => {
@@ -199,50 +203,78 @@ describe('the day columns at 1280', () => {
     expect(card?.children[1]?.textContent).toBe('Saturdays from Nov 1, 2026');
   });
 
-  test('ArrowRight from Sunday selects the next Monday, ArrowDown a week on; the moved-to column takes focus without scrolling', () => {
-    const { onSelect } = renderWeek({ selected: '2026-11-22' });
-    fireEvent.keyDown(cell('2026-11-22'), { key: 'ArrowRight' });
-    expect(onSelect).toHaveBeenLastCalledWith('2026-11-23', true, null);
-    fireEvent.keyDown(cell('2026-11-22'), { key: 'ArrowDown' });
-    expect(onSelect).toHaveBeenLastCalledWith('2026-11-29', true, null);
+  test('ArrowRight from a block’s last day selects the next block’s first, ArrowDown a week on; the moved-to column takes focus without scrolling', () => {
+    const { onSelect } = renderWeek({ selected: '2026-11-24' });
+    fireEvent.keyDown(cell('2026-11-24'), { key: 'ArrowRight' });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-11-25', true, null);
+    fireEvent.keyDown(cell('2026-11-24'), { key: 'ArrowDown' });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-12-01', true, null);
     // PageDown steps from the day's own month.
-    fireEvent.keyDown(cell('2026-11-22'), { key: 'PageDown' });
-    expect(onSelect).toHaveBeenLastCalledWith('2026-12-22', true, '2026-12');
+    fireEvent.keyDown(cell('2026-11-24'), { key: 'PageDown' });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-12-24', true, '2026-12');
     cleanup();
     const focus = jest.spyOn(HTMLElement.prototype, 'focus');
-    render(<Selecting start="2026-11-18" />);
-    fireEvent.keyDown(cell('2026-11-18'), { key: 'ArrowRight' });
-    expect(document.activeElement).toBe(cell('2026-11-19'));
+    render(<Selecting start="2026-11-17" />);
+    fireEvent.keyDown(cell('2026-11-17'), { key: 'ArrowRight' });
+    // Into the next block, which shows with the new day's column focused.
+    expect(screen.getByRole('grid', { name: 'Nov 18 to 24, 2026' })).toBeTruthy();
+    expect(document.activeElement).toBe(cell('2026-11-18'));
     expect(focus).toHaveBeenLastCalledWith({ preventScroll: true });
     expect(document.querySelectorAll('[role="grid"] [tabindex="0"]')).toHaveLength(1);
   });
 
   test('PageDown from a leading day steps from the day’s own month, not the grid’s', () => {
     // The week view hides the grid's month: Oct 28 in November's grid goes to Nov 28 (the month grid's keys give Dec 28).
-    const { onSelect } = renderWeek({ selected: '2026-10-28', month: '2026-11' });
+    const { onSelect } = renderWeek({ selected: '2026-10-28' });
     fireEvent.keyDown(cell('2026-10-28'), { key: 'PageDown' });
     expect(onSelect).toHaveBeenLastCalledWith('2026-11-28', true, '2026-11');
   });
 
-  test('Ctrl+Home goes to the week’s Monday, not the month’s 1st', () => {
-    const { onSelect } = renderWeek({ selected: '2026-11-18' });
-    fireEvent.keyDown(cell('2026-11-18'), { key: 'Home', ctrlKey: true });
-    expect(onSelect).toHaveBeenLastCalledWith('2026-11-16', true, null);
+  test('Home and End go to the block’s first and last day, and Ctrl+Home too, not the month’s 1st', () => {
+    const { onSelect } = renderWeek({ selected: '2026-11-21' });
+    fireEvent.keyDown(cell('2026-11-21'), { key: 'Home' });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-11-18', true, null);
+    fireEvent.keyDown(cell('2026-11-21'), { key: 'End' });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-11-24', true, null);
+    fireEvent.keyDown(cell('2026-11-21'), { key: 'Home', ctrlKey: true });
+    expect(onSelect).toHaveBeenLastCalledWith('2026-11-18', true, null);
   });
 
   test('a click anywhere in a column, a card included, selects its day; Enter selects the focused one', () => {
     const { onSelect } = renderWeek();
-    fireEvent.click(cell('2026-11-17'));
-    expect(onSelect).toHaveBeenLastCalledWith('2026-11-17');
+    fireEvent.click(cell('2026-11-20'));
+    expect(onSelect).toHaveBeenLastCalledWith('2026-11-20');
     fireEvent.click(at(within(cell(SATURDAY)).getAllByRole('listitem'), 0));
     expect(onSelect).toHaveBeenLastCalledWith(SATURDAY);
     fireEvent.keyDown(cell('2026-11-19'), { key: 'Enter' });
     expect(onSelect).toHaveBeenLastCalledWith('2026-11-19');
   });
 
-  test('the box is at least as tall as the month grid, and aria-busy while busy', () => {
+  test('a term card shows its whole title and kind words, wrapping: nothing in it is cut or kept to one line', () => {
+    const finals = townEvent({ id: 'hanover-nh:2026-11-19:term', start: '2026-11-19', end: '2026-11-24', title: 'Fall term finals', kind: 'term' });
+    renderWeek({ reads: input({ events: [finals] }) });
+    const card = within(cell(SATURDAY)).getAllByRole('listitem').find((item) => item.textContent.startsWith('Fall term finals'));
+    if (card === undefined) throw new Error('no term card');
+    expect(card.textContent).toBe('Fall term finals Term, Nov 19 to 24');
+    // jsdom does no layout, so the styles say it: no ellipsis, no single line, nothing clipped.
+    for (const element of [card, ...card.querySelectorAll<HTMLElement>('*')]) {
+      expect(element.style.textOverflow).not.toBe('ellipsis');
+      expect(element.style.whiteSpace).not.toBe('nowrap');
+      expect(element.style.overflow).not.toBe('hidden');
+    }
+  });
+
+  test('the box is at least as tall as the month grid (658px at 1280) and can grow, and aria-busy while busy', () => {
     const { grid } = renderWeek({ busy: true });
     expect(grid.style.minHeight).toBe(`${String(gridHeight(1280))}px`);
+    expect(grid.style.minHeight).toBe('658px');
+    // No fixed height and nothing hidden, from the view's box down to its columns, so a column with more cards grows it.
+    const box = grid.closest<HTMLElement>('.tw-cw');
+    if (box === null) throw new Error('no week box');
+    for (const element of [box, grid, ...within(grid).getAllByRole('row'), ...within(grid).getAllByRole('gridcell')]) {
+      expect(element.style.height).toBe('');
+      expect(element.style.overflow).toBe('');
+    }
     expect(grid.getAttribute('aria-busy')).toBe('true');
   });
 
@@ -258,13 +290,15 @@ describe('the day columns at 1280', () => {
 });
 
 describe('inert and pending columns', () => {
-  test('the last week of the 25 months: Dec 1 to 5, 2027 are inert, and ArrowRight from Nov 30, 2027 is consumed', () => {
+  test('the last block of the 25 months: Dec 1 to 4, 2027 are inert, and ArrowRight from Nov 30, 2027 is consumed', () => {
     const onSelect = jest.fn();
-    const { grid } = renderWeek({ reads: input({ month: '2027-11', events: [townEvent({ start: '2027-12-03', title: 'Tree lighting' })] }), selected: '2027-11-30', month: '2027-11', onSelect });
-    expect(grid.getAttribute('aria-label')).toBe('Nov 29 to Dec 5, 2027');
+    // Today Sun, Nov 15, 2026 (the same 25 months): the last block is Nov 28 to Dec 4, 2027.
+    const reads = input({ today: '2026-11-15', covered: gridRange('2027-11', BOUNDS), events: [townEvent({ start: '2027-12-03', title: 'Tree lighting' })] });
+    const { grid } = renderWeek({ reads, selected: '2027-11-30', onSelect });
+    expect(grid.getAttribute('aria-label')).toBe('Nov 28 to Dec 4, 2027');
     const inert = within(grid).getAllByRole('gridcell').filter((column) => column.getAttribute('aria-disabled') === 'true');
     expect(inert.map((column) => column.getAttribute('aria-label'))).toEqual(
-      ['Wed, Dec 1, 2027', 'Thu, Dec 2, 2027', 'Fri, Dec 3, 2027', 'Sat, Dec 4, 2027', 'Sun, Dec 5, 2027'].map((date) => `${date}. Outside the months the calendar shows.`),
+      ['Wed, Dec 1, 2027', 'Thu, Dec 2, 2027', 'Fri, Dec 3, 2027', 'Sat, Dec 4, 2027'].map((date) => `${date}. Outside the months the calendar shows.`),
     );
     for (const column of inert) {
       expect(column.hasAttribute('data-date')).toBe(false);
@@ -280,8 +314,10 @@ describe('inert and pending columns', () => {
   });
 
   test('a pending column is its head line only, labeled as loading, with no description and no tooltip, and keeps the tab stop', () => {
-    // November's reads cover Oct 26 to Dec 6; the week of Dec 7 waits for December's.
-    const { grid } = renderWeek({ reads: input({ events: [townEvent({ start: '2026-12-08', title: 'Craft fair' })] }), selected: '2026-12-08', month: '2026-12' });
+    // November's reads cover Oct 26 to Dec 6; the block of Dec 2 to 8 runs past them, so Dec 7 and 8 wait for its own.
+    const { grid } = renderWeek({ reads: input({ events: [townEvent({ start: '2026-12-08', title: 'Craft fair' })] }), selected: '2026-12-08' });
+    expect(cell('2026-12-06').getAttribute('aria-label')).not.toContain('Loading');
+    expect(cell('2026-12-07').getAttribute('aria-label')).toBe('Mon, Dec 7, 2026. Loading.');
     expect(cell('2026-12-08').getAttribute('aria-label')).toBe('Tue, Dec 8, 2026. Loading.');
     expect(cell('2026-12-08').textContent).toBe('Tue 8');
     expect(cell('2026-12-08').hasAttribute('aria-describedby')).toBe(false);
@@ -301,7 +337,7 @@ describe('the agenda at 640px and below', () => {
     const rows = within(grid).getAllByRole('row');
     expect(rows).toHaveLength(7);
     for (const row of rows) expect(within(row).getAllByRole('gridcell')).toHaveLength(1);
-    const days = buildWeek(SATURDAY, '2026-11', input(), BOUNDS);
+    const days = buildWeek(SATURDAY, TODAY, input(), BOUNDS);
     expect(rows.map((row) => within(row).getByRole('gridcell').getAttribute('aria-label'))).toEqual(days.map((day) => day.label));
     expect(description(cell(SATURDAY))?.textContent).toContain('6 pm to 9 pm');
     expect(cardTexts(SATURDAY)).toHaveLength(5);

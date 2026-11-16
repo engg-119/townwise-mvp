@@ -7,6 +7,7 @@ import type { DayRecord } from '../../../src/portal/analytics/history';
 import { dayMonth, weekDates } from '../../../src/portal/analytics/week';
 import { forecastLine } from '../../../src/portal/home/Home';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
+import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
@@ -92,6 +93,15 @@ async function renderAt(api: FakePortalApi, ready: string = NOT_PUBLISHED): Prom
   await screen.findByText(ready);
 }
 
+/**
+ * A sentence whose key figures are drawn bold (nested texts, owner request 2026-11-15): the innermost element whose
+ * whole text is `text`, as getByText would find it unbroken.
+ */
+function sentence(text: string): (content: string, element: Element | null) => boolean {
+  return (_content, element) => element !== null && element.textContent === text
+    && Array.from(element.children).every((child) => child.textContent !== text);
+}
+
 function pageText(): string {
   return document.body.textContent;
 }
@@ -111,8 +121,8 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   // The count of TownwiseAI's questions links to its page, with the questions showing (?panel=questions).
   expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
   // Who's in town is its own block, read top to bottom: the honest no-number line, this week, later in the month (one
-  // row per run of days, past days left out), the term's source once by name, then the county's jobs. Each group has
-  // an h3, so a screen reader can move between them.
+  // row per run of days, past days left out), the term's source once as a chip with its site's name, then the county's
+  // jobs. Each group has an h3, so a screen reader can move between them.
   const people = screen.getByRole('region', { name: 'Who’s in town' });
   expect(await within(people).findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
   for (const name of ['This week', 'Later in November', 'Food-service jobs in Grafton County']) {
@@ -120,24 +130,24 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   }
   const order = [
     'Townwise can’t put a number on how many people are in Hanover yet.', 'This week', 'Fall term classes until Tue, Nov 17.',
-    'Later in November', 'Nov 18 to 19', 'Nov 20 to 25', 'Fall term finals', 'From Nov 26', 'Source: Dartmouth Registrar',
-    'Food-service jobs in Grafton County', '2.6% fewer jobs in November 2024 than in an average month that year.',
+    'Later in November', 'Nov 18 to 19', 'Nov 20 to 25', 'Fall term finals', 'From Nov 26', 'Dartmouth Registrar',
+    'Food-service jobs in Grafton County', '4.5% fewer jobs in November 2025 than in an average month that year.',
   ].map((text) => people.textContent.indexOf(text));
   expect(order.every((at) => at >= 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
-  expect(within(people).getByRole('link', { name: 'Source: Dartmouth Registrar' }).getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/test');
+  expect(within(people).getByRole('link', { name: 'Dartmouth Registrar. Source' }).getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/test');
   // No bare hosts, and no source the block doesn't use (the holiday's is the calendar block's).
   expect(within(people).queryByRole('link', { name: 'registrar.dartmouth.edu' })).toBeNull();
   expect(people.textContent).not.toMatch(/opm\.gov|Office of Personnel|County jobs are/);
-  // Source links on the calendar open the source.
-  expect(screen.getAllByRole('link', { name: 'Source: U.S. Office of Personnel Management' })[0]?.getAttribute('href'))
+  // Source chips on the calendar open the source.
+  expect(screen.getAllByRole('link', { name: 'U.S. Office of Personnel Management. Source' })[0]?.getAttribute('href'))
     .toBe('https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/');
 });
 
 test('honesty: with history ending before this week, no day of this week carries a figure, and nothing reads as a forecast', async () => {
   const setItem = jest.spyOn(Storage.prototype, 'setItem');
   await renderAt(portal(meOf(ACCESS.member), DAYS.filter((day) => day.date <= '2026-10-24')));
-  for (const date of weekDates('2026-11-02')) {
+  for (const date of weekDates('2026-11-05')) {
     const cell = document.querySelector(`[data-testid="home-day-${date}"]`);
     if (cell === null) throw new Error(`no row for ${date}`);
     expect(cell.textContent.replace(dayMonth(date), '')).not.toMatch(/\d/);
@@ -151,25 +161,29 @@ test('honesty: with history ending before this week, no day of this week carries
   expect(setItem).not.toHaveBeenCalled();
 });
 
-test('with this week partly in, only its past days carry a figure', async () => {
+test('this week starts today, and none of its days carries a figure before its data is in', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
-  const figures = weekDates('2026-11-02').map((date) => {
+  const strip = screen.getByRole('table', { name: 'This week, day by day' });
+  const heads = within(strip).getAllByRole('columnheader').map((cell) => cell.textContent);
+  expect(heads[0]).toMatch(/^Thu.*Nov 5.*Today/);
+  expect(heads[6]).toMatch(/^Wed.*Nov 11/);
+  // Yesterday is history, not this week.
+  expect(document.querySelector('[data-testid="home-day-2026-11-04"]')).toBeNull();
+  const figures = weekDates('2026-11-05').map((date) => {
     const cell = document.querySelector(`[data-testid="home-day-${date}"]`);
     return /\d+ guests/.test(cell?.textContent ?? '');
   });
-  expect(figures).toEqual([true, true, true, false, false, false, false]);
+  expect(figures).toEqual([false, false, false, false, false, false, false]);
   expect(pageText()).not.toMatch(FORECAST_WORDING);
 });
 
 // Tue, Nov 3, 2026 had 1 guest: a tenth of its Tuesdays' typical guests or fewer (spec D32).
 const NEAR_EMPTY = DAYS.map((day) => (day.date === '2026-11-03' ? { ...day, guests: 1, netSalesCents: 2000 } : day));
 
-test('this week’s own near-empty day reads Likely closed (spec D32), in This month’s words', async () => {
+test('a near-empty day before today reads Likely closed (spec D32) in This month; This week starts today, without it', async () => {
   await renderAt(portal(meOf(ACCESS.member), NEAR_EMPTY));
-  const tuesday = screen.getByTestId('home-day-2026-11-03');
-  expect(within(tuesday).getByText('Likely closed (1 guest recorded)')).toBeTruthy();
-  expect(within(tuesday).queryByText(/^1 guests?$/)).toBeNull();
-  expect(cellOf('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. This week. Likely closed (1 guest recorded).');
+  expect(screen.queryByTestId('home-day-2026-11-03')).toBeNull();
+  expect(cellOf('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. Likely closed (1 guest recorded).');
 });
 
 test('today’s partial upload is never likely closed (D32): only a day before the town’s today can be', async () => {
@@ -187,7 +201,6 @@ test('a business rule’s schedule with fewer guests (D31) says a near-empty day
   await renderAt(api);
   await waitFor(() => { expect(cellOf('2026-11-03').getAttribute('aria-label')).not.toMatch(/Likely closed/); });
   expect(cellOf('2026-11-03').textContent).toBe('31');
-  expect(within(screen.getByTestId('home-day-2026-11-03')).queryByText(/Likely closed/)).toBeNull();
   expect(api.calls.filter((call) => call.path === `${PATH}/rules`)).toHaveLength(1);
   // The hover tooltip reads the same rules, so it agrees with the cell.
   fireEvent(cellOf('2026-11-03'), pointer('pointerover', 'mouse'));
@@ -198,9 +211,11 @@ test('at a glance: last year’s same week, last week against it, and the next e
   await renderAt(portal(meOf(ACCESS.member)));
   const glance = screen.getByRole('region', { name: 'At a glance' });
   expect(within(glance).getByText('740')).toBeTruthy();
-  expect(within(glance).getByText('Same week last year, Mon, Nov 3 to Sun, Nov 9, 2025. From all 7 days.')).toBeTruthy();
+  expect(within(glance).getByText('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.')).toBeTruthy();
   expect(within(glance).getByText('814')).toBeTruthy();
-  expect(within(glance).getByText('+10% against the same week last year (740), over all 7 days.')).toBeTruthy();
+  expect(within(glance).getByText(sentence('+10% against the same week last year (740), over all 7 days.'))).toBeTruthy();
+  // The change is its own bold part of the sentence.
+  expect(within(glance).getByText('+10%')).toBeTruthy();
   expect(within(glance).getByText('Sample game')).toBeTruthy();
   expect(within(glance).getByText('Sat, Nov 7, 2026, in 2 days')).toBeTruthy();
   expect(within(glance).queryByText(FORECAST_WORDING)).toBeNull();
@@ -211,7 +226,8 @@ test('this week is a strip of seven days from 1024px, today’s column raised, l
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
   expect(within(strip).getAllByRole('columnheader')).toHaveLength(7);
   expect(within(strip).getAllByRole('rowheader').map((cell) => cell.textContent)).toEqual(['On the calendar', 'Last year', 'Two years ago']);
-  expect(within(strip).getByText('Sat, Nov 8, 2025: 140 guests')).toBeTruthy();
+  expect(within(strip).getByText(sentence('Sat, Nov 8, 2025: 140 guests'))).toBeTruthy();
+  expect(within(strip).getAllByText('140 guests').length).toBeGreaterThan(0);
   expect(screen.getByText('Bars show last year’s days, scaled to the busiest of them.')).toBeTruthy();
 });
 
@@ -229,9 +245,9 @@ test('the month calendar: the arrow keys and a pointer preview the days beside t
   expect(within(detail).getByRole('link', { name: 'Open this day on Orders' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-05');
   expect(cell('2026-11-05').getAttribute('aria-selected')).toBe('true');
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-  expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. Veterans Day.');
+  expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. This week. Veterans Day.');
   // A past day says its stored figure; a later one, with no published forecast, has none.
-  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. This week. 110 guests.');
+  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. 110 guests.');
   expect(cell('2026-11-03').textContent).toBe('3110');
   expect(cell('2026-11-11').textContent).toBe('11');
 
@@ -247,8 +263,8 @@ test('the month calendar: the arrow keys and a pointer preview the days beside t
   expect(within(detail).getByRole('link', { name: 'Open this day on Orders' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-11');
   // A later day: its holiday and sources, last year's same weekday, and no figure of its own.
   expect(within(detail).getByText('Veterans Day. Federal holiday.')).toBeTruthy();
-  expect(within(detail).getByRole('link', { name: 'Source: U.S. Office of Personnel Management' })).toBeTruthy();
-  expect(within(detail).getByText('Wed, Nov 12, 2025: 100 guests')).toBeTruthy();
+  expect(within(detail).getByRole('link', { name: 'U.S. Office of Personnel Management. Source' })).toBeTruthy();
+  expect(within(detail).getByText(sentence('Wed, Nov 12, 2025: 100 guests'))).toBeTruthy();
   expect(within(detail).queryByText('This day')).toBeNull();
   expect(within(detail).queryByText('Forecast')).toBeNull();
   expect(cell('2026-11-11').getAttribute('tabindex')).toBe('0');
@@ -307,6 +323,16 @@ function cellOf(date: string): HTMLElement {
   return found;
 }
 
+test('with a published forecast, This week starts with each day’s Forecast, its figure bold (owner request)', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
+  const strip = screen.getByRole('table', { name: 'This week, day by day' });
+  await waitFor(() => { expect(within(strip).getAllByRole('rowheader')[0]?.textContent).toBe('Forecast'); });
+  // Thu, Nov 5 (today) to Wed, Nov 11: 212 a day, and Saturday the 7th with its private event.
+  expect(within(strip).getAllByText(sentence('About 212 guests, 180 to 240'))).toHaveLength(6);
+  expect(within(strip).getByText(sentence('About 282 guests, 250 to 310'))).toBeTruthy();
+  expect(within(strip).getAllByText('About 212 guests')).toHaveLength(6);
+});
+
 test('with a published forecast, This month shows each future day’s guests and no tagline', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
   await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5212'); });
@@ -318,8 +344,8 @@ test('with a published forecast, This month shows each future day’s guests and
     .toBe('Sat, Nov 7, 2026. This week. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Sample game.');
   // Before today, the stored figure; never a forecast.
   expect(cellOf('2026-11-04').textContent).toBe('4110');
-  // The day beside the grid gives the forecast and its top three reasons: your notes first, then the biggest effects,
-  // each with which way it usually moves guests.
+  // The day beside the grid gives the forecast and its three reasons with the largest effect, in the Calendar's order
+  // (the note's +35 ties Saturday's and goes first), each with which way it usually moves guests.
   fireEvent.pointerOver(cellOf('2026-11-07'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   expect(within(detail).getByText('Forecast')).toBeTruthy();
@@ -330,21 +356,73 @@ test('with a published forecast, This month shows each future day’s guests and
   expect(within(detail).queryByText(/^Fall term/)).toBeNull();
 });
 
-test('the day detail’s Why rows end in a small Source link, and On the calendar leaves out what Why names, as the Calendar does', async () => {
+test('the day detail’s Why rows end in their source chips, and On the calendar leaves out what Why names, as the Calendar does', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published(true)), 'This month in Hanover');
   await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
   fireEvent.pointerOver(cellOf('2026-11-07'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
-  const source = within(detail).getByRole('link', { name: 'Source: home.dartmouth.edu' });
-  expect(source.textContent).toBe('Source');
+  const source = within(detail).getByRole('link', { name: 'Dartmouth. Source: home.dartmouth.edu' });
+  expect(source.textContent).toBe('Dartmouth');
   expect(source.getAttribute('href')).toBe('https://home.dartmouth.edu/');
-  expect(source.parentElement?.textContent).toBe('Sample game: more guests in Townwise’s model Source');
+  // The chip sits under the row's words (after their mark), in the same row.
+  const row = within(detail).getByText('Sample game: more guests in Townwise’s model').parentElement?.parentElement;
+  expect(row?.contains(source)).toBe(true);
+  expect(row?.textContent).toBe('▲Sample game: more guests in Townwise’s modelDartmouth');
   // The game is in Why with its source, so On the calendar doesn't list it again.
   expect(within(detail).queryByText('Sample game. Town event.')).toBeNull();
   expect(within(detail).getByText('Nothing else on the calendar this day.')).toBeTruthy();
   // A day whose events Why doesn't name keeps them, with their sources.
   fireEvent.pointerOver(cellOf('2026-11-11'));
   expect(within(screen.getByRole('region', { name: 'Selected day' })).getByText('Veterans Day. Federal holiday.')).toBeTruthy();
+});
+
+/** The day detail's Why rows, each as its line with the mark before it and the mark's color (null with no mark). */
+function whyRowsOf(detail: HTMLElement): [string, string | null][] {
+  const part = within(detail).getByText('Why').parentElement;
+  return [...(part?.children ?? [])].slice(1).map((row) => {
+    const line = row.firstElementChild;
+    const mark = line?.querySelector('[aria-hidden="true"]');
+    const text = mark === null || mark === undefined ? null : [...mark.querySelectorAll('*')].find((each) => each.children.length === 0) ?? mark;
+    return [line?.textContent ?? '', text === null ? null : window.getComputedStyle(text).color];
+  });
+}
+
+test('the day detail keeps the three largest effects either way, in the Calendar’s order, a run reason’s after its colored mark', async () => {
+  const run = (kind: string, label: string, direction: 'more' | 'fewer', pct: number, days: number) => ({
+    kind, label, effectPct: null, effect: { direction, pct, basis: 'history', days } as const, sources: [], note: null,
+  });
+  const thanksgiving = forecastDay({
+    date: '2026-11-26',
+    reasons: [
+      run('weekday', 'Thursday', 'more', 10, 52), run('term', 'Fall term', 'more', 15, 20), run('event', 'Turkey trot', 'more', 20, 4),
+      run('holiday', 'Thanksgiving Day', 'fewer', 70, 1),
+    ],
+  });
+  const days = [forecastDay({ date: '2026-11-05' }), thanksgiving];
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf(days)), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-26').textContent).toBe('26212'); });
+  fireEvent.pointerOver(cellOf('2026-11-26'));
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  // The 70% fall is kept over the 10% rise, and shown last, after the rises; its ▼ is the ramp's reddest step.
+  expect(whyRowsOf(detail)).toEqual([
+    ['▲Turkey trot: usually more guests', theme.color.effectUp2],
+    ['▲Fall term: usually more guests', theme.color.effectUp1],
+    ['▼Thanksgiving Day: fewer guests last time', theme.color.effectDown3],
+  ]);
+  // A screen reader hears the words only.
+  expect(within(detail).getByText('▼').closest('[aria-hidden="true"]')).not.toBeNull();
+  expect(within(detail).getByText('Thanksgiving Day: fewer guests last time').closest('[aria-hidden="true"]')).toBeNull();
+});
+
+test('a note’s row in the day detail is its label alone, with no mark; the run reasons beside it keep theirs', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
+  fireEvent.pointerOver(cellOf('2026-11-07'));
+  expect(whyRowsOf(screen.getByRole('region', { name: 'Selected day' }))).toEqual([
+    ['Your private event, 70 guests, 6 pm to 9 pm', null],
+    ['▲Saturday: usually more guests', theme.color.effectUp2],
+    ['▲Sample game: more guests in Townwise’s model', theme.color.effectUp1],
+  ]);
 });
 
 test('hovering a day shows its top reasons; touch does not', async () => {

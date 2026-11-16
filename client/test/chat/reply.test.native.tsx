@@ -1,4 +1,5 @@
-import { render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen } from '@testing-library/react-native';
+import { Linking } from 'react-native';
 
 import type { TreeNode } from '../../src/chat/tree';
 import { initialChatState, type ChatMessage, type TuningChat } from '../../src/chat/useTuningChat';
@@ -27,7 +28,7 @@ const TREE: TreeNode[] = [{ id: 'u1', parentId: null, role: 'user' }, { id: 'a1'
 function msg(key: string, role: ChatMessage['role'], words: string, nodeId: string, parentId: string | null): ChatMessage {
   return {
     key, role, parts: [{ type: 'text', key: `${key}t`, text: words }], state: 'complete', note: null, nodeId, parentId, feedback: null,
-    ratingError: null, next: null, request: null, startedAt: null, endedAt: null, at: null, attachments: [],
+    ratingError: null, next: null, request: null, startedAt: null, endedAt: null, at: null, attachments: [], sources: [],
   };
 }
 
@@ -95,4 +96,37 @@ it('shows every row on native, whatever the message’s place', async () => {
   expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Helpful' })).toBeTruthy();
   expect(screen.getAllByText(/^\d{1,2}:\d{2} (AM|PM)$/)).toHaveLength(2);
+});
+
+it('shows a reply’s sources under its Based on line (D37) as source chips (D40), each named by its site and opened with Linking.openURL', async () => {
+  const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+  const reply: ChatMessage = {
+    ...msg('m2', 'assistant', 'The fair is on Saturday.', 'a1', 'u1'),
+    sources: [{ host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road?day=2' }],
+  };
+  await render(
+    <ReplyView
+      message={reply}
+      ctx={{ town: 'Hanover', hasTownProfile: true }}
+      tree={TREE}
+      newest
+      actions="hover"
+      chat={fakeChat()}
+      locationId="l1"
+      readOnlyId={null}
+      canAct
+      onRetry={jest.fn()}
+      onAnnounce={jest.fn()}
+    />,
+  );
+  expect(screen.getByText('Sources')).toBeTruthy();
+  // Only the two sources are links, each a chip named by its site: for a site the manifest lacks, its host without www.
+  expect(screen.getAllByRole('link')).toEqual([screen.getByRole('link', { name: 'example.com. Source' }), screen.getByRole('link', { name: 'example.org. Source' })]);
+  expect(screen.getByText('example.com')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('link', { name: 'example.org. Source' }));
+  expect(openURL).toHaveBeenCalledWith('https://example.org/road?day=2');
+  await fireEvent.press(screen.getByRole('link', { name: 'example.com. Source' }));
+  expect(openURL).toHaveBeenLastCalledWith('https://www.example.com/fair');
+  expect(openURL).toHaveBeenCalledTimes(2);
+  openURL.mockRestore();
 });

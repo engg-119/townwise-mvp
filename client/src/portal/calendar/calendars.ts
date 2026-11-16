@@ -3,7 +3,7 @@ import { errorCopy, hasCode } from '../errors';
 import { formatCount, formatDate, formatTime, plural } from '../format';
 import type { OwnerCalendar } from './api';
 
-// The "Your calendars" panel's words (P28; connect-owner-calendar design decision 11), pure: a file's name, the words
+// The "Your calendars" popover's words (P28; connect-owner-calendar design decision 11), pure: a file's name, the words
 // for every code phase 1 answers (api/src/handlers/owner-calendars.ts) and for a link's status, a row's lines, and the
 // add-a-link form's checks, which hold the fields to the API's own limits (a trimmed name of 1 to 60 UTF-16 code units,
 // a trimmed link of 1 to 2,048), so its 400 is only a fallback. Anything without words of its own gets errorCopy. Both
@@ -17,7 +17,7 @@ const MAX_LABEL = 60;
 const MAX_LINK = 2048;
 
 export const CALENDARS_COPY = {
-  /** What the privacy page (app/(marketing)/privacy.tsx) says of kept calendars, in the panel's words. */
+  /** What the privacy page (app/(marketing)/privacy.tsx) says of kept calendars, in the popover's words. */
   help: 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
   tooLarge: 'This file is over 1 MB. Export a shorter range of your calendar.',
   notCalendar: 'This doesn’t look like a calendar file (.ics).',

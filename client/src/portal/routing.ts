@@ -82,6 +82,8 @@ export interface NavItem {
   count?: number | null;
   /** The item starts the bar's right-hand group (Team, Settings), after the location's sections. */
   end?: boolean;
+  /** The item sits under the bar's More control (D38), which takes the place of the first such item. */
+  more?: boolean;
 }
 
 function currentFor(path: string, own: string, below: RegExp | null): Current {
@@ -109,9 +111,12 @@ const SECTIONS: readonly (readonly [TabKey, string])[] = [
   ['rules', 'Rules'], ['town', 'Town'], ['data', 'Your data'],
 ];
 
+/** The sections under More (D38): what the forecast reads, set up once or now and then. */
+const MORE: ReadonlySet<TabKey> = new Set(['notes', 'rules', 'town', 'data']);
+
 /**
  * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Orders, Analytics, TownwiseAI, Notes, Rules,
- * Town, Your data), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
+ * Town, Your data, the last four under More), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
  * Analytics also marks Sales data, which lives under it, and Orders its Ordering setup. Rules opens Business rules (P29), for every member.
  */
 export function clientNav(role: Role, pathname: string, locationId: string | null, openAsAdmin = false): NavItem[] {
@@ -126,7 +131,7 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
         ?? (key === 'analytics' && path === locationHref(locationId, 'sales') ? 'true' : null)
         ?? (key === 'orders' && path === locationHref(locationId, 'ordersSetup') ? 'true' : null)
         ?? (key === 'data' && (path === locationHref(locationId, 'upload') || isItemPath(path, href)) ? 'true' : null);
-      items.push({ label, href, current });
+      items.push({ label, href, current, ...(MORE.has(key) ? { more: true } : {}) });
     }
   }
   const account: NavItem[] = role === 'org_admin' && !openAsAdmin ? [{ label: 'Team', href: '/team', current: currentFor(path, '/team', null) }] : [];

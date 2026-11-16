@@ -1,9 +1,9 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
   ALL_FILTERS, calendarMonth, captionOf, dayCell, dayView, eventsOn, forecastWords, monthBounds, rangeWords, reasonOutcomeWords, reasonShortLines,
-  savedNotice, selectedDay, statusWord, tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
+  reasonSize, savedNotice, selectedDay, shortReasons, statusWord, tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
-import type { ForecastDay, ForecastWindow } from '../../../src/portal/estimates/api';
+import type { ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
 import { daysBetween } from '../../../src/portal/locations/dates';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
@@ -13,6 +13,9 @@ import { ruleOf } from '../rules/fakes';
 // today is the published forecast's own (spec 14.5). Synthetic figures only.
 
 const TODAY = '2026-11-11';
+/** The ranges November's and December's grids read (grid.ts gridRange). */
+const NOVEMBER = { from: '2026-10-26', to: '2026-12-06' };
+const DECEMBER = { from: '2026-11-30', to: '2027-01-10' };
 
 function forecastDay(fields: Partial<ForecastDay> & Pick<ForecastDay, 'date'>): ForecastDay {
   return {
@@ -72,7 +75,7 @@ const IMPORTED: ImportedEvent = { calendarId: 'c1', uid: 'u1', title: 'Wine deli
 
 function input(fields: Partial<CalendarInput> = {}): CalendarInput {
   return {
-    today: TODAY, month: '2026-11', forecast: windowOf([PAST, NOTED, BOOKED, CLOSED, forecastDay({ date: TODAY })]),
+    today: TODAY, covered: NOVEMBER, forecast: windowOf([PAST, NOTED, BOOKED, CLOSED, forecastDay({ date: TODAY })]),
     salesDays: [{ date: '2026-11-07', guests: 138, netSalesCents: 276000 }, { date: '2026-11-08', guests: null, netSalesCents: 1000 }],
     events: [GAME, VETERANS, TERM], notes: [PARTY], imported: [IMPORTED], filters: ALL_FILTERS, ...fields,
   };
@@ -85,7 +88,7 @@ function cellOf(rows: readonly (readonly (CalendarCell | null)[])[], date: strin
 }
 
 test('a future day shows the forecast’s rounded mid and +N when notes added guests; a booked day its party; a closed day no figure', () => {
-  const rows = calendarMonth(input());
+  const rows = calendarMonth('2026-11', input());
   // Monday first, with null outside the month: Nov 1, 2026 is a Sunday.
   expect(rows[0]?.slice(0, 6)).toEqual([null, null, null, null, null, null]);
   expect(rows[0]?.[6]?.date).toBe('2026-11-01');
@@ -104,11 +107,11 @@ test('dayCell builds any day’s cell from the reads, whatever month they were m
   const lighting = townEvent({ start: '2026-12-03', title: 'Tree lighting' });
   const reads = input({ events: [GAME, lighting], forecast: windowOf([forecastDay({ date: '2026-12-03' })]) });
   // Dec 3 in November's grid is the cell December's own month would build.
-  expect(dayCell('2026-12-03', reads)).toEqual(cellOf(calendarMonth({ ...reads, month: '2026-12' }), '2026-12-03'));
+  expect(dayCell('2026-12-03', reads)).toEqual(cellOf(calendarMonth('2026-12', { ...reads, covered: DECEMBER }), '2026-12-03'));
   expect(dayCell('2026-12-03', reads)).toMatchObject({ chips: ['Tree lighting'], figure: { value: 212, kind: 'forecast' }, inWeek: false });
-  expect(dayCell('2026-11-21', reads)).toEqual(cellOf(calendarMonth(reads), '2026-11-21'));
+  expect(dayCell('2026-11-21', reads)).toEqual(cellOf(calendarMonth('2026-11', reads), '2026-11-21'));
   // Today's week comes from today, not from the month.
-  expect(dayCell('2026-11-09', { ...reads, month: '2026-12' }).inWeek).toBe(true);
+  expect(dayCell('2026-11-09', { ...reads, covered: DECEMBER }).inWeek).toBe(true);
 });
 
 test('eventsOn keeps an event the day’s reasons name, which the panel’s On the calendar leaves out', () => {
@@ -122,12 +125,12 @@ test('rangeWords rounds a range’s low down and its high up', () => {
 });
 
 test('a past day shows its stored guests and never a forecast figure', () => {
-  const rows = calendarMonth(input());
+  const rows = calendarMonth('2026-11', input());
   expect(cellOf(rows, '2026-11-07')).toMatchObject({ figure: { value: 138, kind: 'actual' }, status: null });
   // No stored guests: nothing, though net sales were stored.
   expect(cellOf(rows, '2026-11-08').figure).toBeNull();
   // A past day the run covered, with no stored day, still shows no forecast figure.
-  const noSales = calendarMonth(input({ salesDays: [] }));
+  const noSales = calendarMonth('2026-11', input({ salesDays: [] }));
   expect(cellOf(noSales, '2026-11-07').figure).toBeNull();
 });
 
@@ -137,7 +140,7 @@ test('a past day under a tenth of its weekday’s typical guests reads “Likely
     .map((date) => ({ date, guests: 140, netSalesCents: 280_000 }));
   const salesDays = [...saturdays, { date: '2026-11-07', guests: 1, netSalesCents: 2_500 }];
   const near = input({ salesDays, forecast: windowOf([]) });
-  const cell = cellOf(calendarMonth(near), '2026-11-07');
+  const cell = cellOf(calendarMonth('2026-11', near), '2026-11-07');
   expect(cell).toMatchObject({ status: 'likely_closed', figure: null });
   expect(cell.label).toBe('Sat, Nov 7, 2026. Likely closed (1 guest recorded).');
   expect(statusWord(cell.status)).toBe('Likely closed');
@@ -147,16 +150,16 @@ test('a past day under a tenth of its weekday’s typical guests reads “Likely
   // A note with fewer guests says the day was open, even with Your notes filtered off.
   const slow = note({ startDate: '2026-11-07', kind: 'other', effect: 'fewer_guests' });
   const open = input({ salesDays, forecast: windowOf([]), notes: [slow], filters: { ...ALL_FILTERS, notes: false } });
-  expect(cellOf(calendarMonth(open), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
+  expect(cellOf(calendarMonth('2026-11', open), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
   expect(forecastWords(dayView('2026-11-07', open).forecast, 'Sawtooth').figure).toEqual({ before: '', value: '1', after: 'guest' });
   // Fewer than 3 Saturdays before it with guests: a real 1-guest day.
   const thin = input({ salesDays: [...saturdays.slice(-2), { date: '2026-11-07', guests: 1, netSalesCents: 2_500 }], forecast: windowOf([]) });
-  expect(cellOf(calendarMonth(thin), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
+  expect(cellOf(calendarMonth('2026-11', thin), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
 });
 
 test('no published forecast: no figure after today on any day', () => {
   for (const forecast of [NONE, null]) {
-    const rows = calendarMonth(input({ forecast }));
+    const rows = calendarMonth('2026-11', input({ forecast }));
     const future = rows.flat().filter((cell): cell is CalendarCell => cell !== null && cell.date >= TODAY);
     expect(future.length).toBeGreaterThan(0);
     expect(future.every((cell) => cell.figure === null && cell.status === null)).toBe(true);
@@ -171,21 +174,21 @@ test('filters hide holidays, town events, term dates, notes and imported events 
   expect(all.events.map((event) => event.title)).toEqual(['Dartmouth home football']);
   expect(all.notes.map((each) => each.id)).toEqual([PARTY.id]);
   expect(all.imported.map((event) => event.title)).toEqual(['Wine delivery']);
-  expect(cellOf(calendarMonth(input()), '2026-11-21')).toMatchObject({
+  expect(cellOf(calendarMonth('2026-11', input()), '2026-11-21')).toMatchObject({
     chips: ['Dartmouth home football', 'Private event, 70', 'Wine delivery'], more: 0, marks: { event: true, note: true, imported: true },
   });
   // Term periods show in the day panel only: they span weeks, so no cell repeats them.
   expect(dayView('2026-11-12', input()).events.map((event) => event.title)).toEqual(['Fall term classes']);
-  expect(cellOf(calendarMonth(input()), '2026-11-12').chips).toEqual([]);
+  expect(cellOf(calendarMonth('2026-11', input()), '2026-11-12').chips).toEqual([]);
 
   const off = (key: keyof CalendarInput['filters']): CalendarInput => input({ filters: { ...ALL_FILTERS, [key]: false } });
   expect(dayView('2026-11-11', off('holidays')).events.map((event) => event.title)).toEqual(['Fall term classes']);
-  expect(cellOf(calendarMonth(off('holidays')), '2026-11-11').marks.event).toBe(false);
+  expect(cellOf(calendarMonth('2026-11', off('holidays')), '2026-11-11').marks.event).toBe(false);
   expect(dayView('2026-11-21', off('events')).events).toEqual([]);
   expect(dayView('2026-11-12', off('terms')).events).toEqual([]);
   expect(dayView('2026-11-21', off('notes')).notes).toEqual([]);
   expect(dayView('2026-11-21', off('imported')).imported).toEqual([]);
-  const quiet = cellOf(calendarMonth(input({ filters: { ...ALL_FILTERS, events: false, notes: false, imported: false } })), '2026-11-21');
+  const quiet = cellOf(calendarMonth('2026-11', input({ filters: { ...ALL_FILTERS, events: false, notes: false, imported: false } })), '2026-11-21');
   expect(quiet).toMatchObject({ chips: [], more: 0, marks: { event: false, note: false, imported: false } });
   // Filters never hide a figure or the forecast's reasons.
   expect(quiet.figure).toEqual({ value: 282, kind: 'forecast' });
@@ -193,7 +196,7 @@ test('filters hide holidays, town events, term dates, notes and imported events 
 });
 
 test('the cell label says the figure, range, note guests, events and notes', () => {
-  const rows = calendarMonth(input());
+  const rows = calendarMonth('2026-11', input());
   expect(cellOf(rows, '2026-11-21').label).toBe(
     'Sat, Nov 21, 2026. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Dartmouth home football. 1 note. From your calendar: Wine delivery.',
   );
@@ -228,10 +231,10 @@ test('the day panel words a forecast; the 8 in 10 sentence goes with the model�
   expect(forecastWords(dayView('2026-11-21', input({ forecast: NONE })).forecast, 'Sawtooth').lines).toEqual([
     'No forecast for this day.', 'Townwise hasn’t published a forecast for Sawtooth yet.',
   ]);
-  // Notes and rules first, with what they did; then the run's reasons by the size of their effect, each in words with a
-  // mark the words repeat, and its sources; then the ones with none.
+  // From the largest rise: the note's 70 guests on the model's 212 (+35) ties the weekday and goes first, with what it
+  // did; then the run's reasons, each in words with a mark the words repeat, and its sources; then the ones with none.
   expect(noted.reasons.map((reason) => [reason.label, reason.mark, reason.detail])).toEqual([
-    ['Your private event, 70 guests, 6 pm to 9 pm', null, 'Adds 70 guests'],
+    ['Your private event, 70 guests, 6 pm to 9 pm', '▲', 'Adds 70 guests'],
     ['Saturday', '▲', 'Usually about 35% more guests than your average day'],
     ['Dartmouth home football', '▲', 'Townwise’s model: about 10% more guests'],
     ['Fall term classes', null, 'Not enough of your history to say yet'],
@@ -239,32 +242,64 @@ test('the day panel words a forecast; the 8 in 10 sentence goes with the model�
   expect(noted.reasons[2]?.sources).toEqual([{ label: 'dartmouthsports.com', url: 'https://dartmouthsports.com/' }]);
 });
 
-test('Why says whether each reason usually brings more or fewer guests, biggest first; a past day says nothing of it', () => {
+test('Why says whether each reason usually brings more or fewer guests, from the largest rise to the largest fall; a past day says nothing of it', () => {
   const view = dayView('2026-11-26', input({ forecast: windowOf([THANKSGIVING]) }));
   expect(view.reasons.map((reason) => [reason.label, reason.mark, reason.detail])).toEqual([
-    ['Thanksgiving Day', '▼', 'Last time, about 70% fewer guests than the same weekday in the weeks around it'],
     ['Turkey trot', '▲', 'Usually about 20% more guests than the same weekday without it'],
-    ['Fall term finals', '▼', 'Usually about 10% fewer guests than the same weekday at other times of the year'],
     ['Thursday', '=', 'Usually about as many guests as your average day'],
     ['Private event booked', '=', 'Townwise’s model: about the same number of guests'],
     ['Your recent level', null, null],
+    ['Fall term finals', '▼', 'Usually about 10% fewer guests than the same weekday at other times of the year'],
+    ['Thanksgiving Day', '▼', 'Last time, about 70% fewer guests than the same weekday in the weeks around it'],
   ]);
-  expect(view.reasons[0]?.sources).toEqual([OPM]);
+  expect(view.reasons[5]?.sources).toEqual([OPM]);
   // Keys stay unique and stable whatever the order.
   expect(new Set(view.reasons.map((reason) => reason.key)).size).toBe(6);
   // A day before today: its reasons carry no effect, and the panel says nothing of one.
   expect(dayView('2026-11-07', input()).reasons.map((reason) => [reason.label, reason.mark, reason.detail])).toEqual([['Saturday', null, null]]);
 });
 
-test('the tooltip and Home’s day detail give the top reasons with short effect words', () => {
-  expect(reasonShortLines(THANKSGIVING, false)).toEqual([
-    'Thanksgiving Day: fewer guests last time', 'Turkey trot: usually more guests', 'Fall term finals: usually fewer guests',
-    'Thursday: usually about the same', 'Private event booked: about the same in Townwise’s model', 'Your recent level',
+test('“your average day” carries the average open day’s guests the API sent; other comparisons and short lines carry none', () => {
+  // Tue, Nov 17, 2026: its weekday's reason and a term reason.
+  const tuesday = (weekday: ReturnType<typeof effect> & { averageGuests?: number | null }, term = effect('fewer', 10, 20)) => forecastDay({
+    date: '2026-11-17',
+    reasons: [
+      { kind: 'weekday', label: 'Tuesday', effectPct: null, effect: weekday, sources: [], note: null },
+      { kind: 'term', label: 'Fall term classes', effectPct: null, effect: term, sources: [], note: null },
+    ],
+  });
+  /** Each reason's Why words, by its label. */
+  const why = (day: ForecastDay) => Object.fromEntries(dayView(day.date, input({ forecast: windowOf([day]) })).reasons.map((reason) => [reason.label, reason.detail]));
+  expect(why(tuesday({ ...effect('fewer', 35, 52), averageGuests: 210 }))).toEqual({
+    Tuesday: 'Usually about 35% fewer guests than your average day (210)',
+    'Fall term classes': 'Usually about 10% fewer guests than the same weekday at other times of the year',
+  });
+  expect(why(tuesday({ ...effect('same', 0, 52), averageGuests: 1210 })).Tuesday).toBe('Usually about as many guests as your average day (1,210)');
+  // An API before the field sends none, and null is none: no parentheses.
+  expect(why(tuesday(effect('fewer', 35, 52))).Tuesday).toBe('Usually about 35% fewer guests than your average day');
+  expect(why(tuesday({ ...effect('fewer', 35, 52), averageGuests: null })).Tuesday).toBe('Usually about 35% fewer guests than your average day');
+  // Only “your average day” takes the number, even from another effect that carried one; the short lines take none.
+  const termWithOne = { ...effect('fewer', 10, 20), averageGuests: 210 };
+  expect(why(tuesday({ ...effect('fewer', 35, 52), averageGuests: 210 }, termWithOne))['Fall term classes'])
+    .toBe('Usually about 10% fewer guests than the same weekday at other times of the year');
+  expect(reasonShortLines(tuesday({ ...effect('fewer', 35, 52), averageGuests: 210 }), false, 2)).toEqual([
+    'Fall term classes: usually fewer guests', 'Tuesday: usually fewer guests',
   ]);
-  expect(reasonShortLines(NOTED, false)).toEqual([
+});
+
+test('the tooltip and Home’s day detail give the top reasons with short effect words', () => {
+  expect(reasonShortLines(THANKSGIVING, false, 6)).toEqual([
+    'Turkey trot: usually more guests', 'Thursday: usually about the same', 'Private event booked: about the same in Townwise’s model',
+    'Your recent level', 'Fall term finals: usually fewer guests', 'Thanksgiving Day: fewer guests last time',
+  ]);
+  // The three largest either way, in Why's order.
+  expect(reasonShortLines(THANKSGIVING, false, 3)).toEqual([
+    'Turkey trot: usually more guests', 'Fall term finals: usually fewer guests', 'Thanksgiving Day: fewer guests last time',
+  ]);
+  expect(reasonShortLines(NOTED, false, 4)).toEqual([
     'Your private event, 70 guests, 6 pm to 9 pm', 'Saturday: usually more guests', 'Dartmouth home football: more guests in Townwise’s model', 'Fall term classes',
   ]);
-  expect(reasonShortLines(NOTED, true)).toEqual(['Your private event, 70 guests, 6 pm to 9 pm', 'Dartmouth home football', 'Saturday', 'Fall term classes']);
+  expect(reasonShortLines(NOTED, true, 4)).toEqual(['Your private event, 70 guests, 6 pm to 9 pm', 'Dartmouth home football', 'Saturday', 'Fall term classes']);
 });
 
 test('On the calendar leaves out what Why already shows, never a note', () => {
@@ -282,7 +317,7 @@ test('On the calendar leaves out what Why already shows, never a note', () => {
 test('ranges round low down and high up, as spec 14.4 and TownwiseAI’s get_forecast do; the middle figure to the nearest guest', () => {
   const day = forecastDay({ date: '2026-11-21', low: 180.6, mid: 212.4, high: 239.2, model: { status: 'open', low: 110.6, mid: 142.4, high: 169.2 }, noteGuests: 70 });
   const rounded = input({ forecast: windowOf([day, forecastDay({ date: '2026-11-07', model: { status: 'open', low: 120.7, mid: 135, high: 149.1 }, actual: 138, inRange: true })]) });
-  expect(cellOf(calendarMonth(rounded), '2026-11-21').label).toContain('Forecast about 212 guests, 180 to 240.');
+  expect(cellOf(calendarMonth('2026-11', rounded), '2026-11-21').label).toContain('Forecast about 212 guests, 180 to 240.');
   expect(forecastWords(dayView('2026-11-21', rounded).forecast, 'Sawtooth').lines).toEqual([
     'Likely 180 to 240.',
     'Townwise’s model: 110 to 170. About 8 in 10 days land in that range. Your notes add 70 guests.',
@@ -402,15 +437,16 @@ test('the day panel lists the scheduled rules covering the day, whatever the fil
   expect(monday.rules.map((rule) => rule.id)).toEqual(['r1']);
   expect(dayView('2026-11-20', withRules).rules.map((rule) => rule.id)).toEqual(['r2']);
   expect(dayView('2026-11-17', withRules).rules).toEqual([]);
-  expect(dayView('2027-01-01', { ...withRules, month: '2027-01' }).rules).toEqual([]);
+  expect(dayView('2027-01-01', { ...withRules, covered: { from: '2026-12-28', to: '2027-02-07' } }).rules).toEqual([]);
   expect(dayView('2026-11-16', { ...withRules, filters: { ...ALL_FILTERS, notes: false } }).rules.map((rule) => rule.id)).toEqual(['r1']);
   // Home passes no rules.
   expect(dayView('2026-11-16', input()).rules).toEqual([]);
+  // The rule's closure is the largest fall, so it goes last, after the weekday with no effect.
   expect(monday.reasons.map((reason) => [reason.label, reason.detail])).toEqual([
-    ['Your rule: closed on Mondays', 'Closes the day'], ['Monday', 'Not enough of your history to say yet'],
+    ['Monday', 'Not enough of your history to say yet'], ['Your rule: closed on Mondays', 'Closes the day'],
   ]);
   expect(forecastWords(monday.forecast, 'Sawtooth').lines).toEqual(['Closed.', 'From your business rule.']);
-  expect(tooltipLines('2026-11-16', withRules)?.lines).toEqual(['Closed', 'Your rule: closed on Mondays', 'Monday']);
+  expect(tooltipLines('2026-11-16', withRules)?.lines).toEqual(['Closed', 'Monday', 'Your rule: closed on Mondays']);
 });
 
 test('guests a rule adds are named as the rule’s, and with a note’s as both', () => {
@@ -430,8 +466,8 @@ test('guests a rule adds are named as the rule’s, and with a note’s as both'
     reasons: [ruleReason('Your rule: adds 40 guests on Mondays', 'r4', 40, 'added')],
   });
   const ruledInput = input({ forecast: windowOf([ruled, both, opened]), rules: RULES, notes: [] });
-  expect(cellOf(calendarMonth(ruledInput), '2026-11-20').label).toContain('Includes 40 guests from your rules.');
-  expect(cellOf(calendarMonth(ruledInput), '2026-11-27').label).toContain('Includes 110 guests from your notes and rules.');
+  expect(cellOf(calendarMonth('2026-11', ruledInput), '2026-11-20').label).toContain('Includes 40 guests from your rules.');
+  expect(cellOf(calendarMonth('2026-11', ruledInput), '2026-11-27').label).toContain('Includes 110 guests from your notes and rules.');
   expect(tooltipLines('2026-11-20', ruledInput)?.lines[1]).toBe('Includes 40 guests from your rules');
   expect(forecastWords(dayView('2026-11-20', ruledInput).forecast, 'Sawtooth').lines).toEqual([
     'Likely 220 to 280.', 'Townwise’s model: 180 to 240. About 8 in 10 days land in that range. Your rules add 40 guests.',
@@ -451,9 +487,9 @@ test('a rule with fewer guests says a near-empty past day was open, as a note do
     schedule: { kind: 'other', startDate: '2026-11-01', endDate: null, weekdays: [6], effect: 'fewer_guests', expectedGuests: null, startTime: null, endTime: null },
     scheduleSummary: 'Other, fewer guests than usual on Saturdays from Nov 1, 2026',
   });
-  expect(cellOf(calendarMonth(input({ salesDays, forecast: windowOf([]), rules: [slowSaturdays] })), '2026-11-07'))
+  expect(cellOf(calendarMonth('2026-11', input({ salesDays, forecast: windowOf([]), rules: [slowSaturdays] })), '2026-11-07'))
     .toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
-  expect(cellOf(calendarMonth(input({ salesDays, forecast: windowOf([]), rules: [] })), '2026-11-07')).toMatchObject({ status: 'likely_closed' });
+  expect(cellOf(calendarMonth('2026-11', input({ salesDays, forecast: windowOf([]), rules: [] })), '2026-11-07')).toMatchObject({ status: 'likely_closed' });
 });
 
 test('today’s stored day is never likely closed: its upload may be partial, so only a day before the town’s today can be (D32)', () => {
@@ -461,7 +497,7 @@ test('today’s stored day is never likely closed: its upload may be partial, so
   const wednesdays = ['2026-09-16', '2026-09-23', '2026-09-30', '2026-10-07', '2026-10-14', '2026-10-21', '2026-10-28', '2026-11-04']
     .map((date) => ({ date, guests: 140, netSalesCents: 280_000 }));
   const partial = input({ salesDays: [...wednesdays, { date: TODAY, guests: 1, netSalesCents: 2_500 }], forecast: windowOf([]) });
-  expect(cellOf(calendarMonth(partial), TODAY).status).not.toBe('likely_closed');
+  expect(cellOf(calendarMonth('2026-11', partial), TODAY).status).not.toBe('likely_closed');
   expect(tooltipLines(TODAY, partial)?.lines ?? []).not.toContain('Likely closed (1 guest recorded)');
 });
 
@@ -471,4 +507,204 @@ test('a rule a note sets aside says so, and rule reasons past the first six are 
   expect(dayView('2026-11-21', input({ forecast: windowOf([ruled]) })).moreRules).toBe(2);
   // An older answer without the count reads as none.
   expect(dayView('2026-11-21', input({ forecast: windowOf([forecastDay({ date: '2026-11-21' })]) })).moreRules).toBe(0);
+});
+
+// Why's colored marks and order (forecast-why; refine-calendar-and-home design decision 8): each reason's signed size,
+// its mark graded by that size, Why from the largest rise to the largest fall, and the short lists' three largest.
+// The spec's figures sit on a model middle figure of 200.
+const MIDDLE_200: ForecastDay['model'] = { status: 'open', low: 170, mid: 200, high: 230 };
+const runReason = (kind: string, label: string, made: ReturnType<typeof effect> | null): ForecastReason => ({
+  kind, label, effectPct: null, effect: made, sources: [], note: null,
+});
+const noteReason = (label: string, guests: number | null, outcome: string): ForecastReason => ({
+  kind: 'note', label, effectPct: null, sources: [], note: { id: label, guests, outcome },
+});
+/** Why's rows for a day with `reasons` on a model middle of 200 (Tue, Nov 17, 2026, unless `date` says), as [label, mark, grade, detail]. */
+function whyOf(reasons: ForecastReason[], fields: Partial<ForecastDay> = {}, date = '2026-11-17'): (string | null)[][] {
+  const day = forecastDay({ date, model: MIDDLE_200, reasons, ...fields });
+  return dayView(date, input({ forecast: windowOf([day]) })).reasons.map((reason) => [reason.label, reason.mark, reason.grade, reason.detail]);
+}
+
+test('each reason has a signed size: a run reason’s effect, a note’s or a rule’s outcome against the model’s middle figure', () => {
+  const day = forecastDay({ date: '2026-11-17', model: MIDDLE_200 });
+  const size = (reason: ForecastReason, past = false): number | null => reasonSize(reason, day, past);
+  expect(size(runReason('weekday', 'Tuesday', effect('more', 35, 52)))).toBe(35);
+  expect(size(runReason('holiday', 'Thanksgiving Day', effect('fewer', 70, 1)))).toBe(-70);
+  expect(size(runReason('weekday', 'Tuesday', effect('same', 5, 52)))).toBe(0);
+  expect(size(runReason('level', 'Your recent level', null))).toBeNull();
+  // 70 guests on a middle of 200 is +35, a closure -100, and a buyout's party of 70 against the 200 it replaces -65.
+  expect(size(noteReason('Your private event, 70 guests', 70, 'added'))).toBe(35);
+  expect(size(noteReason('Your closure', null, 'closed'))).toBe(-100);
+  expect(size(noteReason('Your private buyout, 70 guests', 70, 'booked'))).toBe(-65);
+  expect(size(noteReason('Your private buyout, 260 guests', 260, 'booked'))).toBe(30);
+  // A note that changed nothing is 0, and so is one of 5% or less either way: 10 guests on 200 is 0, not +5.
+  expect(size(noteReason('Your private event', null, 'no_guest_count'))).toBe(0);
+  expect(size(noteReason('Your private event, 10 guests', 10, 'added'))).toBe(0);
+  expect(size(noteReason('Your private buyout, 205 guests', 205, 'booked'))).toBe(0);
+  expect(size(noteReason('Your opening', null, 'already_in_forecast'))).toBe(0);
+  // A rule's outcome is sized as a note's.
+  expect(size(ruleReason('Your rule: adds 40 guests on Fridays', 'r2', 40, 'added'))).toBe(20);
+  // No middle figure: a note that opened a day the model expected closed is +100; a buyout against nothing is 0.
+  const modelClosed = forecastDay({ date: '2026-11-23', model: { status: 'closed', low: null, mid: null, high: null } });
+  expect(reasonSize(noteReason('Your private event, 70 guests', 70, 'added'), modelClosed, false)).toBe(100);
+  expect(reasonSize(noteReason('Your private buyout, 70 guests', 70, 'booked'), modelClosed, false)).toBe(0);
+  // A middle figure of 0 counts as none, so no size divides by 0.
+  const middleZero = forecastDay({ date: '2026-11-23', model: { status: 'open', low: 0, mid: 0, high: 0 } });
+  expect(reasonSize(noteReason('Your private event, 70 guests', 70, 'added'), middleZero, false)).toBe(100);
+  expect(reasonSize(noteReason('Your private buyout, 70 guests', 70, 'booked'), middleZero, false)).toBe(0);
+  // A day before today has none.
+  expect(size(runReason('weekday', 'Tuesday', effect('more', 35, 52)), true)).toBeNull();
+  expect(size(noteReason('Your closure', null, 'closed'), true)).toBeNull();
+});
+
+test('marks are graded by size: 10 to 15% step 1, 20 to 35% step 2, 40% and over step 3; = for about the same', () => {
+  expect(whyOf([
+    runReason('weekday', 'Tuesday', effect('more', 10, 52)),
+    runReason('event', 'Turkey trot', effect('more', 35, 4)),
+    runReason('term', 'Fall term finals', effect('more', 40, 20)),
+    runReason('holiday', 'Thanksgiving Day', effect('fewer', 15, 1)),
+    runReason('booking', 'Private event booked', effect('fewer', 70, null, 'model')),
+  ]).map((row) => row.slice(0, 3))).toEqual([
+    ['Fall term finals', '▲', 'up3'], ['Turkey trot', '▲', 'up2'], ['Tuesday', '▲', 'up1'],
+    ['Thanksgiving Day', '▼', 'down1'], ['Private event booked', '▼', 'down3'],
+  ]);
+  // Each step's edges, and = with no grade.
+  expect(whyOf([
+    runReason('event', 'Turkey trot', effect('more', 15, 4)),
+    runReason('term', 'Fall term finals', effect('more', 20, 20)),
+    runReason('weekday', 'Tuesday', effect('same', 5, 52)),
+    runReason('holiday', 'Thanksgiving Day', effect('fewer', 35, 1)),
+    runReason('booking', 'Private event booked', effect('fewer', 40, null, 'model')),
+  ]).map((row) => row.slice(0, 3))).toEqual([
+    ['Fall term finals', '▲', 'up2'], ['Turkey trot', '▲', 'up1'], ['Tuesday', '=', null],
+    ['Thanksgiving Day', '▼', 'down2'], ['Private event booked', '▼', 'down3'],
+  ]);
+});
+
+test('Why runs from most positive to most negative; a note’s size ties the weekday’s and goes first, with its own ▲', () => {
+  expect(whyOf([
+    runReason('level', 'Your recent level', null),
+    runReason('holiday', 'Thanksgiving Day', effect('fewer', 70, 1)),
+    runReason('term', 'Fall term finals', effect('fewer', 10, 20)),
+    runReason('event', 'Turkey trot', effect('more', 20, 4)),
+    runReason('weekday', 'Tuesday', effect('more', 35, 52)),
+    noteReason('Your private event, 70 guests', 70, 'added'),
+  ])).toEqual([
+    ['Your private event, 70 guests', '▲', 'up2', 'Adds 70 guests'],
+    ['Tuesday', '▲', 'up2', 'Usually about 35% more guests than your average day'],
+    ['Turkey trot', '▲', 'up2', 'Usually about 20% more guests than the same weekday without it'],
+    ['Your recent level', null, null, null],
+    ['Fall term finals', '▼', 'down1', 'Usually about 10% fewer guests than the same weekday at other times of the year'],
+    ['Thanksgiving Day', '▼', 'down3', 'Last time, about 70% fewer guests than the same weekday in the weeks around it'],
+  ]);
+});
+
+test('at an equal fall, a note goes before the run’s reason too, whatever the read’s order', () => {
+  const booked: Partial<ForecastDay> = { status: 'booked', low: null, mid: null, high: null, noteGuests: 70 };
+  expect(whyOf([
+    runReason('holiday', 'Thanksgiving Day', effect('fewer', 65, 1)),
+    noteReason('Your private buyout, 70 guests', 70, 'booked'),
+  ], booked).map((row) => row.slice(0, 3))).toEqual([
+    ['Your private buyout, 70 guests', '▼', 'down3'], ['Thanksgiving Day', '▼', 'down3'],
+  ]);
+});
+
+test('at 0: the run’s about-the-same reasons, then notes that changed nothing, with no mark, then reasons with no effect', () => {
+  expect(whyOf([
+    runReason('level', 'Your recent level', null),
+    noteReason('Your private event', null, 'no_guest_count'),
+    runReason('weekday', 'Tuesday', effect('same', 5, 52)),
+    noteReason('Your private event, 10 guests', 10, 'added'),
+  ])).toEqual([
+    ['Tuesday', '=', null, 'Usually about as many guests as your average day'],
+    ['Your private event', null, null, 'No guest count, so the forecast is unchanged'],
+    ['Your private event, 10 guests', null, null, 'Adds 10 guests'],
+    ['Your recent level', null, null, null],
+  ]);
+});
+
+test('a closure goes last, after a rise, with a ▼ at the top of the ramp', () => {
+  const closed = { status: 'closed', low: null, mid: null, high: null } as const;
+  expect(whyOf([noteReason('Your closure', null, 'closed'), runReason('weekday', 'Tuesday', effect('more', 20, 52))], closed)).toEqual([
+    ['Tuesday', '▲', 'up2', 'Usually about 20% more guests than your average day'],
+    ['Your closure', '▼', 'down3', 'Closes the day'],
+  ]);
+});
+
+test('a buyout’s words say how its party compares with Townwise’s model whenever its mark does', () => {
+  const booked = (guests: number): Partial<ForecastDay> => ({ status: 'booked', low: null, mid: null, high: null, noteGuests: guests });
+  const buyout = (guests: number): ForecastReason[] => [noteReason(`Your private buyout, ${String(guests)} guests`, guests, 'booked')];
+  expect(whyOf(buyout(70), booked(70))).toEqual([
+    ['Your private buyout, 70 guests', '▼', 'down3', 'Books the day: about 65% fewer guests than Townwise’s model'],
+  ]);
+  expect(whyOf(buyout(260), booked(260))).toEqual([
+    ['Your private buyout, 260 guests', '▲', 'up2', 'Books the day: about 30% more guests than Townwise’s model'],
+  ]);
+  // Within 5% of the model, no mark and no comparison.
+  expect(whyOf(buyout(205), booked(205))).toEqual([['Your private buyout, 205 guests', null, null, 'Books the day']]);
+  // An exact half step rounds away from 0, as the API rounds an effect: 215 on 200 is +7.5, so +10, and 185 is -10.
+  expect(whyOf(buyout(215), booked(215))).toEqual([
+    ['Your private buyout, 215 guests', '▲', 'up1', 'Books the day: about 10% more guests than Townwise’s model'],
+  ]);
+  expect(whyOf(buyout(185), booked(185))).toEqual([
+    ['Your private buyout, 185 guests', '▼', 'down1', 'Books the day: about 10% fewer guests than Townwise’s model'],
+  ]);
+  expect(reasonOutcomeWords('booked', 70, -65)).toBe('Books the day: about 65% fewer guests than Townwise’s model');
+  expect(reasonOutcomeWords('booked', 260, 30)).toBe('Books the day: about 30% more guests than Townwise’s model');
+});
+
+test('a day before today keeps the read’s order, with no marks', () => {
+  const reasons = [
+    runReason('weekday', 'Saturday', effect('more', 35, 52)),
+    noteReason('Your closure', null, 'closed'),
+    runReason('holiday', 'Veterans Day', effect('fewer', 70, 1)),
+    noteReason('Your private event, 70 guests', 70, 'added'),
+  ];
+  expect(whyOf(reasons, {}, '2026-11-07')).toEqual([
+    ['Saturday', null, null, null],
+    ['Your closure', null, null, 'Closes the day'],
+    ['Veterans Day', null, null, null],
+    ['Your private event, 70 guests', null, null, 'Adds 70 guests'],
+  ]);
+  expect(reasonShortLines(forecastDay({ date: '2026-11-07', model: MIDDLE_200, reasons }), true, 3)).toEqual(['Saturday', 'Your closure', 'Veterans Day']);
+});
+
+test('the short lists keep the three largest either way, in Why’s order: a 70% fall is never dropped for three small rises', () => {
+  const busy = forecastDay({
+    date: '2026-11-26', model: MIDDLE_200,
+    reasons: [
+      runReason('weekday', 'Thursday', effect('more', 10, 52)),
+      runReason('term', 'Fall term finals', effect('more', 15, 20)),
+      runReason('event', 'Turkey trot', effect('more', 20, 4)),
+      runReason('holiday', 'Thanksgiving Day', effect('fewer', 70, 1)),
+    ],
+  });
+  expect(shortReasons(busy, false, 3).map((each) => [each.line, each.mark, each.grade])).toEqual([
+    ['Turkey trot: usually more guests', '▲', 'up2'],
+    ['Fall term finals: usually more guests', '▲', 'up1'],
+    ['Thanksgiving Day: fewer guests last time', '▼', 'down3'],
+  ]);
+  expect(tooltipLines('2026-11-26', input({ forecast: windowOf([busy]) }))?.lines).toEqual([
+    'About 212 guests (180 to 240)', 'Turkey trot: usually more guests', 'Fall term finals: usually more guests', 'Thanksgiving Day: fewer guests last time',
+  ]);
+  // Ties at the cutoff go in Why's order, not the read's: the two 10% rises stay and the 10% fall, read first, goes.
+  const tied = forecastDay({
+    date: '2026-11-26', model: MIDDLE_200,
+    reasons: [
+      runReason('holiday', 'Thanksgiving Day', effect('fewer', 10, 1)),
+      runReason('weekday', 'Thursday', effect('more', 10, 52)),
+      runReason('event', 'Turkey trot', effect('more', 40, 4)),
+      runReason('term', 'Fall term finals', effect('more', 10, 20)),
+    ],
+  });
+  expect(reasonShortLines(tied, false, 3)).toEqual([
+    'Turkey trot: usually more guests', 'Thursday: usually more guests', 'Fall term finals: usually more guests',
+  ]);
+  // A note's short line is its label alone, so it carries no mark there; a run reason's carries Why's.
+  expect(shortReasons(NOTED, false, 3).map((each) => [each.line, each.mark, each.grade])).toEqual([
+    ['Your private event, 70 guests, 6 pm to 9 pm', null, null],
+    ['Saturday: usually more guests', '▲', 'up2'],
+    ['Dartmouth home football: more guests in Townwise’s model', '▲', 'up1'],
+  ]);
+  expect(shortReasons(THANKSGIVING, false, 6).map((each) => each.mark)).toEqual(['▲', '=', '=', null, '▼', '▼']);
 });

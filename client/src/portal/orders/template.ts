@@ -1,13 +1,14 @@
 import { isBlankRecord } from '../upload/csv';
 import type { OrderCategory, OrderUnit } from './api';
+import { mergeRows, type KeptField, type MergeEntry, type MergeResult, type MergeRow } from './merge';
 import {
-  newKey, normalizeName, parseDealSize, parsePar, parsePerSale, parseServings, SETUP_LIMITS, type ItemDraft, type PosNameDraft,
-  type SetupDraft, type SupplierDraft,
+  normalizeName, parseDealSize, parsePar, parsePerSale, parseServings, SETUP_LIMITS, type PosNameDraft, type SetupDraft,
 } from './setupDraft';
 
 // The ordering template and the sheet import (the order-setup spec, "Items can be imported from a sheet"). The
-// template is a CSV with one row per item; an imported sheet (CSV or Excel, read in the browser by the page) is
-// merged into the draft by item name, replacing an item of the same name and adding the rest, and creates the
+// template is a CSV with one row per item; an imported sheet (CSV or Excel, read in the browser by the page) is read
+// here row by row against the template's columns and merged into the draft by merge.ts, which reading with TownwiseAI
+// shares (proposal.ts): by item name, replacing an item of the same name and adding the rest, and creating the
 // suppliers it names. A replaced item keeps its point-of-sale names, deal size and never run out wherever the sheet
 // leaves that column out or its cell blank. A row that fails a check is listed with why and left out. Nothing saves
 // until Save. Pure.
@@ -82,40 +83,14 @@ export function parsePosNames(cell: string): { names: PosNameDraft[] } | { probl
   return { names };
 }
 
-export interface ImportProblem {
-  /** The sheet's row number, the header being row 1. */
-  readonly row: number;
-  /** The row's item name, as the sheet has it (the owner's own words, shown only on the page). */
-  readonly item: string;
-  readonly reason: string;
-}
-
-/** An optional field a replaced item kept because the sheet left it blank. */
-export type KeptField = 'point-of-sale names' | 'deal size' | 'never run out';
-
-export interface SheetImport {
-  readonly draft: SetupDraft;
-  readonly added: number;
-  readonly replaced: number;
-  /** Replaced items that kept a value the sheet left blank, by the sheet's item name, in sheet order. */
-  readonly kept: readonly { readonly item: string; readonly fields: readonly KeptField[] }[];
-  /** Suppliers the sheet named that the draft did not have; each still needs its deliveries. */
-  readonly newSuppliers: readonly string[];
+export interface SheetImport extends MergeResult {
   readonly examplesSkipped: number;
-  readonly problems: readonly ImportProblem[];
 }
 
 export type ImportOutcome = { ok: true; result: SheetImport } | { ok: false; missing: readonly string[] } | { ok: false; empty: true };
 
-interface ParsedRow {
-  name: string;
-  supplier: string;
-  fields: Omit<ItemDraft, 'key' | 'id' | 'name' | 'supplierKey'>;
-  /** The optional cells left blank, or in a column the sheet does not have. */
-  blank: { posNames: boolean; dealSize: boolean; neverRunOut: boolean };
-}
-
-function readRow(cell: (column: Column) => string): { row: ParsedRow } | { reasons: string[] } {
+/** One sheet row read for the merge: every required cell checked; Point-of-sale names, Deal size and Never run out may be blank. */
+function readRow(cell: (column: Column) => string): { row: MergeRow } | { reasons: string[] } {
   const reasons: string[] = [];
   const name = cell('Item').trim();
   const supplier = cell('Supplier').trim();
@@ -136,41 +111,27 @@ function readRow(cell: (column: Column) => string): { row: ParsedRow } | { reaso
   const pos = parsePosNames(cell('Point-of-sale names'));
   if ('problem' in pos) reasons.push(pos.problem);
   if (reasons.length > 0 || category === undefined || unit === undefined || 'problem' in pos) return { reasons };
+  const blank = new Set<KeptField>();
+  if (cell('Point-of-sale names').trim() === '') blank.add('point-of-sale names');
+  if (deal === '') blank.add('deal size');
+  if (never === '') blank.add('never run out');
   return {
     row: {
       name, supplier,
       fields: { category, unit, servingsPerUnit: servings, par, dealSize: deal, neverRunOut: YES.has(never), posNames: pos.names },
-      blank: { posNames: cell('Point-of-sale names').trim() === '', dealSize: deal === '', neverRunOut: never === '' },
+      blank,
+      keepsPar: false,
     },
   };
 }
 
-/** A replaced item's fields: the sheet's, but its previous value for each optional cell the sheet left blank. */
-function replacing(row: ParsedRow, previous: ItemDraft): { fields: ParsedRow['fields']; kept: KeptField[] } {
-  const fields = { ...row.fields };
-  const kept: KeptField[] = [];
-  if (row.blank.posNames && previous.posNames.length > 0) {
-    fields.posNames = previous.posNames;
-    kept.push('point-of-sale names');
-  }
-  if (row.blank.dealSize && previous.dealSize.trim() !== '') {
-    fields.dealSize = previous.dealSize;
-    kept.push('deal size');
-  }
-  if (row.blank.neverRunOut && previous.neverRunOut) {
-    fields.neverRunOut = true;
-    kept.push('never run out');
-  }
-  return { fields, kept };
-}
-
 /**
- * Merges a sheet's rows into `draft`. `header` is the sheet's first row; `rows` are the rows after it with their row
- * numbers. Header names match without regard to case; Item, Supplier, Category, Unit, Servings per unit and Par are
- * required, the rest optional. An item whose name matches one in the draft (trimmed, case-folded) replaces its
+ * Merges a sheet's rows into `draft` (merge.ts). `header` is the sheet's first row; `rows` are the rows after it with
+ * their row numbers. Header names match without regard to case; Item, Supplier, Category, Unit, Servings per unit and
+ * Par are required, the rest optional. An item whose name matches one in the draft (trimmed, case-folded) replaces its
  * fields and keeps its id, so its sales and counts stay with it; where the sheet leaves Point-of-sale names, Deal size
- * or Never run out blank (or has no such column), it keeps what it had, since a blank there would otherwise wipe
- * its point-of-sale names and the item sales would stop matching it.
+ * or Never run out blank (or has no such column), it keeps what it had, since a blank there would otherwise wipe its
+ * point-of-sale names and the item sales would stop matching it.
  */
 export function importSheet(header: readonly string[], rows: readonly { row: number; cells: readonly string[] }[], draft: SetupDraft): ImportOutcome {
   const keys = header.map(headerKey);
@@ -184,20 +145,8 @@ export function importSheet(header: readonly string[], rows: readonly { row: num
   const filled = rows.filter((row) => !isBlankRecord(row.cells));
   if (filled.length === 0) return { ok: false, empty: true };
 
-  const suppliers = [...draft.suppliers];
-  const items = [...draft.items];
-  const supplierKeyOf = new Map<string, string>();
-  for (const supplier of suppliers) if (!supplierKeyOf.has(normalizeName(supplier.name))) supplierKeyOf.set(normalizeName(supplier.name), supplier.key);
-  const itemAt = new Map<string, number>();
-  items.forEach((item, at) => { if (!itemAt.has(normalizeName(item.name))) itemAt.set(normalizeName(item.name), at); });
-  const firstRow = new Map<string, number>();
-  const problems: ImportProblem[] = [];
-  const newSuppliers: string[] = [];
-  const kept: { item: string; fields: KeptField[] }[] = [];
-  let added = 0;
-  let replaced = 0;
+  const entries: MergeEntry[] = [];
   let examplesSkipped = 0;
-
   for (const { row, cells } of filled) {
     const cell = (column: Column): string => {
       const at = index.get(column);
@@ -209,46 +158,8 @@ export function importSheet(header: readonly string[], rows: readonly { row: num
       continue;
     }
     const read = readRow(cell);
-    if ('reasons' in read) {
-      problems.push({ row, item: itemName, reason: read.reasons.join(' ') });
-      continue;
-    }
-    const { name, supplier } = read.row;
-    const itemKey = normalizeName(name);
-    const earlier = firstRow.get(itemKey);
-    if (earlier !== undefined) {
-      problems.push({ row, item: name, reason: `This item is already on row ${String(earlier)}.` });
-      continue;
-    }
-    const existing = itemAt.get(itemKey);
-    if (existing === undefined && items.length >= SETUP_LIMITS.items) {
-      problems.push({ row, item: name, reason: 'The setup holds up to 300 items.' });
-      continue;
-    }
-    let supplierKey = supplierKeyOf.get(normalizeName(supplier));
-    if (supplierKey === undefined) {
-      if (suppliers.length >= SETUP_LIMITS.suppliers) {
-        problems.push({ row, item: name, reason: 'The setup holds up to 20 suppliers.' });
-        continue;
-      }
-      const created: SupplierDraft = { key: newKey('supplier'), id: null, name: supplier, deliveries: [] };
-      suppliers.push(created);
-      supplierKeyOf.set(normalizeName(supplier), created.key);
-      newSuppliers.push(supplier);
-      supplierKey = created.key;
-    }
-    firstRow.set(itemKey, row);
-    const previous = existing === undefined ? undefined : items[existing];
-    if (existing !== undefined && previous !== undefined) {
-      const merged = replacing(read.row, previous);
-      items[existing] = { ...merged.fields, key: previous.key, id: previous.id, name, supplierKey };
-      if (merged.kept.length > 0) kept.push({ item: name, fields: merged.kept });
-      replaced += 1;
-    } else {
-      itemAt.set(itemKey, items.length);
-      items.push({ ...read.row.fields, key: newKey('item'), id: null, name, supplierKey });
-      added += 1;
-    }
+    entries.push('reasons' in read ? { ref: row, item: itemName, reasons: read.reasons } : { ref: row, item: itemName, row: read.row });
   }
-  return { ok: true, result: { draft: { suppliers, items }, added, replaced, kept, newSuppliers, examplesSkipped, problems } };
+  const merged = mergeRows(draft, entries, { duplicate: (earlier) => `This item is already on row ${String(earlier)}.` });
+  return { ok: true, result: { ...merged, examplesSkipped } };
 }
