@@ -41,6 +41,7 @@ const ANSWER: OrderSetupAnswer = {
   counts: {},
   itemsWithHistory: [],
   today: '2026-11-13',
+  canReadWithAi: false,
 };
 
 function portal(answer: unknown = ANSWER, me = meOf(ACCESS.member)): FakePortalApi {

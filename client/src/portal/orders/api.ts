@@ -155,6 +155,8 @@ export const orderSetupAnswerSchema = z.object({
   itemCoverage: z.record(z.string(), z.number()),
   counts: z.record(z.string(), z.object({ quantity: z.number(), date: z.string() })),
   itemsWithHistory: z.array(z.string()),
+  /** Reading the setup with TownwiseAI is on (D41); false from an API before it, so the page shows no section. */
+  canReadWithAi: z.boolean().default(false),
 });
 export type OrderSetupAnswer = z.infer<typeof orderSetupAnswerSchema>;
 
@@ -196,6 +198,25 @@ export const setupReadSchema = z.object({
   partial: z.boolean(),
 });
 export type SetupRead = z.infer<typeof setupReadSchema>;
+
+/** What a read sends: a file as base64 with the kind its extension names, or pasted text. Never a file's name. */
+export type SetupReadSource =
+  | { readonly type: 'file'; readonly kind: 'pdf' | 'xlsx' | 'docx' | 'text' | 'picture'; readonly data: string }
+  | { readonly type: 'text'; readonly text: string };
+
+/** A read waits this long for its answer; the server ends its own at 150 seconds from the request's start. */
+export const SETUP_READ_TIMEOUT_MS = 170_000;
+
+/**
+ * POST .../orders/setup/read { source }: TownwiseAI reads it once and answers suggestions for the unsaved draft; nothing
+ * is stored. `signal` is the page's Cancel. The codes the page words are in api/README.md (Orders).
+ */
+export async function readSetupWithAi(api: ApiClient, locationId: string, source: SetupReadSource, signal: AbortSignal): Promise<SetupRead> {
+  const body = await api.json(`${locationPath(locationId)}/setup/read`, z.object({ read: setupReadSchema }), {
+    method: 'POST', body: { source }, signal, timeoutMs: SETUP_READ_TIMEOUT_MS,
+  });
+  return body.read;
+}
 
 /** A supplier as PUT sends it: a stored one by its `id`, a new one with a `key` its items name it by. */
 export interface SetupSupplierInput {

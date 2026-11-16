@@ -27,7 +27,7 @@
 ## 5. Client
 
 - [x] 5.1 Split `template.ts` into `readRow` and a shared `mergeRows`; add `importProposal`; widen the kept fields; the existing import tests stay green
-- [ ] 5.2 `api.ts`: `readSetupWithAi` with its schema and a 170-second timeout; `canReadWithAi` on the setup
+- [x] 5.2 `api.ts`: `readSetupWithAi` with its schema and a 170-second timeout; `canReadWithAi` on the setup
 - [ ] 5.3 `SetupRead.web.tsx`: drop, choose or paste; Read; loading with Cancel; the summary; each error; disabled under view-as; files over the caps refused in the browser; the file name never sent
 - [ ] 5.4 Field marks in `SetupEditor.tsx` and `SetupRows.tsx` (estimated servings, not in the file), cleared on edit or Save
 - [ ] 5.5 The native line on Ordering setup
