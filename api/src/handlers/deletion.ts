@@ -2,6 +2,8 @@
 // the staff audit rule (9.3): read-only checks, then the event (ids only), then the effect, which deletes by filter so
 // a retry completes the work, and then redacts the email or names in older events. The tuning chat's records go too,
 // and so do forecast runs (U13B); a person's deletion clears their staff id from the runs they imported or published.
+// Google access for calendars (connect-google-calendar, design decision 11) is ended through
+// calendar/google-access.ts, which revokes each grant, so nothing here opens a token.
 // The kit has no user delete (spec 19, item 7): a deleted person's kit user record is deleted by hand afterwards, as a
 // runbook step (api/README.md).
 import { objectId } from '@ckeith26/mongo';
@@ -12,10 +14,11 @@ import { z } from 'zod';
 import { applyRecorded, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import { scopeForStaffOrg, type Principal } from '../access/policy.ts';
+import { endGoogleAccess, googleAccessDeps, revokeForOrg } from '../calendar/google-access.ts';
 import { purgeEveryOriginal, removeStoredFiles, type RemovedFiles } from '../files/remove.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
-import { deletePersonRecords, findActiveSeat, peopleRecords } from '../stores/cross-tenant.ts';
+import { deletePersonRecords, findActiveSeat, googleConnectionsOfPerson, peopleRecords } from '../stores/cross-tenant.ts';
 import { actorOf, notFound, staffOf } from './admin.ts';
 import { removeWholeFile } from './files.ts';
 
@@ -56,8 +59,12 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     const deletedNotes = await stores.notes.removeForOrg(scope);
     // D31, business rules.
     await stores.businessRules.removeForOrg(scope);
+    // Google access for calendars: each connection ended, its grant revoked (best effort, unless the person holds a
+    // connection in another organization), then whatever is left swept with the calendars.
+    await revokeForOrg(googleAccessDeps(ctx), scope);
     // The owner's calendars: their events, then the calendars.
     await stores.ownerCalendars.removeForOrg(scope);
+    await stores.googleConnections.removeForOrg(scope);
     await stores.chatConversations.removeForOrg(scope);
     await stores.chatLiveTurns.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
@@ -195,6 +202,15 @@ export async function deletePerson(ctx: TownwiseContext, req: Request, res: Resp
   const counts = await applyRecorded(ctx, event, eventId, async () => {
     // Read before they go: the person's seats and requests name addresses they had before this one.
     const known = await peopleRecords(ctx.connection, { userId, email });
+    // A backstop: losing a seat ends the person's Google access there, so a connection still found was left by a crash.
+    // Each is ended in its organization, revoking its grant; one whose organization is gone is deleted with the records.
+    if (userId !== null) {
+      for (const row of await googleConnectionsOfPerson(ctx.connection, userId)) {
+        if (await ctx.stores.orgs.findById(row.orgId) === null) continue;
+        const { scope } = await scopeForStaffOrg(ctx.stores.orgs, staff, row.orgId);
+        await endGoogleAccess(googleAccessDeps(ctx), scope, row.id, 'person_deleted');
+      }
+    }
     const deleted = await deletePersonRecords(ctx.connection, { userId, email });
     if (userId !== null && await findActiveSeat(ctx.connection, userId) !== null) return null;
     if (userId !== null) {

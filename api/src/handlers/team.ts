@@ -1,5 +1,7 @@
 // Team (spec F5, F6, 10.6): an org admin lists, adds, changes roles and removes, in their own organization only.
-// The organization comes from the principal's scope; no route here carries an organization id.
+// The organization comes from the principal's scope; no route here carries an organization id. Removing a seat ends
+// the person's Google access for calendars there (openspec change connect-google-calendar, design decision 11), only
+// through calendar/google-access.ts.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -9,6 +11,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
+import { endGoogleAccess, googleAccessDeps, markPersonForCheck } from '../calendar/google-access.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import { currentEmail } from '../people.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
@@ -234,7 +237,12 @@ export async function changeRole(ctx: TownwiseContext, req: Request, res: Respon
   res.status(200).json({ member: await memberView(ctx, current, caller.userId) });
 }
 
-/** F6, remove: an invitation is deleted; a seat is removed, recounted and restored if no active admin is left (removeActiveSeat). */
+/**
+ * F6, remove: an invitation is deleted; a seat is removed, recounted and restored if no active admin is left
+ * (removeActiveSeat). The person's Google connection is marked for a check before the seat goes, since a retry then
+ * answers 404 and only the check could finish an interrupted request, and ended after the seat's audit event; a
+ * last_admin refusal ends nothing, and the check finds the seat and pushes the mark on.
+ */
 export async function removeMember(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = orgAdmin(principal);
   const { scope } = caller;
@@ -243,10 +251,13 @@ export async function removeMember(ctx: TownwiseContext, req: Request, res: Resp
   if (member === null) throw notFound();
   const email = await emailOf(ctx, member);
   const now = ctx.now();
+  const google = googleAccessDeps(ctx);
+  let connectionId: string | null = null;
 
   if (member.status === 'invited') {
     if (!(await ctx.stores.members.deleteInvite(scope, memberId))) throw notFound();
   } else {
+    connectionId = await markPersonForCheck(google, scope, member.userId);
     const removal = await removeActiveSeat(ctx, scope, memberId, member.userId, { removedAt: now, removedBy: caller.userId });
     if (removal.kind === 'not_found') throw notFound();
     if (removal.kind === 'last_admin') throw lastAdmin();
@@ -256,5 +267,6 @@ export async function removeMember(ctx: TownwiseContext, req: Request, res: Resp
     target: { type: 'member', id: memberId },
     details: { email, wasStatus: member.status },
   });
+  if (connectionId !== null) await endGoogleAccess(google, scope, connectionId, 'seat_removed');
   res.status(204).end();
 }
