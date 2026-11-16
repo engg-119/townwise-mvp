@@ -12,8 +12,8 @@
 // ending an unused connection, one with no seat, an interrupted end and an interrupted location deletion, leaving a
 // seat that may yet come back, pushing a connection in use 24 hours on, keeping a new unused one through a last
 // admin's refused removal until a day after its connect, and keeping a connection due when a mark comes in during its
-// check; close aborting a Google read; and two replicas never checking one connection twice. Every title and name here
-// is made up.
+// check; close aborting a Google read and a check's revoke; and two replicas never checking one connection twice.
+// Every title and name here is made up.
 import { createSecretKey, randomBytes, randomUUID, type KeyObject } from 'node:crypto';
 
 import { createLogger } from '@ckeith26/server-core';
@@ -1057,6 +1057,39 @@ describe('the connection check', () => {
     expect(await refresher.drain()).toBe(2);
 
     expect(await stored(t)).toEqual({ calendars: 0, events: 0 });
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(await connectionRow(connectionId)).toBeNull();
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'unused' }]);
+  });
+
+  it('close during a check’s revoke aborts it, keeps the connection due, logs neither an end nor a failed revoke, and a later look ends it', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    await dayOld(connectionId);
+    await markDue(connectionId);
+    let signal: AbortSignal | undefined;
+    // A revoke that would take its whole 10 seconds, ended only by the signal (calendar/google.ts answers an aborted call unavailable).
+    google.on('revoke', (_token, opts) => new Promise((_resolve, reject) => {
+      signal = opts?.signal;
+      signal?.addEventListener('abort', () => { reject(googleError('unavailable')); });
+    }));
+    const refresher = googleRefresher();
+    const draining = refresher.drain();
+    await vi.waitFor(() => { expect(google.callsOf('revoke')).toHaveLength(1); });
+
+    expect(await within(HOOK_BUDGET_MS, refresher.close())).toBe('done');
+
+    expect(await draining).toBe(1);
+    expect(signal?.aborted).toBe(true);
+    // The revoke may not have reached Google, so the row stays, due at once, under the claim's lease.
+    expect(await connectionRow(connectionId)).toMatchObject({ checkAt: server.clock.now(), leaseUntil: at(LEASE) });
+    expect(logged('townwise.google_access_ended')).toEqual([]);
+    // A cancelled revoke is not Google failing.
+    expect(logged('townwise.google_revoke_failed')).toEqual([]);
+    // Once the lease has run out, another replica ends it.
+    google.reset();
+    server.clock.advance(LEASE + 1);
+    expect(await googleRefresher().drain()).toBe(1);
     expect(revoked()).toEqual([REFRESH_TOKEN]);
     expect(await connectionRow(connectionId)).toBeNull();
     expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'unused' }]);

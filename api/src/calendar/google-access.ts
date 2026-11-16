@@ -79,12 +79,16 @@ async function openedToken(deps: GoogleAccessDeps, scope: OrgScope, connectionId
   return opened.ok ? opened.text : null;
 }
 
-/** Revokes a token at Google, best effort: a failure logs its status only, and is never thrown. */
+/**
+ * Revokes a token at Google, best effort: a failure logs its status only, and is never thrown. A revoke the deps' signal
+ * cancelled (the refresh loop closing) is not Google failing, so it logs nothing, as an aborted read does.
+ */
 async function revokeBestEffort(deps: GoogleAccessDeps, token: string): Promise<void> {
   if (deps.revoke === null) return;
   try {
     await deps.revoke(token, { signal: deps.signal });
   } catch (err) {
+    if (deps.signal?.aborted === true) return;
     deps.logger.warn({ status: err instanceof GoogleCalendarError ? err.status : null }, 'townwise.google_revoke_failed');
   }
 }
