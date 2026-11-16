@@ -66,7 +66,7 @@ Owns: `client/src/portal/shell/Frame.tsx`, `client/test/portal/shell/frame-scrol
 
 - [x] 6.1 `client/src/portal/shell/Frame.tsx`: `Frame` keeps a ref to its `ScrollView` and, in an effect on `usePathname()` that skips the first render, calls `scrollTo({ x: 0, y: 0, animated: false })`; the fill frame is unchanged. Add one sentence to the file's header comment
 - [x] 6.2 Tests: `frame-scroll.test.web.tsx` mounts `Frame` under a mocked pathname, scrolls it, changes the pathname and asserts `scrollTo` with `y: 0`; changing only the query (same pathname) asserts no call; `frame-scroll.test.native.tsx` the same on native. Both mount `Frame` as the layout of a small expo-router app rather than under a mocked pathname, and `test/app/location-shell.test.native.tsx` changed with them (design.md decision 5, its group 6 note)
-- [ ] 6.3 Run `npm test -w @ckeith26/expo-shell -- test/portal/shell/frame-scroll` and `npx eslint client/src/portal/shell/Frame.tsx`
+- [x] 6.3 Run `npm test -w @ckeith26/expo-shell -- test/portal/shell/frame-scroll` and `npx eslint client/src/portal/shell/Frame.tsx`. Result, 2026-11-15 at 6f4dc59, Node 24.22.1, with `--maxWorkers=2`: 2 of 2 suites and 6 of 6 tests pass (4 on web, 2 on native), and eslint reports nothing (nor on `client/test/portal/shell` and `client/test/app/location-shell.test.native.tsx`); `npm run typecheck -w @ckeith26/expo-shell` reports nothing. With the frame's scroll call removed, the 4 tests of a move to another page fail and the 2 of a change of query pass, as they should. The baseline's suites with `test/portal/shell` and `test/app` added (every app test renders through `Frame`) also pass, 95 of 95 suites and 1484 of 1484 tests
 
 ## 7. Source chips (request 6; design decision 6)
 
