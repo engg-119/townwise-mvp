@@ -5,7 +5,6 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import { COPY } from '../../../src/portal/errors';
 import type { MeResponse } from '../../../src/portal/schemas';
-import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
@@ -218,18 +217,18 @@ test('opens at ?day= with that day selected and in the sidebar', async () => {
   const why = within(day).getAllByRole('listitem');
   expect(why.map((row) => row.textContent)).toEqual([
     'Saturday▲Usually about 35% more guests than your average day',
-    'Dartmouth home football▲Usually about 20% more guests than the same weekday without it Source',
+    'Dartmouth home football▲Usually about 20% more guests than the same weekday without itDartmouth Athletics',
   ]);
   for (const mark of within(day).getAllByText('▲')) expect(mark.closest('[aria-hidden="true"]')).not.toBeNull();
-  // The row ends with its source, a small inline link named for where it goes.
+  // The row ends with its source as a chip under its words: the site's name, and a name that starts with it.
   const game = why[1];
   if (game === undefined) throw new Error('no second reason');
-  const source = within(game).getByRole('link', { name: 'Source: dartmouthsports.com' });
+  const source = within(game).getByRole('link', { name: 'Dartmouth Athletics. Source: dartmouthsports.com' });
   expect(source.getAttribute('href')).toBe('https://dartmouthsports.com/');
-  expect(source.textContent).toBe('Source');
+  expect(source.textContent).toBe('Dartmouth Athletics');
   // On the calendar no longer repeats the game Why shows.
   expect(within(day).queryByText('Dartmouth home football. Town event.')).toBeNull();
-  expect(within(day).queryByRole('link', { name: 'Source: home.dartmouth.edu' })).toBeNull();
+  expect(within(day).queryByRole('link', { name: 'Dartmouth. Source: home.dartmouth.edu' })).toBeNull();
   expect(within(day).getByText('Nothing else on the calendar this day.')).toBeTruthy();
 });
 
@@ -241,10 +240,10 @@ test('Why reads at phone width: the label, then the effect in words, then the so
   if (game === undefined) throw new Error('no second reason');
   expect(within(game).getByText('Dartmouth home football')).toBeTruthy();
   expect(within(game).getByText(/^Usually about 20% more guests than the same weekday without it/)).toBeTruthy();
-  expect(within(game).getByRole('link', { name: 'Source: dartmouthsports.com' })).toBeTruthy();
+  expect(within(game).getByRole('link', { name: 'Dartmouth Athletics. Source: dartmouthsports.com' })).toBeTruthy();
 });
 
-test('several sources: each link’s name starts with its visible words, “Source 1: …” (WCAG 2.5.3), and each is a 44px target on web', async () => {
+test('several sources: each chip’s name starts with what it shows (WCAG 2.5.3), and each is a 44px target on web', async () => {
   const sources = [...GAME_REASON.sources, { label: 'Sample events page', url: 'https://example.org/events' }];
   const days = (november() as { days: { date: string }[] }).days.map((day) => (day.date === '2026-11-21'
     ? forecastDay({ date: '2026-11-21', reasons: [{ ...GAME_REASON, sources }, SATURDAY_REASON] }) : day));
@@ -254,12 +253,9 @@ test('several sources: each link’s name starts with its visible words, “Sour
   if (game === undefined) throw new Error('no second reason');
   const links = within(game).getAllByRole('link');
   expect(links.map((link) => [link.textContent, link.getAttribute('aria-label')])).toEqual([
-    ['Source 1', 'Source 1: dartmouthsports.com'], ['Source 2', 'Source 2: Sample events page'],
+    ['Dartmouth Athletics', 'Dartmouth Athletics. Source: dartmouthsports.com'], ['example.org', 'example.org. Source: Sample events page'],
   ]);
-  // The links sit in the sentence's 14px type; their padding takes no room in the line, so the line doesn't move.
-  for (const link of links) {
-    expect(parseFloat(window.getComputedStyle(link).paddingTop) * 2 + theme.type.small.fontSize).toBeGreaterThanOrEqual(44);
-  }
+  for (const link of links) expect(window.getComputedStyle(link).minHeight).toBe('44px');
 });
 
 test('a business rule with a schedule (D31): its reason shows under Why, and the rule under On the calendar with its summary and a link to Rules', async () => {

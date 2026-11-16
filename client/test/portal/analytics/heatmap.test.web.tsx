@@ -179,7 +179,7 @@ test('Enter selects: the panel has the numbers, the event with its source, the n
   key('ArrowRight');
   const event = await screen.findByRole('region', { name: 'Saturday, Oct 17, 2026' });
   expect(within(event).getByText('Sample homecoming')).toBeTruthy();
-  expect(within(event).getByRole('link', { name: 'Source: home.dartmouth.edu' }).getAttribute('href')).toBe('https://home.dartmouth.edu/');
+  expect(within(event).getByRole('link', { name: 'Dartmouth. Source: home.dartmouth.edu' }).getAttribute('href')).toBe('https://home.dartmouth.edu/');
   key('Escape');
   expect(await screen.findByText(PANEL_EMPTY)).toBeTruthy();
   expect(focused()).toBe('2026-10-17');
@@ -192,7 +192,7 @@ test('a pointer over a cell previews it, leaving the grid restores the selection
   fireEvent.pointerOver(cell('2025-11-27'));
   const preview = await screen.findByRole('region', { name: 'Thursday, Nov 27, 2025' });
   expect(within(preview).getByText('Thanksgiving Day')).toBeTruthy();
-  expect(within(preview).getByRole('link', { name: 'Source: U.S. Office of Personnel Management' })).toBeTruthy();
+  expect(within(preview).getByRole('link', { name: 'U.S. Office of Personnel Management. Source' })).toBeTruthy();
   const grid = cell('2025-11-27').closest('[role="grid"]')?.parentElement?.parentElement;
   if (grid === null || grid === undefined) throw new Error('no grid root');
   fireEvent.pointerLeave(grid);

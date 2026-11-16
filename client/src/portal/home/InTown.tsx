@@ -1,4 +1,3 @@
-import { Link } from 'expo-router';
 import { useCallback } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -14,6 +13,7 @@ import { addDays } from '../locations/dates';
 import { usePortal } from '../PortalProvider';
 import { DATA_YEAR, SOURCES, townProfile } from '../towns';
 import { ErrorNotice, LoadingLine, StatusTag } from '../ui/feedback';
+import { SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
 
 // The inside of Home's Who's in town block (spec P11, 13.2), written for an owner glancing at it. With no headcount
@@ -21,8 +21,9 @@ import { Heading, Mono, Small } from '../ui/text';
 // an h3: This week leads with today's term in plain words (or its headcount as one large figure with its unit), then
 // what starts by Sunday; Later in {month} is one row per run of days, its dates (mono) beside words. Past days are left
 // out. While the read is out, its loading line keeps about the groups' height.
-// The term's sources follow once, by name. Then the location's own days by term, and the county's food-service jobs
-// for the month (bundled BLS data, one of the twelve towns only), said as more or fewer than its average month.
+// The term's sources follow once, as chips (ui/SourceChip.tsx). Then the location's own days by term, and the county's
+// food-service jobs for the month (bundled BLS data, one of the twelve towns only), said as more or fewer than its
+// average month, with its source's chip.
 
 const WEB_LINK = /^https:\/\//i;
 const BLS = SOURCES.find((source) => source.url.startsWith('https://www.bls.gov/'));
@@ -142,10 +143,6 @@ function Group(props: { title: string; children: React.ReactNode }): React.JSX.E
   );
 }
 
-function SourceLink(props: { label: string; url: string }): React.JSX.Element {
-  return <Link href={props.url} style={styles.source}>{`Source: ${props.label}`}</Link>;
-}
-
 /** Today's run: its headcount as one figure with its unit when there is one, and the term in a sentence. */
 function Now(props: { run: TownRun; window: PeopleInTown; counted: boolean }): React.JSX.Element {
   const { run, window, counted } = props;
@@ -218,7 +215,7 @@ function People(props: { window: PeopleInTown; today: string }): React.JSX.Eleme
       {!reading.termed || (!between && reading.sources.length === 0) ? null : (
         <View style={styles.foot}>
           {between ? <Mono tone="text3">{BETWEEN_TERMS_NOTE}</Mono> : null}
-          {reading.sources.map((source) => <SourceLink key={source.url} label={source.label} url={source.url} />)}
+          <SourceChips sources={reading.sources} />
         </View>
       )}
       {history === null ? null : (
@@ -242,7 +239,7 @@ function Jobs(props: { townId: string | null; today: string }): React.JSX.Elemen
     <Group title={`Food-service jobs in ${profile.county}`}>
       <Small white style={styles.figureLine}><Text style={styles.figure}>{figure}</Text>{rest}</Small>
       <Mono tone="text3">County, not town. Employment is a stand-in for demand.</Mono>
-      {BLS === undefined ? null : <SourceLink label="U.S. Bureau of Labor Statistics, QCEW" url={BLS.url} />}
+      {BLS === undefined ? null : <SourceChips sources={[{ label: 'U.S. Bureau of Labor Statistics, QCEW', url: BLS.url }]} />}
     </Group>
   );
 }
@@ -285,5 +282,4 @@ const styles = StyleSheet.create({
   figureLine: { lineHeight: 24 },
   none: { ...theme.type.mono, color: c.text3 },
   foot: { gap: 0, alignItems: 'flex-start' },
-  source: { ...theme.type.mono, color: c.text2, minHeight: 44, lineHeight: 44, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

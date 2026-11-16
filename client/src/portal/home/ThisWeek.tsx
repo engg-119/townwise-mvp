@@ -1,4 +1,3 @@
-import { Link, type Href } from 'expo-router';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
@@ -13,6 +12,7 @@ import { useBreakpoint } from '../hooks';
 import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
 import { DataTable, type Column } from '../ui/DataTable';
+import { SourceChips } from '../ui/SourceChip';
 import { Stack } from '../ui/layout';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
@@ -33,16 +33,6 @@ import { Block } from './Block';
 // beside the printed figure) and two years ago. It is a table, so each cell is read with its day and its row. Below
 // 1024px it is the day-by-day table, which stacks at 640px and below.
 
-function Sources(props: { event: TownEvent }): React.JSX.Element {
-  return (
-    <>
-      {props.event.sources.map((source) => (
-        <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-      ))}
-    </>
-  );
-}
-
 function EventLines(props: { events: readonly TownEvent[] }): React.JSX.Element {
   return (
     <>
@@ -50,7 +40,7 @@ function EventLines(props: { events: readonly TownEvent[] }): React.JSX.Element 
         <View key={event.id} style={styles.item}>
           <Text style={styles.title}>{event.title}</Text>
           <Mono tone="text3">{EVENT_WORDS[event.kind]}</Mono>
-          <Sources event={event} />
+          <SourceChips sources={event.sources} />
         </View>
       ))}
     </>
@@ -189,7 +179,7 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
         {week.periods.map((period) => (
           <View key={period.id} style={styles.item}>
             <Small>{periodLine(period)}</Small>
-            <Sources event={period} />
+            <SourceChips sources={period.sources} />
           </View>
         ))}
       </Stack>
@@ -232,8 +222,6 @@ const styles = StyleSheet.create({
   dayHead: { flexDirection: 'row', alignItems: 'center', columnGap: 6 },
   square: { width: 6, height: 6, backgroundColor: c.mint },
   title: { ...theme.type.ui, color: c.white },
-  // Padding, not line height, makes the 44px target, so a link that wraps in a narrow day stays one block.
-  source: { ...theme.type.mono, color: c.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: c.line },
   strip: { borderTopWidth: 1, borderBottomWidth: 1, borderColor: c.border },
   stripRow: { flexDirection: 'row', alignItems: 'stretch' },
   ruled: { borderTopWidth: 1, borderTopColor: c.border },

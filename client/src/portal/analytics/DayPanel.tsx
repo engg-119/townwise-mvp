@@ -1,4 +1,3 @@
-import { Link, type Href } from 'expo-router';
 import { useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -11,16 +10,17 @@ import { locationHref } from '../routing';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { DefinitionList } from '../ui/DataTable';
 import { Messages } from '../ui/feedback';
+import { SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
 import { PANEL_EMPTY, NO_NOTES, type DayPanelData, type PanelSource } from './panel';
 
 // The Day panel (home.md 4.5), one file for both platforms: everything Townwise has for one day, from panel.ts.
-// Sections in order, a section with nothing in it left out (Your numbers and Your notes always show): the date and
-// its status, Your numbers, On the town calendar with each event's sources, Your notes, Where it came from (with the
-// stored file the upload was read from, F4), then Previous day, Next day and a link that opens TownwiseAI with this
+// Sections in order, a section with nothing in it left out (Your numbers and Your notes always show): the date and its
+// status, Your numbers, On the town calendar with each event's sources as chips, Your notes, Where it came from (with
+// the stored file the upload was read from, F4), then Previous day, Next day and a link that opens TownwiseAI with this
 // day in its composer (`?about=`; the Agent page only fills the box, it never sends). It never writes. Under view-as
-// the file's name is not sent and "Download cleaned CSV" is not offered, as on Your data; the API refuses it there
-// too. Note text, figures and the file name are only on screen; nothing here logs.
+// the file's name is not sent and "Download cleaned CSV" is not offered, as on Your data; the API refuses it there too.
+// Note text, figures and the file name are only on screen; nothing here logs.
 
 const HEADING_ID = 'analytics-day-heading';
 
@@ -103,9 +103,7 @@ export function DayPanel(props: {
             <View key={event.id} style={styles.item}>
               <Text style={styles.itemTitle}>{event.title}</Text>
               <Mono tone="text3">{event.dates === null ? event.kind : `${event.kind}, ${event.dates}`}</Mono>
-              {event.sources.map((source) => (
-                <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-              ))}
+              <SourceChips sources={event.sources} />
             </View>
           ))}
           {data.calendarNote === null ? null : <Small>{data.calendarNote}</Small>}
@@ -154,6 +152,5 @@ const styles = StyleSheet.create({
   partTitle: { ...theme.type.label, color: c.text3 },
   item: { gap: theme.space[1] },
   itemTitle: { ...theme.type.ui, color: c.white },
-  source: { ...theme.type.mono, color: c.text2, minHeight: 44, lineHeight: 44, textDecorationLine: 'underline', textDecorationColor: c.line },
   footer: { gap: theme.space[2], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border },
 });

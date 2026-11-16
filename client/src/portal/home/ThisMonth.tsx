@@ -1,4 +1,4 @@
-import { Link, useRouter, type Href } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
@@ -18,6 +18,7 @@ import { useBreakpoint, type LoadState } from '../hooks';
 import type { OrderBoard } from '../orders/api';
 import { calendarHref } from '../routing';
 import { LinkButton } from '../ui/Button';
+import { SourceChips } from '../ui/SourceChip';
 import { Stack } from '../ui/layout';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
@@ -103,9 +104,7 @@ export function MonthList(props: { today: string; context: DayContext }): React.
                 {item.kind === 'event' ? (
                   <>
                     <Small white>{eventLine(item.event)}</Small>
-                    {item.event.sources.map((source) => (
-                      <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-                    ))}
+                    <SourceChips sources={item.event.sources} />
                   </>
                 ) : (
                   <Small white>
@@ -157,5 +156,4 @@ const styles = StyleSheet.create({
   date: { ...theme.type.ui, color: c.white, fontWeight: '600' },
   dateWide: { width: 112 },
   body: { flex: 1, minWidth: 0, gap: 2 },
-  source: { ...theme.type.mono, color: c.text2, minHeight: 44, lineHeight: 44, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

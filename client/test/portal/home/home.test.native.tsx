@@ -191,13 +191,13 @@ test('with history: the lead, the next 7 days with the calendar and past years, 
   expect(screen.getByRole('heading', { name: 'Food-service jobs in Grafton County' })).toBeTruthy();
   expect(screen.getByText('2.6% fewer jobs in November 2024 than in an average month that year.')).toBeTruthy();
   expect(screen.getByText('County, not town. Employment is a stand-in for demand.')).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'U.S. Bureau of Labor Statistics. Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
   expect(screen.queryByText(/average = 100/)).toBeNull();
   expect(screen.getByText('Your November in past years')).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2025, /)).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2024, /)).toBeTruthy();
   // Who's in town: the honest no-number line with its Planned tag, then the term by time under headings, past days
-  // left out, one row per run of days, and the term's source once, by name.
+  // left out, one row per run of days, and the term's source once, as a chip with its site's name.
   expect(screen.getByText(PEOPLE_HEAD)).toBeTruthy();
   expect(await screen.findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
   expect(screen.getByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeTruthy();
@@ -209,7 +209,7 @@ test('with history: the lead, the next 7 days with the calendar and past years, 
   expect(screen.getByText('Fall term finals')).toBeTruthy();
   expect(screen.getByText('From Nov 26')).toBeTruthy();
   expect(screen.getAllByText('Townwise has no term dates')).toHaveLength(2);
-  expect(screen.getByRole('link', { name: 'Source: Dartmouth Registrar' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Dartmouth Registrar. Source' })).toBeTruthy();
   expect(screen.queryByText('registrar.dartmouth.edu')).toBeNull();
   expect(screen.queryByText(/County jobs are/)).toBeNull();
   // The headcount; Bar order and TownwiseAI's questions are no longer Planned.
@@ -266,8 +266,8 @@ test('a term period shows once with its span and source; the one-day event takes
   expect(screen.getByText('Fall term classes. Term, Sep 14 to Nov 17, 2026.')).toBeTruthy();
   // Not in any day's cell, this year or past years: the bare title appears nowhere.
   expect(screen.queryByText('Fall term classes')).toBeNull();
-  // One source link under the next 7 days and one in This month's list, not one per day.
-  expect(screen.getAllByRole('link', { name: 'Source: Registrar' })).toHaveLength(2);
+  // One source chip under the next 7 days and one in This month's list, not one per day.
+  expect(screen.getAllByRole('link', { name: 'Dartmouth. Source: Registrar' })).toHaveLength(2);
 });
 
 test('the questions link counts what GET .../agent asks, and shows nothing with none or when the read fails', async () => {
@@ -313,8 +313,9 @@ test('who’s in town: a headcount leads as one figure with its unit, later days
   expect(await screen.findByText('9,500 to 10,500 people in town')).toBeTruthy();
   expect(screen.getByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
   expect(screen.getAllByText('No headcount')).toHaveLength(3);
-  expect(screen.getByRole('link', { name: 'Source: Synthetic census' })).toBeTruthy();
-  expect(screen.queryByText('census.example.test')).toBeNull();
+  // A source on a host no manifest entry has shows that host, with the globe.
+  expect(screen.getByRole('link', { name: 'census.example.test. Source: Synthetic census' })).toBeTruthy();
+  expect(screen.getByText('census.example.test')).toBeTruthy();
   expect(screen.queryByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeNull();
   // With a headcount nothing on Home is Planned: Bar order is the live card (D35).
   expect(screen.queryAllByText('Planned')).toHaveLength(0);

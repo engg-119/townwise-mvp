@@ -120,8 +120,8 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   // The count of TownwiseAI's questions links to its page, with the questions showing (?panel=questions).
   expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
   // Who's in town is its own block, read top to bottom: the honest no-number line, this week, later in the month (one
-  // row per run of days, past days left out), the term's source once by name, then the county's jobs. Each group has
-  // an h3, so a screen reader can move between them.
+  // row per run of days, past days left out), the term's source once as a chip with its site's name, then the county's
+  // jobs. Each group has an h3, so a screen reader can move between them.
   const people = screen.getByRole('region', { name: 'Who’s in town' });
   expect(await within(people).findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
   for (const name of ['This week', 'Later in November', 'Food-service jobs in Grafton County']) {
@@ -129,17 +129,17 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   }
   const order = [
     'Townwise can’t put a number on how many people are in Hanover yet.', 'This week', 'Fall term classes until Tue, Nov 17.',
-    'Later in November', 'Nov 18 to 19', 'Nov 20 to 25', 'Fall term finals', 'From Nov 26', 'Source: Dartmouth Registrar',
+    'Later in November', 'Nov 18 to 19', 'Nov 20 to 25', 'Fall term finals', 'From Nov 26', 'Dartmouth Registrar',
     'Food-service jobs in Grafton County', '2.6% fewer jobs in November 2024 than in an average month that year.',
   ].map((text) => people.textContent.indexOf(text));
   expect(order.every((at) => at >= 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
-  expect(within(people).getByRole('link', { name: 'Source: Dartmouth Registrar' }).getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/test');
+  expect(within(people).getByRole('link', { name: 'Dartmouth Registrar. Source' }).getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/test');
   // No bare hosts, and no source the block doesn't use (the holiday's is the calendar block's).
   expect(within(people).queryByRole('link', { name: 'registrar.dartmouth.edu' })).toBeNull();
   expect(people.textContent).not.toMatch(/opm\.gov|Office of Personnel|County jobs are/);
-  // Source links on the calendar open the source.
-  expect(screen.getAllByRole('link', { name: 'Source: U.S. Office of Personnel Management' })[0]?.getAttribute('href'))
+  // Source chips on the calendar open the source.
+  expect(screen.getAllByRole('link', { name: 'U.S. Office of Personnel Management. Source' })[0]?.getAttribute('href'))
     .toBe('https://www.opm.gov/policy-data-oversight/pay-leave/federal-holidays/');
 });
 
@@ -281,7 +281,7 @@ test('the month calendar: the arrow keys and a pointer preview the days beside t
   expect(within(detail).getByRole('link', { name: 'Open this day on Orders' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-11');
   // A later day: its holiday and sources, last year's same weekday, and no figure of its own.
   expect(within(detail).getByText('Veterans Day. Federal holiday.')).toBeTruthy();
-  expect(within(detail).getByRole('link', { name: 'Source: U.S. Office of Personnel Management' })).toBeTruthy();
+  expect(within(detail).getByRole('link', { name: 'U.S. Office of Personnel Management. Source' })).toBeTruthy();
   expect(within(detail).getByText('Wed, Nov 12, 2025: 100 guests')).toBeTruthy();
   expect(within(detail).queryByText('This day')).toBeNull();
   expect(within(detail).queryByText('Forecast')).toBeNull();
@@ -364,15 +364,18 @@ test('with a published forecast, This month shows each future day’s guests and
   expect(within(detail).queryByText(/^Fall term/)).toBeNull();
 });
 
-test('the day detail’s Why rows end in a small Source link, and On the calendar leaves out what Why names, as the Calendar does', async () => {
+test('the day detail’s Why rows end in their source chips, and On the calendar leaves out what Why names, as the Calendar does', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published(true)), 'This month in Hanover');
   await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
   fireEvent.pointerOver(cellOf('2026-11-07'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
-  const source = within(detail).getByRole('link', { name: 'Source: home.dartmouth.edu' });
-  expect(source.textContent).toBe('Source');
+  const source = within(detail).getByRole('link', { name: 'Dartmouth. Source: home.dartmouth.edu' });
+  expect(source.textContent).toBe('Dartmouth');
   expect(source.getAttribute('href')).toBe('https://home.dartmouth.edu/');
-  expect(source.parentElement?.textContent).toBe('Sample game: more guests in Townwise’s model Source');
+  // The chip sits under the row's words, in the same row.
+  const line = within(detail).getByText('Sample game: more guests in Townwise’s model');
+  expect(line.parentElement?.contains(source)).toBe(true);
+  expect(line.parentElement?.textContent).toBe('Sample game: more guests in Townwise’s modelDartmouth');
   // The game is in Why with its source, so On the calendar doesn't list it again.
   expect(within(detail).queryByText('Sample game. Town event.')).toBeNull();
   expect(within(detail).getByText('Nothing else on the calendar this day.')).toBeTruthy();

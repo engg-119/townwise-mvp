@@ -5,13 +5,13 @@ import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
 import { eventLine, thisDayLine, type MonthDay } from '../analytics/week';
 import { shortDate, type Metric } from '../analytics/words';
-import { InlineSources } from '../calendar/CalendarDay';
 import { reasonShortLines } from '../calendar/model';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason } from '../estimates/api';
 import { formatCount, plural } from '../format';
 import type { LoadState } from '../hooks';
 import type { OrderBoard } from '../orders/api';
 import { locationHref } from '../routing';
+import { SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
 import { orderCoverSentence, orderForDay, REORDER_OVERVIEW } from './beside';
 import { PastCell } from './ThisWeek';
@@ -19,7 +19,7 @@ import { PastCell } from './ThisWeek';
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
 // from today on, the published forecast's day when there is one (its figure and range, the guests your notes and
 // business rules add, and its top three reasons in the Calendar's order and short words, “Saturday: usually more
-// guests”, a rule's among them, each ending in the Calendar's small inline Source links; spec 16.3 P11, 14.4, D31), how
+// guests”, a rule's among them, each with its sources as chips, ui/SourceChip.tsx; spec 16.3 P11, 14.4, D31), how
 // the next order relates to the day (P30, from Home's one read of the orders, with a link to the day on Orders), the
 // day's holidays and town events with their sources less those Why already names (as the Calendar's panel leaves
 // them out), your notes, then, with any history, the day's own figure (only for a past day with data; a day after today
@@ -101,7 +101,10 @@ export function DayDetail(props: {
       {why.length === 0 ? null : (
         <Part label="Why">
           {why.map((row, index) => (
-            <Small key={String(index)}>{row.line}<InlineSources sources={row.reason.sources} lead /></Small>
+            <View key={String(index)} style={styles.item}>
+              <Small>{row.line}</Small>
+              <SourceChips sources={row.reason.sources} />
+            </View>
           ))}
         </Part>
       )}
@@ -115,9 +118,7 @@ export function DayDetail(props: {
         {events.map((event) => (
           <View key={event.id} style={styles.item}>
             <Small white>{eventLine(event)}</Small>
-            {event.sources.map((source) => (
-              <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-            ))}
+            <SourceChips sources={event.sources} />
           </View>
         ))}
         {day.notes.map((note) => (

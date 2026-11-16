@@ -206,19 +206,6 @@ export function dateRange(start: string, end: string | null): string {
   return `${formatDate(start).replace(/, \d{4}$/, '')} to ${formatDate(end)}`;
 }
 
-/** A source's link text: its host for a public institution (.edu, .gov), "Source" otherwise, numbered on repeats. */
-export function sourceLinks(urls: readonly string[]): { url: string; text: string }[] {
-  const texts = urls.map((url) => {
-    const host = new URL(url).hostname.replace(/^www\./, '');
-    return /\.(?:edu|gov)$/.test(host) ? host : 'Source';
-  });
-  return urls.map((url, index) => {
-    const text = texts[index] ?? 'Source';
-    if (texts.filter((other) => other === text).length < 2) return { url, text };
-    return { url, text: `${text} ${String(texts.slice(0, index + 1).filter((other) => other === text).length)}` };
-  });
-}
-
 /** The gap copy for a town outside the twelve (spec 13). */
 export function notResearchedLine(town: { name: string; state: string }): string {
   return `Townwise hasn’t researched ${town.name}, ${town.state} yet. Profiles cover twelve Northeast towns today.`;
