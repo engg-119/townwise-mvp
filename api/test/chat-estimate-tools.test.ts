@@ -374,6 +374,7 @@ describe('get_forecast (U13B)', () => {
     expect(description).toContain('Say "usually"');
     expect(description).toContain('closed and likely-closed days left out');
     expect(description).toContain('averageGuests, on a weekday\'s history effect, is the average open day\'s guests (say it: "than your average day (210)")');
+    expect(description).toContain('("Saturdays usually bring about 35% more guests than your average day (210)")');
   });
 
   it('gives a busier-or-quieter percentage only where the run recorded a usual level', async () => {
