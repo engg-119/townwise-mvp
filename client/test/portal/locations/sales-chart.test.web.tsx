@@ -50,12 +50,21 @@ test('a pointer over the plot marks the nearest day with a rule and a dot on its
   expect(tipLines()).toEqual(['Sat, May 30, 2026', '486 guests']);
   const marks = container.querySelector('[data-hover="day"]');
   // The rule runs across the plot, between its two borders; the dot sits on the line at the day's value (the
-  // highest, so the top of the line's box).
+  // highest, so the top of the line's box, which is moved down 8 as the line is).
   expect(marks?.querySelector('path')?.getAttribute('d')).toBe('M150 8 V188');
-  expect(container.querySelector('[data-hover="dot"] path')?.getAttribute('d')).toBe('M150 0 h0.01');
-  // A pen hovers as a mouse does.
+  const dot = container.querySelector('[data-hover="dot"]');
+  expect(dot?.getAttribute('transform')).toBe('translate(0 8)');
+  expect(dot?.querySelector('path')?.getAttribute('d')).toBe('M150 0 h0.01');
+  // The tooltip sits 8px beside the day in the plot's pixels (150 of 300 on the 200px plot is 100px), to its right
+  // in the plot's left half. jsdom measures no width, so the tooltip is not clamped here.
+  const tip = screen.getByTestId('chart-tooltip');
+  expect(tip.style.left).toBe('108px');
+  expect(tip.style.transform).toBe('');
+  // A pen hovers as a mouse does; in the right half the tooltip sits to the day's left.
   pointAt(svg, 1, 'pen');
   expect(tipLines()).toEqual(['Wed, Jun 3, 2026', '260 guests']);
+  expect(screen.getByTestId('chart-tooltip').style.left).toBe('192px');
+  expect(screen.getByTestId('chart-tooltip').style.transform).toBe('translateX(-100%)');
 });
 
 test('on the net sales series the tooltip reads the day’s net sales in dollars', () => {
