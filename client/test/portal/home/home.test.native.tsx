@@ -394,6 +394,8 @@ test('last week: no recent days, no last year, and a partial week that names its
   expect(await screen.findByText('No data for the same week last year, so there is nothing to compare yet.')).toBeTruthy();
   // No past year, so no summary and no "two years ago" column; the footnote still defines the terms.
   expect(screen.queryByText(/^Same days last year/)).toBeNull();
+  expect(screen.getByText('The next 7 days, last year')).toBeTruthy();
+  expect(screen.getByText('Fewer than 5 of the same days last year have data, so there is no total to show.')).toBeTruthy();
   expect(screen.queryByText('Two years ago')).toBeNull();
   await cleanup();
 
