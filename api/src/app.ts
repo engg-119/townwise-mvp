@@ -8,6 +8,7 @@ import type { Connection } from 'mongoose';
 
 import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './access/routes.ts';
 import { createCalendarFetcher, type CalendarFetcher } from './calendar/fetch.ts';
+import type { GoogleCalendarClient, revokeGoogleGrant } from './calendar/google.ts';
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
@@ -68,6 +69,19 @@ export interface TownwiseDeps {
   readonly calendarKey?: KeyObject | undefined;
   /** Fetches owner calendar links; absent, calendar/fetch.ts's guarded fetcher. Tests pass one over a local server. */
   readonly calendarFetcher?: CalendarFetcher | undefined;
+  /**
+   * Google's token, calendar list and events endpoints (calendar/google.ts); absent turns Google calendars off (main.ts
+   * builds it only when the client id, the client secret and TOWNWISE_CALENDAR_KEY are all set). Tests pass a fake.
+   */
+  readonly googleCalendar?: GoogleCalendarClient | undefined;
+  /** The public OAuth web client id the browser asks Google for a code with; set with `googleCalendar`. */
+  readonly googleCalendarClientId?: string | undefined;
+  /**
+   * Revokes a Google grant (calendar/google.ts revokeGoogleGrant), which needs no client id or secret: main.ts passes it
+   * whenever TOWNWISE_CALENDAR_KEY is set, Google calendars on or off, so ending access still revokes (design decision
+   * 14). Absent, nothing is revoked. Tests pass a fake.
+   */
+  readonly revokeGoogle?: typeof revokeGoogleGrant | undefined;
 }
 
 /**
@@ -116,6 +130,12 @@ export interface TownwiseContext {
   readonly calendarKey: KeyObject | null;
   /** The one way a handler reaches an owner's calendar address (calendar/fetch.ts). */
   readonly calendarFetcher: CalendarFetcher;
+  /** Null while Google calendars are off (503 google_calendar_unavailable). */
+  readonly googleCalendar: GoogleCalendarClient | null;
+  /** The public OAuth client id the calendar list answers; null while Google calendars are off. */
+  readonly googleCalendarClientId: string | null;
+  /** Null when main.ts has no TOWNWISE_CALENDAR_KEY, so no stored Google token could be opened to revoke anyway. */
+  readonly revokeGoogle: typeof revokeGoogleGrant | null;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -148,6 +168,9 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     labCaller: deps.labCaller ?? null,
     calendarKey: deps.calendarKey ?? null,
     calendarFetcher: deps.calendarFetcher ?? createCalendarFetcher(),
+    googleCalendar: deps.googleCalendar ?? null,
+    googleCalendarClientId: deps.googleCalendar === undefined ? null : deps.googleCalendarClientId ?? null,
+    revokeGoogle: deps.revokeGoogle ?? null,
   };
 }
 
