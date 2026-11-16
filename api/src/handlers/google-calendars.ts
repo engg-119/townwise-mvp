@@ -189,7 +189,7 @@ export async function connectGoogle(ctx: TownwiseContext, req: Request, res: Res
  * GET /api/org/locations/:locationId/google-calendars: the caller's own Google calendars to pick from, with whether each
  * is already one of this location's. 403 view_as_read_only under view-as, where the person is the target, before
  * anything is read; 503 while off; 409 google_not_connected with no connection and google_reconnect for a revoked one,
- * one the key no longer opens, or one Google refuses (a refresh's `invalid_grant`, a calendar list's 401). Like every
+ * one the key no longer opens, or one Google refuses (a refresh's `invalid_grant`, a calendar list's `unauthorized`). Like every
  * GET it only reads (spec 7.3): Google's refusal is not recorded here, and the next add, connect or refresh records it.
  * 200 `{ calendars }`.
  */
