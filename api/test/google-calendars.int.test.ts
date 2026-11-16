@@ -18,7 +18,8 @@ import {
   ACCESS_TOKEN, ALL_SCOPES, allDay, AUTH_CODE, createFakeGoogle, GOOGLE_CLIENT_ID, googleError, linkGoogle, PRIMARY_ID, REFRESH_TOKEN, SHARED_ID,
 } from './helpers/google.ts';
 import {
-  call, limiterKey, logLines, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, limiterKey, logLines, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, writesDuring, type TestSession,
+  type TownwiseTestServer,
 } from './helpers/server.ts';
 
 const KEY = createSecretKey(randomBytes(32));
@@ -327,20 +328,26 @@ describe('the picker lists the person’s own Google calendars', () => {
     });
   });
 
-  it('409 google_not_connected with no connection, google_reconnect for a revoked one (no Google call) and when the refresh answers invalid_grant (now revoked)', async () => {
+  it('409 google_not_connected with no connection, google_reconnect when the refresh answers invalid_grant (written nowhere: a GET only reads) and for a revoked one (no Google call)', async () => {
     const t = await tenant('Reconnect Roadhouse');
     expect(await choices(t, t.member)).toMatchObject({ status: 409, body: { error: 'google_not_connected' } });
     expect((await connect(t, t.member)).status).toBe(200);
     google.on('refreshAccess', () => Promise.reject(googleError('invalid_grant', 400)));
     google.calls.length = 0;
-    expect(await choices(t, t.member)).toMatchObject({ status: 409, body: { error: 'google_reconnect' } });
+    expect(await writesDuring(server, async () => {
+      expect(await choices(t, t.member)).toMatchObject({ status: 409, body: { error: 'google_reconnect' } });
+    })).toEqual([]);
+    expect((await connectionRow(t, t.member))?.revokedAt).toBeNull();
+    expect(google.calls.map((each) => each.method)).toEqual(['refreshAccess']);
+    // The next write path records it: here an add, whose refresh Google refuses the same way.
+    expect(await addGoogle(t, t.member, SHARED_ID)).toMatchObject({ status: 409, body: { error: 'google_reconnect' } });
     expect((await connectionRow(t, t.member))?.revokedAt).toEqual(server.clock.now());
     google.calls.length = 0;
     expect(await choices(t, t.member)).toMatchObject({ status: 409, body: { error: 'google_reconnect' } });
     expect(google.calls).toEqual([]);
   });
 
-  it('a calendar list Google refuses as unauthorized is 409 google_reconnect and marks the connection revoked; a rate limit, api_disabled and a 500 are 503 google_unavailable; none is 401', async () => {
+  it('a calendar list Google refuses as unauthorized is 409 google_reconnect, with no write; a rate limit, api_disabled and a 500 are 503 google_unavailable; none is 401', async () => {
     const t = await tenant('List Failure Lounge');
     expect((await connect(t, t.member)).status).toBe(200);
     const statuses: number[] = [];
@@ -349,12 +356,25 @@ describe('the picker lists the person’s own Google calendars', () => {
       [googleError('unavailable', 500), 'google_unavailable'], [googleError('unauthorized', 401), 'google_reconnect'],
     ] as const) {
       google.on('listCalendars', () => Promise.reject(error));
-      const res = await choices(t, t.member);
-      statuses.push(res.status);
-      expect(res).toMatchObject({ status: answer === 'google_reconnect' ? 409 : 503, body: { error: answer } });
+      const writes = await writesDuring(server, async () => {
+        const res = await choices(t, t.member);
+        statuses.push(res.status);
+        expect(res).toMatchObject({ status: answer === 'google_reconnect' ? 409 : 503, body: { error: answer } });
+      });
+      expect(writes).toEqual([]);
     }
     expect(statuses).not.toContain(401);
-    expect((await connectionRow(t, t.member))?.revokedAt).toEqual(server.clock.now());
+    expect((await connectionRow(t, t.member))?.revokedAt).toBeNull();
+  });
+
+  it('a new refresh token Google sends to the choices is not kept: the GET writes nothing, and the stored token stays', async () => {
+    const t = await tenant('Rotated Picker Pub');
+    expect((await connect(t, t.member)).status).toBe(200);
+    google.state.rotatedRefreshToken = '1//fake-refresh-token-rotated';
+    expect(await writesDuring(server, async () => {
+      expect((await choices(t, t.member)).status).toBe(200);
+    })).toEqual([]);
+    expect(open(KEY, String((await connectionRow(t, t.member))?.sealedRefreshToken))).toEqual({ ok: true, text: REFRESH_TOKEN });
   });
 
   it('a connect whose choices Google refuses keeps the connection and answers as the picker does', async () => {

@@ -176,10 +176,16 @@ export type GoogleAccessToken = { readonly ok: true; readonly accessToken: strin
 /**
  * An access token for one use (the add, connect's choices, the picker's list): opens the stored refresh token and
  * refreshes access. A new refresh token from Google replaces the stored one; `invalid_grant` marks the connection
- * revoked; every Google failure is logged. A revoked connection fails at once, with no Google call.
+ * revoked; every Google failure is logged. A revoked connection fails at once, with no Google call. With `record`
+ * false (the picker's list, a GET, which only reads: spec 7.3) nothing is written: `invalid_grant` answers `revoked`
+ * without marking the connection, which the next add, connect or refresh records, and a new refresh token is not kept
+ * (Google's refresh answers carry none; if one ever came, the stored one is what the next write-path refresh uses).
  */
-export async function googleAccessToken(deps: GoogleAccessDeps, scope: OrgScope, connection: GoogleConnectionRecord): Promise<GoogleAccessToken> {
+export async function googleAccessToken(
+  deps: GoogleAccessDeps, scope: OrgScope, connection: GoogleConnectionRecord, options?: { readonly record?: boolean },
+): Promise<GoogleAccessToken> {
   const { client, key } = deps;
+  const record = options?.record ?? true;
   if (client === null) return { ok: false, code: 'off' };
   if (connection.revokedAt !== null) return { ok: false, code: 'revoked' };
   if (key === null) return { ok: false, code: 'key_mismatch' };
@@ -194,10 +200,12 @@ export async function googleAccessToken(deps: GoogleAccessDeps, scope: OrgScope,
     if (!(err instanceof GoogleCalendarError)) throw err;
     logGoogleFailure(deps.logger, 'token', err);
     if (err.code !== 'invalid_grant') return { ok: false, code: 'unavailable' };
-    await deps.stores.googleConnections.markRevoked(scope, connection.id, deps.now());
+    if (record) await deps.stores.googleConnections.markRevoked(scope, connection.id, deps.now());
     return { ok: false, code: 'revoked' };
   }
-  if (access.refreshToken !== null) await deps.stores.googleConnections.replaceToken(scope, connection.id, seal(key, access.refreshToken), deps.now());
+  if (record && access.refreshToken !== null) {
+    await deps.stores.googleConnections.replaceToken(scope, connection.id, seal(key, access.refreshToken), deps.now());
+  }
   return { ok: true, accessToken: access.accessToken };
 }
 

@@ -69,7 +69,7 @@ The system SHALL store a connection's refresh token and each Google calendar's i
 - **THEN** its status becomes `key_mismatch` and its events stay
 
 ### Requirement: The picker lists the person's own Google calendars
-`GET /api/org/locations/:locationId/google-calendars` (`org.google_calendars.list`, member, not `openAsAdmin`, limiter `google_calendars`) SHALL refuse view-as with 403 `view_as_read_only`, answer 409 `google_not_connected` when the caller has no connection and 409 `google_reconnect` when it is revoked (a refresh answered `invalid_grant` marks it revoked first), and otherwise answer 200 `{ calendars: [{ id, name, primary, added }] }` from Google's calendar list (`minAccessRole=reader`, at most 250), the primary first, where `name` is the calendar's name in the person's Google account, never stored, and `added` says whether that calendar is already one of this location's. A calendar list read Google answers with 401 SHALL mark the connection revoked and answer 409 `google_reconnect`; a rate limit, a disabled Calendar API, a 5xx or any other failure SHALL answer 503 `google_unavailable`. Neither route SHALL answer 401.
+`GET /api/org/locations/:locationId/google-calendars` (`org.google_calendars.list`, member, not `openAsAdmin`, limiter `google_calendars`) SHALL refuse view-as with 403 `view_as_read_only`, answer 409 `google_not_connected` when the caller has no connection and 409 `google_reconnect` when it is revoked or a refresh is answered `invalid_grant`, and otherwise answer 200 `{ calendars: [{ id, name, primary, added }] }` from Google's calendar list (`minAccessRole=reader`, at most 250), the primary first, where `name` is the calendar's name in the person's Google account, never stored, and `added` says whether that calendar is already one of this location's. A calendar list read Google answers with 401 SHALL answer 409 `google_reconnect`, and in connect's answer SHALL also mark the connection revoked; a rate limit, a disabled Calendar API, a 5xx or any other failure SHALL answer 503 `google_unavailable`. Neither route SHALL answer 401. Like every GET (spec 7.3), the choices route SHALL write nothing, so Google's refusal there is recorded by the next add, connect or refresh.
 
 #### Scenario: Choices with one already added
 - **WHEN** a connected member whose primary calendar is on the location lists the choices
@@ -85,6 +85,10 @@ The system SHALL store a connection's refresh token and each Google calendar's i
 
 #### Scenario: Google's token rejected on the list
 - **WHEN** a connected member requests the choices and Google answers the calendar list with 401
+- **THEN** the answer is 409 `google_reconnect`, not 401, and nothing is written
+
+#### Scenario: Google's token rejected in connect's answer
+- **WHEN** a member connects and Google answers the calendar list for the choices with 401
 - **THEN** the connection is marked revoked and the answer is 409 `google_reconnect`, not 401
 
 ### Requirement: Adding a Google calendar checks it before storing anything

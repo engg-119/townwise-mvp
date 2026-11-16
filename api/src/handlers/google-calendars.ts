@@ -99,11 +99,12 @@ export async function storedGoogleIds(ctx: TownwiseContext, scope: OrgScope, loc
 
 /**
  * The picker's choices from the person's calendar list (one page of 250), the primary first and then Google's order.
- * Google refusing the access token (`unauthorized`) marks the connection revoked and answers 409 google_reconnect; any
- * other failure answers 503 google_unavailable; each is logged.
+ * Google refusing the access token (`unauthorized`) answers 409 google_reconnect, and with `record` (connect, a POST)
+ * also marks the connection revoked; the choices route, a GET, writes nothing (spec 7.3). Any other failure answers 503
+ * google_unavailable; each is logged.
  */
 async function choicesOf(
-  ctx: TownwiseContext, scope: OrgScope, input: { connectionId: string; locationId: string; accessToken: string },
+  ctx: TownwiseContext, scope: OrgScope, input: { connectionId: string; locationId: string; accessToken: string; record: boolean },
 ): Promise<GoogleChoice[]> {
   const { client, key } = googleOn(ctx);
   let entries;
@@ -113,7 +114,7 @@ async function choicesOf(
     if (!(err instanceof GoogleCalendarError)) throw err;
     logGoogleFailure(ctx.logger, 'calendar_list', err);
     if (err.code !== 'unauthorized') throw googleUnavailable();
-    await ctx.stores.googleConnections.markRevoked(scope, input.connectionId, ctx.now());
+    if (input.record) await ctx.stores.googleConnections.markRevoked(scope, input.connectionId, ctx.now());
     throw googleReconnect();
   }
   const added = await storedGoogleIds(ctx, scope, input.locationId, key);
@@ -178,15 +179,19 @@ export async function connectGoogle(ctx: TownwiseContext, req: Request, res: Res
     target: { type: 'google_connection', id: connection.id },
     details: { connectionId: connection.id },
   });
-  const calendars = await choicesOf(ctx, scope, { connectionId: connection.id, locationId: location.id, accessToken: exchange.accessToken });
+  const calendars = await choicesOf(ctx, scope, {
+    connectionId: connection.id, locationId: location.id, accessToken: exchange.accessToken, record: true,
+  });
   res.status(200).json({ calendars });
 }
 
 /**
  * GET /api/org/locations/:locationId/google-calendars: the caller's own Google calendars to pick from, with whether each
  * is already one of this location's. 403 view_as_read_only under view-as, where the person is the target, before
- * anything is read; 503 while off; 409 google_not_connected with no connection and google_reconnect for a revoked one
- * (a refresh answered `invalid_grant` marks it so first) or one the key no longer opens. 200 `{ calendars }`.
+ * anything is read; 503 while off; 409 google_not_connected with no connection and google_reconnect for a revoked one,
+ * one the key no longer opens, or one Google refuses (a refresh's `invalid_grant`, a calendar list's 401). Like every
+ * GET it only reads (spec 7.3): Google's refusal is not recorded here, and the next add, connect or refresh records it.
+ * 200 `{ calendars }`.
  */
 export async function listGoogleChoices(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -196,9 +201,11 @@ export async function listGoogleChoices(ctx: TownwiseContext, req: Request, res:
   googleOn(ctx);
   const connection = await ctx.stores.googleConnections.findForUser(scope, caller.userId);
   if (connection === null) throw googleNotConnected();
-  const access = await googleAccessToken(googleAccessDeps(ctx), scope, connection);
+  const access = await googleAccessToken(googleAccessDeps(ctx), scope, connection, { record: false });
   if (!access.ok) throw accessRefusal(access.code);
-  const calendars = await choicesOf(ctx, scope, { connectionId: connection.id, locationId: location.id, accessToken: access.accessToken });
+  const calendars = await choicesOf(ctx, scope, {
+    connectionId: connection.id, locationId: location.id, accessToken: access.accessToken, record: false,
+  });
   res.status(200).json({ calendars });
 }
 
