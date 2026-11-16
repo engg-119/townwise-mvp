@@ -9,8 +9,9 @@
 // Why endGoogleAccess runs in its order: it marks the connection for a check first, so a request that stops part way
 // is finished by the refresh loop's connection check (checkAt now); it removes the Google calendars the connection
 // backs (events first), so a departed person's events leave the location before anything else; it revokes at Google,
-// best effort; it deletes the row whether or not the revoke worked, so Townwise holds nothing; and it logs. A retry or
-// the check completes any step left, and a closed loop stops before the revoke, leaving the mark.
+// best effort; it deletes the row whether or not the revoke worked, so Townwise holds nothing, and then removes the
+// connection's calendars once more, for one an add stored while the revoke ran; and it logs. A retry or the check
+// completes any step left, and a closed loop stops before the revoke, leaving the mark.
 // Why the other-organization rule: Google's revoke ends every grant the account gave the project, so a row in one
 // organization is deleted without revoking while the same person holds a connection in another (cross-tenant's
 // hasGoogleConnectionElsewhere).
@@ -105,7 +106,8 @@ export async function revokeAccessToken(deps: GoogleAccessDeps, accessToken: str
  * Ends a connection (design decision 11), in an order a retry or the connection check completes: marks it for a check,
  * removes the organization's Google calendars it backs with their events, revokes the grant at Google unless the person
  * holds a connection in another organization (best effort; skipped when no key opens the token), deletes the row
- * whether or not the revoke worked, and logs `townwise.google_access_ended`. Resolves how many calendars it removed.
+ * whether or not the revoke worked, removes the connection's calendars again (one an add stored during the revoke),
+ * and logs `townwise.google_access_ended`. Resolves how many calendars it removed.
  * With the deps' signal aborted it stops before the revoke and keeps the row, which the mark makes due at once.
  */
 export async function endGoogleAccess(deps: GoogleAccessDeps, scope: OrgScope, connectionId: string, reason: GoogleEndReason): Promise<number> {
@@ -114,7 +116,7 @@ export async function endGoogleAccess(deps: GoogleAccessDeps, scope: OrgScope, c
   const stopped = (): boolean => deps.signal?.aborted === true;
   const found = await googleConnections.find(scope, connectionId);
   await googleConnections.markForCheck(scope, connectionId, deps.now());
-  const calendars = await ownerCalendars.removeForConnection(scope, connectionId);
+  let calendars = await ownerCalendars.removeForConnection(scope, connectionId);
   if (found !== null) {
     if (stopped()) return calendars;
     if (!(await hasGoogleConnectionElsewhere(deps.connection, found.userId, scope.orgId))) {
@@ -124,6 +126,10 @@ export async function endGoogleAccess(deps: GoogleAccessDeps, scope: OrgScope, c
       if (stopped()) return calendars;
     }
     await googleConnections.remove(scope, connectionId);
+    // An add that stored a calendar for this connection while the revoke ran found the row still there, so its own
+    // check after storing kept it: the calendars go once more now that the row is gone, and an add storing later finds
+    // no row and removes its calendar itself.
+    calendars += await ownerCalendars.removeForConnection(scope, connectionId);
   }
   deps.logger.info({ connectionId, calendars, reason }, 'townwise.google_access_ended');
   return calendars;

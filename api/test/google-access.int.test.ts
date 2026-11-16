@@ -287,6 +287,28 @@ describe('with Google calendars on', () => {
     });
   });
 
+  it('a Google calendar an add stores while the revoke runs goes with the connection: no calendar is left for a deleted connection', async () => {
+    const t = await tenant('Racing Add Rotisserie');
+    await connect(t.locationId, t.member);
+    const calendarId = await addGoogle(t.locationId, t.member, SHARED_ID);
+    const connectionId = await connectionIdOf(t.orgId, t.member);
+    server.clock.advance(MINUTE);
+    // The member's add of another calendar lands while ending the access waits on Google's revoke: the connection row
+    // is still there, so the add's own check after storing passes and it answers 201.
+    google.on('revoke', async () => { await addGoogle(t.locationId, t.member, PRIMARY_ID); });
+    const lines = await linesDuring('townwise.google_access_ended', async () => {
+      expect((await removeCalendar(t.locationId, t.teammate, calendarId)).status).toBe(204);
+    });
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(await connectionRow(t.orgId, t.member)).toBeNull();
+    // Swept again once the row is gone: no calendar or event is left whose access has ended.
+    expect(await stored(t.locationId)).toEqual({ calendars: 0, events: 0 });
+    expect(lines).toEqual([{ connectionId, calendars: 1, reason: 'last_calendar' }]);
+    expect(await disconnectedEvents(connectionId)).toEqual([
+      expect.objectContaining({ details: { connectionId, calendarCount: 1, reason: 'last_calendar' } }),
+    ]);
+  });
+
   it('a revoke that fails still deletes the connection, logging its status only', async () => {
     const t = await tenant('Failed Revoke Fish House');
     await connect(t.locationId, t.member);
