@@ -1,5 +1,5 @@
 import { formatCount } from '../format';
-import type { OrderRule, OrderUnit, SupplierOrder } from './api';
+import type { OrderLine, OrderRule, OrderUnit } from './api';
 
 // The Orders page's words and its input checks, pure. A quantity is checked here before it is sent, so an empty or
 // non-numeric field never becomes 0 or NaN (#68 review N6).
@@ -49,7 +49,12 @@ export function countItems(fields: Readonly<Record<string, string>>): { items: R
   return { items, invalid };
 }
 
-/** How many items one supplier's order orders more than 0 of. */
-export function itemsToOrder(order: SupplierOrder): number {
-  return order.lines.filter((line) => line.recommended > 0).length;
+/** What a line orders: the owner's saved change for this delivery when it has one, else Townwise's quantity. */
+export function orderQuantity(line: Pick<OrderLine, 'edit' | 'recommended'>): number {
+  return line.edit === null ? line.recommended : line.edit.quantity;
+}
+
+/** How many items one supplier's order orders more than 0 of, a saved change counting as the line's quantity. */
+export function itemsToOrder(order: { readonly lines: readonly Pick<OrderLine, 'edit' | 'recommended'>[] }): number {
+  return order.lines.filter((line) => orderQuantity(line) > 0).length;
 }

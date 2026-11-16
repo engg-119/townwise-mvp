@@ -18,6 +18,7 @@ import { dayInOrder, orderCoverSentence, orderForDay, REORDER_OVERVIEW } from '.
 import { fetchOrderBoard, type LiveBoard, type OrderBoard, type OrderLine, type SupplierOrder } from './api';
 import { CountForm } from './CountForm';
 import { LineEditor } from './LineEditor';
+import { amount, orderQuantity } from './words';
 
 // P30 Orders (/locations/[id]/orders, members; design Decisions 2, 6 and 10): the location's next order from each
 // supplier, soonest order-by first, each with its deadline and a line per item; "Enter a count" one step from the
@@ -35,8 +36,9 @@ const COLUMNS = [
   { key: 'why', label: 'Why', flex: 3 },
 ];
 
+/** The Order column: the line's saved change when it has one (its why line then says so), else Townwise's quantity. */
 function quantity(line: OrderLine): string {
-  return `${String(line.recommended)} ${line.unit}`;
+  return amount(orderQuantity(line), line.unit);
 }
 
 function otherDeal(line: OrderLine): string {

@@ -102,6 +102,23 @@ describe('order board', () => {
     expect(lineOf(edited, 'seltzer')).toMatchObject({ recommended: 1, edit: null });
   });
 
+  it('ends the why line with an edit that differs from the quantity, in the owner’s words, and not with one that matches', () => {
+    const board = liveBoard([PLAN], []);
+    const why = lineOf(board, 'lager')?.why ?? '';
+    const edited = withPreferences(board, [{ itemId: 'lager', delivery: '2026-11-19', quantity: 6, unit: 'cases', reason: 'a home game weekend.' }], []);
+    expect(lineOf(edited, 'lager')).toMatchObject({ recommended: 3, why: `${why} You changed this order to 6 cases: a home game weekend.` });
+    const one = withPreferences(board, [{ itemId: 'lager', delivery: '2026-11-19', quantity: 1, unit: 'cases', reason: 'slow week' }], []);
+    expect(lineOf(one, 'lager')?.why).toBe(`${why} You changed this order to 1 case: slow week.`);
+    const remembered = withPreferences(
+      board,
+      [{ itemId: 'lager', delivery: '2026-11-19', quantity: 5, unit: 'cases', reason: 'a home game weekend' }],
+      [{ id: 'r1', itemId: 'lager', delta: 2, unit: 'cases', situation: 'a home game weekend', off: false }],
+    );
+    expect(lineOf(remembered, 'lager')).toMatchObject({
+      recommended: 5, why: `${why} Includes 2 extra cases from your rule: a home game weekend. With your rule, the order is 5 cases.`,
+    });
+  });
+
   it('applies every active rule of an item, lists each with its own id, and never goes below 0', () => {
     const board = liveBoard([PLAN], []);
     const ruled = withPreferences(board, [], [
