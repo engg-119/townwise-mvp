@@ -14,7 +14,10 @@ import { Heading } from './text';
 // a `panel` fill with a 1px `border` outline, the `shadow` token, square, 16px padding, its heading row (the heading and
 // Close) at its top and the rest scrolling under it. The heading row is outside the scroll view, and on web the card's
 // first control takes focus as it opens (focusFirstControl), since Chrome lets a scroll view whose content overflows
-// take focus and the trap would otherwise give it to that unnamed region before Close or the note form's Kind.
+// take focus and the trap would otherwise give it to that unnamed region before Close or the note form's Kind. For the
+// same reason the card takes Tab and Shift+Tab itself on web (tabWithin), moving between its enabled controls and
+// wrapping past either end, so the trap's own wrap never runs, and the scroll view hands back any focus it is given
+// (refuseFocus).
 // The backdrop under it is transparent and is neither a tab stop nor a screen reader stop (a plain View, never a
 // Pressable, which is always focusable on web); it takes presses and closes the popover only where the popover allows
 // that, and on web a press on it keeps focus in the card. Placement (placePopover) is measured on open, on every window size change and every keyboard show or hide: from
@@ -133,6 +136,45 @@ function focusFirstControl(card: Host | null): void {
   }
 }
 
+/** A control disabled in place (a Button, which keeps its focus with aria-disabled) or a disabled field. */
+const DISABLED = ':disabled, [aria-disabled="true"]';
+
+/**
+ * On web, Tab and Shift+Tab inside the card move between its enabled controls alone, from the focused element to the
+ * next (or previous) one, wrapping past either end. Left to the browser, Tab past the last control (Shift+Tab before
+ * the first) leaves the card for react-native-web's focus bracket, and the trap's search for where to bring focus back
+ * can stop on the scroll view, which Chrome lets a script focus. Keys from a dialog the card opened (Your calendars'
+ * Remove), another Modal outside the card's DOM, still come here through React's tree and are left alone.
+ */
+function tabWithin(card: Host | null, event: React.KeyboardEvent<HTMLElement>): void {
+  const node = card as unknown as HTMLElement | null;
+  const from = event.target;
+  if (event.key !== 'Tab' || event.altKey || event.ctrlKey || event.metaKey) return;
+  if (node === null || !(from instanceof Node) || !node.contains(from)) return;
+  event.preventDefault();
+  const controls = [...node.querySelectorAll<HTMLElement>(CONTROL)].filter((control) => !control.matches(DISABLED));
+  const after = controls.filter((control) => (from.compareDocumentPosition(control) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+  const before = controls.filter((control) => control !== from && !after.includes(control));
+  const order = event.shiftKey ? [...before.toReversed(), ...after.toReversed()] : [...after, ...before];
+  for (const control of order) {
+    control.focus();
+    if (document.activeElement === control) return;
+  }
+}
+
+/**
+ * On web, the scroll view never keeps focus. Chrome lets a press on its blank space, or a script, focus it (the trap,
+ * when focus leaves the card, tries each element of the card in turn), so focus goes back to the element in the card
+ * it came from, or else to the card's first control; the trap's search, finding the scroll view refused, goes on into it.
+ */
+function refuseFocus(card: Host | null, event: React.FocusEvent<HTMLElement>): void {
+  if (event.target !== event.currentTarget) return;
+  const node = card as unknown as HTMLElement | null;
+  const from = event.relatedTarget;
+  if (from instanceof HTMLElement && node?.contains(from) === true) from.focus();
+  if (document.activeElement === event.target) focusFirstControl(card);
+}
+
 export function Popover(props: PopoverProps): React.JSX.Element {
   const busy = props.busy === true;
   const card = useRef<Host>(null);
@@ -241,6 +283,7 @@ function Card({ ref, ...props }: PopoverProps & { ref: RefObject<Host | null> })
   // From 641px the card shows once its opener is measured, so it never flashes at the window's top first.
   const unplaced = anchored && rect === null;
   const outside = props.dismissOnOutsidePress && !busy;
+  const web = Platform.OS === 'web';
   return (
     <View style={[styles.frame, { height }]}>
       <View
@@ -249,13 +292,19 @@ function Card({ ref, ...props }: PopoverProps & { ref: RefObject<Host | null> })
         aria-modal
         aria-label={props.label}
         nativeID={props.nativeID}
+        // React Native types these props with its own events; on web react-native-web hands over the DOM's.
+        {...(web ? ({ onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => { tabWithin(ref.current, event); } } as object) : {})}
         style={[styles.card, placement, unplaced ? styles.unplaced : null]}
       >
         <View style={styles.head}>
           <Heading style={styles.heading}>{props.label}</Heading>
           {props.closeButton === true ? <Button variant="link" label="Close" disabled={busy} onPress={onClose} /> : null}
         </View>
-        <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
+        <ScrollView
+          keyboardShouldPersistTaps="handled"
+          contentContainerStyle={styles.content}
+          {...(web ? ({ onFocus: (event: React.FocusEvent<HTMLElement>) => { refuseFocus(ref.current, event); } } as object) : {})}
+        >
           {props.children}
         </ScrollView>
       </View>
