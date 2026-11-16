@@ -1,4 +1,4 @@
-import { amount, countItems, parseCount, parseLineQuantity, ruleLine } from '../../../src/portal/orders/words';
+import { amount, countItems, itemsToOrder, orderQuantity, parseCount, parseLineQuantity, ruleLine } from '../../../src/portal/orders/words';
 
 // The Orders page's input checks (#68 review N6): what the server takes (api/src/handlers/orders.ts decisionBody, and
 // order-setup.ts countBody) and nothing else, so an empty field never becomes 0 and text never becomes NaN.
@@ -20,4 +20,18 @@ test('amounts and rules in words', () => {
   expect([amount(1, 'cases'), amount(2, 'kegs'), amount(2.5, 'bottles'), amount(1200, 'units')]).toEqual(['1 case', '2 kegs', '2.5 bottles', '1,200 units']);
   expect(ruleLine({ delta: 2, situation: 'a football weekend' }, 'cases')).toBe('Adds 2 cases to every order: “a football weekend”');
   expect(ruleLine({ delta: -1, situation: 'slow week' }, 'kegs')).toBe('Takes 1 keg off every order: “slow week”');
+});
+
+test('a line orders its saved change when it has one, and Home counts the items by it', () => {
+  expect(orderQuantity({ recommended: 6, edit: null })).toBe(6);
+  expect(orderQuantity({ recommended: 6, edit: { quantity: 8, reason: 'A wedding party' } })).toBe(8);
+  expect(orderQuantity({ recommended: 6, edit: { quantity: 0, reason: 'Closed for a private event' } })).toBe(0);
+  const lines = [
+    { recommended: 3, edit: { quantity: 0, reason: 'Closed for a private event' } },
+    { recommended: 0, edit: { quantity: 2, reason: 'A wedding party' } },
+    { recommended: 0, edit: { quantity: 5, reason: 'A wedding party' } },
+    { recommended: 4, edit: null },
+  ];
+  // By the saved changes, 3 items (Townwise's quantities alone would say 2).
+  expect(itemsToOrder({ lines })).toBe(3);
 });

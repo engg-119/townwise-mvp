@@ -104,6 +104,10 @@ test('one section per supplier order, soonest first, each with its deadline and 
   expect(screen.getByText('Townwise still can’t see a recent count.')).toBeTruthy();
   expect(screen.getByLabelText('Sample brewery order')).toBeTruthy();
   expect(within(screen.getByLabelText('Sample distributor order')).getByText('13 cases')).toBeTruthy();
+  // A line orders its saved change: the seltzer's 8, not Townwise's 6. A quantity of 1 reads in the singular.
+  expect(within(screen.getByLabelText('Sample distributor order')).getByText('8 cases')).toBeTruthy();
+  expect(within(screen.getByLabelText('Sample distributor order')).queryByText('6 cases')).toBeNull();
+  expect(within(screen.getByLabelText('Sample brewery order')).getByText('1 keg')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Explain the Sample distributor order' })).toBeTruthy();
   expect(screen.getAllByRole('button', { name: 'Save this line' })).toHaveLength(3);
   expect(writes(api)).toEqual([]);
