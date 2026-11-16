@@ -20,11 +20,11 @@
 // at the next look.
 // After the due calendars, the loop claims due Google connection checks one at a time (checkAt passed, under the same
 // lease, scoped by scopeForGoogleCheck): a connection whose person holds no seat in the organization has its access
-// ended (seat_gone), one that backs no calendar too (unused), and one whose seat was removed moments ago is left due
-// for a later look; any other is checked again 24 hours on, only while no mark came in during the check (else it
-// stays due). Every connection is looked at at least daily, and at once after any step that may leave it unused or
-// unowned (they mark it first), so this check also finishes an end of access, a seat removal or a location deletion
-// that stopped part way.
+// ended (seat_gone), one that backs no calendar a day or more after its connect too (unused), and one whose seat was
+// removed moments ago is left due for a later look; any other is checked again 24 hours on, or, unused and younger
+// than a day, a day after its connect, and only while no mark came in during the check (else it stays due). Every
+// connection is looked at at least daily, and at once after any step that may leave it unused or unowned (they mark it
+// first), so this check also finishes an end of access, a seat removal or a location deletion that stopped part way.
 // Closing drops a link fetch in flight, which may take 10 seconds where a shutdown hook has 2, and aborts every Google
 // call in flight through the loop's AbortController (a Google read checks it between pages, and ending access checks it
 // before the revoke): nothing is written, and the lease runs out so a later look refreshes the calendar or checks the
@@ -221,10 +221,11 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
 
   /**
    * One claimed connection check (design decision 10): no seat in the organization ends the access (seat_gone), a seat
-   * removed moments ago leaves it due for a later look (nothing is written, so the lease runs out first), no calendar
-   * ends it (unused), and otherwise it is checked again 24 hours on. The next check is set only while checkAt is still
-   * the one claimed: a mark written during the check (a calendar removed, a seat lost) leaves the connection due, and
-   * the next look checks it again.
+   * removed moments ago leaves it due for a later look (nothing is written, so the lease runs out first), no calendar a
+   * day or more after its connect ends it (unused), and otherwise it is checked again 24 hours on, or, unused and
+   * younger than that, a day after its connect (a last admin's refused removal marks a new one, and changes nothing).
+   * The next check is set only while checkAt is still the one claimed: a mark written during the check (a calendar
+   * removed, a seat lost) leaves the connection due, and the next look checks it again.
    */
   async function check(claim: ClaimedGoogleConnection, leaseUntil: Date): Promise<void> {
     const scope = scopeForGoogleCheck(claim);
@@ -238,8 +239,14 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
       await endGoogleAccess(google, scope, connectionId, 'seat_gone');
       return;
     }
-    if ((await endUnusedGoogleAccess(google, scope, connectionId, 'unused')) !== null) return;
-    const nextCheckAt = new Date(now().getTime() + CHECK_INTERVAL_MS);
+    const at = now();
+    const unusedUntil = new Date(found.connectedAt.getTime() + CHECK_INTERVAL_MS);
+    let nextCheckAt = new Date(at.getTime() + CHECK_INTERVAL_MS);
+    if (at.getTime() < unusedUntil.getTime()) {
+      if ((await calendars.countForConnection(scope, connectionId)) === 0) nextCheckAt = unusedUntil;
+    } else if ((await endUnusedGoogleAccess(google, scope, connectionId, 'unused')) !== null) {
+      return;
+    }
     await stores.googleConnections.releaseCheck(scope, connectionId, { leaseUntil, checkAt: claim.checkAt, nextCheckAt });
   }
 

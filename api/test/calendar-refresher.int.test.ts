@@ -10,9 +10,10 @@
 // token, a missing connection, a seat removed with its access never ended (and one removed moments ago), a key that no
 // longer opens, the client off, Google's rate limit and the Calendar API switched off, claims across kinds; the check
 // ending an unused connection, one with no seat, an interrupted end and an interrupted location deletion, leaving a
-// seat that may yet come back, pushing a connection in use 24 hours on, and keeping a connection due when a mark comes
-// in during its check; close aborting a Google read; and two replicas never checking one connection twice. Every title
-// and name here is made up.
+// seat that may yet come back, pushing a connection in use 24 hours on, keeping a new unused one through a last
+// admin's refused removal until a day after its connect, and keeping a connection due when a mark comes in during its
+// check; close aborting a Google read; and two replicas never checking one connection twice. Every title and name here
+// is made up.
 import { createSecretKey, randomBytes, randomUUID, type KeyObject } from 'node:crypto';
 
 import { createLogger } from '@ckeith26/server-core';
@@ -220,6 +221,11 @@ function connectionRow(connectionId: string) {
 /** Due for a check now, as markForCheck leaves it before a step that may leave it unused or unowned. */
 function markDue(connectionId: string) {
   return server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(connectionId) }, { $set: { checkAt: server.clock.now() } });
+}
+
+/** Connected a day ago, so the check ends it as soon as it backs no calendar (a newer one is given a day from its connect). */
+function dayOld(connectionId: string) {
+  return server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(connectionId) }, { $set: { connectedAt: at(-24 * HOUR) } });
 }
 
 /** The person's seat removed at `removedAt`, as the members store writes it. */
@@ -851,6 +857,7 @@ describe('the connection check', () => {
   it('gives a due connection to exactly one of the claims racing for it, and two refreshers draining at once revoke it once', async () => {
     const t = await tenant();
     const { connectionId } = await connected(t);
+    await dayOld(connectionId);
     await markDue(connectionId);
     const claims = await Promise.all(Array.from({ length: 8 }, () => claimDueGoogleConnection(server.connection, {
       now: server.clock.now(), leaseUntil: at(LEASE),
@@ -870,6 +877,7 @@ describe('the connection check', () => {
     const broken = (await connected(t)).connectionId;
     await server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(broken) }, { $set: { checkAt: at(-HOUR) } });
     const next = (await connected(t)).connectionId;
+    await dayOld(next);
     await markDue(next);
     const find: GoogleConnectionStore['find'] = (scope, connectionId) => (connectionId === broken
       ? Promise.reject(new TypeError('check failed'))
@@ -936,6 +944,7 @@ describe('the connection check', () => {
   it('completes an interrupted location deletion: the refresh marks the connection as it removes the calendar, and the check ends it', async () => {
     const t = await tenant();
     const { connectionId } = await connected(t);
+    await dayOld(connectionId);
     const calendarId = await addGoogle(t, connectionId);
     // removeLocation stopped after the location row went, before its calendars did.
     await stores.locations.remove(t.scope, t.locationId);
@@ -998,9 +1007,32 @@ describe('the connection check', () => {
     expect(logged('townwise.google_access_ended')).toEqual([]);
   });
 
+  it('keeps a new connection that backs no calendar through a last admin’s refused removal, and ends it a day after its connect', async () => {
+    const t = await tenant();
+    const { userId, connectionId } = await connected(t);
+    const before = await connectionRow(connectionId);
+    // A last admin presses Leave before adding a calendar: the connection marked, the seat taken, then put back.
+    await markDue(connectionId);
+    await removeSeat(userId, at(-10_000));
+    await restoreSeat(userId);
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    // Nothing about the connection changed: its next check is still a day after its connect.
+    expect(await connectionRow(connectionId)).toEqual(before);
+    expect(google.calls).toEqual([]);
+    expect(logged('townwise.google_access_ended')).toEqual([]);
+    server.clock.advance(24 * HOUR);
+    expect(await googleRefresher().drain()).toBe(1);
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(await connectionRow(connectionId)).toBeNull();
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'unused' }]);
+  });
+
   it('keeps a connection due when a mark comes in during its check, so a calendar removed meanwhile ends it at the next look', async () => {
     const t = await tenant();
     const { connectionId } = await connected(t);
+    await dayOld(connectionId);
     const calendarId = await addGoogle(t, connectionId, { due: false });
     await setSource(calendarId, { nextRefreshAt: at(72 * HOUR) });
     // Due an hour ago, so a mark written now changes checkAt.
