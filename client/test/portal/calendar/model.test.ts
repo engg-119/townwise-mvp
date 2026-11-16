@@ -548,6 +548,10 @@ test('each reason has a signed size: a run reason’s effect, a note’s or a ru
   const modelClosed = forecastDay({ date: '2026-11-23', model: { status: 'closed', low: null, mid: null, high: null } });
   expect(reasonSize(noteReason('Your private event, 70 guests', 70, 'added'), modelClosed, false)).toBe(100);
   expect(reasonSize(noteReason('Your private buyout, 70 guests', 70, 'booked'), modelClosed, false)).toBe(0);
+  // A middle figure of 0 counts as none, so no size divides by 0.
+  const middleZero = forecastDay({ date: '2026-11-23', model: { status: 'open', low: 0, mid: 0, high: 0 } });
+  expect(reasonSize(noteReason('Your private event, 70 guests', 70, 'added'), middleZero, false)).toBe(100);
+  expect(reasonSize(noteReason('Your private buyout, 70 guests', 70, 'booked'), middleZero, false)).toBe(0);
   // A day before today has none.
   expect(size(runReason('weekday', 'Tuesday', effect('more', 35, 52)), true)).toBeNull();
   expect(size(noteReason('Your closure', null, 'closed'), true)).toBeNull();
@@ -592,6 +596,16 @@ test('Why runs from most positive to most negative; a note’s size ties the wee
     ['Your recent level', null, null, null],
     ['Fall term finals', '▼', 'down1', 'Usually about 10% fewer guests than the same weekday at other times of the year'],
     ['Thanksgiving Day', '▼', 'down3', 'Last time, about 70% fewer guests than the same weekday in the weeks around it'],
+  ]);
+});
+
+test('at an equal fall, a note goes before the run’s reason too, whatever the read’s order', () => {
+  const booked: Partial<ForecastDay> = { status: 'booked', low: null, mid: null, high: null, noteGuests: 70 };
+  expect(whyOf([
+    runReason('holiday', 'Thanksgiving Day', effect('fewer', 65, 1)),
+    noteReason('Your private buyout, 70 guests', 70, 'booked'),
+  ], booked).map((row) => row.slice(0, 3))).toEqual([
+    ['Your private buyout, 70 guests', '▼', 'down3'], ['Thanksgiving Day', '▼', 'down3'],
   ]);
 });
 
@@ -672,6 +686,19 @@ test('the short lists keep the three largest either way, in Why’s order: a 70%
   ]);
   expect(tooltipLines('2026-11-26', input({ forecast: windowOf([busy]) }))?.lines).toEqual([
     'About 212 guests (180 to 240)', 'Turkey trot: usually more guests', 'Fall term finals: usually more guests', 'Thanksgiving Day: fewer guests last time',
+  ]);
+  // Ties at the cutoff go in Why's order, not the read's: the two 10% rises stay and the 10% fall, read first, goes.
+  const tied = forecastDay({
+    date: '2026-11-26', model: MIDDLE_200,
+    reasons: [
+      runReason('holiday', 'Thanksgiving Day', effect('fewer', 10, 1)),
+      runReason('weekday', 'Thursday', effect('more', 10, 52)),
+      runReason('event', 'Turkey trot', effect('more', 40, 4)),
+      runReason('term', 'Fall term finals', effect('more', 10, 20)),
+    ],
+  });
+  expect(reasonShortLines(tied, false, 3)).toEqual([
+    'Turkey trot: usually more guests', 'Thursday: usually more guests', 'Fall term finals: usually more guests',
   ]);
   // A note's short line is its label alone, so it carries no mark there; a run reason's carries Why's.
   expect(shortReasons(NOTED, false, 3).map((each) => [each.line, each.mark, each.grade])).toEqual([
