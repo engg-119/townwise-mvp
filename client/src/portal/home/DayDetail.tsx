@@ -5,8 +5,8 @@ import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
 import { eventLine, thisDayLine, type MonthDay } from '../analytics/week';
 import { shortDate, type Metric } from '../analytics/words';
-import { reasonShortLines } from '../calendar/model';
-import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason } from '../estimates/api';
+import { shortReasons, type ShortReason } from '../calendar/model';
+import { appliedOf, guestsFromWords, yoursDid, type ForecastDay } from '../estimates/api';
 import { formatCount, plural } from '../format';
 import type { LoadState } from '../hooks';
 import type { OrderBoard } from '../orders/api';
@@ -43,24 +43,13 @@ export function forecastDayLines(day: ForecastDay): string[] {
   return [day.noteGuests > 0 ? `${range} Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : range];
 }
 
-/** A Why row: a reason's short line (reasonShortLines) and that reason. */
-export interface WhyRow {
-  line: string;
-  reason: ForecastReason;
-}
-
 /**
- * A forecast day's first `count` reasons in the Calendar's order and short words (reasonShortLines, from today on), each
- * with its reason for its sources. Each line is one reason's own words, so it is matched to the first reason not yet
- * taken whose line it is; two reasons with the same line read the same, so neither row can mislead.
+ * A forecast day's `count` reasons with the largest effect either way, in the Calendar's order and short words, each
+ * with its reason for its sources and, before a line whose words say the direction, Why's mark (shortReasons). Home
+ * passes a forecast day only from today on.
  */
-export function whyRows(day: Pick<ForecastDay, 'reasons'>, count: number): WhyRow[] {
-  const left = day.reasons.map((reason) => ({ reason, line: reasonShortLines({ reasons: [reason] }, false)[0] }));
-  return reasonShortLines(day, false).slice(0, count).flatMap((line) => {
-    const at = left.findIndex((each) => each.line === line);
-    const [taken] = at === -1 ? [] : left.splice(at, 1);
-    return taken === undefined ? [] : [{ line, reason: taken.reason }];
-  });
+export function whyRows(day: Pick<ForecastDay, 'reasons' | 'model'>, count: number): ShortReason[] {
+  return shortReasons(day, false, count);
 }
 
 /** The Reorder part's line: how the next order relates to `date`, or why Townwise can't say. */
