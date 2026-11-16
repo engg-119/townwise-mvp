@@ -22,6 +22,8 @@ const dark = {
   scrim: 'rgba(8, 10, 13, 0.8)', shadow: 'rgba(0, 0, 0, 0.6)',
   cta: '#eff2f6', ctaHover: '#b5bbc2', onCta: '#080a0d', onMint: '#080a0d', focusRing: '#7bd2b4',
   seriesNortheast: '#9a9fa6', seriesCounty: '#7bd2b4', deltaAbove: '#7bd2b4', deltaBelow: '#7b8187',
+  // The light backing of a source chip's logo, the same in both palettes, so a dark logo shows on the dark ground.
+  logoGround: '#f5f6f8',
 } as const;
 
 export type ColorToken = keyof typeof dark;
@@ -41,6 +43,7 @@ const light: Palette = {
   scrim: 'rgba(13, 16, 20, 0.4)', shadow: 'rgba(13, 16, 20, 0.18)',
   cta: '#0d1014', ctaHover: '#3e444b', onCta: '#f5f6f8', onMint: '#ffffff', focusRing: '#136a53',
   seriesNortheast: '#7a8088', seriesCounty: '#136a53', deltaAbove: '#136a53', deltaBelow: '#7a8088',
+  logoGround: '#f5f6f8',
 };
 
 /** The CSS custom property that carries a color token on web: `mintRing` is `--tw-mint-ring`. */

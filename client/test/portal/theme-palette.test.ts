@@ -15,6 +15,8 @@ const DESIGN_SYSTEM = {
   scrim: 'rgba(8, 10, 13, 0.8)', shadow: 'rgba(0, 0, 0, 0.6)',
   cta: '#eff2f6', ctaHover: '#b5bbc2', onCta: '#080a0d', onMint: '#080a0d', focusRing: '#7bd2b4',
   seriesNortheast: '#9a9fa6', seriesCounty: '#7bd2b4', deltaAbove: '#7bd2b4', deltaBelow: '#7b8187',
+  // Added for the source chips' logos (refine-calendar-and-home design decision 6), the same in both palettes.
+  logoGround: '#f5f6f8',
 };
 
 const TOKENS = Object.keys(DESIGN_SYSTEM) as ColorToken[];
@@ -87,6 +89,8 @@ test('light: aliased as dark is, so a token keeps its role in both', () => {
   // The Northeast series is text3 in dark; in light it is the lighter line gray (src/theme.ts says why).
   expect(theme.palette.dark.seriesNortheast).toBe(theme.palette.dark.text3);
   expect(light.seriesNortheast).toBe(light.line);
+  // A source chip's logo sits on the same light backing in both.
+  expect(light.logoGround).toBe(theme.palette.dark.logoGround);
   // mintRing is mint at 40%.
   const [r, g, b] = [1, 3, 5].map((at) => parseInt(light.mint.slice(at, at + 2), 16));
   expect(light.mintRing).toBe(`rgba(${String(r)}, ${String(g)}, ${String(b)}, 0.4)`);
