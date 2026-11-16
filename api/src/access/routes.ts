@@ -65,7 +65,7 @@ export interface TownwiseRoute {
    * the item sales upload) and (U13B) the staff forecast import; '1mb' only on the ordering setup's save (300 items
    * with 10 point-of-sale names each can pass 256kb); '2mb' only on adding an owner calendar, whose body may carry a
    * calendar file of at most 1 MB (its handler counts the file's own bytes) as a JSON string, in which each CR, LF,
-   * tab, quote and backslash takes two bytes; '8mb' only on reading the ordering setup with TownwiseAI (D39), whose
+   * tab, quote and backslash takes two bytes; '8mb' only on reading the ordering setup with TownwiseAI (D41), whose
    * body carries a file of at most 5 MB as base64 (a third larger) or pasted text; 'stream' only on the chunk route,
    * whose handler reads the raw body itself after the policy has passed.
    */
@@ -80,7 +80,7 @@ export interface TownwiseRoute {
   readonly openAsAdmin?: true;
   /**
    * Runs right before the body is parsed, after the policy; a throw refuses the request unparsed. Only reading the
-   * ordering setup with TownwiseAI (D39) has one, which holds the replica's byte gate for the body before it is buffered
+   * ordering setup with TownwiseAI (D41) has one, which holds the replica's byte gate for the body before it is buffered
    * (handlers/order-setup-read.ts holdSetupReadBytes); boot refuses it on any other route.
    */
   readonly beforeBody?: (ctx: TownwiseContext, req: Request, res: Response) => void;
@@ -418,7 +418,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.orders.setup.save', method: 'PUT', path: '/org/locations/:locationId/orders/setup', policy: 'member',
     bodyLimit: '1mb', openAsAdmin: true, handler: saveOrderSetup,
   },
-  // D39: TownwiseAI reads one file or pasted text into suggestions for the setup's unsaved draft. Nothing is stored;
+  // D41: TownwiseAI reads one file or pasted text into suggestions for the setup's unsaved draft. Nothing is stored;
   // each read is a model call, so it shares the ai_reads limiter with D34's reads.
   {
     id: 'org.orders.setup.read', method: 'POST', path: '/org/locations/:locationId/orders/setup/read', policy: 'member',
@@ -593,7 +593,7 @@ export const ROUTE_LIMITS = {
   files: { name: 'townwise:files', limit: 120, windowSeconds: 3600, whenStoreDown: 'allow' },
   file_chunks: { name: 'townwise:file-chunks', limit: 1500, windowSeconds: 3600, whenStoreDown: 'allow' },
   downloads: { name: 'townwise:downloads', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
-  // Spec 11A.9 and D39 (the ordering setup's read): each read is a model call on a whole file or text, so a store
+  // Spec 11A.9 and D41 (the ordering setup's read): each read is a model call on a whole file or text, so a store
   // outage denies (the writes limiter allows).
   ai_reads: { name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
 } as const;
@@ -604,7 +604,7 @@ const STREAM_ROUTE = 'org.files.chunk';
 const ONE_MB_ROUTE = 'org.orders.setup.save';
 /**
  * The only route that may take an 8 MB body, and the only one with a step before its body: reading the ordering setup
- * with TownwiseAI (D39).
+ * with TownwiseAI (D41).
  */
 const EIGHT_MB_ROUTE = 'org.orders.setup.read';
 

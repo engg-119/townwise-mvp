@@ -133,7 +133,7 @@ describe('ordering setup', () => {
     const locationId = await addLocation(server, { orgId, name: 'Empty Bar' });
     const res = await call(server, `${base(locationId)}/setup`, { session: member.session });
     expect(res.status).toBe(200);
-    // Every setup and board answer carries the town's date (A7, C7). This server has no setup reader (D39).
+    // Every setup and board answer carries the town's date (A7, C7). This server has no setup reader (D41).
     expect(await res.json()).toEqual({
       setup: null, coverage: null, itemCoverage: {}, counts: {}, itemsWithHistory: [], today: TODAY, canReadWithAi: false,
     });

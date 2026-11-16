@@ -1,4 +1,4 @@
-// Reading the ordering setup with TownwiseAI (spec D39) end to end against the database, over a scripted model (no call
+// Reading the ordering setup with TownwiseAI (spec D41) end to end against the database, over a scripted model (no call
 // leaves the test): each input kind and what the request holds (the content and the saved names, never a point-of-sale,
 // organization, location or file name), the answer, `canReadWithAi`, off, the files AI budget (spent, reserved before
 // the call, corrected after it, a failed call charged what its stream reported, a refusal charged), the person leaving,

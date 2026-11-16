@@ -122,7 +122,7 @@ export async function startTownwiseServer(opts?: {
   aiReader?: { model: FileReaderModel; aroundOnRead?: (actions: OnAiRead) => OnAiRead }
     & Partial<Pick<AiReaderDeps, 'leaseMs' | 'extractText' | 'onRead' | 'filesMonthlyBudgetUsd'>>;
   /**
-   * Reading the ordering setup with TownwiseAI (D39), over a scripted model (no call leaves the test); absent, it is off
+   * Reading the ordering setup with TownwiseAI (D41), over a scripted model (no call leaves the test); absent, it is off
    * and its route answers 503 ai_unavailable. `setupReadTimeMs` shortens its time limit; `setupReadText` scripts the
    * AI text thread a file's text is made with.
    */

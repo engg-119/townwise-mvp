@@ -69,7 +69,7 @@ function assertKnownItems(setup: StoredSetup | null, ids: readonly string[]): vo
 /**
  * GET .../orders/setup: the setup (null when none was saved), item-sales coverage, each item's covered days with any
  * servings in the last 8 weeks, each item's latest count in the last 400 days, `today`, the town's date, and
- * `canReadWithAi`, whether reading the setup with TownwiseAI is on (D39; the page shows its section only then).
+ * `canReadWithAi`, whether reading the setup with TownwiseAI is on (D41; the page shows its section only then).
  */
 export async function getOrderSetup(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = memberOf(principal);

@@ -1,4 +1,4 @@
-// Reading the ordering setup with TownwiseAI (spec D39), without a server: the prompt and the answer's schema (no par,
+// Reading the ordering setup with TownwiseAI (spec D41), without a server: the prompt and the answer's schema (no par,
 // no never run out), the answer checked again (setupResult), the request (the content and the saved names only, a cut
 // said), what it reserves, the input a posted file or pasted text makes (a picture without its metadata, the caps, a
 // file told by its bytes), and the model's client over a fake fetch. Synthetic content only.

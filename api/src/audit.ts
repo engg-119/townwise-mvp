@@ -244,7 +244,7 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       return d.kind === 'rule' ? 'Saved an order rule TownwiseAI proposed' : 'Saved an order change TownwiseAI proposed';
     case 'order.card_dismissed':
       return d.kind === 'rule' ? 'Set aside an order rule TownwiseAI proposed' : 'Set aside an order change TownwiseAI proposed';
-    // D39: never a name or the content.
+    // D41: never a name or the content.
     case 'order.setup_read': {
       const what = d.inputKind === 'text' ? 'pasted text' : 'a file';
       if (d.outcome === 'read') return `TownwiseAI read ${what} for the ordering setup: ${text(d.suppliers)} suppliers and ${text(d.items)} items suggested`;

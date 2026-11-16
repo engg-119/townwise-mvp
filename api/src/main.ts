@@ -136,7 +136,7 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
     labCaller: createLocalLabCaller(secret),
   };
 }
-// Reading the ordering setup with TownwiseAI (handlers/order-setup-read.ts, D39): a file or text sent in the request,
+// Reading the ordering setup with TownwiseAI (handlers/order-setup-read.ts, D41): a file or text sent in the request,
 // never stored, so it is on with stored files on or off; with the same ANTHROPIC_API_KEY, and charged to the same
 // TOWNWISE_FILES_MONTHLY_BUDGET_USD, whose 0 turns it off.
 const setupReader = ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAnthropicSetupReaderModel(ANTHROPIC_API_KEY);

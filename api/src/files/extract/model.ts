@@ -1,6 +1,6 @@
 // The file reader's models, as ports, and the only file of the file code that constructs a model client: the AI column
 // step's (spec 11A), whose request holds only the redacted profile, reading with TownwiseAI's (spec 11A.9), whose
-// request (reader.ts) holds a file the person opted in, and reading the ordering setup's (spec D39), whose request
+// request (reader.ts) holds a file the person opted in, and reading the ordering setup's (spec D41), whose request
 // (setup-reader.ts) holds the file or text the person gave it. main.ts builds the real ones when ANTHROPIC_API_KEY is
 // set; tests pass scripted fakes. Nothing here logs: a failure leaves as `failed` with the error's class and HTTP status, never
 // its message or the request (and, for a reader's stream that had begun, the cost of what it had reported).
@@ -185,7 +185,7 @@ export function createAnthropicFileReaderModel(apiKey: string, fetch?: typeof gl
 }
 
 /**
- * Reading the ordering setup with TownwiseAI (spec D39): SETUP_EFFORT, streamed, one SDK retry, and the read's whole
+ * Reading the ordering setup with TownwiseAI (spec D41): SETUP_EFFORT, streamed, one SDK retry, and the read's whole
  * time as the timeout; the handler's signal ends the call SETUP_READ_TIME_MS after the request began.
  */
 export function createAnthropicSetupReaderModel(apiKey: string, fetch?: typeof globalThis.fetch): FileReaderModel {

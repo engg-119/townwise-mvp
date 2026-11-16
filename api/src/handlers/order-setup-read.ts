@@ -1,4 +1,4 @@
-// POST .../orders/setup/read (spec D39; openspec change read-setup-with-townwise-ai): TownwiseAI reads one file or
+// POST .../orders/setup/read (spec D41; openspec change read-setup-with-townwise-ai): TownwiseAI reads one file or
 // pasted text a member gave Ordering setup (P31) and suggests suppliers and items for the page's unsaved draft. The
 // content comes in the request and goes to Anthropic once, in one call, with the saved setup's supplier and item names
 // and nothing else; nothing of it is stored (no stored file, no Your data item, no change to the setup), and the call
@@ -114,7 +114,7 @@ const REFUSED: Readonly<Record<InputRefusal | 'mismatch' | 'empty', { code: stri
 };
 
 /**
- * POST .../orders/setup/read { source }: one read (spec D39). `source` is { type: 'file', kind, data } (kind from the
+ * POST .../orders/setup/read { source }: one read (spec D41). `source` is { type: 'file', kind, data } (kind from the
  * file's extension: pdf, xlsx, docx, text or picture; data its bytes as base64) or { type: 'text', text }. Every member,
  * and staff opened as admin (audited as Townwise staff); never under view-as (the chain refuses it, 403
  * view_as_read_only), and before the body is parsed 413 payload_too_large or 503 extract_busy while this replica holds

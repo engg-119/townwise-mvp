@@ -59,7 +59,7 @@ export interface TownwiseDeps {
    */
   readonly aiReader?: { nudge(): void } | undefined;
   /**
-   * Reading the ordering setup with TownwiseAI (handlers/order-setup-read.ts, spec D39); absent turns it off (main.ts
+   * Reading the ordering setup with TownwiseAI (handlers/order-setup-read.ts, spec D41); absent turns it off (main.ts
    * builds it only when ANTHROPIC_API_KEY is set and TOWNWISE_FILES_MONTHLY_BUDGET_USD is above 0, stored files on or off).
    */
   readonly setupReader?: FileReaderModel | undefined;

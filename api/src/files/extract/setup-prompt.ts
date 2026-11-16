@@ -1,4 +1,4 @@
-// Reading the ordering setup with TownwiseAI (spec D39): the frozen prompt, the answer's schema, and the server's check
+// Reading the ordering setup with TownwiseAI (spec D41): the frozen prompt, the answer's schema, and the server's check
 // of the answer. The model reads one file or pasted text a member gave Ordering setup (P31) and suggests suppliers,
 // with their delivery and order-by days where the content states them, and items. It never suggests a par or never
 // run out: neither is in the schema, and setupResult keeps only the fields below, so an answer that carries one loses

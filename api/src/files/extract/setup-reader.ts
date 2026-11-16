@@ -1,4 +1,4 @@
-// Reading the ordering setup with TownwiseAI (spec D39): the request for one file or pasted text a member gave
+// Reading the ordering setup with TownwiseAI (spec D41): the request for one file or pasted text a member gave
 // Ordering setup, and the most it can cost. The request holds the content (a PDF as a document, a picture as an image,
 // anything else as text) and the names of the setup's saved suppliers and items, so the model can reuse their spelling,
 // and nothing else: never a point-of-sale name (as get_order_setup leaves them out, chat/tools/orders.ts), the file's

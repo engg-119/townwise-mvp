@@ -182,7 +182,7 @@ describe('route table', () => {
       { id: 'org.orders.rule_off', method: 'POST', path: `${base}/rules/off`, policy: 'member', bodyLimit: '1kb', limiter: undefined },
       { id: 'org.orders.setup.get', method: 'GET', path: `${base}/setup`, policy: 'member', bodyLimit: 'none', limiter: undefined },
       { id: 'org.orders.setup.save', method: 'PUT', path: `${base}/setup`, policy: 'member', bodyLimit: '1mb', limiter: undefined },
-      // D39: a file of up to 5 MB as base64, or pasted text; each read is a model call, so the ai_reads limiter.
+      // D41: a file of up to 5 MB as base64, or pasted text; each read is a model call, so the ai_reads limiter.
       { id: 'org.orders.setup.read', method: 'POST', path: `${base}/setup/read`, policy: 'member', bodyLimit: '8mb', limiter: 'ai_reads' },
       { id: 'org.orders.item_sales.upload', method: 'POST', path: `${base}/item-sales`, policy: 'member', bodyLimit: '256kb', limiter: 'item_sales' },
       { id: 'org.orders.item_sales.remove', method: 'DELETE', path: `${base}/item-sales`, policy: 'org_admin', bodyLimit: 'none', limiter: undefined },
@@ -226,7 +226,7 @@ describe('route table', () => {
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'PUT', bodyLimit: 'stream' })]); }).not.toThrow();
   });
 
-  it('D39: boot refuses an 8 MB body on any route but reading the ordering setup with TownwiseAI, a POST', () => {
+  it('D41: boot refuses an 8 MB body on any route but reading the ordering setup with TownwiseAI, a POST', () => {
     expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'POST', bodyLimit: '8mb' })]); }).not.toThrow();
     expect(() => { assertRouteTable([route({ method: 'POST', bodyLimit: '8mb' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'PUT', bodyLimit: '8mb' })]); }).toThrow(ConfigError);
@@ -235,7 +235,7 @@ describe('route table', () => {
     expect(TOWNWISE_ROUTES.find((r) => r.id === 'org.orders.setup.read')).toMatchObject({ openAsAdmin: true });
   });
 
-  it('D39: only reading the ordering setup holds its byte gate before the body is parsed; boot refuses the step anywhere else', () => {
+  it('D41: only reading the ordering setup holds its byte gate before the body is parsed; boot refuses the step anywhere else', () => {
     const step: TownwiseRoute['beforeBody'] = () => undefined;
     expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'POST', bodyLimit: '8mb', beforeBody: step })]); }).not.toThrow();
     expect(() => { assertRouteTable([route({ method: 'POST', bodyLimit: '32kb', beforeBody: step })]); }).toThrow(ConfigError);
@@ -300,7 +300,7 @@ describe('route table', () => {
       method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb', openAsAdmin: true, limiter: 'ai_reads',
     });
     expect(ROUTE_LIMITS.ai_reads).toEqual({ name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' });
-    // D39: reading the ordering setup with TownwiseAI shares it.
+    // D41: reading the ordering setup with TownwiseAI shares it.
     expect(TOWNWISE_ROUTES.filter((entry) => entry.limiter === 'ai_reads').map((entry) => entry.id)).toEqual(['org.data.ai_read', 'org.orders.setup.read']);
   });
 

@@ -153,7 +153,7 @@ export const CHAT_SLOT_WAIT_MS = 15_000;
 export const CHAT_TEXT_TIME_MS = 30_000;
 
 /**
- * Reading the ordering setup with TownwiseAI (spec D39): one file or pasted text, sent in the request (an 8 MB body)
+ * Reading the ordering setup with TownwiseAI (spec D41): one file or pasted text, sent in the request (an 8 MB body)
  * and never stored. A file of at most 5 MiB, a PDF of at most 30 pages, a picture within the caps above
  * (MODEL_PICTURE_BYTES, MODEL_PICTURE_MAX_SIDE), and text cut at 100,000 characters (the answer says so). A PDF's own
  * text, kept in memory only to tell which names it holds, stops at AI_SOURCE_CHARS. Making text waits for the parse
