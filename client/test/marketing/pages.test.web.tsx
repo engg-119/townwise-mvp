@@ -265,10 +265,10 @@ test('Privacy names Anthropic as TownwiseAI’s provider, says nothing is sent u
   const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
   const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
   if (anthropic === undefined) throw new Error('no Anthropic item');
-  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it, or Townwise staff setting up your organization for you before anyone from it joins use it (see Who can see it, under Your restaurant’s sales data).');
+  expect(anthropic.textContent).toContain('which provides the AI model behind TownwiseAI, the assistant on each location’s TownwiseAI page. Nothing is sent to Anthropic unless you use it, or Townwise staff use it while they have your organization open as its admin (see Who can see it, under Your restaurant’s sales data).');
   // D25: staff in open as admin can run TownwiseAI and drop files, so neither sentence may say only “you”.
   expect(anthropic.textContent).not.toContain('Nothing is sent to Anthropic unless you use it.');
-  expect(anthropic.textContent).toContain('when you, or staff setting it up for you, drop a file');
+  expect(anthropic.textContent).toContain('when you, or Townwise staff helping you, drop a file');
   expect(anthropic.textContent).not.toContain('off in production');
   expect(anthropic.textContent).toContain('Anthropic receives the messages you send and the location data the assistant reads to answer them');
   expect(anthropic.textContent).toContain('its notes, its forecast’s ranges and accuracy and its calibration results, its town profile');
@@ -331,10 +331,10 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 14, 2026.');
-  // D25: open as admin before anyone joins, then view-as only.
-  expect(text).toContain('Before anyone from your organization has joined Townwise, staff setting it up for you, with your consent, can open it as its admin: they see and change what an admin can, except your team, until the first person joins. Each time, and every change they make, is recorded and shown to your organization’s admins.');
-  expect(text).toContain('Once anyone has joined, Townwise staff can see the sales figures, your location notes and your calendars with their events only through view-as');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 15, 2026.');
+  // D25: open as admin before and after a join, with a reason after (owner call, 2026-11-15); otherwise view-as only.
+  expect(text).toContain('Townwise staff helping you, with your consent, can open your organization as its admin, before or after anyone from it joins: they see and change what an admin can, except your team, for at most an hour each time. Once anyone has joined, they must give a reason first. Each time, with its reason, and every change they make is recorded and listed in your organization’s Townwise staff activity.');
+  expect(text).toContain('Otherwise, Townwise staff can see the sales figures, your location notes and your calendars with their events only through view-as');
   expect(text).toContain('uploads, TownwiseAI messages, and staff view-as and open as admin for one hour');
   expect(text).toContain('public facts about its town (its calendar, and who is likely in town, with the public sources behind them). TownwiseAI never reads the sales files you drop unless you let it read one. It reads a text item on Your data, text you pasted or a text file you added, only when you ask, and never a file’s name. When it reads the location’s own calendars, Anthropic receives their events’ titles, dates and hours.');
   expect(text).toContain('Turning an item off leaves it out of your numbers, forecasts and TownwiseAI until someone turns it back on.');

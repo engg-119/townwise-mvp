@@ -56,7 +56,7 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename, a version switch, a reply's rating, the profile
-   * edit and an order rule's turn-off;
+   * edit, an order rule's turn-off and open as admin's start (its reason);
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
    * switch, (D31) a business rule, the order decisions and rules, and the item and order change cards;
    * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
@@ -494,7 +494,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   },
   // D25, open as admin: no body, and the view-as limiter, shared with view-as Start. End is view-as End.
   {
-    id: 'admin.orgs.open_as_admin', method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none',
+    id: 'admin.orgs.open_as_admin', method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: '1kb',
     limiter: 'view-as', handler: startOpenAsAdmin,
   },
   // U13B, forecast runs from the staff console (spec 10.13, 14.4): import as a draft, publish, withdraw, delete.

@@ -2,23 +2,30 @@ import { useCallback, useEffect, useState } from 'react';
 import { useLocalSearchParams, usePathname, useRouter } from 'expo-router';
 import { Platform, StyleSheet, View } from 'react-native';
 
+import { ApiError } from '../../api/client';
 import { theme } from '../../theme';
 import { hasCode } from '../errors';
-import { downloadClean, downloadRaw } from '../files/api';
-import { cleanName, COPY as FILE_COPY } from '../files/copy';
+import { downloadClean, downloadRaw, removeRaw } from '../files/api';
+import { cleanName, COPY as FILE_COPY, deleteRawBody } from '../files/copy';
 import { CAN_SAVE_FILES, saveFile } from '../files/download';
 import { useLoad } from '../hooks';
+import { shownLocationName } from '../locations/naming';
+import { useOrgRefreshOnLeave } from '../locations/parts';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
-import { ErrorNotice, LoadingLine, Messages, Notice } from '../ui/feedback';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { ErrorNotice, LoadingLine, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Small } from '../ui/text';
 import { AI } from './aiCopy';
-import { getItem, type DataItem } from './api';
-import { DATA, dataError, itemName, shownName } from './copy';
+import { getItem, removeItem, setEnabled, type DataItem } from './api';
+import {
+  DATA, dataError, deletedFileLine, deletedUploadLine, deleteFileBody, deleteUploadBody, isReference, itemName, shownName, turnedOffLine,
+  turnedOnLine,
+} from './copy';
 import { AiSection } from './item/AiSection';
 import { addedByLine, EDIT, editedLine, ITEM, itemDaysLine, kindLine, renamedLine, statusLine, tooBigToEditLine } from './item/copy';
 import type { Editable, Saved } from './item/edit';
@@ -27,9 +34,20 @@ import { RenameForm } from './item/RenameForm';
 
 // P27 One item of Your data (D28), /locations/[locationId]/data/[ref], inside the location layout: the item's name,
 // what it is and how it arrived, who added it and when (and who last edited it), whether it is on, its days, the
-// downloads the person may take (web), and what it holds (item/ItemContent: an upload's days on every platform, and on
-// web a stored file drawn in the browser). An item that is gone (deleted, or replaced by an edit, whose ref changed)
-// says so, with the way back. Opening is a read, so it works under view-as, which sends no name and opens no file.
+// actions the person may take, and what it holds (item/ItemContent: an upload's days on every platform, and on web a
+// stored file drawn in the browser). An item that is gone (deleted, or replaced by an edit, whose ref changed) says
+// so, with the way back. Opening is a read, so it works under view-as, which sends no name and opens no file; there
+// Turn off and Delete are disabled in place under the read-only line, as Your data's rows once had them.
+//
+// The actions Your data's rows used to carry are here (the list's rows only open this page): Turn off or on (acts at
+// once), the downloads (web), then, in a Delete section of their own below the item, as Sales data's Delete sales
+// data stands apart, Delete original (a sales file's, not an item kept for reference, which is its original) and
+// Delete, each delete saying in words what goes and what stays. Opening a delete's dialog clears the last action's
+// notice. Turning an item off or on and deleting one change the location's day counts, so the organization
+// (GET /api/org) is read again when the page closes. A delete takes the page away: it goes back to Your data (to the
+// entry that opened the item when there is one, so Back never lands on the deleted item nor on Your data twice), which
+// says how it ended (PortalProvider.showNotice, shown by the location layout's PageNotice), and that notice takes
+// focus (DataPage). A delete that failed stays here and says why; the item is read again, so one that is gone says so.
 //
 // Editing (web, `item.canEdit`: an item kept for reference, for the person who added it or an org admin): Rename opens
 // an inline form (item/RenameForm), and Edit, shown once what opened can be edited (item/edit.ts), puts the editor in
@@ -48,7 +66,13 @@ interface ItemAction {
   accessibilityLabel: string;
   disabled: boolean;
   onPress: () => void;
+  describedBy?: string;
 }
+
+const READ_ONLY_ID = 'item-ro';
+
+/** What a delete on this page is asking to delete: the upload, the stored file, or a sales file's original. */
+type Confirm = 'upload' | 'file' | 'raw';
 
 /** Editing happens on web only, as the file views do (D20, D21). */
 const CAN_EDIT = Platform.OS === 'web';
@@ -70,9 +94,10 @@ export function ItemPage(): React.JSX.Element {
 }
 
 function ItemOfPath(): React.JSX.Element {
-  const { api } = usePortal();
+  const { api, showNotice } = usePortal();
   const { location } = useLocation();
   const { readOnly } = useReadOnly();
+  const markStale = useOrgRefreshOnLeave();
   const router = useRouter();
   const ref = refOf(usePathname());
   const params = useLocalSearchParams<{ saved?: string }>();
@@ -95,6 +120,12 @@ function ItemOfPath(): React.JSX.Element {
   }, [reload]);
   const dataHref = locationHref(location.id, 'data');
   const back = <LinkButton variant="link" href={dataHref} label={ITEM.back} />;
+  // A deleted item has no page: back to Your data, which says how it ended. dismissTo pops back to the Your data that
+  // opened it, or puts Your data in its place when none did.
+  const deleted = useCallback((text: string) => {
+    showNotice({ text }, dataHref);
+    router.dismissTo(dataHref);
+  }, [showNotice, dataHref, router]);
 
   if (state.status === 'failed') {
     return (
@@ -105,7 +136,12 @@ function ItemOfPath(): React.JSX.Element {
     );
   }
   if (item === null) return <Section><LoadingLine text={ITEM.loading} /></Section>;
-  return <Item item={item} viewAs={readOnly} back={back} reload={reload} showItem={showItem} openRef={openRef} saved={saved} />;
+  return (
+    <Item
+      item={item} viewAs={readOnly} back={back} reload={reload} showItem={showItem} openRef={openRef} saved={saved} markStale={markStale}
+      deleted={deleted}
+    />
+  );
 }
 
 function Item(props: {
@@ -118,9 +154,15 @@ function Item(props: {
   openRef: (ref: string, saved?: Saved) => void;
   /** “Saved.” when a save opened this page. */
   saved: string | null;
+  /** Reads the organization again once the page closes: the item's days changed. */
+  markStale: () => void;
+  /** Leaves the page after a delete, saying `text` on Your data. */
+  deleted: (text: string) => void;
 }): React.JSX.Element {
-  const { item, saved } = props;
+  const { item, saved, markStale } = props;
   const { api } = usePortal();
+  const { location, org } = useLocation();
+  const { line } = useReadOnly();
   const [saving, setSaving] = useState<'raw' | 'clean' | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [mode, setMode] = useState<'rename' | 'edit' | null>(null);
@@ -128,8 +170,15 @@ function Item(props: {
   const [editable, setEditable] = useState<Editable | null>(null);
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(saved);
+  // A Turn off or on running, and the delete being asked about or run.
+  const [toggling, setToggling] = useState(false);
+  const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [pending, setPending] = useState(false);
   const focusMessage = useFocusMessage();
   useEffect(() => { if (saved !== null) focusMessage(); }, [saved, focusMessage]);
+  // Asked one update after a dialog closes: in that update its focus trap still holds focus.
+  const [ended, setEnded] = useState(0);
+  useEffect(() => { if (ended > 0) focusMessage(); }, [ended, focusMessage]);
   const { file } = item;
   const named = (action: string): string => `${action}: ${itemName(item)}`;
   const editing = CAN_EDIT && item.canEdit;
@@ -146,6 +195,63 @@ function Item(props: {
       (caught: unknown) => { setError(caught); setSaving(null); },
     );
   };
+  const toggle = (): void => {
+    if (toggling) return;
+    const enable = !item.enabled;
+    setToggling(true);
+    setNotice(null);
+    setError(null);
+    setEnabled(api, item.locationId, item.ref, enable).then(
+      (updated) => {
+        markStale();
+        setToggling(false);
+        setNotice(enable ? turnedOnLine(itemName(item)) : turnedOffLine(itemName(item), shownLocationName(location, org)));
+        focusMessage();
+        props.showItem(updated);
+      },
+      (caught: unknown) => {
+        setToggling(false);
+        setError(caught);
+        if (caught instanceof ApiError && caught.kind === 'http' && caught.status === 404) props.reload();
+      },
+    );
+  };
+  const run = (): void => {
+    if (confirm === null || pending) return;
+    setPending(true);
+    setNotice(null);
+    setError(null);
+    // The delete may have taken effect even so (a lost answer), so the organization is read again too.
+    const failed = (caught: unknown): void => {
+      markStale();
+      setPending(false);
+      setConfirm(null);
+      setError(caught);
+      setEnded((n) => n + 1);
+      props.reload();
+    };
+    if (confirm === 'raw') {
+      if (file === null) return;
+      removeRaw(api, item.locationId, file.id).then(() => {
+        markStale();
+        setPending(false);
+        setConfirm(null);
+        setNotice(FILE_COPY.rawDeleted);
+        setEnded((n) => n + 1);
+        props.reload();
+      }, failed);
+      return;
+    }
+    removeItem(api, item.locationId, item.ref).then((result) => {
+      markStale();
+      props.deleted(confirm === 'upload' ? deletedUploadLine(result.deletedDays) : deletedFileLine(itemName(item)));
+    }, failed);
+  };
+  // A delete's dialog starts without the last action's notice, which would otherwise show behind it and after it.
+  const ask = (which: Confirm): void => {
+    setNotice(null);
+    setConfirm(which);
+  };
   const open = (next: 'rename' | 'edit'): void => {
     setNotice(null);
     setError(null);
@@ -154,12 +260,23 @@ function Item(props: {
 
   const canRaw = file !== null && file.canDownloadRaw && file.rawAvailable;
   const canClean = file !== null && file.canDownloadClean && file.hasClean;
+  // The API allows it on an item kept for reference, but there it would leave an item with nothing in it: Delete does that whole.
+  const canDeleteRaw = file !== null && file.canDeleteRaw && file.rawAvailable && !isReference(item);
+  // A write waits for any other write here; under view-as Turn off and Delete show, disabled under the read-only line.
+  const writing = busy || toggling || pending;
+  const readOnly = props.viewAs ? { disabled: true, describedBy: READ_ONLY_ID } : null;
+  const turn = item.enabled ? DATA.turnOff : DATA.turnOn;
   const actions: ItemAction[] = [];
+  // Delete original and Delete, in their own section below the item.
+  const deletes: ItemAction[] = [];
   if (editing && mode === null) {
     if (editable?.fits === true) {
-      actions.push({ key: 'edit', label: EDIT.edit, accessibilityLabel: named(EDIT.edit), disabled: busy, onPress: () => { open('edit'); } });
+      actions.push({ key: 'edit', label: EDIT.edit, accessibilityLabel: named(EDIT.edit), disabled: writing, onPress: () => { open('edit'); } });
     }
-    actions.push({ key: 'rename', label: EDIT.rename, accessibilityLabel: named(EDIT.rename), disabled: busy, onPress: () => { open('rename'); } });
+    actions.push({ key: 'rename', label: EDIT.rename, accessibilityLabel: named(EDIT.rename), disabled: writing, onPress: () => { open('rename'); } });
+  }
+  if (item.canTurnOff || readOnly !== null) {
+    actions.push({ key: 'turn', label: turn, accessibilityLabel: named(turn), disabled: writing, onPress: toggle, ...readOnly });
   }
   if (canRaw && CAN_SAVE_FILES) {
     actions.push({
@@ -173,6 +290,19 @@ function Item(props: {
       disabled: saving !== null || busy, onPress: () => { save('clean'); },
     });
   }
+  if (canDeleteRaw) {
+    deletes.push({
+      key: 'deleteRaw', label: DATA.deleteOriginal, accessibilityLabel: named(DATA.deleteOriginal), disabled: writing,
+      onPress: () => { ask('raw'); },
+    });
+  }
+  if (item.canDelete || readOnly !== null) {
+    deletes.push({
+      key: 'delete', label: DATA.delete, accessibilityLabel: named(DATA.delete), disabled: writing,
+      onPress: () => { ask(item.ref.startsWith('u_') ? 'upload' : 'file'); }, ...readOnly,
+    });
+  }
+  const dialog = confirm === null ? null : dialogOf(confirm, item, shownLocationName(location, org));
   const edited = editedLine(item);
   const days = itemDaysLine(item);
 
@@ -189,21 +319,9 @@ function Item(props: {
           {days === null ? null : <Small>{days}</Small>}
         </View>
         {item.fromAiRead === null ? null : <LinkButton href={itemHref(item.locationId, item.fromAiRead)} label={AI.madeBy} />}
+        {props.viewAs ? <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} /> : null}
         {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}
-        {actions.length === 0 ? null : (
-          <Actions>
-            {actions.map((action) => (
-              <Button
-                key={action.key}
-                variant="outline"
-                label={action.label}
-                accessibilityLabel={action.accessibilityLabel}
-                disabled={action.disabled}
-                onPress={action.onPress}
-              />
-            ))}
-          </Actions>
-        )}
+        <ActionRow actions={actions} />
         {editing && mode === null && editable?.fits === false ? <Small>{tooBigToEditLine(editable.kind)}</Small> : null}
         {error === null ? null : <Messages live="alert" items={[dataError(error)]} />}
         {mode === 'rename' ? (
@@ -228,8 +346,53 @@ function Item(props: {
           edit={{ open: mode === 'edit', onEditable: setEditable, onSaving: setBusy, onClose: () => { setMode(null); } }}
         />
       </Stack>
+      {deletes.length === 0 ? null : <Section title={ITEM.deletes}><ActionRow actions={deletes} /></Section>}
+      <ConfirmDialog
+        visible={dialog !== null}
+        title={dialog?.title ?? ''}
+        body={dialog?.body ?? ''}
+        confirmLabel={dialog?.label ?? ''}
+        pendingLabel={DATA.deleting}
+        pending={pending}
+        onConfirm={run}
+        onCancel={() => { setConfirm(null); }}
+      />
     </Section>
   );
+}
+
+function ActionRow(props: { actions: readonly ItemAction[] }): React.JSX.Element | null {
+  if (props.actions.length === 0) return null;
+  return (
+    <Actions>
+      {props.actions.map((action) => (
+        <Button
+          key={action.key}
+          variant="outline"
+          label={action.label}
+          accessibilityLabel={action.accessibilityLabel}
+          disabled={action.disabled}
+          {...(action.describedBy === undefined ? {} : { describedBy: action.describedBy })}
+          onPress={action.onPress}
+        />
+      ))}
+    </Actions>
+  );
+}
+
+function dialogOf(confirm: Confirm, item: DataItem, locationName: string): { title: string; body: string; label: string } {
+  switch (confirm) {
+    case 'upload':
+      return { title: DATA.deleteUploadTitle, body: deleteUploadBody(item, locationName), label: DATA.deleteUploadConfirm };
+    case 'file':
+      return { title: DATA.deleteFileTitle, body: deleteFileBody(itemName(item)), label: DATA.deleteFileConfirm };
+    case 'raw':
+      return {
+        title: FILE_COPY.deleteRaw,
+        body: deleteRawBody({ name: item.name, kind: item.kind === 'daily_totals' ? 'other' : item.kind, uploadedAt: item.addedAt }),
+        label: FILE_COPY.deleteRaw,
+      };
+  }
 }
 
 const styles = StyleSheet.create({

@@ -11,7 +11,6 @@ import { findActiveSeat, findOpenInvites, latestRemovedSeat, type OpenInvite } f
 import type { OpenAsAdminGrantRecord, ViewAsGrantRecord } from '../stores/view-as-grants.ts';
 import type { Town } from '../towns.ts';
 import { scopeForOpenAsAdmin, type OrgScope } from './policy.ts';
-import { isInSetup } from './setup.ts';
 
 export type Role = 'org_admin' | 'member';
 
@@ -195,20 +194,21 @@ export async function resolveAccess(ctx: TownwiseContext, auth: AuthContext): Pr
 
   // Section 8 and 8a, live grant of either kind: holds this session, not ended, not expired. Then a view-as grant is
   // live while the target's resolved organization still equals the grant's (null equals null), and an open-as-admin
-  // grant while its organization is in setup (below). Anything else is ignored like an expired grant.
+  // grant while its organization is active (below). Anything else is ignored like an expired grant.
   const grant = await ctx.stores.grants.findBySession(auth.sessionId);
   if (grant === null) return staffOnly;
   if (grant.endedAt !== null || grant.expiresAt.getTime() <= now.getTime()) return staffOnly;
   if (grant.kind === 'open_as_admin') {
-    // D25: live only while its organization exists and is in setup (active, nobody has ever joined it), so a join or a
-    // suspension ends it from the next request on. The organization comes from the grant, never from the request.
+    // D25: live only while its organization exists and is active, before or after anyone joins it (owner call,
+    // 2026-11-15), so a suspension ends it from the next request on. The organization comes from the grant, never from
+    // the request.
     const org = await ctx.stores.orgs.findById(grant.orgId);
     if (org === null) return staffOnly;
     // A suspension ends it for good: a grant started at or before the last one stays dead after a reactivation, whether
     // or not End was ever sent (fails closed; nothing here writes).
     if (org.lastSuspendedAt !== null && grant.startedAt.getTime() <= org.lastSuspendedAt.getTime()) return staffOnly;
+    if (org.status !== 'active') return staffOnly;
     const scope = scopeForOpenAsAdmin(grant);
-    if (!(await isInSetup(ctx, scope, org))) return staffOnly;
     return {
       user, self, effective: { state: 'member', org: { id: org.id, name: org.name }, role: 'org_admin' }, seat: null,
       staffVerifiedUntil, viewAs: null, openAsAdmin: { grant, scope, orgName: org.name },

@@ -19,6 +19,8 @@ export const staffActivitySchema = z.object({
   summary: z.string(),
   /** view_as.started only; `endsAt` is the grant's scheduled end. */
   viewAs: z.object({ targetEmail: z.string(), reason: z.string(), endsAt: z.string() }).nullable(),
+  /** D25: an opening as admin after someone joined, with the reason staff gave; absent on every other row. */
+  openAsAdmin: z.object({ reason: z.string() }).optional(),
   /** False when the server refused or could not make the change; the refusal is never a row of its own. */
   applied: z.boolean(),
   /** Why it didn’t take effect, in plain words; null when applied. */

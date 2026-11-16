@@ -1,5 +1,5 @@
-// Whether an organization is in setup (D23): the one predicate behind staff setup's routes, the console's `inSetup`,
-// and (D25) whether an open-as-admin grant is live.
+// Whether an organization is in setup (D23): the one predicate behind staff setup's routes and the console's `inSetup`,
+// and the notion of “joined” behind it, which open as admin (D25) reads to ask a reason once someone has joined.
 import { AppError } from '@ckeith26/server-core';
 
 import type { TownwiseContext } from '../app.ts';
@@ -12,7 +12,15 @@ import type { OrgScope } from './policy.ts';
  * (`joinedAt`, active or removed). The setup routes (staff-setup.ts) and `inSetup` (admin.ts) read this one predicate.
  */
 export async function isInSetup(ctx: TownwiseContext, scope: OrgScope, org: OrgRecord): Promise<boolean> {
-  return org.status === 'active' && org.firstJoinedAt === null && !(await ctx.stores.members.anyJoined(scope));
+  return org.status === 'active' && !(await hasEverJoined(ctx, scope, org));
+}
+
+/**
+ * Whether anyone has ever joined the organization, as staff setup counts it: its `firstJoinedAt`, or, for an
+ * organization from before that field, any member row that joined. Open as admin asks a reason once this holds (D25).
+ */
+export async function hasEverJoined(ctx: TownwiseContext, scope: OrgScope, org: OrgRecord): Promise<boolean> {
+  return org.firstJoinedAt !== null || await ctx.stores.members.anyJoined(scope);
 }
 
 export function notInSetup(): AppError {

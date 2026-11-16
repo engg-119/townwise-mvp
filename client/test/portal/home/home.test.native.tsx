@@ -47,7 +47,8 @@ afterEach(async () => {
 const PATH = '/api/org/locations/l1';
 const CALENDAR = `${PATH}/calendar?from=2024-10-07&to=2026-11-30`;
 const SATURDAY = (date: string): boolean => new Date(`${date}T00:00:00Z`).getUTCDay() === 6;
-// Sep 1, 2024 to Wed, Nov 4, 2026: Saturdays 40 busier; last week (Oct 26 to Nov 1, 2026) 10% up on its year.
+// Sep 1, 2024 to Wed, Nov 4, 2026: Saturdays 40 busier; from Oct 26, 2026, 10% up on its year, so last week (the seven days
+// before today, Oct 29 to Nov 4) is too.
 const DAYS = run('2024-09-01', '2026-11-04', (date) => Math.round((SATURDAY(date) ? 140 : 100) * (date >= '2026-10-26' ? 1.1 : 1)));
 const HAS_DAYS = { dayCount: 795, guestsDayCount: 795, netSalesDayCount: 795, firstDate: '2024-09-01', lastDate: '2026-11-04', missingDays: 0 };
 const EVENTS = [
@@ -175,7 +176,7 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.queryByRole('textbox')).toBeNull();
 
   // Last week against the same week last year; no chart on native.
-  expect(screen.getByText('Last week, Oct 26 to Nov 1')).toBeTruthy();
+  expect(screen.getByText('Last week, Oct 29 to Nov 4')).toBeTruthy();
   expect(screen.getByText('Last week: 814 guests, 10% more than the same week last year (740), compared over 7 days.')).toBeTruthy();
   expect(screen.queryByText(/^Scale 0 to/)).toBeNull();
 
@@ -397,7 +398,8 @@ test('last week: no recent days, no last year, and a partial week that names its
   expect(screen.queryByText('Two years ago')).toBeNull();
   await cleanup();
 
-  await renderApp('/locations/l1', portal({ days: DAYS.filter((day) => day.date !== '2025-10-28' && day.date !== '2026-10-30') }));
+  // Two pairs broken inside last week (Oct 29 to Nov 4): Sat, Nov 1, 2025 and Fri, Oct 30, 2026.
+  await renderApp('/locations/l1', portal({ days: DAYS.filter((day) => day.date !== '2025-11-01' && day.date !== '2026-10-30') }));
   expect(await screen.findByText(/^Last week: [\d,]+ guests on the 5 days both weeks have, 10% more than the same days last year \([\d,]+\)\.$/)).toBeTruthy();
 });
 

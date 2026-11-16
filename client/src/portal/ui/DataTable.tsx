@@ -1,4 +1,6 @@
-import { Pressable, ScrollView, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
+import { createContext, useContext, useState } from 'react';
+import { Link, useRouter } from 'expo-router';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type PressableStateCallbackType, type StyleProp, type ViewStyle } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
@@ -9,6 +11,16 @@ import { useBreakpoint } from '../hooks';
 // has the full width. From 641px to 1023px the table keeps a minimum width and its region scrolls sideways instead
 // of squeezing the columns; from 1024px it fills its column with no minimum, so a desktop table does not scroll
 // sideways. The last row has no rule under it: a Section that follows draws its own.
+//
+// A row with an `href` opens it from a press anywhere on it. Its one way in for the keyboard and screen readers is
+// the <RowLink> the caller puts in one of its cells (the item's name): the row itself is not focusable, so the table
+// keeps its rows and cells, and the row shows `raised` while that link has focus, as on hover. A control of its own
+// in such a row (a ZIP's “See what's inside”) still does only what it says: the innermost press wins. On web a press
+// that ends a text selection (a drag across the row) selects and opens nothing. The link's name is underlined, as the
+// portal's other links are, so a phone's stacked card shows it opens. A row with an `onPress` instead does that in
+// place (a driver's days under Biggest drivers), the same way: a press anywhere on it, its way in a control the caller
+// puts in a cell, which raises the row while focused through useRowFocus. A row with neither keeps the default cursor
+// and is no tab stop.
 
 /**
  * The least width of one unit of column flex below 1024px: a 9-character mono word (“Locations”, 64.8px at 12px)
@@ -40,6 +52,78 @@ export interface Row {
   cells: Readonly<Record<string, React.ReactNode>>;
   /** The selected-row idiom: `raised`, a `border` outline. */
   selected?: boolean;
+  /** Where a press anywhere on the row leads. Give one of its cells a <RowLink> to the same place. */
+  href?: string;
+  /**
+   * What a press anywhere on the row does in place, when it has no `href`. Give one of its cells a control that does the
+   * same for the keyboard and screen readers, and let it raise the row while focused (useRowFocus).
+   */
+  onPress?: () => void;
+}
+
+/** Tells a linked row that its link took or lost focus. */
+const RowFocus = createContext<((focused: boolean) => void) | null>(null);
+
+/** For a row's own control (a row with `onPress`): call with true on focus and false on blur to raise the row. */
+export function useRowFocus(): ((focused: boolean) => void) | null {
+  return useContext(RowFocus);
+}
+
+/**
+ * A linked row's link: the row's one focusable element, named `accessibilityLabel` when given (else `label`), and
+ * printed as the first column prints.
+ */
+export function RowLink(props: { href: string; label: string; accessibilityLabel?: string }): React.JSX.Element {
+  const focus = useContext(RowFocus);
+  return (
+    <Link href={props.href} asChild>
+      {/* A child of Link asChild takes one plain style object (ui/hover.ts). */}
+      <Pressable
+        role="link"
+        {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
+        onFocus={() => { focus?.(true); }}
+        onBlur={() => { focus?.(false); }}
+        style={styles.rowLink}
+      >
+        <Text style={styles.rowLinkText}>{props.label}</Text>
+      </Pressable>
+    </Link>
+  );
+}
+
+/** A row that opens `href`, or runs `onPress`, from a press anywhere on it, raised on hover and while its control has focus. */
+function LinkedRow(props: {
+  href: string | undefined;
+  onPress: (() => void) | undefined;
+  role: 'row' | 'listitem';
+  style: (raised: boolean) => StyleProp<ViewStyle>;
+  children: React.ReactNode;
+}): React.JSX.Element {
+  const router = useRouter();
+  const [focused, setFocused] = useState(false);
+  return (
+    <RowFocus.Provider value={setFocused}>
+      <Pressable
+        role={props.role}
+        // Pressable makes itself a tab stop on web unless told otherwise; the row's RowLink is its one.
+        tabIndex={-1}
+        focusable={false}
+        onPress={() => {
+          if (selecting()) return;
+          if (props.href !== undefined) router.push(props.href);
+          else props.onPress?.();
+        }}
+        style={(state) => props.style(focused || hovered(state))}
+      >
+        {props.children}
+      </Pressable>
+    </RowFocus.Provider>
+  );
+}
+
+/** Web: whether text is selected, so the press that ended a drag across a row only selected it. */
+function selecting(): boolean {
+  return Platform.OS === 'web' && (globalThis.getSelection()?.toString() ?? '') !== '';
 }
 
 function hovered(state: PressableStateCallbackType): boolean {
@@ -67,20 +151,22 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
     return (
       <View role="region" aria-label={props.label} focusable style={styles.region}>
         <View role="list">
-          {rows.map((row, rowIndex) => (
-            <View
-              key={row.key}
-              role="listitem"
-              style={[styles.stackedRow, ruleless(row, rowIndex), row.selected === true ? styles.selected : null]}
-            >
-              {columns.map((column, index) => (empty(row.cells[column.key]) ? null : (
-                <View key={column.key} style={styles.pair}>
-                  <Text style={styles.head}>{column.label}</Text>
-                  <View style={styles.pairValue}><Cell value={row.cells[column.key]} numeric={false} first={index === 0} /></View>
-                </View>
-              )))}
-            </View>
-          ))}
+          {rows.map((row, rowIndex) => {
+            const style = (raised: boolean): StyleProp<ViewStyle> => [
+              styles.stackedRow, ruleless(row, rowIndex), raised ? styles.raised : null, row.selected === true ? styles.selected : null,
+            ];
+            const pairs = columns.map((column, index) => (empty(row.cells[column.key]) ? null : (
+              <View key={column.key} style={styles.pair}>
+                <Text style={styles.head}>{column.label}</Text>
+                <View style={styles.pairValue}><Cell value={row.cells[column.key]} numeric={false} first={index === 0} /></View>
+              </View>
+            )));
+            return row.href === undefined && row.onPress === undefined ? (
+              <View key={row.key} role="listitem" style={style(false)}>{pairs}</View>
+            ) : (
+              <LinkedRow key={row.key} href={row.href} onPress={row.onPress} role="listitem" style={style}>{pairs}</LinkedRow>
+            );
+          })}
         </View>
       </View>
     );
@@ -109,23 +195,22 @@ export function DataTable(props: { label: string; columns: readonly Column[]; ro
             </View>
           ))}
         </View>
-        {rows.map((row, rowIndex) => (
-          <Pressable
-            key={row.key}
-            role="row"
-            focusable={false}
-            style={(state) => [
-              styles.row, ruleless(row, rowIndex), hovered(state) || row.selected === true ? styles.raised : null,
-              row.selected === true ? styles.selected : null,
-            ]}
-          >
-            {columns.map((column, index) => (
-              <View key={column.key} role="cell" style={[styles.cell, { flex: column.flex ?? 1 }, column.numeric === true ? styles.cellNumeric : null]}>
-                <Cell value={row.cells[column.key]} numeric={column.numeric === true} first={index === 0} />
-              </View>
-            ))}
-          </Pressable>
-        ))}
+        {rows.map((row, rowIndex) => {
+          const style = (raised: boolean): StyleProp<ViewStyle> => [
+            styles.row, ruleless(row, rowIndex), raised || row.selected === true ? styles.raised : null,
+            row.selected === true ? styles.selected : null,
+          ];
+          const cells = columns.map((column, index) => (
+            <View key={column.key} role="cell" style={[styles.cell, { flex: column.flex ?? 1 }, column.numeric === true ? styles.cellNumeric : null]}>
+              <Cell value={row.cells[column.key]} numeric={column.numeric === true} first={index === 0} />
+            </View>
+          ));
+          return row.href === undefined && row.onPress === undefined ? (
+            <Pressable key={row.key} role="row" tabIndex={-1} focusable={false} style={(state) => [style(hovered(state)), styles.plainRow]}>{cells}</Pressable>
+          ) : (
+            <LinkedRow key={row.key} href={row.href} onPress={row.onPress} role="row" style={style}>{cells}</LinkedRow>
+          );
+        })}
       </View>
     </ScrollView>
   );
@@ -175,6 +260,9 @@ const styles = StyleSheet.create({
   first: { color: c.white },
   numeric: { textAlign: 'right' },
   hidden: { opacity: 0 },
+  rowLink: { alignSelf: 'flex-start' },
+  rowLinkText: { ...theme.type.mono, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
+  plainRow: { cursor: 'auto' as const },
   stackedRow: { paddingVertical: theme.space[2], borderBottomWidth: 1, borderBottomColor: c.border },
   pair: { rowGap: 2, paddingVertical: 4, paddingHorizontal: 8 },
   pairValue: { minWidth: 0 },

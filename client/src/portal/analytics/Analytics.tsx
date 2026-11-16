@@ -349,6 +349,7 @@ function AnalyticsView(props: {
             rows={found.map((driver, at) => ({
               key: driver.key,
               selected: driver.key === openDriver?.key,
+              onPress: () => { setDriverKey((key) => (key === driver.key ? null : driver.key)); },
               cells: {
                 rank: String(at + 1),
                 driver: (

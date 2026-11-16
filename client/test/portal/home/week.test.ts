@@ -182,9 +182,10 @@ describe('last week', () => {
 
   test('compared over the days both weeks have', () => {
     const comparison = lastWeekComparison(input(DAYS));
-    expect(comparison).toMatchObject({ state: 'compared', monday: '2026-10-26', sunday: '2026-11-01', comparedDays: 7, total: 770, lastYearTotal: 700 });
+    // The seven days before today (Thu, Nov 5): Oct 29 to Nov 4, This week's weekdays a week earlier.
+    expect(comparison).toMatchObject({ state: 'compared', from: '2026-10-29', to: '2026-11-04', comparedDays: 7, total: 770, lastYearTotal: 700 });
     expect(lastWeekLine(comparison, 'guests')).toBe('Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.');
-    const partial = lastWeekComparison(input(DAYS.filter((each) => each.date !== '2025-10-28' && each.date !== '2026-10-30')));
+    const partial = lastWeekComparison(input(DAYS.filter((each) => each.date !== '2025-11-01' && each.date !== '2026-10-30')));
     expect(partial).toMatchObject({ state: 'compared', comparedDays: 5, total: 550, lastYearTotal: 500 });
     expect(lastWeekLine(partial, 'guests')).toBe('Last week: 550 guests on the 5 days both weeks have, 10% more than the same days last year (500).');
   });
@@ -204,16 +205,16 @@ describe('last week', () => {
     const recent = lastWeekComparison(input(old));
     expect(recent.state).toBe('no_recent');
     expect(lastWeekLine(recent, 'guests')).toBe('Your history ends Oct 20, 2026. Upload the days since to compare last week.');
-    // A gap: last week is missing, but days after it are stored, so the history does not end before it.
-    const gap = lastWeekComparison(input(DAYS.filter((each) => each.date < '2026-10-26' || each.date > '2026-11-01')));
-    expect(gap).toEqual({ state: 'no_days', monday: '2026-10-26', sunday: '2026-11-01' });
+    // A gap: last week is missing, but today is stored, so the history does not end before it.
+    const gap = lastWeekComparison(input([...DAYS, day('2026-11-05', 110)].filter((each) => each.date < '2026-10-29' || each.date > '2026-11-04')));
+    expect(gap).toEqual({ state: 'no_days', from: '2026-10-29', to: '2026-11-04' });
     expect(lastWeekLine(gap, 'guests')).toBe('No guests stored for last week, so there is nothing to compare yet.');
     expect(lastWeekLine(gap, 'netSales')).toBe('No net sales stored for last week, so there is nothing to compare yet.');
     const young = DAYS.filter((each) => each.date >= '2026-01-01');
     const noLastYear = lastWeekComparison(input(young));
     expect(noLastYear.state).toBe('no_last_year');
     expect(lastWeekLine(noLastYear, 'guests')).toBe('No data for the same week last year, so there is nothing to compare yet.');
-    const apart = DAYS.filter((each) => !(each.date >= '2026-10-26' && each.date <= '2026-10-29') && !(each.date >= '2025-10-31' && each.date <= '2025-11-02'));
+    const apart = DAYS.filter((each) => !(each.date >= '2026-10-29' && each.date <= '2026-11-01') && !(each.date >= '2025-11-03' && each.date <= '2025-11-05'));
     expect(lastWeekComparison(input(apart)).state).toBe('no_overlap');
   });
 });

@@ -187,9 +187,9 @@ describe('route table', () => {
     ]);
   });
 
-  it('D25: Open as admin is a staff POST with no body, sharing the view-as limiter', () => {
+  it('D25: Open as admin is a staff POST with a small body (the reason, once someone has joined), sharing the view-as limiter', () => {
     expect(TOWNWISE_ROUTES.find((r) => r.id === 'admin.orgs.open_as_admin')).toMatchObject({
-      method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none', limiter: 'view-as',
+      method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: '1kb', limiter: 'view-as',
     });
   });
 

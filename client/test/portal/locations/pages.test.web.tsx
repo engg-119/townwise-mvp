@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
@@ -103,6 +103,46 @@ test('Town on web for a town whose county BLS did not publish for the year: the 
   expect(screen.queryByText('Scale fitted to this town. Index: 100 = an average month')).toBeNull();
   expect(screen.queryByRole('button', { name: /Show the numbers/ })).toBeNull();
   expect(document.body.textContent).not.toMatch(/Measured across|with the region|index points|Curve: /);
+});
+
+test('By month draws each year as its own line over January to December, with a Guests and Net sales switch, above the table', async () => {
+  renderAt('/locations/l1/sales', portal(meOf(ACCESS.member)));
+  const group = await screen.findByRole('radiogroup', { name: 'Show' });
+  expect(within(group).getByRole('radio', { name: 'Guests' }).getAttribute('aria-checked')).toBe('true');
+  const caption = screen.getByText('Average guests per day in each month, one line per year.');
+  // The line that says what the chart shows comes before its scale, as Analytics' summary does.
+  const scale = screen.getByText('Scale 0 to 100 guests. Scale fitted to this location.');
+  expect(caption.compareDocumentPosition(scale) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // The key names each year, oldest first; the newest is solid and the older dashed (charts.test.web.tsx).
+  expect([...document.querySelectorAll('span[data-year]')].map((each) => each.textContent)).toEqual(['2025', '2026']);
+  expect(document.querySelector('svg g[data-year="2025"] path')?.hasAttribute('stroke-dasharray')).toBe(true);
+  expect(document.querySelector('svg g[data-year="2026"] path')?.hasAttribute('stroke-dasharray')).toBe(false);
+  expect(screen.getByText('Scale 0 to 100 guests. Scale fitted to this location.')).toBeTruthy();
+  fireEvent.click(within(group).getByRole('radio', { name: 'Net sales' }));
+  expect(await screen.findByText('Average net sales per day in each month, one line per year.')).toBeTruthy();
+  expect(screen.getByText('Scale 0 to $2,000. Scale fitted to this location.')).toBeTruthy();
+  // The table stays below, with each month's link to its days.
+  const months = screen.getByRole('region', { name: 'Sales by month' });
+  expect(within(months).getByRole('button', { name: 'Jan 2025' })).toBeTruthy();
+});
+
+test('By month’s points are Analytics’ year over year: closed days are left out, and the basis line says so', async () => {
+  // Made-up figures: 40 guests and $1,000 every day of 2025 and January 2026, but Jan 5, 2025, an all-zero (closed) day.
+  const days = daysOf('2025-01-01', 396, (index) => (index === 4 ? { guests: 0, netSalesCents: 0 } : { guests: 40, netSalesCents: 100_000 }));
+  const api = fakePortalApi({
+    me: meOf(ACCESS.member), org: orgOf('member'),
+    fallback: locationsFake({ sales: { l1: salesOf(days, [uploadOf('u1')]) }, days: { l1: days }, notes: { l1: [] } }),
+  });
+  renderAt('/locations/l1/sales', api);
+  expect(await screen.findByText('Based on 395 days with a guest count. Leaves out 1 closed day.')).toBeTruthy();
+  const svg = document.querySelector('svg g[data-year="2025"]')?.closest('svg');
+  if (svg === null || svg === undefined) throw new Error('no chart');
+  svg.getBoundingClientRect = () => ({ left: 0, width: 300, top: 0, height: 160, right: 300, bottom: 160, x: 0, y: 0, toJSON: () => ({}) });
+  const event = new MouseEvent('pointermove', { bubbles: true, clientX: 6 });
+  Object.defineProperty(event, 'pointerType', { value: 'mouse' });
+  act(() => { fireEvent(svg, event); });
+  // January 2025 averages its 30 open days (40), not 31 days with the closed one (38.7).
+  expect([...screen.getByTestId('chart-tooltip').children].map((each) => each.textContent)).toEqual(['January', '2026: 40 guests', '2025: 40 guests']);
 });
 
 test('Town on web: the month scrubber starts at this month and moves the chart’s cursor and readout, by click and key', async () => {

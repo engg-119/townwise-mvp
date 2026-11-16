@@ -1,5 +1,5 @@
-// Open as admin, Start and End through the API (D25, spec 9.2, 9.3, 10.7): staff open an organization nobody has joined
-// as its admin. Start is recorded before the grant exists and is refused while a grant of either kind is live; End,
+// Open as admin, Start and End through the API (D25, spec 9.2, 9.3, 10.7): staff open an organization as its admin,
+// before or after anyone joins it (owner call, 2026-11-15). Start is recorded before the grant exists and is refused while a grant of either kind is live; End,
 // shared with view-as, ends either kind and records its end. Grants here are made only by
 // POST /api/admin/orgs/:orgId/open-as-admin.
 import { randomUUID } from 'node:crypto';
@@ -40,9 +40,15 @@ function uniqueEmail(name: string): string {
   return `${name}-${randomUUID().slice(0, 8)}@example.test`;
 }
 
-/** Start, with no body. */
-function start(orgId: string, session = staff): Promise<Response> {
-  return call(server, `/api/admin/orgs/${orgId}/open-as-admin`, { method: 'POST', session });
+/** Start: with no body, or with `{ reason }` (required once someone has joined). */
+function start(orgId: string, session = staff, reason?: string): Promise<Response> {
+  return call(server, `/api/admin/orgs/${orgId}/open-as-admin`, reason === undefined ? { method: 'POST', session } : { session, json: { reason } });
+}
+
+const OPEN_REASON = 'Fixing their location settings';
+
+async function orgDoc(orgId: string, change: Record<string, unknown>): Promise<void> {
+  await server.connection.collection('tw_orgs').updateOne({ _id: new Types.ObjectId(orgId) }, change);
 }
 
 function end(session = staff): Promise<Response> {
@@ -125,19 +131,78 @@ describe('POST /api/admin/orgs/:orgId/open-as-admin', () => {
     expect(await opened.json()).toMatchObject({ org: { id: org.orgId, name: org.name }, role: 'org_admin' });
   });
 
-  it('refuses an organization someone joined or that is suspended with 409 org_not_in_setup, an unknown one with 404 and a malformed id with 400, writing nothing', async () => {
-    const joined = await setupOrg(server, staff);
-    await joinAs(server, joined.adminEmail);
-    const suspended = await setupOrg(server, staff);
-    await setOrgStatus(suspended.orgId, 'suspended');
+  it('once someone has joined, asks a reason as view-as does: none is 400 reason_required, one outside 5 to 200 characters 400 invalid_request, writing nothing', async () => {
+    await joinAs(server, org.adminEmail);
     const answers: { status: number; error: string }[] = [];
     const writes = await writesDuring(server, async () => {
-      for (const orgId of [joined.orgId, suspended.orgId, new Types.ObjectId().toHexString(), 'not-an-id']) {
+      answers.push(await errorOf(await start(org.orgId)));
+      answers.push(await errorOf(await call(server, `/api/admin/orgs/${org.orgId}/open-as-admin`, { session: staff, json: {} })));
+      for (const reason of ['abc', '   abc   ', 'x'.repeat(201)]) answers.push(await errorOf(await start(org.orgId, staff, reason)));
+    });
+    expect(answers).toEqual([
+      { status: 400, error: 'reason_required' }, { status: 400, error: 'reason_required' },
+      { status: 400, error: 'invalid_request' }, { status: 400, error: 'invalid_request' }, { status: 400, error: 'invalid_request' },
+    ]);
+    expect(writes).toEqual([]);
+    expect(await me(staff)).toMatchObject(STAFF_ONLY);
+  });
+
+  it('opens an organization someone joined with a reason: the grant and open_as_admin.started carry it, and its admin reads it in Townwise staff activity', async () => {
+    const admin = await joinAs(server, org.adminEmail);
+    const res = await start(org.orgId, staff, `  ${OPEN_REASON}  `);
+    expect(res.status).toBe(201);
+    const body = await res.json() as MeResponse;
+    expect(body).toMatchObject({
+      access: { state: 'member', org: { id: org.orgId, name: org.name }, role: 'org_admin' }, viewAs: null,
+      openAsAdmin: { org: { id: org.orgId, name: org.name } },
+    });
+    const id = body.openAsAdmin?.id ?? '';
+    expect(await grants().findOne({ _id: new Types.ObjectId(id) })).toMatchObject({ kind: 'open_as_admin', reason: OPEN_REASON });
+    expect((await eventsIn(org.orgId)).filter((event) => event.action === 'open_as_admin.started')).toEqual([expect.objectContaining({
+      actorRole: 'superadmin', actorEmail: STAFF_EMAIL, viewAsGrantId: id, target: { type: 'grant', id }, details: { reason: OPEN_REASON },
+    })]);
+    const activity = await call(server, '/api/org/staff-activity', { session: admin });
+    expect(activity.status).toBe(200);
+    const started = (await activity.json() as { events: Record<string, unknown>[] }).events
+      .filter((event) => String(event.summary).startsWith('Opened the organization as its admin'));
+    expect(started).toEqual([expect.objectContaining({
+      staffEmail: STAFF_EMAIL, summary: 'Opened the organization as its admin', viewAs: null, openAsAdmin: { reason: OPEN_REASON },
+    })]);
+  });
+
+  it('“joined” is staff setup’s: a firstJoinedAt alone, or a member row that joined on an organization from before that field, asks a reason; an open invitation does not', async () => {
+    // Everyone who joined has since left: firstJoinedAt outlives the seat.
+    await orgDoc(org.orgId, { $set: { firstJoinedAt: server.clock.now() } });
+    const legacy = await setupOrg(server, staff);
+    await joinAs(server, legacy.adminEmail);
+    await orgDoc(legacy.orgId, { $unset: { firstJoinedAt: '' } });
+    const invited = await setupOrg(server, staff);
+    expect(await errorOf(await start(org.orgId))).toEqual({ status: 400, error: 'reason_required' });
+    expect(await errorOf(await start(legacy.orgId))).toEqual({ status: 400, error: 'reason_required' });
+    // The console agrees: neither is in setup.
+    for (const orgId of [org.orgId, legacy.orgId]) {
+      expect(await (await call(server, `/api/admin/orgs/${orgId}`, { session: staff })).json()).toMatchObject({ org: { inSetup: false } });
+    }
+    const opened = await start(invited.orgId);
+    expect(opened.status).toBe(201);
+    const id = (await opened.json() as MeResponse).openAsAdmin?.id ?? '';
+    expect(await grants().findOne({ _id: new Types.ObjectId(id) })).not.toHaveProperty('reason');
+    expect((await eventsOfGrant(id))[0]).toMatchObject({ action: 'open_as_admin.started', details: {} });
+  });
+
+  it('refuses a suspended organization with 409 org_suspended, joined or not, an unknown one with 404 and a malformed id with 400, writing nothing', async () => {
+    await setOrgStatus(org.orgId, 'suspended');
+    const joined = await setupOrg(server, staff);
+    await joinAs(server, joined.adminEmail);
+    await setOrgStatus(joined.orgId, 'suspended');
+    const answers: { status: number; error: string }[] = [];
+    const writes = await writesDuring(server, async () => {
+      for (const orgId of [org.orgId, joined.orgId, new Types.ObjectId().toHexString(), 'not-an-id']) {
         answers.push(await errorOf(await start(orgId)));
       }
     });
     expect(answers).toEqual([
-      { status: 409, error: 'org_not_in_setup' }, { status: 409, error: 'org_not_in_setup' },
+      { status: 409, error: 'org_suspended' }, { status: 409, error: 'org_suspended' },
       { status: 404, error: 'not_found' }, { status: 400, error: 'invalid_request' },
     ]);
     expect(writes).toEqual([]);
@@ -248,10 +313,10 @@ describe('POST /api/admin/orgs/:orgId/open-as-admin', () => {
     expect(await grants().countDocuments({ kind: 'open_as_admin', actorSessionId: staff.sessionId })).toBe(0);
   });
 
-  it('a grant that stopped being live (someone joined) is cleared by the next start, recorded as replaced', async () => {
+  it('a grant that stopped being live (its organization was suspended) is cleared by the next start, recorded as replaced', async () => {
     const next = await setupOrg(server, staff);
     const firstId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
-    await joinAs(server, org.adminEmail);
+    await setOrgStatus(org.orgId, 'suspended');
     expect(await me(staff)).toMatchObject(STAFF_ONLY);
 
     const res = await start(next.orgId);
@@ -302,10 +367,10 @@ describe('End (POST /api/admin/view-as/end)', () => {
     ]);
   });
 
-  it('after someone joined, End clears the ignored grant and records its end', async () => {
+  it('after someone joined, the grant is still live, and End ends it and records its end', async () => {
     const grantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
     await joinAs(server, org.adminEmail);
-    expect(await me(staff)).toMatchObject(STAFF_ONLY);
+    expect((await me(staff)).openAsAdmin).toMatchObject({ id: grantId, org: { id: org.orgId } });
 
     expect((await end()).status).toBe(200);
     expect(await grants().findOne({ _id: new Types.ObjectId(grantId) })).toMatchObject({ endReason: 'ended' });
@@ -353,18 +418,18 @@ describe('a suspension', () => {
 });
 
 describe('a tab still showing an organization this session no longer has open', () => {
-  /** X (`org`) open, then joined, then Y opened from the console: the X tab has not read GET /api/me since. */
-  async function openYAfterXJoined(): Promise<{ y: { orgId: string; name: string }; xGrantId: string; yGrantId: string }> {
+  /** X (`org`) open, then suspended, then Y opened from the console: the X tab has not read GET /api/me since. */
+  async function openYAfterXSuspended(): Promise<{ y: { orgId: string; name: string }; xGrantId: string; yGrantId: string }> {
     const y = await setupOrg(server, staff);
     const xGrantId = (await (await start(org.orgId)).json() as MeResponse).openAsAdmin?.id ?? '';
-    await joinAs(server, org.adminEmail);
+    await setOrgStatus(org.orgId, 'suspended');
     const started = await start(y.orgId);
     expect(started.status).toBe(201);
     return { y, xGrantId, yGrantId: (await started.json() as MeResponse).openAsAdmin?.id ?? '' };
   }
 
   it('its rename and new location, naming X or no organization, answer 409 open_as_admin_active and write nothing in Y', async () => {
-    const { y } = await openYAfterXJoined();
+    const { y } = await openYAfterXSuspended();
     const answers: { status: number; error: string }[] = [];
     const writes = await writesDuring(server, async () => {
       for (const named of [{ orgId: org.orgId }, {}]) {
@@ -382,7 +447,7 @@ describe('a tab still showing an organization this session no longer has open', 
   });
 
   it('its End, naming X’s grant, leaves Y’s running and writes nothing; End naming Y’s grant ends it', async () => {
-    const { y, xGrantId, yGrantId } = await openYAfterXJoined();
+    const { y, xGrantId, yGrantId } = await openYAfterXSuspended();
     let stale: Response | undefined;
     const writes = await writesDuring(server, async () => {
       stale = await call(server, '/api/admin/view-as/end', { session: staff, json: { grantId: xGrantId } });
@@ -522,9 +587,9 @@ describe('attribution', () => {
     kind: 'closure', startDate: '2026-05-04', endDate: '2026-05-04', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
   };
 
-  /** Start, then make one of each kind of change as the staff member; resolves the location's id. */
-  async function changeAsStaff(): Promise<string> {
-    expect((await start(org.orgId)).status).toBe(201);
+  /** Start (with a reason once someone has joined), then make one of each kind of change as the staff member; resolves the location's id. */
+  async function changeAsStaff(reason?: string): Promise<string> {
+    expect((await start(org.orgId, staff, reason)).status).toBe(201);
     const renamed = await call(server, '/api/org', { method: 'PATCH', session: staff, json: { name: `${org.name} Two`, orgId: org.orgId } });
     expect(renamed.status).toBe(200);
     const created = await call(server, '/api/org/locations', {
@@ -586,5 +651,26 @@ describe('attribution', () => {
     expect(uploads.every((upload) => upload.uploadedByEmail === 'Townwise staff')).toBe(true);
     // The staff activity names the staff member by design (D9); the authors of notes and uploads never do.
     for (const text of [notesText, salesText]) expect(text).not.toContain(STAFF_EMAIL);
+  });
+
+  it('after a join, the admin sees each change while staff are still inside, and what staff wrote reads Townwise staff', async () => {
+    const admin = await joinAs(server, org.adminEmail);
+    const locationId = await changeAsStaff(OPEN_REASON);
+    // Still open: nothing ended it.
+    expect((await me(staff)).openAsAdmin).toMatchObject({ org: { id: org.orgId } });
+    const grantId = String((await grants().findOne({ activeSessionId: staff.sessionId }))?._id);
+
+    const activity = await call(server, '/api/org/staff-activity', { session: admin });
+    expect(activity.status).toBe(200);
+    const summaries = (await activity.json() as { events: { summary: string }[] }).events.map((event) => event.summary);
+    expect(summaries).toEqual(expect.arrayContaining([
+      'Opened the organization as its admin', 'Added the location Main Street', 'Added a note (closure), 2026-05-04 to 2026-05-04',
+    ]));
+    const changes = (await eventsIn(org.orgId)).filter((event) => !String(event.action).startsWith('open_as_admin.') && event.actorRole === 'superadmin');
+    expect(changes.length).toBeGreaterThan(0);
+    for (const event of changes) expect(event).toMatchObject({ actorEmail: STAFF_EMAIL, viewAsGrantId: grantId });
+
+    const notes = await (await call(server, `/api/org/locations/${locationId}/notes`, { session: admin })).json() as { notes: { createdByEmail: string }[] };
+    expect(notes.notes.map((note) => note.createdByEmail)).toEqual(['Townwise staff']);
   });
 });

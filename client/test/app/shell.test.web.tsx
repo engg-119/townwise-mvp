@@ -165,7 +165,7 @@ test('open as admin: the banner is on every page; End opens the console with the
   api.answers['/api/admin/view-as/end'] = () => staffMe();
   renderAt('/dashboard', api);
   const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
-  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. This ends when someone joins.')).toBeTruthy();
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. Its admins see each change you make in their Townwise staff activity.')).toBeTruthy();
   await waitFor(() => { expect(document.title).toBe('Setting up Test Group · Townwise'); });
   const nav = screen.getByRole('navigation', { name: 'Main' });
   expect(within(nav).queryByRole('link', { name: 'Team' })).toBeNull();
