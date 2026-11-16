@@ -24,7 +24,6 @@ const frame = `
 .twmap .pane-notes{grid-area:notes;min-width:0}
 @media (min-width:900px){.twmap .app-b{grid-template-columns:300px minmax(0,1fr);grid-template-areas:"list card" "notes notes"}.twmap .pane-list{border-right:1px solid var(--border)}.twmap .pane-card{border-top:0}}
 @media (min-width:1160px){.twmap .app-b{grid-template-rows:auto 1fr;grid-template-areas:"list card" "list notes"}}
-.twmap .mono-s{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
 `;
 
 // The map: one SVG for land, an HTML overlay for labels and markers. The zoom moves the world group on
@@ -186,15 +185,9 @@ const panel = `
 .twmap .why{display:grid;gap:6px;align-content:start;min-width:0}
 .twmap .why li{display:grid;font-size:14px;line-height:20px;color:var(--text2)}
 .twmap .why li+li{margin-top:4px}
-.twmap .lk{display:block}
-.twmap .lk a{display:inline-flex;align-items:center;min-height:44px;margin-right:12px;font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text2)}
-@media (hover:hover){.twmap .lk a:hover{color:var(--mint)}}
 .twmap .cav li+li{margin-top:4px}
 .twmap .cav li,.twmap .fine{font-family:var(--mono);font-size:12px;line-height:16px;color:var(--text3)}
-.twmap .srcs{display:grid}
-.twmap .srcs a{display:inline-flex;align-items:center;min-height:44px;color:var(--text3)}
-@media (hover:hover){.twmap .srcs a:hover{color:var(--mint)}}
-@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}
+@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine{font-size:14px;line-height:20px}}
 `;
 
 // Crossfades replay because their class flips between two identical copies on each change. A change made

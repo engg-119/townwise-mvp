@@ -249,9 +249,12 @@ test('choosing a town from the list zooms the map and opens its panel, with focu
   expect(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true }).textContent).toBe('Nov');
   expect(document.querySelector('[aria-live="polite"]')?.textContent)
     .toBe('Hanover, NH: Moves with the region; biggest gap with the region in May, −7.3 index points.');
-  // Its drivers and dates link their sources: public institutions by host, other sites as "Source".
+  // Its drivers and dates link their sources as chips named by their sites, as the portal's do.
   const notes = document.getElementById(hanover.getAttribute('aria-controls')?.split(' ')[1] ?? '');
-  expect(within(notes ?? document.body).getAllByRole('link', { name: 'registrar.dartmouth.edu' }).length).toBeGreaterThan(0);
+  const registrar = within(notes ?? document.body).getAllByRole('link', { name: 'Dartmouth Registrar. Source' });
+  expect(registrar.length).toBeGreaterThan(0);
+  expect(registrar[0]?.textContent).toBe('Dartmouth Registrar');
+  expect(within(notes ?? document.body).queryByRole('link', { name: 'registrar.dartmouth.edu' })).toBeNull();
 });
 
 test('a marker click zooms the same way and moves focus to the town’s list button', () => {
@@ -456,9 +459,9 @@ test('on phones the pinned caption takes the map’s width, so it lines up with 
 });
 
 test('on phones the card’s sentences are body size and the notes’ longer mono lines 14px', () => {
-  expect(mapCss).toContain('@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}');
+  expect(mapCss).toContain('@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine{font-size:14px;line-height:20px}}');
   // The rule comes after the base sizes, so it wins at the same specificity.
-  expect(mapCss.indexOf('.twmap .cav li,.twmap .fine{')).toBeLessThan(mapCss.indexOf('.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px'));
+  expect(mapCss.indexOf('.twmap .cav li,.twmap .fine{font-family')).toBeLessThan(mapCss.indexOf('.twmap .cav li,.twmap .fine{font-size:14px'));
   expect(mapCss.indexOf('.twmap .cp{')).toBeLessThan(mapCss.indexOf('.twmap .cp,.twmap .pat,'));
 });
 

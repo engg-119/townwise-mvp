@@ -236,7 +236,8 @@ test('How it works shows its four steps statically, with step 01’s public Hano
   expect([...first.querySelectorAll('.sr-only li')].map((item) => item.textContent)).toEqual([
     'Fall term classes begin, Sep 14, 2026', 'Fall term classes end, Nov 17, 2026', 'Winter term classes begin, Jan 5, 2027',
   ]);
-  const source = within(first).getByRole('link', { name: 'registrar.dartmouth.edu' });
+  const source = within(first).getByRole('link', { name: 'Dartmouth Registrar. Source' });
+  expect(source.textContent).toBe('Dartmouth Registrar');
   expect(source.getAttribute('href')).toBe('https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates');
   expect(how.querySelector('.after')?.textContent).toBe('Forecasts we report as results are frozen before their outcomes are known, then scored afterward. Tests on past data are labeled as backtests.');
 });
