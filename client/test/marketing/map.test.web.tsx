@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
 import { cameraFor, cameraTransform, REGION } from '../../src/marketing/map/camera';
-import { countySeries } from '../../src/marketing/map/countyData';
+import { countySeries, SOURCES } from '../../src/marketing/map/countyData';
 import { mapTowns, markerScale } from '../../src/marketing/map/mapState';
 import { mapCss } from '../../src/marketing/map/mapStyles.web';
 import { NortheastMap } from '../../src/marketing/map/NortheastMap.web';
@@ -437,6 +437,20 @@ test('the story and the caption say the map shows BLS QCEW restaurant and bar jo
   expect(screen.getByRole('img', { name: /^Map of the nine Northeast states with twelve featured towns/ })).toBeTruthy();
   expect(screen.getAllByText('Historical public data, not a Townwise forecast.')).toHaveLength(1);
   expect(document.body.textContent).not.toMatch(/sales of|revenue|\$/);
+});
+
+test('the map’s data and geometry sources show their labels as text, each above its chip', () => {
+  renderMap();
+  const items = [...document.querySelectorAll('.nt-c li')].filter((item) => item.querySelector('.src-chip') !== null);
+  expect(items.map((item) => [item.querySelector('.fine')?.textContent, item.querySelector('.src-chip')?.textContent])).toEqual([
+    ['BLS QCEW open data area slices, NAICS 722, private ownership, 2024', 'U.S. Bureau of Labor Statistics'],
+    ['Census TIGERweb Census 2020 areal hydrography (water removed from town outlines)', 'U.S. Census Bureau'],
+    ['Census TIGERweb Census 2020 county subdivisions', 'U.S. Census Bureau'],
+    ['us-atlas 3.0.1 state and county boundaries', 'jsDelivr'],
+  ]);
+  // One chip per item, so the two Census layers are told apart by their labels, not numbered.
+  expect(items.map((item) => item.querySelectorAll('a').length)).toEqual(SOURCES.map(() => 1));
+  expect(items.map((item) => item.querySelector('a')?.getAttribute('href'))).toEqual(SOURCES.map((source) => source.url));
 });
 
 test('the map figure fills the pane on phones instead of collapsing to zero width', () => {

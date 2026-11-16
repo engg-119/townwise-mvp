@@ -285,7 +285,9 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
             <p className="fine">{INDEX_DEFINITION}</p>
           </div>
           <div className="nt-c">
-            <SourceChips sources={SOURCES} />
+            {/* Each source's label stays text above its chip, so the two Census layers and the us-atlas file (which
+                jsDelivr serves) read apart without a hover. */}
+            <ul>{SOURCES.map((source) => <li key={source.url}><span className="fine">{source.label}</span><SourceChips sources={[source]} /></li>)}</ul>
           </div>
         </div>
       </div>
