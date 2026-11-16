@@ -125,6 +125,20 @@ describe('the answer as Townwise answers it', () => {
     expect(setupResult(answer({ itemsCut: true }), null)?.itemsCut).toBe(true);
   });
 
+  it('gives an item no supplier unless it names one of the suppliers kept, so items never add suppliers past the cap', () => {
+    const suppliers = Array.from({ length: 21 }, (_, index) => ({ name: `Supplier ${String(index)}`, deliveries: [] }));
+    const result = setupResult(answer({
+      suppliers,
+      items: [
+        { ...ITEM, name: 'Kept', supplier: 'supplier 3' },
+        { ...ITEM, name: 'Past the cap', supplier: 'Supplier 20' },
+        { ...ITEM, name: 'Never listed', supplier: 'Elsewhere Beverage' },
+      ],
+    }), null);
+    expect(result?.suppliers).toHaveLength(20);
+    expect(result?.items.map((item) => [item.name, item.supplier])).toEqual([['Kept', 'Supplier 3'], ['Past the cap', null], ['Never listed', null]]);
+  });
+
   it('replaces an email address or a phone number in any name or note', () => {
     const result = setupResult(answer({
       suppliers: [{ name: 'Rep pat@example.test', deliveries: [] }],
