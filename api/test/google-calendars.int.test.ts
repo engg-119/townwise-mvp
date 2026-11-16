@@ -6,14 +6,17 @@
 // Every name and title here is made up.
 import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 
+import type { Request, Response as ExpressResponse } from 'express';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type { Principal } from '../src/access/policy.ts';
+import type { TownwiseContext } from '../src/app.ts';
 import { summaryOf } from '../src/audit.ts';
 import { SEAT_SETTLE_MS } from '../src/calendar/google-access.ts';
 import { CHECK_INTERVAL_MS } from '../src/stores/google-connections.ts';
 import { open, seal } from '../src/calendar/secret.ts';
-import type { OwnerCalendarView } from '../src/handlers/owner-calendars.ts';
+import { createOwnerCalendar, LINK_ADD_BUDGET, type OwnerCalendarView } from '../src/handlers/owner-calendars.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   ACCESS_TOKEN, ALL_SCOPES, allDay, AUTH_CODE, createFakeGoogle, GOOGLE_CLIENT_ID, googleError, linkGoogle, PRIMARY_ID, REFRESH_TOKEN, SHARED_ID,
@@ -442,6 +445,31 @@ describe('adding a Google calendar checks it before storing anything', () => {
     expect(await sourceCount(t)).toBe(5);
   });
 
+  it('spends one of the account’s link adds before any Google call: with the 12 an hour used up it answers 429 rate_limited and Google is not called', async () => {
+    const t = await tenant('Budget Brasserie');
+    expect((await connect(t, t.member)).status).toBe(200);
+    const budget = limiterKey(LINK_ADD_BUDGET.name, t.member.session.userId);
+    expect((await addGoogle(t, t.member, SHARED_ID)).status).toBe(201);
+    expect(await server.redis.get(budget)).toBe('1');
+    await server.redis.set(budget, String(LINK_ADD_BUDGET.limit), 'EX', 3600);
+    google.calls.length = 0;
+    expect(await addGoogle(t, t.member, PRIMARY_ID)).toMatchObject({ status: 429, body: { error: 'rate_limited' } });
+    expect(google.calls).toEqual([]);
+    expect(await sourceCount(t)).toBe(1);
+  });
+
+  it('a calendar Google refuses as unauthorized on calendarList.get is 409 google_reconnect, logged with its call, status and code, and nothing is read or stored', async () => {
+    const t = await tenant('Unauthorized Udon');
+    expect((await connect(t, t.member)).status).toBe(200);
+    google.on('getCalendar', () => Promise.reject(googleError('unauthorized', 401)));
+    const lines = await failuresDuring(async () => {
+      expect(await addGoogle(t, t.member, SHARED_ID)).toMatchObject({ status: 409, body: { error: 'google_reconnect' } });
+    });
+    expect(lines).toEqual([{ op: 'calendar', status: 401, code: 'unauthorized' }]);
+    expect(google.callsOf('listEvents')).toEqual([]);
+    expect(await sourceCount(t)).toBe(0);
+  });
+
   it('409 google_not_connected without a connection and google_reconnect for a revoked one, with no Google call', async () => {
     const t = await tenant('Unconnected Oyster Bar');
     expect(await addGoogle(t, t.member, SHARED_ID)).toMatchObject({ status: 409, body: { error: 'google_not_connected' } });
@@ -685,6 +713,34 @@ describe('staff never connect, and view-as shows no Google calendar’s name or 
     const own = await send(`${calendarsPath(t)}/events?from=2026-06-01&to=2026-06-30`, t.member.session);
     expect(JSON.stringify(own.body)).toContain(TITLE);
     expect(JSON.stringify(own.body)).toContain('Bookings');
+  });
+});
+
+describe('the link adds while their store is down', () => {
+  // No server: a Redis client whose connection has ended stands for the outage (the limiter refuses without waiting).
+  it('a Google add answers 503 google_calendar_unavailable, after the calendar_limit check and before any Google call', async () => {
+    const fake = createFakeGoogle();
+    let listed = 0;
+    const ctx = {
+      redis: { status: 'end' },
+      now: () => new Date('2026-06-01T12:00:00.000Z'),
+      calendarKey: KEY, googleCalendar: fake.client, googleCalendarClientId: GOOGLE_CLIENT_ID, revokeGoogle: fake.revoke,
+      stores: {
+        locations: {
+          find: () => Promise.resolve({ id: '000000000000000000000004', name: 'Outage Room', town: { townId: 'hanover-nh' }, placeId: null, createdAt: new Date(0) }),
+        },
+        googleConnections: { findForUser: () => Promise.resolve({ id: '000000000000000000000005', userId: '000000000000000000000001', revokedAt: null }) },
+        ownerCalendars: { list: () => { listed += 1; return Promise.resolve([]); } },
+      },
+    } as unknown as TownwiseContext;
+    const member = {
+      kind: 'member', userId: '000000000000000000000001', email: 'member@example.test', role: 'member', memberId: '000000000000000000000002',
+      scope: { orgId: '000000000000000000000003' }, viewAs: null, openAsAdmin: null,
+    } as unknown as Principal;
+    const req = { params: { locationId: '000000000000000000000004' }, body: { kind: 'google', googleCalendarId: SHARED_ID } } as unknown as Request;
+    await expect(createOwnerCalendar(ctx, req, {} as ExpressResponse, member)).rejects.toMatchObject({ status: 503, code: 'google_calendar_unavailable' });
+    expect(listed).toBe(1);
+    expect(fake.calls).toEqual([]);
   });
 });
 
