@@ -347,8 +347,9 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
   const [problems, setProblems] = useState<LinkProblems>({});
-  // Every answer lands while the popover is open (it waits while an add, an import or a refresh runs), so focus is
-  // always in it when the messages line asks for it.
+  // Every answer lands while the popover is open (it waits while an add, an import, a refresh or a Google wait, connect
+  // or add runs), so focus is always in it when the messages line asks for it. Only a Google choices read can land
+  // while it is closed, and its ask then finds no messages line, so focus stays where it is.
   const focusMessage = useFocusMessage();
   // Remove took its row away (or found it gone): once the dialog has closed, the messages line takes focus.
   const removeEnded = useRef(false);
