@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback and the calendar refresh loop import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop and Google access import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -22,17 +22,21 @@ describe('isolation (source)', () => {
     // lab/callback.ts holds the forecast lab job's callback, which finds its calibration by id and token before any
     // organization is known. files/ai-reader.ts (spec 11A.9) claims the next file someone asked TownwiseAI to read,
     // across organizations, as the file reader claims the next import. calendar/refresher.ts claims a due calendar link
-    // in any organization.
+    // in any organization. calendar/google-access.ts checks a person's seat before reading their Google calendar, and
+    // whether they hold a Google connection in another organization before revoking (connect-google-calendar).
     expect(importers).toEqual([
-      'access/resolve.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts', 'handlers/admin.ts',
-      'handlers/deletion.ts',
+      'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts',
+      'handlers/admin.ts', 'handlers/deletion.ts',
       'handlers/me.ts', 'lab/callback.ts',
     ]);
   });
 
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {
-    const with401 = sourceFiles().filter((file) => /\b401\b/.test(file.text)).map((file) => file.path);
-    expect(with401).toEqual(['access/resolve.ts']);
+    const with401 = sourceFiles().filter((file) => /\b401\b/.test(file.text)).map((file) => file.path).sort();
+    // calendar/google.ts reads Google's 401 to pick its `unauthorized` code and never answers one: it builds no AppError,
+    // and its callers answer 409 google_reconnect for it (connect-google-calendar, design decision 8).
+    expect(with401).toEqual(['access/resolve.ts', 'calendar/google.ts']);
+    expect(sourceFiles().find((file) => file.path === 'calendar/google.ts')?.text).not.toMatch(/AppError/);
     const resolve = sourceFiles().find((file) => file.path === 'access/resolve.ts')?.text ?? '';
     expect(resolve.match(/\b401\b/g)).toHaveLength(1);
     expect(resolve).toMatch(/export function userGone\(\): never \{\n\s+throw new AppError\(401, 'unauthenticated'/);
@@ -124,17 +128,43 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'calendar/refresher.ts']);
   });
 
-  it('only the calendar routes and the refresh loop open a calendar link’s address or read one back from the store, and only the routes seal one', () => {
+  it('only the calendar routes, the refresh loop and Google access open a sealed secret or read one back from the store, and only the routes and Google access seal one', () => {
     const importers = sourceFiles()
       .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
         .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'calendar/secret.ts'))
       .map((file) => file.path)
       .sort();
-    expect(importers).toEqual(['calendar/refresher.ts', 'handlers/owner-calendars.ts']);
-    expect(sourceFiles().filter((file) => file.path !== 'calendar/secret.ts' && /\bseal\(/.test(file.text)).map((file) => file.path))
-      .toEqual(['handlers/owner-calendars.ts']);
+    expect(importers).toEqual(['calendar/google-access.ts', 'calendar/refresher.ts', 'handlers/google-calendars.ts', 'handlers/owner-calendars.ts']);
+    // A link's address and a Google calendar's id (the owner calendar routes), connect's refresh token (the Google
+    // calendar routes), and a refresh token Google replaced (Google access); never the refresh loop.
+    expect(sourceFiles().filter((file) => file.path !== 'calendar/secret.ts' && /\bseal\(/.test(file.text)).map((file) => file.path).sort())
+      .toEqual(['calendar/google-access.ts', 'handlers/google-calendars.ts', 'handlers/owner-calendars.ts']);
+    // A link's address only.
     expect(sourceFiles().filter((file) => file.text.includes('.sealedAddress(')).map((file) => file.path).sort())
       .toEqual(['calendar/refresher.ts', 'handlers/owner-calendars.ts']);
+  });
+
+  it('only calendar/google-access.ts reads a stored Google token back, and a Google calendar’s sealed id is read only there and in the Google calendar routes (connect-google-calendar)', () => {
+    // The refresh loop, Refresh now, the add, connect, the choices, team removal, leaving, staff removal and location,
+    // organization and person deletion all reach a token through google-access.ts, so handlers/deletion.ts never does.
+    expect(sourceFiles().filter((file) => file.text.includes('.sealedToken(')).map((file) => file.path)).toEqual(['calendar/google-access.ts']);
+    // The owner calendar routes reach them through google-access.ts (markCalendarForCheck, readGoogleSource) and the
+    // Google calendar routes' storedGoogleIds.
+    expect(sourceFiles().filter((file) => /\.googleSources?\(/.test(file.text)).map((file) => file.path).sort())
+      .toEqual(['calendar/google-access.ts', 'handlers/google-calendars.ts']);
+  });
+
+  it('only calendar/google.ts names Google’s OAuth and Calendar hosts or reads a token answer’s fields, and only calendar/google-access.ts writes the Google log lines', () => {
+    expect(sourceFiles().filter((file) => /oauth2\.googleapis\.com|www\.googleapis\.com\/calendar/.test(file.text)).map((file) => file.path))
+      .toEqual(['calendar/google.ts']);
+    // azure-identity.ts reads the managed identity's own `access_token` from Azure (older than Google calendars).
+    const tokenFields = /\.(?:refresh_token|access_token|id_token)\b|\[\s*['"`](?:refresh_token|access_token|id_token)['"`]\s*\]/;
+    for (const sample of ['body.refresh_token', 'body.access_token ?? null', 'parsed.data.id_token', 'raw[\'access_token\']']) expect(sample).toMatch(tokenFields);
+    expect(sourceFiles().filter((file) => tokenFields.test(file.text)).map((file) => file.path).sort()).toEqual(['azure-identity.ts', 'calendar/google.ts']);
+    for (const line of ['townwise.google_calendar_failed', 'townwise.google_revoke_failed', 'townwise.google_access_ended']) {
+      expect({ line, files: sourceFiles().filter((file) => file.text.includes(`'${line}'`)).map((file) => file.path) })
+        .toEqual({ line, files: ['calendar/google-access.ts'] });
+    }
   });
 
   it('handlers reach a calendar link only through ctx.calendarFetcher: only app.ts and the refresh loop build one, and only calendar/fetch.ts opens a connection', () => {
@@ -148,7 +178,7 @@ describe('isolation (source)', () => {
     expect(sockets).toEqual(['calendar/fetch.ts']);
   });
 
-  it('only the calendar routes, the refresh loop, TownwiseAI’s calendar tool and the deletions reach stored calendars, so no forecast code reads them', () => {
+  it('only the calendar routes, the refresh loop, Google access, TownwiseAI’s calendar tool and the deletions reach stored calendars, so no forecast code reads them', () => {
     // A value import of the store, a read of stores.ownerCalendars (dotted, destructured or bracketed) or a collection by name.
     const reaches = (file: { path: string; text: string }): boolean => /\bownerCalendars\b|\btw_calendar_/.test(file.text)
       || [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
@@ -156,9 +186,17 @@ describe('isolation (source)', () => {
     // The owner-calendar spec: a stored event changes no forecast figure, so forecasts/*, lab/*, people-in-town/* and the
     // estimates and forecast-run handlers stay off this list.
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
-      'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/deletion.ts', 'handlers/locations.ts', 'handlers/owner-calendars.ts',
-      'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
+      'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/deletion.ts', 'handlers/google-calendars.ts',
+      'handlers/locations.ts', 'handlers/owner-calendars.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
     ]);
+    // Seat loss ends a person's Google calendars only through calendar/google-access.ts (connect-google-calendar).
+    const imports = (file: { path: string; text: string }): string[] => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+      .map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));
+    for (const path of ['handlers/team.ts', 'handlers/org.ts', 'handlers/admin.ts']) {
+      const file = sourceFiles().find((each) => each.path === path);
+      expect({ path, reaches: file !== undefined && reaches(file), viaGoogleAccess: file !== undefined && imports(file).includes('calendar/google-access.ts') })
+        .toEqual({ path, reaches: false, viaGoogleAccess: true });
+    }
   });
 
   it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {
