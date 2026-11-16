@@ -385,7 +385,7 @@ describe('the picker lists the person’s own Google calendars', () => {
     expect((await connectionRow(t, t.member))?.revokedAt).toEqual(server.clock.now());
   });
 
-  it('under view-as the choices answer 403 view_as_read_only and Google is not called; open as admin, every Google route answers 403 open_as_admin_refused', async () => {
+  it('under view-as the choices answer 403 view_as_read_only and Google is not called; open as admin, every Google route answers 403 open_as_admin_refused and the list answers google.available false', async () => {
     const t = await tenant('Watched Wine Bar');
     expect((await connect(t, t.member)).status).toBe(200);
     google.calls.length = 0;
@@ -408,6 +408,10 @@ describe('the picker lists the person’s own Google calendars', () => {
     ] as const) {
       expect(await send(path, staff, init)).toMatchObject({ status: 403, body: { error: 'open_as_admin_refused' } });
     }
+    // So the list offers them no Google calendars at all, as when they are off.
+    expect(await send(calendarsPath({ locationId }), staff)).toMatchObject({
+      status: 200, body: { calendars: [], google: { available: false, connected: false, clientId: null } },
+    });
     expect(google.calls).toEqual([]);
     await removeStaffFactor(server);
   });

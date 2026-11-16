@@ -206,9 +206,13 @@ function shownView(calendar: OwnerCalendarRecord, viewAs: boolean): OwnerCalenda
   return viewAs && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
 }
 
-/** The list's `google`: under view-as `connected` is the staff member's own state, which is never a connection here. */
+/**
+ * The list's `google`: under view-as `connected` is the staff member's own state, which is never a connection here.
+ * Open as admin it is unavailable, as when off: staff never connect, and every Google route and add refuses them.
+ */
 async function googleView(ctx: TownwiseContext, caller: MemberPrincipal): Promise<GoogleCalendarsView> {
-  const clientId = ctx.googleCalendar === null || ctx.calendarKey === null ? null : ctx.googleCalendarClientId;
+  const off = ctx.googleCalendar === null || ctx.calendarKey === null || caller.openAsAdmin !== null;
+  const clientId = off ? null : ctx.googleCalendarClientId;
   if (clientId === null) return { available: false, connected: false, clientId: null };
   const connection = caller.viewAs === null ? await ctx.stores.googleConnections.findForUser(caller.scope, caller.userId) : null;
   return { available: true, connected: connection !== null && connection.revokedAt === null, clientId };
