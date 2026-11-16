@@ -59,11 +59,20 @@ export function nativeLine(google: boolean): string {
     : 'To add events from your own calendar file, open Townwise on the web.';
 }
 
+/** The explainer's paragraphs: what Townwise reads, who sees it, and how its access ends. */
+const EXPLAINER_PARAGRAPHS = [
+  'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included.',
+  'Everyone on your team can see these events, and TownwiseAI reads their titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one.',
+  'Removing your last Google calendar, or leaving your organization, ends Townwise’s access to your Google account. Google may warn that Townwise isn’t verified yet while Google reviews it.',
+] as const;
+
 /** The Google section's words (google-calendar's "The Your calendars popover connects and picks Google calendars"). */
 export const GOOGLE_COPY = {
   add: 'Add a Google calendar',
   /** Before "Continue to Google", whose press is the person's agreement (the connect body's `agreed: true`). */
-  explainer: 'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included. Everyone on your team can see these events, and TownwiseAI reads their titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one. Removing your last Google calendar, or leaving your organization, ends Townwise’s access to your Google account. Google may warn that Townwise isn’t verified yet while Google reviews it.',
+  explainer: EXPLAINER_PARAGRAPHS.join(' '),
+  /** The explainer as the section shows it: the same words, with a blank line between its paragraphs. */
+  explainerShown: EXPLAINER_PARAGRAPHS.join('\n\n'),
   continue: 'Continue to Google',
   /** In place of "Continue to Google" until Google's script has loaded. */
   loadingGoogle: 'Loading Google…',

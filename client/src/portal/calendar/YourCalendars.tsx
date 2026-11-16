@@ -373,6 +373,9 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   // The choices came from a connect in this section: its Cancel, with nothing added, drops the connection.
   const [fresh, setFresh] = useState(false);
   const [googleFocus, setGoogleFocus] = useState<GoogleFocus>(null);
+  // A refusal's words while the explainer shows again. They sit in the section, just above "Continue to Google", which
+  // takes focus, so they are in view; the popover's own messages line is above the long explainer.
+  const [googleWords, setGoogleWords] = useState<string | null>(null);
   // The `state` Google's answer must carry while the section waits on a press; null otherwise. Leaving the page forgets
   // it, so an answer that lands after never posts a code.
   const expectedStateRef = useRef<string | null>(null);
@@ -478,7 +481,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const explain = useCallback((words: string | null) => {
     setGoogleStep('explaining');
     setGoogleFocus('continue');
-    if (words !== null) setMessage({ live: 'alert', items: [words] });
+    setGoogleWords(words);
+    if (words !== null) setMessage(null);
   }, []);
 
   // A connected person's choices. A connection that is gone or dead falls back to the explainer; any other refusal
@@ -548,6 +552,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     if (gone) {
       setGoogleStep('explaining');
       setGoogleFocus(null);
+      setGoogleWords(null);
       setChoices([]);
       setChecked([]);
       setFresh(false);
@@ -582,6 +587,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     setChecked([]);
     setFresh(false);
     setGoogleFocus('add');
+    setGoogleWords(null);
   }
 
   // An add, an import, a refresh, or a Google choices read, wait, connect or add is out: the popover waits for its
@@ -677,7 +683,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
         ) : null}
         {googleClientId === null || googleStep === 'closed' || googleStep === 'loading' ? null : (
           <View style={styles.form}>
-            {googleStep === 'explaining' ? <Small nativeID={EXPLAINER_ID}>{GOOGLE_COPY.explainer}</Small> : null}
+            {googleStep === 'explaining' ? <Small nativeID={EXPLAINER_ID}>{GOOGLE_COPY.explainerShown}</Small> : null}
+            {googleStep === 'explaining' && googleWords !== null ? <Messages live="alert" items={[googleWords]} /> : null}
             {googleStep === 'explaining' || googleStep === 'waiting' || googleStep === 'connecting' ? (
               <GoogleConnect
                 clientId={googleClientId}
@@ -689,6 +696,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
                 focusContinue={googleFocus === 'continue'}
                 onWait={() => {
                   setMessage(null);
+                  setGoogleWords(null);
                   setGoogleStep('waiting');
                 }}
                 onCode={(code) => {

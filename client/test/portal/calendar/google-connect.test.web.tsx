@@ -191,13 +191,13 @@ test('no script from accounts.google.com is in the document until “Add a Googl
   expect(within(panel).getByText(/^Sign in with Google to pick calendars from your Google account\./)).toBeTruthy();
   expect(document.activeElement).toBe(loading);
   const explainer = (button: HTMLElement): string | null | undefined => document.getElementById(button.getAttribute('aria-describedby') ?? '')?.textContent;
-  expect(explainer(loading)).toBe(GOOGLE_COPY.explainer);
+  expect(explainer(loading)).toBe(GOOGLE_COPY.explainerShown);
   finishLoad();
   const go = await within(panel).findByRole('button', { name: 'Continue to Google' });
   expect(go).toBe(loading);
   expect(go.getAttribute('aria-disabled')).toBeNull();
   expect(document.activeElement).toBe(go);
-  expect(explainer(go)).toBe(GOOGLE_COPY.explainer);
+  expect(explainer(go)).toBe(GOOGLE_COPY.explainerShown);
 });
 
 test('the press sets up the code client with exactly the three scopes, a popup, include_granted_scopes false, the person’s email and a fresh state, and calls requestCode inside the press', async () => {

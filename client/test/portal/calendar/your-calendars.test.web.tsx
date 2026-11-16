@@ -1077,15 +1077,20 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     }
   });
 
-  test('a refusal of the connect shows the explainer again with its words', async () => {
+  test('a refusal of the connect shows the explainer again with its words, between the explainer and Continue', async () => {
     const { api } = await renderGoogle();
     const panel = openPopover();
     await connectWith(panel, api, () => refusal(409, 'google_other_account'));
-    expect(await within(panel).findByText(
+    const words = await within(panel).findByText(
       'Choose the Google account you sign in to Townwise with. To add another account’s calendar, share it with that account in Google Calendar first.',
-    )).toBeTruthy();
-    expect(within(panel).getByText(GOOGLE_COPY.explainer)).toBeTruthy();
-    expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Continue to Google' }));
+    );
+    const explainer = within(panel).getByText(GOOGLE_COPY.explainer);
+    const go = within(panel).getByRole('button', { name: 'Continue to Google' });
+    expect(document.activeElement).toBe(go);
+    // In view next to the focused button, not in the messages line above the long explainer (UI check, 2026-11-16).
+    expect(explainer.compareDocumentPosition(words) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(words.compareDocumentPosition(go) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(words.getAttribute('role')).toBe('alert');
     expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
   });
 

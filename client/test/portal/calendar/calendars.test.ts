@@ -260,6 +260,9 @@ describe('the Google section’s words', () => {
     expect(GOOGLE_COPY.explainer).toBe(
       'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included. Everyone on your team can see these events, and TownwiseAI reads their titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one. Removing your last Google calendar, or leaving your organization, ends Townwise’s access to your Google account. Google may warn that Townwise isn’t verified yet while Google reviews it.',
     );
+    // Shown in three paragraphs (what Townwise reads, who sees it, how access ends), with the same words.
+    expect(GOOGLE_COPY.explainerShown.split('\n\n')).toHaveLength(3);
+    expect(GOOGLE_COPY.explainerShown.replaceAll('\n\n', ' ')).toBe(GOOGLE_COPY.explainer);
     expect(GOOGLE_COPY.add).toBe('Add a Google calendar');
     expect(GOOGLE_COPY.continue).toBe('Continue to Google');
     expect(GOOGLE_COPY.loadingGoogle).toBe('Loading Google…');
