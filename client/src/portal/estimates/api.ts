@@ -108,13 +108,15 @@ const appliedSchema = z.object({ id: z.string(), guests: z.number().nullable(), 
 /**
  * Whether a reason usually brings more or fewer guests (spec 14.4): `pct` is its size rounded to the nearest 5 (never
  * negative), 'same' at 5 or less; `basis` 'model' is the run's own effect, 'history' how the location's own last 52
- * weeks usually ran over `days` days (null for the model's).
+ * weeks usually ran over `days` days (null for the model's). `averageGuests`, on a weekday's history effect, is the
+ * average open day's guests it is held against; null on every other, missing from an API before it.
  */
 const reasonEffectSchema = z.object({
   direction: z.enum(['more', 'fewer', 'same']),
   pct: z.number(),
   basis: z.enum(['model', 'history']),
   days: z.number().nullable(),
+  averageGuests: z.number().nullish(),
 });
 export type ReasonEffect = z.infer<typeof reasonEffectSchema>;
 

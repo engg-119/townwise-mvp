@@ -259,6 +259,34 @@ test('Why says whether each reason usually brings more or fewer guests, biggest 
   expect(dayView('2026-11-07', input()).reasons.map((reason) => [reason.label, reason.mark, reason.detail])).toEqual([['Saturday', null, null]]);
 });
 
+test('“your average day” carries the average open day’s guests the API sent; other comparisons and short lines carry none', () => {
+  // Tue, Nov 17, 2026: its weekday's reason and a term reason.
+  const tuesday = (weekday: ReturnType<typeof effect> & { averageGuests?: number | null }, term = effect('fewer', 10, 20)) => forecastDay({
+    date: '2026-11-17',
+    reasons: [
+      { kind: 'weekday', label: 'Tuesday', effectPct: null, effect: weekday, sources: [], note: null },
+      { kind: 'term', label: 'Fall term classes', effectPct: null, effect: term, sources: [], note: null },
+    ],
+  });
+  /** Each reason's Why words, by its label. */
+  const why = (day: ForecastDay) => Object.fromEntries(dayView(day.date, input({ forecast: windowOf([day]) })).reasons.map((reason) => [reason.label, reason.detail]));
+  expect(why(tuesday({ ...effect('fewer', 35, 52), averageGuests: 210 }))).toEqual({
+    Tuesday: 'Usually about 35% fewer guests than your average day (210)',
+    'Fall term classes': 'Usually about 10% fewer guests than the same weekday at other times of the year',
+  });
+  expect(why(tuesday({ ...effect('same', 0, 52), averageGuests: 1210 })).Tuesday).toBe('Usually about as many guests as your average day (1,210)');
+  // An API before the field sends none, and null is none: no parentheses.
+  expect(why(tuesday(effect('fewer', 35, 52))).Tuesday).toBe('Usually about 35% fewer guests than your average day');
+  expect(why(tuesday({ ...effect('fewer', 35, 52), averageGuests: null })).Tuesday).toBe('Usually about 35% fewer guests than your average day');
+  // Only “your average day” takes the number, even from another effect that carried one; the short lines take none.
+  const termWithOne = { ...effect('fewer', 10, 20), averageGuests: 210 };
+  expect(why(tuesday({ ...effect('fewer', 35, 52), averageGuests: 210 }, termWithOne))['Fall term classes'])
+    .toBe('Usually about 10% fewer guests than the same weekday at other times of the year');
+  expect(reasonShortLines(tuesday({ ...effect('fewer', 35, 52), averageGuests: 210 }), false)).toEqual([
+    'Tuesday: usually fewer guests', 'Fall term classes: usually fewer guests',
+  ]);
+});
+
 test('the tooltip and Home’s day detail give the top reasons with short effect words', () => {
   expect(reasonShortLines(THANKSGIVING, false)).toEqual([
     'Thanksgiving Day: fewer guests last time', 'Turkey trot: usually more guests', 'Fall term finals: usually fewer guests',

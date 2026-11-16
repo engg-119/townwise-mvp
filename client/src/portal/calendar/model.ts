@@ -412,16 +412,19 @@ function effectOf(reason: ForecastReason, past: boolean): ReasonEffect | null {
 }
 
 /**
- * An effect in words: “Usually about 35% more guests than your average day”, “Last time, about 70% fewer guests than
- * the same weekday in the weeks around it” (one past occurrence is what happened, not what usually does), “Usually about
- * as many guests as your average day”, or the model's own, “Townwise’s model: about 10% more guests”.
+ * An effect in words: “Usually about 35% more guests than your average day (210)”, “Last time, about 70% fewer guests
+ * than the same weekday in the weeks around it” (one past occurrence is what happened, not what usually does), “Usually
+ * about as many guests as your average day (1,210)”, or the model's own, “Townwise’s model: about 10% more guests”. The
+ * average day's guests follow “your average day” only, and only when the API sent them.
  */
 function effectWords(kind: string, effect: ReasonEffect): string {
   if (effect.basis === 'model') {
     return effect.direction === 'same' ? 'Townwise’s model: about the same number of guests' : `Townwise’s model: about ${String(effect.pct)}% ${effect.direction} guests`;
   }
   const lead = effect.days === 1 ? 'Last time,' : 'Usually';
-  const against = AGAINST.get(kind);
+  const named = AGAINST.get(kind);
+  const against = named === undefined || kind !== 'weekday' || typeof effect.averageGuests !== 'number'
+    ? named : `${named} (${formatCount(effect.averageGuests)})`;
   if (effect.direction === 'same') return against === undefined ? `${lead} about the same number of guests` : `${lead} about as many guests as ${against}`;
   return `${lead} about ${String(effect.pct)}% ${effect.direction} guests${against === undefined ? '' : ` than ${against}`}`;
 }

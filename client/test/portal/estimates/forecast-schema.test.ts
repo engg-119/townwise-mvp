@@ -85,6 +85,17 @@ describe('forecastWindowSchema', () => {
     expect(parsed.weeks[0]?.noteGuests).toBe(0);
   });
 
+  test('a weekday effect’s average day: with it, from an API before it, and null', () => {
+    const weekday = (averageGuests: Record<string, unknown>) => ({
+      kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null,
+      effect: { direction: 'more', pct: 35, basis: 'history', days: 52, ...averageGuests },
+    });
+    const day = { ...NOTED_DAY, reasons: [weekday({ averageGuests: 210 }), weekday({}), weekday({ averageGuests: null })] };
+    const reasons = forecastWindowSchema.parse({ ...WINDOW, days: [day] }).days[0]?.reasons ?? [];
+    // Each effect still parses, so the page reads it as before.
+    expect(reasons.map((reason) => [reason.effect?.pct, reason.effect?.averageGuests])).toEqual([[35, 210], [35, undefined], [35, null]]);
+  });
+
   test('no published forecast', () => {
     const none = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-05-01', to: '2026-05-31' }] };
     expect(forecastWindowSchema.parse(none)).toEqual({ available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] });
