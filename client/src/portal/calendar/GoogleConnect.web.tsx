@@ -24,9 +24,10 @@ import type { GoogleConnectProps } from './GoogleConnect';
 // (`onCancel`); `popup_failed_to_open` says the pop-up words; any other error, from the callback or the error
 // callback's `unknown`, says "Google didn’t connect Townwise. Try again." and never Google's own `error_description`
 // (`onRefusal`). While Google's window is open it shows "Waiting for Google…" and "Stop waiting", which forgets the
-// press, so a window that never answers can't hold the popover. "Continue to Google" (and "Loading Google…" before it)
-// is described by the explainer, since its press is the person's agreement and focus lands on it past the explainer.
-// Native has its own file (GoogleConnect.tsx).
+// press, so a window that never answers can't hold the popover; while the code is posted the line reads "Connecting
+// your Google account…" and "Stop waiting" stays in place, disabled, so focus stays on it until the picker or the
+// explainer takes it. "Continue to Google" (and "Loading Google…" before it) is described by the explainer, since its
+// press is the person's agreement and focus lands on it past the explainer. Native has its own file (GoogleConnect.tsx).
 
 const SCOPES = [
   'openid',
@@ -123,12 +124,12 @@ export function GoogleConnect(props: GoogleConnectProps): React.JSX.Element {
     props.onCancel();
   }
 
-  if (props.waiting) {
+  if (props.waiting || props.connecting) {
     return (
       <>
-        <Small white>{GOOGLE_COPY.waiting}</Small>
+        <Small white>{props.connecting ? GOOGLE_COPY.connecting : GOOGLE_COPY.waiting}</Small>
         <Actions>
-          <Button variant="link" label={GOOGLE_COPY.stopWaiting} focusOnMount onPress={stopWaiting} />
+          <Button variant="link" label={GOOGLE_COPY.stopWaiting} disabled={props.connecting} focusOnMount onPress={stopWaiting} />
         </Actions>
       </>
     );

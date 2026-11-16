@@ -917,8 +917,8 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
 
   interface Served {
     google: GoogleCalendars;
-    /** What GET .../google-calendars answers. */
-    choices: GoogleChoice[] | ApiError;
+    /** What GET .../google-calendars answers, or a promise of it that a test holds. */
+    choices: GoogleChoice[] | ApiError | Promise<GoogleChoice[]>;
   }
 
   beforeEach(() => {
@@ -938,7 +938,8 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
       }
       if (path === GOOGLE_PATH) {
         fake.paths.push(path);
-        return served.choices instanceof ApiError ? Promise.reject(served.choices) : Promise.resolve(schema.parse({ calendars: served.choices }));
+        const { choices } = served;
+        return choices instanceof ApiError ? Promise.reject(choices) : Promise.resolve(choices).then((found) => schema.parse({ calendars: found }));
       }
       return json(...args);
     }) as typeof json;
@@ -1084,7 +1085,7 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
       'Choose the Google account you sign in to Townwise with. To add another account’s calendar, share it with that account in Google Calendar first.',
     )).toBeTruthy();
     expect(within(panel).getByText(GOOGLE_COPY.explainer)).toBeTruthy();
-    expect(within(panel).getByRole('button', { name: 'Continue to Google' })).toBeTruthy();
+    expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Continue to Google' }));
     expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
   });
 
@@ -1094,12 +1095,40 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     const answer = deferred<unknown>();
     await connectWith(panel, api, () => answer.promise);
     expect(within(panel).getByText('Connecting your Google account…')).toBeTruthy();
+    expect(within(panel).queryByText('Waiting for Google…')).toBeNull();
+    // "Stop waiting" stays in place, disabled, so the focus it had stays in the section.
+    const stop = within(panel).getByRole('button', { name: 'Stop waiting' });
+    expect(stop.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(stop);
+    fireEvent.click(stop);
+    expect(within(panel).getByText('Connecting your Google account…')).toBeTruthy();
     escape();
     pressOutside();
     expect(screen.getByRole('dialog', { name: 'Your calendars' })).toBe(panel);
     expect(closeOf(panel).getAttribute('aria-disabled')).toBe('true');
     await act(async () => { answer.resolve({ calendars: [PRIMARY] }); await Promise.resolve(); });
     expect(await within(panel).findByRole('checkbox', { name: 'Owner' })).toBeTruthy();
+    await waitFor(() => { expect(document.activeElement).toBe(box(panel, 'Owner')); });
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test('while a connected person’s choices are read, “Add a Google calendar” stays in place as “Loading your Google calendars…”, disabled with focus, and the popover waits for them', async () => {
+    const choices = deferred<GoogleChoice[]>();
+    await renderGoogle({ google: { ...ON, connected: true }, choices: choices.promise });
+    const panel = openPopover();
+    const action = within(panel).getByRole('button', { name: 'Add a Google calendar' });
+    focus(action);
+    fireEvent.click(action);
+    expect(within(panel).getByRole('button', { name: 'Loading your Google calendars…' })).toBe(action);
+    expect(action.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(action);
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    escape();
+    pressOutside();
+    expect(screen.getByRole('dialog', { name: 'Your calendars' })).toBe(panel);
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBe('true');
+    await act(async () => { choices.resolve([PRIMARY, SHARED]); await Promise.resolve(); });
+    await waitFor(() => { expect(document.activeElement).toBe(box(panel, 'Owner')); });
     expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
   });
 

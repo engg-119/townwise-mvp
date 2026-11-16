@@ -54,13 +54,13 @@ import { IcsImport } from './IcsImport';
 // again (`reading`) a row may be out of date, a removed calendar still listed, so every row's Refresh now and Remove
 // wait, disabled in place, and the list is aria-busy.
 // The Google section (google-calendar's "The Your calendars popover connects and picks Google calendars"): for a person
-// the list says is connected it first reads their choices ("Loading your Google calendars…"), and a 409
-// google_not_connected or google_reconnect (with "Connect your Google account again to add calendars.") falls back to
-// the explainer; for anyone else it opens on the explainer, then "Continue to Google", described by the explainer since
-// its press is the agreement, and Cancel (GoogleConnect.web.tsx, which loads Google's script only now and opens
-// Google's window in the press). While Google's window is open it says "Waiting for Google…" with "Stop waiting"; a
-// code is posted as `{ code, agreed: true }` ("Connecting your Google account…"), and the answer's choices open the
-// picker; any refusal shows the explainer again with its words. The picker
+// the list says is connected it first reads their choices ("Add a Google calendar" reading "Loading your Google
+// calendars…" meanwhile, disabled in place), and a 409 google_not_connected or google_reconnect (with "Connect your
+// Google account again to add calendars.") falls back to the explainer; for anyone else it opens on the explainer, then
+// "Continue to Google", described by the explainer since its press is the agreement, and Cancel (GoogleConnect.web.tsx,
+// which loads Google's script only now and opens Google's window in the press). While Google's window is open it says
+// "Waiting for Google…" with "Stop waiting"; a code is posted as `{ code, agreed: true }` ("Connecting your Google
+// account…"), and the answer's choices open the picker; any refusal shows the explainer again with its words. The picker
 // says "Choose the calendars to add to {location}.", then a checkbox row per calendar (the primary first, with "Your
 // main calendar"; one already on the location checked, disabled and "Added"), "This location can add {k} more." with
 // the checks capped at k, the line on sharing another account's calendar, and "Add {n} calendars" ("Add calendar" for
@@ -72,23 +72,24 @@ import { IcsImport } from './IcsImport';
 // changes nothing here: the API's connection check ends an unused connection a day after its connect. Native never
 // offers the section (its line points to the web), and under view-as "Add a Google calendar" stays in place, disabled,
 // described by the read-only line.
-// While a link add, a file import, a Refresh now, or a Google wait, connect or add runs the popover waits for its answer
-// (Popover's `busy`: Close disabled in place, Escape, back and a press outside doing nothing), and a press outside never
-// closes it while its Remove dialog is open, so every answer lands in the open popover. The popover's content unmounts
-// when it closes, so what must survive closing lives here, in Calendars, which stays mounted with the button: the
-// messages line, the help's open state, whether the add-a-link form is open, its Name and Calendar link fields and their
-// problems, and the link add itself (its pending state and its in-flight guard, so no remount can post a link twice);
-// and the Google section's step, its choices and checks, the `state` Google's answer must carry, and its connect and
-// adds. When the popover takes away the control that has focus, focus moves to what takes its place, as on Rules: "Add a
-// link" opens the form with focus in Name, and Cancel gives it back to "Add a link" (on native the screen reader's,
-// places/focus.ts); "Add a Google calendar" opens the section with focus on "Continue to Google" (or on the picker's
-// first control once the choices arrive), "Stop waiting" takes it while Google's window is open and gives it back to
-// "Continue to Google", and the section's Cancel gives it back to "Add a Google calendar"; an add that worked, Google
-// calendars added from the picker, a Remove (once its dialog has given focus back to its opener) and a 404 on Refresh
-// now move it to the messages line (MessageFocus, around the popover), since each takes its control away. A step that
-// lands while the popover is closed takes no focus when it opens again, which leaves focus on Close. Under view-as the
-// list and the help work and every write stays in place, disabled, described by the read-only line. The same component
-// on native, where the import is IcsImport.tsx's line.
+// While a link add, a file import, a Refresh now, or a Google choices read, wait, connect or add runs the popover waits
+// for its answer (Popover's `busy`: Close disabled in place, Escape, back and a press outside doing nothing), and a
+// press outside never closes it while its Remove dialog is open, so every answer lands in the open popover. The
+// popover's content unmounts when it closes, so what must survive closing lives here, in Calendars, which stays mounted
+// with the button: the messages line, the help's open state, whether the add-a-link form is open, its Name and Calendar
+// link fields and their problems, and the link add itself (its pending state and its in-flight guard, so no remount
+// can post a link twice); and the Google section's step, its choices and checks, the `state` Google's answer must
+// carry, and its connect and adds. When the popover takes away the control that has focus, focus moves to what takes
+// its place, as on Rules: "Add a link" opens the form with focus in Name, and Cancel gives it back to "Add a link" (on
+// native the screen reader's, places/focus.ts); "Add a Google calendar" opens the section with focus on "Continue to
+// Google" (or keeps it, disabled in place, while a connected person's choices are read, and the picker's first control
+// takes it once they arrive), "Stop waiting" takes it while Google's window is open, keeps it, disabled in place, while
+// the code is posted, and gives it back to "Continue to Google", and the section's Cancel gives it back to "Add a
+// Google calendar"; an add that worked, Google calendars added from the picker, a Remove (once its dialog has given
+// focus back to its opener) and a 404 on Refresh now move it to the messages line (MessageFocus, around the popover),
+// since each takes its control away. A part of the Google section that shows again as the popover opens takes no focus,
+// which stays on Close. Under view-as the list and the help work and every write stays in place, disabled, described by
+// the read-only line. The same component on native, where the import is IcsImport.tsx's line.
 // [CONFIRM: the import help behind "How importing works"]
 
 const POPOVER_ID = 'your-calendars';
@@ -351,9 +352,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const [name, setName] = useState('');
   const [link, setLink] = useState('');
   const [problems, setProblems] = useState<LinkProblems>({});
-  // Every answer lands while the popover is open (it waits while an add, an import, a refresh or a Google wait, connect
-  // or add runs), so focus is always in it when the messages line asks for it. Only a Google choices read can land
-  // while it is closed, and its ask then finds no messages line, so focus stays where it is.
+  // Every answer lands while the popover is open (it waits while an add, an import, a refresh or a Google choices read,
+  // wait, connect or add runs), so focus is always in it when the messages line asks for it.
   const focusMessage = useFocusMessage();
   // Remove took its row away (or found it gone): once the dialog has closed, the messages line takes focus.
   const removeEnded = useRef(false);
@@ -581,9 +581,10 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     setGoogleFocus('add');
   }
 
-  // An add, an import, a refresh, or a Google wait, connect or add is out: the popover waits for its answer. A list read
-  // again that says Google calendars are off hides the section, and nothing then holds the popover.
-  const googleBusy = googleClientId !== null && (googleStep === 'waiting' || googleStep === 'connecting' || googleStep === 'adding');
+  // An add, an import, a refresh, or a Google choices read, wait, connect or add is out: the popover waits for its
+  // answer. A list read again that says Google calendars are off hides the section, and nothing then holds the popover.
+  const googleBusy = googleClientId !== null
+    && (googleStep === 'loading' || googleStep === 'waiting' || googleStep === 'connecting' || googleStep === 'adding');
   const busy = add.pending || importFile.pending || refresh.pending || googleBusy;
   /** Closes the popover. A form opened or cancelled since it opened shows again with focus on Close. */
   const close = useCallback(() => {
@@ -601,7 +602,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
         hasPopup="dialog"
         {...(open ? { controls: POPOVER_ID } : {})}
         onPress={() => {
-          // What the Google section did while the popover was closed takes no focus as it opens.
+          // A part of the Google section that shows again as the popover opens takes no focus, which stays on Close.
           setGoogleFocus(null);
           setOpen(true);
         }}
@@ -647,8 +648,15 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
           {adding ? null : (
             <Button variant="outline" label="Add a link" focusOnMount={form === 'cancelled'} {...ro} onPress={() => { setForm('opening'); }} />
           )}
-          {googleClientId === null || googleStep !== 'closed' ? null : (
-            <Button variant="outline" label={GOOGLE_COPY.add} focusOnMount={googleFocus === 'add'} {...ro} onPress={openGoogle} />
+          {/* While a connected person's choices are read it stays in place, disabled, so it keeps focus. */}
+          {googleClientId === null || (googleStep !== 'closed' && googleStep !== 'loading') ? null : (
+            <Button
+              variant="outline"
+              label={googleStep === 'loading' ? GOOGLE_COPY.loadingChoices : GOOGLE_COPY.add}
+              focusOnMount={googleFocus === 'add'}
+              {...(ro ?? { disabled: googleStep === 'loading' })}
+              onPress={openGoogle}
+            />
           )}
         </Actions>
         {adding ? (
@@ -664,16 +672,16 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
             onCancel={() => { clearLink(); setForm('cancelled'); }}
           />
         ) : null}
-        {googleClientId === null || googleStep === 'closed' ? null : (
+        {googleClientId === null || googleStep === 'closed' || googleStep === 'loading' ? null : (
           <View style={styles.form}>
-            {googleStep === 'loading' ? <Small>{GOOGLE_COPY.loadingChoices}</Small> : null}
             {googleStep === 'explaining' ? <Small nativeID={EXPLAINER_ID}>{GOOGLE_COPY.explainer}</Small> : null}
-            {googleStep === 'explaining' || googleStep === 'waiting' ? (
+            {googleStep === 'explaining' || googleStep === 'waiting' || googleStep === 'connecting' ? (
               <GoogleConnect
                 clientId={googleClientId}
                 loginHint={me.user.email}
                 expectedStateRef={expectedStateRef}
                 waiting={googleStep === 'waiting'}
+                connecting={googleStep === 'connecting'}
                 describedBy={EXPLAINER_ID}
                 focusContinue={googleFocus === 'continue'}
                 onWait={() => {
@@ -689,7 +697,6 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
                 onClose={closeGoogle}
               />
             ) : null}
-            {googleStep === 'connecting' ? <Small>{GOOGLE_COPY.connecting}</Small> : null}
             {googleStep === 'picking' || googleStep === 'adding' ? (
               <GooglePicker
                 location={shownLocationName(location, org)}
