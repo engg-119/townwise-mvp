@@ -14,6 +14,7 @@ import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig
 import type { FileBlobs } from './files/blobs.ts';
 import type { FileReaderModel } from './files/extract/reader.ts';
 import { SETUP_READ_TIME_MS } from './files/extract/setup-prompt.ts';
+import type { AiTextInput, AiTextOutcome } from './files/parse/ai-text.ts';
 import { createItemReader, type ItemReader } from './files/items.ts';
 import { createForecastReader, type ForecastReader } from './forecasts/reader.ts';
 import type { LabCaller } from './lab/caller.ts';
@@ -64,6 +65,8 @@ export interface TownwiseDeps {
   readonly setupReader?: FileReaderModel | undefined;
   /** A setup read's time limit from the request's start, in milliseconds; tests shorten it. Absent, SETUP_READ_TIME_MS. */
   readonly setupReadTimeMs?: number | undefined;
+  /** How a setup read makes a file's text; tests pass a scripted one. Absent, the AI text thread (parse/ai-text.ts). */
+  readonly setupReadText?: ((input: AiTextInput) => Promise<AiTextOutcome>) | undefined;
   /** U13A: the researched headcount inputs; absent, the committed people-in-town/sources.ts. Tests pass synthetic ones. */
   readonly peopleData?: PeopleData | undefined;
   /** Starts the forecast lab's jobs; absent turns calibrations off (main.ts builds it from TOWNWISE_LAB_RUNNER). */
@@ -116,6 +119,8 @@ export interface TownwiseContext {
   /** Reading the ordering setup with TownwiseAI: null while it is off (503 ai_unavailable, canReadWithAi false). */
   readonly setupReader: FileReaderModel | null;
   readonly setupReadTimeMs: number;
+  /** Null: the AI text thread. */
+  readonly setupReadText: ((input: AiTextInput) => Promise<AiTextOutcome>) | null;
   /** The one door TownwiseAI's tools read a reference item's text through (chat/* imports no file code). */
   readonly items: ItemReader;
   /** U13A. */
@@ -152,6 +157,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     aiReads: deps.aiReader ?? null,
     setupReader: deps.setupReader ?? null,
     setupReadTimeMs: deps.setupReadTimeMs ?? SETUP_READ_TIME_MS,
+    setupReadText: deps.setupReadText ?? null,
     items: createItemReader(stores, deps.files ?? null, { logger: deps.logger }),
     ports: {
       peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }),

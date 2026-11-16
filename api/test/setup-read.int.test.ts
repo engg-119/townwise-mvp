@@ -1,16 +1,19 @@
 // Reading the ordering setup with TownwiseAI (spec D39) end to end against the database, over a scripted model (no call
 // leaves the test): each input kind and what the request holds (the content and the saved names, never a point-of-sale,
 // organization, location or file name), the answer, `canReadWithAi`, off, the files AI budget (spent, reserved before
-// the call, corrected after it, a failed call charged what its stream reported, a refusal charged), the time limit, who may read (view-as,
-// staff opened as admin, another organization), the 400s and the body limit, the bytes a replica holds, nothing stored,
-// and logs and audit that carry no name. Synthetic content only.
+// the call, corrected after it, a failed call charged what its stream reported, a refusal charged), the person leaving,
+// the time limit from the request's start, a busy parse thread, who may read (view-as, staff opened as admin, another
+// organization), the 400s and the body limit, the bytes a replica holds, nothing stored, and logs and audit that carry
+// no name. Synthetic content only.
 import { randomUUID } from 'node:crypto';
 
 import { createRateLimiter } from '@ckeith26/rate-limit';
 import { Types } from 'mongoose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FileReaderModel, ReaderAnswer, ReaderRequest } from '../src/files/extract/reader.ts';
+import type { AiTextInput, AiTextOutcome } from '../src/files/parse/ai-text.ts';
+import { SlotBusy } from '../src/files/parse/thread-slot.ts';
 import { setupCeilingMicroUsd } from '../src/files/extract/setup-reader.ts';
 import { SETUP_FILE_BYTES, SETUP_READ_BYTES_IN_FLIGHT } from '../src/files/limits.ts';
 import { setupReadBytes } from '../src/handlers/order-setup-read.ts';
@@ -67,20 +70,45 @@ const model: FileReaderModel = {
 };
 /** What the slow model answers once its signal ends the call: by default, a call whose stream reported nothing. */
 let endedAnswer: ReaderAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null };
-/** Answers only once its signal ends the call, as the real client does. */
+/** Each slow call: its signal, and how long after it began the signal ended it. */
+const calls: { signal: AbortSignal; endedAfterMs: number | null }[] = [];
+/** Answers only once its signal ends the call, as the real client does; `started` resolves once a call has begun. */
 const slowModel: FileReaderModel = {
   readFile(request, signal) {
     requests.push(request);
+    const call: { signal: AbortSignal; endedAfterMs: number | null } = { signal, endedAfterMs: null };
+    calls.push(call);
+    const begun = Date.now();
+    started?.();
     return new Promise((resolve) => {
-      signal.addEventListener('abort', () => { resolve(endedAnswer); }, { once: true });
+      signal.addEventListener('abort', () => {
+        call.endedAfterMs = Date.now() - begun;
+        resolve(endedAnswer);
+      }, { once: true });
     });
   },
 };
+
+// ---- The scripted AI text thread (a workbook's, Word file's or PDF's text) ----------------------------------------
+
+/** While set, making a file's text waits for it; `textBegun` resolves once it has begun. */
+let textGate: Promise<void> | null = null;
+let textBegun: (() => void) | null = null;
+/** Thrown instead of the text (SlotBusy: the parse thread stayed busy). */
+let textThrows: Error | null = null;
+async function scriptedText(input: AiTextInput): Promise<AiTextOutcome> {
+  textBegun?.();
+  if (textGate !== null) await textGate;
+  if (textThrows !== null) throw textThrows;
+  return { kind: 'text', text: `${SENTINEL} IPA, half-barrel`, cut: false, pages: input.kind === 'pdf' ? 1 : null };
+}
 
 let server: TownwiseTestServer;
 let off: TownwiseTestServer;
 let noBudget: TownwiseTestServer;
 let slow: TownwiseTestServer;
+/** The slow model, the scripted text thread, and a second's time limit. */
+let scripted: TownwiseTestServer;
 
 interface Person { session: TestSession; email: string }
 let orgId: string;
@@ -109,6 +137,7 @@ beforeAll(async () => {
   off = await startTownwiseServer();
   noBudget = await startTownwiseServer({ setupReader: model, env: { TOWNWISE_FILES_MONTHLY_BUDGET_USD: '0' } });
   slow = await startTownwiseServer({ setupReader: slowModel, setupReadTimeMs: 300 });
+  scripted = await startTownwiseServer({ setupReader: slowModel, setupReadTimeMs: 1000, setupReadText: scriptedText });
   server = await startTownwiseServer({ setupReader: model });
   orgId = await createOrg(server, { name: `${ORG_SENTINEL} Tavern` });
   member = await person(orgId, 'member', 'member');
@@ -125,6 +154,7 @@ afterAll(async () => {
   await off.close();
   await noBudget.close();
   await slow.close();
+  await scripted.close();
 });
 beforeEach(async () => {
   answers = [];
@@ -132,6 +162,10 @@ beforeEach(async () => {
   gate = null;
   started = null;
   endedAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null };
+  calls.length = 0;
+  textGate = null;
+  textBegun = null;
+  textThrows = null;
   await server.redis.flushdb();
   await server.connection.collection('tw_files_usage').deleteMany({});
 });
@@ -146,6 +180,24 @@ const file = (kind: string, bytes: Buffer): unknown => ({ source: { type: 'file'
 
 async function errorOf(res: Response): Promise<{ status: number; error: string }> {
   return { status: res.status, error: (await res.json() as { error: string }).error };
+}
+
+/** A read the person leaves: its fetch, which `leaving` aborts; resolves to the error's name once aborted. */
+function readLeaving(on: TownwiseTestServer, session: TestSession, json: unknown, leaving: AbortSignal): Promise<unknown> {
+  return fetch(new URL(readPath(), on.url), {
+    method: 'POST', body: JSON.stringify(json), signal: leaving,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${session.accessToken}` },
+  }).catch((err: unknown) => (err instanceof Error ? err.name : 'error'));
+}
+
+/** The last townwise.setup_read_failed line `on` logged since `from`, once there is one. */
+async function failedLine(on: TownwiseTestServer, from: number): Promise<Record<string, unknown>> {
+  let line: Record<string, unknown> | undefined;
+  await vi.waitFor(() => {
+    line = logLines(on).slice(from).findLast((each) => each.msg === 'townwise.setup_read_failed');
+    expect(line).toBeDefined();
+  });
+  return line ?? {};
 }
 
 async function usage(org = orgId): Promise<number> {
@@ -374,19 +426,88 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
         .toEqual(['refused', 'too_long', 'invalid_answer', 'failed', 'failed']);
     });
 
-    it('ends the call at the read’s time limit, charging what its stream reported (503)', async () => {
+    it('ends the call at the read’s time limit, charging what its stream reported (503 extract_timed_out, logged as such)', async () => {
       endedAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null, streamedMicroUsd: 2500 };
       const session = await signIn(slow, member.email);
-      expect((await errorOf(await read(pasted(), session, slow))).status).toBe(503);
+      const before = logLines(slow).length;
+      expect(await errorOf(await read(pasted(), session, slow))).toEqual({ status: 503, error: 'extract_timed_out' });
+      expect(await failedLine(slow, before)).toMatchObject({ code: 'extract_timed_out', errType: 'APIUserAbortError', status: null });
       expect(requests).toHaveLength(1);
       expect(await usage()).toBe(2500);
     });
 
     it('keeps the whole reservation for a call the time limit ends before its stream reported anything', async () => {
       const session = await signIn(slow, member.email);
-      expect((await errorOf(await read(pasted(), session, slow))).status).toBe(503);
+      expect(await errorOf(await read(pasted(), session, slow))).toEqual({ status: 503, error: 'extract_timed_out' });
       expect(requests).toHaveLength(1);
       expect(await usage()).toBe(ceilingOf(requests[0]));
+    });
+  });
+
+  describe('when the person leaves, the time runs out or the parse thread is busy', () => {
+    const docx = (): unknown => file('docx', docxOf([`${SENTINEL} IPA, half-barrel`]));
+
+    it('makes no call and charges nothing when the person leaves while the content is parsed (logged extract_left)', async () => {
+      const session = await signIn(scripted, member.email);
+      let release: () => void = () => undefined;
+      textGate = new Promise<void>((resolve) => { release = resolve; });
+      const begun = new Promise<void>((resolve) => { textBegun = resolve; });
+      const before = logLines(scripted).length;
+      const leaving = new AbortController();
+      const pending = readLeaving(scripted, session, docx(), leaving.signal);
+      await begun;
+      leaving.abort();
+      expect(await pending).toBe('AbortError');
+      // Give the server the closed connection before the text is done.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      release();
+      expect(await failedLine(scripted, before)).toMatchObject({ code: 'extract_left', inputKind: 'file', fileKind: 'docx', errType: null });
+      expect(requests).toHaveLength(0);
+      expect(await usage()).toBe(0);
+    });
+
+    it('ends the call when the person leaves during it: the model’s signal aborts, charged by what its stream reported (logged extract_left)', async () => {
+      const session = await signIn(scripted, member.email);
+      const begun = new Promise<void>((resolve) => { started = resolve; });
+      const before = logLines(scripted).length;
+      const leaving = new AbortController();
+      const pending = readLeaving(scripted, session, pasted(), leaving.signal);
+      await begun;
+      leaving.abort();
+      expect(await pending).toBe('AbortError');
+      await vi.waitFor(() => { expect(calls[0]?.signal.aborted).toBe(true); });
+      expect(await failedLine(scripted, before)).toMatchObject({ code: 'extract_left', inputKind: 'text', errType: 'APIUserAbortError' });
+      // Its stream reported nothing, so the whole reservation stays.
+      expect(await usage()).toBe(ceilingOf(requests[0]));
+    });
+
+    it('counts the time limit from the request’s start: time spent making the text is taken from the call’s', async () => {
+      const session = await signIn(scripted, member.email);
+      textGate = new Promise<void>((resolve) => { setTimeout(resolve, 600); });
+      expect(await errorOf(await read(docx(), session, scripted))).toEqual({ status: 503, error: 'extract_timed_out' });
+      expect(calls).toHaveLength(1);
+      // About 400 ms of the second were left; counted from the call it would have run the whole 1,000.
+      expect(calls[0]?.endedAfterMs).toBeLessThan(800);
+    });
+
+    it('makes no call for a read already past its time limit once the text is made (503 extract_timed_out, nothing charged)', async () => {
+      const session = await signIn(scripted, member.email);
+      textGate = new Promise<void>((resolve) => { setTimeout(resolve, 1200); });
+      const before = logLines(scripted).length;
+      expect(await errorOf(await read(docx(), session, scripted))).toEqual({ status: 503, error: 'extract_timed_out' });
+      expect(await failedLine(scripted, before)).toMatchObject({ code: 'extract_timed_out', errType: null });
+      expect(requests).toHaveLength(0);
+      expect(await usage()).toBe(0);
+    });
+
+    it('answers 503 extract_busy when the parse thread stays busy, with no call and nothing charged', async () => {
+      const session = await signIn(scripted, member.email);
+      textThrows = new SlotBusy();
+      const res = await read(docx(), session, scripted);
+      expect(res.headers.get('retry-after')).toBe('5');
+      expect(await errorOf(res)).toEqual({ status: 503, error: 'extract_busy' });
+      expect(requests).toHaveLength(0);
+      expect(await usage()).toBe(0);
     });
   });
 

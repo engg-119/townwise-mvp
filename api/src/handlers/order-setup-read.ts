@@ -80,13 +80,18 @@ const REFUSED: Readonly<Record<InputRefusal | 'mismatch' | 'empty', { code: stri
  * extract_kind_mismatch, extract_encrypted, extract_not_readable, extract_empty); 409 files_ai_budget_exhausted when
  * the rest of the budget cannot cover the most the call may cost; then one call. A refusal (422 extract_refused), an
  * answer cut at max_tokens (422 extract_answer_too_long) or an answer that is not JSON (422 extract_invalid_answer) is
- * charged. A call that fails (503 extract_failed: an API error, or a call past SETUP_READ_TIME_MS from the request's
- * start) is charged what its stream had reported, else nothing for an API error and the whole reservation for a call
- * that was ended (charged()). Text past 100,000 characters is cut and the answer says so (`partial`). 200 { read }: the checked
+ * charged. A call that fails is charged what its stream had reported, else nothing for an API error and the whole
+ * reservation for a call that was ended (charged()): 503 extract_failed for an API error, 503 extract_timed_out past
+ * SETUP_READ_TIME_MS from the request's start, and extract_left (logged; nobody is left to answer) when the person
+ * left. A read already past its time, or whose person has left, makes no call and is charged nothing. Text past 100,000 characters is cut and the answer says so (`partial`). 200 { read }: the checked
  * suggestions (setup-prompt.ts setupResult) and `partial`. Every call is audited (order.setup_read) with its outcome.
  */
 export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const started = Date.now();
+  // The person leaving (the response closing before it was sent) is heard from here on: one who leaves while the
+  // content is checked or parsed gets no call, and one who leaves during the call ends it.
+  const left = new AbortController();
+  res.on('close', () => { if (!res.writableFinished) left.abort(); });
   const caller = memberOf(principal);
   const { scope } = caller;
   const location = await loadLocation(ctx, scope, req.params.locationId);
@@ -105,6 +110,9 @@ export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Re
   const refused = (reason: keyof typeof REFUSED): AppError => fail(400, REFUSED[reason].code, REFUSED[reason].message);
   const spent = (): AppError => fail(409, 'files_ai_budget_exhausted', 'Your organization’s TownwiseAI budget for reading files is used up this month');
   const busy = (): AppError => fail(503, 'extract_busy', 'TownwiseAI is reading a lot right now. Try again in a moment.', { retryAfterSeconds: 5 });
+  /** Past the read's time limit; and the person gone (logged only: nobody is there to answer). */
+  const late = (why: { errType?: string; status?: number | null } = {}): AppError => fail(503, 'extract_timed_out', 'TownwiseAI took too long to read it. Try a shorter file, or part of it.', why);
+  const gone = (why: { errType?: string; status?: number | null } = {}): AppError => fail(503, 'extract_left', 'The read stopped: the page was closed.', why);
 
   const month = ctx.now().toISOString().slice(0, 7);
   const budget = Math.round(ctx.config.filesMonthlyBudgetUsd * 1_000_000);
@@ -121,7 +129,7 @@ export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Re
       const file = postedSource(source.kind, bytes);
       if (typeof file === 'string') throw refused(file);
       try {
-        prepared = await prepareInput(file, SETUP_INPUT);
+        prepared = await prepareInput(file, SETUP_INPUT, ctx.setupReadText ?? undefined);
       } catch (err) {
         if (err instanceof SlotBusy) throw busy();
         // A parser's message could quote the file, so only its class is logged.
@@ -139,17 +147,21 @@ export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Re
     });
     const reserved = setupCeilingMicroUsd(request, input, prepared.pages);
     if (!await ctx.stores.filesUsage.reserve(scope, month, reserved, budget, ctx.now())) throw spent();
-    // The call ends at the read's time limit from the request's start, or when the person leaves.
-    const left = new AbortController();
-    res.on('close', () => { if (!res.writableFinished) left.abort(); });
-    const signal = AbortSignal.any([left.signal, AbortSignal.timeout(Math.max(0, started + ctx.setupReadTimeMs - Date.now()))]);
+    // The call ends at the read's time limit from the request's start, or when the person leaves. Checked right before
+    // it: when either came first, no call is made and the reservation is given back. A response destroyed before this
+    // handler ran never emits 'close' to it (Node does not replay it), hence `res.destroyed`.
+    const remaining = started + ctx.setupReadTimeMs - Date.now();
+    const timeLimit = AbortSignal.timeout(Math.max(0, remaining));
+    const signal = AbortSignal.any([left.signal, timeLimit]);
+    const ended = left.signal.aborted || res.destroyed ? 'left' : remaining <= 0 ? 'timed_out' : null;
     let reply: ReaderAnswer | undefined;
     try {
-      reply = await model.readFile(request, signal);
+      if (ended === null) reply = await model.readFile(request, signal);
     } finally {
-      // The reservation becomes what the call is charged.
+      // The reservation becomes what the call is charged (nothing when no call was made).
       await ctx.stores.filesUsage.add(scope, month, charged(reply, signal.aborted, reserved) - reserved, ctx.now());
     }
+    if (reply === undefined) throw ended === 'left' ? gone() : late();
     const result = reply.kind === 'answered' ? setupResult(reply.output, prepared.sourceText) : null;
     const outcome = reply.kind === 'failed' ? 'failed' : reply.kind === 'answered' ? (result === null ? 'invalid_answer' : 'read') : reply.kind;
     await recordAfter(ctx, {
@@ -157,7 +169,10 @@ export async function readOrderSetup(ctx: TownwiseContext, req: Request, res: Re
       details: { locationId: location.id, inputKind, outcome, suppliers: result?.suppliers.length ?? 0, items: result?.items.length ?? 0 },
     });
     if (reply.kind === 'failed') {
-      throw fail(503, 'extract_failed', 'TownwiseAI couldn’t read it just now. Try again.', { errType: reply.errType, status: reply.status });
+      const why = { errType: reply.errType, status: reply.status };
+      if (left.signal.aborted) throw gone(why);
+      if (timeLimit.aborted) throw late(why);
+      throw fail(503, 'extract_failed', 'TownwiseAI couldn’t read it just now. Try again.', why);
     }
     if (reply.kind === 'refused') throw fail(422, 'extract_refused', 'TownwiseAI declined to read that.');
     if (reply.kind === 'too_long') throw fail(422, 'extract_answer_too_long', 'TownwiseAI’s answer ran too long. Try a shorter file, or part of it.');
