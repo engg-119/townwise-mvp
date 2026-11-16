@@ -279,3 +279,59 @@ test('view-as: the section is disabled in place, described by the read-only line
   expect(screen.queryByRole('button', { name: 'Read the file' })).toBeNull();
   expect(writes(api)).toEqual([]);
 });
+
+/** The text of everything a field's aria-describedby names. */
+function description(field: HTMLElement): string {
+  return (field.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent ?? '').join(' ');
+}
+
+/** The saved setup as the server answers a PUT: the sent rows, new ones with minted ids. */
+function stored(body: unknown): { setup: OrderSetup } {
+  const { setup } = body as { setup: { suppliers: ({ id?: string; key?: string } & Record<string, unknown>)[]; items: ({ id?: string; supplierId: string } & Record<string, unknown>)[] } };
+  const ids = new Map<string, string>();
+  const suppliers = setup.suppliers.map(({ key, id, ...rest }, index) => {
+    const minted = id ?? `ccccccccccccccccccccccc${String(index)}`;
+    ids.set(key ?? minted, minted);
+    return { ...rest, id: minted };
+  });
+  const items = setup.items.map(({ id, ...rest }, index) => ({ ...rest, id: id ?? `ddddddddddddddddddddddd${String(index)}`, supplierId: ids.get(rest.supplierId) ?? rest.supplierId }));
+  return { setup: { version: 4, updatedAt: '2026-11-13T17:00:00.000Z', suppliers, items } as OrderSetup };
+}
+
+test('an estimated servings value and a name not in the file take their field’s helper, tied by aria-describedby, until an edit or a save', async () => {
+  const api = portal();
+  // The replaced item's name is marked too: it keeps its id, so only the save clears its mark.
+  api.answers[`${PATH}/setup/read`] = () => ({ read: { ...READ, items: READ.items.map((item, i) => (i === 0 ? { ...item, inFile: false } : item)) } });
+  api.answers[`${PATH}/setup`] = stored;
+  renderAt(api);
+  await screen.findByRole('heading', { name: HEADING });
+  await pick(new File(['%PDF-1.4 synthetic'], FILE_NAME, { type: 'application/pdf' }));
+  await click('Read the file');
+  await screen.findByText(/^TownwiseAI found 3 items/);
+
+  const ipa = region('Item 2');
+  const servings = within(ipa).getByRole('textbox', { name: 'Servings per unit' });
+  const name = within(ipa).getByRole('textbox', { name: 'Item name' });
+  expect(description(servings)).toBe('TownwiseAI estimated this: A half-barrel holds about 124 pints. Check it.');
+  expect(description(name)).toBe('TownwiseAI didn’t find this name in the file. Check it.');
+  expect(within(ipa).queryByText(/^How many servings one unit holds/)).toBeNull();
+  // The replaced item's servings weren't estimated, so its field keeps its usual helper.
+  expect(description(within(region('Item 1')).getByRole('textbox', { name: 'Servings per unit' }))).toMatch(/^How many servings one unit holds/);
+  expect(description(within(region('Item 1')).getByRole('textbox', { name: 'Item name' }))).toBe('TownwiseAI didn’t find this name in the file. Check it.');
+
+  // An edit clears that field's mark only.
+  fireEvent.change(servings, { target: { value: '120' } });
+  expect(description(within(region('Item 2')).getByRole('textbox', { name: 'Servings per unit' }))).toMatch(/^How many servings one unit holds/);
+  expect(description(within(region('Item 2')).getByRole('textbox', { name: 'Item name' }))).toBe('TownwiseAI didn’t find this name in the file. Check it.');
+
+  // A save the checks stop keeps the marks; a save that goes through clears them.
+  await click('Save the setup');
+  expect(within(region('Item 2')).getByText('Enter a whole number from 0 to 999.')).toBeTruthy();
+  expect(description(within(region('Item 2')).getByRole('textbox', { name: 'Item name' }))).toContain('TownwiseAI didn’t find this name in the file. Check it.');
+  fireEvent.change(within(region('Item 2')).getByRole('textbox', { name: 'Par' }), { target: { value: '1' } });
+  await click('Save the setup');
+  await screen.findByText('Saved the ordering setup.');
+  expect(description(within(region('Item 1')).getByRole('textbox', { name: 'Item name' }))).toBe('');
+  expect(description(within(region('Item 2')).getByRole('textbox', { name: 'Item name' }))).toBe('');
+  expect(within(region('Item 2')).getByRole('textbox', { name: 'Item name' })).toHaveProperty('value', 'Sample IPA');
+});
