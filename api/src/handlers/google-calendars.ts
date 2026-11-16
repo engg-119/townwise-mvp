@@ -19,7 +19,7 @@ import type { OrgScope, Principal } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import {
-  endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, revokeAccessToken, storedTokenOpens,
+  endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, revokeAccessToken, seatOf, storedTokenOpens,
   type GoogleAccessFailure,
 } from '../calendar/google-access.ts';
 import {
@@ -133,8 +133,9 @@ function connectAgain(): AppError {
  * the ID token names the caller's own Google sign-in account. With no refresh token from Google, the stored one is kept
  * only when the connection is not revoked and the key opens it; otherwise the access token just given is revoked and
  * the answer is 409 google_connect_again, storing nothing. Then the connection is stored (its token sealed, agreedAt and
- * connectedAt now, revokedAt cleared, the check 24 hours on), the person's Google calendars in the organization are due
- * at once, and `google_calendar.connected` is audited. 200 with the choices, as the choices route answers them.
+ * connectedAt now, revokedAt cleared, the check 24 hours on, or at once when the caller no longer holds their seat), the
+ * person's Google calendars in the organization are due at once, and `google_calendar.connected` is audited. 200 with
+ * the choices, as the choices route answers them.
  */
 export async function connectGoogle(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -173,6 +174,9 @@ export async function connectGoogle(ctx: TownwiseContext, req: Request, res: Res
     await revokeAccessToken(deps, exchange.accessToken);
     throw connectAgain();
   }
+  // A seat removed while the code was at Google found no row to mark or ended the one there, and the upsert pushed any
+  // mark a day on: without the seat the connection is due at once, and the check ends it once the seat has settled.
+  if ((await seatOf(deps, scope, caller.userId)) !== 'held') await ctx.stores.googleConnections.markForCheck(scope, connection.id, now);
   await ctx.stores.ownerCalendars.markDueForConnection(scope, connection.id, now);
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'google_calendar.connected',

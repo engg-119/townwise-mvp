@@ -1,7 +1,8 @@
 // Ending Townwise's Google access through the API (src/calendar/google-access.ts and its callers; openspec change
 // connect-google-calendar: the google-calendar spec's "Townwise's access ends when it is no longer needed" and "A
 // revoke never ends another connection", design decisions 10, 11 and 14). Team removal, leaving and staff removal mark
-// the person's connection and then end it; a last_admin refusal ends nothing; Remove of the last Google calendar ends
+// the person's connection and then end it; a connect that stores one after its person's seat went leaves it due at
+// once; a last_admin refusal ends nothing; Remove of the last Google calendar ends
 // it, whoever presses it; deleting a location ends the connections left backing nothing; deleting an organization
 // revokes through revokeForOrg; a failed revoke still deletes; the revoke runs with the Google client off; and a
 // connection in another organization keeps the grant. Google is the fake of helpers/google.ts, which records every
@@ -16,8 +17,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { SEAT_SETTLE_MS } from '../src/calendar/google-access.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
-  addGoogleCalendar, addGoogleConnection, allDay, AUTH_CODE, createFakeGoogle, GOOGLE_CLIENT_ID, googleError, linkGoogle, PRIMARY_ID, REFRESH_TOKEN,
-  SHARED_ID,
+  ACCESS_TOKEN, addGoogleCalendar, addGoogleConnection, allDay, AUTH_CODE, createFakeGoogle, GOOGLE_CLIENT_ID, googleError, linkGoogle, PRIMARY_ID,
+  REFRESH_TOKEN, SHARED_ID,
 } from './helpers/google.ts';
 import {
   call, logLines, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -260,6 +261,34 @@ describe('with Google calendars on', () => {
     expect(google.calls.map((each) => each.method)).toContain('listEvents');
     expect(google.calls.map((each) => each.method)).not.toContain('revoke');
     expect(await connectionIdOf(t.orgId, t.member)).toBe(connectionId);
+  });
+
+  it('a person removed while Google exchanges their connect’s code is left with a connection due at once, whether or not they had one before', async () => {
+    const t = await tenant('Mid Connect Removal Cafe');
+    // The teammate connected before; the member has not.
+    await connect(t.locationId, t.teammate, TEAMMATE_TOKEN);
+    const earlier = await connectionIdOf(t.orgId, t.teammate);
+    /** `p` connects, and an org admin removes them while the code is at Google. */
+    async function removedDuringConnect(p: Person): Promise<void> {
+      server.clock.advance(MINUTE);
+      google.calls.length = 0;
+      google.on('exchangeCode', async () => {
+        expect((await send(`/api/org/members/${p.seatId}`, t.admin.session, { method: 'DELETE' })).status).toBe(204);
+        return { accessToken: ACCESS_TOKEN, refreshToken: google.state.refreshToken, scopes: google.state.scopes, subject: google.state.subject };
+      });
+      await connect(t.locationId, p);
+      // Not 24 hours on: the refresh loop's connection check claims it at its next look and, the seat gone, ends it
+      // (seat_gone; calendar-refresher.int.test.ts, "completes an interrupted end").
+      expect(await connectionRow(t.orgId, p)).toMatchObject({ checkAt: server.clock.now(), revokedAt: null });
+    }
+
+    // The removal found no connection to mark or end; the connect stored one after it.
+    await removedDuringConnect(t.member);
+    expect(revoked()).toEqual([]);
+    // The removal ended the teammate's connection; the connect stored a new one after it.
+    await removedDuringConnect(t.teammate);
+    expect(revoked()).toEqual([TEAMMATE_TOKEN]);
+    expect(await connectionIdOf(t.orgId, t.teammate)).not.toBe(earlier);
   });
 
   it('removing the last Google calendar ends the connection, whoever removes it; removing one that leaves another keeps it', async () => {
