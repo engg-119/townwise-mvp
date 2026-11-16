@@ -12,7 +12,7 @@
 
 ## 3. API: the route
 
-- [x] 3.1 Allow an `'8mb'` body on this route only and pin it in `assertRouteTable` and `routes.test.ts`
+- [x] 3.1 Allow an `'8mb'` body and the `beforeBody` byte gate on this route only and pin them in `assertRouteTable` and `routes.test.ts`
 - [x] 3.2 The `org.orders.setup.read` entry in `TOWNWISE_ROUTES` (member, open as admin, `ai_reads`)
 - [x] 3.3 The handler: on, budget, byte gate, input, reserve, one call, correct, check, answer; every error code of the spec
 - [x] 3.4 The `order.setup_read` audit allowlist and the two counts-only log lines
@@ -21,13 +21,13 @@
 ## 4. API: tests
 
 - [x] 4.1 Unit: the prompt and schema (no par or never-run-out keys), the answer's check, the request holds no point-of-sale, organization, location or file name, a picture's metadata is gone, a cut is said
-- [x] 4.2 Integration (`test/setup-read.int.test.ts`, fake model): each input kind; off, spent, reserved, corrected, a failure charges 0, a refusal is charged; view-as 403; staff open as admin audited; cross-tenant 404; the 400 caps; `extract_busy`; nothing stored and the setup version unchanged; logs and audit carry no name sentinel
+- [x] 4.2 Integration (`test/setup-read.int.test.ts`, fake model): each input kind; off, spent, reserved, corrected, a failed call charges what its stream reported (an API error before the stream 0, a call ended before any stream event its reservation), a refusal is charged; view-as 403; staff open as admin audited; cross-tenant 404; the 400 caps; `extract_busy`; nothing stored and the setup version unchanged; logs and audit carry no name sentinel
 - [x] 4.3 Update the `isolation.test.ts` lists the move touches
 
 ## 5. Client
 
 - [x] 5.1 Split `template.ts` into `readRow` and a shared `mergeRows`; add `importProposal`; widen the kept fields; the existing import tests stay green
-- [x] 5.2 `api.ts`: `readSetupWithAi` with its schema and a 170-second timeout; `canReadWithAi` on the setup
+- [x] 5.2 `api.ts`: `readSetupWithAi` with its schema and a 230-second timeout; `canReadWithAi` on the setup
 - [x] 5.3 `SetupRead.web.tsx`: drop, choose or paste; Read; loading with Cancel; the summary; each error; disabled under view-as; files over the caps refused in the browser; the file name never sent
 - [x] 5.4 Field marks in `SetupEditor.tsx` and `SetupRows.tsx` (estimated servings, not in the file), cleared on edit or Save
 - [x] 5.5 The native line on Ordering setup
