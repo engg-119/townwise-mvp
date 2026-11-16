@@ -56,12 +56,12 @@ describe('the AI text thread', () => {
     expect(cut).toEqual({ kind: 'text', text: 'Sheet: Daily\nBusiness Date\tGue', cut: true, pages: null });
   });
 
-  it('counts a workbook past its tenth sheet as cut', async () => {
-    const sheets = Array.from({ length: 11 }, (_, index) => ({ name: `S${String(index + 1)}`, rows: [['a']] }));
+  it('counts a workbook past its thirtieth sheet as cut', async () => {
+    const sheets = Array.from({ length: 31 }, (_, index) => ({ name: `S${String(index + 1)}`, rows: [['a']] }));
     const made = await extractAiText({ kind: 'xlsx', bytes: xlsxOf(sheets), maxChars: 10_000 });
     expect(made).toMatchObject({ kind: 'text', cut: true });
-    expect(made.kind === 'text' ? made.text : '').toContain('Sheet: S10');
-    expect(made.kind === 'text' ? made.text : '').not.toContain('Sheet: S11');
+    expect(made.kind === 'text' ? made.text : '').toContain('Sheet: S30');
+    expect(made.kind === 'text' ? made.text : '').not.toContain('Sheet: S31');
   });
 
   it('reads a Word document’s paragraphs and tables, a table’s rows apart by tabs', async () => {

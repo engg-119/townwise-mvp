@@ -4,7 +4,7 @@
 // keeps its UID, title (at most 200 characters), dates and hours only. Every title, name and address here is made up.
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { MAX_EVENTS, MAX_ICS_BYTES, MAX_TITLE_CHARS, parseIcs, WINDOW_DAYS, type IcsEvent } from '../src/calendar/ics.ts';
+import { keepWindow, MAX_EVENTS, MAX_ICS_BYTES, MAX_TITLE_CHARS, parseIcs, WINDOW_DAYS, type IcsEvent } from '../src/calendar/ics.ts';
 import { utcDay } from '../src/dates.ts';
 
 const TODAY = '2026-11-11';
@@ -299,5 +299,61 @@ describe('what an event keeps', () => {
     // An emoji across the 200th character is left out whole, not split.
     expect(titleOf(`${'C'.repeat(199)}\u{1F600}tail`)).toBe('C'.repeat(199));
     expect(titleOf(`${'C'.repeat(198)}\u{1F600}tail`)).toBe(`${'C'.repeat(198)}\u{1F600}`);
+  });
+});
+
+describe('keepWindow (shared with Google calendars, openspec change connect-google-calendar)', () => {
+  const allDay = (uid: string, startDate: string, endDate = startDate): IcsEvent => ({
+    uid, title: uid, startDate, endDate, startTime: null, endTime: null,
+  });
+  /** `count` one-day events from `firstDay` on, `perDay` a day, listed newest first. */
+  const days = (prefix: string, firstDay: string, count: number, perDay = 1): IcsEvent[] =>
+    Array.from({ length: count }, (_, index) => allDay(`${prefix}${String(index)}`, plusDays(firstDay, Math.floor(index / perDay)))).reverse();
+  const outside = [allDay('too-early', plusDays(TODAY, -WINDOW_DAYS - 2), plusDays(TODAY, -WINDOW_DAYS - 1)), allDay('too-late', plusDays(TODAY, WINDOW_DAYS + 1))];
+  const starts = (events: readonly IcsEvent[]): string[] => events.map((event) => event.startDate);
+
+  it('without options keeps the window and the first 2,000 by start, as parseIcs does', () => {
+    const earlier = days('before-', plusDays(TODAY, -300), 300);
+    const ahead = days('ahead-', TODAY, 1_800, 5);
+    const kept = keepWindow([...outside, ...ahead, ...earlier], TODAY);
+    expect(kept).toHaveLength(MAX_EVENTS);
+    // Every earlier event, then the first 1,700 ahead: the latest ahead ones are cut.
+    expect(kept.slice(0, 300).map((event) => event.uid)).toEqual(earlier.map((event) => event.uid).reverse());
+    expect(kept.at(-1)?.startDate).toBe(plusDays(TODAY, 339));
+    expect(starts(kept)).toEqual(starts(kept).slice().sort());
+    expect(kept.map((event) => event.uid)).not.toContain('too-early');
+    // Events starting together keep the order they came in.
+    const twins = [allDay('second', TODAY), allDay('first', plusDays(TODAY, -1)), allDay('third', TODAY)];
+    expect(keepWindow(twins, TODAY).map((event) => event.uid)).toEqual(['first', 'second', 'third']);
+  });
+
+  it('with aheadFirst keeps the events ending on or after today first, then the latest earlier ones that fit, by start', () => {
+    const earlier = days('before-', plusDays(TODAY, -30), 30);
+    // Started before today and still on: it ends today, so it is ahead.
+    const spanning = allDay('spanning', plusDays(TODAY, -45), TODAY);
+    const ahead = days('ahead-', TODAY, 1_989, 5);
+    const kept = keepWindow([...outside, ...earlier, spanning, ...ahead], TODAY, { aheadFirst: true });
+    expect(kept).toHaveLength(MAX_EVENTS);
+    const uids = kept.map((event) => event.uid);
+    expect(uids).toContain('spanning');
+    for (const event of ahead) expect(uids).toContain(event.uid);
+    // 10 left for the earlier ones: the 10 latest, the days just before today.
+    const keptEarlier = kept.filter((event) => event.uid.startsWith('before-'));
+    expect(starts(keptEarlier)).toEqual(Array.from({ length: 10 }, (_, index) => plusDays(TODAY, index - 10)));
+    expect(starts(kept)).toEqual(starts(kept).slice().sort());
+    expect(uids).not.toContain('too-early');
+    expect(uids).not.toContain('too-late');
+
+    // More than 2,000 ahead: the first 2,000 of them by start, and no earlier one.
+    const busy = keepWindow([...earlier, ...days('busy-', TODAY, 2_050, 20)], TODAY, { aheadFirst: true });
+    expect(busy).toHaveLength(MAX_EVENTS);
+    expect(busy.every((event) => event.uid.startsWith('busy-'))).toBe(true);
+    expect(busy.at(-1)?.startDate).toBe(plusDays(TODAY, 99));
+
+    // Under 2,000 in all: everything in the window is kept.
+    expect(keepWindow([...outside, ...earlier, spanning], TODAY, { aheadFirst: true })).toHaveLength(31);
+    // The same events without aheadFirst keep the earliest instead.
+    expect(keepWindow([...earlier, ...days('busy-', TODAY, 2_050, 20)], TODAY).slice(0, 30).map((event) => event.uid))
+      .toEqual(earlier.map((event) => event.uid).reverse());
   });
 });

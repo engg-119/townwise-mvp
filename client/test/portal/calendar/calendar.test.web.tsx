@@ -3,21 +3,23 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { COPY } from '../../../src/portal/errors';
 import type { MeResponse } from '../../../src/portal/schemas';
-import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { holiday, townEvent } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 import { ruleOf } from '../rules/fakes';
-import { calendarFake, forecastDay, forecastOf, NOTES_PATH, PATH, savedNote, type CalendarFake } from './fakes';
+import {
+  CALENDARS_PATH, calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, PATH, RULES_PATH, savedNote, type CalendarFake,
+} from './fakes';
 
 // P28 Calendar on web (spec 16.3, D30): the month grid with each day's published forecast, the
 // selected day's panel beside it, notes added, edited and deleted from the day with the forecast read again, the
 // filters, view-as, the forecast read failing on its own, no published forecast, the hover tooltip and the keys, and
-// the owner's calendar file (spec 17: read in the browser, kept in the page, a note made from an event without
-// its title). Today is Wed, Nov 11, 2026. Synthetic figures and made-up titles only.
+// the location's own calendars (spec 17, D33: a file posted and kept, its stored events read once per grid, a note made
+// from an event without its title). Today is Wed, Nov 11, 2026. Synthetic figures and made-up titles only.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -55,7 +57,7 @@ afterEach(() => {
   if (width !== 1280) setWidth(1280);
 });
 
-const NOVEMBER_FORECAST = `${PATH}/forecast?from=2026-11-01&to=2026-11-30`;
+const NOVEMBER_FORECAST = `${PATH}/forecast?from=2026-10-26&to=2026-12-06`;
 const GUESTS_HELP = 'Townwise forecasts whole days, so these guests add to the whole day’s total, on each day the note covers.';
 const GAME = townEvent({ start: '2026-11-21', title: 'Dartmouth home football' });
 const VETERANS = holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day');
@@ -83,7 +85,9 @@ function november(noted?: { guests: number; id: string }): unknown {
   return forecastOf(days);
 }
 
-function setup(me: MeResponse = meOf(ACCESS.member), init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'forecasts'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
+function setup(
+  me: MeResponse = meOf(ACCESS.member), init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'forecasts' | 'calendars' | 'ownerEvents'>> = {},
+): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({
     events: [GAME, VETERANS],
     days: [{ date: '2026-11-07', guests: 138, netSalesCents: 276000 }],
@@ -114,6 +118,11 @@ function panel(): HTMLElement {
   return screen.getByRole('region', { name: 'Selected day' });
 }
 
+/** The note form's popover, which must be open: the dialog its heading names ("Add an event", "Edit note", "Make a note"). */
+function noteForm(name: string): HTMLElement {
+  return screen.getByRole('dialog', { name });
+}
+
 /** An element whose whole text is `text` (the day's figure nests its number in its own span). */
 function whole(text: string): (content: string, element: Element | null) => boolean {
   return (_content, element) => element?.textContent === text && [...element.children].every((child) => child.textContent !== text);
@@ -139,7 +148,34 @@ const ICS = [
   'END:VCALENDAR', '',
 ].join('\r\n');
 
-const ICS_HELP = 'Export a calendar from Google Calendar, Outlook or Apple Calendar as an .ics file and choose it here. Townwise reads it in your browser and keeps it only while this page is open. Nothing from the file is sent to Townwise unless you make a note from an event.';
+// The list here answers without `google` (Google calendars off), so the help names none.
+const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
+const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar.';
+const NOT_CALENDAR = 'This doesn’t look like a calendar file (.ics).';
+const CALENDAR_LIMIT = 'This location has 5 calendars, the most it can hold. Remove one to add another.';
+const NOVEMBER_EVENTS = `${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`;
+
+/** kitchen.ics as the API keeps it: its two single events, and the weekly meeting counted, not imported. */
+const KITCHEN = ownerCalendar({ id: 'c1', label: 'kitchen', kind: 'file', eventCount: 2, skippedRepeating: 1 });
+const DINNER = ownerEvent({
+  calendarId: 'c1', calendar: 'kitchen', uid: 'i1', title: 'Smith rehearsal dinner', startDate: '2026-11-21', startTime: '18:00', endTime: '21:00',
+});
+const AWAY = ownerEvent({ calendarId: 'c1', calendar: 'kitchen', uid: 'i2', title: 'Owner away', startDate: '2026-11-24', endDate: '2026-11-25' });
+
+/** The "Your calendars" popover, which must be open. */
+function calendarsPanel(): HTMLElement {
+  return screen.getByRole('dialog', { name: 'Your calendars' });
+}
+
+/** Closes the "Your calendars" popover, which floats over the page, before the page is used again. */
+function closeCalendars(): void {
+  fireEvent.click(within(calendarsPanel()).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
+}
+
+function storedReads(fake: CalendarFake): string[] {
+  return fake.paths.filter((path) => path.startsWith(`${CALENDARS_PATH}/events?`));
+}
 
 /** `size` stands in for the file's size on disk; a file given one throws if it is read. */
 function icsFile(text: string, name = 'kitchen.ics', size?: number): File {
@@ -151,7 +187,11 @@ function icsFile(text: string, name = 'kitchen.ics', size?: number): File {
   return file;
 }
 
+/** Opens the "Your calendars" popover when it is closed, then chooses the file in its import. */
 function chooseFile(file: File): void {
+  const calendars = screen.getByRole('button', { name: /^Your calendars/ });
+  if (calendars.getAttribute('aria-expanded') !== 'true') fireEvent.click(calendars);
+  expect(calendars.getAttribute('aria-expanded')).toBe('true');
   const input = document.querySelector<HTMLInputElement>('input[type="file"]');
   if (input === null) throw new Error('no file input');
   expect(input.getAttribute('accept')).toBe('.ics,text/calendar');
@@ -178,18 +218,18 @@ test('opens at ?day= with that day selected and in the sidebar', async () => {
   const why = within(day).getAllByRole('listitem');
   expect(why.map((row) => row.textContent)).toEqual([
     'Saturday▲Usually about 35% more guests than your average day',
-    'Dartmouth home football▲Usually about 20% more guests than the same weekday without it Source',
+    'Dartmouth home football▲Usually about 20% more guests than the same weekday without itDartmouth Athletics',
   ]);
   for (const mark of within(day).getAllByText('▲')) expect(mark.closest('[aria-hidden="true"]')).not.toBeNull();
-  // The row ends with its source, a small inline link named for where it goes.
+  // The row ends with its source as a chip under its words: the site's name, and a name that starts with it.
   const game = why[1];
   if (game === undefined) throw new Error('no second reason');
-  const source = within(game).getByRole('link', { name: 'Source: dartmouthsports.com' });
+  const source = within(game).getByRole('link', { name: 'Dartmouth Athletics. Source: dartmouthsports.com' });
   expect(source.getAttribute('href')).toBe('https://dartmouthsports.com/');
-  expect(source.textContent).toBe('Source');
+  expect(source.textContent).toBe('Dartmouth Athletics');
   // On the calendar no longer repeats the game Why shows.
   expect(within(day).queryByText('Dartmouth home football. Town event.')).toBeNull();
-  expect(within(day).queryByRole('link', { name: 'Source: home.dartmouth.edu' })).toBeNull();
+  expect(within(day).queryByRole('link', { name: 'Dartmouth. Source: home.dartmouth.edu' })).toBeNull();
   expect(within(day).getByText('Nothing else on the calendar this day.')).toBeTruthy();
 });
 
@@ -201,10 +241,10 @@ test('Why reads at phone width: the label, then the effect in words, then the so
   if (game === undefined) throw new Error('no second reason');
   expect(within(game).getByText('Dartmouth home football')).toBeTruthy();
   expect(within(game).getByText(/^Usually about 20% more guests than the same weekday without it/)).toBeTruthy();
-  expect(within(game).getByRole('link', { name: 'Source: dartmouthsports.com' })).toBeTruthy();
+  expect(within(game).getByRole('link', { name: 'Dartmouth Athletics. Source: dartmouthsports.com' })).toBeTruthy();
 });
 
-test('several sources: each link’s name starts with its visible words, “Source 1: …” (WCAG 2.5.3), and each is a 44px target on web', async () => {
+test('several sources: each chip’s name starts with what it shows (WCAG 2.5.3), and each is a 44px target on web', async () => {
   const sources = [...GAME_REASON.sources, { label: 'Sample events page', url: 'https://example.org/events' }];
   const days = (november() as { days: { date: string }[] }).days.map((day) => (day.date === '2026-11-21'
     ? forecastDay({ date: '2026-11-21', reasons: [{ ...GAME_REASON, sources }, SATURDAY_REASON] }) : day));
@@ -214,12 +254,9 @@ test('several sources: each link’s name starts with its visible words, “Sour
   if (game === undefined) throw new Error('no second reason');
   const links = within(game).getAllByRole('link');
   expect(links.map((link) => [link.textContent, link.getAttribute('aria-label')])).toEqual([
-    ['Source 1', 'Source 1: dartmouthsports.com'], ['Source 2', 'Source 2: Sample events page'],
+    ['Dartmouth Athletics', 'Dartmouth Athletics. Source: dartmouthsports.com'], ['example.org', 'example.org. Source: Sample events page'],
   ]);
-  // The links sit in the sentence's 14px type; their padding takes no room in the line, so the line doesn't move.
-  for (const link of links) {
-    expect(parseFloat(window.getComputedStyle(link).paddingTop) * 2 + theme.type.small.fontSize).toBeGreaterThanOrEqual(44);
-  }
+  for (const link of links) expect(window.getComputedStyle(link).minHeight).toBe('44px');
 });
 
 test('a business rule with a schedule (D31): its reason shows under Why, and the rule under On the calendar with its summary and a link to Rules', async () => {
@@ -251,18 +288,18 @@ test('a business rule with a schedule (D31): its reason shows under Why, and the
   expect(within(panel()).queryByText(/^Your rule: /)).toBeNull();
 });
 
-test('the forecast read covers exactly the shown month (one request of at most 31 days)', async () => {
+test('the forecast read covers exactly the shown grid (one request of at most 42 days)', async () => {
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar', api);
   expect(cell('2026-11-11').getAttribute('aria-selected')).toBe('true');
   expect(within(panel()).getByRole('heading', { name: 'Today, Wed, Nov 11' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST]);
-  // Sales days only for the month's past part, and the 8 weeks before it that likely closed reads (spec D32).
-  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-09-06&to=2026-11-10`]);
+  // Sales days only for the grid's past part, and the 8 weeks before it that likely closed reads (spec D32).
+  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-08-31&to=2026-11-10`]);
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
-  expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-12-01&to=2026-12-31`]);
-  // A month after today has no past part to read.
+  expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`]);
+  // A grid after today has no past part to read.
   expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toHaveLength(1);
   expect(screen.getByText('December 2026')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Today' }));
@@ -278,22 +315,23 @@ test('adding a private event of 70 posts the note, reloads the forecast and the 
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   fireEvent.click(within(panel()).getByRole('button', { name: 'Add an event' }));
-  expect(within(panel()).getByRole('button', { name: 'Private event' }).getAttribute('aria-pressed')).toBe('true');
-  expect(within(panel()).getByRole('button', { name: 'More guests than usual' }).getAttribute('aria-pressed')).toBe('true');
-  expect(within(panel()).getByLabelText<HTMLInputElement>('Starts').value).toBe('2026-11-21');
+  const form = noteForm('Add an event');
+  expect(within(form).getByRole('button', { name: 'Private event' }).getAttribute('aria-pressed')).toBe('true');
+  expect(within(form).getByRole('button', { name: 'More guests than usual' }).getAttribute('aria-pressed')).toBe('true');
+  expect(within(form).getByLabelText<HTMLInputElement>('Starts').value).toBe('2026-11-21');
   // Forecasts are daily, so the guests count toward the whole day, whatever the hours (spec 12).
-  expect(within(panel()).getByText(GUESTS_HELP)).toBeTruthy();
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Opening' }));
-  expect(within(panel()).queryByText(GUESTS_HELP)).toBeNull();
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Private event' }));
-  fireEvent.change(within(panel()).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
+  expect(within(form).getByText(GUESTS_HELP)).toBeTruthy();
+  fireEvent.click(within(form).getByRole('button', { name: 'Opening' }));
+  expect(within(form).queryByText(GUESTS_HELP)).toBeNull();
+  fireEvent.click(within(form).getByRole('button', { name: 'Private event' }));
+  fireEvent.change(within(form).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
   api.answers[NOTES_PATH] = (body) => {
     const saved = savedNote('n9', body);
     fake.notes = [saved.note];
     fake.forecasts['2026-11'] = november({ guests: 70, id: 'n9' });
     return saved;
   };
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: NOTES_PATH,
@@ -327,7 +365,7 @@ test('a saved note that changes nothing says so, from the day read again: no gue
     fake.forecasts['2026-11'] = forecastOf(days as Parameters<typeof forecastOf>[0]);
     return saved;
   };
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(noteForm('Add an event')).getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved. Add a guest count to change the forecast.')).toBeTruthy();
   expect(screen.queryByText(/now includes/)).toBeNull();
   expect(within(panel()).getByText('No guest count, so the forecast is unchanged')).toBeTruthy();
@@ -339,15 +377,16 @@ test('editing and deleting a note reload the forecast', async () => {
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   expect(within(panel()).getByText('Adds 40 guests')).toBeTruthy();
   fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Private event note, Nov 21, 2026' }));
-  expect(within(panel()).getByRole('heading', { name: 'Edit this note' })).toBeTruthy();
-  fireEvent.change(within(panel()).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
+  const form = noteForm('Edit note');
+  expect(within(form).getByLabelText<HTMLInputElement>('Expected guests (optional)').value).toBe('40');
+  fireEvent.change(within(form).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
   api.answers[`${NOTES_PATH}/n1`] = (body) => {
     const saved = savedNote('n1', body);
     fake.notes = [saved.note];
     fake.forecasts['2026-11'] = november({ guests: 70, id: 'n1' });
     return saved;
   };
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await within(panel()).findByText('Adds 70 guests')).toBeTruthy();
   expect(forecastReads(fake)).toHaveLength(2);
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`]);
@@ -385,21 +424,38 @@ test('turning off Town events hides their chips but not the figures', async () =
   expect(cell('2026-11-11').getAttribute('aria-label')).not.toContain('Veterans Day.');
 });
 
-test('importing an .ics file shows its events under Your calendar; Make a note opens the form with dates and hours and an empty detail', async () => {
+test('a calendar file is posted and kept, its events show once read again, and Make a note opens the form with dates and hours and an empty detail', async () => {
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
-  expect(screen.getByText(ICS_HELP)).toBeTruthy();
+  const answer = deferred<unknown>();
+  api.answers[CALENDARS_PATH] = () => answer.promise;
   const reads = fake.paths.length;
   chooseFile(icsFile(ICS, 'kitchen.ics'));
-  expect(await screen.findByText('2 events from kitchen.ics.')).toBeTruthy();
-  expect(screen.getByText('1 repeating event wasn’t imported. Add it as a note with weekdays.')).toBeTruthy();
-  // Read in the browser: nothing was sent and nothing read again.
-  expect(fake.paths).toHaveLength(reads);
-  expect(writes(api)).toEqual([]);
+  expect(within(calendarsPanel()).getByText(HELP)).toBeTruthy();
+  expect(await within(calendarsPanel()).findByRole('button', { name: 'Importing…' })).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'kitchen', ics: ICS } }]);
+  // The API keeps the calendar and its two events.
+  fake.calendars = [KITCHEN];
+  fake.ownerEvents = [DINNER, AWAY];
+  await act(async () => { answer.resolve({ calendar: KITCHEN }); await Promise.resolve(); });
+  expect(await within(calendarsPanel()).findByText('Added kitchen: 2 events.')).toBeTruthy();
+  // The messages line; the calendar's row says the same of its repeating event once the list is read again.
+  expect(within(calendarsPanel()).getAllByRole('status').map((line) => line.textContent)).toEqual([
+    'Added kitchen: 2 events.', '1 repeating event wasn’t imported. Add it as a note with weekdays.',
+  ]);
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy(); });
+  await waitFor(() => { expect(cell('2026-11-21').textContent).toContain('Smith rehearsal dinner'); });
+  // The list and the grid's stored events are read again; stored events never change the forecast, so neither it nor
+  // the notes and rules are.
+  const again = fake.paths.slice(reads);
+  expect(again).toContain(CALENDARS_PATH);
+  expect(again).toContain(NOVEMBER_EVENTS);
+  expect(again.filter((path) => path.includes('/forecast?') || path === NOTES_PATH || path === RULES_PATH)).toEqual([]);
+  expect(writes(api)).toHaveLength(1);
+  closeCalendars();
   const chip = screen.getByRole('button', { name: 'Your calendar' });
   expect(chip.getAttribute('aria-pressed')).toBe('true');
-  expect(cell('2026-11-21').textContent).toContain('Smith rehearsal dinner');
   expect(cell('2026-11-25').textContent).toContain('Owner away');
   // Only notes change the forecast.
   expect(cell('2026-11-21').textContent).toContain('212');
@@ -408,14 +464,14 @@ test('importing an .ics file shows its events under Your calendar; Make a note o
   expect(within(day).getByText('Nov 21, 2026, 6 pm to 9 pm')).toBeTruthy();
   expect(within(day).getByText('Events from your calendar don’t change the forecast until you make a note from them.')).toBeTruthy();
 
-  // Turning the filter off hides the file's events from the grid and the panel.
+  // Turning the filter off hides the calendar's events from the grid and the panel.
   fireEvent.click(chip);
   expect(cell('2026-11-21').textContent).not.toContain('Smith rehearsal dinner');
   expect(within(panel()).queryByText('From your calendar: Smith rehearsal dinner')).toBeNull();
   fireEvent.click(chip);
 
   fireEvent.click(within(panel()).getByRole('button', { name: 'Make a note from Smith rehearsal dinner' }));
-  const form = panel();
+  const form = noteForm('Make a note');
   expect(within(form).getByRole('button', { name: 'Private event' }).getAttribute('aria-pressed')).toBe('true');
   expect(within(form).getByRole('button', { name: 'More guests than usual' }).getAttribute('aria-pressed')).toBe('true');
   expect(within(form).getByLabelText<HTMLInputElement>('Starts').value).toBe('2026-11-21');
@@ -433,46 +489,147 @@ test('importing an .ics file shows its events under Your calendar; Make a note o
   };
   fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
-  expect(writes(api)).toEqual([{
+  expect(writes(api).slice(1)).toEqual([{
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
       startTime: '18:00', endTime: '21:00',
     },
   }]);
-  expect(JSON.stringify(writes(api))).not.toContain('Smith');
+  // The file's own POST carries its text; no other write carries a title.
+  expect(JSON.stringify(writes(api).slice(1))).not.toContain('Smith');
   await waitFor(() => { expect(cell('2026-11-21').textContent).toContain('+70'); });
-  // The file's events stay while the page is open.
+  // The stored events stay: a note's save reads the notes and the forecast again, not the calendars.
   expect(within(panel()).getByText('From your calendar: Smith rehearsal dinner')).toBeTruthy();
 });
 
 test('a file over 1 MB is refused unread, and a file that isn’t a calendar says so', async () => {
-  const { api } = setup();
+  const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   chooseFile(icsFile(ICS, 'everything.ics', 1024 * 1024 + 1));
-  expect(await screen.findByText('This file is over 1 MB. Export a shorter range of your calendar.')).toBeTruthy();
-  expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
-  chooseFile(icsFile('date,guests\n2026-11-01,120\n', 'sales.csv'));
-  expect(await screen.findByText('This doesn’t look like a calendar file (.ics).')).toBeTruthy();
-  expect(screen.queryByText('This file is over 1 MB. Export a shorter range of your calendar.')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
+  expect(await within(calendarsPanel()).findByText(TOO_LARGE)).toBeTruthy();
   expect(writes(api)).toEqual([]);
-  // Exactly 1 MB is read.
+  // A CSV is posted, and the API says it isn't a calendar: nothing is kept, so nothing is read again.
+  api.answers[CALENDARS_PATH] = () => refusal(400, 'not_calendar');
+  const reads = fake.paths.length;
+  const csv = 'date,guests\n2026-11-01,120\n';
+  chooseFile(icsFile(csv, 'sales.csv'));
+  expect(await within(calendarsPanel()).findByText(NOT_CALENDAR)).toBeTruthy();
+  expect(screen.queryByText(TOO_LARGE)).toBeNull();
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'sales.csv', ics: csv } }]);
+  expect(fake.paths.slice(reads)).toEqual([]);
+  expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
+  api.answers[CALENDARS_PATH] = () => refusal(409, 'calendar_limit');
+  chooseFile(icsFile(ICS, 'kitchen.ics'));
+  expect(await within(calendarsPanel()).findByText(CALENDAR_LIMIT)).toBeTruthy();
+  expect(screen.queryByText(NOT_CALENDAR)).toBeNull();
+  // Exactly 1 MB is posted.
+  api.answers[CALENDARS_PATH] = () => {
+    fake.calendars = [KITCHEN];
+    fake.ownerEvents = [DINNER, AWAY];
+    return { calendar: KITCHEN };
+  };
   const full = new File([ICS], 'kitchen.ics', { type: 'text/calendar' });
   Object.defineProperty(full, 'text', { value: () => Promise.resolve(ICS) });
   Object.defineProperty(full, 'size', { value: 1024 * 1024 });
   chooseFile(full);
-  expect(await screen.findByText('2 events from kitchen.ics.')).toBeTruthy();
-  expect(screen.queryByText('This doesn’t look like a calendar file (.ics).')).toBeNull();
+  expect(await within(calendarsPanel()).findByText('Added kitchen: 2 events.')).toBeTruthy();
+  expect(screen.queryByText(CALENDAR_LIMIT)).toBeNull();
+  expect(writes(api)).toHaveLength(3);
 });
 
-test('view-as: Add, Edit, Delete and Make a note are disabled with the read-only line', async () => {
-  const party = noteOf('n1', { kind: 'private_event', effect: 'more_guests', startDate: '2026-11-21', endDate: '2026-11-21', expectedGuests: 40 });
-  const { api } = setup(viewAsMe(ACCESS.admin), { notes: [party] });
+test('stored events show on load: the cells, the tooltip, the day panel and the week view’s cards, with Your calendar on; the same uid in two calendars shows twice', async () => {
+  const errors = jest.spyOn(console, 'error');
+  try {
+    // The same export imported twice is two calendars, each with the event's uid.
+    const again = ownerEvent({ ...DINNER, calendarId: 'c2', calendar: 'kitchen copy' });
+    const party = ownerEvent({ calendarId: 'c1', calendar: 'kitchen', uid: 'i4', title: 'Staff party', startDate: '2026-11-05' });
+    const { api } = setup(meOf(ACCESS.member), {
+      calendars: [KITCHEN, ownerCalendar({ id: 'c2', label: 'kitchen copy', eventCount: 1 })], ownerEvents: [party, DINNER, again, AWAY],
+    });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    expect(writes(api)).toEqual([]);
+    expect(screen.getByRole('button', { name: 'Your calendar' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Your calendars (2)' })).toBeTruthy();
+    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(3);
+    expect(cell('2026-11-24').textContent).toContain('Owner away');
+    expect(cell('2026-11-25').textContent).toContain('Owner away');
+    expect(cell('2026-11-21').textContent).toContain('212');
+    // The tooltip lists a day's entries when it has no forecast reasons to show, as on a past day.
+    expect(cell('2026-11-05').textContent).toContain('Staff party');
+    fireEvent(cell('2026-11-05'), pointer('pointerover', 'mouse'));
+    expect(screen.getByTestId('calendar-tooltip').textContent).toContain('Staff party');
+    expect(within(panel()).getAllByText('From your calendar: Smith rehearsal dinner')).toHaveLength(2);
+    expect(within(panel()).getAllByRole('button', { name: 'Make a note from Smith rehearsal dinner' })).toHaveLength(2);
+    fireEvent.click(within(screen.getByRole('group', { name: 'Calendar view' })).getByRole('button', { name: 'Week' }));
+    expect(await screen.findByRole('grid', { name: 'Nov 18 to 24, 2026' })).toBeTruthy();
+    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(3);
+    // Each item keeps its own key: {calendarId}:{uid}.
+    expect(errors.mock.calls.filter((call) => String(call[0]).includes('same key'))).toEqual([]);
+  } finally {
+    errors.mockRestore();
+  }
+});
+
+test('one stored-events read per grid: none on selecting a day or switching to Week, the next grid’s on Next month, pending like the other reads', async () => {
+  const { api, fake } = setup(meOf(ACCESS.member), { calendars: [KITCHEN], ownerEvents: [DINNER, AWAY] });
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
-  // Importing reads a file in the staff member's own browser and sends nothing, so it is allowed.
-  chooseFile(icsFile(ICS));
-  expect(await screen.findByText('2 events from kitchen.ics.')).toBeTruthy();
+  expect(storedReads(fake)).toEqual([NOVEMBER_EVENTS]);
+  // Dec 1's block, Nov 25 to Dec 1, lies inside November's grid.
+  fireEvent.click(cell('2026-12-01'));
+  await waitFor(() => { expect(within(panel()).getByRole('heading', { name: 'Tue, Dec 1, 2026' })).toBeTruthy(); });
+  const views = screen.getByRole('group', { name: 'Calendar view' });
+  fireEvent.click(within(views).getByRole('button', { name: 'Week' }));
+  expect(await screen.findByRole('grid', { name: 'Nov 25 to Dec 1, 2026' })).toBeTruthy();
+  fireEvent.click(within(views).getByRole('button', { name: 'Month' }));
+  expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();
+  expect(storedReads(fake)).toEqual([NOVEMBER_EVENTS]);
+  const release = fake.hold('owner-calendars/events', '2026-11-30');
+  fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
+  const december = await screen.findByRole('grid', { name: 'December 2026' });
+  expect(storedReads(fake)).toEqual([NOVEMBER_EVENTS, `${CALENDARS_PATH}/events?from=2026-11-30&to=2027-01-10`]);
+  // Held, the stored events keep December's grid pending, as the town calendar's read would.
+  expect(december.getAttribute('aria-busy')).toBe('true');
+  expect(cell('2026-12-12').getAttribute('aria-label')).toBe('Sat, Dec 12, 2026. Loading.');
+  await act(async () => { release(); await Promise.resolve(); });
+  await waitFor(() => { expect(screen.getByRole('grid', { name: 'December 2026' }).getAttribute('aria-busy')).toBe('false'); });
+  expect(cell('2026-12-12').getAttribute('aria-label')).not.toContain('Loading');
+});
+
+test('a failed stored-events read leaves the grid showing with Try again for them; a failed town calendar read still fails the page', async () => {
+  const { api, fake } = setup(meOf(ACCESS.member), { calendars: [KITCHEN], ownerEvents: offline() });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(await screen.findByText('Couldn’t load the events from your calendars. Try again.')).toBeTruthy();
+  expect(cell('2026-11-21').textContent).toContain('Dartmouth home football');
+  expect(cell('2026-11-21').textContent).toContain('212');
+  expect(cell('2026-11-21').textContent).not.toContain('Smith rehearsal dinner');
+  const reads = fake.paths.length;
+  fake.ownerEvents = [DINNER, AWAY];
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => { expect(cell('2026-11-21').textContent).toContain('Smith rehearsal dinner'); });
+  expect(fake.paths.slice(reads)).toContain(NOVEMBER_EVENTS);
+  expect(screen.queryByText('Couldn’t load the events from your calendars. Try again.')).toBeNull();
+  cleanup();
+
+  const failing = setup();
+  const json = failing.fake.json.bind(failing.fake);
+  failing.fake.json = (path, schema, opts) => (path.includes('/calendar?') ? Promise.reject(offline()) : json(path, schema, opts));
+  const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api: failing.api });
+  window.history.replaceState(null, '', '/locations/l1/calendar?day=2026-11-21');
+  render(
+    <Head.Provider>
+      <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location="/locations/l1/calendar?day=2026-11-21" />
+    </Head.Provider>,
+  );
+  expect(await screen.findByText(COPY.network)).toBeTruthy();
+  expect(screen.queryByRole('grid')).toBeNull();
+});
+
+test('view-as: Add, Edit, Delete, Make a note and the calendars panel’s actions are disabled with the read-only line', async () => {
+  const party = noteOf('n1', { kind: 'private_event', effect: 'more_guests', startDate: '2026-11-21', endDate: '2026-11-21', expectedGuests: 40 });
+  const bookings = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
+  const { api } = setup(viewAsMe(ACCESS.admin), { notes: [party], calendars: [KITCHEN, bookings], ownerEvents: [DINNER, AWAY] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   for (const name of ['Add an event', 'Edit Private event note, Nov 21, 2026', 'Delete Private event note, Nov 21, 2026', 'Make a note from Smith rehearsal dinner']) {
     const control = within(panel()).getByRole('button', { name });
     expect(control.getAttribute('aria-disabled')).toBe('true');
@@ -480,8 +637,35 @@ test('view-as: Add, Edit, Delete and Make a note are disabled with the read-only
     fireEvent.click(control);
   }
   expect(document.getElementById('calendar-ro')?.textContent).toBe('Read-only while viewing as gm@example.org.');
-  expect(within(panel()).queryByRole('button', { name: 'Save note' })).toBeNull();
   expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
+
+  // The popover opens and lists the calendars; its writes stay in place, disabled, described by its own read-only line.
+  fireEvent.click(screen.getByRole('button', { name: 'Your calendars (2)' }));
+  const calendars = calendarsPanel();
+  expect(within(calendars).getByText('kitchen')).toBeTruthy();
+  expect(within(calendars).getByText('Link, calendar.google.com, 1 event')).toBeTruthy();
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input');
+  const picked = jest.spyOn(input, 'click').mockImplementation(() => undefined);
+  const controls = ['Import a calendar file', 'Add a link', 'Refresh now: Bookings', 'Remove kitchen', 'Remove Bookings']
+    .map((name) => within(calendars).getByRole('button', { name }));
+  const line = within(calendars).getByText('Read-only while viewing as gm@example.org.');
+  expect(line.id).not.toBe('');
+  expect(line.id).not.toBe('calendar-ro');
+  for (const control of controls) {
+    expect(control.getAttribute('aria-disabled')).toBe('true');
+    expect(control.getAttribute('aria-describedby')?.split(' ')).toContain(line.id);
+    fireEvent.click(control);
+  }
+  expect(picked).not.toHaveBeenCalled();
+  expect(within(calendars).queryByLabelText('Calendar link')).toBeNull();
+  expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull();
+  // How importing works is no write: it still shows the help.
+  const toggle = within(calendars).getByRole('button', { name: 'How importing works' });
+  expect(toggle.getAttribute('aria-disabled')).toBeNull();
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
   expect(writes(api)).toEqual([]);
 });
 
@@ -550,22 +734,28 @@ test('Try again and a month change while the forecast still fails keep the calen
   const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': offline(), '2026-12': offline() } });
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   expect(await screen.findByText('Couldn’t load the forecast for November. Try again.')).toBeTruthy();
-  // The import's own line is the toolbar's state: it would be gone if the page swapped to its loader and back.
+  // The popover's message is the header row's state: it would be gone if the page swapped to its loader and back.
+  api.answers[CALENDARS_PATH] = () => refusal(400, 'not_calendar');
   chooseFile(icsFile('date,guests\n2026-11-01,120\n', 'sales.csv'));
-  expect(await screen.findByText('This doesn’t look like a calendar file (.ics).')).toBeTruthy();
+  expect(await within(calendarsPanel()).findByText(NOT_CALENDAR)).toBeTruthy();
+  expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`POST ${CALENDARS_PATH}`]);
+  closeCalendars();
 
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(screen.queryByText('Loading the calendar')).toBeNull();
   expect(screen.getByRole('grid', { name: 'November 2026' }).getAttribute('aria-busy')).toBe('true');
   expect(await screen.findByText('Couldn’t load the forecast for November. Try again.')).toBeTruthy();
   expect(screen.getByRole('grid', { name: 'November 2026' }).getAttribute('aria-busy')).toBe('false');
-  expect(screen.getByText('This doesn’t look like a calendar file (.ics).')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /^Your calendars/ }));
+  expect(within(calendarsPanel()).getByText(NOT_CALENDAR)).toBeTruthy();
+  closeCalendars();
 
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   expect(screen.queryByText('Loading the calendar')).toBeNull();
   expect(await screen.findByText('Couldn’t load the forecast for December. Try again.')).toBeTruthy();
   expect(screen.getByRole('grid', { name: 'December 2026' })).toBeTruthy();
-  expect(screen.getByText('This doesn’t look like a calendar file (.ics).')).toBeTruthy();
+  fireEvent.click(screen.getByRole('button', { name: /^Your calendars/ }));
+  expect(within(calendarsPanel()).getByText(NOT_CALENDAR)).toBeTruthy();
 });
 
 test('a note gone in the meantime: Save and Delete answer 404, say so, close and read the notes and forecast again', async () => {
@@ -575,11 +765,12 @@ test('a note gone in the meantime: Save and Delete answer 404, say so, close and
   const notesReads = (): number => fake.paths.filter((path) => path === NOTES_PATH).length;
   expect(notesReads()).toBe(1);
   fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Private event note, Nov 21, 2026' }));
-  fireEvent.change(within(panel()).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
+  const form = noteForm('Edit note');
+  fireEvent.change(within(form).getByLabelText('Expected guests (optional)'), { target: { value: '70' } });
   api.answers[`${NOTES_PATH}/n1`] = () => refusal(404, 'not_found');
-  fireEvent.click(within(panel()).getByRole('button', { name: 'Save note' }));
+  fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await within(panel()).findByText('This note isn’t available.')).toBeTruthy();
-  expect(within(panel()).queryByRole('heading', { name: 'Edit this note' })).toBeNull();
+  expect(screen.queryByRole('dialog', { name: 'Edit note' })).toBeNull();
   await waitFor(() => { expect(forecastReads(fake)).toHaveLength(2); });
   expect(notesReads()).toBe(2);
 

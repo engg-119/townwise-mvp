@@ -1,5 +1,5 @@
 // The route chain (spec 7.2) and the staff gate (D2), through /api and the test-only /probe table.
-import { randomUUID } from 'node:crypto';
+import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
@@ -11,6 +11,7 @@ import {
   addConversation, addGrant, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
+import { addGoogleConnection, createFakeGoogle, GOOGLE_CLIENT_ID, linkGoogle } from './helpers/google.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import {
   call, limiterKey, logLines, makeStaff, MINUTE, refresh, removeStaffFactor, signIn, signInStaff, startTownwiseServer,
@@ -19,10 +20,16 @@ import {
 
 let server: TownwiseTestServer;
 let blobs: MemoryFileBlobs;
+/** Google calendars on, over the fake client, so the picker's choices (a GET) answer and run through the no-write check. */
+const CALENDAR_KEY = createSecretKey(randomBytes(32));
+const google = createFakeGoogle();
 
 beforeAll(async () => {
   blobs = createMemoryFileBlobs();
-  server = await startTownwiseServer({ probe: PROBE_ROUTES, files: blobs });
+  server = await startTownwiseServer({
+    probe: PROBE_ROUTES, files: blobs, calendarKey: CALENDAR_KEY, googleCalendar: google.client, googleCalendarClientId: GOOGLE_CLIENT_ID,
+    revokeGoogle: google.revoke,
+  });
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
@@ -127,6 +134,11 @@ describe('GET is side-effect free (7.3)', () => {
     // D28: one item of Your data, the upload's.
     const ref = `u_${uploadId}`;
     const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId, ref };
+    // The member's Google connection, so the picker's choices answer them (connect-google-calendar). The fake's refresh
+    // sends no new refresh token, so the list's happy path writes nothing; Google's refusals write nothing either
+    // (google-calendars.int.test.ts pins those).
+    await linkGoogle(server, member.userId, 'google-subject-chain');
+    await addGoogleConnection(server, { orgId, userId: member.userId, key: CALENDAR_KEY });
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',

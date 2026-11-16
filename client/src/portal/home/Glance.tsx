@@ -4,7 +4,7 @@ import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
 import { plainOf, strong, type Phrase } from '../analytics/phrase';
 import {
-  EVENT_WORDS, nextEventWhen, summaryLabel, vsUsualPhrase, type LastWeek, type NextEvent, type ThisWeek,
+  EVENT_WORDS, lastYearDayPhrase, nextEventWhen, summaryLabel, vsUsualPhrase, type LastWeek, type NextEvent, type ThisWeek,
 } from '../analytics/week';
 import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from '../analytics/words';
 import { plural } from '../format';
@@ -57,8 +57,12 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric }): React.JSX.Elem
       <View style={styles.lines}>
         <Small white>{summaryLabel(summary)}</Small>
         {usualLine === null ? null : <Small><PhraseParts phrase={usualLine} /></Small>}
-        {summary.busiest === null ? null : <Small>{`Busiest last year: ${shortDate(summary.busiest)}.`}</Small>}
-        {summary.quietest === null ? null : <Small>{`Quietest last year: ${shortDate(summary.quietest)}.`}</Small>}
+        {summary.busiest === null || summary.busiestValue === null ? null : (
+          <Small><PhraseParts phrase={lastYearDayPhrase('Busiest', summary.busiest, summary.busiestValue, props.metric)} /></Small>
+        )}
+        {summary.quietest === null || summary.quietestValue === null ? null : (
+          <Small><PhraseParts phrase={lastYearDayPhrase('Quietest', summary.quietest, summary.quietestValue, props.metric)} /></Small>
+        )}
       </View>
     </Tile>
   );

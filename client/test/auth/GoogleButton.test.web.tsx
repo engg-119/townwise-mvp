@@ -1,5 +1,6 @@
 import { act, render, screen, waitFor } from '@testing-library/react';
 
+import { gisLoaded, loadGis } from '../../src/auth/gis.web';
 import { GoogleButton, resetGoogleButtonState } from '../../src/auth/GoogleButton';
 import { REVEAL_MS, SWAP_GRACE_MS } from '../../src/auth/GoogleButton.web';
 
@@ -18,6 +19,26 @@ test('script injected once across remounts', async () => {
   first.unmount();
   render(<GoogleButton {...props} />);
   expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+});
+
+test('the button and the Calendar’s Google connect share one loader: one script tag whichever runs first', async () => {
+  const props = { google, onIdToken: jest.fn(), onError: jest.fn() };
+  render(<GoogleButton {...props} />);
+  await waitFor(() => { expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1); });
+  const shared = loadGis();
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+  document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+  await expect(shared).resolves.toBeUndefined();
+  expect(gisLoaded()).toBe(true);
+
+  resetGoogleButtonState();
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(0);
+  expect(gisLoaded()).toBe(false);
+  const first = loadGis();
+  render(<GoogleButton {...props} />);
+  expect(document.querySelectorAll(`script[src="${GIS}"]`)).toHaveLength(1);
+  document.querySelector(`script[src="${GIS}"]`)?.dispatchEvent(new Event('load'));
+  await expect(first).resolves.toBeUndefined();
 });
 
 test('initialize called once', async () => {
@@ -146,6 +167,9 @@ test('a skeleton shaped like Google’s button shows at once in the 44px box, be
   expect(skeleton?.style.height).toBe('40px');
   expect(skeleton?.style.borderRadius).toBe('4px');
   expect(skeleton?.style.maxWidth).toBe('400px');
+  // It reads as Google's own placeholder, so the swap is invisible for a visitor without a Google session.
+  expect(skeleton?.textContent).toBe('Continue with Google');
+  expect(skeleton?.querySelectorAll('svg path')).toHaveLength(4);
 });
 
 test('Google’s button replaces the skeleton, with no fade, once its iframe has its size', async () => {

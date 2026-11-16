@@ -7,7 +7,8 @@ import type { Metric } from './words';
 
 // "Color by" (home.md 4.2): Guests or Net sales as two pressed buttons in a radio group with one tab stop; the
 // arrow keys move the choice (web). The look of the note form's ChoiceGroup, written here so this folder does not
-// import upload/, which another session owns. A metric with no data is disabled, and its helper says why.
+// import upload/, which another session owns. A metric with no data is disabled, and its helper says why. Sales data's
+// By month chart passes its own `label` (“Show”).
 
 const OPTIONS: readonly { value: Metric; label: string; missing: string }[] = [
   { value: 'guests', label: 'Guests', missing: 'No guest counts in your history.' },
@@ -22,7 +23,10 @@ export function MetricSwitch(props: {
   onChange: (metric: Metric) => void;
   disabled?: boolean;
   nativeID: string;
+  /** The group's name and visible legend; “Color by” unless given. */
+  label?: string;
 }): React.JSX.Element {
+  const label = props.label ?? 'Color by';
   const refs = useRef<(Host | null)[]>([]);
   const enabled = OPTIONS.filter((option) => props.disabled !== true && props.available[option.value]);
   const helper = OPTIONS.find((option) => !props.available[option.value])?.missing ?? null;
@@ -42,11 +46,11 @@ export function MetricSwitch(props: {
   return (
     <View
       role="radiogroup"
-      aria-label="Color by"
+      aria-label={label}
       {...(Platform.OS === 'web' ? ({ onKeyDown } as object) : {})}
       style={styles.group}
     >
-      <Text style={styles.legend}>Color by</Text>
+      <Text style={styles.legend}>{label}</Text>
       <View style={styles.row}>
         {OPTIONS.map((option, index) => {
           const on = option.value === props.value;

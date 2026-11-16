@@ -59,7 +59,7 @@ export function dayMonthRange(start: string, end: string): string {
 }
 
 /**
- * The calendar range Home asks for: from two years before this week's Monday (Last week and the late-week share read
+ * The calendar range Home asks for: from two years before this week's Monday (the late-week share reads
  * Monday weeks), less the 4 weeks either side that "usual" reads, to the later of this month's last day and This
  * week's last day, six days from today.
  */
@@ -69,6 +69,13 @@ export function homeCalendarRange(today: string): { from: string; to: string } {
   const monthEnd = monthRange(today.slice(0, 7)).to;
   const last = addDays(today, 6);
   return { from, to: monthEnd > last ? monthEnd : last };
+}
+
+/** The days Home reads the forecast for: this month, and This week's seven days from today when they run past it. */
+export function forecastRange(today: string): { from: string; to: string } {
+  const month = monthRange(today.slice(0, 7));
+  const last = addDays(today, 6);
+  return { from: month.from, to: month.to > last ? month.to : last };
 }
 
 export interface HomeInput {
@@ -157,6 +164,9 @@ export interface WeekSummary {
   vsUsual: { change: number; days: number } | null;
   busiest: string | null;
   quietest: string | null;
+  /** Their figures, shown beside them (owner request, 2026-11-15). */
+  busiestValue: number | null;
+  quietestValue: number | null;
 }
 
 /** This week in {Town}: the seven days from today, today first (owner request, 2026-11-15). */
@@ -196,6 +206,7 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
   return {
     from: first.date, to: last.date, days: kept.length, total: sum(kept.map((each) => each.value)), vsUsual,
     busiest: busiest?.date ?? null, quietest: quietest?.date ?? null,
+    busiestValue: busiest?.value ?? null, quietestValue: quietest?.value ?? null,
   };
 }
 
@@ -248,6 +259,28 @@ export function summaryLabel(summary: WeekSummary): string {
   const range = `${shortDate(summary.from).replace(/, \d{4}$/, '')} to ${shortDate(summary.to)}`;
   const days = summary.days === 7 ? 'From all 7 days.' : `From ${formatCount(summary.days)} of its 7 days.`;
   return `Same 7 days last year, ${range}. ${days}`;
+}
+
+/**
+ * A day's published forecast in This week (owner request, 2026-11-15), as This month's grid reads it, the figure strong:
+ * "About 90 guests, 68 to 112", "Closed", "Booked: a private buyout, 40 guests"; null when the run has no figure for it.
+ */
+export function forecastPhrase(day: ForecastDay | undefined): Phrase | null {
+  if (day === undefined) return null;
+  if (day.status === 'closed') return ['Closed'];
+  if (day.status === 'booked') {
+    if (!yoursDid(day, 'booked')) return ['Booked for a private event'];
+    return day.noteGuests > 0 ? ['Booked: a private buyout, ', strong(plural(day.noteGuests, 'guest', 'guests'))] : ['Booked: a private buyout'];
+  }
+  if (day.low === null || day.mid === null || day.high === null) return null;
+  const mid = Math.round(day.mid);
+  // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
+  return [strong(`About ${plural(mid, 'guest', 'guests')}`), `, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`];
+}
+
+/** "Busiest last year: Sat, Nov 22, 2025 (253 guests).", the figure strong. */
+export function lastYearDayPhrase(which: 'Busiest' | 'Quietest', date: string, value: number, metric: Metric): Phrase {
+  return [`${which} last year: ${shortDate(date)} (`, strong(metricText(value, metric)), ').'];
 }
 
 /** "+9% against that year’s usual for those days, compared over 7 days.", the change strong. */
@@ -324,35 +357,38 @@ export type LastWeek =
   /** Every upload holding days is turned off on Your data. */
   | { state: 'uploads_off' }
   /** The history ends before last week. */
-  | { state: 'no_recent'; monday: string; sunday: string; lastDate: string }
+  | { state: 'no_recent'; from: string; to: string; lastDate: string }
   /** Last week has no day with the metric, though the history reaches it: a gap, or days without this metric. */
-  | { state: 'no_days'; monday: string; sunday: string }
-  | { state: 'no_last_year'; monday: string; sunday: string; days: ComparedDay[] }
-  | { state: 'no_overlap'; monday: string; sunday: string; days: ComparedDay[] }
+  | { state: 'no_days'; from: string; to: string }
+  | { state: 'no_last_year'; from: string; to: string; days: ComparedDay[] }
+  | { state: 'no_overlap'; from: string; to: string; days: ComparedDay[] }
   | {
-    state: 'compared'; monday: string; sunday: string; days: ComparedDay[];
+    state: 'compared'; from: string; to: string; days: ComparedDay[];
     /** Days with the metric in both weeks; the totals and the change are over these days only. */
     comparedDays: number; total: number; lastYearTotal: number; change: number | null;
   };
 
-/** Last week (Monday to Sunday before this one) against the days 364 days earlier. */
+/**
+ * Last week: the seven days before today, This week's weekdays a week earlier (owner request, 2026-11-15), against the
+ * days 364 days earlier.
+ */
 export function lastWeekComparison(input: HomeInput): LastWeek {
   if (input.lastDate === null) return input.uploadsOff === true ? { state: 'uploads_off' } : { state: 'no_history' };
-  const monday = addDays(mondayOf(input.today), -7);
-  const sunday = addDays(monday, 6);
-  const days = weekDates(monday).map((date) => ({
+  const from = addDays(input.today, -7);
+  const to = addDays(input.today, -1);
+  const days = weekDates(from).map((date) => ({
     date, value: figureOf(date, input), lastYear: figureOf(sameWeekdayYearsAgo(date, 1), input),
   }));
   if (days.every((each) => each.value === null)) {
-    return input.lastDate < monday ? { state: 'no_recent', monday, sunday, lastDate: input.lastDate } : { state: 'no_days', monday, sunday };
+    return input.lastDate < from ? { state: 'no_recent', from, to, lastDate: input.lastDate } : { state: 'no_days', from, to };
   }
-  if (days.every((each) => each.lastYear === null)) return { state: 'no_last_year', monday, sunday, days };
+  if (days.every((each) => each.lastYear === null)) return { state: 'no_last_year', from, to, days };
   const both = days.filter((each): each is ComparedDay & { value: number; lastYear: number } => each.value !== null && each.lastYear !== null);
-  if (both.length === 0) return { state: 'no_overlap', monday, sunday, days };
+  if (both.length === 0) return { state: 'no_overlap', from, to, days };
   const total = sum(both.map((each) => each.value));
   const lastYearTotal = sum(both.map((each) => each.lastYear));
   return {
-    state: 'compared', monday, sunday, days, comparedDays: both.length, total, lastYearTotal,
+    state: 'compared', from, to, days, comparedDays: both.length, total, lastYearTotal,
     change: lastYearTotal === 0 ? null : total / lastYearTotal - 1,
   };
 }

@@ -6,7 +6,8 @@
 //
 // The history is the 52 weeks before the town's today, read with the forecast's own read of the stored days (reader.ts),
 // and every closed and likely-closed day (spec D32, ../closed-days.ts) is left out of both sides of every comparison:
-// - weekday: that weekday's mean guests against the mean over every open day, with at least 8 of that weekday;
+// - weekday: that weekday's mean guests against the mean over every open day, with at least 8 of that weekday; that
+//   mean, the average open day, rounded to the nearest guest, is the effect's averageGuests (null on every other effect);
 // - term: each day in the day's term state against the mean of the same weekday in the other known term states, with
 //   at least 6 days on each side;
 // - holiday: each past occurrence of the holiday (its calendar group) against the same weekday in the 4 weeks before
@@ -38,6 +39,8 @@ export interface ReasonEffect {
   basis: 'model' | 'history';
   /** The history days it rests on (that weekday's, the term state's, the holiday's or the event's); null for the model's. */
   days: number | null;
+  /** On a weekday's history effect, the average open day's guests it is held against, rounded; null on every other. */
+  averageGuests: number | null;
 }
 
 /** The 52 weeks before today the effects read. */
@@ -65,9 +68,9 @@ export function effectHistory(today: string): { from: string; to: string; readFr
 }
 
 /** An effect from a signed percent: its size rounded to the nearest 5, and 'same' at 5 or less. */
-export function effectFrom(pct: number, basis: ReasonEffect['basis'], days: number | null): ReasonEffect {
+export function effectFrom(pct: number, basis: ReasonEffect['basis'], days: number | null, averageGuests: number | null = null): ReasonEffect {
   const size = Math.round(Math.abs(pct) / PCT_STEP) * PCT_STEP;
-  return { direction: size <= PCT_STEP ? 'same' : pct > 0 ? 'more' : 'fewer', pct: size, basis, days };
+  return { direction: size <= PCT_STEP ? 'same' : pct > 0 ? 'more' : 'fewer', pct: size, basis, days, averageGuests };
 }
 
 export interface EffectHistory {
@@ -103,8 +106,8 @@ interface OpenDay {
 const sum = (days: readonly OpenDay[]): number => days.reduce((total, day) => total + day.guests, 0);
 
 /** `actual` against `expected` guests as an effect from history; null when nothing was expected. */
-function compared(actual: number, expected: number, days: number): ReasonEffect | null {
-  return expected > 0 ? effectFrom(100 * (actual / expected - 1), 'history', days) : null;
+function compared(actual: number, expected: number, days: number, averageGuests: number | null = null): ReasonEffect | null {
+  return expected > 0 ? effectFrom(100 * (actual / expected - 1), 'history', days, averageGuests) : null;
 }
 
 /**
@@ -150,7 +153,8 @@ export function reasonEffects(history: EffectHistory): ReasonEffectOf {
   const weekday = (which: Weekday): ReasonEffect | null => {
     const same = open.filter((day) => day.weekday === which);
     if (same.length < WEEKDAY_MIN_DAYS) return null;
-    return compared(sum(same) / same.length, sum(open) / open.length, same.length);
+    const average = sum(open) / open.length;
+    return compared(sum(same) / same.length, average, same.length, Math.round(average));
   };
   const term = (state: TermState): ReasonEffect | null => againstSameWeekday(
     open.filter((day) => day.state === state), open.filter((day) => day.state !== state && day.state !== 'unknown'), TERM_MIN_DAYS,

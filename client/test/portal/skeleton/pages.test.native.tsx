@@ -9,6 +9,7 @@ jest.mock('expo-splash-screen', () => ({
 
 import { render } from '@testing-library/react-native';
 import { cleanup, renderRouter, screen, within } from 'expo-router/testing-library';
+import { StyleSheet } from 'react-native';
 
 import SecurityScreen from '../../../app/(gate)/(app)/(account)/settings/security';
 import { AuthProvider } from '../../../src/auth/AuthProvider';
@@ -116,6 +117,19 @@ describe('the location pages', () => {
     await expectSkeleton('calendar', 'Loading the calendar');
     expect(screen.getAllByTestId('skeleton-calendar-cell', { hidden: true })).toHaveLength(42);
     expect(screen.getAllByTestId('skeleton-calendar-panel', { hidden: true })).toHaveLength(1);
+  });
+
+  test('P28 Calendar: after the view switch the header row holds the Your calendars block, as on web', async () => {
+    await renderApp('/locations/l1/calendar', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    // Native's import line is inside the closed panel now, so the row ends with the button's 170px block.
+    const row = screen.getByTestId('skeleton-calendar-row', { hidden: true });
+    const calendars = within(row).getByTestId('skeleton-calendar-calendars', { hidden: true });
+    expect(StyleSheet.flatten(calendars.props.style)).toEqual(expect.objectContaining({ width: 170, minHeight: 44 }));
+    expect(within(row).queryByTestId('skeleton-calendar-import-line', { hidden: true })).toBeNull();
+    // In the row's order: the label, the switch, then the button's block.
+    const order = within(row).getAllByTestId(/^skeleton-calendar-(label|views|calendars)$/, { hidden: true }).map((item) => item.props.testID as string);
+    expect(order).toEqual(['skeleton-calendar-label', 'skeleton-calendar-views', 'skeleton-calendar-calendars']);
   });
 
   test('P29 Business rules: the add form and a few rows', async () => {

@@ -40,21 +40,26 @@ export type ReaderAnswer =
   | { readonly kind: 'refused'; readonly costMicroUsd: number }
   /** Stopped at max_tokens: the answer is cut, so none is kept; the call still cost what it cost. */
   | { readonly kind: 'too_long'; readonly costMicroUsd: number }
-  /** No answer: the error's class and HTTP status, never its message or the request. */
-  | { readonly kind: 'failed'; readonly errType: string; readonly status: number | null };
+  /**
+   * No answer: the error's class and HTTP status, never its message or the request. `streamedMicroUsd`, once the
+   * call's stream had begun (it was aborted, or failed mid-stream), is what the stream had reported at list prices: its
+   * input tokens and its output so far (model.ts streamTally); absent when no stream event had arrived.
+   */
+  | { readonly kind: 'failed'; readonly errType: string; readonly status: number | null; readonly streamedMicroUsd?: number };
 
 export interface FileReaderModel {
   readFile(request: ReaderRequest, signal: AbortSignal): Promise<ReaderAnswer>;
 }
 
-const TEXT_FORMS: Readonly<Record<Extract<ReaderInput, { type: 'text' }>['form'], string>> = {
+export const TEXT_FORMS: Readonly<Record<Extract<ReaderInput, { type: 'text' }>['form'], string>> = {
   text: 'a text file (it may be a CSV or TSV export)',
   workbook: 'an Excel workbook, made into text: each sheet starts with a "Sheet:" line, then its rows, cells apart by tabs',
   word: 'a Word document, made into text: its paragraphs on lines of their own, and its tables\' rows with cells apart by tabs',
   archive: 'a ZIP archive, made into text: each file in it that was read starts with a line "Entry n (what it is):", then its text (a workbook\'s sheets under "Sheet:" lines, rows with cells apart by tabs)',
 };
 
-const MARKER = '--- FILE CONTENT ---';
+/** The line after which a request's text, to its end, is the file's content. */
+export const MARKER = '--- FILE CONTENT ---';
 
 /** The words that go with the file: the date, the zone, what the file is, and whether it was cut. */
 function contextText(input: ReaderInput, context: ReaderContext): string {
@@ -85,15 +90,23 @@ const PDF_PAGE_TOKENS = 3000;
 const CONTEXT_CHARS = 2000;
 
 /**
- * The most a request for `input` can cost, reserved against the budget before the call: the system prompt and the
- * words at a token for every three characters, a PDF at 3,000 tokens a page (`pages`, or 600 when not known), a picture
- * at 5,000, and every output token the request may write, all at the most expensive model's prices (pricing.ts
- * ceilingCostMicroUsd).
+ * The most a request with `input` can cost, reserved against a budget before the call: `chars` (its system prompt and
+ * every word it sends) at a token for every three characters, a PDF at 3,000 tokens a page, a picture at 5,000, and
+ * `maxTokens` of output, all at the most expensive model's prices (pricing.ts ceilingCostMicroUsd). Both TownwiseAI
+ * readers reserve this one (this file's, and the ordering setup's, setup-reader.ts).
+ */
+export function inputCeilingMicroUsd(input: ReaderInput, limits: { chars: number; pages: number; maxTokens: number }): number {
+  const tokens = input.type === 'pdf' ? limits.pages * PDF_PAGE_TOKENS : input.type === 'image' ? IMAGE_TOKENS : 0;
+  return ceilingCostMicroUsd({ input: tokens + Math.ceil(limits.chars / 3), output: limits.maxTokens, cacheRead: 0, cacheWrite: 0 });
+}
+
+/**
+ * The most a request for `input` can cost: the system prompt, the words that go with any file and its own text, a PDF
+ * at its `pages` (600 when not known), and every output token the request may write (inputCeilingMicroUsd).
  */
 export function readerCeilingMicroUsd(input: ReaderInput, pages: number | null): number {
   const chars = READER_SYSTEM_PROMPT.length + CONTEXT_CHARS + (input.type === 'text' ? input.text.length : 0);
-  const tokens = input.type === 'pdf' ? (pages ?? AI_PDF_PAGES) * PDF_PAGE_TOKENS : input.type === 'image' ? IMAGE_TOKENS : 0;
-  return ceilingCostMicroUsd({ input: tokens + Math.ceil(chars / 3), output: READER_MAX_TOKENS, cacheRead: 0, cacheWrite: 0 });
+  return inputCeilingMicroUsd(input, { chars, pages: pages ?? AI_PDF_PAGES, maxTokens: READER_MAX_TOKENS });
 }
 
 /** The request for one file, exactly. */

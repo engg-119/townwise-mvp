@@ -1,5 +1,7 @@
 // The caller's own organization (spec 10.3, F7, D9, P18): org admins rename it and read its Townwise staff activity;
-// any member leaves it. The organization comes only from the principal's scope; no route here carries an id.
+// any member leaves it, which ends their Google access for calendars there (openspec change connect-google-calendar,
+// design decision 11), only through calendar/google-access.ts. The organization comes only from the principal's
+// scope; no route here carries an id.
 import { authOf } from '@ckeith26/auth';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -9,6 +11,7 @@ import { recordAfter, staffActivityViews } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { Principal } from '../access/policy.ts';
 import { resolveAccess } from '../access/resolve.ts';
+import { endGoogleAccess, googleAccessDeps, markPersonForCheck } from '../calendar/google-access.ts';
 import { memberOf } from './locations.ts';
 import { meResponse } from './me.ts';
 import { actorOf, assertOpenAsAdminTab, lastAdmin, orgAdmin, removeActiveSeat } from './team.ts';
@@ -48,7 +51,8 @@ export async function renameOrg(ctx: TownwiseContext, req: Request, res: Respons
 /**
  * POST /api/org/leave {} (F7): the same as removing oneself (removeActiveSeat), recorded as member.left with the role
  * the seat had when it was removed. The last admin, or one being demoted while they leave, gets 409 last_admin and
- * keeps the seat; a member leaves whether or not the organization has an admin.
+ * keeps the seat; a member leaves whether or not the organization has an admin. Their Google connection is marked for
+ * a check before the seat goes and ended after member.left, as for removeMember (handlers/team.ts).
  */
 export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -57,6 +61,8 @@ export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response
   const { scope } = caller;
   parseInput(leaveBody, req.body);
   const now = ctx.now();
+  const google = googleAccessDeps(ctx);
+  const connectionId = await markPersonForCheck(google, scope, caller.userId);
   const removal = await removeActiveSeat(ctx, scope, caller.memberId, caller.userId, { removedAt: now, removedBy: caller.userId });
   if (removal.kind === 'last_admin') throw lastAdmin();
   // not_found means an admin removed the seat meanwhile: the caller is out either way, and did not leave.
@@ -66,6 +72,7 @@ export async function leaveOrg(ctx: TownwiseContext, req: Request, res: Response
       target: { type: 'member', id: caller.memberId },
       details: { email: caller.email },
     });
+    if (connectionId !== null) await endGoogleAccess(google, scope, connectionId, 'left');
   }
   res.status(200).json(meResponse(await resolveAccess(ctx, authOf(req))));
 }

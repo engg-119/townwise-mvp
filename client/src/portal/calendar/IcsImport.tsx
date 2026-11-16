@@ -1,17 +1,25 @@
 import { Mono } from '../ui/text';
-import type { ImportedCalendar } from './model';
+import { nativeLine } from './calendars';
 
-// The owner's calendar file on native (P28, spec 16.3): no file picker is installed, so the toolbar says
-// where to import one instead. Web has its own file (IcsImport.web.tsx), which takes the same props.
-
-export const NATIVE_IMPORT_LINE = 'To add events from your own calendar file, open Townwise on the web.';
+// The calendar file import on native (P28, spec 16.3; connect-owner-calendar design decision 11): no file picker is
+// installed, so the "Your calendars" popover says where to import one instead, in the place web's "Import a calendar
+// file" has, which while Google calendars are on also points to the web for connecting one. Web has its own file
+// (IcsImport.web.tsx), which takes the same props. The siblings share only this type: on web a value exported here
+// would resolve to the .web file itself, so their words are in calendars.ts.
 
 export interface IcsImportProps {
-  /** The page's day, for the 400 days either side that a file's events are kept within. */
-  today: string;
-  /** The file read last, while the page is open; null before one. */
-  imported: ImportedCalendar | null;
-  onImport: (imported: ImportedCalendar) => void;
+  /** The id of the popover's help, which describes the import button (web). */
+  describedBy: string;
+  /** While the popover posts the file chosen last: the button reads "Importing…", disabled (web). */
+  pending: boolean;
+  /** Under view-as, the popover's read-only line: the button stays in place, disabled and described by it (web). */
+  readOnlyId: string | null;
+  /** A file of at most 1 MB, read: its name and its text, which the API parses. */
+  onFile: (file: { name: string; text: string }) => void;
+  /** The words for a file refused before or as it is read. */
+  onRefusal: (words: string) => void;
+  /** The list answers Google calendars on (`google.available`): the line also names connecting one (native). */
+  google?: boolean;
 }
 
-export const IcsImport: (props: IcsImportProps) => React.JSX.Element = () => <Mono>{NATIVE_IMPORT_LINE}</Mono>;
+export const IcsImport: (props: IcsImportProps) => React.JSX.Element = (props) => <Mono>{nativeLine(props.google === true)}</Mono>;

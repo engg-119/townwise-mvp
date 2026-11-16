@@ -204,12 +204,13 @@ function mapBack(): HTMLElement {
   return back;
 }
 
-function nantucketScale(): number {
-  const marker = [...document.querySelectorAll<HTMLElement>('.mk-pos')].find((element) => element.querySelector('.mtag')?.textContent === 'Nantucket, MA');
+function barHarborScale(): number {
+  const marker = [...document.querySelectorAll<HTMLElement>('.mk-pos')].find((element) => element.querySelector('.mtag')?.textContent === 'Bar Harbor, ME');
   return Number(marker?.style.getPropertyValue('--k'));
 }
 
-const NANTUCKET = mapTowns.find((town) => town.id === 'nantucket-ma')?.series.gap ?? [];
+// Bar Harbor's county has the year's largest gaps, so its dot changes size the most.
+const BAR_HARBOR = mapTowns.find((town) => town.id === 'bar-harbor-me')?.series?.gap ?? [];
 
 test('the story starts at its title, with one band observer on the scroll container over the sixteen slots', () => {
   installObserver();
@@ -241,14 +242,14 @@ test('exactly one slot in the band sets the step: the region, the towns, then ea
   band().report([{ target: slot(1), inBand: false, rect: { top: -100, bottom: 400 } }]);
   expect(story.className).toBe('story is-on ss-2');
   expect(frame.className).toContain('is-local');
-  expect(listHeader()).toBe('Gap in Jan 2024');
+  expect(listHeader()).toBe('Gap in Jan 2025');
 
   step(3);
   expect(story.className).toBe('story is-on ss-3 is-months');
   expect(document.querySelector('.tl-m')?.textContent).toBe('Jan');
-  expect(document.querySelector('.tl-y')?.textContent).toBe('2024');
-  expect(document.querySelector('.tl-line')?.textContent).toBe('January starts the 2024 data, so there is no month before it to compare.');
-  expect(document.querySelector('.ptl-m')?.textContent).toBe('Jan 2024');
+  expect(document.querySelector('.tl-y')?.textContent).toBe('2025');
+  expect(document.querySelector('.tl-line')?.textContent).toBe('January starts the 2025 data, so there is no month before it to compare.');
+  expect(document.querySelector('.ptl-m')?.textContent).toBe('Jan 2025');
 
   const ticks: string[] = [];
   for (let month = 1; month < 12; month += 1) {
@@ -256,12 +257,12 @@ test('exactly one slot in the band sets the step: the region, the towns, then ea
     expect(story.className).toBe(`story is-on ss-${String(month + 3)} is-months`);
     expect(document.querySelector('.tl-m')?.textContent).toBe(MONTHS[month]);
     expect(document.querySelector('.tl-line')?.textContent).toBe(moveSentence(month));
-    expect(document.querySelector('.ptl-m')?.textContent).toBe(`${MONTHS[month] ?? ''} 2024`);
+    expect(document.querySelector('.ptl-m')?.textContent).toBe(`${MONTHS[month] ?? ''} 2025`);
     expect([...document.querySelectorAll('.tl-rail li')].map((item) => item.className)).toEqual(MONTHS.map((_, index) => (index < month ? 'is-p' : index === month ? 'is-c' : '')));
     expect(document.querySelector<HTMLElement>('.tl-fill')?.style.transform).toBe(`scaleY(${railFill(month).toFixed(4)})`);
     expect(document.querySelector<HTMLElement>('.tl-cur')?.style.transform).toBe(`translateX(${String(cursorX(month))}px)`);
-    expect(nantucketScale()).toBeCloseTo(markerScale(NANTUCKET[month] ?? 0), 3);
-    expect(listHeader()).toBe(`Gap in ${MONTHS[month] ?? ''} 2024`);
+    expect(barHarborScale()).toBeCloseTo(markerScale(BAR_HARBOR[month] ?? 0), 3);
+    expect(listHeader()).toBe(`Gap in ${MONTHS[month] ?? ''} 2025`);
     ticks.push(document.querySelector('.tl-m')?.className ?? '');
   }
   // Each month ticks in: the class flips between two copies so the animation replays.
@@ -270,10 +271,10 @@ test('exactly one slot in the band sets the step: the region, the towns, then ea
 
   step(15);
   expect(story.className).toBe('story is-on ss-15');
-  // The last step rests on the reader's month: today is Nov 5, 2026, so November 2024 in the data.
-  expect(listHeader()).toBe('Gap in Nov 2024');
-  expect(nantucketScale()).toBeCloseTo(markerScale(NANTUCKET[10] ?? 0), 3);
-  expect(screen.getByRole('heading', { level: 2, name: 'November, this month in 2024.' })).toBeTruthy();
+  // The last step rests on the reader's month: today is Nov 5, 2026, so November 2025 in the data.
+  expect(listHeader()).toBe('Gap in Nov 2025');
+  expect(barHarborScale()).toBeCloseTo(markerScale(BAR_HARBOR[10] ?? 0), 3);
+  expect(screen.getByRole('heading', { level: 2, name: 'November, this month in 2025.' })).toBeTruthy();
   expect(screen.getByText(finale(10).line)).toBeTruthy();
 });
 
@@ -283,10 +284,10 @@ test('scrolling back up runs the story backward to the region', () => {
   const { frame, story } = renderStory();
   step(15);
   step(14);
-  expect(listHeader()).toBe('Gap in Dec 2024');
+  expect(listHeader()).toBe('Gap in Dec 2025');
   step(5);
   expect(story.className).toBe('story is-on ss-5 is-months');
-  expect(listHeader()).toBe('Gap in Mar 2024');
+  expect(listHeader()).toBe('Gap in Mar 2025');
   step(1);
   expect(story.className).toBe('story is-on ss-1');
   expect(frame.className).toContain('is-region');
@@ -302,7 +303,7 @@ test('a jump past the story ends it at the last step, and a jump back returns it
   place((index) => ({ top: -6000 + index * 300, bottom: -5700 + index * 300 }));
   band().report([{ target: slot(5), inBand: false, rect: { top: -4500, bottom: -4300 } }]);
   expect(story.className).toBe('story is-on ss-15');
-  expect(listHeader()).toBe('Gap in Nov 2024');
+  expect(listHeader()).toBe('Gap in Nov 2025');
 
   // Home: back to the top, where the title's slot is in the band.
   place((index) => rectFor(index, 0));
@@ -333,7 +334,7 @@ test('a hidden screen (zero rects) holds the step', () => {
   place(() => ({ top: 0, bottom: 0 }));
   band().report(slots().map((target) => ({ target, inBand: false, rect: { top: 0, bottom: 0 }, rootBounds: { top: 0, bottom: 0, left: 0, right: 0, width: 0, height: 0 } })));
   expect(story.className).toBe('story is-on ss-6 is-months');
-  expect(listHeader()).toBe('Gap in Apr 2024');
+  expect(listHeader()).toBe('Gap in Apr 2025');
 });
 
 test('the pinned map is sized in px from the scroll container before the first paint, and on phones the band sits below the pin', () => {
@@ -462,10 +463,11 @@ test('from February each step bursts job flows that replay on every step, backwa
   step(3);
   expect(document.querySelectorAll('.pt')).toHaveLength(0);
   step(4);
-  expect(document.querySelectorAll('.pt')).toHaveLength(15);
+  expect(document.querySelectorAll('.pt')).toHaveLength(16);
   const february = movers();
   mapTowns.forEach((town, index) => {
-    const flow = flowOf(index, moveAt(town.series.gap, 1));
+    // A town without a series (Nantucket) never moves, so it has no flow.
+    const flow = town.series === null ? null : flowOf(index, moveAt(town.series.gap, 1));
     const shown = february[index];
     expect(shown?.points).toEqual(flow?.points.map((point) => `${String(point.a)}deg ${String(point.d)}px ${String(point.j)}`) ?? []);
     if (flow !== null) expect(shown?.flow).toMatch(new RegExp(`^fl fl-${flow.dir} fl-[ab]$`));
@@ -474,7 +476,7 @@ test('from February each step bursts job flows that replay on every step, backwa
   const burst = (): string | undefined => document.querySelector('.fl')?.className.split(' ').at(-1);
   const first = burst();
   step(5);
-  expect(document.querySelectorAll('.pt')).toHaveLength(18);
+  expect(document.querySelectorAll('.pt')).toHaveLength(13);
   const second = burst();
   expect(second).not.toBe(first);
   // Back up a step: the class flips again, so February's burst plays again.
@@ -492,13 +494,13 @@ test('with reduced motion the month still follows the scroll, with a + or − in
   expect(frame.className).toBe('app app-a is-region');
   expect(document.querySelector('.m-draw')).toBeNull();
   step(4);
-  expect(listHeader()).toBe('Gap in Feb 2024');
+  expect(listHeader()).toBe('Gap in Feb 2025');
   expect(document.querySelectorAll('.pt, .fl')).toHaveLength(0);
   expect(movers().filter((marker) => marker.glyph !== null).map((marker) => [marker.name, marker.glyph])).toEqual([
-    ['Amherst, MA', '+'], ['Ithaca, NY', '+'], ['State College, PA', '+'],
+    ['Amherst, MA', '+'], ['Ithaca, NY', '+'], ['Middlebury, VT', '−'], ['State College, PA', '+'],
   ]);
   step(5);
-  expect(movers().filter((marker) => marker.glyph !== null).map((marker) => marker.glyph)).toEqual(['−', '−', '−', '−', '−', '−']);
+  expect(movers().filter((marker) => marker.glyph !== null).map((marker) => marker.glyph)).toEqual(['−', '−', '−', '−']);
 });
 
 test('the legend and, on phones, step 2 say what the moving dots or the + and − mean; CSS shows the one that applies', () => {
@@ -545,20 +547,20 @@ test('a town picked mid-story keeps its zoom while the scroll moves the month, a
   media({ wide: true, reduce: false });
   const { frame } = renderStory();
   step(6);
-  expect(listHeader()).toBe('Gap in Apr 2024');
+  expect(listHeader()).toBe('Gap in Apr 2025');
   const hanover = row('Hanover, NH');
   fireEvent.click(hanover, { detail: 1 });
   expect(frame.className).toContain('is-zoomed');
   expect(frame.className).not.toContain('is-sm');
-  expect(listHeader()).toBe('Gap in Nov 2024');
+  expect(listHeader()).toBe('Gap in Nov 2025');
   step(8);
-  expect(listHeader()).toBe('Gap in Jun 2024');
+  expect(listHeader()).toBe('Gap in Jun 2025');
   expect(frame.className).toContain('is-zoomed');
   const focus = jest.spyOn(hanover, 'focus');
   fireEvent.click(mapBack(), { detail: 1 });
   expect(frame.className).not.toContain('is-zoomed');
   expect(frame.className).toContain('is-local');
-  expect(listHeader()).toBe('Gap in Jun 2024');
+  expect(listHeader()).toBe('Gap in Jun 2025');
   expect(focus).toHaveBeenCalledWith({ preventScroll: true });
   // Before the towns, Back returns to the region.
   step(1);
@@ -575,7 +577,7 @@ test('the month scrubber sets the month by hand, so the dots jump', () => {
   step(5);
   expect(frame.className).toContain('is-sm');
   fireEvent.click(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { name: 'Oct' }), { detail: 1 });
-  expect(listHeader()).toBe('Gap in Oct 2024');
+  expect(listHeader()).toBe('Gap in Oct 2025');
   expect(frame.className).not.toContain('is-sm');
 });
 
@@ -584,7 +586,7 @@ test('without an observer the map lies flat at the reader’s month; a silent on
   const flat = renderStory();
   expect(flat.story.className).toBe('story is-flat ss-15');
   expect(flat.frame.className).toBe('app app-a is-local');
-  expect(listHeader()).toBe('Gap in Nov 2024');
+  expect(listHeader()).toBe('Gap in Nov 2025');
   flat.unmount();
   cleanup();
 
@@ -599,7 +601,7 @@ test('without an observer the map lies flat at the reader’s month; a silent on
   expect(band().disconnected).toBe(false);
   step(4);
   expect(story.className).toBe('story is-on ss-4 is-months');
-  expect(listHeader()).toBe('Gap in Feb 2024');
+  expect(listHeader()).toBe('Gap in Feb 2025');
 });
 
 test('from 1024px a zoomed town hides the title, and focus inside it brings back only the part with focus, so the H1 stays off the map’s Back', () => {
@@ -654,7 +656,7 @@ test('every step is in the reading order, the story adds no control, and nothing
   for (const at of [15, 3, 0]) step(at);
   // Each month slot carries its month's sentence for screen readers.
   expect(slots().slice(3, 15).map((element) => element.querySelector('.sr-only')?.textContent)).toEqual(
-    MONTH_NAMES.map((name, month) => `${name} 2024. ${moveSentence(month)}`),
+    MONTH_NAMES.map((name, month) => `${name} 2025. ${moveSentence(month)}`),
   );
   const focusable = [...story.querySelectorAll<HTMLElement>('button, a, [tabindex]')].filter((element) => element.tabIndex >= 0);
   expect(focusable.every((element) => element.tagName === 'BUTTON' || element.tagName === 'A')).toBe(true);

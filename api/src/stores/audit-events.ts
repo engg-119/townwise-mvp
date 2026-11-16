@@ -51,11 +51,16 @@ export const AUDIT_DETAIL_KEYS = {
   'rule.created': ['locationId', 'via', 'scheduled'],
   'rule.updated': ['locationId', 'scheduled'],
   'rule.deleted': ['locationId'],
-  // Owner calendars (openspec change connect-owner-calendar, design decision 10): ids, the kind ('file' or 'link'), the
-  // event count and the status code only. Never the calendar's label, host or address, or an event's title.
+  // Owner calendars (openspec change connect-owner-calendar, design decision 10): ids, the kind ('file', 'link' or
+  // 'google'), the event count and the status code only. Never the calendar's label, host or address, or an event's title.
   'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
   'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
   'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  // Google access for calendars (openspec change connect-google-calendar, design decision 13): the connection's id, how
+  // many calendars went with it and why ('unused' or 'last_calendar'). Never a code, a token, a Google calendar id, an
+  // email address, a calendar's name or anything Google answered.
+  'google_calendar.connected': ['connectionId'],
+  'google_calendar.disconnected': ['connectionId', 'calendarCount', 'reason'],
   // `attachments` (D36): how many files the person's message carried, only on a turn whose message carried any.
   // `webSearches` (D37): how many web searches the turn was billed for, only on a turn that made any; never a query or URL.
   'chat.turn_completed': [
@@ -75,6 +80,10 @@ export const AUDIT_DETAIL_KEYS = {
   'order.rule_turned_off': ['locationId', 'ruleId'],
   'order.card_saved': ['locationId', 'conversationId', 'kind'],
   'order.card_dismissed': ['locationId', 'conversationId', 'kind'],
+  // D41, reading the ordering setup with TownwiseAI: whether a file or pasted text was read, the call's outcome ('read',
+  // 'refused', 'too_long', 'invalid_answer' or 'failed') and how many suppliers and items it suggested. Never a name,
+  // a point-of-sale name, a note or the content.
+  'order.setup_read': ['locationId', 'inputKind', 'outcome', 'suppliers', 'items'],
   // U13B, forecast runs (spec 14.4): ids, the model version, the dates and the day count, never a figure.
   'forecast.imported': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount', 'via', 'calibrationId'],
@@ -86,8 +95,9 @@ export const AUDIT_DETAIL_KEYS = {
   'org.forecasts_switched': ['on'],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
-  // D25, open as admin: ids only. The grant is the target and the organization the event's orgId; no name, email or reason.
-  'open_as_admin.started': [],
+  // D25, open as admin: the grant is the target and the organization the event's orgId; no name or email. `reason`, the
+  // staff member's own words as view-as's, only once someone has joined the organization (2026-11-15).
+  'open_as_admin.started': ['reason'],
   'open_as_admin.ended': ['endReason'],
   'people.signed_out_everywhere': [],
   'person.deleted': ['userId'],
@@ -105,7 +115,9 @@ export type AuditTargetType =
   // Business rules (D31).
   | 'rule'
   // Owner calendars.
-  | 'owner_calendar';
+  | 'owner_calendar'
+  // A person's Google access for calendars (connect-google-calendar).
+  | 'google_connection';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

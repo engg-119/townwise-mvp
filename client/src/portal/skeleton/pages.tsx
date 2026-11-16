@@ -2,7 +2,7 @@ import { Platform, StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
-import { cellSizes } from '../calendar/model';
+import { cellSize } from '../calendar/grid';
 import { BlockRow, GUTTER } from '../home/Block';
 import { Actions } from '../ui/Button';
 import { Columns, Pair, Panel, Section, Stack } from '../ui/layout';
@@ -182,6 +182,7 @@ export function SalesSkeleton(props: LabelProps): React.JSX.Element {
         <Columns
           main={(
             <Stack>
+              {Platform.OS === 'web' ? <SkeletonChart height={340} /> : null}
               <SkeletonTable columns={[{ flex: 1.4 }, { numeric: true }, { numeric: true }, { numeric: true }]} rows={6} stack={false} />
               <SkeletonText width="80%" />
             </Stack>
@@ -300,7 +301,7 @@ export function SecuritySkeleton(props: LabelProps): React.JSX.Element {
 const WEEKS = 6;
 const DAYS = 7;
 
-/** A month as a grid of `WEEKS` rows of seven cells under a weekday head, always 42 cells, so the grid never changes height. */
+/** A month as a grid of `WEEKS` rows of seven cells of a fixed height under a weekday head: always 42 cells, so the grid never changes height. */
 function SkeletonMonth(props: { cellTestID: string; cellHeight: number }): React.JSX.Element {
   return (
     <View style={styles.month}>
@@ -312,7 +313,7 @@ function SkeletonMonth(props: { cellTestID: string; cellHeight: number }): React
       {Array.from({ length: WEEKS }, (_, week) => (
         <View key={week} style={styles.monthRow}>
           {Array.from({ length: DAYS }, (_, day) => (
-            <View key={day} testID={props.cellTestID} style={[styles.monthCell, { minHeight: props.cellHeight }]} />
+            <View key={day} testID={props.cellTestID} style={[styles.monthCell, { height: props.cellHeight }]} />
           ))}
         </View>
       ))}
@@ -419,30 +420,46 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
 }
 
 /**
- * P28 Calendar: the toolbar (month switcher, filter chips, the calendar file's control), then the month's grid, always
- * six weeks of seven days, with the day panel beside it from 1024px and under it below.
+ * P28 Calendar: the header row (Today, the two arrows, the label's 216px, flexible at 640px and below as the page's
+ * is, the Month and Week switch's 130px and the "Your calendars" button's 170px, as the row's own items, so it wraps
+ * where the page's does: one line at 1024px, two at 375px; the button's panel is closed on load), the filters' legend over four chips where the page puts
+ * them for the width (heading the grid's column from 641px, so from 1024px the panel beside it starts level with the
+ * legend; after the grid below), then the month's grid, always six weeks of seven days, each cell as tall as the
+ * loaded grid's (grid.ts cellSize), with the day panel beside it from 1024px and under it below.
  */
 export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
-  const { desktop, width } = useBreakpoint();
+  const { desktop, phone, width } = useBreakpoint();
+  const filters = (
+    <View testID="skeleton-calendar-filters" style={styles.calendarFilters}>
+      <SkeletonText type="ui" width={140} />
+      <View style={styles.chips}>
+        {[88, 96, 80, 104].map((chip) => <SkeletonButton key={chip} width={chip} />)}
+      </View>
+    </View>
+  );
   return (
     <Skeleton name="calendar" label={props.label}>
       <View style={styles.calendar}>
-        <View style={[styles.bar, desktop ? styles.barWide : null]}>
-          <View style={styles.switcher}>
+        <View testID="skeleton-calendar-row" style={[styles.calendarRow, desktop ? styles.calendarRowWide : null]}>
+          <View style={[styles.switcher, desktop ? styles.switcherWide : styles.switcherNarrow, phone ? styles.switcherPhone : null]}>
+            <SkeletonButton link width={44} />
             <SkeletonButton width={44} />
-            <SkeletonBlock height={theme.type.ui.fontSize} width={128} />
             <SkeletonButton width={44} />
-            <SkeletonButton link width={48} />
+            <View testID="skeleton-calendar-label" style={phone ? styles.calendarLabelPhone : styles.calendarLabel}>
+              <SkeletonBlock height={theme.type.ui.fontSize} width={128} />
+            </View>
           </View>
-          <View style={styles.chips}>
-            {[88, 96, 80, 104].map((chip) => <SkeletonButton key={chip} width={chip} />)}
-          </View>
-          <SkeletonButton width={170} />
+          {/* The Month and Week switch, then "Your calendars", each about as wide as the page's, on web and native; its
+              panel is closed on load, so nothing stands for it. */}
+          <View testID="skeleton-calendar-views"><SkeletonButton width={130} /></View>
+          <SkeletonButton testID="skeleton-calendar-calendars" width={170} />
         </View>
         <View style={desktop ? styles.split : styles.stacked}>
-          <View style={desktop ? styles.wide : null}>
-            <SkeletonMonth cellTestID="skeleton-calendar-cell" cellHeight={cellSizes(width).minHeight} />
+          <View style={[styles.calendarColumn, desktop ? styles.wide : null]}>
+            {phone ? null : filters}
+            <SkeletonMonth cellTestID="skeleton-calendar-cell" cellHeight={cellSize(width).height} />
           </View>
+          {phone ? filters : null}
           <View testID="skeleton-calendar-panel" style={desktop ? styles.narrow : null}>
             <Stack gap={theme.space[5]}>
               <SkeletonHeading width={200} />
@@ -670,10 +687,18 @@ const styles = StyleSheet.create({
   monthRow: { flexDirection: 'row', gap: 3 },
   monthHead: { flex: 1, alignItems: 'center' },
   monthCell: { flex: 1, minWidth: 0, backgroundColor: c.raised },
+  // P28 Calendar, as calendar/Toolbar.tsx and CalendarPage.tsx lay it out.
   calendar: { gap: theme.space[6] },
-  bar: { gap: theme.space[4] },
-  barWide: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'flex-end', columnGap: theme.space[8], rowGap: theme.space[4] },
-  switcher: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[3] },
+  calendarRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[3], rowGap: theme.space[4] },
+  calendarRowWide: { justifyContent: 'flex-end' },
+  switcher: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[3], minHeight: 44 },
+  switcherWide: { marginRight: 'auto' },
+  switcherNarrow: { flexBasis: '100%' },
+  switcherPhone: { flexShrink: 1, minWidth: 0 },
+  calendarLabel: { width: 216 },
+  calendarLabelPhone: { flexShrink: 1, minWidth: 0 },
+  calendarFilters: { gap: theme.space[2] },
+  calendarColumn: { gap: theme.space[4] },
   chips: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[2], rowGap: theme.space[2] },
   stacked: { gap: theme.space[8] },
   wide: { flex: 8, minWidth: 0 },

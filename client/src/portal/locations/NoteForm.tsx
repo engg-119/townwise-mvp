@@ -14,7 +14,9 @@ import { checkNote, MAX_DETAIL, NOTE_COPY, type NoteDraft, type NoteMessages } f
 
 // C6, the note form (spec P14, 12): the fields a note shares with a business rule's schedule (NoteFields: Kind, the
 // dates, the hours, the days, Effect and Expected guests), then Details (required for Other). It checks the API's
-// rules before it sends, then “Save note” posts or replaces the note. “Cancel” closes it.
+// rules before it sends, then “Save note” posts or replaces the note. “Cancel” closes it. `bare` is the form inside
+// the Calendar's popover (refine-calendar-and-home design decision 2), whose heading names it: no Panel, eyebrow or
+// heading of its own, and Cancel waits, disabled in place, while the save runs, as the popover does.
 
 function list(message: string | undefined): readonly string[] {
   return message === undefined ? [] : [message];
@@ -40,6 +42,8 @@ export function NoteForm(props: {
   submitVariant?: 'primary' | 'outline';
   /** The note was made by TownwiseAI from a file (D34): the form says undoing that read removes it. */
   fromAiFile?: boolean;
+  /** Inside a popover that heads it: no Panel, eyebrow or heading, and Cancel disabled while the save runs. */
+  bare?: boolean;
 }): React.JSX.Element {
   const { save, onSaved } = props;
   const [draft, setDraft] = useState<NoteDraft>(props.initial);
@@ -61,34 +65,40 @@ export function NoteForm(props: {
   }
 
   const failure = action.error === null ? null : saveErrorCopy(action.error);
+  const bare = props.bare === true;
+  const fields = (
+    <Stack gap={20}>
+      <NoteFields draft={draft} set={set} messages={messages} idPrefix="note" endHelper="Leave it empty for one day." noun="note" />
+      <FormField
+        label={draft.kind === 'other' ? 'Details' : 'Details (optional)'}
+        helper={NOTE_COPY.detailHelp}
+        value={draft.detail}
+        onChangeText={(detail) => { set({ detail }); }}
+        multiline
+        maxLength={MAX_DETAIL}
+        autoCapitalize="sentences"
+        messages={list(messages.detail)}
+      />
+      {failure === null ? null : (
+        <ErrorNotice message={failure} {...(failure === NOTE_COPY.limit ? {} : { onRetry: submit })} />
+      )}
+      <Actions>
+        <Button variant={props.submitVariant ?? 'primary'} label={action.pending ? 'Saving…' : 'Save note'} disabled={action.pending} onPress={submit} />
+        <Button variant="link" label="Cancel" disabled={bare && action.pending} onPress={props.onCancel} />
+      </Actions>
+    </Stack>
+  );
+  const fromAiFile = props.fromAiFile === true ? <Small>{NOTE_COPY.fromAiFileEdit}</Small> : null;
+  if (bare) return <>{fromAiFile}{fields}</>;
   const title = props.editing ? 'Edit this note' : 'Add a note';
   return (
     <Panel label={title}>
       <Stack gap={8}>
         <Eyebrow>{props.editing ? 'Edit note' : 'New note'}</Eyebrow>
         <Heading>{title}</Heading>
-        {props.fromAiFile === true ? <Small>{NOTE_COPY.fromAiFileEdit}</Small> : null}
+        {fromAiFile}
       </Stack>
-      <Stack gap={20}>
-        <NoteFields draft={draft} set={set} messages={messages} idPrefix="note" endHelper="Leave it empty for one day." noun="note" />
-        <FormField
-          label={draft.kind === 'other' ? 'Details' : 'Details (optional)'}
-          helper={NOTE_COPY.detailHelp}
-          value={draft.detail}
-          onChangeText={(detail) => { set({ detail }); }}
-          multiline
-          maxLength={MAX_DETAIL}
-          autoCapitalize="sentences"
-          messages={list(messages.detail)}
-        />
-        {failure === null ? null : (
-          <ErrorNotice message={failure} {...(failure === NOTE_COPY.limit ? {} : { onRetry: submit })} />
-        )}
-        <Actions>
-          <Button variant={props.submitVariant ?? 'primary'} label={action.pending ? 'Saving…' : 'Save note'} disabled={action.pending} onPress={submit} />
-          <Button variant="link" label="Cancel" onPress={props.onCancel} />
-        </Actions>
-      </Stack>
+      {fields}
     </Panel>
   );
 }

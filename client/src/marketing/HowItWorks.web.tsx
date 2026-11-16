@@ -1,16 +1,17 @@
 import { useContext, useEffect, useId, useRef, useState } from 'react';
 
 import { MONTHS } from './map/countyData';
-import { fmtRange, sourceLinks } from './map/TownPanel.web';
+import { fmtRange } from './map/TownPanel.web';
 import { towns } from './map/towns';
 import { FLOW, FLOW_DAY_PX } from './homeStyles.web';
 import { ScrollRoot } from './MarketingShell.web';
+import { SourceChips } from './SourceChip.web';
 import { useMediaQuery } from './useReducedMotion.web';
 import { useReveal, type RevealView } from './useReveal.web';
 
-// Step 01 shows Hanover's dates from the published calendars, with one link per source page.
+// Step 01 shows Hanover's dates from the published calendars, with one source chip per source page.
 const HANOVER_DATES = towns.find((town) => town.id === 'hanover-nh')?.dates ?? [];
-const HANOVER_SOURCES = sourceLinks([...new Set(HANOVER_DATES.flatMap((date) => date.sourceUrls))]);
+const HANOVER_SOURCES = [...new Set(HANOVER_DATES.flatMap((date) => date.sourceUrls))].map((url) => ({ url }));
 
 // The illustrations of steps 02 and 03 (ConsoleV2.dc.html), in a 400 by 200 box. Not real output.
 const GRID_D = 'M0 40 H400 M0 100 H400 M0 160 H400';
@@ -226,7 +227,7 @@ export function HowItWorks(): React.JSX.Element {
           <p>A research agent will work out what moves demand in your town: the academic calendar, sporting events, campus activities, tourism and seasonal population changes. It will gather the public dates behind each one into a profile of the town.</p>
           <p><span className="lbl">Today:</span> Hanover’s calendar is compiled from public sources, every date with a source. The agent that will do this research on its own is not built yet.</p>
           <ul className="sr-only">{HANOVER_DATES.map((date) => <li key={date.text}>{date.text}, {fmtRange(date.start, date.end)}</li>)}</ul>
-          <p className="hw-src">Source:{HANOVER_SOURCES.map((link) => <a key={link.url} href={link.url} rel="noopener">{link.text}</a>)}</p>
+          <p className="hw-src">Source:<SourceChips sources={HANOVER_SOURCES} /></p>
         </Step>
         <Step index={1} active={isActive(1)} inline={!pinned} title="Build the forecast">
           <p>A forecasting agent will turn the town profile into model inputs, choose modeling approaches, then train, test and refine the models itself.</p>

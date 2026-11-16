@@ -27,6 +27,7 @@ import { BarChart, EffectBar, HorizontalBars, LineChart } from './AnalyticsChart
 import { calendarRange, fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } from './api';
 import { canFocus, focusBounds, heatmapMonths, heatmapSummary, MONTH_ROWS_LINE } from './cells';
 import { DayPanel } from './DayPanel';
+import { DriverButton, DriverDetail } from './DriverDetail';
 import { dayContext, ruleSchedules } from './days';
 import { basisLine, defaultFilters, metricsWithData, toggleYear, yearsWithData, type Filters as FilterState } from './filters';
 import { FilterPanel } from './FilterPanel';
@@ -107,6 +108,9 @@ function AnalyticsView(props: {
   const yoy = useMemo(() => yearOverYear(input), [input]);
   const nights = useMemo(() => nightTypes(input), [input]);
   const found = useMemo(() => drivers(input), [input]);
+  // The driver whose days show under Biggest drivers; a driver the filters no longer find shows nothing.
+  const [driverKey, setDriverKey] = useState<string | null>(null);
+  const openDriver = found.find((driver) => driver.key === driverKey) ?? null;
 
   /** Whether the heatmap still draws `date` under these filters: its year is checked, and on native its month has a row. */
   const shows = (date: string, next: FilterState): boolean => {
@@ -344,12 +348,24 @@ function AnalyticsView(props: {
             ]}
             rows={found.map((driver, at) => ({
               key: driver.key,
+              selected: driver.key === openDriver?.key,
+              onPress: () => { setDriverKey((key) => (key === driver.key ? null : driver.key)); },
               cells: {
-                rank: String(at + 1), driver: driver.rough ? `${driver.label} (rough)` : driver.label,
+                rank: String(at + 1),
+                driver: (
+                  <DriverButton
+                    label={driver.rough ? `${driver.label} (rough)` : driver.label}
+                    open={driver.key === openDriver?.key}
+                    onPress={() => { setDriverKey((key) => (key === driver.key ? null : driver.key)); }}
+                  />
+                ),
                 bar: <EffectBar effect={driver.effect} />, effect: signedPercent(driver.effect), seen: seenText(driver),
               },
             }))}
           />
+        )}
+        {openDriver === null ? null : (
+          <DriverDetail driver={openDriver} metric={metric} locationId={locationId} onClose={() => { setDriverKey(null); }} />
         )}
         <Small>{DRIVERS_FOOTNOTE}</Small>
         <Basis line={basis} />

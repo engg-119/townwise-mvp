@@ -1,7 +1,7 @@
 import type { TownInput } from './api';
 import { fmt0, fmtSigned } from '../marketing/format';
 import {
-  CAVEATS, countySeries, DATA_YEAR, INDEX_DEFINITION, MONTHS, northeastSeries, SOURCES, type CountySeries, type Source,
+  CAVEATS, countySeries, DATA_YEAR, INDEX_DEFINITION, MONTHS, northeastSeries, SOURCES, unavailableCounties, type CountySeries, type Source,
 } from '../marketing/map/countyData';
 import { towns, type Driver, type KeyDate } from '../marketing/map/towns';
 import { formatDate, plural } from './format';
@@ -128,7 +128,7 @@ export function patternOf(series: CountySeries): Pattern {
   return series.correlationWithNortheast <= -0.5 ? 'opposite' : 'breaks';
 }
 
-export interface TownProfileData {
+interface TownProfileBase {
   id: string;
   name: string;
   state: string;
@@ -139,24 +139,34 @@ export interface TownProfileData {
   note: string;
   drivers: readonly Driver[];
   dates: readonly KeyDate[];
-  series: CountySeries;
-  pattern: Pattern;
 }
+
+/** A town whose county BLS published for the whole data year, with its series and pattern. */
+export type MeasuredProfile = TownProfileBase & { series: CountySeries; pattern: Pattern; seriesUnavailable: null };
+
+/**
+ * One of the twelve: measured, or without a series because BLS did not publish its county for the whole year, with
+ * the reason in one sentence ("BLS didn’t publish Nantucket County’s food-service jobs for …"): no line, gap or pattern.
+ */
+export type TownProfileData = MeasuredProfile | (TownProfileBase & { series: null; pattern: null; seriesUnavailable: string });
 
 /** One of the twelve, by id; null for another town or an id outside the list. */
 export function townProfile(townId: string | null): TownProfileData | null {
   if (townId === null) return null;
   const town = towns.find((candidate) => candidate.id === townId);
-  const series = countySeries.find((candidate) => candidate.townId === townId);
-  if (town === undefined || series === undefined) return null;
-  return {
+  if (town === undefined) return null;
+  const base: TownProfileBase = {
     id: town.id, name: town.name, state: town.state, label: `${town.name}, ${town.state}`, kind: town.kind,
-    county: town.county, note: town.note, drivers: town.drivers, dates: town.dates, series, pattern: patternOf(series),
+    county: town.county, note: town.note, drivers: town.drivers, dates: town.dates,
   };
+  const series = countySeries.find((candidate) => candidate.townId === townId);
+  if (series !== undefined) return { ...base, series, pattern: patternOf(series), seriesUnavailable: null };
+  const gone = unavailableCounties.find((candidate) => candidate.townId === townId);
+  return gone === undefined ? null : { ...base, series: null, pattern: null, seriesUnavailable: gone.reason };
 }
 
 /** The pattern's data sentence: "; biggest gap with the region in May, −15.9 index points." */
-export function patternGap(profile: TownProfileData): string {
+export function patternGap(profile: MeasuredProfile): string {
   const { monthIndex, signedGap } = profile.series.largestGap;
   return `; biggest gap with the region in ${MONTH_NAMES[monthIndex] ?? ''}, ${fmtSigned(signedGap)} index points.`;
 }
@@ -168,7 +178,9 @@ export function patternGap(profile: TownProfileData): string {
 export function townResearchLine(townId: string | null): string {
   const profile = townProfile(townId);
   if (profile === null) return 'Not researched yet';
-  if (profile.drivers.length === 0) return 'Employment pattern only. Drivers aren’t researched yet.';
+  if (profile.drivers.length === 0) {
+    return profile.series === null ? `No ${String(DATA_YEAR)} jobs index. Drivers aren’t researched yet.` : 'Employment pattern only. Drivers aren’t researched yet.';
+  }
   const dates = profile.dates.length === 0 ? 'no key dates' : plural(profile.dates.length, 'key date', 'key dates');
   return `${plural(profile.drivers.length, 'driver', 'drivers')} and ${dates}, from public sources`;
 }
@@ -180,7 +192,7 @@ function busiestAndQuietest(values: readonly number[]): string {
 }
 
 /** The chart's text summary, from the homepage panel's sentences (TownPanel.web.tsx TownSentences). */
-export function townSentences(profile: TownProfileData): string[] {
+export function townSentences(profile: MeasuredProfile): string[] {
   const { county, pattern, kind, series } = profile;
   const { index, largestGap } = series;
   const gapMonth = MONTH_NAMES[largestGap.monthIndex] ?? '';
@@ -204,19 +216,6 @@ export function dateRange(start: string, end: string | null): string {
   if (end === null) return formatDate(start);
   if (start.slice(0, 4) !== end.slice(0, 4)) return `${formatDate(start)} to ${formatDate(end)}`;
   return `${formatDate(start).replace(/, \d{4}$/, '')} to ${formatDate(end)}`;
-}
-
-/** A source's link text: its host for a public institution (.edu, .gov), "Source" otherwise, numbered on repeats. */
-export function sourceLinks(urls: readonly string[]): { url: string; text: string }[] {
-  const texts = urls.map((url) => {
-    const host = new URL(url).hostname.replace(/^www\./, '');
-    return /\.(?:edu|gov)$/.test(host) ? host : 'Source';
-  });
-  return urls.map((url, index) => {
-    const text = texts[index] ?? 'Source';
-    if (texts.filter((other) => other === text).length < 2) return { url, text };
-    return { url, text: `${text} ${String(texts.slice(0, index + 1).filter((other) => other === text).length)}` };
-  });
 }
 
 /** The gap copy for a town outside the twelve (spec 13). */

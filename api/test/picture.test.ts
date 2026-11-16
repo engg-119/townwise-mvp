@@ -15,7 +15,10 @@ const u32be = (value: number): number[] => [(value >>> 24) & 0xff, (value >> 16)
 const u32le = (value: number): number[] => [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff, (value >>> 24) & 0xff];
 const u24le = (value: number): number[] => [value & 0xff, (value >> 8) & 0xff, (value >> 16) & 0xff];
 
-const SENTINELS = ['Sentinel-gps', 'Sentinel-iptc', 'Sentinel-comment', 'Sentinel-trailer', 'Sentinel-text', 'Sentinel-itxt', 'Sentinel-ztxt', 'Sentinel-exif', 'Sentinel-xmp'];
+const SENTINELS = [
+  'Sentinel-gps', 'Sentinel-iptc', 'Sentinel-comment', 'Sentinel-trailer', 'Sentinel-text', 'Sentinel-itxt', 'Sentinel-ztxt', 'Sentinel-exif',
+  'Sentinel-xmp', 'Sentinel-ducky', 'Sentinel-jumbf', 'Sentinel-fpxr', 'Sentinel-maker', 'Sentinel-time', 'Sentinel-editor',
+];
 
 function withoutSentinels(out: Buffer | null): void {
   expect(out).not.toBeNull();
@@ -37,9 +40,22 @@ const EXIF = segment(0xe1, bytes('Exif\0\0', 'Sentinel-gps'));
 const XMP = segment(0xe1, bytes('http://ns.adobe.com/xap/1.0/\0', 'Sentinel-xmp'));
 const IPTC = segment(0xed, bytes('Photoshop 3.0\0', 'Sentinel-iptc'));
 const COM = segment(0xfe, bytes('Sentinel-comment'));
+const ICC = segment(0xe2, bytes('ICC_PROFILE\0', [1, 1], 'icc'));
+const ADOBE = segment(0xee, bytes('Adobe', [0, 100, 0, 0, 0, 0, 1]));
+const FPXR = segment(0xe2, bytes('FPXR\0', 'Sentinel-fpxr'));
+const JUMBF = segment(0xeb, bytes('JP', 'Sentinel-jumbf'));
+const DUCKY = segment(0xec, bytes('Ducky', 'Sentinel-ducky'));
+const MAKER = segment(0xef, bytes('Sentinel-maker'));
 
 describe('a JPEG', () => {
   const clean = bytes(SOI, APP0, DQT, sof(0xc0, 640, 480), DHT, SOS, SCAN, EOI);
+
+  it('drops every APPn but APP0, an APP2 ICC profile and APP14, keeping the colours and every other byte', () => {
+    const tagged = bytes(SOI, APP0, ICC, FPXR, JUMBF, DUCKY, ADOBE, MAKER, DQT, sof(0xc0, 640, 480), DHT, SOS, SCAN, EOI);
+    const out = withoutMetadata(tagged, 'image/jpeg');
+    withoutSentinels(out);
+    expect(out).toEqual(bytes(SOI, APP0, ICC, ADOBE, DQT, sof(0xc0, 640, 480), DHT, SOS, SCAN, EOI));
+  });
 
   it('drops APP1 (EXIF, XMP), APP13 and COM and anything after its end, keeping every other byte', () => {
     const tagged = bytes(SOI, APP0, EXIF, XMP, IPTC, COM, DQT, sof(0xc0, 640, 480), DHT, SOS, SCAN, EOI, 'Sentinel-trailer');
@@ -87,10 +103,10 @@ const IDAT = chunk('IDAT', bytes([0x78, 0x9c, 0x01, 0x02, 0x03]));
 const IEND = chunk('IEND', '');
 
 describe('a PNG', () => {
-  it('drops its tEXt, iTXt, zTXt and eXIf chunks and anything after IEND, keeping every other chunk byte for byte', () => {
+  it('drops its tEXt, iTXt, zTXt, eXIf and tIME chunks and anything after IEND, keeping every other chunk byte for byte', () => {
     const tagged = bytes(
       SIGNATURE, ihdr(32, 16), chunk('tEXt', 'Comment\0Sentinel-text'), chunk('iCCP', 'icc'), chunk('iTXt', 'XML:com.adobe.xmp\0\0\0\0\0Sentinel-itxt'),
-      IDAT, chunk('zTXt', 'Raw\0\0Sentinel-ztxt'), chunk('eXIf', 'MM\0*Sentinel-exif'), IEND, 'Sentinel-trailer',
+      chunk('tIME', 'Sentinel-time'), IDAT, chunk('zTXt', 'Raw\0\0Sentinel-ztxt'), chunk('eXIf', 'MM\0*Sentinel-exif'), IEND, 'Sentinel-trailer',
     );
     const out = withoutMetadata(tagged, 'image/png');
     withoutSentinels(out);
@@ -157,12 +173,50 @@ describe('a WebP', () => {
   });
 });
 
+// GIF: the header, the logical screen (its flags say a global colour table follows), then blocks up to the trailer:
+// an image (0x2C, a descriptor, the LZW code size and data sub-blocks) or an extension (0x21, a label, sub-blocks).
+const subBlocks = (...data: (Buffer | string)[]): Buffer => bytes(...data.flatMap((each) => {
+  const part = typeof each === 'string' ? Buffer.from(each, 'latin1') : each;
+  return [[part.length], part];
+}), [0]);
+/** A logical screen of `width` by `height` with a global colour table of two colours (flags 0x80). */
+const screen = (width: number, height: number): Buffer => bytes([width & 0xff, width >> 8, height & 0xff, height >> 8], [0x80, 0, 0], [0, 0, 0, 255, 255, 255]);
+const IMAGE = bytes([0x2c, 0, 0, 0, 0, 2, 0, 2, 0, 0], [2], subBlocks(Buffer.from([0x44, 0x01])));
+/** A local colour table on this one (flags 0x80), so its sub-blocks start after it. */
+const LOCAL_IMAGE = bytes([0x2c, 0, 0, 0, 0, 1, 0, 1, 0, 0x80], [1, 2, 3, 4, 5, 6], [2], subBlocks(Buffer.from([0x4c, 0x01])));
+const CONTROL = bytes([0x21, 0xf9], subBlocks(Buffer.from([0x04, 10, 0, 0])));
+const GIF_COMMENT = bytes([0x21, 0xfe], subBlocks('Sentinel-', 'comment'));
+const GIF_XMP = bytes([0x21, 0xff], subBlocks('XMP DataXMP', '<x:xmpmeta>Sentinel-xmp</x:xmpmeta>'));
+const LOOP = bytes([0x21, 0xff], subBlocks('NETSCAPE2.0', Buffer.from([1, 0, 0])));
+const EDITOR = bytes([0x21, 0xff], subBlocks('ImageMagick', 'Sentinel-editor'));
+
 describe('a GIF', () => {
-  it('reads its size from the logical screen and is sent as it is', () => {
-    const gif = bytes('GIF89a', [0x40, 0x1f, 0x10, 0x00], [0, 0, 0], ';');
-    expect(pictureSize(gif, 'image/gif')).toEqual({ width: 8000, height: 16 });
-    expect(withoutMetadata(gif, 'image/gif')).toEqual(gif);
-    expect(withoutMetadata(Buffer.from('GIF8'), 'image/gif')).toBeNull();
+  it('drops its comment and application extensions and anything after its trailer, keeping the pictures byte for byte', () => {
+    const tagged = bytes('GIF89a', screen(40, 30), GIF_COMMENT, LOOP, CONTROL, IMAGE, GIF_XMP, CONTROL, LOCAL_IMAGE, EDITOR, ';', 'Sentinel-trailer');
+    const out = withoutMetadata(tagged, 'image/gif');
+    withoutSentinels(out);
+    expect(out).toEqual(bytes('GIF89a', screen(40, 30), CONTROL, IMAGE, CONTROL, LOCAL_IMAGE, ';'));
+    const clean = bytes('GIF87a', screen(40, 30), IMAGE, ';');
+    expect(withoutMetadata(clean, 'image/gif')).toEqual(clean);
+    // One that ends without its trailer is given one.
+    expect(withoutMetadata(bytes('GIF89a', screen(40, 30), IMAGE), 'image/gif')).toEqual(bytes('GIF89a', screen(40, 30), IMAGE, ';'));
+  });
+
+  it('reads its size from the logical screen', () => {
+    expect(pictureSize(bytes('GIF89a', screen(8000, 16), IMAGE, ';'), 'image/gif')).toEqual({ width: 8000, height: 16 });
+  });
+
+  it('is null with no picture, a block cut short, an unknown block or another header', () => {
+    for (const broken of [
+      Buffer.from('GIF8'),
+      bytes('GIF89a', screen(2, 2), ';'),
+      bytes('GIF89a', screen(2, 2), GIF_COMMENT, ';'),
+      bytes('GIF89a', screen(2, 2), IMAGE.subarray(0, IMAGE.length - 2)),
+      bytes('GIF89a', screen(2, 2), [0x21, 0xfe, 40], 'short'),
+      bytes('GIF89a', screen(2, 2), [0x99], IMAGE, ';'),
+      bytes('GIF89a', [2, 0, 2, 0, 0x87, 0, 0], [0, 0, 0]),
+      bytes('GIF88a', screen(2, 2), IMAGE, ';'),
+    ]) expect(withoutMetadata(broken, 'image/gif')).toBeNull();
   });
 });
 

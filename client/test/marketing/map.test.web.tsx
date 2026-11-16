@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
 import { cameraFor, cameraTransform, REGION } from '../../src/marketing/map/camera';
-import { countySeries } from '../../src/marketing/map/countyData';
-import { mapTowns, markerScale } from '../../src/marketing/map/mapState';
+import { countySeries, SOURCES, unavailableCounties } from '../../src/marketing/map/countyData';
+import { mapTowns, markerScale, type MeasuredTown } from '../../src/marketing/map/mapState';
 import { mapCss } from '../../src/marketing/map/mapStyles.web';
 import { NortheastMap } from '../../src/marketing/map/NortheastMap.web';
 import { storyCss } from '../../src/marketing/map/storyStyles.web';
@@ -86,6 +86,12 @@ function town(id: string): (typeof mapTowns)[number] {
   return found;
 }
 
+function measured(id: string): MeasuredTown {
+  const found = town(id);
+  if (found.series === null) throw new Error(`no series for ${id}`);
+  return found;
+}
+
 function renderMap(): { mapFrame: HTMLElement; listFrame: HTMLElement; world: SVGGElement } {
   const { container } = render(<NortheastMap />);
   const [mapFrame, listFrame] = container.querySelectorAll<HTMLElement>('.app');
@@ -125,7 +131,8 @@ function panel(): HTMLElement {
   return element;
 }
 
-const NANTUCKET_GAPS = town('nantucket-ma').series.gap;
+// Bar Harbor's county has the year's largest gaps, so its dot changes size the most.
+const BAR_HARBOR_GAPS = measured('bar-harbor-me').series.gap;
 
 test('the outlines draw in once the map is in view, and the towns wait for the story', () => {
   installObserver();
@@ -153,24 +160,24 @@ test('the outlines draw in once the map is in view, and the towns wait for the s
 
   band.reportStep(2);
   expect(mapFrame.className).toBe('app app-a is-local is-sm');
-  expect(listHeader()).toBe('Gap in Jan 2024');
+  expect(listHeader()).toBe('Gap in Jan 2025');
   // Each marker's scale follows that month's gap, and the scale eases only when the scroll moved the month.
-  const nantucket = marker('Nantucket, MA');
-  const scale = (): number => Number(nantucket.style.getPropertyValue('--k'));
-  expect(scale()).toBeCloseTo(markerScale(NANTUCKET_GAPS[0] ?? 0), 3);
+  const barHarbor = marker('Bar Harbor, ME');
+  const scale = (): number => Number(barHarbor.style.getPropertyValue('--k'));
+  expect(scale()).toBeCloseTo(markerScale(BAR_HARBOR_GAPS[0] ?? 0), 3);
   expect(storyCss).toContain('.twmap .app.is-sm .dot{transition:transform 360ms cubic-bezier(0.34,1.25,0.64,1)}');
   // The markers enter one by one, west to east.
   const order = [...document.querySelectorAll<HTMLElement>('.mk-pos')].map((element) => Number(element.style.getPropertyValue('--i')));
   expect([...order].sort((a, b) => a - b)).toEqual([...Array(12).keys()]);
   expect(mapCss).toContain('calc(var(--dz,0ms) + var(--i) * var(--stg,50ms))');
   band.reportStep(4);
-  expect(scale()).toBeCloseTo(markerScale(NANTUCKET_GAPS[1] ?? 0), 3);
+  expect(scale()).toBeCloseTo(markerScale(BAR_HARBOR_GAPS[1] ?? 0), 3);
   wait(10_000);
-  expect(listHeader()).toBe('Gap in Feb 2024');
-  // The last step rests on the reader's month: today is Nov 5, 2026, so November 2024 in the data.
+  expect(listHeader()).toBe('Gap in Feb 2025');
+  // The last step rests on the reader's month: today is Nov 5, 2026, so November 2025 in the data.
   band.reportStep(15);
-  expect(listHeader()).toBe('Gap in Nov 2024');
-  expect(scale()).toBeCloseTo(markerScale(NANTUCKET_GAPS[10] ?? 0), 3);
+  expect(listHeader()).toBe('Gap in Nov 2025');
+  expect(scale()).toBeCloseTo(markerScale(BAR_HARBOR_GAPS[10] ?? 0), 3);
 });
 
 test.each([
@@ -179,13 +186,13 @@ test.each([
   ['the month scrubber', () => { fireEvent.click(screen.getByRole('radio', { name: 'Oct' })); }, 'Oct'],
 ])('%s sets the month by hand, and nothing changes it on its own', (_name, use, month) => {
   const { mapFrame } = renderMap();
-  expect(listHeader()).toBe('Gap in Nov 2024');
+  expect(listHeader()).toBe('Gap in Nov 2025');
   use();
   // A month picked by hand jumps: the dots do not ease.
   expect(mapFrame.className).not.toContain('is-sm');
-  expect(listHeader()).toBe(`Gap in ${month} 2024`);
+  expect(listHeader()).toBe(`Gap in ${month} 2025`);
   wait(10_000);
-  expect(listHeader()).toBe(`Gap in ${month} 2024`);
+  expect(listHeader()).toBe(`Gap in ${month} 2025`);
 });
 
 test('without an observer the map lies flat at the resting month: no draw-in and no playing year', () => {
@@ -195,8 +202,8 @@ test('without an observer the map lies flat at the resting month: no draw-in and
   expect(document.querySelector('.m-draw')).toBeNull();
   expect(screen.queryByRole('button', { name: /the year$/ })).toBeNull();
   wait(20_000);
-  expect(listHeader()).toBe('Gap in Nov 2024');
-  expect(Number(marker('Nantucket, MA').style.getPropertyValue('--k'))).toBeCloseTo(markerScale(NANTUCKET_GAPS[10] ?? 0), 3);
+  expect(listHeader()).toBe('Gap in Nov 2025');
+  expect(Number(marker('Bar Harbor, ME').style.getPropertyValue('--k'))).toBeCloseTo(markerScale(BAR_HARBOR_GAPS[10] ?? 0), 3);
 });
 
 test('with reduced motion and an observer, the outlines show at once and the story still sets the towns and months', () => {
@@ -209,9 +216,9 @@ test('with reduced motion and an observer, the outlines show at once and the sto
   expect(mapFrame.className).toBe('app app-a is-region');
   observerOf('.st-h').reportStep(5);
   expect(mapFrame.className).toBe('app app-a is-local is-sm');
-  expect(listHeader()).toBe('Gap in Mar 2024');
+  expect(listHeader()).toBe('Gap in Mar 2025');
   wait(20_000);
-  expect(listHeader()).toBe('Gap in Mar 2024');
+  expect(listHeader()).toBe('Gap in Mar 2025');
   // The dots do not ease with reduced motion, whoever set the month.
   expect(storyCss).toContain('@media (prefers-reduced-motion:reduce){.twmap .tl-fill,.twmap .tl-cur,.twmap .app.is-sm .dot{transition:none}');
 });
@@ -238,33 +245,67 @@ test('choosing a town from the list zooms the map and opens its panel, with focu
   const card = panel();
   expect(within(card).getByRole('heading', { name: 'Hanover, NH' })).toBeTruthy();
   expect(card.textContent).toContain('College town');
-  expect(card.textContent).toContain('Moves with the region; biggest gap with the region in May, −7.3 index points.');
+  expect(card.textContent).toContain('Moves with the region; biggest gap with the region in May, −7.9 index points.');
   // The gap for this month (November, not the biggest gap's May), the county against the Northeast, and both
   // curves drawn.
-  expect(card.querySelector('.bv-v')?.textContent).toBe('−1.7');
-  expect(card.querySelector('.bv-l')?.textContent).toBe('below the Northeast, index points, Nov 2024');
-  expect(card.querySelector('.bv-s')?.textContent).toBe('Grafton County 97.4 · Northeast 99.2');
+  expect(card.querySelector('.bv-v')?.textContent).toBe('−3.8');
+  expect(card.querySelector('.bv-l')?.textContent).toBe('below the Northeast, index points, Nov 2025');
+  expect(card.querySelector('.bv-s')?.textContent).toBe('Grafton County 95.5 · Northeast 99.3');
   expect(card.querySelector('.ch-town')?.getAttribute('d')).toMatch(/^M12 /);
   expect(card.querySelector('.ch-ne')?.getAttribute('d')).toMatch(/^M12 /);
   expect(within(screen.getByRole('radiogroup', { name: 'Month' })).getByRole('radio', { checked: true }).textContent).toBe('Nov');
   expect(document.querySelector('[aria-live="polite"]')?.textContent)
-    .toBe('Hanover, NH: Moves with the region; biggest gap with the region in May, −7.3 index points.');
-  // Its drivers and dates link their sources: public institutions by host, other sites as "Source".
+    .toBe('Hanover, NH: Moves with the region; biggest gap with the region in May, −7.9 index points.');
+  // Its drivers and dates link their sources as chips named by their sites, as the portal's do.
   const notes = document.getElementById(hanover.getAttribute('aria-controls')?.split(' ')[1] ?? '');
-  expect(within(notes ?? document.body).getAllByRole('link', { name: 'registrar.dartmouth.edu' }).length).toBeGreaterThan(0);
+  const registrar = within(notes ?? document.body).getAllByRole('link', { name: 'Dartmouth Registrar. Source' });
+  expect(registrar.length).toBeGreaterThan(0);
+  expect(registrar[0]?.textContent).toBe('Dartmouth Registrar');
+  expect(within(notes ?? document.body).queryByRole('link', { name: 'registrar.dartmouth.edu' })).toBeNull();
 });
 
 test('a marker click zooms the same way and moves focus to the town’s list button', () => {
   const { world } = renderMap();
-  const button = markerButton('Nantucket, MA');
+  const button = markerButton('Bar Harbor, ME');
   expect(button.getAttribute('aria-hidden')).toBe('true');
   expect(button.tabIndex).toBe(-1);
   fireEvent.click(button, { detail: 1 });
+  expect(world.style.transform).toBe(cameraTransform(cameraFor(town('bar-harbor-me').shape.bbox)));
+  expect(document.activeElement).toBe(row('Bar Harbor, ME'));
+  expect(within(panel()).getByRole('heading', { name: 'Bar Harbor, ME' })).toBeTruthy();
+  // November's gap, not August's +58.9 peak.
+  expect(panel().querySelector('.bv-v')?.textContent).toBe('−27.3');
+});
+
+// BLS withheld Nantucket County for April to June 2025, so it has no 2025 index: its dot is a grey ring at the
+// smallest size, its row says n/a with no line, and its panel says why, with the Northeast alone: no gap, no pattern.
+test('a town without a series shows the reason, never a gap, a pattern or a line', () => {
+  const { world } = renderMap();
+  const reason = 'BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.';
+  const dot = marker('Nantucket, MA');
+  expect(dot.className).toContain('pat-none');
+  expect(Number(dot.style.getPropertyValue('--k'))).toBeCloseTo(markerScale(0), 3);
+  expect(mapCss).toContain('.twmap .pat-none .dot{background:transparent;border:3px solid var(--line);outline:0}');
+  expect(screen.getAllByText('No 2025 index').length).toBeGreaterThan(0);
+  const nantucketRow = row('Nantucket, MA');
+  expect(nantucketRow.querySelector('.row-v')?.textContent).toMatch(/^Nov +n\/a$/);
+  expect(nantucketRow.querySelector('.sp-tw')).toBeNull();
+  expect(nantucketRow.querySelector('.sp-ne')).not.toBeNull();
+  fireEvent.click(markerButton('Nantucket, MA'), { detail: 1 });
   expect(world.style.transform).toBe(cameraTransform(cameraFor(town('nantucket-ma').shape.bbox)));
-  expect(document.activeElement).toBe(row('Nantucket, MA'));
-  expect(within(panel()).getByRole('heading', { name: 'Nantucket, MA' })).toBeTruthy();
-  // November's gap, not July's +93.5 peak.
-  expect(panel().querySelector('.bv-v')?.textContent).toBe('−32.7');
+  const card = panel();
+  expect(within(card).getByRole('heading', { name: 'Nantucket, MA' })).toBeTruthy();
+  expect(within(card).getByText(reason)).toBeTruthy();
+  expect(card.textContent).not.toMatch(/Measured across|with the region|index points|Scale fitted/);
+  expect(card.querySelector('.pat')).toBeNull();
+  // The Northeast alone: its value for the month, its line, and no county line or gap bars.
+  expect(card.querySelector('.bv-v')?.className).toContain('is-ne');
+  expect(card.querySelector('.bv-l')?.textContent).toBe('Northeast, Nov 2025');
+  expect(card.querySelector('.ch-ne')?.getAttribute('d')).toMatch(/^M12 /);
+  expect(card.querySelector('.ch-town')?.getAttribute('d')).toBe('');
+  expect([card.querySelector('.ch-up')?.getAttribute('d'), card.querySelector('.ch-down')?.getAttribute('d')]).toEqual(['', '']);
+  expect(within(card).getByRole('region', { name: 'Numbers: the Northeast, 2025' }).querySelectorAll('th[scope="col"]')).toHaveLength(2);
+  expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe(`Nantucket, MA: ${reason}`);
 });
 
 test('a pointer click goes to the town whose dot is nearest it, even on a neighbor’s overlapping button', () => {
@@ -326,7 +367,7 @@ test('the map’s Back returns to the region and puts focus back on the town’s
   expect(world.style.transform).toBe(cameraTransform(REGION));
   expect(mapFrame.className).toContain('is-back');
   expect(focus).toHaveBeenCalledWith({ preventScroll: true });
-  expect(within(panel()).getByRole('heading', { name: 'Northeast, 2024' })).toBeTruthy();
+  expect(within(panel()).getByRole('heading', { name: 'Northeast, 2025' })).toBeTruthy();
   expect(screen.queryAllByRole('button', { name: 'Back to the Northeast' })).toEqual([]);
 });
 
@@ -348,8 +389,8 @@ test('the month scrubber is a radiogroup with one tab stop that follows the arro
   };
   act(() => { radios[10]?.focus(); });
   press('ArrowRight', 11);
-  expect(listHeader()).toBe('Gap in Dec 2024');
-  expect(panel().querySelector('.bv-l')?.textContent).toBe('Northeast, Dec 2024');
+  expect(listHeader()).toBe('Gap in Dec 2025');
+  expect(panel().querySelector('.bv-l')?.textContent).toBe('Northeast, Dec 2025');
   press('ArrowDown', 0);
   press('ArrowLeft', 11);
   press('ArrowUp', 10);
@@ -380,7 +421,7 @@ test('Escape inside the map resets a zoomed town and returns focus to its list b
   expect(world.style.transform).toBe(cameraTransform(REGION));
   expect(document.activeElement).toBe(row('Bar Harbor, ME'));
   expect(row('Bar Harbor, ME').getAttribute('aria-pressed')).toBe('false');
-  expect(within(panel()).getByRole('heading', { name: 'Northeast, 2024' })).toBeTruthy();
+  expect(within(panel()).getByRole('heading', { name: 'Northeast, 2025' })).toBeTruthy();
   // The name tag the refocused row would show is dismissed too.
   expect(document.querySelectorAll('.is-hov')).toHaveLength(0);
   expect(document.querySelector('[aria-live="polite"]')?.textContent).toBe('');
@@ -409,7 +450,7 @@ test('the town list is the keyboard path: twelve buttons in two groups, with mar
   }
   expect(screen.getByText('College').closest('.grp')?.querySelectorAll('.row')).toHaveLength(6);
   expect(screen.getByText('Seasonal and event').closest('.grp')?.querySelectorAll('.row')).toHaveLength(6);
-  expect(screen.getByText('Same scale within this group: 80 to 115')).toBeTruthy();
+  expect(screen.getByText('Same scale within this group: 85 to 115')).toBeTruthy();
   for (const button of document.querySelectorAll<HTMLButtonElement>('.mk')) {
     expect(button.getAttribute('aria-hidden')).toBe('true');
     expect(button.tabIndex).toBe(-1);
@@ -429,11 +470,31 @@ test('the story and the caption say the map shows BLS QCEW restaurant and bar jo
   renderMap();
   const first = screen.getByRole('heading', { level: 2, name: 'The Northeast, as one pattern.' }).parentElement;
   expect(first?.querySelector('.eyebrow')?.textContent).toBe('What the map shows');
-  expect(first?.textContent).toContain('Restaurant and bar jobs in each town’s county, month by month in 2024, compared with the Northeast. Public data from the U.S. Bureau of Labor Statistics (QCEW), not a Townwise forecast.');
-  expect(screen.getByText('Restaurant and bar jobs by county, 2024. Public data (BLS QCEW). Not a forecast.').className).toBe('eyebrow pin-cap');
-  expect(screen.getByRole('img', { name: /^Map of the nine Northeast states with twelve featured towns/ })).toBeTruthy();
+  expect(first?.textContent).toContain('Restaurant and bar jobs in each town’s county, month by month in 2025, compared with the Northeast. Public data from the U.S. Bureau of Labor Statistics (QCEW), not a Townwise forecast.');
+  expect(screen.getByText('Restaurant and bar jobs by county, 2025. Public data (BLS QCEW). Not a forecast.').className).toBe('eyebrow pin-cap');
+  // BLS withheld Nantucket County for April to June 2025: the caption sizes only the dots with a 2025 index, and the
+  // towns step names the grey ring.
+  expect(screen.getByRole('img', { name: 'Map of the nine Northeast states with twelve featured towns, each dot with a 2025 index sized by its county’s gap from the Northeast in the month shown. Nantucket has no 2025 index, so its dot is a grey ring. Use the town list below the map to explore each one.' })).toBeTruthy();
+  const towns = screen.getByRole('heading', { level: 2, name: 'Now the towns.' }).parentElement;
+  expect(towns?.textContent).toContain('The bigger the dot, the bigger that month’s gap. Grey ring: a county with no 2025 index.');
   expect(screen.getAllByText('Historical public data, not a Townwise forecast.')).toHaveLength(1);
   expect(document.body.textContent).not.toMatch(/sales of|revenue|\$/);
+});
+
+test('the map’s data and geometry sources show their labels as text, each above its chip', () => {
+  renderMap();
+  const items = [...document.querySelectorAll('.nt-c li')].filter((item) => item.querySelector('.src-chip') !== null);
+  expect(items.map((item) => [item.querySelector('.fine')?.textContent, item.querySelector('.src-chip')?.textContent])).toEqual([
+    ['BLS QCEW open data area slices, NAICS 722, private ownership, 2025 (Northeast: CT ME MA NH NJ NY PA; RI and VT withheld for January to March)', 'U.S. Bureau of Labor Statistics'],
+    ['Census TIGERweb Census 2020 areal hydrography (water removed from town outlines)', 'U.S. Census Bureau'],
+    ['Census TIGERweb Census 2020 county subdivisions', 'U.S. Census Bureau'],
+    ['us-atlas 3.0.1 state and county boundaries', 'jsDelivr'],
+  ]);
+  // One chip per item, so the two Census layers are told apart by their labels, not numbered.
+  expect(items.map((item) => item.querySelectorAll('a').length)).toEqual(SOURCES.map(() => 1));
+  expect(items.map((item) => item.querySelector('a')?.getAttribute('href'))).toEqual(SOURCES.map((source) => source.url));
+  // Each label is a block of its own, so a wrapped label keeps the fine print's line height, not the item's 28px.
+  expect(items.map((item) => window.getComputedStyle(item.querySelector('.fine') ?? item).display)).toEqual(SOURCES.map(() => 'block'));
 });
 
 test('the map figure fills the pane on phones instead of collapsing to zero width', () => {
@@ -468,9 +529,9 @@ test('on phones the pinned caption takes the map’s width, so it lines up with 
 });
 
 test('on phones the card’s sentences are body size and the notes’ longer mono lines 14px', () => {
-  expect(mapCss).toContain('@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px;line-height:20px}}');
+  expect(mapCss).toContain('@media (max-width:640px){.twmap .cp,.twmap .pat,.twmap .tx,.twmap .why li{font-size:16px;line-height:24px}.twmap .cav li,.twmap .fine{font-size:14px;line-height:20px}}');
   // The rule comes after the base sizes, so it wins at the same specificity.
-  expect(mapCss.indexOf('.twmap .cav li,.twmap .fine{')).toBeLessThan(mapCss.indexOf('.twmap .cav li,.twmap .fine,.twmap .srcs a{font-size:14px'));
+  expect(mapCss.indexOf('.twmap .cav li,.twmap .fine{font-family')).toBeLessThan(mapCss.indexOf('.twmap .cav li,.twmap .fine{font-size:14px'));
   expect(mapCss.indexOf('.twmap .cp{')).toBeLessThan(mapCss.indexOf('.twmap .cp,.twmap .pat,'));
 });
 
@@ -491,6 +552,6 @@ test('the map CSS follows the motion rules', () => {
   // Interface transitions stay under 300ms; only the one-time intro runs longer (the draw-in, 900ms).
   const durations = [...mapCss.matchAll(/transition:([^;}]*)/g)].flatMap((match) => [...(match[1] ?? '').matchAll(/(\d+)ms/g)].map((ms) => Number(ms[1])));
   expect(durations.filter((ms) => ms >= 300)).toEqual([900, 400, 500]);
-  // Each county series feeds one marker.
-  expect(countySeries.map((series) => series.townId).sort()).toEqual(mapTowns.map((candidate) => candidate.id).sort());
+  // Each county, with a series or without one, feeds one marker.
+  expect([...countySeries, ...unavailableCounties].map((series) => series.townId).sort()).toEqual(mapTowns.map((candidate) => candidate.id).sort());
 });

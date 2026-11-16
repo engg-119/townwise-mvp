@@ -18,12 +18,14 @@ import { z } from 'zod';
 import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi, createTownwiseContext, createTownwiseLab } from '../../src/app.ts';
 import type { CalendarFetcher } from '../../src/calendar/fetch.ts';
+import type { GoogleCalendarClient, revokeGoogleGrant } from '../../src/calendar/google.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import { createAiReadActions } from '../../src/files/ai-actions.ts';
 import { createAiReader, type AiReader, type AiReaderDeps, type OnAiRead } from '../../src/files/ai-reader.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
 import type { FileReaderModel } from '../../src/files/extract/reader.ts';
+import type { AiTextInput, AiTextOutcome } from '../../src/files/parse/ai-text.ts';
 import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
 import type { LabCaller } from '../../src/lab/caller.ts';
 import type { LabRunner } from '../../src/lab/runner.ts';
@@ -120,6 +122,14 @@ export async function startTownwiseServer(opts?: {
    */
   aiReader?: { model: FileReaderModel; aroundOnRead?: (actions: OnAiRead) => OnAiRead }
     & Partial<Pick<AiReaderDeps, 'leaseMs' | 'extractText' | 'onRead' | 'filesMonthlyBudgetUsd'>>;
+  /**
+   * Reading the ordering setup with TownwiseAI (D41), over a scripted model (no call leaves the test); absent, it is off
+   * and its route answers 503 ai_unavailable. `setupReadTimeMs` shortens its time limit; `setupReadText` scripts the
+   * AI text thread a file's text is made with.
+   */
+  setupReader?: FileReaderModel;
+  setupReadTimeMs?: number;
+  setupReadText?: (input: AiTextInput) => Promise<AiTextOutcome>;
   /** U13A: synthetic headcount inputs for people in town; absent, the committed (empty) sources. */
   peopleData?: PeopleData;
   /** The forecast lab's runner (helpers/lab.ts has a fake); absent, calibrations are off. /lab is mounted either way. */
@@ -133,6 +143,11 @@ export async function startTownwiseServer(opts?: {
   calendarKey?: KeyObject;
   /** Fetches owner calendar links (helpers over a local server); absent, the guarded fetcher over the network. */
   calendarFetcher?: CalendarFetcher;
+  /** Google calendars, over a fake client (helpers/google.ts) with its client id; absent, they are off (503). */
+  googleCalendar?: GoogleCalendarClient;
+  googleCalendarClientId?: string;
+  /** Revokes a Google grant (helpers/google.ts has a fake that records each call); absent, nothing is revoked. */
+  revokeGoogle?: typeof revokeGoogleGrant;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -194,9 +209,12 @@ export async function startTownwiseServer(opts?: {
     const baseDeps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
-      files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
+      files, fileWorker: reader ?? undefined, setupReader: opts?.setupReader, setupReadTimeMs: opts?.setupReadTimeMs,
+      setupReadText: opts?.setupReadText,
+      peopleData: opts?.peopleData, labRunner: opts?.labRunner,
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
-      calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher,
+      calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher, googleCalendar: opts?.googleCalendar,
+      googleCalendarClientId: opts?.googleCalendarClientId, revokeGoogle: opts?.revokeGoogle,
     };
     const { aroundOnRead = (actions: OnAiRead) => actions, ...readerOpts } = opts?.aiReader ?? { model: undefined };
     const aiReader = files === undefined || readerOpts.model === undefined ? null : createAiReader({

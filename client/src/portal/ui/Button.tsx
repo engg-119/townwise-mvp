@@ -3,6 +3,7 @@ import { Link } from 'expo-router';
 import { Platform, Pressable, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
 import { theme } from '../../theme';
+import { useFocusOnMount } from '../places/focus';
 import { webAria } from './aria';
 import { useHover } from './hover';
 
@@ -26,8 +27,29 @@ interface CommonProps {
   block?: boolean;
 }
 
+type Host = React.ComponentRef<typeof View>;
+
 export interface ButtonProps extends CommonProps {
   onPress?: () => void;
+  /**
+   * A disclosure's state: aria-expanded on web, accessibilityState's `expanded` on native. Left out, the button says
+   * nothing about it.
+   */
+  expanded?: boolean;
+  /**
+   * The id (nativeID) of the region or popover the button shows and hides, as aria-controls (web). For a popover, set
+   * only while it is open, since a closed popover is not in the document.
+   */
+  controls?: string;
+  /** The button opens a dialog popover: aria-haspopup="dialog" (web). */
+  hasPopup?: 'dialog';
+  /** The pressable host, so the button can anchor a popover (Popover's `anchor`). */
+  ref?: RefObject<Host | null>;
+  /**
+   * Takes focus as it mounts (web; the screen reader on native, places/focus.ts), for a button that comes back in place
+   * of the part that had focus, as "Add a link" after its form's Cancel. Only the value at mount counts.
+   */
+  focusOnMount?: boolean;
 }
 
 // react-native-web reports hover in the press state; React Native's types do not declare it.
@@ -45,8 +67,6 @@ function boxStyle(variant: ButtonVariant, hover: boolean, disabled: boolean, blo
   ];
 }
 
-type Host = React.ComponentRef<typeof View>;
-
 /** The two DOM calls the web disabled state needs; react-native-web hands the <button> itself to the ref. */
 interface AttributeTarget {
   setAttribute: (name: string, value: string) => void;
@@ -58,14 +78,15 @@ interface AttributeTarget {
  * web react-native-web turns that prop into the disabled attribute and tabindex -1, which drop focus, so the button
  * gets no press handler and aria-disabled="true" is set on it directly.
  */
-function useWebAriaDisabled(disabled: boolean): RefObject<Host | null> {
-  const ref = useRef<Host>(null);
+function useWebAriaDisabled(disabled: boolean, existing?: RefObject<Host | null>): RefObject<Host | null> {
+  const own = useRef<Host>(null);
+  const ref = existing ?? own;
   useLayoutEffect(() => {
     if (Platform.OS !== 'web') return;
     const element = ref.current as unknown as AttributeTarget | null;
     if (disabled) element?.setAttribute('aria-disabled', 'true');
     else element?.removeAttribute('aria-disabled');
-  }, [disabled]);
+  }, [disabled, ref]);
   return ref;
 }
 
@@ -78,17 +99,21 @@ function Label(props: { variant: ButtonVariant; hover: boolean; disabled: boolea
   );
 }
 
-export function Button(props: ButtonProps): React.JSX.Element {
+export function Button({ ref: forwarded, ...props }: ButtonProps): React.JSX.Element {
   const variant = props.variant ?? 'primary';
   const disabled = props.disabled === true;
-  const ref = useWebAriaDisabled(disabled);
+  const ref = useWebAriaDisabled(disabled, forwarded);
+  useFocusOnMount(props.focusOnMount === true, ref);
   return (
     <Pressable
       ref={ref}
       role="button"
       {...(Platform.OS === 'web' ? {} : { disabled })}
+      {...(Platform.OS === 'web' || props.expanded === undefined ? {} : { accessibilityState: { expanded: props.expanded } })}
       {...(props.accessibilityLabel === undefined ? {} : { accessibilityLabel: props.accessibilityLabel })}
-      {...webAria({ 'aria-describedby': props.describedBy })}
+      {...webAria({
+        'aria-describedby': props.describedBy, 'aria-expanded': props.expanded, 'aria-controls': props.controls, 'aria-haspopup': props.hasPopup,
+      })}
       {...(disabled || props.onPress === undefined ? {} : { onPress: props.onPress })}
       style={(state) => boxStyle(variant, hovered(state), disabled, props.block === true)}
     >

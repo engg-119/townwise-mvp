@@ -1,6 +1,6 @@
 // Open as admin (D25): resolution, the principal and the guard. A grant held by a staff session opens an organization
-// nobody has joined as its admin, and is live only while that organization is in setup (active, nobody has ever joined
-// it). These tests write grants directly in the shape insertOpenAsAdmin writes.
+// as its admin, before or after anyone joins it, and is live only while that organization is active and has not been
+// suspended since the grant started. These tests write grants directly in the shape insertOpenAsAdmin writes.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -253,14 +253,50 @@ describe('a live open-as-admin grant', () => {
   });
 });
 
-describe('a grant that is not live is ignored', () => {
-  it('once anyone joins the organization, from the next request on', async () => {
+describe('a join (owner call, 2026-11-15)', () => {
+  it('leaves the grant live: still the organization’s admin, from the grant, and Team still answers 403 open_as_admin_refused', async () => {
     expect((await call(server, '/probe/member', { session: staff })).status).toBe(200);
-    await joinAs(server, org.adminEmail);
-    expect(await errorOf(await call(server, '/probe/member', { session: staff }))).toEqual({ status: 403, error: 'no_access' });
-    expect(await me(staff)).toMatchObject(notLive);
+    const admin = await joinAs(server, org.adminEmail);
+    expect(await (await call(server, `/probe/member?orgId=${other.orgId}`, { session: staff })).json())
+      .toEqual({ kind: 'member', orgId: org.orgId, role: 'org_admin' });
+    expect(await me(staff)).toMatchObject({
+      access: { state: 'member', org: { id: org.orgId, name: org.name }, role: 'org_admin' }, openAsAdmin: { id: grantId }, viewAs: null,
+    });
+
+    const rows = (): Promise<unknown[]> => server.connection.collection('tw_members').find({ orgId: new Types.ObjectId(org.orgId) }).sort({ _id: 1 }).toArray();
+    const before = await rows();
+    // The seat the invited admin just took.
+    expect(before).toHaveLength(1);
+    const memberId = String((before[0] as { _id: Types.ObjectId })._id);
+    const answers: { status: number; error: string }[] = [];
+    const writes = await writesDuring(server, async () => {
+      answers.push(await errorOf(await call(server, '/api/org/members', { session: staff })));
+      answers.push(await errorOf(await call(server, '/api/org/members', { session: staff, json: { emails: ['new-cook@example.test'], role: 'member' } })));
+      answers.push(await errorOf(await call(server, `/api/org/members/${memberId}`, { method: 'PATCH', session: staff, json: { role: 'member' } })));
+      answers.push(await errorOf(await call(server, `/api/org/members/${memberId}`, { method: 'DELETE', session: staff })));
+      answers.push(await errorOf(await call(server, '/api/org/leave', { session: staff, json: {} })));
+    });
+    expect(answers).toEqual(Array.from({ length: 5 }, () => ({ status: 403, error: 'open_as_admin_refused' })));
+    expect(writes).toEqual([]);
+    expect(await rows()).toEqual(before);
+
+    // The admin who joined is their own admin, untouched by the grant.
+    expect(await me(admin)).toMatchObject({ access: { state: 'member', org: { id: org.orgId }, role: 'org_admin' }, openAsAdmin: null, viewAs: null });
+    expect(await (await call(server, '/probe/member', { session: admin })).json()).toEqual({ kind: 'member', orgId: org.orgId, role: 'org_admin' });
   });
 
+  it('a suspension after the join still ends it', async () => {
+    await joinAs(server, org.adminEmail);
+    expect((await me(staff)).openAsAdmin).not.toBeNull();
+    await server.connection.collection('tw_orgs').updateOne(
+      { _id: new Types.ObjectId(org.orgId) }, { $set: { status: 'suspended', suspendedAt: server.clock.now() } },
+    );
+    expect(await me(staff)).toMatchObject(notLive);
+    expect(await errorOf(await call(server, '/probe/member', { session: staff }))).toEqual({ status: 403, error: 'no_access' });
+  });
+});
+
+describe('a grant that is not live is ignored', () => {
   it('while the organization is suspended', async () => {
     await server.connection.collection('tw_orgs').updateOne(
       { _id: new Types.ObjectId(org.orgId) }, { $set: { status: 'suspended', suspendedAt: server.clock.now() } },

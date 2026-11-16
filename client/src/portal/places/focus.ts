@@ -10,9 +10,13 @@ export const SCRIPT_FOCUS: object = Platform.OS === 'web' ? { tabIndex: -1 } : {
 
 type AccessibilityTarget = Parameters<typeof AccessibilityInfo.sendAccessibilityEvent>[0];
 
-/** Moves focus (web) or the screen reader (native) to the ref's node once, when it mounts, if `enabled` then. */
-export function useFocusOnMount<T>(enabled = true): React.RefObject<T | null> {
-  const ref = useRef<T>(null);
+/**
+ * Moves focus (web) or the screen reader (native) to the ref's node once, when it mounts, if `enabled` then. `existing`
+ * is a ref the component already puts on the node (Button's), used instead of a new one.
+ */
+export function useFocusOnMount<T>(enabled = true, existing?: React.RefObject<T | null>): React.RefObject<T | null> {
+  const own = useRef<T>(null);
+  const ref = existing ?? own;
   // Only the value at mount counts: a part that is already showing never takes focus back.
   const atMount = useRef(enabled);
   useEffect(() => {
@@ -23,6 +27,6 @@ export function useFocusOnMount<T>(enabled = true): React.RefObject<T | null> {
       return;
     }
     AccessibilityInfo.sendAccessibilityEvent(node as unknown as AccessibilityTarget, 'focus');
-  }, []);
+  }, [ref]);
   return ref;
 }

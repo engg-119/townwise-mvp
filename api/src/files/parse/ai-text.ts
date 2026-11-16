@@ -5,8 +5,9 @@
 // either it is `too_complex`. The thread runs only while it holds the process's one parse-thread slot (thread-slot.ts),
 // shared with the sales reader, so the two threads never hold their heaps at once. This is apart from the sales parse
 // thread (thread.ts), whose raw rows never leave it: only this thread hands a file's content back, and only
-// files/ai-reader.ts asks it (test/isolation.test.ts). A text file is decoded here, in the main thread, as the sales
-// reader decodes one.
+// files/extract/input.ts (the TownwiseAI reader's input, and the ordering setup's read, D41) and files/items.ts (a file
+// attached to a TownwiseAI message, D36) ask it (test/isolation.test.ts).
+// A text file is decoded here, in the main thread, as the sales reader decodes one.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 
 import { AI_TEXT_TIME_MS, AI_THREAD_LIMITS } from '../limits.ts';
@@ -36,9 +37,14 @@ export interface AiTextInput {
   readonly kind: AiTextKind;
   readonly bytes: Uint8Array;
   readonly maxChars: number;
-  /** Tests shorten these. */
+  /** Tests shorten these; a chat turn (D36) shortens `timeMs` too. */
   readonly timeMs?: number;
   readonly resourceLimits?: ResourceLimits;
+  /**
+   * How long to wait for the parse-thread slot (a chat turn, D36): past it the read rejects with SlotBusy and its
+   * thread never starts. Without it (the TownwiseAI reader), it waits as long as it takes.
+   */
+  readonly waitMs?: number;
 }
 
 const THREAD_URL = new URL('./ai-text-thread.ts', import.meta.url);
@@ -52,10 +58,10 @@ function isTooComplex(err: unknown): boolean {
 
 /**
  * One file's text through the thread, once the parse-thread slot is free. Any other thread failure rejects (the reader
- * counts it as an attempt).
+ * counts it as an attempt), and so does a wait past `waitMs` (SlotBusy).
  */
 export function extractAiText(input: AiTextInput): Promise<AiTextOutcome> {
-  return inThreadSlot(() => textThread(input));
+  return inThreadSlot(() => textThread(input), input.waitMs);
 }
 
 async function textThread(input: AiTextInput): Promise<AiTextOutcome> {

@@ -252,6 +252,11 @@ function ruleSentence(delta: number, unit: OrderUnit, situation: string): string
     : `Includes ${String(size)} extra ${unitFor(size, unit)} from your rule: ${words}.`;
 }
 
+/** 'You changed this order to 16 cases: a home game weekend.' The reason is the owner's own words. */
+function editSentence(quantity: number, unit: OrderUnit, reason: string): string {
+  return `You changed this order to ${amountOf(quantity, unit)}: ${reason.replace(/[.!?]+$/, '')}.`;
+}
+
 /** What the rules did: the quantity they leave, and, when 0 or 999 stopped them, the change they could make. */
 function rulesOutcome(before: number, after: number, delta: number, count: number, unit: OrderUnit): string {
   const yours = count === 1 ? 'your rule' : 'your rules';
@@ -266,8 +271,9 @@ function rulesOutcome(before: number, after: number, delta: number, count: numbe
  * Decision 6): each rule is listed on its own, and together they move the recommended quantity, never below 0 or past
  * 999, and the why line ends with the quantity they leave. A line that a rule moves has no other deal option, which
  * was priced for the quantity before the rule. A rule applies to every order of its item until it is turned off. An
- * edit or a rule saved in another unit than the line's now (the setup changed the item's unit) is left out. A sample
- * is returned unchanged.
+ * edit or a rule saved in another unit than the line's now (the setup changed the item's unit) is left out. An edit
+ * never moves `recommended`; when it differs from the quantity the rules leave, the why line ends with it, in the
+ * owner's words, and the page shows it in the Order column. A sample is returned unchanged.
  */
 export function withPreferences(board: OrderBoard, decisions: readonly StoredDecision[], rules: readonly StoredRule[]): OrderBoard {
   if (board.sample) return board;
@@ -279,18 +285,22 @@ export function withPreferences(board: OrderBoard, decisions: readonly StoredDec
       const edit = edits.get(line.itemId);
       const shown = edit?.unit === line.unit ? { quantity: edit.quantity, reason: edit.reason } : null;
       const rules = applied.map((rule) => ({ id: rule.id, delta: rule.delta, situation: rule.situation }));
-      if (applied.length === 0) return { ...line, edit: shown, rules };
-      const delta = applied.reduce((sum, rule) => sum + rule.delta, 0);
-      const recommended = Math.min(MAX_QUANTITY, Math.max(0, line.recommended + delta));
-      const sentences = applied.map((rule) => ruleSentence(rule.delta, line.unit, rule.situation));
-      return {
-        ...line,
-        recommended,
-        alternative: null,
-        why: [line.why, ...sentences, rulesOutcome(line.recommended, recommended, delta, applied.length, line.unit)].join(' '),
-        edit: shown,
-        rules,
-      };
+      const ruled = ((): OrderLine => {
+        if (applied.length === 0) return { ...line, edit: shown, rules };
+        const delta = applied.reduce((sum, rule) => sum + rule.delta, 0);
+        const recommended = Math.min(MAX_QUANTITY, Math.max(0, line.recommended + delta));
+        const sentences = applied.map((rule) => ruleSentence(rule.delta, line.unit, rule.situation));
+        return {
+          ...line,
+          recommended,
+          alternative: null,
+          why: [line.why, ...sentences, rulesOutcome(line.recommended, recommended, delta, applied.length, line.unit)].join(' '),
+          edit: shown,
+          rules,
+        };
+      })();
+      if (shown === null || shown.quantity === ruled.recommended) return ruled;
+      return { ...ruled, why: `${ruled.why} ${editSentence(shown.quantity, line.unit, shown.reason)}` };
     });
     return { ...order, lines };
   });

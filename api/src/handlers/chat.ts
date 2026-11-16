@@ -14,7 +14,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import {
-  ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_REF, attachedOnPath, attachedTo, bytesToRead, checkAttachments, createByteGate, expandedMessage,
+  ANSWER_TIME_MS, ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_REF, attachedOnPath, attachedTo, bytesToRead, checkAttachments, createByteGate, expandedMessage,
   MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentRefusal, type TurnAttachments,
 } from '../chat/attachments.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
@@ -380,7 +380,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   // message was sent.
   const refusal = 'replyTo' in body ? null : refusalOf(checks);
   if (refusal !== null) throw attachmentRefused(refusal);
-  // The bytes the turn will read are held from here until it ends; every exit gives them back once.
+  // The bytes the turn will read are held from here until it ends (a document's only until it is read); every exit
+  // gives back what is still held, once.
   let heldBytes = bytesToRead(checks);
   if (!attachmentBytes.reserve(heldBytes)) {
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, held: attachmentBytes.held }, 'townwise.chat_attachments_busy');
@@ -389,6 +390,20 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const releaseBytes = (): void => {
     attachmentBytes.release(heldBytes);
     heldBytes = 0;
+  };
+  // D36: the bytes this turn holds, as its reads take and give them back. A release gives back at most what the turn
+  // still holds, so one after releaseBytes (a document read finishing after the send failed) frees no other turn's.
+  const turnBytes = {
+    reserve: (bytes: number): boolean => {
+      if (!attachmentBytes.reserve(bytes)) return false;
+      heldBytes += bytes;
+      return true;
+    },
+    release: (bytes: number): void => {
+      const given = Math.min(bytes, heldBytes);
+      attachmentBytes.release(given);
+      heldBytes -= given;
+    },
   };
   const now = ctx.now();
   const claim: TurnClaim = { turnId: randomUUID(), now, staleBefore: new Date(now.getTime() - STALE_TURN_MS) };
@@ -424,10 +439,15 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     throw err;
   }
   const { conversationId, title, history, nodes } = claimed;
+  // The turn's time limit runs from its claims, so reading its files counts toward it: a PDF, Word or Excel file (D36)
+  // can wait for the parse thread, and the claims go stale at 3 minutes. Every file read of the turn, its message's
+  // and read_data_item's, is done ANSWER_TIME_MS before the limit, so the turn has time left to answer.
+  const timeLimit = AbortSignal.timeout(ctx.chatTurnTimeLimitMs);
+  const filesBy = Date.now() + ctx.chatTurnTimeLimitMs - ANSWER_TIME_MS;
   // D36: the files' bytes, read only now that the turn holds its claims. A failure gives everything back before the stream.
   let attached: TurnAttachments | null = null;
   try {
-    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks));
+    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks, filesBy, turnBytes));
   } catch (err) {
     releaseBytes();
     await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
@@ -451,7 +471,6 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const closed = new AbortController();
   res.on('close', () => { closed.abort(); });
   if (req.socket.destroyed) closed.abort();
-  const timeLimit = AbortSignal.timeout(ctx.chatTurnTimeLimitMs);
   const signal = AbortSignal.any([closed.signal, timeLimit]);
   const ping = setInterval(() => {
     if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
@@ -468,6 +487,9 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
     const person = userMessage ?? modelHistory.at(-1);
     // Sent in place of the stored message only when it differs: content was read, or a regenerate's files changed.
     const expanded = attached === null || person === undefined ? null : expandedMessage(person, attached);
+    // D36: the files the path's messages attach, this one's included: read_data_item reads them again beyond text items,
+    // holding their bytes against the same cap as the message's (turnBytes), given back with them when the turn ends.
+    const attachedRefs = new Set([...modelHistory, ...(userMessage === null ? [] : [userMessage])].flatMap((param) => attachedTo(param).map((file) => file.ref)));
     // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
     send('conversation', {
       id: conversationId, title, userNodeId: nodes.user?.id ?? null, replyNodeId: nodes.reply.id,
@@ -478,8 +500,10 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       // U13A: today is the town's local date, so an evening turn is not already tomorrow.
       tools: {
         ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
-        // read_data_item sets readUntrusted too, once it hands back an item's text; runTurn sets both for web pages.
-        turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false },
+        // read_data_item sets readUntrusted too, once it hands back an item's text or a picture; runTurn sets both for
+        // web pages.
+        turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, pictureBytes: attached?.pictureBytes ?? 0 },
+        files: { attached: attachedRefs, by: filesBy, bytes: turnBytes },
       },
       history: modelHistory,
       userMessage,

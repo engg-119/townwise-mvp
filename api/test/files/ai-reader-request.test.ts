@@ -3,7 +3,8 @@
 // for one bad entry.
 import { describe, expect, it } from 'vitest';
 
-import { pictureType, retryDelayMs } from '../../src/files/ai-reader.ts';
+import { retryDelayMs } from '../../src/files/ai-reader.ts';
+import { pictureType } from '../../src/files/extract/input.ts';
 import { readerCeilingMicroUsd, readerRequest } from '../../src/files/extract/reader.ts';
 import {
   DAYS_MAX, EVENTS_MAX, FACTS_MAX, READER_MAX_TOKENS, READER_MODEL, READER_SYSTEM_PROMPT, readerResult, redacted,
@@ -44,7 +45,7 @@ describe('the request', () => {
     expect(whole).toContain('--- FILE CONTENT ---\\nDate,Guests\\n2025-01-01,40"');
     expect(whole).not.toContain('too long');
     const cut = JSON.stringify(readerRequest({ type: 'text', form: 'workbook', text: 'Sheet: A', cut: true }, CONTEXT));
-    expect(cut).toContain('only its start follows (at most 300,000 characters, from at most its first 10 sheets)');
+    expect(cut).toContain('only its start follows (at most 300,000 characters, from at most its first 30 sheets)');
     expect(cut).toContain('only the start of the file was read');
   });
 

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { useLoad } from '../hooks';
@@ -15,7 +15,14 @@ export type ZipFile = Pick<FileView, 'id' | 'name' | 'kind' | 'uploadedAt'>;
 
 // A ZIP's count and “See what’s inside”, its paginated entry list (storage2 2.2): on the drop step and in Your
 // data. Entries load 200 a page, in archive order; the names print only where the API sends them (never under
-// view-as).
+// view-as). In a Your data row, which opens its item from a press anywhere on it, a press inside the list (an entry's
+// text) stays in the list: the list takes the press itself (native) and stops the click there (web).
+
+/** What the list puts on its view so a press inside it never reaches a pressable row around it. */
+const KEEP_PRESS = {
+  onStartShouldSetResponder: () => true,
+  ...(Platform.OS === 'web' ? ({ onClick: (event: { stopPropagation: () => void }) => { event.stopPropagation(); } } as object) : {}),
+};
 
 function Entries(props: { locationId: string; file: ZipFile }): React.JSX.Element {
   const { api } = usePortal();
@@ -38,7 +45,7 @@ function Entries(props: { locationId: string; file: ZipFile }): React.JSX.Elemen
     );
   };
   return (
-    <View role="list" aria-label={`Files inside ${fileName(props.file)}`} style={styles.entries}>
+    <View role="list" aria-label={`Files inside ${fileName(props.file)}`} {...KEEP_PRESS} style={styles.entries}>
       {all.flatMap((page) => page.entries).map((entry) => (
         <View key={entry.index} role="listitem" style={styles.entry}>
           <Mono tone="white">{entry.path ?? KIND_LABEL[entry.kind]}</Mono>

@@ -25,7 +25,7 @@ function sourcesOf(profile: { drivers: { sourceUrls: string[] }[]; dates: { sour
 export const townProfileTool: ChatTool<Record<string, never>> = {
   definition: {
     name: 'get_town_profile',
-    description: 'The public profile of the location\'s town, when Townwise has researched it: the county\'s food-service employment pattern by month against the Northeast, demand drivers and key dates with sources, and caveats. Null for a town without a profile.',
+    description: 'The public profile of the location\'s town, when Townwise has researched it: the county\'s food-service employment pattern by month against the Northeast (series is null, with seriesUnavailable saying why, when BLS did not publish the county for the whole year), demand drivers and key dates with sources, and caveats. Null for a town without a profile.',
     input_schema: NO_INPUT,
     eager_input_streaming: true,
   },

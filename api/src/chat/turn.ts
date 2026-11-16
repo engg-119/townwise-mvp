@@ -461,6 +461,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
 
       const results: BetaToolResultBlockParam[] = [];
       for (const [index, block] of toolUses.entries()) {
+        // A turn stopped or past its time limit runs no more tools: it saves nothing, and a tool such as read_data_item
+        // can take a while.
+        if (aborted()) return abortedResult();
         if (index >= MAX_TOOLS_PER_MESSAGE) {
           results.push(tooMany(block));
           continue;

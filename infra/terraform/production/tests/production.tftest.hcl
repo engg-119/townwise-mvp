@@ -417,6 +417,16 @@ run "key_vault" {
 
   assert {
     condition = (
+      !var.enable_google_calendar &&
+      !contains([for secret in azurerm_container_app.api.secret : secret.name], "townwise-google-calendar-secret") &&
+      !contains([for env in azurerm_container_app.api.template[0].container[0].env : env.name], "TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET") &&
+      !contains(keys(azurerm_role_assignment.api_secret_read), "townwise-google-calendar-secret")
+    )
+    error_message = "By default Google calendars are off: no Google client secret, no TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET, no role on it."
+  }
+
+  assert {
+    condition = (
       !var.enable_chat &&
       !contains([for secret in azurerm_container_app.api.secret : secret.name], "anthropic-api-key") &&
       !contains([for env in azurerm_container_app.api.template[0].container[0].env : env.name], "ANTHROPIC_API_KEY")
@@ -527,6 +537,51 @@ run "calendar_links_enabled" {
     )
     error_message = "With calendar links on, TOWNWISE_CALENDAR_KEY is a Key Vault reference to townwise-calendar-key, with no value in Terraform."
   }
+}
+
+run "google_calendar_enabled" {
+  command = plan
+
+  variables {
+    enable_calendar_links  = true
+    enable_google_calendar = true
+  }
+
+  assert {
+    condition = toset([for key, assignment in azurerm_role_assignment.api_secret_read : assignment.scope]) == toset([
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/mongodb-uri",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-jwt-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/auth-encryption-keys",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/townwise-calendar-key",
+      "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.KeyVault/vaults/kv-townwise-2d2c15bf/secrets/townwise-google-calendar-secret",
+      ]) && alltrue([
+      for key, assignment in azurerm_role_assignment.api_secret_read :
+      assignment.role_definition_name == "Key Vault Secrets User" && assignment.principal_id == "00000000-0000-0000-0000-0000000000ee"
+    ])
+    error_message = "With Google calendars on, the app's identity reads the Google client secret by one more secret-scoped assignment than calendar links alone, and nothing wider."
+  }
+
+  assert {
+    condition = (
+      toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${coalesce(env.secret_name, "-")}" if env.secret_name != null]) == toset([
+        "MONGODB_URI=mongodb-uri", "AUTH_JWT_KEYS=auth-jwt-keys", "AUTH_ENCRYPTION_KEYS=auth-encryption-keys", "TOWNWISE_CALENDAR_KEY=townwise-calendar-key",
+        "TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET=townwise-google-calendar-secret",
+      ]) &&
+      contains([for secret in azurerm_container_app.api.secret : secret.key_vault_secret_id], "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/townwise-google-calendar-secret") &&
+      alltrue([for secret in azurerm_container_app.api.secret : secret.value == null])
+    )
+    error_message = "With Google calendars on, TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET is a Key Vault reference to townwise-google-calendar-secret, with no value in Terraform."
+  }
+}
+
+run "google_calendar_without_links" {
+  command = plan
+
+  variables {
+    enable_google_calendar = true
+  }
+
+  expect_failures = [var.enable_google_calendar]
 }
 
 run "places_enabled" {

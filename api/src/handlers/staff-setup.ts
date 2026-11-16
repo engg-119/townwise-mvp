@@ -7,7 +7,7 @@
 // they join (D9): read-only checks, then the event, then the effect (spec 9.3). Records written here hold the staff
 // user id with `byStaff`, so every client view names them “Townwise staff”. Answers carry ids, names, towns, counts and
 // date coverage, never a figure: these routes never read values. Staff read them by opening the organization as its
-// admin while nobody has joined it (D25, open-as-admin.ts), or through view-as after (D7).
+// admin (D25, open-as-admin.ts), or through view-as once someone has joined (D7).
 //
 // Setup is checked before the event, with no lock. A join landing between the check and the write is accepted: the
 // write is still recorded, and the new admin sees it in their staff activity.

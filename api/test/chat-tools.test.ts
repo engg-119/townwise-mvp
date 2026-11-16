@@ -126,6 +126,22 @@ describe('the views on a tool call’s card', () => {
     expect(resultViewOf('get_town_profile', ok({ profile: null }))).toEqual({ available: false, town: null, sources: [] });
   });
 
+  // BLS withheld Nantucket County for April to June 2025: the tool gives TownwiseAI the profile with a null series and
+  // the reason, never a stale or made-up index, and the card still names the town.
+  it('get_town_profile: a county BLS did not publish for the whole year comes with a null series and the reason', async () => {
+    const tc = { location: { town: { townId: 'nantucket-ma' } } } as unknown as ToolContext;
+    const { content } = await toolNamed('get_town_profile')?.run(tc, {}) ?? { content: '' };
+    const { profile } = JSON.parse(content) as { profile: { name: string; county: string; year: number; series: unknown; seriesUnavailable: string } };
+    expect(profile).toMatchObject({
+      name: 'Nantucket', county: 'Nantucket County', year: 2025, series: null,
+      seriesUnavailable: 'BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.',
+    });
+    expect(resultViewOf('get_town_profile', ok({ profile }))).toEqual({ available: true, town: { name: 'Nantucket', state: 'MA' }, sources: [] });
+    const hanover = JSON.parse((await toolNamed('get_town_profile')?.run({ location: { town: { townId: 'hanover-nh' } } } as unknown as ToolContext, {}))?.content ?? '{}') as { profile: { series: { index: number[] } | null; seriesUnavailable: string | null } };
+    expect(hanover.profile.series?.index).toHaveLength(12);
+    expect(hanover.profile.seriesUnavailable).toBeNull();
+  });
+
   it('propose_note: no views (the proposal card shows the note)', () => {
     const note = {
       kind: 'closure', startDate: '2026-06-20', endDate: '2026-06-20', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
@@ -221,7 +237,8 @@ describe('get_day', () => {
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      turn: { readUntrusted: false, readWeb: false },
+      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
+      files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined } },
     };
     return { tc, byIds, ranges };
   }

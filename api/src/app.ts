@@ -8,10 +8,14 @@ import type { Connection } from 'mongoose';
 
 import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './access/routes.ts';
 import { createCalendarFetcher, type CalendarFetcher } from './calendar/fetch.ts';
+import type { GoogleCalendarClient, revokeGoogleGrant } from './calendar/google.ts';
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
 import type { FileBlobs } from './files/blobs.ts';
+import type { FileReaderModel } from './files/extract/reader.ts';
+import { SETUP_READ_TIME_MS } from './files/extract/setup-prompt.ts';
+import type { AiTextInput, AiTextOutcome } from './files/parse/ai-text.ts';
 import { createItemReader, type ItemReader } from './files/items.ts';
 import { createForecastReader, type ForecastReader } from './forecasts/reader.ts';
 import type { LabCaller } from './lab/caller.ts';
@@ -55,6 +59,15 @@ export interface TownwiseDeps {
    * files are on, ANTHROPIC_API_KEY is set and TOWNWISE_FILES_MONTHLY_BUDGET_USD is above 0).
    */
   readonly aiReader?: { nudge(): void } | undefined;
+  /**
+   * Reading the ordering setup with TownwiseAI (handlers/order-setup-read.ts, spec D41); absent turns it off (main.ts
+   * builds it only when ANTHROPIC_API_KEY is set and TOWNWISE_FILES_MONTHLY_BUDGET_USD is above 0, stored files on or off).
+   */
+  readonly setupReader?: FileReaderModel | undefined;
+  /** A setup read's time limit from the request's start, in milliseconds; tests shorten it. Absent, SETUP_READ_TIME_MS. */
+  readonly setupReadTimeMs?: number | undefined;
+  /** How a setup read makes a file's text; tests pass a scripted one. Absent, the AI text thread (parse/ai-text.ts). */
+  readonly setupReadText?: ((input: AiTextInput) => Promise<AiTextOutcome>) | undefined;
   /** U13A: the researched headcount inputs; absent, the committed people-in-town/sources.ts. Tests pass synthetic ones. */
   readonly peopleData?: PeopleData | undefined;
   /** Starts the forecast lab's jobs; absent turns calibrations off (main.ts builds it from TOWNWISE_LAB_RUNNER). */
@@ -68,6 +81,19 @@ export interface TownwiseDeps {
   readonly calendarKey?: KeyObject | undefined;
   /** Fetches owner calendar links; absent, calendar/fetch.ts's guarded fetcher. Tests pass one over a local server. */
   readonly calendarFetcher?: CalendarFetcher | undefined;
+  /**
+   * Google's token, calendar list and events endpoints (calendar/google.ts); absent turns Google calendars off (main.ts
+   * builds it only when the client id, the client secret and TOWNWISE_CALENDAR_KEY are all set). Tests pass a fake.
+   */
+  readonly googleCalendar?: GoogleCalendarClient | undefined;
+  /** The public OAuth web client id the browser asks Google for a code with; set with `googleCalendar`. */
+  readonly googleCalendarClientId?: string | undefined;
+  /**
+   * Revokes a Google grant (calendar/google.ts revokeGoogleGrant), which needs no client id or secret: main.ts passes it
+   * whenever TOWNWISE_CALENDAR_KEY is set, Google calendars on or off, so ending access still revokes (design decision
+   * 14). Absent, nothing is revoked. Tests pass a fake.
+   */
+  readonly revokeGoogle?: typeof revokeGoogleGrant | undefined;
 }
 
 /**
@@ -104,6 +130,11 @@ export interface TownwiseContext {
   readonly nudgeFiles: () => void;
   /** Reading with TownwiseAI: null while it is off (503 ai_unavailable); its nudge after a read is asked for. */
   readonly aiReads: { nudge(): void } | null;
+  /** Reading the ordering setup with TownwiseAI: null while it is off (503 ai_unavailable, canReadWithAi false). */
+  readonly setupReader: FileReaderModel | null;
+  readonly setupReadTimeMs: number;
+  /** Null: the AI text thread. */
+  readonly setupReadText: ((input: AiTextInput) => Promise<AiTextOutcome>) | null;
   /** The one door TownwiseAI's tools read a reference item's text through (chat/* imports no file code). */
   readonly items: ItemReader;
   /** U13A. */
@@ -116,6 +147,12 @@ export interface TownwiseContext {
   readonly calendarKey: KeyObject | null;
   /** The one way a handler reaches an owner's calendar address (calendar/fetch.ts). */
   readonly calendarFetcher: CalendarFetcher;
+  /** Null while Google calendars are off (503 google_calendar_unavailable). */
+  readonly googleCalendar: GoogleCalendarClient | null;
+  /** The public OAuth client id the calendar list answers; null while Google calendars are off. */
+  readonly googleCalendarClientId: string | null;
+  /** Null when main.ts has no TOWNWISE_CALENDAR_KEY, so no stored Google token could be opened to revoke anyway. */
+  readonly revokeGoogle: typeof revokeGoogleGrant | null;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -138,7 +175,10 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     files: deps.files ?? null,
     nudgeFiles: () => { deps.fileWorker?.nudge(); },
     aiReads: deps.aiReader ?? null,
-    items: createItemReader(stores, deps.files ?? null),
+    setupReader: deps.setupReader ?? null,
+    setupReadTimeMs: deps.setupReadTimeMs ?? SETUP_READ_TIME_MS,
+    setupReadText: deps.setupReadText ?? null,
+    items: createItemReader(stores, deps.files ?? null, { logger: deps.logger }),
     ports: {
       peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }),
       // U13B.
@@ -148,6 +188,9 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     labCaller: deps.labCaller ?? null,
     calendarKey: deps.calendarKey ?? null,
     calendarFetcher: deps.calendarFetcher ?? createCalendarFetcher(),
+    googleCalendar: deps.googleCalendar ?? null,
+    googleCalendarClientId: deps.googleCalendar === undefined ? null : deps.googleCalendarClientId ?? null,
+    revokeGoogle: deps.revokeGoogle ?? null,
   };
 }
 

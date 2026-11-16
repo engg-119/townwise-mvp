@@ -16,6 +16,7 @@ import type { TownwiseContext } from '../app.ts';
 import { scopeForNewOrg, scopeForStaffOrg, type OrgScope, type Principal, type StaffPrincipal } from '../access/policy.ts';
 import { requestView, type AccessRequestView } from '../access/resolve.ts';
 import { isInSetup } from '../access/setup.ts';
+import { endGoogleAccess, googleAccessDeps, markPersonForCheck } from '../calendar/google-access.ts';
 import { normalizeEmail } from '../normalize-email.ts';
 import { currentEmail } from '../people.ts';
 import type { AccessRequestRecord } from '../stores/access-requests.ts';
@@ -272,7 +273,7 @@ export async function rejectRequest(ctx: TownwiseContext, req: Request, res: Res
 
 // Organizations, people and the audit log (spec 10.7, P20 to P23). Staff reads here are not recorded (D7), and
 // they carry counts, dates, emails and names only: never a sales figure or note text. Staff read those through view-as
-// (D7), or by opening an organization nobody has joined as its admin (D25).
+// (D7), or by opening an organization as its admin (D25).
 
 /** P21: the newest events on the organization's page. */
 const RECENT_EVENTS = 20;
@@ -529,7 +530,9 @@ export async function changeOrgMemberRole(ctx: TownwiseContext, req: Request, re
 
 /**
  * DELETE /api/admin/orgs/:orgId/members/:memberId (F6 from the console): an invitation is deleted; a seat is removed,
- * recounted and restored when no active admin is left (removeActiveSeat).
+ * recounted and restored when no active admin is left (removeActiveSeat). The person's Google access for calendars
+ * there is marked for a check before the seat goes and ended once it has (calendar/google-access.ts, as in
+ * handlers/team.ts).
  */
 export async function removeOrgMember(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const staff = staffOf(principal);
@@ -544,6 +547,9 @@ export async function removeOrgMember(ctx: TownwiseContext, req: Request, res: R
     details: { email: await emailOf(ctx, member), wasStatus: member.status },
   };
   const eventId = await recordBefore(ctx, event);
+  const google = googleAccessDeps(ctx);
+  // Before the seat goes, as in handlers/team.ts: the mark is what lets the check finish an interrupted removal.
+  const connectionId = member.status === 'active' ? await markPersonForCheck(google, scope, member.userId) : null;
   const outcome = await applyRecorded(ctx, event, eventId, async (): Promise<SeatRemoval['kind']> => {
     if (member.status === 'invited') return await ctx.stores.members.deleteInvite(scope, memberId) ? 'removed' : 'not_found';
     return (await removeActiveSeat(ctx, scope, memberId, member.userId, { removedAt: now, removedBy: staff.actor.userId })).kind;
@@ -556,6 +562,7 @@ export async function removeOrgMember(ctx: TownwiseContext, req: Request, res: R
     await recordNotApplied(ctx, event, eventId, 'last_admin');
     throw lastAdmin();
   }
+  if (connectionId !== null) await endGoogleAccess(google, scope, connectionId, 'seat_removed');
   res.status(204).end();
 }
 

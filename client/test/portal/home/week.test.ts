@@ -1,12 +1,15 @@
 import { dayContext, EMPTY_CONTEXT, type DayContext } from '../../../src/portal/analytics/days';
 import { byDate, decodeHistory, type DayRecord } from '../../../src/portal/analytics/history';
+import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, homeCalendarRange, lastWeekComparison, lastWeekLine,
+  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, forecastPhrase, forecastRange, homeCalendarRange, lastWeekComparison, lastWeekLine,
+  lastYearDayPhrase,
   lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
   nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import { addDays } from '../../../src/portal/locations/dates';
 import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { forecastDay } from '../calendar/fakes';
 
 // Home's computations (home.md 2, 5.6), on synthetic days only. Explainability: every comparison says how many days
 // it is over, and "last year" is the same weekday 52 weeks earlier. Honesty: no figure for a day after the last day
@@ -40,6 +43,27 @@ describe('weeks', () => {
     expect(homeCalendarRange('2026-11-29').to).toBe('2026-12-05');
   });
 
+  test('the forecast is read for this month and This week’s seven days, which can run into next month', () => {
+    expect(forecastRange('2026-11-05')).toEqual({ from: '2026-11-01', to: '2026-11-30' });
+    expect(forecastRange('2026-11-29')).toEqual({ from: '2026-11-01', to: '2026-12-05' });
+  });
+
+  test('a day’s published forecast in This week, its figure strong, as This month gives it (owner request)', () => {
+    expect(forecastPhrase(undefined)).toBeNull();
+    const open = forecastPhrase(forecastDay({ date: '2026-11-05', low: 67.6, mid: 90.4, high: 112.2 }));
+    if (open === null) throw new Error('no phrase');
+    expect(plainOf(open)).toBe('About 90 guests, 67 to 113');
+    expect(open[0]).toEqual({ strong: 'About 90 guests' });
+    expect(forecastPhrase(forecastDay({ date: '2026-11-15', status: 'closed', low: null, mid: null, high: null }))).toEqual(['Closed']);
+    const yours = forecastDay({
+      date: '2026-11-16', status: 'booked', low: null, mid: null, high: null, noteGuests: 40,
+      reasons: [{ kind: 'note', label: 'Your buyout', effectPct: null, sources: [], note: { id: 'n1', guests: 40, outcome: 'booked' } }],
+    });
+    expect(forecastPhrase(yours)).toEqual(['Booked: a private buyout, ', { strong: '40 guests' }]);
+    expect(forecastPhrase({ ...yours, reasons: [] })).toEqual(['Booked for a private event']);
+    expect(forecastPhrase(forecastDay({ date: '2026-11-17', low: null, mid: null, high: null }))).toBeNull();
+  });
+
   test('ranges without a year', () => {
     expect(dayMonthRange('2026-11-11', '2026-11-11')).toBe('Nov 11');
     expect(dayMonthRange('2026-11-20', '2026-11-22')).toBe('Nov 20 to 22');
@@ -68,7 +92,11 @@ describe('this week', () => {
 
   test('the summary needs 5 days of last year’s week and names its day count', () => {
     const week = thisWeek(input(DAYS));
-    expect(week.summary).toMatchObject({ from: '2025-11-06', to: '2025-11-12', days: 7, total: 740, busiest: '2025-11-08' });
+    expect(week.summary).toMatchObject({ from: '2025-11-06', to: '2025-11-12', days: 7, total: 740, busiest: '2025-11-08', busiestValue: 140, quietestValue: 100 });
+    // Busiest and quietest say their figure in brackets, the figure strong (owner request, 2026-11-15).
+    const busiest = lastYearDayPhrase('Busiest', '2025-11-08', 140, 'guests');
+    expect(plainOf(busiest)).toBe('Busiest last year: Sat, Nov 8, 2025 (140 guests).');
+    expect(busiest.filter((part) => typeof part !== 'string')).toEqual([{ strong: '140 guests' }]);
     if (week.summary === null) throw new Error('no summary');
     expect(summaryLabel(week.summary)).toBe('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.');
     // Every day matches its usual exactly.
@@ -154,9 +182,10 @@ describe('last week', () => {
 
   test('compared over the days both weeks have', () => {
     const comparison = lastWeekComparison(input(DAYS));
-    expect(comparison).toMatchObject({ state: 'compared', monday: '2026-10-26', sunday: '2026-11-01', comparedDays: 7, total: 770, lastYearTotal: 700 });
+    // The seven days before today (Thu, Nov 5): Oct 29 to Nov 4, This week's weekdays a week earlier.
+    expect(comparison).toMatchObject({ state: 'compared', from: '2026-10-29', to: '2026-11-04', comparedDays: 7, total: 770, lastYearTotal: 700 });
     expect(lastWeekLine(comparison, 'guests')).toBe('Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.');
-    const partial = lastWeekComparison(input(DAYS.filter((each) => each.date !== '2025-10-28' && each.date !== '2026-10-30')));
+    const partial = lastWeekComparison(input(DAYS.filter((each) => each.date !== '2025-11-01' && each.date !== '2026-10-30')));
     expect(partial).toMatchObject({ state: 'compared', comparedDays: 5, total: 550, lastYearTotal: 500 });
     expect(lastWeekLine(partial, 'guests')).toBe('Last week: 550 guests on the 5 days both weeks have, 10% more than the same days last year (500).');
   });
@@ -176,16 +205,16 @@ describe('last week', () => {
     const recent = lastWeekComparison(input(old));
     expect(recent.state).toBe('no_recent');
     expect(lastWeekLine(recent, 'guests')).toBe('Your history ends Oct 20, 2026. Upload the days since to compare last week.');
-    // A gap: last week is missing, but days after it are stored, so the history does not end before it.
-    const gap = lastWeekComparison(input(DAYS.filter((each) => each.date < '2026-10-26' || each.date > '2026-11-01')));
-    expect(gap).toEqual({ state: 'no_days', monday: '2026-10-26', sunday: '2026-11-01' });
+    // A gap: last week is missing, but today is stored, so the history does not end before it.
+    const gap = lastWeekComparison(input([...DAYS, day('2026-11-05', 110)].filter((each) => each.date < '2026-10-29' || each.date > '2026-11-04')));
+    expect(gap).toEqual({ state: 'no_days', from: '2026-10-29', to: '2026-11-04' });
     expect(lastWeekLine(gap, 'guests')).toBe('No guests stored for last week, so there is nothing to compare yet.');
     expect(lastWeekLine(gap, 'netSales')).toBe('No net sales stored for last week, so there is nothing to compare yet.');
     const young = DAYS.filter((each) => each.date >= '2026-01-01');
     const noLastYear = lastWeekComparison(input(young));
     expect(noLastYear.state).toBe('no_last_year');
     expect(lastWeekLine(noLastYear, 'guests')).toBe('No data for the same week last year, so there is nothing to compare yet.');
-    const apart = DAYS.filter((each) => !(each.date >= '2026-10-26' && each.date <= '2026-10-29') && !(each.date >= '2025-10-31' && each.date <= '2025-11-02'));
+    const apart = DAYS.filter((each) => !(each.date >= '2026-10-29' && each.date <= '2026-11-01') && !(each.date >= '2025-11-03' && each.date <= '2025-11-05'));
     expect(lastWeekComparison(input(apart)).state).toBe('no_overlap');
   });
 });

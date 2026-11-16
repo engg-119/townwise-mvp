@@ -118,17 +118,29 @@ test('staff activity pages: Show older staff activity adds the next 50 below, an
   expect(screen.queryByRole('button', { name: 'Show older staff activity' })).toBeNull();
 });
 
-test('D25: the staff activity intro names open as admin, so it never says staff read figures only through View as', async () => {
+test('D25: the staff activity intro names open as admin, before or after a join, so it never says staff read figures only through View as', async () => {
   const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
   withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [ADD_EVENT] }) } });
   renderAt('/settings', api);
   expect(await screen.findByText(
-    'Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Before anyone from '
-    + 'your organization joined, staff setting it up may have opened it as its admin, which shows them what an admin sees; '
-    + 'each time is listed here, with every change they made. Otherwise staff can see your team’s email addresses, your '
+    'Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Staff helping you '
+    + 'set up may also open your organization as its admin, which shows them what an admin sees and lets them change it, '
+    + 'except your team; each time is listed here, with every change they made. Otherwise staff can see your team’s email addresses, your '
     + 'location names and towns, and which dates your data covers. Any change staff make to your team, name or status is '
     + 'listed here too.',
   )).toBeTruthy();
+});
+
+test('D25: an opening as admin after a join shows the reason staff gave in the Reason column', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') });
+  const opened = {
+    ...ADD_EVENT, summary: 'Opened the organization as its admin', openAsAdmin: { reason: 'Fixing their location settings' },
+  };
+  withRoutes(api, { gets: { '/api/org/staff-activity': () => ({ events: [opened, ADD_EVENT] }) } });
+  renderAt('/settings', api);
+  const table = await screen.findByRole('region', { name: 'Townwise staff activity on Test Group' });
+  expect(table.textContent).toContain('Opened the organization as its admin');
+  expect(table.textContent).toContain('Fixing their location settings');
 });
 
 test('Your name is prefilled, saves, clears with an empty field, and shows the one message for a bad name', async () => {

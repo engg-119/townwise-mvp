@@ -47,7 +47,8 @@ afterEach(async () => {
 const PATH = '/api/org/locations/l1';
 const CALENDAR = `${PATH}/calendar?from=2024-10-07&to=2026-11-30`;
 const SATURDAY = (date: string): boolean => new Date(`${date}T00:00:00Z`).getUTCDay() === 6;
-// Sep 1, 2024 to Wed, Nov 4, 2026: Saturdays 40 busier; last week (Oct 26 to Nov 1, 2026) 10% up on its year.
+// Sep 1, 2024 to Wed, Nov 4, 2026: Saturdays 40 busier; from Oct 26, 2026, 10% up on its year, so last week (the seven days
+// before today, Oct 29 to Nov 4) is too.
 const DAYS = run('2024-09-01', '2026-11-04', (date) => Math.round((SATURDAY(date) ? 140 : 100) * (date >= '2026-10-26' ? 1.1 : 1)));
 const HAS_DAYS = { dayCount: 795, guestsDayCount: 795, netSalesDayCount: 795, firstDate: '2024-09-01', lastDate: '2026-11-04', missingDays: 0 };
 const EVENTS = [
@@ -140,7 +141,7 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByRole('heading', { name: 'What’s on the calendar, and how this week went before' })).toBeTruthy();
   expect(screen.getByText('740')).toBeTruthy();
   expect(screen.getByText('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.')).toBeTruthy();
-  expect(screen.getByText('Busiest last year: Sat, Nov 8, 2025.')).toBeTruthy();
+  expect(screen.getByText('Busiest last year: Sat, Nov 8, 2025 (140 guests).')).toBeTruthy();
   expect(screen.getByText('On the calendar this week: Sample game (Saturday), and 1 more.')).toBeTruthy();
   // On Saturday's row, and as the next event at a glance.
   expect(screen.getAllByText('Sample game')).toHaveLength(2);
@@ -175,7 +176,7 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.queryByRole('textbox')).toBeNull();
 
   // Last week against the same week last year; no chart on native.
-  expect(screen.getByText('Last week, Oct 26 to Nov 1')).toBeTruthy();
+  expect(screen.getByText('Last week, Oct 29 to Nov 4')).toBeTruthy();
   expect(screen.getByText('Last week: 814 guests, 10% more than the same week last year (740), compared over 7 days.')).toBeTruthy();
   expect(screen.queryByText(/^Scale 0 to/)).toBeNull();
 
@@ -184,15 +185,15 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Veterans Day. Federal holiday.')).toBeTruthy();
   // The county's jobs under their own heading, more or fewer said in words, the unit named.
   expect(screen.getByRole('heading', { name: 'Food-service jobs in Grafton County' })).toBeTruthy();
-  expect(screen.getByText('2.6% fewer jobs in November 2024 than in an average month that year.')).toBeTruthy();
+  expect(screen.getByText('4.5% fewer jobs in November 2025 than in an average month that year.')).toBeTruthy();
   expect(screen.getByText('County, not town. Employment is a stand-in for demand.')).toBeTruthy();
-  expect(screen.getByRole('link', { name: 'Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'U.S. Bureau of Labor Statistics. Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
   expect(screen.queryByText(/average = 100/)).toBeNull();
   expect(screen.getByText('Your November in past years')).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2025, /)).toBeTruthy();
   expect(screen.getByText(/^\d+ guests a day over 30 days in 2024, /)).toBeTruthy();
   // Who's in town: the honest no-number line with its Planned tag, then the term by time under headings, past days
-  // left out, one row per run of days, and the term's source once, by name.
+  // left out, one row per run of days, and the term's source once, as a chip with its site's name.
   expect(screen.getByText(PEOPLE_HEAD)).toBeTruthy();
   expect(await screen.findByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
   expect(screen.getByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeTruthy();
@@ -204,7 +205,7 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Fall term finals')).toBeTruthy();
   expect(screen.getByText('From Nov 26')).toBeTruthy();
   expect(screen.getAllByText('Townwise has no term dates')).toHaveLength(2);
-  expect(screen.getByRole('link', { name: 'Source: Dartmouth Registrar' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'Dartmouth Registrar. Source' })).toBeTruthy();
   expect(screen.queryByText('registrar.dartmouth.edu')).toBeNull();
   expect(screen.queryByText(/County jobs are/)).toBeNull();
   // The headcount; Bar order and TownwiseAI's questions are no longer Planned.
@@ -261,8 +262,8 @@ test('a term period shows once with its span and source; the one-day event takes
   expect(screen.getByText('Fall term classes. Term, Sep 14 to Nov 17, 2026.')).toBeTruthy();
   // Not in any day's cell, this year or past years: the bare title appears nowhere.
   expect(screen.queryByText('Fall term classes')).toBeNull();
-  // One source link under This week and one in This month's list, not one per day.
-  expect(screen.getAllByRole('link', { name: 'Source: Registrar' })).toHaveLength(2);
+  // One source chip under This week and one in This month's list, not one per day.
+  expect(screen.getAllByRole('link', { name: 'Dartmouth. Source: Registrar' })).toHaveLength(2);
 });
 
 test('the questions link counts what GET .../agent asks, and shows nothing with none or when the read fails', async () => {
@@ -308,8 +309,9 @@ test('who’s in town: a headcount leads as one figure with its unit, later days
   expect(await screen.findByText('9,500 to 10,500 people in town')).toBeTruthy();
   expect(screen.getByText('Fall term classes until Tue, Nov 17.')).toBeTruthy();
   expect(screen.getAllByText('No headcount')).toHaveLength(3);
-  expect(screen.getByRole('link', { name: 'Source: Synthetic census' })).toBeTruthy();
-  expect(screen.queryByText('census.example.test')).toBeNull();
+  // A source on a host no manifest entry has shows that host, with the globe.
+  expect(screen.getByRole('link', { name: 'census.example.test. Source: Synthetic census' })).toBeTruthy();
+  expect(screen.getByText('census.example.test')).toBeTruthy();
   expect(screen.queryByText('Townwise can’t put a number on how many people are in Hanover yet.')).toBeNull();
   // With a headcount nothing on Home is Planned: Bar order is the live card (D35).
   expect(screen.queryAllByText('Planned')).toHaveLength(0);
@@ -361,6 +363,7 @@ test('show the numbers lists last year, two years ago and usual', async () => {
 });
 
 test('the coverage line for Nantucket and for a town outside the twelve, with no county line for the latter', async () => {
+  // BLS withheld Nantucket County for April to June 2025: its jobs block says so, with no figure and no stale number.
   const nantucket = [locationOf('l1', 'Main Street Bar', { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' }, { coverage: HAS_DAYS })];
   await renderApp('/locations/l1', portal({
     locations: nantucket, calendar: { town: { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' }, researched: false, covers: null, events: [] },
@@ -369,6 +372,10 @@ test('the coverage line for Nantucket and for a town outside the twelve, with no
   expect(screen.getByText('From your sales through Wed, Nov 4, 2026 and US federal holidays.')).toBeTruthy();
   expect(screen.getByText('Nothing on the calendar this week.')).toBeTruthy();
   expect(screen.getByRole('heading', { name: 'Food-service jobs in Nantucket County' })).toBeTruthy();
+  expect(screen.getByText('BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.')).toBeTruthy();
+  expect(screen.queryByText(/% (fewer|more) jobs|About as many jobs/)).toBeNull();
+  expect(screen.queryByText('County, not town. Employment is a stand-in for demand.')).toBeNull();
+  expect(screen.getByRole('link', { name: 'U.S. Bureau of Labor Statistics. Source: U.S. Bureau of Labor Statistics, QCEW' })).toBeTruthy();
   await cleanup();
 
   const norwich = [locationOf('l1', 'Main Street Bar', { townId: null, name: 'Norwich', state: 'VT' }, { coverage: HAS_DAYS })];
@@ -392,7 +399,8 @@ test('last week: no recent days, no last year, and a partial week that names its
   expect(screen.queryByText('Two years ago')).toBeNull();
   await cleanup();
 
-  await renderApp('/locations/l1', portal({ days: DAYS.filter((day) => day.date !== '2025-10-28' && day.date !== '2026-10-30') }));
+  // Two pairs broken inside last week (Oct 29 to Nov 4): Sat, Nov 1, 2025 and Fri, Oct 30, 2026.
+  await renderApp('/locations/l1', portal({ days: DAYS.filter((day) => day.date !== '2025-11-01' && day.date !== '2026-10-30') }));
   expect(await screen.findByText(/^Last week: [\d,]+ guests on the 5 days both weeks have, 10% more than the same days last year \([\d,]+\)\.$/)).toBeTruthy();
 });
 

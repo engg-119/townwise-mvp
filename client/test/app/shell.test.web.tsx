@@ -165,7 +165,7 @@ test('open as admin: the banner is on every page; End opens the console with the
   api.answers['/api/admin/view-as/end'] = () => staffMe();
   renderAt('/dashboard', api);
   const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
-  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. This ends when someone joins.')).toBeTruthy();
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. Its admins see each change you make in their Townwise staff activity.')).toBeTruthy();
   await waitFor(() => { expect(document.title).toBe('Setting up Test Group · Townwise'); });
   const nav = screen.getByRole('navigation', { name: 'Main' });
   expect(within(nav).queryByRole('link', { name: 'Team' })).toBeNull();
@@ -248,7 +248,7 @@ test('Waiting draws the town’s chart on web, with its summary and the numbers'
   expect(screen.queryByText('See the chart at townwise.tech.')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /Show the numbers/ }));
   expect(screen.getByRole('button', { name: /Show the numbers/ }).getAttribute('aria-expanded')).toBe('true');
-  expect(screen.getByRole('region', { name: 'Numbers: Lamoille County and the Northeast, 2024' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Numbers: Lamoille County and the Northeast, 2025' })).toBeTruthy();
 });
 
 test('Request access on web: the Town field is a select grouped as the homepage lists the towns', async () => {

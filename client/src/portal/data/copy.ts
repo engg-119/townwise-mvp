@@ -40,7 +40,6 @@ export const DATA = {
   noFileKept: 'No file kept',
   none: 'None',
   dailyTotals: 'Daily totals',
-  open: 'Open',
   turnOff: 'Turn off',
   turnOn: 'Turn on',
   downloadRaw: 'Download original',
@@ -57,11 +56,11 @@ export const DATA = {
 } as const;
 
 export const COLUMNS = {
-  item: 'Item', location: 'Location', added: 'Added', kind: 'Kind', size: 'Size', status: 'Status', days: 'Days', actions: 'Actions',
+  item: 'Item', location: 'Location', added: 'Added', kind: 'Kind', size: 'Size', status: 'Status', days: 'Days',
 } as const;
 
 export function lead(locationName: string): string {
-  return `Sales uploads, files and text your team added for ${locationName}, newest first. Turn an item off to leave it out of your numbers, forecasts and TownwiseAI without deleting it.`;
+  return `Sales uploads, files and text your team added for ${locationName}, newest first. Open an item to turn it off and leave it out of your numbers, forecasts and TownwiseAI without deleting it.`;
 }
 
 export function tableLabel(locationName: string | null): string {
@@ -107,6 +106,11 @@ export function addedLine(item: Pick<DataItem, 'addedAt' | 'addedByEmail'>): str
 export function daysLine(days: DataItem['days']): string {
   if (days === null) return DATA.none;
   return `${formatCount(days.inUse)} of ${formatCount(days.count)} in use, ${formatDate(days.firstDate)} to ${formatDate(days.lastDate)}`;
+}
+
+/** A stored file kept for reference: the original is the whole item, with no cleaned copy and no days. */
+export function isReference(item: Pick<DataItem, 'ref' | 'outcome'>): boolean {
+  return item.ref.startsWith('f_') && item.outcome === 'reference';
 }
 
 /** What Townwise did with the item, under On or Off. */

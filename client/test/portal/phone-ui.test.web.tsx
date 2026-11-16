@@ -9,7 +9,8 @@ import { clientNav } from '../../src/portal/routing';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles';
 import { TopBar } from '../../src/portal/shell/TopBar';
 import { LinkButton } from '../../src/portal/ui/Button';
-import { DataTable, MIN_FLEX_WIDTH, type Column } from '../../src/portal/ui/DataTable';
+import { ConfirmDialog } from '../../src/portal/ui/ConfirmDialog';
+import { DataTable, MIN_FLEX_WIDTH, RowLink, type Column } from '../../src/portal/ui/DataTable';
 import { Notice } from '../../src/portal/ui/feedback';
 import { Select } from '../../src/portal/ui/Select';
 import { theme } from '../../src/theme';
@@ -311,6 +312,23 @@ test('from 641px to 1023px a table keeps a minimum width, so its focusable regio
   expect(style(nth(rows, -1)).borderBottomWidth).toBe('0px');
 });
 
+test('a row with an href opens it from a press anywhere on it, on phones too, and its RowLink is its one tab stop', async () => {
+  const rows = ROWS.map((row, index) => (index === 0 ? { ...row, href: '/other', cells: { ...row.cells, name: <RowLink href="/other" label={row.cells.name} /> } } : row));
+  renderLinked(<DataTable label="Organizations" columns={COLUMNS} rows={rows} />);
+  const items = within(screen.getByRole('region', { name: 'Organizations' })).getAllByRole('listitem');
+  const link = within(nth(items, 0)).getByRole('link', { name: 'Harbor Light Chowder House' });
+  expect([link.tagName, link.getAttribute('href'), nth(items, 0).tabIndex]).toEqual(['A', '/other', -1]);
+  // A row with no href is as it was: no link.
+  expect(within(nth(items, 1)).queryByRole('link')).toBeNull();
+  fireEvent.focus(link);
+  expect(style(nth(items, 0)).backgroundColor).toBe(RAISED);
+  await act(async () => {
+    fireEvent.click(within(nth(items, 0)).getByText('445'));
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+  });
+  expect(window.location.pathname).toBe('/other');
+});
+
 test('a selected last row keeps its whole outline', () => {
   setWidth(768);
   renderLinked(<DataTable label="Organizations" columns={COLUMNS} rows={ROWS.map((row, index) => ({ ...row, selected: index === 1 }))} />);
@@ -362,4 +380,23 @@ test('the portal’s stylesheet sets grayscale antialiasing on its root, as the 
   const css = [...document.querySelectorAll('style')].map((element) => element.textContent).find((text) => text.includes('#tw-portal'));
   expect(css).toContain('#tw-portal{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}');
   expect(document.querySelectorAll('script')).toHaveLength(scripts);
+});
+
+test('a Modal (a popover, ConfirmDialog) renders outside #tw-portal, in aria-modal, and takes the portal’s focus ring exactly', () => {
+  render(
+    <View nativeID="tw-portal">
+      <PortalStyles />
+      <ConfirmDialog visible title="Remove this calendar?" body="Its events leave the Calendar." confirmLabel="Remove calendar" onConfirm={() => undefined} onCancel={() => undefined} />
+    </View>,
+  );
+  const dialog = screen.getByRole('dialog', { name: 'Remove this calendar?' });
+  expect(dialog.closest('#tw-portal')).toBeNull();
+  expect(dialog.closest('[aria-modal="true"]')).not.toBeNull();
+  const css = [...document.querySelectorAll('style')].map((element) => element.textContent).find((text) => text.includes('#tw-portal')) ?? '';
+  const rules = (scope: string): string[] => css.split('\n').filter((rule) => rule.startsWith(`${scope} `)).map((rule) => rule.slice(scope.length));
+  const ring = `:focus-visible{outline:2px solid ${theme.color.focusRing};outline-offset:2px}`;
+  // The same three focus rules, the ring, no ring without focus-visible, and the opt-out of a box that draws its own.
+  const portal = rules('#tw-portal').filter((rule) => rule.includes('outline'));
+  expect(portal).toEqual([` ${ring}`, ' :focus:not(:focus-visible){outline:none}', ' [data-ring="box"]:focus-visible{outline:none}']);
+  expect(rules('[aria-modal="true"]')).toEqual(portal);
 });

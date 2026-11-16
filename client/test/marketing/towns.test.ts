@@ -1,4 +1,4 @@
-import { countySeries } from '../../src/marketing/map/countyData';
+import { countySeries, unavailableCounties } from '../../src/marketing/map/countyData';
 import { townShapes } from '../../src/marketing/map/geometry';
 import { towns, type Town } from '../../src/marketing/map/towns';
 
@@ -53,9 +53,10 @@ test('copy uses typographic apostrophes and no dashes', () => {
   for (const text of copy) expect(text).not.toMatch(/['"\u2013\u2014]/);
 });
 
-test('each town has its county series and its map shape', () => {
+// A county BLS did not publish for the whole year (Nantucket in 2025) is in unavailableCounties instead, with no values.
+test('each town has its county series, or its county marked unavailable, and its map shape', () => {
   for (const town of towns) {
-    const series = countySeries.find((county) => county.townId === town.id);
+    const series = countySeries.find((county) => county.townId === town.id) ?? unavailableCounties.find((county) => county.townId === town.id);
     expect([town.id, series?.fips, series?.label]).toEqual([town.id, town.countyFips, `${town.county}, ${town.state}`]);
     expect(townShapes.some((shape) => shape.id === town.id)).toBe(true);
   }
