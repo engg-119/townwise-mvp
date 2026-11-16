@@ -1,7 +1,9 @@
 // Deletion (spec D22, F13, 9.3, 10.7, 19 item 7): staff delete a suspended organization's records, or a person's.
 // Each writes its event first, deletes by filter (the tuning chat's records, TownwiseAI's proposal records and order
-// cards included), and redacts the audit log.
-import { randomUUID } from 'node:crypto';
+// cards included), and redacts the audit log. Google access for calendars (connect-google-calendar) ends first: an
+// organization's connections through revokeForOrg, and a person's leftover ones through endGoogleAccess, each grant
+// revoked through helpers/google.ts's fake, which runs with Google calendars off as the calendar key is set.
+import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,18 +14,22 @@ import {
   addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
   addRemovedSeat, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
+import { addGoogleCalendar, addGoogleConnection, createFakeGoogle, REFRESH_TOKEN, SHARED_ID } from './helpers/google.ts';
 import {
-  call, makeStaff, MINUTE, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
+  call, logLines, makeStaff, MINUTE, signIn, signInStaff, startTownwiseServer, STAFF_EMAIL, writesDuring,
   type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 let staff: TestSession;
+const KEY = createSecretKey(randomBytes(32));
+const google = createFakeGoogle();
 
-beforeAll(async () => { server = await startTownwiseServer(); });
+beforeAll(async () => { server = await startTownwiseServer({ calendarKey: KEY, revokeGoogle: google.revoke }); });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
   await server.redis.flushdb();
+  google.reset();
   staff = await signInStaff(server);
 });
 afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
@@ -40,8 +46,8 @@ const TENANT_COLLECTIONS = [
   'tw_calibrations',
   // Business rules (spec 6.24).
   'tw_business_rules',
-  // The owner's own calendars and their events.
-  'tw_calendar_sources', 'tw_calendar_events',
+  // The owner's own calendars and their events, and (connect-google-calendar) the Google connections that read them.
+  'tw_calendar_sources', 'tw_calendar_events', 'tw_google_connections',
   // Orders: edits, rules, cards, setups, item sales and counts.
   ...ORDER_COLLECTIONS,
 ] as const;
@@ -122,6 +128,8 @@ async function withWritesFailing(collection: string, run: () => Promise<void>): 
 interface PopulatedOrg {
   orgId: string; name: string; oldName: string; locationNames: string[]; requestId: string;
   admin: Person; member: Person; invitedEmail: string;
+  /** The member's Google refresh token, which deleting the organization revokes. */
+  googleToken: string;
 }
 
 /** An organization with a record in every tenant collection, its request, a view-as grant, and events naming it. */
@@ -146,6 +154,10 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
   await addNote(server, { orgId, locationId, detail: `${name} note detail`, createdBy: member.session.userId });
   await addOwnerCalendar(server, { orgId, locationId });
+  // connect-google-calendar: the member's Google connection, with the Google calendar it reads.
+  const googleToken = `${REFRESH_TOKEN}-${randomUUID().slice(0, 8)}`;
+  const connectionId = await addGoogleConnection(server, { orgId, userId: member.session.userId, key: KEY, refreshToken: googleToken });
+  await addGoogleCalendar(server, { orgId, locationId, connectionId, key: KEY, googleCalendarId: SHARED_ID, slot: 1 });
   const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
   await addProposal({ orgId, locationId, userId: member.session.userId });
   // Orders: a record in each of its collections, the card in the member's conversation.
@@ -173,7 +185,7 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
     at, orgId, action: 'location.created', target: { type: 'location', id: locationId }, details: { name: locationNames[0] ?? '', townId: 'hanover-nh' },
   });
   await addAuditEvent(server, { at, orgId, action: 'member.role_changed', details: { email: member.email, from: 'member', to: 'org_admin' } });
-  return { orgId, name, oldName, locationNames, requestId, admin, member, invitedEmail };
+  return { orgId, name, oldName, locationNames, requestId, admin, member, invitedEmail, googleToken };
 }
 
 /** One organization's documents in every collection, its request and its events, serialized. */
@@ -222,6 +234,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });
     expect(await count('tw_orgs', { _id: orgId })).toBe(0);
     expect(await count('tw_access_requests', { _id: new Types.ObjectId(doomed.requestId) })).toBe(0);
+    // The member's Google grant was revoked (connect-google-calendar), and the other organization's was not.
+    expect(google.callsOf('revoke').map((each) => each.args[0])).toEqual([doomed.googleToken]);
     // View-as grants keep only ids.
     expect(await count('tw_view_as_grants', { orgId })).toBe(1);
     expect(await snapshotOf(kept)).toBe(keptBefore);
@@ -432,6 +446,7 @@ async function snapshotOfPerson(target: Person): Promise<string> {
     // Order cards hold no person id: they are the cards in the person's conversations.
     await server.connection.collection('tw_order_cards').find({ conversationId: { $in: conversationIds } }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_profiles').find({ userId }).sort({ _id: 1 }).toArray(),
+    await server.connection.collection('tw_google_connections').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_audit_events').find({ $or: [{ actorUserId: userId }, { 'details.email': target.email }] }).sort({ _id: 1 }).toArray(),
     await server.authStores.totp.get(userId),
   ];
@@ -510,6 +525,31 @@ describe('POST /api/admin/people/delete', () => {
     // The kit user record stays until it is deleted by hand (runbook); meanwhile they can sign in, with no organization.
     expect(await server.authStores.users.findById(userId)).not.toBeNull();
     expect((await me(await signIn(server, doomed.person.email))).access).toEqual({ state: 'no_org' });
+  });
+
+  it('ends the Google connections a crash left the person (connect-google-calendar): each with its calendars, the grant revoked once', async () => {
+    const doomed = await doomedPerson('google-leftover');
+    const { userId } = doomed.person.session;
+    const token = `${REFRESH_TOKEN}-leftover`;
+    const olderOrgId = await createOrg(server, { name: `Leftover Older Home ${randomUUID().slice(0, 6)}` });
+    const olderLocation = await addLocation(server, { orgId: olderOrgId, name: 'Older Room' });
+    const first = await addGoogleConnection(server, { orgId: doomed.formerOrgId, userId, key: KEY, refreshToken: token });
+    await addGoogleCalendar(server, { orgId: doomed.formerOrgId, locationId: doomed.locationId, connectionId: first, key: KEY, googleCalendarId: SHARED_ID });
+    server.clock.advance(MINUTE);
+    const second = await addGoogleConnection(server, { orgId: olderOrgId, userId, key: KEY, refreshToken: token });
+    await addGoogleCalendar(server, { orgId: olderOrgId, locationId: olderLocation, connectionId: second, key: KEY, googleCalendarId: SHARED_ID });
+    const from = server.logs.length;
+    expect((await deletePerson(doomed.person.email)).status).toBe(200);
+    // The first is ended without a revoke while the second still holds the grant (the other-organization rule).
+    const ended = logLines(server).slice(from).filter((line) => line.msg === 'townwise.google_access_ended')
+      .map(({ connectionId, calendars, reason }) => ({ connectionId, calendars, reason }));
+    expect(ended).toEqual([first, second].map((connectionId) => ({ connectionId, calendars: 1, reason: 'person_deleted' })));
+    expect(google.callsOf('revoke').map((each) => each.args[0])).toEqual([token]);
+    expect(await count('tw_google_connections', { userId })).toBe(0);
+    for (const locationId of [doomed.locationId, olderLocation]) {
+      expect(await count('tw_calendar_sources', { locationId: new Types.ObjectId(locationId) })).toBe(0);
+      expect(await count('tw_calendar_events', { locationId: new Types.ObjectId(locationId) })).toBe(0);
+    }
   });
 
   it('deletes an address that never signed in: its invitations and the events that name it', async () => {
