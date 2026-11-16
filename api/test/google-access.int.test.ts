@@ -13,6 +13,7 @@ import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { SEAT_SETTLE_MS } from '../src/calendar/google-access.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   addGoogleCalendar, addGoogleConnection, allDay, AUTH_CODE, createFakeGoogle, GOOGLE_CLIENT_ID, googleError, linkGoogle, PRIMARY_ID, REFRESH_TOKEN,
@@ -199,8 +200,18 @@ describe('with Google calendars on', () => {
     expect(await stored(t.locationId)).toEqual({ calendars: 2, events: 2 });
     expect(revoked()).toEqual([]);
 
-    // A teammate's Refresh now finds no seat for the connection's person and ends the access without reading Google.
-    expect(await send(`${calendarsPath(t.locationId)}/${calendarId ?? ''}/refresh`, t.teammate.session, { method: 'POST' }))
+    // Within SEAT_SETTLE_MS of the removal the seat may still come back (a last admin's refusal restores it), so a
+    // teammate's Refresh now reads nothing, ends nothing and records nothing.
+    const refreshPath = `${calendarsPath(t.locationId)}/${calendarId ?? ''}/refresh`;
+    expect(await send(refreshPath, t.teammate.session, { method: 'POST' })).toMatchObject({ status: 503, body: { error: 'google_unavailable' } });
+    expect(google.calls).toEqual([]);
+    expect(await stored(t.locationId)).toEqual({ calendars: 2, events: 2 });
+    expect(await connectionRow(t.orgId, t.member)).toMatchObject({ checkAt: server.clock.now(), revokedAt: null });
+
+    // Past it (and past Refresh now's 5 minutes), the next Refresh now finds no seat and ends the access without reading Google.
+    server.clock.advance(5 * MINUTE);
+    expect(5 * MINUTE).toBeGreaterThan(SEAT_SETTLE_MS);
+    expect(await send(refreshPath, t.teammate.session, { method: 'POST' }))
       .toMatchObject({ status: 404, body: { error: 'not_found' } });
     expect(google.calls.map((each) => each.method)).toEqual(['revoke']);
     expect(await stored(t.locationId)).toEqual({ calendars: 0, events: 0 });
@@ -221,6 +232,34 @@ describe('with Google calendars on', () => {
     expect(google.calls).toEqual([]);
     expect(await connectionRow(t.orgId, t.admin)).toEqual({ ...before, checkAt: server.clock.now() });
     expect(await stored(t.locationId)).toEqual({ calendars: 2, events: 2 });
+  });
+
+  it('a Google read in the moment a removal has taken the seat and a last_admin refusal has not yet put it back ends nothing', async () => {
+    const { t, connectionId } = await connectedMember('Restored Seat Saloon');
+    const [calendarId] = (await server.connection.collection('tw_calendar_sources').find({ locationId: new Types.ObjectId(t.locationId) }).toArray())
+      .map((row) => row._id.toHexString());
+    const refreshPath = `${calendarsPath(t.locationId)}/${calendarId ?? ''}/refresh`;
+    const seat = { _id: new Types.ObjectId(t.member.seatId) };
+    const members = server.connection.collection('tw_members');
+    server.clock.advance(MINUTE);
+    // removeActiveSeat's remove, as the members store writes it; its recount and restore have not run yet.
+    await members.updateOne(seat, { $set: { status: 'removed', removedAt: server.clock.now(), removedBy: t.admin.session.userId }, $unset: { activeUserId: '' } });
+    const before = await connectionRow(t.orgId, t.member);
+    const lines = await linesDuring('townwise.google_access_ended', async () => {
+      expect(await send(refreshPath, t.teammate.session, { method: 'POST' })).toMatchObject({ status: 503, body: { error: 'google_unavailable' } });
+    });
+    expect(lines).toEqual([]);
+    expect(google.calls).toEqual([]);
+    expect(await connectionRow(t.orgId, t.member)).toEqual(before);
+    expect(await stored(t.locationId)).toEqual({ calendars: 2, events: 2 });
+    // The restore, as the members store writes it: the seat is back, and the next read goes on as before.
+    await members.updateOne(seat, { $set: { status: 'active', activeUserId: t.member.session.userId, removedAt: null, removedBy: null } });
+    server.clock.advance(5 * MINUTE);
+    expect(await send(refreshPath, t.teammate.session, { method: 'POST' })).toMatchObject({ status: 200, body: { calendar: { status: 'ok' } } });
+    expect(google.calls[0]?.method).toBe('refreshAccess');
+    expect(google.calls.map((each) => each.method)).toContain('listEvents');
+    expect(google.calls.map((each) => each.method)).not.toContain('revoke');
+    expect(await connectionIdOf(t.orgId, t.member)).toBe(connectionId);
   });
 
   it('removing the last Google calendar ends the connection, whoever removes it; removing one that leaves another keeps it', async () => {

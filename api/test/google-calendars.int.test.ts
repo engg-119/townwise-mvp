@@ -10,6 +10,7 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { summaryOf } from '../src/audit.ts';
+import { SEAT_SETTLE_MS } from '../src/calendar/google-access.ts';
 import { CHECK_INTERVAL_MS } from '../src/stores/google-connections.ts';
 import { open, seal } from '../src/calendar/secret.ts';
 import type { OwnerCalendarView } from '../src/handlers/owner-calendars.ts';
@@ -591,10 +592,11 @@ describe('refresh now on a Google calendar', () => {
   it('a person with no seat any more: their access ends, the calendar is gone (404), and Google’s calendar is not read', async () => {
     const t = await tenant('Departed Diner');
     const calendar = await connectedWith(t, t.member, SHARED_ID);
-    // Their seat removed by a request that never ended their access.
+    // Their seat removed by a request that never ended their access, longer ago than a refused removal takes to restore it.
     await server.connection.collection('tw_members').updateOne(
       { orgId: new Types.ObjectId(t.orgId), userId: t.member.session.userId }, { $set: { status: 'removed', removedAt: server.clock.now() }, $unset: { activeUserId: '' } },
     );
+    server.clock.advance(SEAT_SETTLE_MS);
     google.calls.length = 0;
     expect(await refreshNow(t, t.teammate, calendar.id)).toMatchObject({ status: 404, body: { error: 'not_found' } });
     expect(google.calls.map((each) => each.method)).toEqual(['revoke']);

@@ -23,7 +23,7 @@ import type { Connection } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
-import { findActiveSeat, hasGoogleConnectionElsewhere } from '../stores/cross-tenant.ts';
+import { findActiveSeat, hasGoogleConnectionElsewhere, latestRemovedSeat } from '../stores/cross-tenant.ts';
 import type { GoogleConnectionRecord } from '../stores/google-connections.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { CalendarFailure, ParsedCalendar } from '../stores/owner-calendars.ts';
@@ -244,18 +244,41 @@ export async function readConnectedCalendar(
 }
 
 /**
+ * How long a seat removed in this organization may still come back. Removing an org admin, or leaving as one, removes
+ * the seat, recounts the admins and restores the seat when none is left (handlers/team.ts removeActiveSeat), so for a
+ * moment a last admin whose removal is about to be refused holds no seat. Until this has passed since the removal, a
+ * missing seat ends nothing.
+ */
+export const SEAT_SETTLE_MS = 60_000;
+
+/**
+ * The connection's person in this organization (design decision 10): `held`; `gone` when they hold a seat in another
+ * organization, or none with no removal here in the last SEAT_SETTLE_MS; `unsettled` when their seat here was removed
+ * less than that ago, by a removal that may yet be refused (last admin) and the seat put back. The refresh loop's seat
+ * check and its connection check share this rule, so neither ends the access of a last admin mid-refusal.
+ */
+export async function seatOf(deps: GoogleAccessDeps, scope: OrgScope, userId: string): Promise<'held' | 'gone' | 'unsettled'> {
+  const seat = await findActiveSeat(deps.connection, userId);
+  if (seat !== null) return seat.orgId === scope.orgId ? 'held' : 'gone';
+  const removed = await latestRemovedSeat(deps.connection, userId);
+  const recent = removed?.orgId === scope.orgId && deps.now().getTime() - removed.removedAt.getTime() < SEAT_SETTLE_MS;
+  return recent ? 'unsettled' : 'gone';
+}
+
+/**
  * What reading a stored Google calendar came to: `missing` (not a Google calendar of this location), `removed` (its
  * connection is gone, so the calendar was removed with its events: the remains of an interrupted end), `ended` (the
- * connection's person holds no seat in this organization, so their access ended without reading Google), or the read.
+ * connection's person holds no seat in this organization, so their access ended without reading Google), `unsettled`
+ * (their seat here was removed moments ago and may yet come back, so nothing was read, ended or written), or the read.
  */
 export type GoogleSourceRead =
-  | { readonly kind: 'missing' | 'removed' | 'ended' }
+  | { readonly kind: 'missing' | 'removed' | 'ended' | 'unsettled' }
   | { readonly kind: 'read'; readonly read: GoogleCalendarRead };
 
 /**
  * The refresh loop's and "Refresh now"'s read of a stored Google calendar (design decision 10), in its order: the
- * source, its connection, the seat check (findActiveSeat: none, or one in another organization, ends the access with
- * reason `seat_gone`), then readConnectedCalendar, the calendar id opened only once the connection may be read.
+ * source, its connection, the seat check (seatOf: `gone` ends the access with reason `seat_gone`, `unsettled` stops
+ * with nothing read or ended), then readConnectedCalendar, the calendar id opened only once the connection may be read.
  */
 export async function readGoogleSource(
   deps: GoogleAccessDeps, scope: OrgScope, locationId: string, calendarId: string, town: IcsTown,
@@ -267,8 +290,9 @@ export async function readGoogleSource(
     await deps.stores.ownerCalendars.remove(scope, locationId, calendarId);
     return { kind: 'removed' };
   }
-  const seat = await findActiveSeat(deps.connection, connection.userId);
-  if (seat?.orgId !== scope.orgId) {
+  const seat = await seatOf(deps, scope, connection.userId);
+  if (seat === 'unsettled') return { kind: 'unsettled' };
+  if (seat === 'gone') {
     await endGoogleAccess(deps, scope, connection.id, 'seat_gone');
     return { kind: 'ended' };
   }

@@ -373,10 +373,13 @@ async function refreshLink(ctx: TownwiseContext, scope: OrgScope, location: Loca
 /**
  * A Google calendar's "Refresh now", the refresh loop's own read (calendar/google-access.ts readGoogleSource): a
  * connection that is gone, or whose person holds no seat here any more, takes the calendar with it, so the answer is
- * 404; `invalid_grant` marks the connection revoked, and a new refresh token from Google replaces the stored one.
+ * 404; `invalid_grant` marks the connection revoked, and a new refresh token from Google replaces the stored one. A
+ * person whose seat here was removed moments ago, by a removal that may yet be refused, gets no read and no record:
+ * 503 google_unavailable, and a later try decides.
  */
 async function refreshGoogle(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord, calendarId: string, now: Date): Promise<Refreshed> {
   const source = await readGoogleSource(googleAccessDeps(ctx), scope, location.id, calendarId, townOf(location, now));
+  if (source.kind === 'unsettled') throw googleUnavailable();
   if (source.kind !== 'read') throw notFound();
   const { read } = source;
   if (read.ok) return read;
