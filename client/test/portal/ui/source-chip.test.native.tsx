@@ -30,7 +30,7 @@ const REGISTRAR = { label: 'Dartmouth Registrar, 2025-26 key dates', url: 'https
 const UNKNOWN = { label: 'Sample events page', url: 'https://events.example.org/calendar' };
 
 test('each chip is a 44px link named by what it shows, with no hitSlop, and a press opens its source', async () => {
-  const opened = jest.spyOn(Linking, 'openURL').mockResolvedValue(true);
+  const opened = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
   await render(<SourceChips sources={[REGISTRAR, { ...REGISTRAR, label: 'Dartmouth Registrar, 2026-27 key dates', url: `${REGISTRAR.url}-2` }]} />);
   const first = screen.getByRole('link', { name: 'Dartmouth Registrar. Source: Dartmouth Registrar, 2025-26 key dates' });
   const second = screen.getByRole('link', { name: 'Dartmouth Registrar 2. Source: Dartmouth Registrar, 2026-27 key dates' });
