@@ -278,10 +278,32 @@ describe('the input', () => {
     expect(await prepared('picture', pngOf(8001, 10))).toEqual({ kind: 'skip', reason: 'too_large' });
     expect(await prepared('picture', pngOf(10, 10, [], Buffer.alloc(3_750_001)))).toEqual({ kind: 'skip', reason: 'too_large' });
     expect(await prepared('picture', Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('not a picture')]))).toEqual({ kind: 'skip', reason: 'not_readable' });
-    // D34's reader still sends a picture byte for byte.
-    const asIs: InputSource = { kind: 'other', sizeBytes: tagged.length, name: 'photo.png', read: (count) => Promise.resolve(count === undefined ? tagged : tagged.subarray(0, count)) };
-    const d34 = await prepareInput(asIs, READER_INPUT);
-    expect(d34.kind === 'input' && d34.input.type === 'image' ? d34.input.base64 : null).toBe(tagged.toString('base64'));
+  });
+
+  it('sends a picture to D34’s reader without its metadata too, with no pixel cap, and refuses one whose bytes don’t parse', async () => {
+    const asSource = (bytes: Buffer): InputSource => ({
+      kind: 'other', sizeBytes: bytes.length, name: 'photo.bin', read: (count) => Promise.resolve(count === undefined ? bytes : bytes.subarray(0, count)),
+    });
+    const sentOf = async (bytes: Buffer): Promise<Buffer> => {
+      const d34 = await prepareInput(asSource(bytes), READER_INPUT);
+      if (d34.kind !== 'input' || d34.input.type !== 'image') throw new Error('no picture');
+      return Buffer.from(d34.input.base64, 'base64');
+    };
+    const tagged = pngOf(40, 30, [pngChunk('tEXt', Buffer.from('Author\0Sentinel-metadata')), pngChunk('eXIf', Buffer.from('Sentinel-gps'))]);
+    expect(await sentOf(tagged)).toEqual(pngOf(40, 30));
+    // Over D41's pixel cap, a D34 picture is still sent (the cap is D41's), and still without its metadata.
+    expect(await sentOf(pngOf(9000, 10, [pngChunk('tEXt', Buffer.from('Sentinel-metadata'))]))).toEqual(pngOf(9000, 10));
+    const exif = Buffer.concat([Buffer.from([0xff, 0xe1, 0, 20]), Buffer.from('Exif\0\0Sentinel-gps')]);
+    const sof = Buffer.from([0xff, 0xc0, 0, 17, 8, 0, 30, 0, 40, 3, 1, 0x11, 0, 2, 0x11, 1, 3, 0x11, 1]);
+    const sos = Buffer.from([0xff, 0xda, 0, 12, 3, 1, 0, 2, 0x11, 3, 0x11, 0, 0x3f, 0]);
+    const scan = Buffer.from([0x12, 0x34, 0x56]);
+    const jpeg = (...parts: Buffer[]): Buffer => Buffer.concat([Buffer.from([0xff, 0xd8]), ...parts, sos, scan, Buffer.from([0xff, 0xd9])]);
+    const sentJpeg = await sentOf(jpeg(exif, sof));
+    expect(sentJpeg.toString('latin1')).not.toContain('Sentinel-gps');
+    expect(sentJpeg).toEqual(jpeg(sof));
+    expect(await prepareInput(asSource(Buffer.concat([Buffer.from('89504e470d0a1a0a', 'hex'), Buffer.from('not a picture')])), READER_INPUT))
+      .toEqual({ kind: 'skip', reason: 'not_readable' });
+    expect(await prepareInput(asSource(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 1, 2])), READER_INPUT)).toEqual({ kind: 'skip', reason: 'not_readable' });
   });
 
   it('tells a posted file’s kind by its bytes: a ZIP, old Office, a password, a HEIC picture or bytes of another kind are refused', () => {

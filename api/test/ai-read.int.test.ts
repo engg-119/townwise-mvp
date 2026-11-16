@@ -566,12 +566,21 @@ describe('the TownwiseAI reader', () => {
       expect(hooked[0]?.read.result.daysBorneOut).toEqual([0]);
     });
 
-    it('sends a picture as an image by its bytes, whatever its name or kind, with no text to check against', async () => {
+    it('sends a picture as an image by its bytes, whatever its name or kind, without its metadata, with no text to check against', async () => {
       const l1 = await newLocation();
-      const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('rest of a picture')]);
-      await seedStored(l1, { kind: 'other', name: 'menu.txt', raw: png, ai: aiDoc() });
+      const chunk = (type: string, data: Buffer): Buffer => {
+        const length = Buffer.alloc(4);
+        length.writeUInt32BE(data.length);
+        return Buffer.concat([length, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)]);
+      };
+      const header = Buffer.concat([Buffer.from([0, 0, 0, 40, 0, 0, 0, 30]), Buffer.from([8, 2, 0, 0, 0])]);
+      const pngOf = (...extra: Buffer[]): Buffer => Buffer.concat([
+        Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk('IHDR', header), ...extra, chunk('IDAT', Buffer.from('pixels')), chunk('IEND', Buffer.alloc(0)),
+      ]);
+      await seedStored(l1, { kind: 'other', name: 'menu.txt', raw: pngOf(chunk('tEXt', Buffer.from('Author\0Sentinel-metadata')), chunk('eXIf', Buffer.from('Sentinel-gps'))), ai: aiDoc() });
       await read();
-      expect(contentOf(requests[0])[0]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: png.toString('base64') } });
+      expect(contentOf(requests[0])[0]).toEqual({ type: 'image', source: { type: 'base64', media_type: 'image/png', data: pngOf().toString('base64') } });
+      expect(JSON.stringify(requests[0])).not.toMatch(/Sentinel/);
       expect(hooked[0]?.read.result.daysBorneOut).toBeNull();
     });
 
@@ -599,6 +608,7 @@ describe('the TownwiseAI reader', () => {
         [{ kind: 'pdf', name: 'big.pdf', raw: Buffer.from('%PDF-1.4\n'), sizeBytes: 11 * MIB }, 'too_large'],
         // 3,750,000 bytes at most, so its base64 stays within the API's 5 MB.
         [{ kind: 'other', name: 'big.png', raw: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), sizeBytes: 3_750_001 }, 'too_large'],
+        [{ kind: 'other', name: 'broken.png', raw: Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), Buffer.from('rest of a picture')]) }, 'not_readable'],
         [{ kind: 'zip', name: 'all.zip', raw: zipOf([{ name: 'photo.png', data: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]) }]) }, 'kind_not_read'],
         [{ kind: 'xls', name: 'old.xls', raw: Buffer.from([0xd0, 0xcf, 0x11, 0xe0]) }, 'kind_not_read'],
         [{ kind: 'other', name: 'locked.xlsx', raw: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1]) }, 'encrypted'],

@@ -3,7 +3,7 @@
 // stored) share it, each within its own caps. A PDF is sent whole as a document (its own text, made in the AI text
 // thread, kept only to check the answer against), a workbook or Word document as its text from that thread, a text
 // file as its first characters, a ZIP (D34 only) as its entries' text, and a PNG, JPEG, GIF or WebP picture, told by
-// its bytes whatever its name or kind, as an image: for D41 without its metadata and within the model's pixel cap. A
+// its bytes whatever its name or kind, as an image without its metadata (D34 too), and for D41 within the model's pixel cap. A
 // file's name is read only for its extension and never leaves this file. Nothing here logs.
 import type { FileKind } from '../../stores/files.ts';
 import {
@@ -19,7 +19,7 @@ import type { ImageMediaType, ReaderInput } from './reader.ts';
 /**
  * Why a file is not sent: over the size or page caps (or, for D41, a picture over the pixel cap); a kind not read (old
  * Excel or Word, Numbers, anything else that is not a picture, or a ZIP with no entry read as text); encrypted; its text
- * ran past the thread's limits; or it could not be opened (for D41, a picture whose bytes don't parse as their type).
+ * ran past the thread's limits; or it could not be opened (a picture whose bytes don't parse as their type).
  */
 export type InputRefusal = 'too_large' | 'kind_not_read' | 'encrypted' | 'too_complex' | 'not_readable';
 
@@ -53,7 +53,7 @@ export interface InputCaps {
   /** Null: a ZIP is not read. */
   readonly zipBytes: number | null;
   readonly pictureBytes: number;
-  /** Null sends a picture byte for byte; else its metadata is dropped and one larger on a side is refused. */
+  /** A picture is sent without its metadata whatever this is; set, one larger on a side is refused. Null: no pixel cap. */
   readonly pictureMaxSide: number | null;
   /** The AI text thread: how long to wait for its slot (absent: as long as it takes) and its time limit. */
   readonly slotWaitMs?: number;
@@ -85,11 +85,13 @@ export function pictureType(head: Uint8Array): ImageMediaType | null {
 
 const skip = (reason: InputRefusal): PreparedInput => ({ kind: 'skip', reason });
 
-/** A picture as sent within `maxSide` pixels a side, without its metadata (picture.ts), or why not. */
-function cleanPicture(bytes: Buffer, type: ImageMediaType, maxSide: number): Buffer | InputRefusal {
-  const size = pictureSize(bytes, type);
-  if (size === null) return 'not_readable';
-  if (size.width > maxSide || size.height > maxSide) return 'too_large';
+/** A picture as sent, without its metadata (picture.ts) and, when `maxSide` is set, within it pixels a side; or why not. */
+function cleanPicture(bytes: Buffer, type: ImageMediaType, maxSide: number | null): Buffer | InputRefusal {
+  if (maxSide !== null) {
+    const size = pictureSize(bytes, type);
+    if (size === null) return 'not_readable';
+    if (size.width > maxSide || size.height > maxSide) return 'too_large';
+  }
   return withoutMetadata(bytes, type) ?? 'not_readable';
 }
 
@@ -106,7 +108,7 @@ export async function prepareInput(
   if (picture !== null) {
     if (source.sizeBytes > caps.pictureBytes) return skip('too_large');
     const bytes = source.sizeBytes <= head.length ? head : await source.read();
-    const sent = caps.pictureMaxSide === null ? bytes : cleanPicture(bytes, picture, caps.pictureMaxSide);
+    const sent = cleanPicture(bytes, picture, caps.pictureMaxSide);
     if (typeof sent === 'string') return skip(sent);
     return { kind: 'input', input: { type: 'image', mediaType: picture, base64: sent.toString('base64') }, sourceText: null, partial: false, pages: null };
   }

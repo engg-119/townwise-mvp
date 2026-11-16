@@ -11,7 +11,7 @@ import { dataError } from './copy';
 
 export const AI = {
   heading: 'TownwiseAI',
-  explain: 'TownwiseAI can read this file and use what it finds. The whole file is sent to Anthropic’s Claude to read. TownwiseAI then adds what it finds to your account: dated events as notes, daily totals it can check against the file as new sales days (it never changes a day you already have), and a summary TownwiseAI can read later. When an org admin asks, it may also start updating the forecast. Everything it adds can be undone.',
+  explain: 'TownwiseAI can read this file and use what it finds. The whole file is sent to Anthropic’s Claude to read (a picture without its metadata). TownwiseAI then adds what it finds to your account: dated events as notes, daily totals it can check against the file as new sales days (it never changes a day you already have), and a summary TownwiseAI can read later. When an org admin asks, it may also start updating the forecast. Everything it adds can be undone.',
   privacy: 'How Townwise handles your data',
   privacyHref: '/privacy',
   read: 'Let TownwiseAI read this file',
