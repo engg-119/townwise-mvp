@@ -335,3 +335,25 @@ test('an estimated servings value and a name not in the file take their field’
   expect(description(within(region('Item 2')).getByRole('textbox', { name: 'Item name' }))).toBe('');
   expect(within(region('Item 2')).getByRole('textbox', { name: 'Item name' })).toHaveProperty('value', 'Sample IPA');
 });
+
+test('an answer that comes while a save runs merges into the saved setup once it is saved, instead of being lost', async () => {
+  const api = portal();
+  const answer = deferred<unknown>();
+  const put = deferred<unknown>();
+  api.answers[`${PATH}/setup/read`] = () => answer.promise;
+  api.answers[`${PATH}/setup`] = (body) => put.promise.then(() => stored(body));
+  renderAt(api);
+  await screen.findByRole('heading', { name: HEADING });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Or paste text' }), { target: { value: 'Sample IPA, 1 half-barrel' } });
+  await click('Read the text');
+  fireEvent.change(within(region('Item 1')).getByRole('textbox', { name: 'Par' }), { target: { value: '6' } });
+  await click('Save the setup');
+  await settle(() => { answer.resolve({ read: READ }); });
+  expect(screen.queryByRole('region', { name: 'Item 2' })).toBeNull();
+  await settle(() => { put.resolve(null); });
+  await screen.findByText(/^TownwiseAI found 3 items/);
+  expect(writes(api).filter((call) => call.method === 'PUT')).toHaveLength(1);
+  expect(within(region('Item 1')).getByRole('textbox', { name: 'Par' })).toHaveProperty('value', '6');
+  expect(within(region('Item 2')).getByRole('textbox', { name: 'Item name' })).toHaveProperty('value', 'Sample IPA');
+  expect(screen.getByText('Unsaved changes.')).toBeTruthy();
+});

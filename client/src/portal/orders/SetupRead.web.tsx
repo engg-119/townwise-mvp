@@ -11,7 +11,7 @@ import { LoadingLine, Messages } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Section } from '../ui/layout';
 import { Small } from '../ui/text';
-import { readSetupWithAi, type SetupReadSource } from './api';
+import { readSetupWithAi, type SetupRead as SetupReadAnswer, type SetupReadSource } from './api';
 import { importProposal, problemLine, proposalSummary, type ProposalImport, type ReadFrom } from './proposal';
 import type { ReadSlot } from './SetupEditor';
 import { READ_ACCEPT, READ_COPY, readError, readingLine, readKindOf } from './setupReadWords';
@@ -21,8 +21,10 @@ import { READ_ACCEPT, READ_COPY, readError, readingLine, readKindOf } from './se
 // kind its extension names (never its name) or as the text, to POST .../orders/setup/read. The answer merges into the
 // unsaved draft through the sheet import's merge (proposal.ts) and the summary says what to set and check. A file over
 // the caps is refused here with the cap in words; every refusal from the API is said in plain words. Cancel stops the
-// request and nothing is added. Under view-as every control is disabled in place, described by the read-only line, and
-// no file input is drawn, so no client file is read into a staff browser. Nothing here logs or keeps the file or text.
+// request and nothing is added. An answer that comes while the editor is locked (a save running) waits for the lock to
+// lift and then merges into the draft the save left, so the save never drops it. Under view-as every control is
+// disabled in place, described by the read-only line, and no file input is drawn, so no client file is read into a
+// staff browser. Nothing here logs or keeps the file or text.
 
 type Shown =
   | { kind: 'idle' }
@@ -52,6 +54,9 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
   const latest = useRef(props.draft);
   const run = useRef(0);
   const stop = useRef<AbortController | null>(null);
+  const locked = useRef(props.locked);
+  /** An answer that came while the editor was locked, merged once it isn't. */
+  const held = useRef<{ answer: SetupReadAnswer; from: ReadFrom } | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [text, setText] = useState('');
   const [over, setOver] = useState(false);
@@ -60,6 +65,14 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
   const reading = shown.kind === 'reading';
 
   useEffect(() => { latest.current = props.draft; }, [props.draft]);
+  // After every render, so it sees the draft a save left (the effect above runs first).
+  useEffect(() => {
+    locked.current = props.locked;
+    const waiting = held.current;
+    if (props.locked || waiting === null) return;
+    held.current = null;
+    land(waiting.answer, waiting.from);
+  });
   useEffect(() => () => {
     run.current += 1;
     stop.current?.abort();
@@ -78,6 +91,14 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
     }
     setFile(chosen);
     setShown({ kind: 'idle' });
+  }
+
+  function land(answer: SetupReadAnswer, from: ReadFrom): void {
+    const result = importProposal(answer, latest.current, from);
+    props.apply(result);
+    if (from === 'file') setFile(null);
+    else setText('');
+    setShown({ kind: 'done', from, result });
   }
 
   async function read(from: ReadFrom): Promise<void> {
@@ -107,11 +128,8 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
       }
       const answer = await readSetupWithAi(api, location.id, source, controller.signal);
       if (run.current !== mine) return;
-      const result = importProposal(answer, latest.current, from);
-      props.apply(result);
-      if (from === 'file') setFile(null);
-      else setText('');
-      setShown({ kind: 'done', from, result });
+      if (locked.current) held.current = { answer, from };
+      else land(answer, from);
     } catch (error) {
       if (run.current === mine) setShown({ kind: 'failed', message: readError(error) });
     } finally {
@@ -121,6 +139,7 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
 
   function cancel(): void {
     run.current += 1;
+    held.current = null;
     stop.current?.abort();
     stop.current = null;
     setShown({ kind: 'stopped' });
