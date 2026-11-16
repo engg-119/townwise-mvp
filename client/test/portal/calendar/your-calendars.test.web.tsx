@@ -1094,6 +1094,34 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
   });
 
+  test('a window blocked inside the press shows its words above “Continue to Google” and scrolls Continue into view, each time', async () => {
+    await renderGoogle();
+    const panel = openPopover();
+    // A blocked window answers inside requestCode, in the press itself, so Continue never remounts.
+    const initCodeClient = (config: CodeClientConfig): { requestCode: () => void } => ({
+      requestCode: () => { config.error_callback({ type: 'popup_failed_to_open' }); },
+    });
+    (window as { google?: unknown }).google = { accounts: { id: { initialize: jest.fn(), renderButton: jest.fn() }, oauth2: { initCodeClient } } };
+    const scrolled: Element[] = [];
+    const scrollIntoView = jest.fn(function (this: Element) { scrolled.push(this); });
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true, writable: true });
+    try {
+      fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+      act(() => { document.querySelector(`script[src="${GIS_SRC}"]`)?.dispatchEvent(new Event('load')); });
+      const go = await within(panel).findByRole('button', { name: 'Continue to Google' });
+      fireEvent.click(go);
+      const words = await within(panel).findByText(GOOGLE_COPY.popupBlocked);
+      expect(words.compareDocumentPosition(go) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(document.activeElement).toBe(go);
+      expect(scrolled).toEqual([go]);
+      fireEvent.click(go);
+      await waitFor(() => { expect(scrolled).toEqual([go, go]); });
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' });
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
   test('while the code is posted the popover waits: Escape and a press outside do nothing and Close is disabled', async () => {
     const { api } = await renderGoogle();
     const panel = openPopover();

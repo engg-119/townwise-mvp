@@ -374,8 +374,9 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const [fresh, setFresh] = useState(false);
   const [googleFocus, setGoogleFocus] = useState<GoogleFocus>(null);
   // A refusal's words while the explainer shows again. They sit in the section, just above "Continue to Google", which
-  // takes focus, so they are in view; the popover's own messages line is above the long explainer.
-  const [googleWords, setGoogleWords] = useState<string | null>(null);
+  // takes focus, so they are in view; the popover's own messages line is above the long explainer. A new object for
+  // each refusal, so the same words twice still bring Continue into view.
+  const [googleWords, setGoogleWords] = useState<{ text: string } | null>(null);
   // The `state` Google's answer must carry while the section waits on a press; null otherwise. Leaving the page forgets
   // it, so an answer that lands after never posts a code.
   const expectedStateRef = useRef<string | null>(null);
@@ -481,9 +482,18 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const explain = useCallback((words: string | null) => {
     setGoogleStep('explaining');
     setGoogleFocus('continue');
-    setGoogleWords(words);
+    setGoogleWords(words === null ? null : { text: words });
     if (words !== null) setMessage(null);
   }, []);
+
+  // The words can push the focused "Continue to Google" out of a phone sheet's view, and a blocked window answers inside
+  // the press, so Continue never remounts to take focus again (which would scroll it into view). Each refusal brings
+  // the focused control back into view; a remounted Continue has taken focus by now, since children's effects run first.
+  useEffect(() => {
+    if (googleWords === null || Platform.OS !== 'web' || typeof document === 'undefined') return;
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement && typeof focused.scrollIntoView === 'function') focused.scrollIntoView({ block: 'nearest' });
+  }, [googleWords]);
 
   // A connected person's choices. A connection that is gone or dead falls back to the explainer; any other refusal
   // closes the section with its words, so "Add a Google calendar" can be pressed again.
@@ -684,7 +694,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
         {googleClientId === null || googleStep === 'closed' || googleStep === 'loading' ? null : (
           <View style={styles.form}>
             {googleStep === 'explaining' ? <Small nativeID={EXPLAINER_ID}>{GOOGLE_COPY.explainerShown}</Small> : null}
-            {googleStep === 'explaining' && googleWords !== null ? <Messages live="alert" items={[googleWords]} /> : null}
+            {googleStep === 'explaining' && googleWords !== null ? <Messages live="alert" items={[googleWords.text]} /> : null}
             {googleStep === 'explaining' || googleStep === 'waiting' || googleStep === 'connecting' ? (
               <GoogleConnect
                 clientId={googleClientId}
