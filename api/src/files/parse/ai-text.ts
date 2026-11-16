@@ -5,8 +5,8 @@
 // either it is `too_complex`. The thread runs only while it holds the process's one parse-thread slot (thread-slot.ts),
 // shared with the sales reader, so the two threads never hold their heaps at once. This is apart from the sales parse
 // thread (thread.ts), whose raw rows never leave it: only this thread hands a file's content back, and only
-// files/extract/input.ts (the TownwiseAI reader's input) and files/items.ts (a file attached to a TownwiseAI message,
-// D36) ask it (test/isolation.test.ts).
+// files/extract/input.ts (the TownwiseAI reader's input, and the ordering setup's read, D39) and files/items.ts (a file
+// attached to a TownwiseAI message, D36) ask it (test/isolation.test.ts).
 // A text file is decoded here, in the main thread, as the sales reader decodes one.
 import { Worker, type ResourceLimits } from 'node:worker_threads';
 

@@ -1,7 +1,8 @@
 // The file reader's models, as ports, and the only file of the file code that constructs a model client: the AI column
-// step's (spec 11A), whose request holds only the redacted profile, and reading with TownwiseAI's (spec 11A.9), whose
-// request (reader.ts) holds a file the person opted in. main.ts builds the real ones when ANTHROPIC_API_KEY is set; tests
-// pass scripted fakes. Nothing here logs: a failure leaves as `failed` with the error's class and HTTP status, never
+// step's (spec 11A), whose request holds only the redacted profile, reading with TownwiseAI's (spec 11A.9), whose
+// request (reader.ts) holds a file the person opted in, and reading the ordering setup's (spec D39), whose request
+// (setup-reader.ts) holds the file or text the person gave it. main.ts builds the real ones when ANTHROPIC_API_KEY is
+// set; tests pass scripted fakes. Nothing here logs: a failure leaves as `failed` with the error's class and HTTP status, never
 // its message or the request.
 import Anthropic from '@anthropic-ai/sdk';
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
@@ -12,6 +13,7 @@ import type { RedactedProfile } from './profile.ts';
 import { columnsAnswer, EXTRACT_MAX_TOKENS, EXTRACT_MODEL, EXTRACT_TIMEOUT_MS, SYSTEM_PROMPT, type ColumnChoice } from './prompt.ts';
 import type { FileReaderModel, ReaderAnswer } from './reader.ts';
 import { READER_TIMEOUT_MS, readerAnswer } from './reader-prompt.ts';
+import { SETUP_EFFORT, SETUP_READ_TIME_MS, setupAnswer } from './setup-prompt.ts';
 
 export type ExtractResult =
   /** `choice` is null when the model declined or its answer did not parse; the call still cost what it cost. */
@@ -88,15 +90,20 @@ function answerJson(message: BetaMessage): unknown {
 /** The answer's JSON schema, as betaZodOutputFormat makes it (limits the API does not enforce become descriptions). */
 export const READER_FORMAT = { type: 'json_schema', schema: betaZodOutputFormat(readerAnswer).schema } as const;
 
+/** Reading the ordering setup's answer schema (setup-prompt.ts), made the same way. */
+export const SETUP_FORMAT = { type: 'json_schema', schema: betaZodOutputFormat(setupAnswer).schema } as const;
+
 /**
- * Reading with TownwiseAI: the Anthropic API at medium effort, streamed (the answer may run to 64,000 tokens, which a
- * single response would not hold within the timeout), with the server-side refusal fallback the chat uses, structured
- * output, a 300-second timeout to the start of the answer and one SDK retry (the reader backs off and retries the rest itself). Not the parse
- * helpers: they throw on an answer outside the schema's limits or on a refusal's text, and the reader checks the
- * answer itself (reader-prompt.ts, readerResult), so a refusal is charged and an over-long fact is dropped instead of
- * failing the call. An answer cut at max_tokens is `too_long`.
+ * A TownwiseAI reader's model: the Anthropic API streamed, with the server-side refusal fallback the chat uses,
+ * structured output, `timeoutMs` to the start of the answer and one SDK retry. Not the parse helpers: they throw on an
+ * answer outside the schema's limits or on a refusal's text, and each reader checks the answer itself (readerResult,
+ * setupResult), so a refusal is charged and an over-long entry is dropped instead of failing the call. An answer cut
+ * at max_tokens is `too_long`.
  */
-export function createAnthropicFileReaderModel(apiKey: string, fetch?: typeof globalThis.fetch): FileReaderModel {
+function streamedReaderModel(
+  apiKey: string, call: { effort: 'low' | 'medium'; format: typeof READER_FORMAT | typeof SETUP_FORMAT; timeoutMs: number },
+  fetch: typeof globalThis.fetch | undefined,
+): FileReaderModel {
   const client = anthropicClient(apiKey, { ...(fetch === undefined ? {} : { fetch }), maxRetries: 1 });
   return {
     async readFile(request, signal) {
@@ -104,10 +111,10 @@ export function createAnthropicFileReaderModel(apiKey: string, fetch?: typeof gl
         const message = await client.beta.messages.stream({
           ...request,
           // Adaptive thinking is Opus 5.5's only mode, so `thinking` is omitted.
-          output_config: { effort: 'medium', format: READER_FORMAT },
+          output_config: { effort: call.effort, format: call.format },
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-        }, { signal, timeout: READER_TIMEOUT_MS }).finalMessage();
+        }, { signal, timeout: call.timeoutMs }).finalMessage();
         const costMicroUsd = messageCostMicroUsd(message);
         if (message.stop_reason === 'refusal') return { kind: 'refused', costMicroUsd };
         if (message.stop_reason === 'max_tokens') return { kind: 'too_long', costMicroUsd };
@@ -117,4 +124,21 @@ export function createAnthropicFileReaderModel(apiKey: string, fetch?: typeof gl
       }
     },
   };
+}
+
+/**
+ * Reading with TownwiseAI (spec 11A.9): medium effort, streamed (the answer may run to 64,000 tokens, which a single
+ * response would not hold within the timeout), a 300-second timeout to the start of the answer and one SDK retry (the
+ * reader backs off and retries the rest itself).
+ */
+export function createAnthropicFileReaderModel(apiKey: string, fetch?: typeof globalThis.fetch): FileReaderModel {
+  return streamedReaderModel(apiKey, { effort: 'medium', format: READER_FORMAT, timeoutMs: READER_TIMEOUT_MS }, fetch);
+}
+
+/**
+ * Reading the ordering setup with TownwiseAI (spec D39): SETUP_EFFORT, streamed, one SDK retry, and the read's whole
+ * time as the timeout; the handler's signal ends the call SETUP_READ_TIME_MS after the request began.
+ */
+export function createAnthropicSetupReaderModel(apiKey: string, fetch?: typeof globalThis.fetch): FileReaderModel {
+  return streamedReaderModel(apiKey, { effort: SETUP_EFFORT, format: SETUP_FORMAT, timeoutMs: SETUP_READ_TIME_MS }, fetch);
 }

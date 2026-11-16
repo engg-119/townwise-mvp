@@ -1,23 +1,25 @@
-// The model's input for a TownwiseAI read, from a file's bytes: reading with TownwiseAI (spec 11A.9, D34) reads a stored
-// file from storage as far as it needs, within its caps. A PDF is sent whole as a document (its own text, made in the AI
-// text thread, kept only to check the answer against), a workbook or Word document as its text from that thread, a text
-// file as its first characters, a ZIP as its entries' text, and a PNG, JPEG, GIF or WebP picture, told by its bytes
-// whatever its name or kind, as an image (or, with `pictureMaxSide`, without its metadata and within that pixel cap). A
+// The model's input for a TownwiseAI read, from a file's bytes: reading with TownwiseAI (spec 11A.9, D34, a stored file
+// read from storage as far as it needs) and reading the ordering setup (D39, a file sent in the request and never
+// stored) share it, each within its own caps. A PDF is sent whole as a document (its own text, made in the AI text
+// thread, kept only to check the answer against), a workbook or Word document as its text from that thread, a text
+// file as its first characters, a ZIP (D34 only) as its entries' text, and a PNG, JPEG, GIF or WebP picture, told by
+// its bytes whatever its name or kind, as an image: for D39 without its metadata and within the model's pixel cap. A
 // file's name is read only for its extension and never leaves this file. Nothing here logs.
 import type { FileKind } from '../../stores/files.ts';
 import {
-  AI_IMAGE_BYTES, AI_PDF_BYTES, AI_PDF_PAGES, AI_SOURCE_CHARS, AI_TEXT_CHARS, AI_TEXT_READ_BYTES, AI_ZIP_BYTES, DOCX_READ_BYTES,
-  HEAD_BYTES, XLSX_READ_BYTES,
+  AI_IMAGE_BYTES, AI_PDF_BYTES, AI_PDF_PAGES, AI_SOURCE_CHARS, AI_TEXT_CHARS, AI_TEXT_READ_BYTES, AI_ZIP_BYTES, CHAT_SLOT_WAIT_MS,
+  CHAT_TEXT_TIME_MS, DOCX_READ_BYTES, HEAD_BYTES, MODEL_PICTURE_BYTES, MODEL_PICTURE_MAX_SIDE, SETUP_FILE_BYTES, SETUP_PDF_PAGES,
+  SETUP_TEXT_CHARS, XLSX_READ_BYTES,
 } from '../limits.ts';
-import { extractAiText, textFileText, type AiTextInput, type AiTextKind, type AiTextOutcome } from '../parse/ai-text.ts';
+import { capText, extractAiText, textFileText, type AiTextInput, type AiTextKind, type AiTextOutcome } from '../parse/ai-text.ts';
 import { pictureSize, withoutMetadata } from '../picture.ts';
 import { sniff } from '../sniff.ts';
 import type { ImageMediaType, ReaderInput } from './reader.ts';
 
 /**
- * Why a file is not sent: over the size or page caps (or a picture over a pixel cap); a kind not read (old
+ * Why a file is not sent: over the size or page caps (or, for D39, a picture over the pixel cap); a kind not read (old
  * Excel or Word, Numbers, anything else that is not a picture, or a ZIP with no entry read as text); encrypted; its text
- * ran past the thread's limits; or it could not be opened (or a picture whose bytes don't parse as their type).
+ * ran past the thread's limits; or it could not be opened (for D39, a picture whose bytes don't parse as their type).
  */
 export type InputRefusal = 'too_large' | 'kind_not_read' | 'encrypted' | 'too_complex' | 'not_readable';
 
@@ -62,6 +64,13 @@ export interface InputCaps {
 export const READER_INPUT: InputCaps = {
   pdfBytes: AI_PDF_BYTES, pdfPages: AI_PDF_PAGES, textChars: AI_TEXT_CHARS, textReadBytes: AI_TEXT_READ_BYTES, sourceChars: AI_SOURCE_CHARS,
   xlsxBytes: XLSX_READ_BYTES, docxBytes: DOCX_READ_BYTES, zipBytes: AI_ZIP_BYTES, pictureBytes: AI_IMAGE_BYTES, pictureMaxSide: null,
+};
+
+/** Reading the ordering setup (limits.ts, spec D39): within the request's time, so the thread waits as a chat read's does. */
+export const SETUP_INPUT: InputCaps = {
+  pdfBytes: SETUP_FILE_BYTES, pdfPages: SETUP_PDF_PAGES, textChars: SETUP_TEXT_CHARS, textReadBytes: SETUP_TEXT_CHARS * 4,
+  sourceChars: AI_SOURCE_CHARS, xlsxBytes: SETUP_FILE_BYTES, docxBytes: SETUP_FILE_BYTES, zipBytes: null, pictureBytes: MODEL_PICTURE_BYTES,
+  pictureMaxSide: MODEL_PICTURE_MAX_SIDE, slotWaitMs: CHAT_SLOT_WAIT_MS, textTimeMs: CHAT_TEXT_TIME_MS,
 };
 
 /** A PNG, JPEG, GIF or WebP picture, by its first bytes whatever its name or kind, or null. */
@@ -144,4 +153,57 @@ export async function prepareInput(
     case 'doc':
       return skip('kind_not_read');
   }
+}
+
+/** Text a person pasted (D39): its first `textChars` characters, said to be cut past them. */
+export function pastedInput(text: string, caps: InputCaps): PreparedInput {
+  const capped = capText(text, caps.textChars);
+  return { kind: 'input', input: { type: 'text', form: 'text', text: capped.text, cut: capped.cut }, sourceText: capped.text, partial: capped.cut, pages: null };
+}
+
+/** What a member says a file posted to Ordering setup is, from its extension (D39). */
+export const POSTED_KINDS = ['pdf', 'xlsx', 'docx', 'text', 'picture'] as const;
+export type PostedKind = (typeof POSTED_KINDS)[number];
+
+/** A name with the extension each posted kind has, for sniff (the file's own name never reaches the server). */
+const POSTED_NAMES: Readonly<Record<PostedKind, string>> = {
+  pdf: 'file.pdf', xlsx: 'file.xlsx', docx: 'file.docx', text: 'file.txt', picture: 'file.png',
+};
+
+/**
+ * The kind to read a file posted as `claimed` as, from its first bytes (sniff.ts, as a stored file's kind is told), or
+ * why it is refused: `kind_not_read` for a ZIP that is not the workbook or Word document it says it is, an old Excel
+ * or Word file, or a picture of a kind the model does not read (HEIC); `encrypted` for a password-protected workbook or
+ * Word document; `mismatch` for bytes of another kind than the one claimed (a PDF posted as a workbook, a binary file as
+ * text). A picture is `other`, which prepareInput reads by its bytes.
+ */
+function postedKind(claimed: PostedKind, head: Uint8Array): FileKind | 'kind_not_read' | 'encrypted' | 'mismatch' {
+  const sniffed = sniff(POSTED_NAMES[claimed], head.subarray(0, HEAD_BYTES));
+  switch (sniffed.kind) {
+    case 'pdf':
+      return claimed === 'pdf' ? 'pdf' : 'mismatch';
+    case 'xlsx':
+    case 'docx':
+    case 'text':
+      // Only the extension claimed makes these.
+      return sniffed.kind;
+    case 'zip':
+    case 'xls':
+    case 'doc':
+      return 'kind_not_read';
+    case 'other':
+      if (sniffed.outcome === 'encrypted') return 'encrypted';
+      if (sniffed.outcome === 'image') return pictureType(head) === null ? 'kind_not_read' : claimed === 'picture' ? 'other' : 'mismatch';
+      return 'mismatch';
+  }
+}
+
+/** A file posted to Ordering setup as `claimed` (D39), held in memory, as prepareInput reads it; or why it is refused (postedKind). */
+export function postedSource(claimed: PostedKind, bytes: Buffer): InputSource | 'kind_not_read' | 'encrypted' | 'mismatch' {
+  const kind = postedKind(claimed, bytes);
+  if (kind === 'kind_not_read' || kind === 'encrypted' || kind === 'mismatch') return kind;
+  return {
+    kind, sizeBytes: bytes.length, name: POSTED_NAMES[claimed],
+    read: (count) => Promise.resolve(count === undefined ? bytes : bytes.subarray(0, count)),
+  };
 }
