@@ -1,7 +1,7 @@
 ## 1. Spike
 
-- [ ] 1.1 Measure latency and output tokens on a 150-row synthetic order guide, a 20-page synthetic PDF and a synthetic photo, at low and medium effort, against the real API
-- [ ] 1.2 Set the effort, `max_tokens`, the item cap and the 150-second limit from the results, and update design Decision 8 and the `[CONFIRM]` markers
+- [x] 1.1 Measure latency and output tokens on a 150-row synthetic order guide, a 20-page synthetic PDF and a synthetic photo, at low and medium effort, against the real API
+- [x] 1.2 Set the effort, `max_tokens`, the item cap and the 150-second limit from the results, and update design Decision 8 and the `[CONFIRM]` markers
 
 ## 2. API: the reader
 

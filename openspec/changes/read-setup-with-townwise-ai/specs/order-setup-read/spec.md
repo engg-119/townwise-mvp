@@ -42,7 +42,7 @@ A read SHALL take one PDF, Excel `.xlsx`, Word `.docx`, CSV or text file, or one
 - **THEN** the first 100,000 are read and the answer says the text was cut
 
 ### Requirement: What is proposed
-The answer SHALL propose suppliers with delivery and order-by days when the content gives them, and items with name, supplier, category, unit, servings per unit, deal size and point-of-sale names where the content gives them. It SHALL NOT propose a par or never run out. A servings estimate SHALL be marked as an estimate, and an item whose name is not in the content's text SHALL be marked. Email addresses and phone numbers SHALL be removed from the answer. [CONFIRM: TownwiseAI never proposes a par or never run out] [CONFIRM: names not found written in the file are marked] [CONFIRM: 150 items a read, 20,000 output tokens, low effort, 150 seconds; final after the spike]
+The answer SHALL propose suppliers with delivery and order-by days when the content gives them, and items with name, supplier, category, unit, servings per unit, deal size and point-of-sale names where the content gives them. It SHALL NOT propose a par or never run out. A servings estimate SHALL be marked as an estimate, and an item whose name is not in the content's text SHALL be marked. Email addresses and phone numbers SHALL be removed from the answer. [CONFIRM: TownwiseAI never proposes a par or never run out] [CONFIRM: names not found written in the file are marked] [CONFIRM: 150 items a read, 20,000 output tokens, low effort, 150 seconds, set by the spike of 2026-11-15]
 
 #### Scenario: A keg on an invoice
 - **WHEN** an invoice lists a half-barrel of an IPA
@@ -68,7 +68,7 @@ The page SHALL merge the suggestions into the setup draft through the same merge
 - **THEN** the page says "TownwiseAI found 14 items: 11 new, 3 replaced by name. Nothing is saved yet: check them below, then save the setup." and asks for the par of the 11 new items
 
 ### Requirement: Budget and failures
-Each read SHALL be charged to the organization's files AI budget (`tw_files_usage`), shared with D34 reads and the AI column step, by reserving the call's ceiling before it and correcting to its cost after. A spent budget SHALL answer 409 `files_ai_budget_exhausted` with no call. A refusal or a cut answer SHALL be charged and answer 422; an API error or timeout SHALL be charged nothing and answer 503 `extract_failed`. Reads SHALL share the `ai_reads` limiter. [CONFIRM: shares TOWNWISE_FILES_MONTHLY_BUDGET_USD; $5 covers about 20 reads] [CONFIRM: shares the townwise:ai-reads limiter]
+Each read SHALL be charged to the organization's files AI budget (`tw_files_usage`), shared with D34 reads and the AI column step, by reserving the call's ceiling before it and correcting to its cost after. A spent budget SHALL answer 409 `files_ai_budget_exhausted` with no call. A refusal or a cut answer SHALL be charged and answer 422; an API error or timeout SHALL be charged nothing and answer 503 `extract_failed`. Reads SHALL share the `ai_reads` limiter. [CONFIRM: shares TOWNWISE_FILES_MONTHLY_BUDGET_USD; a read costs about $0.06 to $0.44, so $5 covers about 12 reads of a 150-item list or about 80 invoice photos] [CONFIRM: shares the townwise:ai-reads limiter]
 
 #### Scenario: The budget is spent
 - **WHEN** the month's files AI spend has reached the budget
