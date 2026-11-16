@@ -24,6 +24,7 @@ import { createAiReadActions } from '../../src/files/ai-actions.ts';
 import { createAiReader, type AiReader, type AiReaderDeps, type OnAiRead } from '../../src/files/ai-reader.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
 import type { FileReaderModel } from '../../src/files/extract/reader.ts';
+import type { AiTextInput, AiTextOutcome } from '../../src/files/parse/ai-text.ts';
 import { createFileWorker, type FileWorker, type FileWorkerDeps } from '../../src/files/worker.ts';
 import type { LabCaller } from '../../src/lab/caller.ts';
 import type { LabRunner } from '../../src/lab/runner.ts';
@@ -34,6 +35,7 @@ import { createTownwiseStores } from '../../src/stores/index.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 import type { StaticMapSigner } from '../../src/places/static-map.ts';
 import { testLabCaller } from './lab.ts';
+import { waitForRedis } from './redis-ready.ts';
 
 export const WEB_ORIGIN = 'https://app.example.test';
 export const STAFF_EMAIL = 'staff@townwise.test';
@@ -119,6 +121,14 @@ export async function startTownwiseServer(opts?: {
    */
   aiReader?: { model: FileReaderModel; aroundOnRead?: (actions: OnAiRead) => OnAiRead }
     & Partial<Pick<AiReaderDeps, 'leaseMs' | 'extractText' | 'onRead' | 'filesMonthlyBudgetUsd'>>;
+  /**
+   * Reading the ordering setup with TownwiseAI (D41), over a scripted model (no call leaves the test); absent, it is off
+   * and its route answers 503 ai_unavailable. `setupReadTimeMs` shortens its time limit; `setupReadText` scripts the
+   * AI text thread a file's text is made with.
+   */
+  setupReader?: FileReaderModel;
+  setupReadTimeMs?: number;
+  setupReadText?: (input: AiTextInput) => Promise<AiTextOutcome>;
   /** U13A: synthetic headcount inputs for people in town; absent, the committed (empty) sources. */
   peopleData?: PeopleData;
   /** The forecast lab's runner (helpers/lab.ts has a fake); absent, calibrations are off. /lab is mounted either way. */
@@ -171,12 +181,7 @@ export async function startTownwiseServer(opts?: {
   const clock = createClock();
   const mail: MagicLinkMessage[] = [];
   try {
-    // One ping gives up near 1 s (the client's commandTimeout), and on the laptop runner a first connection to the
-    // test Valkey (through host.docker.internal) now and then takes longer, which failed a whole suite. Up to three
-    // pings while the client goes on connecting.
-    let ready = false;
-    for (let attempt = 0; attempt < 3 && !ready; attempt += 1) ready = await redis.ready(3000);
-    if (!ready) throw new Error('redis not ready');
+    await waitForRedis(redis);
     await mongo.connection.dropDatabase();
     await redis.client.flushdb();
     const authStores = createMongoAuthStores(mongo.connection);
@@ -198,7 +203,9 @@ export async function startTownwiseServer(opts?: {
     const baseDeps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
-      files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
+      files, fileWorker: reader ?? undefined, setupReader: opts?.setupReader, setupReadTimeMs: opts?.setupReadTimeMs,
+      setupReadText: opts?.setupReadText,
+      peopleData: opts?.peopleData, labRunner: opts?.labRunner,
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
       calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher,
     };

@@ -8,11 +8,11 @@ import { cameraFor, cameraPoint, cameraTransform, REGION } from './camera';
 import { DATA_YEAR, GROUP_DOMAIN, MAX_ABS_GAP, MONTHS, northeastSeries, type TownGroup } from './countyData';
 import { FEATURED_D, stateShapes, STATES_D, VIEW_HEIGHT, VIEW_WIDTH, type Point } from './geometry';
 import {
-  FINAL_STEP, initialMapState, mapReducer, mapTowns, markerScale, MONTH_NAMES, monthLabel, nearestTown, PATTERN_LABEL, patternGap,
-  PATTERNS, shownMonth, valueAt, type MapTown,
+  FINAL_STEP, gapOf, initialMapState, mapReducer, mapTowns, markerScale, MONTH_NAMES, monthLabel, nearestTown, PATTERN_LABEL, patternGap,
+  PATTERNS, shownMonth, type MapTown,
 } from './mapState';
 import { mapCss } from './mapStyles.web';
-import { cursorX, finale, flowOf, glyphOf, moveAt, moveSentence, NE_SPARK_D, PIN_EXTRA, placeTags, railFill, storyBox, titleBox } from './story';
+import { cursorX, finale, flowOf, glyphOf, mapCaption, moveAt, moveSentence, NE_SPARK_D, PIN_EXTRA, placeTags, railFill, storyBox, titleBox } from './story';
 import { storyCss } from './storyStyles.web';
 import { TownPanel } from './TownPanel.web';
 
@@ -60,6 +60,10 @@ const GROUPS: readonly { group: TownGroup; title: string }[] = [
 ];
 // Every list value has the width of the largest, so the months and decimal points line up.
 const VALUE_WIDTH = fmtSigned(MAX_ABS_GAP).length;
+// The towns whose county BLS did not publish for the year, by name: a grey ring on the map and in the legend, n/a in
+// the list, and named in the caption.
+const UNMEASURED = mapTowns.filter((town) => town.series === null).map((town) => town.name);
+const CAPTION = mapCaption(UNMEASURED, DATA_YEAR);
 
 function spark(values: readonly number[], [lo, hi]: readonly [number, number]): string {
   return values.map((value, month) => `${month === 0 ? 'M' : 'L'}${round(1 + (month * 62) / 11, 2)} ${round(19 - ((value - lo) / (hi - lo)) * 18, 2)}`).join(' ');
@@ -90,11 +94,19 @@ function railClass(index: number, month: number): string | undefined {
 const FLOW_MOTION = 'Dots pulling in: restaurant and bar jobs up since last month, compared with the Northeast. Pushing out: down.';
 const FLOW_GLYPHS = '+ or − beside a dot: restaurant and bar jobs up or down since last month, compared with the Northeast.';
 
+// What the live region says when a town is picked: its pattern and biggest gap, or why it has none.
+function liveLine(town: MapTown | null): string {
+  if (town === null) return '';
+  if (town.series === null) return `${town.label}: ${town.seriesUnavailable}`;
+  return `${town.label}: ${PATTERN_LABEL[town.pattern]}${patternGap(town)}`;
+}
+
 function Legend(props: { className: string }): React.JSX.Element {
   return (
     <div className={props.className}>
       <ul className="lg-pat">
         {PATTERNS.map((pattern) => <li key={pattern}><span className={`sw sw-${pattern}`} aria-hidden="true" />{PATTERN_LABEL[pattern]}</li>)}
+        {UNMEASURED.length > 0 && <li><span className="sw sw-none" aria-hidden="true" />No {DATA_YEAR} index</li>}
       </ul>
       <p>Dot size: that month’s gap from the Northeast, index points</p>
       <ul>
@@ -373,7 +385,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
           <div className="st-s st-h" data-ss="0">{props.head}</div>
           <div ref={pinRef} className="story-pin">
             <div ref={figRef} className="map-fig">
-              <p id={`${id}caption`} className="sr-only">Map of the nine Northeast states with twelve featured towns, each dot sized by its county’s gap from the Northeast in the month shown. Use the town list below the map to explore each one.</p>
+              <p id={`${id}caption`} className="sr-only">{CAPTION}</p>
               <div ref={boxRef} className="map-box">
                 <svg className="map-svg" viewBox={`0 0 ${String(VIEW_WIDTH)} ${String(VIEW_HEIGHT)}`} role="img" aria-labelledby={`${id}caption`}>
                   <g className="world" style={{ transform: cameraTransform(camera) }}>
@@ -390,8 +402,8 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
                 <div className="ov">
                   {stateShapes.map((shape) => <span key={shape.abbr} className="st" aria-hidden="true" style={place(shape.label)}>{shape.abbr}</span>)}
                   {mapTowns.map((town, index) => {
-                    const k = markerScale(valueAt(town.series.gap, month));
-                    const delta = moveAt(town.series.gap, month);
+                    const k = markerScale(gapOf(town, month) ?? 0);
+                    const delta = town.series === null ? 0 : moveAt(town.series.gap, month);
                     const flow = flows ? flowOf(index, delta) : null;
                     const glyph = glyphs ? glyphOf(delta) : null;
                     const value = tags?.get(town.id);
@@ -403,7 +415,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
                     return (
                       <div
                         key={town.id}
-                        className={classes('mk-pos', `pat-${town.pattern}`, `side-${side}`, side === 'right' && town.shape.centroid[0] > 700 && 'edge-r', hovered && 'is-hov', hovered && state.pointer && 'is-ptr')}
+                        className={classes('mk-pos', `pat-${town.pattern ?? 'none'}`, `side-${side}`, side === 'right' && town.shape.centroid[0] > 700 && 'edge-r', hovered && 'is-hov', hovered && state.pointer && 'is-ptr')}
                         style={style}
                         onMouseEnter={() => { hover(town.id, true); }}
                         onMouseLeave={() => { hover(null, false); }}
@@ -475,7 +487,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
             <div className="st-s st-t" data-ss="2" style={row(3)}>
               <div className="st-c">
                 <h2 className="h3">Now the towns.</h2>
-                <p>In the counties around some of these towns, they keep their own. Filled dots: counties where restaurant and bar jobs break from the region’s monthly pattern. Outlined: counties that move with it. The bigger the dot, the bigger that month’s gap.</p>
+                <p>In the counties around some of these towns, they keep their own. Filled dots: counties where restaurant and bar jobs break from the region’s monthly pattern. Outlined: counties that move with it. The bigger the dot, the bigger that month’s gap.{UNMEASURED.length > 0 ? ` Grey ring: a county with no ${String(DATA_YEAR)} index.` : ''}</p>
                 <p className="st-ph">
                   <span className="lg-fl-m">Month by month, small dots pull in toward a town when its county’s restaurant and bar jobs rose against the Northeast since the month before, and push out when they fell.</span>
                   <span className="lg-fl-r">Month by month, a + or − beside a dot shows its county’s restaurant and bar jobs up or down against the Northeast since the month before.</span>
@@ -512,8 +524,9 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
                   <p className="grp-s">Same scale within this group: {GROUP_DOMAIN[group].join(' to ')}</p>
                 </div>
                 <ul className="rows">
-                  {mapTowns.filter((town) => town.series.group === group).map((town) => {
+                  {mapTowns.filter((town) => town.group === group).map((town) => {
                     const pressed = state.sel === town.id;
+                    const gap = gapOf(town, month);
                     return (
                       <li key={town.id}>
                         <button
@@ -536,9 +549,9 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
                           <span className="row-d" aria-hidden={local ? undefined : true}>
                             <svg className="sp" viewBox="0 0 64 20" preserveAspectRatio="none" aria-hidden="true" focusable="false">
                               <path className="sp-ne" d={spark(northeastSeries.index, GROUP_DOMAIN[group])} />
-                              <path className="sp-tw" d={spark(town.series.index, GROUP_DOMAIN[group])} />
+                              {town.series !== null && <path className="sp-tw" d={spark(town.series.index, GROUP_DOMAIN[group])} />}
                             </svg>
-                            <span className={classes('row-v', valueFade)}>{`${monthLabel(month)} ${fmtSigned(valueAt(town.series.gap, month)).padStart(VALUE_WIDTH)}`}</span>
+                            <span className={classes('row-v', valueFade)}>{`${monthLabel(month)} ${(gap === null ? 'n/a' : fmtSigned(gap)).padStart(VALUE_WIDTH)}`}</span>
                           </span>
                         </button>
                       </li>
@@ -560,7 +573,7 @@ export function NortheastMap(props: { head?: React.ReactNode; lead?: React.React
           />
         </div>
       </div>
-      <p className="sr-only" aria-live="polite">{selected === null ? '' : `${selected.label}: ${PATTERN_LABEL[selected.pattern]}${patternGap(selected)}`}</p>
+      <p className="sr-only" aria-live="polite">{liveLine(selected)}</p>
     </div>
   );
 }

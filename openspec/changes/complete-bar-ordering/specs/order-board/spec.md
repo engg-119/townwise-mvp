@@ -75,7 +75,11 @@ Confidence SHALL be low with no count, a count over 7 days old, no covered item-
 - **THEN** the line recommends 20 and its why line says it brings stock up to the par, with no chance
 
 ### Requirement: Saved edits and rules apply to the live board
-A saved edit SHALL show on its line for the same delivery. A rule SHALL add its change to every later order of its item until turned off, each active rule listed on the line with its own turn-off, the recommended quantity never below 0 or above 999. A line a rule moves SHALL have no alternative, and its why line SHALL end with the quantity the rules leave, saying so when 0 or 999 stopped them. An edit or a rule saved in another unit than the item's unit now SHALL be neither shown nor applied. Saving an edit SHALL be refused on a sample and on a line not on the item's next order. [CONFIRM: a remembered change applies to every later order of the item]
+A saved edit SHALL show on its line for the same delivery: the Order column SHALL show its quantity, and when that differs from the quantity the rules leave, the line's why line SHALL end with it in the owner's words; Home's count of items to order SHALL count by it. An edit SHALL never move the recommended quantity. A rule SHALL add its change to every later order of its item until turned off, each active rule listed on the line with its own turn-off, the recommended quantity never below 0 or above 999. A line a rule moves SHALL have no alternative, and its why line SHALL end with the quantity the rules leave, saying so when 0 or 999 stopped them. An edit or a rule saved in another unit than the item's unit now SHALL be neither shown nor applied. Saving an edit SHALL be refused on a sample and on a line not on the item's next order. [CONFIRM: a remembered change applies to every later order of the item]
+
+#### Scenario: A saved change shows in the Order column
+- **WHEN** a line recommends 13 cases and the owner saves 16 with the reason "a home game weekend"
+- **THEN** the Order column shows 16 cases, the recommended quantity stays 13, and the why line ends "You changed this order to 16 cases: a home game weekend."
 
 #### Scenario: Two rules
 - **WHEN** an item has active rules of +2 and -1

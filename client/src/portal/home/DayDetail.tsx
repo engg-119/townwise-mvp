@@ -3,7 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
-import { eventLine, thisDayLine, type MonthDay } from '../analytics/week';
+import { eventLine, thisDayPhrase, type MonthDay } from '../analytics/week';
 import { shortDate, type Metric } from '../analytics/words';
 import { ReasonMark } from '../calendar/CalendarDay';
 import { shortReasons, type ShortReason } from '../calendar/model';
@@ -12,6 +12,7 @@ import { formatCount, plural } from '../format';
 import type { LoadState } from '../hooks';
 import type { OrderBoard } from '../orders/api';
 import { locationHref } from '../routing';
+import { PhraseParts } from '../ui/PhraseParts';
 import { SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
 import { orderCoverSentence, orderForDay, REORDER_OVERVIEW } from './beside';
@@ -124,7 +125,7 @@ export function DayDetail(props: {
       </Part>
       {history && !day.future ? (
         <Part label="This day">
-          <Mono tone={day.value === null ? 'text3' : 'white'}>{thisDayLine(day, metric)}</Mono>
+          <Mono tone={day.value === null ? 'text3' : 'white'}><PhraseParts phrase={thisDayPhrase(day, metric)} /></Mono>
         </Part>
       ) : null}
       {history ? <Part label="Same weekday last year"><PastCell day={day.lastYear} metric={metric} /></Part> : null}

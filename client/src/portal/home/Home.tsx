@@ -7,11 +7,13 @@ import { fetchCalendar, fetchSalesHistory, type Calendar, type SalesHistory } fr
 import { dayContext, ruleSchedules } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { byDate, decodeHistory } from '../analytics/history';
-import { homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput } from '../analytics/week';
+import {
+  forecastRange, homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
+} from '../analytics/week';
 import { fetchForecast } from '../estimates/api';
 import { useBreakpoint, useLoad } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
-import { localToday, monthRange } from '../locations/dates';
+import { localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
 import { formatCount } from '../format';
 import { LoadFailure } from '../locations/parts';
@@ -34,10 +36,9 @@ import { MonthList, PastYears, ThisMonth, WhoIsInTown } from './ThisMonth';
 import { ThisWeek } from './ThisWeek';
 
 // P11 Home (/locations/[id], members; spec 16.3), a dashboard built around the Monday decisions. Under the lead, a
-// grid of blocks (Block.tsx), most practical first: At a glance (the next 7 days last year, last week, the next event);
-// The next 7 days in {Town}, today and the 6 after it, day by day; This month, a calendar whose days open in the
-// Calendar (P28), beside Last week; the month's events beside Who's in town; this month in past years beside the bar
-// order; and the location's
+// grid of blocks (Block.tsx), most practical first: At a glance (this week last year, last week, the next event);
+// This week in {Town}, day by day; This month, a calendar whose days open in the Calendar (P28), beside Last week; the
+// month's events beside Who's in town; this month in past years beside the bar order; and the location's
 // history. Every figure is a sum, an average or a share of the location's own stored days, of a past day, except This
 // month's days from today on, which show the published forecast's own figures (spec 16.3 P11, 14.5,
 // D30), never a guess of Home's: with no published forecast the lead says so and those days show none. It reads three
@@ -47,9 +48,9 @@ import { ThisWeek } from './ThisWeek';
 // (GET .../forecast; Home never waits for it or fails with it), the month's people in town (in Who's in town) and the
 // next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), and writes nothing,
 // so view-as shows it unchanged with its upload links disabled.
-// "Today" is the device's date; the next 7 days start on today, and Last week, the bar order's week and the month
-// grid's weeks run Monday to Sunday. While onboarding's needsHistory is true, its HistoryStep takes the place of the
-// blocks that need days, and when it has read the history Home loads again.
+// "Today" is the device's date; This week in {Town} is the seven days from today, today first, and Last week the
+// seven days before today. While onboarding's needsHistory is true, its HistoryStep
+// takes the place of the blocks that need days, and when it has read the history Home loads again.
 
 const READ_ONLY_ID = 'home-ro';
 const NO_RULES: readonly Rule[] = [];
@@ -101,7 +102,8 @@ function HomeView(props: {
   const { api } = usePortal();
   // This month's published forecast, on its own: while it loads or when it fails, Home shows no forecast figure and
   // the lead keeps the not-published line.
-  const forecastRead = useLoad(useCallback(() => fetchForecast(api, locationId, monthRange(today.slice(0, 7))), [api, locationId, today])).state;
+  // It covers This week's seven days too, which can run into next month.
+  const forecastRead = useLoad(useCallback(() => fetchForecast(api, locationId, forecastRange(today)), [api, locationId, today])).state;
   const forecast = forecastRead.status === 'ready' ? forecastRead.data : null;
   // A published run that doesn't cover this month is still published, so the line would be wrong there.
   const notPublished = forecast === null || (!forecast.available && forecast.reason === 'no_published_forecast');
@@ -148,7 +150,7 @@ function HomeView(props: {
           readOnlyId={readOnlyId}
         />
       )}
-      <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} />
+      <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} />
       <BlockRow
         items={[
           {

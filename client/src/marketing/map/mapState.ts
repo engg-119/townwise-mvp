@@ -1,6 +1,6 @@
 import { fmtSigned } from '../format';
 import { pickStep, type Side } from './band';
-import { countySeries, MAX_ABS_GAP, MONTHS, type CountySeries } from './countyData';
+import { countySeries, MAX_ABS_GAP, MONTHS, unavailableCounties, type CountySeries, type TownGroup } from './countyData';
 import { countyShapes, townShapes, type TownShape } from './geometry';
 import { towns, type Town } from './towns';
 
@@ -28,14 +28,19 @@ export const MONTH_NAMES: readonly string[] = [
   'July', 'August', 'September', 'October', 'November', 'December',
 ];
 
-export interface MapTown extends Town {
+interface MapTownBase extends Town {
   // "Hanover, NH"
   label: string;
-  series: CountySeries;
+  group: TownGroup;
   shape: TownShape;
   countyD: string;
-  pattern: Pattern;
 }
+
+// A town whose county BLS published for the whole data year has its series and pattern. One it did not has
+// neither, only the reason in a sentence (countyData.ts unavailableCounties): no line, no gap, no pattern.
+export type MeasuredTown = MapTownBase & { series: CountySeries; pattern: Pattern; seriesUnavailable: null };
+export type UnmeasuredTown = MapTownBase & { series: null; pattern: null; seriesUnavailable: string };
+export type MapTown = MeasuredTown | UnmeasuredTown;
 
 // A county breaks from the region when its mean absolute gap is 5 index points or more, and runs opposite
 // when it also moves against the Northeast (Pearson r at or below minus 0.5). Team thresholds, never printed.
@@ -44,13 +49,25 @@ function patternOf(series: CountySeries): Pattern {
   return series.correlationWithNortheast <= -0.5 ? 'opposite' : 'breaks';
 }
 
-export const mapTowns: readonly MapTown[] = towns.flatMap((town) => {
+export const mapTowns: readonly MapTown[] = towns.flatMap((town): MapTown[] => {
   const series = countySeries.find((county) => county.townId === town.id);
+  const gone = unavailableCounties.find((county) => county.townId === town.id);
   const shape = townShapes.find((candidate) => candidate.id === town.id);
   const county = countyShapes.find((candidate) => candidate.fips === town.countyFips);
-  if (series === undefined || shape === undefined || county === undefined) return [];
-  return [{ ...town, label: `${town.name}, ${town.state}`, series, shape, countyD: county.d, pattern: patternOf(series) }];
+  if (shape === undefined || county === undefined) return [];
+  const base = { ...town, label: `${town.name}, ${town.state}`, shape, countyD: county.d };
+  if (series !== undefined) return [{ ...base, group: series.group, series, pattern: patternOf(series), seriesUnavailable: null }];
+  if (gone !== undefined) return [{ ...base, group: gone.group, series: null, pattern: null, seriesUnavailable: gone.reason }];
+  return [];
 });
+
+// The towns with a series: the only ones the story's moves, value tags and final step can speak of.
+export const measuredTowns: readonly MeasuredTown[] = mapTowns.filter((town): town is MeasuredTown => town.series !== null);
+
+// A town's gap for a month, or null for a town without a series.
+export function gapOf(town: MapTown, month: number): number | null {
+  return town.series === null ? null : valueAt(town.series.gap, month);
+}
 
 // The town whose dot is nearest a point, in map units (the viewBox). Each dot's 44px hit area overlaps its
 // neighbors' where towns sit close (Burlington and Stowe are 12px apart on a phone), so a tap goes to the dot
@@ -74,7 +91,7 @@ export function valueAt(values: readonly number[], month: number): number {
 }
 
 // The town's data sentence after its pattern label, shared by the panel and the live line.
-export function patternGap(town: MapTown): string {
+export function patternGap(town: MeasuredTown): string {
   const { monthIndex, signedGap } = town.series.largestGap;
   return `; biggest gap with the region in ${MONTH_NAMES[monthIndex] ?? ''}, ${fmtSigned(signedGap)} index points.`;
 }

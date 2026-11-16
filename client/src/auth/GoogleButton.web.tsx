@@ -156,14 +156,37 @@ export function GoogleButton(props: GoogleButtonProps): React.JSX.Element | null
   if (unavailable) {
     return <Message tone="error">Google sign-in didn’t load. Check your connection, turn off any blocker for accounts.google.com, and reload.</Message>;
   }
-  // Until Google's button is ready, a skeleton of it (Google's white 40px button, radius 4, at the width Google is
-  // given) holds its place from the first frame; then Google's button replaces it at once, with no fade.
-  const skeleton = settled ? null : createElement('div', { 'aria-hidden': true, 'data-skeleton': 'google', style: SKELETON });
+  // Until Google's button is ready, a copy of Google's own placeholder (its white 40px button with the G and "Continue
+  // with Google", at the width Google is given) holds its place from the first frame; then Google's button replaces it
+  // at once, with no fade. For a visitor without a Google session the swap is invisible; for one with a session the
+  // label becomes "Continue as <name>" in the same box.
+  const skeleton = settled ? null : createElement('div', { 'aria-hidden': true, 'data-skeleton': 'google', style: SKELETON },
+    createElement('div', { style: SKELETON_ROW },
+      createElement('svg', { viewBox: '0 0 48 48', width: 18, height: 18, style: SKELETON_LOGO },
+        ...G_LOGO.map(([fill, d]) => createElement('path', { key: fill, fill, d }))),
+      createElement('span', { style: SKELETON_LABEL }, 'Continue with Google')));
   const drawn = createElement('div', { ref: setNode, style: settled ? { height: BUTTON_HEIGHT } : { height: BUTTON_HEIGHT, visibility: 'hidden' as const } });
   return createElement('div', { style: { position: 'relative' as const, height: BUTTON_HEIGHT } }, skeleton, drawn);
 }
 
+// Google's placeholder for { text: 'continue_with' }, as its own styles compute (read from the GIS script on
+// townwise.tech, 2026-11-15). The font stack is Google's; the CSP's font-src 'self' keeps Google Sans out, so both fall
+// back to Arial alike.
 const SKELETON = {
   position: 'absolute' as const, top: 0, left: 0, boxSizing: 'border-box' as const, width: '100%', minWidth: 200, maxWidth: 400,
   height: 40, borderRadius: 4, border: '1px solid #dadce0', backgroundColor: '#ffffff', pointerEvents: 'none' as const,
+  paddingLeft: 12, paddingRight: 12, color: '#3c4043', fontFamily: '"Google Sans", arial, sans-serif', fontSize: 14,
+  letterSpacing: '0.25px',
 };
+const SKELETON_ROW = { display: 'flex', alignItems: 'center', justifyContent: 'space-between', height: '100%' };
+const SKELETON_LOGO = { flexShrink: 0, marginRight: 8 };
+const SKELETON_LABEL = {
+  flexGrow: 1, textAlign: 'center' as const, fontWeight: 500, whiteSpace: 'nowrap' as const, overflow: 'hidden', textOverflow: 'ellipsis',
+};
+// Google's G, the paths its own button draws.
+const G_LOGO = [
+  ['#EA4335', 'M24 9.5c3.54 0 6.71 1.22 9.21 3.6l6.85-6.85C35.9 2.38 30.47 0 24 0 14.62 0 6.51 5.38 2.56 13.22l7.98 6.19C12.43 13.72 17.74 9.5 24 9.5z'],
+  ['#4285F4', 'M46.98 24.55c0-1.57-.15-3.09-.38-4.55H24v9.02h12.94c-.58 2.96-2.26 5.48-4.78 7.18l7.73 6c4.51-4.18 7.09-10.36 7.09-17.65z'],
+  ['#FBBC05', 'M10.53 28.59c-.48-1.45-.76-2.99-.76-4.59s.27-3.14.76-4.59l-7.98-6.19C.92 16.46 0 20.12 0 24c0 3.88.92 7.54 2.56 10.78l7.97-6.19z'],
+  ['#34A853', 'M24 48c6.48 0 11.93-2.13 15.89-5.81l-7.73-6c-2.15 1.45-4.92 2.3-8.16 2.3-6.26 0-11.57-4.22-13.47-9.91l-7.98 6.19C6.51 42.62 14.62 48 24 48z'],
+] as const;

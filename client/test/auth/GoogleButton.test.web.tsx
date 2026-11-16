@@ -146,6 +146,9 @@ test('a skeleton shaped like Google’s button shows at once in the 44px box, be
   expect(skeleton?.style.height).toBe('40px');
   expect(skeleton?.style.borderRadius).toBe('4px');
   expect(skeleton?.style.maxWidth).toBe('400px');
+  // It reads as Google's own placeholder, so the swap is invisible for a visitor without a Google session.
+  expect(skeleton?.textContent).toBe('Continue with Google');
+  expect(skeleton?.querySelectorAll('svg path')).toHaveLength(4);
 });
 
 test('Google’s button replaces the skeleton, with no fade, once its iframe has its size', async () => {

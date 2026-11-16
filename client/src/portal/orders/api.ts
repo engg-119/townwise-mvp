@@ -155,11 +155,70 @@ export const orderSetupAnswerSchema = z.object({
   itemCoverage: z.record(z.string(), z.number()),
   counts: z.record(z.string(), z.object({ quantity: z.number(), date: z.string() })),
   itemsWithHistory: z.array(z.string()),
+  /** Reading the setup with TownwiseAI is on (D41); false from an API before it, so the page shows no section. */
+  canReadWithAi: z.boolean().default(false),
 });
 export type OrderSetupAnswer = z.infer<typeof orderSetupAnswerSchema>;
 
 export function fetchOrderSetup(api: ApiClient, locationId: string): Promise<OrderSetupAnswer> {
   return api.json(`${locationPath(locationId)}/setup`, orderSetupAnswerSchema);
+}
+
+// Reading the ordering setup with TownwiseAI (D41): what TownwiseAI suggests from one file or pasted text, checked again
+// by the server (api/src/files/extract/setup-prompt.ts). Never a par or never run out.
+
+export const setupReadItemSchema = z.object({
+  name: z.string(),
+  supplier: z.string().nullable(),
+  category: orderCategorySchema.nullable(),
+  unit: orderUnitSchema.nullable(),
+  servingsPerUnit: z.number().nullable(),
+  /** TownwiseAI's estimate for a standard container, not a figure the content gave. */
+  servingsEstimated: z.boolean(),
+  dealSize: z.number().nullable(),
+  posNames: z.array(posNameSchema),
+  /** A short note, '' when nothing needs saying. */
+  note: z.string(),
+  /** The name is written in the content's text; null for a picture or a PDF with no text. */
+  inFile: z.boolean().nullable(),
+});
+export type SetupReadItem = z.infer<typeof setupReadItemSchema>;
+
+export const setupReadSchema = z.object({
+  kind: z.string(),
+  confidence: z.string(),
+  suppliers: z.array(z.object({
+    name: z.string(),
+    deliveries: z.array(z.object({ deliveryWeekday: weekdaySchema, cutoffWeekday: weekdaySchema.nullable(), cutoffTime: z.string().nullable() })),
+  })),
+  items: z.array(setupReadItemSchema),
+  /** The content held more items than TownwiseAI gives at once. */
+  itemsCut: z.boolean(),
+  /** The text was cut before it was read. */
+  partial: z.boolean(),
+});
+export type SetupRead = z.infer<typeof setupReadSchema>;
+
+/** What a read sends: a file as base64 with the kind its extension names, or pasted text. Never a file's name. */
+export type SetupReadSource =
+  | { readonly type: 'file'; readonly kind: 'pdf' | 'xlsx' | 'docx' | 'text' | 'picture'; readonly data: string }
+  | { readonly type: 'text'; readonly text: string };
+
+/**
+ * A read waits this long for its answer. The server ends its own 150 seconds from its handler's start, which comes only
+ * after the upload, and the ingress closes a request at about 240 seconds.
+ */
+export const SETUP_READ_TIMEOUT_MS = 230_000;
+
+/**
+ * POST .../orders/setup/read { source }: TownwiseAI reads it once and answers suggestions for the unsaved draft; nothing
+ * is stored. `signal` is the page's Cancel. The codes the page words are in api/README.md (Orders).
+ */
+export async function readSetupWithAi(api: ApiClient, locationId: string, source: SetupReadSource, signal: AbortSignal): Promise<SetupRead> {
+  const body = await api.json(`${locationPath(locationId)}/setup/read`, z.object({ read: setupReadSchema }), {
+    method: 'POST', body: { source }, signal, timeoutMs: SETUP_READ_TIMEOUT_MS,
+  });
+  return body.read;
 }
 
 /** A supplier as PUT sends it: a stored one by its `id`, a new one with a `key` its items name it by. */

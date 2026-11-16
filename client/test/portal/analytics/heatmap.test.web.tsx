@@ -61,12 +61,12 @@ const EVENTS = [
 
 const FILE = { id: '00000000-0000-0000-0000-00000000f001', name: 'sample-sales.csv', kind: 'text' as const };
 
-function portal(me: MeResponse, days = DAYS, uploads = [upload()]): FakePortalApi {
+function portal(me: MeResponse, days = DAYS, uploads = [upload()], events = EVENTS): FakePortalApi {
   const fake = analyticsFake({
     [`${PATH}/sales/history`]: historyBody(days, uploads),
     [`${PATH}/estimates/about`]: ABOUT,
     [`${PATH}/notes`]: { notes: [NOTE] },
-    [`${PATH}/calendar?from=2025-01-01&to=2026-12-31`]: calendarBody({ events: EVENTS }),
+    [`${PATH}/calendar?from=2025-01-01&to=2026-12-31`]: calendarBody({ events }),
     [`${PATH}/calendar?from=2026-01-01&to=2026-12-31`]: calendarBody({ events: [] }),
   });
   return fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake });
@@ -345,6 +345,47 @@ test('F4 under view-as: the file by kind only, no download, and still the link t
   expect(within(day).queryByRole('button', { name: 'Download cleaned CSV' })).toBeNull();
   expect(within(day).getByRole('link', { name: 'Open Your data' })).toBeTruthy();
   expect(api.calls.some((call) => call.path.includes('/files/'))).toBe(false);
+});
+
+test('a driver’s name opens its days under Biggest drivers, row selected, each with a Calendar link; Close shuts it (owner request)', async () => {
+  // Two home games, each 50% busier than its Saturdays.
+  const games = ['2025-10-18', '2026-10-17'];
+  const days = DAYS.map((each) => (games.includes(each.date) ? { ...each, guests: 210 } : each));
+  const football = games.map((date, at) => townEvent({
+    start: date, title: at === 0 ? 'Home football vs Brown' : 'Home football vs Cornell', group: 'hanover-nh:football', groupLabel: 'Home football',
+  }));
+  await ready(portal(meOf(ACCESS.member), days, [upload()], football));
+  const name = screen.getByRole('button', { name: 'Home football (rough)' });
+  expect(name.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(name);
+  const detail = await screen.findByRole('region', { name: 'Home football, day by day' });
+  expect(name.getAttribute('aria-expanded')).toBe('true');
+  expect(within(detail).getByText('Home football vs Brown')).toBeTruthy();
+  expect(within(detail).getByText('Home football vs Cornell')).toBeTruthy();
+  // Each day's figure and change are their own bold parts of the line.
+  expect(within(detail).getAllByText('210 guests')).toHaveLength(2);
+  expect(within(detail).getAllByText('+50%').length).toBeGreaterThan(0);
+  expect(within(detail).getByRole('link', { name: 'Open Sat, Oct 18, 2025 in the Calendar' }).getAttribute('href')).toBe('/locations/l1/calendar?day=2025-10-18');
+  // Pressing the name again shuts it; so does Close.
+  fireEvent.click(name);
+  expect(screen.queryByRole('region', { name: 'Home football, day by day' })).toBeNull();
+  fireEvent.click(name);
+  fireEvent.click(within(await screen.findByRole('region', { name: 'Home football, day by day' })).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('region', { name: 'Home football, day by day' })).toBeNull();
+  // A press anywhere on the row opens it too, and again shuts it; the name's own press counts once, not twice.
+  const row = name.closest('[role="row"]');
+  if (row === null) throw new Error('no row');
+  const effect = within(row as HTMLElement).getByText('+50%');
+  fireEvent.click(effect);
+  expect(await screen.findByRole('region', { name: 'Home football, day by day' })).toBeTruthy();
+  expect(name.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.click(effect);
+  expect(screen.queryByRole('region', { name: 'Home football, day by day' })).toBeNull();
+  // A press that ends a text selection across the row selects and opens nothing.
+  const selection = jest.spyOn(window, 'getSelection').mockReturnValue({ toString: () => 'Home football' } as Selection);
+  fireEvent.click(effect);
+  selection.mockRestore();
+  expect(screen.queryByRole('region', { name: 'Home football, day by day' })).toBeNull();
 });
 
 test('F9: “How Townwise estimates” sits above Your data, says there is no forecast yet, and names what it reads', async () => {

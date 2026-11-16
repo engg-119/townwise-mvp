@@ -9,10 +9,11 @@ export const SETTINGS_COPY = {
   twoStep: 'Recommended for admins.',
   nameHelper: 'Your team sees this name at the top of every page. Townwise staff see it in the staff console.',
   nameLength: 'Use 2 to 120 characters.',
-  // D25: before anyone joined, staff may have opened the organization as its admin, so “Without View as” would be false.
-  staffIntro: 'Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Before '
-    + 'anyone from your organization joined, staff setting it up may have opened it as its admin, which shows them what an '
-    + 'admin sees; each time is listed here, with every change they made. Otherwise staff can see your team’s email '
+  // D25: staff may open the organization as its admin, before or after anyone joined (owner call, 2026-11-15), so
+  // “Without View as” would be false.
+  staffIntro: 'Each time Townwise staff use View as to see your sales and notes, it’s recorded here with its reason. Staff '
+    + 'helping you set up may also open your organization as its admin, which shows them what an admin sees and lets them '
+    + 'change it, except your team; each time is listed here, with every change they made. Otherwise staff can see your team’s email '
     + 'addresses, your location names and towns, and which dates your data covers. Any change staff make to your team, '
     + 'name or status is listed here too.',
   staffEmpty: 'Townwise staff haven’t viewed or changed your organization.',

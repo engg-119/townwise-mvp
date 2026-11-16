@@ -365,3 +365,64 @@ test('an opened card lists the views in words, and never a field it has no words
     .toEqual([{ term: 'Researched', value: 'Yes' }, { term: 'Town', value: 'Hanover, NH' }]);
   expect(viewRows(null, null)).toEqual([]);
 });
+
+// D37: Anthropic's web search, not in the registry (the API runs it). Its views exactly as api/src/chat/web-search.ts
+// searchCard builds them: input always null, `{ pages, sources }` done, `{ code }` on error. Synthetic pages.
+test('a web search card: searching, then how many pages it found and their sites, never the query or an error code', () => {
+  expect(isKnownTool('web_search')).toBe(true);
+  expect(isHiddenTool('web_search')).toBe(false);
+  expect(toolLine(step('web_search', 'running'), CTX)).toMatchObject({ status: 'Searching', sentence: 'Searching the web', detail: null });
+  const found = {
+    pages: 9,
+    sources: [
+      { host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road' },
+      { host: 'plain.example', url: 'http://plain.example/x' },
+    ],
+  };
+  // The sites drop www. for display only; a link that isn't https is no site.
+  expect(toolLine(step('web_search', 'done', null, found), CTX))
+    .toMatchObject({ status: 'Searched', sentence: 'Searched the web', detail: '9 pages: example.com, example.org', sources: [] });
+  expect(toolLine(step('web_search', 'done', null, { pages: 1, sources: [found.sources[1]] }), CTX).detail).toBe('1 page: example.org');
+  expect(toolLine(step('web_search', 'done', null, { pages: 4, sources: [] }), CTX).detail).toBe('4 pages');
+  // www.example.com and example.com are one site on the card.
+  expect(toolLine(step('web_search', 'done', null, {
+    pages: 2, sources: [{ host: 'www.example.com', url: 'https://www.example.com/a' }, { host: 'example.com', url: 'https://example.com/b' }],
+  }), CTX).detail).toBe('2 pages: example.com');
+  expect(toolLine(step('web_search', 'done', null, { pages: 0, sources: [] }), CTX)).toMatchObject({ sentence: 'Searched the web', detail: null });
+  for (const code of ['max_uses_exceeded', 'too_many_requests', 'invalid_tool_input', 'query_too_long', 'request_too_large', 'unavailable']) {
+    expect(toolLine(step('web_search', 'error', null, { code }), CTX)).toMatchObject({ status: 'Couldn’t search', sentence: 'Couldn’t search the web', detail: null });
+    expect(viewRows(null, { code }, 'web_search')).toEqual([]);
+  }
+  // The opened card has nothing more to show: no rows and no links, so the row never opens.
+  expect(viewRows(null, found, 'web_search')).toEqual([]);
+});
+
+test('a web search still running when its reply ended never finished, and says so; while the reply streams it is searching', () => {
+  expect(toolLine(step('web_search', 'running'), CTX, true))
+    .toMatchObject({ status: 'Stopped', object: 'before the search finished', sentence: 'Stopped before the search finished', detail: null, sources: [] });
+  expect(toolLine(step('web_search', 'running'), CTX, false).sentence).toBe('Searching the web');
+  // A search that finished keeps its words, and other tools keep theirs.
+  expect(toolLine(step('web_search', 'done', null, { pages: 1, sources: [] }), CTX, true).sentence).toBe('Searched the web');
+  expect(toolLine(step('web_search', 'error', null, { code: 'unavailable' }), CTX, true).sentence).toBe('Couldn’t search the web');
+  expect(toolLine(step('list_notes', 'running'), CTX, true).sentence).toBe('Reading your notes');
+});
+
+test('a web search is public web pages in the Based on line, unless it found none, and adds nothing to what TownwiseAI reads', () => {
+  const notes = step('list_notes', 'done', null, { count: 2 });
+  const found = { pages: 9, sources: [{ host: 'example.org', url: 'https://example.org/road' }] };
+  expect(basedOnLine([notes, step('web_search', 'done', null, found), step('web_search', 'done', null, found)], CTX))
+    .toBe('Based on your 2 notes and public web pages.');
+  expect(basedOnLine([step('web_search', 'done', null, { pages: 0, sources: [] })], CTX)).toBe('Based on this conversation only.');
+  expect(basedOnLine([step('web_search', 'error', null, { code: 'unavailable' }), step('web_search', 'running')], CTX)).toBe('Based on this conversation only.');
+  expect(readsLine(CTX)).not.toMatch(/web/);
+});
+
+test('start_calibration’s web_turn (D37) reads as words beside file_turn, never as the code', () => {
+  const refused = { started: false, status: null, code: 'web_turn' };
+  expect(toolLine(step('start_calibration', 'done', null, refused), CTX))
+    .toMatchObject({ sentence: 'Didn’t start a forecast calibration', detail: 'It can’t start in a conversation that read web pages' });
+  expect(toolLine(step('start_calibration', 'done', null, { ...refused, code: 'file_turn' }), CTX).detail).toBe('It can’t start in a reply that read a file from Your data');
+  expect(viewRows(null, refused, 'start_calibration')).toEqual([
+    { term: 'Started', value: 'No' }, { term: 'Reason', value: 'It can’t start in a conversation that read web pages' },
+  ]);
+});

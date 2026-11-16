@@ -48,10 +48,14 @@ test('a file Your data already has is ready, as the copy the server kept (409 fi
   expect(chipOf(upload('refused', { error: { code: 'storage_full', detail: { fileId: 'x' } } })).state).toBe('failed');
 });
 
-test('a kind TownwiseAI can’t read yet still attaches, and its chip says so', () => {
+test('a PDF, Word or Excel file shows its kind; a kind TownwiseAI can’t read still attaches, and its chip says so', () => {
   const pdf = chipOf(upload('done', { name: 'menu.pdf', file: fileViewOf('f1', { kind: 'pdf' }) }));
-  expect(chipLine(pdf)).toBe('TownwiseAI can’t read PDFs yet');
-  expect(chipLine(chipOf(upload('done', { name: 'hours.docx', file: fileViewOf('f1', { kind: 'docx' }) })))).toBe('TownwiseAI can’t read Word files yet');
+  expect(chipLine(pdf)).toBe('PDF');
+  expect(chipLine(chipOf(upload('done', { name: 'hours.docx', file: fileViewOf('f1', { kind: 'docx' }) })))).toBe('Word file');
+  expect(chipLine(chipOf(upload('done', { name: 'book.xlsx', file: fileViewOf('f1', { kind: 'xlsx' }) })))).toBe('Excel file');
+  expect(chipLine(chipOf(upload('done', { name: 'old.doc', file: fileViewOf('f1', { kind: 'doc' }) })))).toBe('TownwiseAI can’t read .doc files; save it as .docx');
+  expect(chipLine(chipOf(upload('done', { name: 'old.xls', file: fileViewOf('f1', { kind: 'xls' }) })))).toBe('TownwiseAI can’t read .xls files; save it as .xlsx');
+  expect(chipLine(chipOf(upload('done', { name: 'week.zip', file: fileViewOf('f1', { kind: 'zip' }) })))).toBe('TownwiseAI can’t read ZIP files yet');
   expect(chipLine(chipOf(upload('done', { name: 'photo.heic', file: fileViewOf('f1', { kind: 'other' }) })))).toBe('TownwiseAI can’t read this kind of file yet');
   expect(chipLine(chipOf(upload('done', { name: 'patio.png', file: fileViewOf('f1', { kind: 'other' }) })))).toBe('Picture');
 });

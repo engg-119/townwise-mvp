@@ -5,7 +5,7 @@ import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 're
 import { aboutDraft, orderDraft } from '../../../../../../src/chat/about';
 import { openQuestions, useAgentPanel, type SendToChat } from '../../../../../../src/chat/useAgentPanel';
 import { useTuningChat } from '../../../../../../src/chat/useTuningChat';
-import { AgentChat, type AgentChatContext, type AgentChatHandle } from '../../../../../../src/chat/ui/AgentChat';
+import { AgentChat, landingShowsQuestions, type AgentChatContext, type AgentChatHandle } from '../../../../../../src/chat/ui/AgentChat';
 import { AgentSidePanel } from '../../../../../../src/chat/ui/AgentSidePanel';
 import { PanelSheet } from '../../../../../../src/chat/ui/PanelSheet';
 import { questionChatOf } from '../../../../../../src/chat/ui/QuestionCard';
@@ -25,7 +25,9 @@ import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
 // P25 TownwiseAI (/locations/[locationId]/agent, members; spec 16.3, D26): the chat page and its panel, Questions
 // and activity (Questions for you, What it's been doing, the budget, How TownwiseAI works). The panel is closed by
 // default and its open state lives here, in memory. Open from 1024px, the chat takes columns 1 to 8 and the panel 9 to
-// 12, scrolling on its own; closed, the chat takes 1 to 12. Below 1024px the panel is a full-screen sheet. The chat
+// 12, scrolling on its own; closed, the chat takes 1 to 12. Beside an empty conversation's landing, which lists the
+// questions under its chips, the column leaves Questions for you out (owner request, 2026-11-15); the sheet, drawn over
+// the landing, keeps them. Below 1024px the panel is a full-screen sheet. The chat
 // is drawn in the same place either way, so opening the panel never redraws it. The page has no header of its own: the
 // chat header is the first thing under the portal's top bar and the chat fills the rest of the screen, with a
 // visually hidden h1, TownwiseAI, for screen readers.
@@ -136,6 +138,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
     };
     view.tell(message, { started, ended }, desktop);
   };
+  const column = desktop && panelOpen;
   const sections = (
     <AgentSidePanel
       panel={panel}
@@ -148,9 +151,9 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       send={tellFromPanel}
       about={about.state}
       onRetryAbout={about.reload}
+      showQuestions={!(column && landingShowsQuestions(chat.state, panel))}
     />
   );
-  const column = desktop && panelOpen;
 
   return (
     <View

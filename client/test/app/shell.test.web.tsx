@@ -13,6 +13,7 @@ import {
   type FakePortalApi,
 } from '../helpers/portal';
 import { choicesOf, choose, groupsOf } from '../helpers/select';
+import { moreButton, openMore } from '../helpers/topBar';
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -64,7 +65,8 @@ test('the client app marks where you are in the top bar; the header names the lo
   renderAt('/locations/l1/notes', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
   expect(await screen.findByText('Main Street Bar, Hanover, NH')).toBeTruthy();
   const main = screen.getByRole('navigation', { name: 'Main' });
-  expect(within(main).getByRole('link', { name: 'Notes' }).getAttribute('aria-current')).toBe('page');
+  expect(within(main).queryByRole('link', { name: 'Notes' })).toBeNull();
+  expect(within(openMore()).getByRole('link', { name: 'Notes' }).getAttribute('aria-current')).toBe('page');
   expect(within(main).getByRole('link', { name: 'Home' }).getAttribute('aria-current')).toBeNull();
   expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Notes']);
   expect(screen.getByRole('link', { name: 'All locations' }).getAttribute('href')).toBe('/dashboard');
@@ -74,6 +76,8 @@ test('the client app marks where you are in the top bar; the header names the lo
   choose(switcher, 'River Grill');
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l2/notes'); });
   expect(await screen.findByText('River Grill, Norwich, VT')).toBeTruthy();
+  // Another location closes More.
+  expect(moreButton().getAttribute('aria-expanded')).toBe('false');
   expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/locations/l2');
 });
 
@@ -87,7 +91,7 @@ test('the last location opened is kept in memory only: the sections open it from
     await waitFor(() => { expect(window.location.pathname).toBe('/team'); });
     const main = screen.getByRole('navigation', { name: 'Main' });
     expect(within(main).getByRole('link', { name: 'Home' }).getAttribute('href')).toBe('/locations/l2');
-    expect(within(main).getByRole('link', { name: 'Your data' }).getAttribute('href')).toBe('/locations/l2/data');
+    expect(within(openMore()).getByRole('link', { name: 'Your data' }).getAttribute('href')).toBe('/locations/l2/data');
     expect(setItem).not.toHaveBeenCalled();
     expect(document.cookie).toBe(cookie);
   } finally {
@@ -161,7 +165,7 @@ test('open as admin: the banner is on every page; End opens the console with the
   api.answers['/api/admin/view-as/end'] = () => staffMe();
   renderAt('/dashboard', api);
   const banner = await screen.findByRole('region', { name: 'Townwise staff setup' });
-  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. This ends when someone joins.')).toBeTruthy();
+  expect(within(banner).getByText('You’re setting up Test Group as Townwise staff. Its admins see each change you make in their Townwise staff activity.')).toBeTruthy();
   await waitFor(() => { expect(document.title).toBe('Setting up Test Group · Townwise'); });
   const nav = screen.getByRole('navigation', { name: 'Main' });
   expect(within(nav).queryByRole('link', { name: 'Team' })).toBeNull();
@@ -171,8 +175,10 @@ test('open as admin: the banner is on every page; End opens the console with the
   fireEvent.click(within(nav).getByRole('link', { name: 'Home' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1'); });
   expect(screen.getByRole('region', { name: 'Townwise staff setup' })).toBeTruthy();
-  fireEvent.click(within(nav).getByRole('link', { name: 'Notes' }));
+  fireEvent.click(within(openMore()).getByRole('link', { name: 'Notes' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/notes'); });
+  // Following one of its links closes More.
+  expect(moreButton().getAttribute('aria-expanded')).toBe('false');
   const shown = screen.getByRole('region', { name: 'Townwise staff setup' });
   fireEvent.click(within(shown).getByRole('button', { name: 'End' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
@@ -242,7 +248,7 @@ test('Waiting draws the town’s chart on web, with its summary and the numbers'
   expect(screen.queryByText('See the chart at townwise.tech.')).toBeNull();
   fireEvent.click(screen.getByRole('button', { name: /Show the numbers/ }));
   expect(screen.getByRole('button', { name: /Show the numbers/ }).getAttribute('aria-expanded')).toBe('true');
-  expect(screen.getByRole('region', { name: 'Numbers: Lamoille County and the Northeast, 2024' })).toBeTruthy();
+  expect(screen.getByRole('region', { name: 'Numbers: Lamoille County and the Northeast, 2025' })).toBeTruthy();
 });
 
 test('Request access on web: the Town field is a select grouped as the homepage lists the towns', async () => {

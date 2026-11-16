@@ -10,6 +10,7 @@ import { Panel } from '../ui/layout';
 import { Select } from '../ui/Select';
 import { Small } from '../ui/text';
 import type { OrderSetupAnswer } from './api';
+import type { ItemMark } from './proposal';
 import {
   CATEGORY_OPTIONS, EMPTY_DELIVERY, EMPTY_POS_NAME, fieldId, SETUP_LIMITS, UNIT_OPTIONS, WEEKDAY_OPTIONS, type DeliveryDraft, type ItemDraft,
   type PosNameDraft, type SetupProblems, type SupplierDraft,
@@ -19,7 +20,8 @@ import { amount } from './words';
 // One supplier and one item of the Ordering setup page (Setup.tsx): every field of the draft, with the messages its
 // last Save found, and, for a stored item, its latest count and whether item sales matched it. A delivery's and a
 // point-of-sale name's fields are named with their number ("Delivery day 2"), as their Remove buttons are. Under
-// view-as and while a save runs, every field is read-only and every button disabled in place.
+// view-as and while a save runs, every field is read-only and every button disabled in place. A TownwiseAI read's mark
+// (D41) takes the place of its field's helper, so the field's aria-describedby names it.
 
 export const SERVINGS_HINT = 'How many servings one unit holds: a case of 24 cans is 24; a half-barrel keg is about 124 sixteen-ounce pints.';
 
@@ -161,11 +163,13 @@ export function ItemPanel(props: {
   suppliers: readonly SupplierDraft[];
   problems: SetupProblems;
   status: Status;
+  /** What a TownwiseAI read marked on this item: an estimated servings value, a name not in the file. */
+  mark: ItemMark | undefined;
   lock: RowLock;
   onChange: (next: ItemDraft) => void;
   onRemove: () => void;
 }): React.JSX.Element {
-  const { item, problems, lock } = props;
+  const { item, problems, lock, mark } = props;
   const set = (patch: Partial<ItemDraft>): void => { props.onChange({ ...item, ...patch }); };
   const setPos = (at: number, patch: Partial<PosNameDraft>): void => {
     set({ posNames: item.posNames.map((pos, index) => (index === at ? { ...pos, ...patch } : pos)) });
@@ -178,7 +182,13 @@ export function ItemPanel(props: {
     <Panel label={`Item ${String(props.index + 1)}`}>
       <View style={styles.row}>
         <View style={styles.wide}>
-          <FormField label="Item name" value={item.name} onChangeText={(name) => { set({ name }); }} {...field('name')} />
+          <FormField
+            label="Item name"
+            {...(mark?.name === undefined ? {} : { helper: mark.name.text })}
+            value={item.name}
+            onChangeText={(name) => { set({ name }); }}
+            {...field('name')}
+          />
         </View>
         <View style={styles.cell}>
           <Select
@@ -217,7 +227,7 @@ export function ItemPanel(props: {
         <View style={styles.wide}>
           <FormField
             label="Servings per unit"
-            helper={SERVINGS_HINT}
+            helper={mark?.servings?.text ?? SERVINGS_HINT}
             numeric
             keyboardType="decimal-pad"
             value={item.servingsPerUnit}

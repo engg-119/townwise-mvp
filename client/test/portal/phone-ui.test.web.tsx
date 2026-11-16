@@ -9,7 +9,7 @@ import { clientNav } from '../../src/portal/routing';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles';
 import { TopBar } from '../../src/portal/shell/TopBar';
 import { LinkButton } from '../../src/portal/ui/Button';
-import { DataTable, MIN_FLEX_WIDTH, type Column } from '../../src/portal/ui/DataTable';
+import { DataTable, MIN_FLEX_WIDTH, RowLink, type Column } from '../../src/portal/ui/DataTable';
 import { Notice } from '../../src/portal/ui/feedback';
 import { Select } from '../../src/portal/ui/Select';
 import { theme } from '../../src/theme';
@@ -59,6 +59,8 @@ function hover(element: Element): void {
 const RAISED = theme.color.raised;
 const LINE = theme.color.line;
 const WHITE = theme.color.white;
+const TEXT2 = theme.color.text2;
+const PANEL = theme.color.panel;
 
 test('LinkButton keeps its box through Link asChild: 44px tall, the outline’s 1px line, white on hover', () => {
   renderLinked(
@@ -93,12 +95,49 @@ test('on a phone the sections take one row in a focusable region that scrolls si
   expect(style(parentOf(nav)).paddingLeft).toBe('16px');
   expect(style(nav).flexWrap).toBe('nowrap');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Team', 'Settings',
   ]);
-  const notes = within(nav).getByRole('link', { name: 'Notes' });
+  // Notes, Rules, Town and Your data sit under More (D38), right after TownwiseAI; More is white while it holds the
+  // current page.
+  const more = within(nav).getByRole('button', { name: 'More' });
+  expect(within(nav).getByRole('link', { name: 'TownwiseAI' }).compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(style(within(more).getByText('More')).color).toBe(WHITE);
+  expect(more.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(more);
+  // On a phone its links take a row under the bar, outside the scroller, which would clip a dropdown.
+  expect(more.getAttribute('aria-expanded')).toBe('true');
+  const row = screen.getByRole('navigation', { name: 'More' });
+  expect(region.contains(row)).toBe(false);
+  expect(row.id).toBe(more.getAttribute('aria-controls'));
+  // The row is in the flow, so the bar is never lifted for it.
+  expect(style(screen.getByRole('banner')).zIndex).not.toBe('1');
+  expect(style(row).borderTopWidth).toBe('1px');
+  expect(within(row).getAllByRole('link').map((link) => link.textContent)).toEqual(['Notes', 'Rules', 'Town', 'Your data']);
+  const notes = within(row).getByRole('link', { name: 'Notes' });
   expect(notes.getAttribute('aria-current')).toBe('page');
   expect(style(notes).minHeight).toBe('44px');
-  expect(within(nav).getByRole('link', { name: 'Town' }).getAttribute('aria-current')).toBeNull();
+  expect(within(row).getByRole('link', { name: 'Town' }).getAttribute('aria-current')).toBeNull();
+  // In the flow it covers nothing, so a press or focus elsewhere leaves it open; Tab reaches it after Settings.
+  fireEvent.pointerDown(document.body);
+  act(() => { within(nav).getByRole('link', { name: 'Settings' }).focus(); });
+  expect(screen.getByRole('navigation', { name: 'More' })).toBeTruthy();
+  // Escape from one of its links closes it and hands focus back to More.
+  act(() => { notes.focus(); });
+  fireEvent.keyDown(notes, { key: 'Escape' });
+  expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
+  expect(document.activeElement).toBe(more);
+  expect(more.getAttribute('aria-expanded')).toBe('false');
+});
+
+test('More draws in the nav’s colors when nothing under it is current, and a press toggles it', () => {
+  renderBar('/locations/l1/agent');
+  const more = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('button', { name: 'More' });
+  expect(style(within(more).getByText('More')).color).toBe(TEXT2);
+  fireEvent.click(more);
+  expect(style(within(more).getByText('More')).color).toBe(WHITE);
+  fireEvent.click(more);
+  expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
+  expect(style(within(more).getByText('More')).color).toBe(TEXT2);
 });
 
 test.each([768, 1279])('at %ipx the sections wrap in a second row under a rule, with Team and Settings at its far end', (at) => {
@@ -110,6 +149,12 @@ test.each([768, 1279])('at %ipx the sections wrap in a second row under a rule, 
   expect(style(nav).flexWrap).toBe('wrap');
   expect(within(nav).getByRole('link', { name: 'Analytics' }).getAttribute('aria-current')).toBe('true');
   expect(style(parentOf(within(nav).getByRole('link', { name: 'Team' }))).marginLeft).toBe('auto');
+  // More drops its links down inside the nav, as from 1280px.
+  fireEvent.click(within(nav).getByRole('button', { name: 'More' }));
+  expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
+    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+  ]);
+  expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
 });
 
 test('from 1280px the nav sits in the bar, the sections then Team and Settings, before the email and Sign out', () => {
@@ -122,6 +167,66 @@ test('from 1280px the nav sits in the bar, the sections then Team and Settings, 
   expect(nav.compareDocumentPosition(email) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(parentOf(nav).contains(email)).toBe(true);
   expect(style(nav).flexGrow).toBe('1');
+  expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
+    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Team', 'Settings',
+  ]);
+  // The links sit `space-5` (20px) apart, not `space-6`, so at 1280px the organization name and the email keep
+  // their room (D38); Team and Settings follow suit.
+  expect(style(nav).columnGap).toBe('20px');
+  expect(style(parentOf(within(nav).getByRole('link', { name: 'Team' }))).columnGap).toBe('20px');
+});
+
+test('from 641px More is a dropdown: a square panel box over the page, inside the nav, that closes on Escape, a press or focus outside', () => {
+  setWidth(1280);
+  renderBar('/locations/l1/sales/upload');
+  const banner = screen.getByRole('banner');
+  const nav = within(banner).getByRole('navigation', { name: 'Main' });
+  const more = within(nav).getByRole('button', { name: 'More' });
+  // Closed, More names no container, and the bar stays level with the page, so a layer drawn in main (TownwiseAI's
+  // file drop) still covers it.
+  expect(more.hasAttribute('aria-controls')).toBe(false);
+  expect(style(banner).zIndex).not.toBe('1');
+  // Upload lives under Your data, so More holds the current page.
+  expect(style(within(more).getByText('More')).color).toBe(WHITE);
+  fireEvent.click(more);
+  // Open, the bar is lifted over the page, so the box, which hangs below it, paints over main.
+  expect(style(banner).zIndex).toBe('1');
+  const box = document.getElementById(more.getAttribute('aria-controls') ?? '');
+  if (box === null) throw new Error('no dropdown');
+  expect(nav.contains(box)).toBe(true);
+  expect(style(box).position).toBe('absolute');
+  expect(style(box).top).toBe('100%');
+  expect(style(box).backgroundColor).toBe(PANEL);
+  expect(style(box).borderTopWidth).toBe('1px');
+  expect(within(box).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href'), link.getAttribute('aria-current')])).toEqual([
+    ['Notes', '/locations/l1/notes', null], ['Rules', '/locations/l1/rules', null], ['Town', '/locations/l1/town', null],
+    ['Your data', '/locations/l1/data', 'true'],
+  ]);
+  // Its links follow More in the tab order, and a press on More or in the box keeps it open.
+  expect(more.compareDocumentPosition(within(box).getByRole('link', { name: 'Notes' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.pointerDown(within(box).getByRole('link', { name: 'Town' }));
+  expect(more.getAttribute('aria-expanded')).toBe('true');
+  // Escape from a link closes it and hands focus back to More.
+  const rules = within(box).getByRole('link', { name: 'Rules' });
+  act(() => { rules.focus(); });
+  fireEvent.keyDown(rules, { key: 'Escape' });
+  expect(more.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(more);
+  expect(style(banner).zIndex).not.toBe('1');
+  // A press outside closes it.
+  fireEvent.click(more);
+  fireEvent.pointerDown(document.body);
+  expect(more.getAttribute('aria-expanded')).toBe('false');
+  // So does focus moving on past it, and focus stays where it went.
+  fireEvent.click(more);
+  const team = within(nav).getByRole('link', { name: 'Team' });
+  act(() => { team.focus(); });
+  expect(more.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(team);
+  // An Escape meant for something else leaves it alone.
+  fireEvent.click(more);
+  fireEvent.keyDown(document.body, { key: 'Escape' });
+  expect(more.getAttribute('aria-expanded')).toBe('true');
 });
 
 test('without a location the bar keeps its 900px wrap: Team and Settings sit in the bar', () => {
@@ -130,6 +235,8 @@ test('without a location the bar keeps its 900px wrap: Team and Settings sit in 
   const nav = within(screen.getByRole('banner')).getByRole('navigation', { name: 'Main' });
   expect(style(parentOf(nav)).borderTopWidth).not.toBe('1px');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Team', 'Settings']);
+  // Without a location's sections the links keep `space-6`.
+  expect(style(nav).columnGap).toBe('24px');
 });
 
 test('the console’s status filters: 44px links in a row, the selected one filled, inside the margins', () => {
@@ -202,6 +309,23 @@ test('from 641px to 1023px a table keeps a minimum width, so its focusable regio
   const rows = within(region).getAllByRole('row');
   expect(style(nth(rows, -2)).borderBottomWidth).toBe('1px');
   expect(style(nth(rows, -1)).borderBottomWidth).toBe('0px');
+});
+
+test('a row with an href opens it from a press anywhere on it, on phones too, and its RowLink is its one tab stop', async () => {
+  const rows = ROWS.map((row, index) => (index === 0 ? { ...row, href: '/other', cells: { ...row.cells, name: <RowLink href="/other" label={row.cells.name} /> } } : row));
+  renderLinked(<DataTable label="Organizations" columns={COLUMNS} rows={rows} />);
+  const items = within(screen.getByRole('region', { name: 'Organizations' })).getAllByRole('listitem');
+  const link = within(nth(items, 0)).getByRole('link', { name: 'Harbor Light Chowder House' });
+  expect([link.tagName, link.getAttribute('href'), nth(items, 0).tabIndex]).toEqual(['A', '/other', -1]);
+  // A row with no href is as it was: no link.
+  expect(within(nth(items, 1)).queryByRole('link')).toBeNull();
+  fireEvent.focus(link);
+  expect(style(nth(items, 0)).backgroundColor).toBe(RAISED);
+  await act(async () => {
+    fireEvent.click(within(nth(items, 0)).getByText('445'));
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+  });
+  expect(window.location.pathname).toBe('/other');
 });
 
 test('a selected last row keeps its whole outline', () => {

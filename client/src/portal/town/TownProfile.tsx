@@ -7,7 +7,7 @@ import { useBreakpoint } from '../hooks';
 import type { Town } from '../schemas';
 import {
   CAVEATS, DATA_YEAR, INDEX_DEFINITION, KIND_LABEL, MONTHS, PATTERN_LABEL, SOURCES, dateRange, northeastSeries,
-  notResearchedLine, patternGap, townProfile, townSentences, type TownProfileData,
+  notResearchedLine, patternGap, townProfile, townSentences, type MeasuredProfile, type TownProfileData,
 } from '../towns';
 import { DataTable } from '../ui/DataTable';
 import { StatusTag } from '../ui/feedback';
@@ -17,11 +17,12 @@ import { Eyebrow, Heading, Mono, Small } from '../ui/text';
 import { TownChart } from './TownChart';
 
 // A town's public profile (spec Section 13), for Waiting (P4) and the Town tab (P15), from the bundled data:
-// the kind tag, the anchor note, the county it is measured across, its 2024 food-service employment pattern
+// the kind tag, the anchor note, the county it is measured across, its 2025 food-service employment pattern
 // against the Northeast (the chart on web; its text summary and “Show the numbers” everywhere), the drivers and
 // key dates with their sources, the caveats, the index definition and the source (each link a source chip,
 // ui/SourceChip.tsx; the BLS sentence is text). County, not town; employment, not sales. A town outside the twelve
-// gets the honest gap line and no chart.
+// gets the honest gap line and no chart; one whose county BLS did not publish for the whole year says why in place of
+// its pattern, with no chart, numbers or sentences.
 
 const BLS_SOURCES = SOURCES.filter((source) => source.url.startsWith('https://www.bls.gov/'));
 
@@ -30,7 +31,7 @@ function Sources(props: { urls: readonly string[] }): React.JSX.Element | null {
   return <SourceChips sources={props.urls.map((url) => ({ url }))} />;
 }
 
-function Numbers(props: { profile: TownProfileData }): React.JSX.Element {
+function Numbers(props: { profile: MeasuredProfile }): React.JSX.Element {
   const { series, county } = props.profile;
   const [open, setOpen] = useState(false);
   return (
@@ -99,7 +100,7 @@ function Notes(props: { profile: TownProfileData }): React.JSX.Element {
       {drivers.length > 0 && dates.length === 0 ? <Small>{`No key dates are researched for ${name} yet.`}</Small> : null}
       <Stack gap={12}>
         {CAVEATS.map((caveat) => <Text key={caveat} style={styles.fine}>{caveat}</Text>)}
-        <Text style={styles.fine}>{`Curve: ${String(DATA_YEAR)} employment.`}</Text>
+        {profile.series === null ? null : <Text style={styles.fine}>{`Curve: ${String(DATA_YEAR)} employment.`}</Text>}
         <Text style={styles.fine}>
           {`Source: U.S. Bureau of Labor Statistics, QCEW, private food services and drinking places (NAICS 722), ${profile.county}, ${String(DATA_YEAR)}.`}
         </Text>
@@ -111,7 +112,7 @@ function Notes(props: { profile: TownProfileData }): React.JSX.Element {
 }
 
 /** The swatch, the pattern's name and its biggest gap with the region, the signed delta in mono (spec 15.7). */
-export function PatternLine(props: { profile: TownProfileData }): React.JSX.Element {
+export function PatternLine(props: { profile: MeasuredProfile }): React.JSX.Element {
   const { profile } = props;
   const { phone } = useBreakpoint();
   const gap = patternGap(profile);
@@ -155,19 +156,25 @@ export function TownProfile(props: { town: Town; heading: string }): React.JSX.E
       </View>
       <View style={styles.intro}>
         <Small>{profile.note}</Small>
-        <Small>{`Measured across ${profile.county}, ${String(DATA_YEAR)}.`}</Small>
-        <PatternLine profile={profile} />
-      </View>
-      <Columns
-        main={(
-          <Stack gap={8}>
-            <TownChart profile={profile} />
-            <Text style={styles.fine}>County level. Jobs stand in for demand; they are not sales.</Text>
-            <Numbers profile={profile} />
-          </Stack>
+        {profile.series === null ? <Small>{profile.seriesUnavailable}</Small> : (
+          <>
+            <Small>{`Measured across ${profile.county}, ${String(DATA_YEAR)}.`}</Small>
+            <PatternLine profile={profile} />
+          </>
         )}
-        side={<Stack gap={8}>{townSentences(profile).map((line) => <Small key={line}>{line}</Small>)}</Stack>}
-      />
+      </View>
+      {profile.series === null ? null : (
+        <Columns
+          main={(
+            <Stack gap={8}>
+              <TownChart profile={profile} />
+              <Text style={styles.fine}>County level. Jobs stand in for demand; they are not sales.</Text>
+              <Numbers profile={profile} />
+            </Stack>
+          )}
+          side={<Stack gap={8}>{townSentences(profile).map((line) => <Small key={line}>{line}</Small>)}</Stack>}
+        />
+      )}
       <Notes profile={profile} />
     </View>
   );

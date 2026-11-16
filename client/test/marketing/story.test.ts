@@ -1,8 +1,8 @@
 import { fmtSigned } from '../../src/marketing/format';
 import { bandEdges, CENTER_BAND, phoneBand, pickStep, rootMargin, sideOf, sideOfRect, type Side } from '../../src/marketing/map/band';
-import { mapTowns, MONTH_NAMES } from '../../src/marketing/map/mapState';
+import { mapTowns, measuredTowns, MONTH_NAMES } from '../../src/marketing/map/mapState';
 import {
-  biggestMove, cursorX, finale, flowOf, glyphOf, largest, markerBox, moveAt, moveSentence, NE_SPARK_D, placeTags, railFill, storyBox,
+  biggestMove, cursorX, finale, flowOf, glyphOf, largest, mapCaption, markerBox, moveAt, moveSentence, NE_SPARK_D, placeTags, railFill, storyBox,
   titleBox, topMovers, type Box,
 } from '../../src/marketing/map/story';
 
@@ -89,18 +89,18 @@ describe('the months', () => {
 
   test('the panel’s sentence names the month’s biggest move against the Northeast', () => {
     expect(MONTH_NAMES.map((_, month) => moveSentence(month))).toEqual([
-      'January starts the 2024 data, so there is no month before it to compare.',
-      'Biggest move since January: Ithaca, NY, +12.4 index points against the Northeast.',
-      'Biggest move since February: Hanover, NH, −7.9 index points against the Northeast.',
-      'Biggest move since March: Stowe, VT, −17.3 index points against the Northeast.',
-      'Biggest move since April: Nantucket, MA, +50.1 index points against the Northeast.',
-      'Biggest move since May: Nantucket, MA, +54.1 index points against the Northeast.',
-      'Biggest move since June: Nantucket, MA, +38.9 index points against the Northeast.',
-      'Biggest move since July: Nantucket, MA, −5.0 index points against the Northeast.',
-      'Biggest move since August: Nantucket, MA, −42.9 index points against the Northeast.',
-      'Biggest move since September: Nantucket, MA, −29.4 index points against the Northeast.',
-      'Biggest move since October: Nantucket, MA, −48.9 index points against the Northeast.',
-      'Biggest move since November: Bar Harbor, ME, −15.0 index points against the Northeast.',
+      'January starts the 2025 data, so there is no month before it to compare.',
+      'Biggest move since January: State College, PA, +11.9 index points against the Northeast.',
+      'Biggest move since February: North Elba, NY, −10.5 index points against the Northeast.',
+      'Biggest move since March: Stowe, VT, −16.3 index points against the Northeast.',
+      'Biggest move since April: Bar Harbor, ME, +39.2 index points against the Northeast.',
+      'Biggest move since May: Bar Harbor, ME, +35.8 index points against the Northeast.',
+      'Biggest move since June: Provincetown, MA, +20.3 index points against the Northeast.',
+      'Biggest move since July: Burlington, VT, +3.0 index points against the Northeast.',
+      'Biggest move since August: Provincetown, MA, −30.4 index points against the Northeast.',
+      'Biggest move since September: Provincetown, MA, −16.9 index points against the Northeast.',
+      'Biggest move since October: Bar Harbor, ME, −59.6 index points against the Northeast.',
+      'Biggest move since November: Stowe, VT, +15.7 index points against the Northeast.',
     ]);
     expect(biggestMove(0)).toBeNull();
   });
@@ -108,47 +108,47 @@ describe('the months', () => {
   test('a tie for the biggest move goes to the first in list order, by size whatever the sign', () => {
     expect(largest([{ id: 'a', delta: 3 }, { id: 'b', delta: -5 }, { id: 'c', delta: 5 }, { id: 'd', delta: 4.9 }])?.id).toBe('b');
     expect(largest([])).toBeNull();
-    expect(biggestMove(1)?.town.id).toBe('ithaca-ny');
+    expect(biggestMove(1)?.town.id).toBe('state-college-pa');
   });
 
   test('the value tags are each month’s three biggest movers, larger raw moves first', () => {
     const tags = (month: number): string[] => topMovers(month).map(({ town, delta }) => `${town.name} ${fmtSigned(delta)}`);
     expect(MONTH_NAMES.map((_, month) => tags(month))).toEqual([
       [],
-      ['Ithaca +12.4', 'Amherst +4.7', 'State College +4.7'],
-      ['Hanover −7.9', 'Middlebury −5.6', 'North Elba −5.3'],
-      ['Stowe −17.3', 'Bar Harbor +12.1', 'Nantucket +10.9'],
-      ['Nantucket +50.1', 'Bar Harbor +30.2', 'State College −16.5'],
-      ['Nantucket +54.1', 'Bar Harbor +37.9', 'Provincetown +32.5'],
-      ['Nantucket +38.9', 'North Elba +25.3', 'Provincetown +20.5'],
-      ['Nantucket −5.0', 'North Elba −2.9', 'Provincetown −2.4'],
-      ['Nantucket −42.9', 'Provincetown −31.0', 'North Elba −25.7'],
-      ['Nantucket −29.4', 'Bar Harbor −22.7', 'Provincetown −13.6'],
-      ['Nantucket −48.9', 'Bar Harbor −44.5', 'Provincetown −20.3'],
-      ['Bar Harbor −15.0', 'Stowe +14.1', 'North Elba +5.9'],
+      ['State College +11.9', 'Ithaca +9.0', 'Amherst +4.5'],
+      ['North Elba −10.5', 'Stowe −6.7', 'Burlington −5.1'],
+      ['Stowe −16.3', 'North Elba −13.4', 'Bar Harbor +6.9'],
+      ['Bar Harbor +39.2', 'Provincetown +20.3', 'State College −18.0'],
+      ['Bar Harbor +35.8', 'North Elba +29.0', 'Provincetown +27.2'],
+      ['Provincetown +20.3', 'Bar Harbor +18.4', 'North Elba +15.6'],
+      ['Burlington +3.0', 'Bar Harbor +2.6', 'North Elba −2.5'],
+      ['Provincetown −30.4', 'Conway −20.1', 'State College +18.2'],
+      ['Provincetown −16.9', 'Bar Harbor −13.8', 'Amherst +4.2'],
+      ['Bar Harbor −59.6', 'North Elba −20.8', 'Provincetown −19.5'],
+      ['Stowe +15.7', 'Bar Harbor −10.9', 'North Elba +6.6'],
     ]);
   });
 
   test('job flows: one particle per 4 points, at most 6 a town, none under 1 point', () => {
-    const totals = MONTH_NAMES.map((_, month) => mapTowns.reduce((sum, town, index) => sum + (flowOf(index, moveAt(town.series.gap, month))?.points.length ?? 0), 0));
-    expect(totals).toEqual([0, 15, 18, 25, 29, 44, 38, 10, 44, 25, 32, 17]);
+    const totals = MONTH_NAMES.map((_, month) => measuredTowns.reduce((sum, town, index) => sum + (flowOf(index, moveAt(town.series.gap, month))?.points.length ?? 0), 0));
+    expect(totals).toEqual([0, 16, 13, 24, 28, 38, 30, 9, 34, 17, 30, 15]);
     for (let month = 0; month < 12; month += 1) {
-      for (const [index, town] of mapTowns.entries()) expect(flowOf(index, moveAt(town.series.gap, month))?.points.length ?? 0).toBeLessThanOrEqual(6);
+      for (const [index, town] of measuredTowns.entries()) expect(flowOf(index, moveAt(town.series.gap, month))?.points.length ?? 0).toBeLessThanOrEqual(6);
     }
     expect(flowOf(3, 0.99)).toBeNull();
-    // Ithaca (third in the list) in February: +12.4, so 4 particles pulling in, 24px out, a quarter turn apart.
-    expect(flowOf(2, 12.4)).toEqual({ dir: 'in', points: [{ a: 46, d: 24, j: 0 }, { a: 136, d: 24, j: 1 }, { a: 226, d: 24, j: 2 }, { a: 316, d: 24, j: 3 }] });
+    // State College (sixth in the list) in February: +11.9, so 3 particles pulling in, 24px out, a third of a turn apart.
+    expect(flowOf(5, 11.9)).toEqual({ dir: 'in', points: [{ a: 115, d: 24, j: 0 }, { a: 235, d: 24, j: 1 }, { a: 355, d: 24, j: 2 }] });
     expect(flowOf(0, -50)).toEqual({ dir: 'out', points: Array.from({ length: 6 }, (_, j) => ({ a: j * 60, d: 40, j })) });
   });
 
   test('with reduced motion a + or − marks each move of 4 points or more', () => {
-    const counts = MONTH_NAMES.map((_, month) => mapTowns.filter((town) => glyphOf(moveAt(town.series.gap, month)) !== null).length);
-    expect(counts).toEqual([0, 3, 6, 7, 6, 10, 9, 1, 10, 5, 6, 3]);
+    const counts = MONTH_NAMES.map((_, month) => measuredTowns.filter((town) => glyphOf(moveAt(town.series.gap, month)) !== null).length);
+    expect(counts).toEqual([0, 4, 4, 8, 6, 10, 7, 0, 9, 3, 6, 5]);
     expect([glyphOf(4), glyphOf(-4), glyphOf(3.99)]).toEqual(['+', '−', null]);
   });
 
   test('the Northeast sparkline, the cursor and the rail', () => {
-    expect(NE_SPARK_D).toBe('M0 38 L10.91 36.26 L21.82 30.33 L32.73 24.01 L43.64 11.73 L54.55 2 L65.45 7.2 L76.36 8.24 L87.27 13.93 L98.18 18.36 L109.09 22.37 L120 20.87');
+    expect(NE_SPARK_D).toBe('M0 37.25 L10.91 38 L21.82 31.27 L32.73 25.52 L43.64 9.78 L54.55 2 L65.45 6.43 L76.36 5.65 L87.27 12.86 L98.18 16.05 L109.09 21.5 L120 21.99');
     expect(MONTH_NAMES.map((_, month) => cursorX(month))).toEqual([0, 10.91, 21.82, 32.73, 43.64, 54.55, 65.45, 76.36, 87.27, 98.18, 109.09, 120]);
     expect(railFill(0)).toBeCloseTo(1 / 12);
     expect(railFill(11)).toBe(1);
@@ -156,13 +156,37 @@ describe('the months', () => {
 
   test('the final step is the reader’s month, with the counties furthest above and below, from the data', () => {
     expect(finale(10)).toEqual({
-      title: 'November, this month in 2024.',
-      line: 'Centre County sat 7.2 index points above the Northeast; Nantucket County, 32.7 below.',
+      title: 'November, this month in 2025.',
+      line: 'Centre County sat 10.8 index points above the Northeast; Hancock County, 27.3 below.',
     });
     expect(finale(6)).toEqual({
-      title: 'July, this month in 2024.',
-      line: 'Nantucket County sat 93.5 index points above the Northeast; Centre County, 15.4 below.',
+      title: 'July, this month in 2025.',
+      line: 'Hancock County sat 56.3 index points above the Northeast; Centre County, 14.1 below.',
     });
+  });
+
+  // BLS withheld Nantucket County for 2025 Q2: the town stays on the map and in the list, with no series, so it never
+  // moves, takes a value tag or ends the story, and its dot keeps the smallest size.
+  test('a town without a series never moves, tags or ends the story', () => {
+    const nantucket = mapTowns.find((town) => town.id === 'nantucket-ma');
+    expect(nantucket).toMatchObject({ series: null, pattern: null, group: 'seasonalEvent', seriesUnavailable: 'BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.' });
+    expect(mapTowns).toHaveLength(12);
+    expect(measuredTowns.map((town) => town.id)).toEqual(mapTowns.filter((town) => town.id !== 'nantucket-ma').map((town) => town.id));
+    const text = MONTH_NAMES.flatMap((_, month) => [moveSentence(month), finale(month).line, ...topMovers(month).map(({ town }) => town.name), ...[...placeTags(month, 732).values()].map((tag) => tag.text)]).join(' ');
+    expect(text).not.toMatch(/Nantucket/);
+    if (nantucket === undefined) throw new Error('no Nantucket');
+    for (const month of [0, 6, 10]) {
+      const [left, , right] = markerBox(nantucket, month, 732);
+      expect(right - left).toBeCloseTo(2 * 17 * 0.35);
+    }
+  });
+
+  // Only a town with an index for the year has a dot sized by its gap; the caption names any town without one.
+  test('the map caption says which dots are sized by their gap, and names a town with no index', () => {
+    expect(mapCaption(['Nantucket'], 2025)).toBe('Map of the nine Northeast states with twelve featured towns, each dot with a 2025 index sized by its county’s gap from the Northeast in the month shown. Nantucket has no 2025 index, so its dot is a grey ring. Use the town list below the map to explore each one.');
+    expect(mapCaption([], 2025)).toBe('Map of the nine Northeast states with twelve featured towns, each dot sized by its county’s gap from the Northeast in the month shown. Use the town list below the map to explore each one.');
+    expect(mapCaption(['Nantucket', 'Stowe'], 2025)).toContain('Nantucket and Stowe have no 2025 index, so their dots are grey rings.');
+    for (const text of [mapCaption(['Nantucket'], 2025), mapCaption([], 2025)]) expect(text).not.toMatch(/['"\u2013\u2014]/);
   });
 
   test('no generated sentence has an en or em dash, or says curve', () => {
@@ -218,9 +242,10 @@ describe('the pinned map', () => {
       }
       return shown;
     };
-    // A phone's map has room for fewer tags clear of the markers; from 580px nearly all of them fit.
-    for (const width of [358, 487]) expect(check(width, [])).toBeGreaterThanOrEqual(20);
-    for (const width of [580, 732, 939]) expect(check(width, [])).toBeGreaterThanOrEqual(30);
+    // A phone's map has room for fewer tags clear of the markers; from 580px nearly all of them fit. The floors are
+    // the 2025 data's counts (15 at 358 and 487px, 29 at 580px, of 33 movers); 2024's were 20 and 30.
+    for (const width of [358, 487]) expect(check(width, [])).toBeGreaterThanOrEqual(15);
+    for (const width of [580, 732, 939]) expect(check(width, [])).toBeGreaterThanOrEqual(29);
     expect(placeTags(0, 732).size).toBe(0);
     expect(placeTags(3, 0).size).toBe(0);
     // Flat and wide, the title reaches over the map's northwest corner: no tag lands on it.

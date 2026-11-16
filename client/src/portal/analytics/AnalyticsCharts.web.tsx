@@ -1,8 +1,8 @@
 import { theme } from '../../theme';
 import { formatCount } from '../format';
 import type { BarChartProps, EffectBarProps, LineChartProps } from './AnalyticsCharts';
-import type { TipBar } from './barTips';
-import { slotIndex } from './hoverMath';
+import type { ChartTip, TipBar } from './barTips';
+import { nearestIndex, slotIndex } from './hoverMath';
 import { ChartTooltip, useChartHover } from './ChartTooltip.web';
 import { MONTH_NAMES, metricNumber, metricText, type Metric } from './words';
 
@@ -10,9 +10,12 @@ import { MONTH_NAMES, metricNumber, metricText, type Metric } from './words';
 // chart is drawn: mint bars and lines, solid, 2px, square ends, on recessive `border` rules at 0, the middle and the
 // top of the scale, each with its count up the side, and the scale printed with "Scale fitted to this location."
 // Every SVG and count is aria-hidden: the section's summary, basis line and table carry
-// the same numbers. With more than one year, the newest is mint and the others `line` gray, each labeled with its
-// year at its end and in the key, so a year is never told by color alone. A mouse or pen over a vertical bar
-// highlights it and shows its tooltip (ChartTooltip.web.tsx); a bar may bring its own words (TipBar).
+// the same numbers. With more than one year, the newest is mint and solid and the others `line` gray, each with a dash
+// pattern of its own (YEAR_DASHES) and labeled with its year at its end and in the key, so a year is never told by
+// color alone. A mouse or pen over a vertical bar
+// highlights it and shows its tooltip (ChartTooltip.web.tsx); a bar may bring its own words (TipBar). Over the year
+// lines it marks the nearest month and shows each year's value there, newest first. The lines keep a gutter at the
+// right (END_GUTTER) so December's year label stays inside the chart's box at any width.
 
 const C = theme.color;
 const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', color: C.text3, fontVariantNumeric: 'tabular-nums' } as const;
@@ -37,6 +40,9 @@ function Scale(props: { top: number; metric: Metric }): React.JSX.Element {
 
 /** Room at the left for the counts up the side, as the Sales data chart has. */
 const GUTTER = 72;
+
+/** Room at the right of the year lines for a year label at December: 6px out, then 4 mono digits (29px at 12px). */
+const END_GUTTER = 40;
 
 /**
  * The top of the scale, its middle and 0. `scaleTop` makes the middle a round number, except under 2.5 times a
@@ -152,33 +158,69 @@ function endLabels(lines: LineChartProps['lines'], y: (value: number) => number)
   return labels;
 }
 
-/** One line per year over its months: average per day; a month that is not complete is a hollow point. */
+/**
+ * The dash of each year older than the newest, newest first: dashed as the Town chart's Northeast line, then dotted,
+ * then dash-dot, repeating. Drawn with butt ends, since square ends would close the gaps.
+ */
+export const YEAR_DASHES: readonly string[] = ['4 3', '2 3', '7 3 2 3'];
+
+/** A year's color and dash: the newest mint and solid, each older one `line` gray with the next of YEAR_DASHES. */
+export function yearStroke(year: number, years: readonly number[]): { color: string; dash: string | null } {
+  const rank = [...years].sort((a, b) => b - a).indexOf(year);
+  return rank <= 0 ? { color: C.mint, dash: null } : { color: C.line, dash: YEAR_DASHES[(rank - 1) % YEAR_DASHES.length] ?? null };
+}
+
+/** A key's 16px by 2px swatch of a year's line, its dashes drawn as a repeating gradient of the same lengths. */
+function Swatch(props: { color: string; dash: string | null }): React.JSX.Element {
+  let at = 0;
+  const stops = (props.dash ?? '').split(' ').filter(Boolean).map((length, index) => {
+    const from = at;
+    at += Number(length);
+    return `${index % 2 === 0 ? props.color : 'transparent'} ${String(from)}px ${String(at)}px`;
+  });
+  const background = props.dash === null ? props.color : `repeating-linear-gradient(to right, ${stops.join(', ')})`;
+  return <span data-swatch="" style={{ display: 'inline-block', width: 16, height: 2, background }} />;
+}
+
+/**
+ * One line per year over its months: average per day; a month that is not complete is a hollow point, and a complete
+ * month with no month beside it a solid one.
+ */
 export function LineChart(props: LineChartProps): React.JSX.Element | null {
+  const width = 300;
+  const inset = 6;
+  const [hover, bind] = useChartHover((fraction) => {
+    const index = nearestIndex((fraction * width - inset) / (width - 2 * inset), 12);
+    return index !== null && props.lines.some((line) => (line.points[index] ?? null) !== null) ? index : null;
+  });
   const values = props.lines.flatMap((line) => line.points.map((point) => point?.value ?? null));
   if (values.every((value) => value === null)) return null;
   const top = scaleTop(maxOf(values));
-  const width = 300;
-  const inset = 6;
   const x = (month: number): number => inset + ((month - 1) / 11) * (width - 2 * inset);
   const y = (value: number): number => inset + (1 - value / top) * (HEIGHT - 2 * inset);
-  const newest = Math.max(...props.lines.map((line) => line.year));
-  const color = (year: number): string => (year === newest ? C.mint : C.line);
+  const years = props.lines.map((line) => line.year);
+  const color = (year: number): string => yearStroke(year, years).color;
   const ticked = ticks(top, props.metric);
+  const tip = hover.index === null ? null : monthTip(props.lines, hover.index, props.metric);
+  const plot = { marginLeft: GUTTER, marginRight: END_GUTTER };
   return (
     <div style={{ display: 'grid', gap: 8 }}>
       <div aria-hidden="true" style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
         {props.lines.map((line) => (
-          <span key={line.year} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${color(line.year)}` }} />{line.year}
+          <span key={line.year} data-year={line.year} style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <Swatch {...yearStroke(line.year, years)} />{line.year}
           </span>
         ))}
         <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
           <span style={{ display: 'inline-block', width: 8, height: 8, boxSizing: 'border-box', border: `2px solid ${C.line}`, borderRadius: 4 }} />Month not complete
         </span>
       </div>
-      <div style={{ position: 'relative', height: HEIGHT, marginLeft: GUTTER }}>
-        <svg viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', overflow: 'visible' }}>
+      <div style={{ position: 'relative', height: HEIGHT, ...plot }}>
+        <svg {...bind} viewBox={`0 0 ${String(width)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', display: 'block', overflow: 'visible' }}>
           <path d={rulesPath(ticked, y, width)} stroke={C.border} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          {hover.index === null || tip === null ? null : (
+            <path data-hover="month" d={`M${x(hover.index + 1).toFixed(2)} 0 V${String(HEIGHT)}`} stroke={C.line} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          )}
           {[...props.lines].sort((a, b) => a.year - b.year).map((line) => {
             const parts: string[] = [];
             let open = false;
@@ -187,12 +229,27 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
               parts.push(`${open ? 'L' : 'M'}${x(index + 1).toFixed(2)} ${y(point.value).toFixed(2)}`);
               open = true;
             });
+            const { dash } = yearStroke(line.year, years);
             return (
-              <g key={line.year}>
-                <path d={parts.join(' ')} fill="none" stroke={color(line.year)} strokeWidth={2} strokeLinecap="square" strokeLinejoin="miter" vectorEffect="non-scaling-stroke" />
+              <g key={line.year} data-year={line.year}>
+                <path
+                  d={parts.join(' ')}
+                  fill="none"
+                  stroke={color(line.year)}
+                  strokeWidth={2}
+                  strokeLinecap={dash === null ? 'square' : 'butt'}
+                  strokeLinejoin="miter"
+                  vectorEffect="non-scaling-stroke"
+                  {...(dash === null ? {} : { strokeDasharray: dash })}
+                />
                 {line.points.map((point, index) => {
-                  if (point === null || point.complete) return null;
+                  if (point === null) return null;
                   const d = `M${x(index + 1).toFixed(2)} ${y(point.value).toFixed(2)} h0.01`;
+                  // A complete month with no month beside it has no line to sit on, so it is a dot of its own.
+                  const lone = (line.points[index - 1] ?? null) === null && (line.points[index + 1] ?? null) === null;
+                  if (point.complete) {
+                    return lone ? <path key={index} data-lone="" d={d} stroke={color(line.year)} strokeWidth={6} strokeLinecap="round" vectorEffect="non-scaling-stroke" /> : null;
+                  }
                   return (
                     <g key={index}>
                       <path d={d} stroke={color(line.year)} strokeWidth={9} strokeLinecap="round" vectorEffect="non-scaling-stroke" />
@@ -214,8 +271,9 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
           </span>
         ))}
         <Counts values={ticked} metric={props.metric} y={y} />
+        {hover.index !== null && tip !== null ? <ChartTooltip tip={tip} x={(x(hover.index + 1) / width) * hover.width} alignRight={hover.index >= 6} /> : null}
       </div>
-      <div aria-hidden="true" style={{ ...mono, position: 'relative', height: 16, marginLeft: GUTTER }}>
+      <div aria-hidden="true" style={{ ...mono, position: 'relative', height: 16, ...plot }}>
         {MONTH_NAMES.map((name, index) => (
           <span key={name} style={{ position: 'absolute', left: `${String((x(index + 1) / width) * 100)}%`, transform: 'translateX(-50%)' }}>
             {name.slice(0, 1)}
@@ -225,6 +283,15 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
       <Scale top={top} metric={props.metric} />
     </div>
   );
+}
+
+/** A month's tooltip on the year lines: the month, then each year with a value there, newest first. */
+function monthTip(lines: LineChartProps['lines'], index: number, metric: Metric): ChartTip | null {
+  const rows = [...lines].sort((a, b) => b.year - a.year).flatMap((line) => {
+    const point = line.points[index] ?? null;
+    return point === null ? [] : [`${String(line.year)}: ${metricText(point.value, metric)}${point.complete ? '' : ' (month not complete)'}`];
+  });
+  return rows.length === 0 ? null : { title: MONTH_NAMES[index] ?? '', lines: rows };
 }
 
 /** A driver's effect from 50% fewer to 50% more, with the middle marked; beyond that it runs to the end. */

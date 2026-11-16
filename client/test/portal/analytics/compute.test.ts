@@ -1,6 +1,6 @@
 import {
-  analyticsInput, byMonth, DRIVERS_EMPTY, DRIVERS_FOOTNOTE, driverLine, drivers, monthSummary, nightLine, nightTypes, seenText, weeklyShape,
-  weeklySummary, yearOverYear, yearOverYearSummary,
+  analyticsInput, byMonth, driverDayPhrase, DRIVERS_EMPTY, DRIVERS_FOOTNOTE, driverLine, drivers, driverSummaryPhrase, monthSummary, nightLine,
+  nightTypes, seenText, weeklyShape, weeklySummary, yearOverYear, yearOverYearSummary,
 } from '../../../src/portal/analytics/aggregates';
 import { calendarRange, fetchCalendar, fetchSalesHistory, salesHistorySchema, townEventSchema } from '../../../src/portal/analytics/api';
 import { usual } from '../../../src/portal/analytics/baseline';
@@ -14,6 +14,7 @@ import {
 } from '../../../src/portal/analytics/filters';
 import { byDate, decodeHistory } from '../../../src/portal/analytics/history';
 import { levelsFor } from '../../../src/portal/analytics/levels';
+import { plainOf } from '../../../src/portal/analytics/phrase';
 import { dayPanel, fileLine, noteWords, type PanelInput } from '../../../src/portal/analytics/panel';
 import { longDate, shortDate, signedPercent } from '../../../src/portal/analytics/words';
 import { addDays } from '../../../src/portal/locations/dates';
@@ -440,6 +441,25 @@ describe('biggest drivers', () => {
       'Thanksgiving: −50% against usual, 3 days, 2023 to 2025. Rough.',
       'Your private events: +30% against usual, 4 days, 2026.',
     ]);
+  });
+
+  test('each driver keeps its days with their figure, usual and effect, which its detail says, figures strong (owner request)', () => {
+    const found = drivers(analyticsInput(days, dayContext(notes, events), defaultFilters(days)));
+    const thanksgiving = found[0];
+    const firstDay = thanksgiving?.days[0];
+    if (thanksgiving === undefined || firstDay === undefined) throw new Error('no driver');
+    expect(thanksgiving.days.map((each) => [each.date, each.title, each.value, each.usual, Math.round(each.effect * 100)])).toEqual([
+      ['2023-11-23', 'Thanksgiving Day', 50, 100, -50],
+      ['2024-11-28', 'Thanksgiving Day', 50, 100, -50],
+      ['2025-11-27', 'Thanksgiving Day', 50, 100, -50],
+    ]);
+    expect(thanksgiving.days.map((each) => each.date)).toEqual(thanksgiving.dates);
+    expect(plainOf(driverSummaryPhrase(thanksgiving))).toBe('−50% against usual, from 3 days, 2023 to 2025. Rough: fewer than 4 days.');
+    expect(driverSummaryPhrase(thanksgiving)[0]).toEqual({ strong: '−50%' });
+    expect(plainOf(driverDayPhrase(firstDay, 'guests'))).toBe('Thu, Nov 23, 2023: 50 guests against a usual 100, −50%');
+    expect(driverDayPhrase(firstDay, 'guests').filter((part) => typeof part !== 'string')).toEqual([{ strong: '50 guests' }, { strong: '−50%' }]);
+    // A note's day keeps none of the note's words: they stay in Notes.
+    expect(found[1]?.days.map((each) => each.title)).toEqual([null, null, null, null]);
   });
 
   test('a kind of day seen once is not a driver, and the empty line says why', () => {

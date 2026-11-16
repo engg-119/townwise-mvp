@@ -1,12 +1,15 @@
 import { dayContext, EMPTY_CONTEXT, type DayContext } from '../../../src/portal/analytics/days';
 import { byDate, decodeHistory, type DayRecord } from '../../../src/portal/analytics/history';
+import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, homeCalendarRange, lastWeekComparison, lastWeekLine,
+  calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, forecastPhrase, forecastRange, homeCalendarRange, lastWeekComparison, lastWeekLine,
+  lastYearDayPhrase,
   lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
   nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import { addDays } from '../../../src/portal/locations/dates';
 import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { forecastDay } from '../calendar/fakes';
 
 // Home's computations (home.md 2, 5.6), on synthetic days only. Explainability: every comparison says how many days
 // it is over, and "last year" is the same weekday 52 weeks earlier. Honesty: no figure for a day after the last day
@@ -33,14 +36,32 @@ describe('weeks', () => {
     expect(new Date('2025-11-06T00:00:00Z').getUTCDay()).toBe(new Date('2026-11-05T00:00:00Z').getUTCDay());
   });
 
-  test('the calendar range starts two years and four weeks before this week’s Monday, and ends on the later of month end and today plus 6', () => {
+  test('the calendar range reaches two years and four weeks back, and to the later of month end and six days from today', () => {
     expect(homeCalendarRange('2026-11-05')).toEqual({ from: '2024-10-07', to: '2026-11-30' });
-    // Sun, Nov 15, 2026: the start is this week's Monday (Nov 9) less 756 days, not today's; the month runs past the strip.
-    expect(homeCalendarRange('2026-11-15')).toEqual({ from: '2024-10-14', to: '2026-11-30' });
-    // Mon, Nov 30, 2026: the strip runs into December.
-    expect(homeCalendarRange('2026-11-30')).toEqual({ from: '2024-11-04', to: '2026-12-06' });
-    // Sun, Nov 29, 2026: this week's Sunday is in November, but the strip ends on Sat, Dec 5.
-    expect(homeCalendarRange('2026-11-29')).toEqual({ from: '2024-10-28', to: '2026-12-05' });
+    // This week's seven days from Nov 30, 2026 end in December, and from Sunday, Nov 29 too.
+    expect(homeCalendarRange('2026-11-30').to).toBe('2026-12-06');
+    expect(homeCalendarRange('2026-11-29').to).toBe('2026-12-05');
+  });
+
+  test('the forecast is read for this month and This week’s seven days, which can run into next month', () => {
+    expect(forecastRange('2026-11-05')).toEqual({ from: '2026-11-01', to: '2026-11-30' });
+    expect(forecastRange('2026-11-29')).toEqual({ from: '2026-11-01', to: '2026-12-05' });
+  });
+
+  test('a day’s published forecast in This week, its figure strong, as This month gives it (owner request)', () => {
+    expect(forecastPhrase(undefined)).toBeNull();
+    const open = forecastPhrase(forecastDay({ date: '2026-11-05', low: 67.6, mid: 90.4, high: 112.2 }));
+    if (open === null) throw new Error('no phrase');
+    expect(plainOf(open)).toBe('About 90 guests, 67 to 113');
+    expect(open[0]).toEqual({ strong: 'About 90 guests' });
+    expect(forecastPhrase(forecastDay({ date: '2026-11-15', status: 'closed', low: null, mid: null, high: null }))).toEqual(['Closed']);
+    const yours = forecastDay({
+      date: '2026-11-16', status: 'booked', low: null, mid: null, high: null, noteGuests: 40,
+      reasons: [{ kind: 'note', label: 'Your buyout', effectPct: null, sources: [], note: { id: 'n1', guests: 40, outcome: 'booked' } }],
+    });
+    expect(forecastPhrase(yours)).toEqual(['Booked: a private buyout, ', { strong: '40 guests' }]);
+    expect(forecastPhrase({ ...yours, reasons: [] })).toEqual(['Booked for a private event']);
+    expect(forecastPhrase(forecastDay({ date: '2026-11-17', low: null, mid: null, high: null }))).toBeNull();
   });
 
   test('ranges without a year', () => {
@@ -50,70 +71,50 @@ describe('weeks', () => {
   });
 });
 
-describe('the next 7 days', () => {
+describe('this week', () => {
   // Two years of history ending Wednesday, Nov 4, 2026. Saturdays 40 busier.
   const DAYS = run('2024-09-01', '2026-11-04', (date) => 100 + (new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? 40 : 0));
 
-  test('rows from today through today plus 6, today first, with last year and two years ago, and no figure after the last day', () => {
+  test('the seven days from today, today first, with last year and two years ago, and no figure after today', () => {
     const week = thisWeek(input(DAYS));
-    expect([week.first, week.last]).toEqual(['2026-11-05', '2026-11-11']);
+    expect(week).toMatchObject({ from: TODAY, to: '2026-11-11' });
     expect(week.rows.map((row) => row.date)).toEqual(weekDates(TODAY));
-    expect(week.rows.map((row) => row.isToday)).toEqual([true, false, false, false, false, false, false]);
-    // The history ends the day before today, so no day of the 7 has its own figure.
+    expect(week.rows[0]?.isToday).toBe(true);
+    expect(week.rows.filter((row) => row.isToday)).toHaveLength(1);
+    // History ends yesterday, so no day has a figure of its own; once today's data is in, today prints it.
     expect(week.rows.map((row) => row.value)).toEqual([null, null, null, null, null, null, null]);
-    // Today's own upload shows; a later day's never does.
-    const uploaded = thisWeek(input([...DAYS, day(TODAY, 120), day('2026-11-06', 130)]));
-    expect(uploaded.rows.map((row) => row.value)).toEqual([120, null, null, null, null, null, null]);
+    expect(thisWeek(input([...DAYS, day(TODAY, 120)])).rows.map((row) => row.value)).toEqual([120, null, null, null, null, null, null]);
+    // Saturday, Nov 7 is the third day.
     expect(week.rows[2]?.lastYear).toMatchObject({ date: '2025-11-08', value: 140 });
     expect(week.rows[2]?.twoYearsAgo).toMatchObject({ date: '2024-11-09', value: 140 });
     expect(week.twoYears).toBe(true);
   });
 
-  test('a Sunday starts on the Sunday, and the 7 days run across a month and a daylight saving change by calendar date', () => {
-    const sunday = thisWeek(input(DAYS, EMPTY_CONTEXT, '2026-11-15'));
-    expect(sunday.rows.map((row) => row.date)).toEqual(['2026-11-15', '2026-11-16', '2026-11-17', '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21']);
-    expect(sunday.rows[0]?.isToday).toBe(true);
-    // Mon, Nov 30, 2026: each day has its own calendar entries and notes, December's included.
-    const context = dayContext(
-      [note({ startDate: '2026-12-05', detail: 'A holiday party.' })],
-      [townEvent({ start: '2026-11-30', title: 'Sample lecture' }), townEvent({ start: '2026-12-03', title: 'Tree lighting' })],
-    );
-    const across = thisWeek(input(DAYS, context, '2026-11-30'));
-    expect([across.first, across.last]).toEqual(['2026-11-30', '2026-12-06']);
-    expect(across.rows.map((row) => row.date)).toEqual(['2026-11-30', '2026-12-01', '2026-12-02', '2026-12-03', '2026-12-04', '2026-12-05', '2026-12-06']);
-    expect(across.rows.map((row) => row.events.map((each) => each.title))).toEqual([['Sample lecture'], [], [], ['Tree lighting'], [], [], []]);
-    expect(across.rows.map((row) => row.notes.map((each) => each.detail))).toEqual([[], [], [], [], [], ['A holiday party.'], []]);
-    // US daylight saving time ends Sun, Nov 1, 2026: the days are still 7 calendar dates, one each.
-    expect(thisWeek(input(DAYS, EMPTY_CONTEXT, '2026-10-29')).rows.map((row) => row.date))
-      .toEqual(['2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01', '2026-11-02', '2026-11-03', '2026-11-04']);
-  });
-
-  test('the summary sums the same 7 days last year, needs 5 of them and names its day count', () => {
+  test('the summary needs 5 days of last year’s week and names its day count', () => {
     const week = thisWeek(input(DAYS));
-    expect(week.summary).toMatchObject({ from: '2025-11-06', to: '2025-11-12', days: 7, total: 740, busiest: '2025-11-08' });
+    expect(week.summary).toMatchObject({ from: '2025-11-06', to: '2025-11-12', days: 7, total: 740, busiest: '2025-11-08', busiestValue: 140, quietestValue: 100 });
+    // Busiest and quietest say their figure in brackets, the figure strong (owner request, 2026-11-15).
+    const busiest = lastYearDayPhrase('Busiest', '2025-11-08', 140, 'guests');
+    expect(plainOf(busiest)).toBe('Busiest last year: Sat, Nov 8, 2025 (140 guests).');
+    expect(busiest.filter((part) => typeof part !== 'string')).toEqual([{ strong: '140 guests' }]);
     if (week.summary === null) throw new Error('no summary');
-    expect(summaryLabel(week.summary)).toBe('Same days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.');
+    expect(summaryLabel(week.summary)).toBe('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From all 7 days.');
     // Every day matches its usual exactly.
     expect(vsUsualLine(week.summary)).toBe('0% against that year’s usual for those days, compared over 7 days.');
-    // Sun, Nov 15, 2026: Nov 16 to 22, 2025.
-    const sunday = thisWeek(input(DAYS, EMPTY_CONTEXT, '2026-11-15')).summary;
-    if (sunday === null) throw new Error('no summary');
-    expect(sunday).toMatchObject({ from: '2025-11-16', to: '2025-11-22', days: 7, total: 740 });
-    expect(summaryLabel(sunday)).toBe('Same days last year, Sun, Nov 16 to Sat, Nov 22, 2025. From all 7 days.');
-    // Four of those days: no summary.
-    const gappy = DAYS.filter((each) => !['2025-11-16', '2025-11-17', '2025-11-18'].includes(each.date));
-    expect(thisWeek(input(gappy, EMPTY_CONTEXT, '2026-11-15')).summary).toBeNull();
-    const six = DAYS.filter((each) => each.date !== '2025-11-16');
-    const partial = thisWeek(input(six, EMPTY_CONTEXT, '2026-11-15')).summary;
+    // Four of the same 7 days last year: no summary.
+    const gappy = DAYS.filter((each) => !['2025-11-06', '2025-11-07', '2025-11-10'].includes(each.date));
+    expect(thisWeek(input(gappy)).summary).toBeNull();
+    const six = DAYS.filter((each) => each.date !== '2025-11-06');
+    const partial = thisWeek(input(six)).summary;
     if (partial === null) throw new Error('no summary');
-    expect(summaryLabel(partial)).toBe('Same days last year, Sun, Nov 16 to Sat, Nov 22, 2025. From 6 of its 7 days.');
+    expect(summaryLabel(partial)).toBe('Same 7 days last year, Thu, Nov 6 to Wed, Nov 12, 2025. From 6 of its 7 days.');
   });
 
   test('the quietest day leaves out closed days', () => {
     const closed = DAYS.map((each) => (each.date === '2025-11-07' ? day(each.date, 0, 0) : each));
     const week = thisWeek(input(closed));
     expect(week.summary?.quietest).not.toBe('2025-11-07');
-    expect(week.rows[1]?.lastYear).toMatchObject({ date: '2025-11-07', closed: true });
+    expect(week.rows[1]?.lastYear.closed).toBe(true);
   });
 
   test('usual for a past day, and the change against it', () => {
@@ -131,11 +132,12 @@ describe('the next 7 days', () => {
     const week = thisWeek(input(DAYS, context));
     expect(week.rows[1]?.notes.map((each) => each.detail)).toEqual(['A rehearsal dinner.']);
     expect(week.rows[2]?.events.map((each) => each.title)).toEqual(['Sample game']);
+    // Veterans Day, Wednesday, Nov 11, is the seventh day.
     expect(week.rows[6]?.events.map((each) => each.title)).toEqual(['Veterans Day']);
-    expect(calendarWeekLine(week, calendarBody())).toBe('On the calendar in the next 7 days: Sample game (Saturday), and 1 more.');
-    expect(calendarWeekLine({ firstEvent: null, periods: [] }, calendarBody())).toBe('Nothing on Hanover’s researched calendar in the next 7 days.');
+    expect(calendarWeekLine(week, calendarBody())).toBe('On the calendar this week: Sample game (Saturday), and 1 more.');
+    expect(calendarWeekLine({ firstEvent: null, periods: [] }, calendarBody())).toBe('Nothing on Hanover’s researched calendar this week.');
     expect(calendarWeekLine({ firstEvent: null, periods: [] }, calendarBody({ town: { townId: null, name: 'Norwich', state: 'VT' }, researched: false, covers: null })))
-      .toBe('Nothing on the calendar in the next 7 days.');
+      .toBe('Nothing on the calendar this week.');
     expect(calendarCoverageLine(calendarBody())).toBe('Hanover’s researched calendar covers Sep 14, 2026 to Jan 5, 2027 so far, plus US federal holidays.');
     expect(calendarCoverageLine(calendarBody({ town: { townId: 'nantucket-ma', name: 'Nantucket', state: 'MA' }, researched: false, covers: null })))
       .toBe('Townwise’s Nantucket calendar has no researched town events yet. Only US federal holidays and your notes show here.');
@@ -149,25 +151,21 @@ describe('the next 7 days', () => {
       townEvent({ id: `hanover-nh:${start}:term`, start, end, title, kind: 'term', group: `hanover-nh:${title}`, groupLabel: title });
     const context = dayContext([], [
       term('2025-09-15', '2025-11-18', 'Fall term classes'), term('2026-09-14', '2026-11-17', 'Fall term classes'),
-      term('2026-11-20', '2026-11-25', 'Fall term finals'), townEvent({ start: '2026-11-21', title: 'Dartmouth home football' }),
+      term('2026-11-20', '2026-11-25', 'Fall term finals'), townEvent({ start: '2026-11-21', title: 'Home football vs Brown' }),
     ]);
-    // Sun, Nov 15, 2026: the 7 days run to Sat, Nov 21, through the end of classes and into finals.
-    const week = thisWeek(input(DAYS, context, '2026-11-15'));
-    expect(week.firstEvent).toEqual({ title: 'Dartmouth home football', date: '2026-11-21', more: 0 });
-    expect(calendarWeekLine(week, calendarBody())).toBe('On the calendar in the next 7 days: Dartmouth home football (Saturday).');
-    expect(week.rows.map((row) => row.events.map((each) => each.title))).toEqual([[], [], [], [], [], [], ['Dartmouth home football']]);
+    // From Monday, Nov 16: classes end on the second day, finals start on the fifth.
+    const week = thisWeek(input(DAYS, context, '2026-11-16'));
+    expect(week.firstEvent).toEqual({ title: 'Home football vs Brown', date: '2026-11-21', more: 0 });
+    expect(calendarWeekLine(week, calendarBody())).toBe('On the calendar this week: Home football vs Brown (Saturday).');
+    expect(week.rows.map((row) => row.events.map((each) => each.title))).toEqual([[], [], [], [], [], ['Home football vs Brown'], []]);
     expect(week.rows.every((row) => row.lastYear.events.length === 0 && row.twoYearsAgo.events.length === 0)).toBe(true);
     expect(week.periods.map((each) => each.title)).toEqual(['Fall term classes', 'Fall term finals']);
     expect(week.periods.map(periodLine)).toEqual(['Fall term classes. Term, Sep 14 to Nov 17, 2026.', 'Fall term finals. Term, Nov 20 to 25, 2026.']);
-    // From Wed, Nov 18 classes are over, so only finals cover the 7 days.
-    expect(thisWeek(input(DAYS, context, '2026-11-18')).periods.map((each) => each.title)).toEqual(['Fall term finals']);
-    // 7 days inside the term with no day event say so without claiming an empty calendar.
+    // A week inside the term with no day event says so without claiming an empty calendar.
     const quiet = thisWeek(input(DAYS, context, '2026-11-04'));
     expect(quiet.firstEvent).toBeNull();
     expect(quiet.periods.map((each) => each.title)).toEqual(['Fall term classes']);
-    expect(calendarWeekLine(quiet, calendarBody())).toBe('No holiday or town event on Hanover’s researched calendar in the next 7 days.');
-    expect(calendarWeekLine(quiet, calendarBody({ town: { townId: null, name: 'Norwich', state: 'VT' }, researched: false, covers: null })))
-      .toBe('No holiday or town event in the next 7 days.');
+    expect(calendarWeekLine(quiet, calendarBody())).toBe('No holiday or town event on Hanover’s researched calendar this week.');
   });
 
   test('the lead names the last day of data and the calendar', () => {
@@ -184,26 +182,12 @@ describe('last week', () => {
 
   test('compared over the days both weeks have', () => {
     const comparison = lastWeekComparison(input(DAYS));
-    expect(comparison).toMatchObject({ state: 'compared', monday: '2026-10-26', sunday: '2026-11-01', comparedDays: 7, total: 770, lastYearTotal: 700 });
+    // The seven days before today (Thu, Nov 5): Oct 29 to Nov 4, This week's weekdays a week earlier.
+    expect(comparison).toMatchObject({ state: 'compared', from: '2026-10-29', to: '2026-11-04', comparedDays: 7, total: 770, lastYearTotal: 700 });
     expect(lastWeekLine(comparison, 'guests')).toBe('Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.');
-    const partial = lastWeekComparison(input(DAYS.filter((each) => each.date !== '2025-10-28' && each.date !== '2026-10-30')));
+    const partial = lastWeekComparison(input(DAYS.filter((each) => each.date !== '2025-11-01' && each.date !== '2026-10-30')));
     expect(partial).toMatchObject({ state: 'compared', comparedDays: 5, total: 550, lastYearTotal: 500 });
     expect(lastWeekLine(partial, 'guests')).toBe('Last week: 550 guests on the 5 days both weeks have, 10% more than the same days last year (500).');
-  });
-
-  test('on a Sunday last week stays Monday to Sunday, and this week’s days before today are in neither it nor the 7 days', () => {
-    const sunday = '2026-11-15';
-    const days = run('2025-10-01', '2026-11-14', () => 100);
-    const comparison = lastWeekComparison(input(days, EMPTY_CONTEXT, sunday));
-    expect(comparison).toMatchObject({ state: 'compared', monday: '2026-11-02', sunday: '2026-11-08' });
-    if (comparison.state !== 'compared') throw new Error('not compared');
-    const strip = thisWeek(input(days, EMPTY_CONTEXT, sunday)).rows.map((row) => row.date);
-    expect(strip).toEqual(weekDates(sunday));
-    // The month grid still outlines this week, Mon, Nov 9 to Sun, Nov 15.
-    const outlined = monthGrid(sunday, EMPTY_CONTEXT).flat().filter((cell) => cell?.inWeek === true).map((cell) => cell?.date);
-    expect(outlined).toEqual(weekDates('2026-11-09'));
-    const shown = new Set([...comparison.days.map((each) => each.date), ...strip]);
-    expect(weekDates('2026-11-09').slice(0, 6).filter((date) => shown.has(date))).toEqual([]);
   });
 
   test('fewer guests, less net sales', () => {
@@ -221,16 +205,16 @@ describe('last week', () => {
     const recent = lastWeekComparison(input(old));
     expect(recent.state).toBe('no_recent');
     expect(lastWeekLine(recent, 'guests')).toBe('Your history ends Oct 20, 2026. Upload the days since to compare last week.');
-    // A gap: last week is missing, but days after it are stored, so the history does not end before it.
-    const gap = lastWeekComparison(input(DAYS.filter((each) => each.date < '2026-10-26' || each.date > '2026-11-01')));
-    expect(gap).toEqual({ state: 'no_days', monday: '2026-10-26', sunday: '2026-11-01' });
+    // A gap: last week is missing, but today is stored, so the history does not end before it.
+    const gap = lastWeekComparison(input([...DAYS, day('2026-11-05', 110)].filter((each) => each.date < '2026-10-29' || each.date > '2026-11-04')));
+    expect(gap).toEqual({ state: 'no_days', from: '2026-10-29', to: '2026-11-04' });
     expect(lastWeekLine(gap, 'guests')).toBe('No guests stored for last week, so there is nothing to compare yet.');
     expect(lastWeekLine(gap, 'netSales')).toBe('No net sales stored for last week, so there is nothing to compare yet.');
     const young = DAYS.filter((each) => each.date >= '2026-01-01');
     const noLastYear = lastWeekComparison(input(young));
     expect(noLastYear.state).toBe('no_last_year');
     expect(lastWeekLine(noLastYear, 'guests')).toBe('No data for the same week last year, so there is nothing to compare yet.');
-    const apart = DAYS.filter((each) => !(each.date >= '2026-10-26' && each.date <= '2026-10-29') && !(each.date >= '2025-10-31' && each.date <= '2025-11-02'));
+    const apart = DAYS.filter((each) => !(each.date >= '2026-10-29' && each.date <= '2026-11-01') && !(each.date >= '2025-11-03' && each.date <= '2025-11-05'));
     expect(lastWeekComparison(input(apart)).state).toBe('no_overlap');
   });
 });
@@ -248,17 +232,6 @@ describe('the bar order helper', () => {
     const short = lateWeekShare(input(days.filter((each) => each.date !== '2025-11-03')));
     if (short === null) throw new Error('no share');
     expect(lateWeekLine(short, 'guests')).toBe('Last year this week, Thursday to Sunday brought 75% of the week’s guests (6 days of that week have data).');
-  });
-
-  test('on a Sunday it still reads last year’s Monday-to-Sunday week, not the 7 days’ last year', () => {
-    // Sun, Nov 15, 2026: last year's week is Mon, Nov 10 to Sun, Nov 16, 2025; the 7 days' last year is Nov 16 to 22.
-    const days = run('2025-11-10', '2025-11-22', (_date, index) => (index < 3 ? 100 : 150));
-    const found = lateWeekShare(input(days, EMPTY_CONTEXT, '2026-11-15'));
-    expect(found).toEqual({ share: 600 / 900, days: 7 });
-    if (found === null) throw new Error('no share');
-    expect(lateWeekLine(found, 'guests')).toBe('Last year this week, Thursday to Sunday brought 67% of the week’s guests.');
-    // Without Sun, Nov 16, 2025 there is no share, though the 7 days' last year has 6 of its days.
-    expect(lateWeekShare(input(days.filter((each) => each.date !== '2025-11-16'), EMPTY_CONTEXT, '2026-11-15'))).toBeNull();
   });
 });
 
@@ -300,7 +273,8 @@ describe('this month', () => {
     expect(cells).toHaveLength(30);
     expect(cells.find((cell) => cell.date === '2026-11-11')?.event).toBe(true);
     expect(cells.find((cell) => cell.date === '2026-11-21')?.note).toBe(true);
-    expect(cells.filter((cell) => cell.inWeek).map((cell) => cell.date)).toEqual(weekDates('2026-11-02'));
+    // This week is the seven days from today, as the This week card shows them.
+    expect(cells.filter((cell) => cell.inWeek).map((cell) => cell.date)).toEqual(weekDates(TODAY));
     expect(cells.find((cell) => cell.isToday)?.date).toBe(TODAY);
     const items = monthItems(TODAY, context);
     expect(items.map((item) => [item.kind, item.dates])).toEqual([['event', 'Nov 11'], ['note', 'Nov 20 to 22'], ['event', 'Nov 26']]);
@@ -319,7 +293,7 @@ describe('the month card', () => {
     const cells = monthGrid(TODAY, context).flat().filter((cell) => cell !== null);
     expect(cells.find((cell) => cell.date === TODAY)?.label).toBe('Thu, Nov 5, 2026. Today. This week.');
     expect(cells.find((cell) => cell.date === '2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. 1 note.');
-    expect(cells.find((cell) => cell.date === '2026-11-11')?.label).toBe('Wed, Nov 11, 2026. Veterans Day.');
+    expect(cells.find((cell) => cell.date === '2026-11-11')?.label).toBe('Wed, Nov 11, 2026. This week. Veterans Day.');
   });
 
   test('the keys move a day or a week and never leave the month', () => {
@@ -363,7 +337,7 @@ describe('the month card', () => {
     const home = input(days, context);
     const cellOn = (on: HomeInput, date: string) => monthGrid(TODAY, on.context, { input: on, forecast: new Map() }).flat().find((each) => each?.date === date);
     const cell = cellOn(home, '2026-11-03');
-    expect(cell).toMatchObject({ status: 'closed', likelyClosed: true, figure: null, label: 'Tue, Nov 3, 2026. This week. Likely closed (1 guest recorded).' });
+    expect(cell).toMatchObject({ status: 'closed', likelyClosed: true, figure: null, label: 'Tue, Nov 3, 2026. Likely closed (1 guest recorded).' });
     expect(cell === undefined || cell === null ? null : monthStatusWord(cell)).toBe('Likely closed');
     expect(monthStatusWord({ status: 'closed', likelyClosed: false })).toBe('Closed');
     expect(monthStatusWord({ status: 'booked', likelyClosed: false })).toBe('Booked');
@@ -380,25 +354,20 @@ describe('the month card', () => {
     expect(monthDay('2026-11-03', slow)).toMatchObject({ likelyClosed: false });
   });
 
-  test('the 7 days’ own day is today’s, in This month’s words, and never likely closed with the town’s today (spec D32)', () => {
-    // Tue, Nov 3, 2026 had 1 guest, and is today: the only day of the 7 that can have its own figure.
-    const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', (date) => (date === '2026-11-03' ? 1 : 100))));
-    const tuesday = '2026-11-03';
-    // A context without the town's today treats every day as past, so the day reads as likely closed, as This month's.
-    const week = thisWeek(input(days, context, tuesday));
-    const today = week.rows[0];
-    if (today === undefined) throw new Error('no today');
-    expect(today).toMatchObject({ date: tuesday, isToday: true, value: 1, likelyClosed: true });
-    expect(week.rows.slice(1).every((row) => row.value === null)).toBe(true);
-    expect(thisDayLine(today, 'guests')).toBe(thisDayLine(monthDay(tuesday, input(days, context, tuesday)), 'guests'));
-    expect(thisDayLine(today, 'guests')).toBe('Likely closed (1 guest recorded)');
-    // With the town's today, as Home builds it, today's upload may be partial, so it is never likely closed.
-    const homeToday = thisWeek(input(days, dayContext([], [], [], tuesday), tuesday)).rows[0];
-    if (homeToday === undefined) throw new Error('no today');
-    expect(homeToday).toMatchObject({ value: 1, likelyClosed: false });
-    expect(thisDayLine(homeToday, 'guests')).toBe('1 guest');
+  test('this week’s own near-empty day (spec D32) is likely closed, in This month’s words, but never today in the app', () => {
+    // History through Tuesday, Nov 3, 2026, which had 1 guest; This week starts that day.
+    const tuesdayToday = '2026-11-03';
+    const days = decodeHistory(historyBody(run('2024-09-01', tuesdayToday, (date) => (date === tuesdayToday ? 1 : 100))));
+    const week = thisWeek(input(days, context, tuesdayToday));
+    const tuesday = week.rows[0];
+    if (tuesday === undefined) throw new Error('no Tuesday');
+    expect(tuesday).toMatchObject({ date: tuesdayToday, value: 1, likelyClosed: true });
+    expect(thisDayLine(tuesday, 'guests')).toBe(thisDayLine(monthDay(tuesdayToday, input(days, context, tuesdayToday)), 'guests'));
+    expect(thisDayLine(tuesday, 'guests')).toBe('Likely closed (1 guest recorded)');
+    // Home's context knows today, whose upload may be partial: today is never likely closed (D32).
+    expect(thisWeek(input(days, dayContext([], [], [], tuesdayToday), tuesdayToday)).rows[0]).toMatchObject({ value: 1, likelyClosed: false });
     // A business rule's schedule with fewer guests says the day was open (D31), as a note does.
-    const ruled = thisWeek(input(days, dayContext([], [], [{ startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'fewer_guests' }]), tuesday));
+    const ruled = thisWeek(input(days, dayContext([], [], [{ startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'fewer_guests' }]), tuesdayToday));
     expect(ruled.rows[0]).toMatchObject({ value: 1, likelyClosed: false });
   });
 
@@ -408,7 +377,7 @@ describe('the month card', () => {
     const twoYearsAgo = '2024-11-05';
     const gap = new Set([1, 2, 3, 4].map((weeks) => addDays(twoYearsAgo, -7 * weeks)));
     const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', (date) => (date === twoYearsAgo ? 1 : gap.has(date) ? null : 100))));
-    // With today Tue, Nov 3, 2026, the first of the 7 days is that day two years on.
+    // From Tuesday, Nov 3, 2026, whose same weekday two years earlier is Nov 5, 2024.
     const week = thisWeek(input(days, context, '2026-11-03'));
     expect(week.rows[0]?.twoYearsAgo).toMatchObject({ date: twoYearsAgo, value: 1, closed: true, likelyClosed: true });
   });

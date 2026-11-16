@@ -14,6 +14,8 @@ import { DATA, dataError, daysLine, kindLabel, stateLine, VIA_LINE } from '../co
 
 export const ITEM = {
   back: 'Back to Your data',
+  /** The heading of the section that holds Delete original and Delete. */
+  deletes: 'Delete this item',
   loading: 'Loading this item',
   gone: 'This item isn’t here anymore. It may have been deleted, or replaced when someone saved an edit of it.',
   show: 'Show',
@@ -21,7 +23,7 @@ export const ITEM = {
   original: 'Original file',
   clean: 'Cleaned copy',
   loadingDays: 'Loading its days',
-  daysOff: 'This upload is turned off, so its days are left out of your numbers and aren’t shown here. Turn it on in Your data to see them.',
+  daysOff: 'This upload is turned off, so its days are left out of your numbers and aren’t shown here. Turn it on above to see them.',
   noDaysLeft: 'Later uploads replaced every day this upload sent, so it holds none now.',
   nativeFile: 'Open this file from a computer at townwise.tech.',
   nativeFileViews: 'Its original file and cleaned copy open from a computer at townwise.tech.',

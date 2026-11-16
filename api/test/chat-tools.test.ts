@@ -8,6 +8,8 @@ import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TEXT_ITEM_MAX_CHARS, TEXT_ITEM_TITLE_MAX } from '../src/files/items.ts';
 import { townProfileOf } from '../src/handlers/towns.ts';
 import { inputViewOf, resultViewOf, TOOL_REGISTRY, TOOLS, toolNamed, type ToolContext, type ToolView } from '../src/chat/tools/registry.ts';
+import { requestParams } from '../src/chat/turn.ts';
+import { WEB_SEARCH_TOOL } from '../src/chat/web-search.ts';
 import type { BusinessRuleRecord, BusinessRuleStore } from '../src/stores/business-rules.ts';
 import type { NoteRecord, NoteStore } from '../src/stores/notes.ts';
 import type { SalesDayStore, SalesDayWithUpload } from '../src/stores/sales-days.ts';
@@ -49,6 +51,14 @@ describe('the tool registry', () => {
   it('sends the model exactly the registry’s definitions, in order, each streaming its input unbuffered', () => {
     expect(TOOLS).toEqual(TOOL_REGISTRY.map((tool) => tool.definition));
     expect(TOOLS.every((tool) => tool.eager_input_streaming === true)).toBe(true);
+  });
+
+  it('keeps web search (D37) out of the registry: sent after every registry tool while on, so a tool appended later goes before it', () => {
+    expect(FROZEN_NAMES).not.toContain('web_search');
+    expect(toolNamed('web_search')).toBeUndefined();
+    const tools = requestParams([{ role: 'user', content: 'Hi' }], true).tools ?? [];
+    expect(tools.map((tool) => ('name' in tool ? tool.name : null))).toEqual([...FROZEN_NAMES, 'web_search']);
+    expect(tools.at(-1)).toBe(WEB_SEARCH_TOOL);
   });
 
   it('finds a tool by name and nothing for an unknown one', () => {
@@ -114,6 +124,22 @@ describe('the views on a tool call’s card', () => {
       sources: [{ host: 'example.test', url: 'https://www.example.test/b' }, { host: 'data.example.test', url: 'https://data.example.test/c' }],
     });
     expect(resultViewOf('get_town_profile', ok({ profile: null }))).toEqual({ available: false, town: null, sources: [] });
+  });
+
+  // BLS withheld Nantucket County for April to June 2025: the tool gives TownwiseAI the profile with a null series and
+  // the reason, never a stale or made-up index, and the card still names the town.
+  it('get_town_profile: a county BLS did not publish for the whole year comes with a null series and the reason', async () => {
+    const tc = { location: { town: { townId: 'nantucket-ma' } } } as unknown as ToolContext;
+    const { content } = await toolNamed('get_town_profile')?.run(tc, {}) ?? { content: '' };
+    const { profile } = JSON.parse(content) as { profile: { name: string; county: string; year: number; series: unknown; seriesUnavailable: string } };
+    expect(profile).toMatchObject({
+      name: 'Nantucket', county: 'Nantucket County', year: 2025, series: null,
+      seriesUnavailable: 'BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.',
+    });
+    expect(resultViewOf('get_town_profile', ok({ profile }))).toEqual({ available: true, town: { name: 'Nantucket', state: 'MA' }, sources: [] });
+    const hanover = JSON.parse((await toolNamed('get_town_profile')?.run({ location: { town: { townId: 'hanover-nh' } } } as unknown as ToolContext, {}))?.content ?? '{}') as { profile: { series: { index: number[] } | null; seriesUnavailable: string | null } };
+    expect(hanover.profile.series?.index).toHaveLength(12);
+    expect(hanover.profile.seriesUnavailable).toBeNull();
   });
 
   it('propose_note: no views (the proposal card shows the note)', () => {
@@ -211,7 +237,8 @@ describe('get_day', () => {
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      turn: { readUntrusted: false },
+      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
+      files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined } },
     };
     return { tc, byIds, ranges };
   }

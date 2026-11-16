@@ -21,6 +21,28 @@ describe('workbooks (spec 11A)', () => {
     });
   });
 
+  it('reads a workbook written as Toast exports are: data descriptors with 8-byte sizes, no ZIP64 extra field', async () => {
+    const book = xlsxOf([{ name: 'Daily', rows: [['Date', 'Guests'], [45658, 120]], dateColumns: [0] }], { descriptor64: true });
+    expect(await readWorkbook(book)).toEqual({
+      kind: 'sheets', omitted: 0, sheets: [{ name: 'Daily', rows: [['Date', 'Guests'], ['2025-01-01', '120']] }],
+    });
+  });
+
+  it('reads a Toast Sales Summary’s 22 sheets, so "Sales by day" (the 20th) is reached', async () => {
+    const filler = Array.from({ length: 19 }, (_, index) => ({ name: `Summary ${String(index + 1)}`, rows: [['Total', 1]] }));
+    const book = xlsxOf([
+      ...filler,
+      { name: 'Sales by day', rows: [['yyyyMMdd', 'Net sales', 'Total orders', 'Total guests'], ['20250102', 1000, 40, 50]] },
+      { name: 'Day of week (totals)', rows: [['Day', 'Net sales'], ['Monday', 1]] },
+      { name: 'Time of day (totals)', rows: [['Hour', 'Net sales'], ['11', 1]] },
+    ], { descriptor64: true });
+    const workbook = await readWorkbook(book);
+    expect(workbook.kind).toBe('sheets');
+    if (workbook.kind !== 'sheets') return;
+    expect(workbook.omitted).toBe(0);
+    expect(workbook.sheets.map((sheet) => sheet.name)).toContain('Sales by day');
+  });
+
   it('refuses a declared-size bomb and a huge entry before inflating anything, and an archive without a workbook', async () => {
     const parts = [{ name: '[Content_Types].xml', data: '<x/>' }, { name: 'xl/workbook.xml', data: '<x/>' }];
     expect(await checkWorkbookArchive(zipOf(parts))).toBe('ok');

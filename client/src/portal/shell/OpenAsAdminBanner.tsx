@@ -17,7 +17,7 @@ import { Wrap } from '../ui/layout';
 // Townwise staff ended at {time}.” shows once. Every control on the pages below stays enabled, Sign out among them.
 
 export function openAsAdminLine(org: string): string {
-  return `You’re setting up ${org} as Townwise staff. This ends when someone joins.`;
+  return `You’re setting up ${org} as Townwise staff. Its admins see each change you make in their Townwise staff activity.`;
 }
 
 export function OpenAsAdminBanner(props: { openAsAdmin: OpenAsAdmin }): React.JSX.Element {

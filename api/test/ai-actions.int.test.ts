@@ -130,6 +130,11 @@ afterAll(async () => {
   await noLab.close();
 });
 beforeEach(async () => {
+  // A read route nudges the reader itself, so a test that asks for a read without awaiting it (one that asks again at
+  // its end) leaves a drain running. Let it end first: on a loaded runner it otherwise reached the fake model after the
+  // next test had scripted its answer, took it, and left that test's read the default answer (develop CI, 2026-11-15).
+  await server.aiReader?.settled();
+  await noLab.aiReader?.settled();
   answers = [];
   requests.length = 0;
   failRawWrites = 0;
@@ -868,7 +873,11 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     const fileId = await seedStored(locationId, { raw: salesCsv(days), by: who });
     answers = [salesAnswer(days, { events: [EVENT, { ...EVENT, title: 'Brunch', startDate: '2026-06-15', endDate: '2026-06-15' }] })];
     await readAs(who, locationId, fileId);
-    return { fileId, outcome: await outcomeOf(fileId) };
+    const outcome = await outcomeOf(fileId);
+    // The read wrote its days and its summary item. Should it ever not (two CI runs on 2026-11-15 found no uploadId, on a
+    // laptop runner short of memory), the failure shows the read's record rather than a BSON error at the first oid().
+    expect(typeof outcome.uploadId === 'string' && typeof outcome.itemId === 'string', JSON.stringify(await aiOf(fileId))).toBe(true);
+    return { fileId, outcome };
   }
 
   it('removes the notes (an edited one too), the upload with the days it still holds, and the summary item; leaves a started calibration', async () => {
@@ -969,6 +978,8 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     await server.connection.collection('tw_files').updateOne({ _id: oid(queued) }, { $set: { 'ai.status': 'reading' } });
     expect((await undo(team.member, l1, `f_${queued}`)).status).toBe(409);
     await server.connection.collection('tw_files').updateOne({ _id: oid(queued) }, { $set: { 'ai.status': 'skipped' } });
+    // The request above nudged the reader: let that drain end before the rest, so it can't land in the middle of it.
+    await server.aiReader?.settled();
 
     const never = await seedStored(l1);
     const failed = await seedStored(l1);

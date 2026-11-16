@@ -1,13 +1,15 @@
-import { dayMonth, lastWeekLine, type LastWeek as Comparison } from '../analytics/week';
+import { dayMonth, lastWeekPhrase, type LastWeek as Comparison } from '../analytics/week';
 import { metricNumber, shortDate, signedPercent, type Metric } from '../analytics/words';
 import { ShowNumbers, UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Small } from '../ui/text';
 import { Block } from './Block';
 import { LastWeekChart } from './LastWeekChart';
 
-// Last week (home.md 2.4): last week, Monday to Sunday, against the same weekdays 52 weeks earlier. Until a
+// Last week (home.md 2.4): the seven days before today, This week's weekdays a week earlier (owner request,
+// 2026-11-15), against the same weekdays 52 weeks earlier. Until a
 // forecast exists this is history against history, never against a prediction. The totals and the change are over
 // the days that have the metric in both weeks, and the summary says how many. Web draws the pairs; native has the
 // text and the table (D21).
@@ -19,13 +21,13 @@ export function LastWeek(props: {
   readOnlyId: string | null;
 }): React.JSX.Element {
   const { comparison, metric } = props;
-  const range = comparison.state === 'no_history' || comparison.state === 'uploads_off' ? null : `${dayMonth(comparison.monday)} to ${dayMonth(comparison.sunday)}`;
+  const range = comparison.state === 'no_history' || comparison.state === 'uploads_off' ? null : `${dayMonth(comparison.from)} to ${dayMonth(comparison.to)}`;
   const days = comparison.state === 'compared' || comparison.state === 'no_last_year' || comparison.state === 'no_overlap' ? comparison.days : null;
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
   return (
     <Block label="Last week" eyebrow={range === null ? 'Last week' : `Last week, ${range}`} title="Against the same week last year">
       {comparison.state === 'compared' ? <LastWeekChart days={comparison.days} metric={metric} /> : null}
-      <Small white>{lastWeekLine(comparison, metric)}</Small>
+      <Small white><PhraseParts phrase={lastWeekPhrase(comparison, metric)} /></Small>
       {comparison.state === 'no_recent' || comparison.state === 'no_days' ? (
         <Actions><UploadAction locationId={props.locationId} variant="link" readOnlyId={props.readOnlyId} /></Actions>
       ) : null}

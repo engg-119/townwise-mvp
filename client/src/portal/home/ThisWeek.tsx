@@ -1,37 +1,40 @@
+import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import type { Calendar, TownEvent } from '../analytics/api';
 import { noteWords } from '../analytics/panel';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, LAST_YEAR_FOOTNOTE, pastDayLine, periodLine, thisDayLine, vsUsualDay,
+  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, forecastPhrase, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase,
+  vsUsualDayPhrase,
   type PastDay, type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
+import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { useBreakpoint } from '../hooks';
 import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
 import { DataTable, type Column } from '../ui/DataTable';
 import { SourceChips } from '../ui/SourceChip';
 import { Stack } from '../ui/layout';
+import { PhraseParts } from '../ui/PhraseParts';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 
-// The next 7 days in {Town} (spec P11 and D40; refine-calendar-and-home design decision 4): today and the 6 days
-// after it, today first, not Monday to Sunday, each day with what is on the town calendar and the location's notes,
-// beside the same weekday last year and two years ago. Last year's total for those days is the first tile At a
-// glance. No figure is ever shown for a day after the last day of data or after today: a day prints its own figure
-// only when it has data and is not after today, so here only today with its upload does, in This month's words
-// (thisDayLine; today is never likely closed, spec D32, since its upload may be partial). With no history at all
-// (`history` false) the past-year rows and the footnote are left out and only the calendar shows. Term and season
-// periods span weeks, so they show once under the headline with their whole span and sources, not in each day. Last
-// week and the month grid's This week outline stay Monday to Sunday, so this week's days before today show in
-// neither this block nor Last week, only in the month grid.
+// This week (spec P11): the seven days from today, today first (owner request, 2026-11-15), each day with what is on
+// the town calendar and the location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
+// tile At a glance. No figure is ever shown for a day after the last day of data: a day prints its own figure only
+// when it is past and has data, or “Likely closed (1 guest recorded)” when it was near empty (spec D32), as This month says. With no history at all (`history` false) the past-year rows and the footnote are
+// left out and only the calendar shows. Term and season periods span weeks, so they show once under the headline
+// with their whole span and sources, not in each day.
 //
-// From 1024px the 7 days are a strip, one column a day, with today's column first and raised: the day (and its own
-// figure), then rows for the calendar, last year (a bar scaled to the busiest of the 7 days last year, aria-hidden,
-// beside the printed figure) and two years ago. It is a table, so each cell is read with its day and its row. Below
-// 1024px it is the day-by-day table, which stacks at 640px and below.
+// With a published forecast, the first row is each day's Forecast, as This month's grid gives it (owner request,
+// 2026-11-15): "About 90 guests, 68 to 112", Closed or Booked, or "No forecast" for a day the run doesn't cover; with
+// none published there is no Forecast row, so Home still never shows a guess of its own.
+// From 1024px the week is a strip, one column a day, with today's column, the first, raised: the day (and its own figure), then
+// rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
+// figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
+// day-by-day table, which stacks at 640px and below.
 
 function EventLines(props: { events: readonly TownEvent[] }): React.JSX.Element {
   return (
@@ -66,17 +69,23 @@ function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
   return <View style={styles.cell}><EventLines events={row.events} /><NoteLines notes={row.notes} /></View>;
 }
 
+/** A day's published forecast, its figure bold, or "No forecast". */
+function ForecastCell(props: { day: ForecastDay | undefined }): React.JSX.Element {
+  const phrase = forecastPhrase(props.day);
+  return phrase === null ? <Mono tone="text3">No forecast</Mono> : <Mono tone="white"><PhraseParts phrase={phrase} /></Mono>;
+}
+
 /** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */
 export function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
   const { day, metric } = props;
-  const line = pastDayLine(day, metric);
+  const line = pastDayPhrase(day, metric);
   if (line === null) return <Mono tone="text3">No data</Mono>;
-  const change = vsUsualDay(day);
+  const change = vsUsualDayPhrase(day);
   return (
     <View style={styles.item}>
-      <Mono tone="white">{line}</Mono>
+      <Mono tone="white"><PhraseParts phrase={line} /></Mono>
       {day.closed ? <Mono>{day.likelyClosed ? 'Likely closed' : 'Closed'}</Mono> : null}
-      {change === null ? null : <Mono>{change}</Mono>}
+      {change === null ? null : <Mono><PhraseParts phrase={change} /></Mono>}
       {day.events.map((title) => <Small key={title}>{title}</Small>)}
     </View>
   );
@@ -92,14 +101,14 @@ function DayHead(props: { row: WeekRow; metric: Metric }): React.JSX.Element {
       </View>
       <Mono>{dayMonth(row.date)}</Mono>
       {row.isToday ? <Mono tone="text3">Today</Mono> : null}
-      {row.value === null ? null : <Mono tone="white">{thisDayLine(row, props.metric)}</Mono>}
+      {row.value === null ? null : <Mono tone="white"><PhraseParts phrase={thisDayPhrase(row, props.metric)} /></Mono>}
     </View>
   );
 }
 
 const BAR_ZONE = 40;
 
-/** Last year's figure as a bar, scaled to the busiest of the 7 days last year; aria-hidden, the cell prints it. */
+/** Last year's figure as a bar, scaled to the week's busiest day last year; aria-hidden, the cell prints it. */
 function Bar(props: { value: number | null; top: number }): React.JSX.Element {
   const height = props.value === null || props.top <= 0 ? 0 : Math.max(1, Math.round((props.value / props.top) * BAR_ZONE));
   return (
@@ -109,11 +118,12 @@ function Bar(props: { value: number | null; top: number }): React.JSX.Element {
   );
 }
 
-/** The 7 days as a strip of seven columns, today's first (from 1024px). */
-function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
-  const { week, metric, history } = props;
+/** The week as a strip of seven columns (from 1024px). */
+function WeekStrip(props: { week: Week; metric: Metric; history: boolean; forecast: ReadonlyMap<string, ForecastDay> | null }): React.JSX.Element {
+  const { week, metric, history, forecast } = props;
   const top = Math.max(0, ...week.rows.map((row) => row.lastYear.value ?? 0));
   const rows: { key: string; label: string; cell: (row: WeekRow) => React.ReactNode }[] = [
+    ...(forecast === null ? [] : [{ key: 'forecast', label: 'Forecast', cell: (row: WeekRow) => <ForecastCell day={forecast.get(row.date)} /> }]),
     { key: 'calendar', label: 'On the calendar', cell: (row) => <CalendarCell row={row} /> },
     ...(history ? [{
       key: 'lastYear', label: 'Last year',
@@ -124,7 +134,7 @@ function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): Rea
     }] : []),
   ];
   return (
-    <View role="table" aria-label="The next 7 days, day by day" style={styles.strip}>
+    <View role="table" aria-label="This week, day by day" style={styles.strip}>
       <View role="row" style={styles.stripRow}>
         <View role="cell" style={styles.corner} />
         {week.rows.map((row) => (
@@ -145,11 +155,12 @@ function WeekStrip(props: { week: Week; metric: Metric; history: boolean }): Rea
   );
 }
 
-/** The 7 days as a table, a row a day, today's first (below 1024px). */
-function WeekTable(props: { week: Week; metric: Metric; history: boolean }): React.JSX.Element {
-  const { week, metric, history } = props;
+/** The week as a table, a row a day (below 1024px). */
+function WeekTable(props: { week: Week; metric: Metric; history: boolean; forecast: ReadonlyMap<string, ForecastDay> | null }): React.JSX.Element {
+  const { week, metric, history, forecast } = props;
   const columns: Column[] = [
     { key: 'day', label: 'Day', flex: 0.8 },
+    ...(forecast === null ? [] : [{ key: 'forecast', label: 'Forecast', flex: 1.4 }]),
     { key: 'calendar', label: 'On the calendar', flex: 2 },
     ...(history ? [{ key: 'lastYear', label: 'Last year', flex: 1.6 }] : []),
     ...(history && week.twoYears ? [{ key: 'twoYears', label: 'Two years ago', flex: 1.6 }] : []),
@@ -159,21 +170,30 @@ function WeekTable(props: { week: Week; metric: Metric; history: boolean }): Rea
     selected: row.isToday,
     cells: {
       day: <DayHead row={row} metric={metric} />,
+      forecast: forecast === null ? null : <ForecastCell day={forecast.get(row.date)} />,
       calendar: <CalendarCell row={row} />,
       lastYear: <PastCell day={row.lastYear} metric={metric} />,
       twoYears: <PastCell day={row.twoYearsAgo} metric={metric} />,
     },
   }));
-  return <DataTable label="The next 7 days, day by day" columns={columns} rows={rows} />;
+  return <DataTable label="This week, day by day" columns={columns} rows={rows} />;
 }
 
-export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric; history: boolean }): React.JSX.Element {
+export function ThisWeek(props: {
+  week: Week; calendar: Calendar; metric: Metric; history: boolean;
+  /** The published forecast, when there is one; null while it loads, if it fails, or with none published. */
+  forecast: ForecastWindow | null;
+}): React.JSX.Element {
   const { week, calendar, metric, history } = props;
   const { desktop } = useBreakpoint();
+  const forecast = useMemo(
+    () => (props.forecast === null ? null : new Map(props.forecast.days.map((day): [string, ForecastDay] => [day.date, day]))),
+    [props.forecast],
+  );
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
 
   return (
-    <Block label={`The next 7 days in ${calendar.town.name}`} eyebrow={`The next 7 days in ${calendar.town.name}`} title="What’s on the calendar, and how these days went before">
+    <Block label={`This week in ${calendar.town.name}`} eyebrow={`This week in ${calendar.town.name}`} title="What’s on the calendar, and how this week went before">
       <Stack gap={8}>
         <Small white>{calendarWeekLine(week, calendar)}</Small>
         {week.periods.map((period) => (
@@ -183,7 +203,9 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
           </View>
         ))}
       </Stack>
-      {desktop ? <WeekStrip week={week} metric={metric} history={history} /> : <WeekTable week={week} metric={metric} history={history} />}
+      {desktop
+        ? <WeekStrip week={week} metric={metric} history={history} forecast={forecast} />
+        : <WeekTable week={week} metric={metric} history={history} forecast={forecast} />}
       <Stack gap={8}>
         {history ? <Mono tone="text3">{LAST_YEAR_FOOTNOTE}</Mono> : null}
         {history && desktop ? <Mono tone="text3">Bars show last year’s days, scaled to the busiest of them.</Mono> : null}
@@ -192,7 +214,7 @@ export function ThisWeek(props: { week: Week; calendar: Calendar; metric: Metric
       {history ? (
         <ShowNumbers>
           <DataTable
-            label="These days in past years"
+            label="This week’s days in past years"
             columns={[
               { key: 'day', label: 'Day' }, { key: 'lastYear', label: 'Last year', numeric: true },
               { key: 'twoYears', label: 'Two years ago', numeric: true }, { key: 'usual', label: 'Usual (last year)', numeric: true },

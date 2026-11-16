@@ -44,10 +44,10 @@ test('an item citing two sites shows one chip for each', () => {
 test('the BLS source is a chip with its label in its name, and the QCEW sentence stays text', () => {
   render(<TownProfile town={{ townId: 'hanover-nh', name: 'Hanover', state: 'NH' }} heading="Hanover, NH" />);
   const bls = screen.getByRole('link', {
-    name: 'U.S. Bureau of Labor Statistics. Source: BLS QCEW open data area slices, NAICS 722, private ownership, 2024',
+    name: 'U.S. Bureau of Labor Statistics. Source: BLS QCEW open data area slices, NAICS 722, private ownership, 2025 (Northeast: CT ME MA NH NJ NY PA; RI and VT withheld for January to March)',
   });
   expect(bls.textContent).toBe('U.S. Bureau of Labor Statistics');
   expect(bls.getAttribute('href')).toBe('https://www.bls.gov/cew/additional-resources/open-data/');
-  const sentence = screen.getByText('Source: U.S. Bureau of Labor Statistics, QCEW, private food services and drinking places (NAICS 722), Grafton County, 2024.');
+  const sentence = screen.getByText('Source: U.S. Bureau of Labor Statistics, QCEW, private food services and drinking places (NAICS 722), Grafton County, 2025.');
   expect(sentence.closest('a')).toBeNull();
 });

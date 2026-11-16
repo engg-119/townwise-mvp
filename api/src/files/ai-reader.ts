@@ -23,14 +23,11 @@ import type { TownwiseStores } from '../stores/index.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { verifiedIndexes } from './ai-verify.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
-import { readerCeilingMicroUsd, readerRequest, type FileReaderModel, type ImageMediaType, type ReaderInput } from './extract/reader.ts';
+import { prepareInput, READER_INPUT, type PreparedInput } from './extract/input.ts';
+import { readerCeilingMicroUsd, readerRequest, type FileReaderModel } from './extract/reader.ts';
 import { readerResult } from './extract/reader-prompt.ts';
-import {
-  AI_IMAGE_BYTES, AI_PDF_BYTES, AI_PDF_PAGES, AI_RETRY_BASE_MS, AI_SOURCE_CHARS, AI_TEXT_CHARS, AI_TEXT_READ_BYTES, AI_ZIP_BYTES,
-  DOCX_READ_BYTES, HEAD_BYTES, MAX_ATTEMPTS, READ_TIME_MS, XLSX_READ_BYTES,
-} from './limits.ts';
-import { extractAiText, textFileText, type AiTextInput, type AiTextOutcome } from './parse/ai-text.ts';
-import { sniff } from './sniff.ts';
+import { AI_RETRY_BASE_MS, MAX_ATTEMPTS, READ_TIME_MS } from './limits.ts';
+import type { AiTextInput, AiTextOutcome } from './parse/ai-text.ts';
 
 /** What a finished read hands to `onRead`: the checked answer, whether the input was cut, and what the call cost. */
 export interface AiFileRead {
@@ -98,13 +95,8 @@ const POLL_MS = 5000;
 const LEASE_MS = 90_000;
 const HEARTBEAT_MS = 30_000;
 
-/** `pages` for a PDF (what its reservation is estimated on). */
-type Prepared =
-  | { readonly kind: 'skip'; readonly reason: AiSkipReason }
-  | {
-    readonly kind: 'input'; readonly input: ReaderInput; readonly sourceText: string | null; readonly partial: boolean;
-    readonly pages: number | null;
-  };
+/** The model's input (extract/input.ts), or why the read is skipped; `pages` for a PDF (what its reservation is estimated on). */
+type Prepared = PreparedInput | { readonly kind: 'skip'; readonly reason: AiSkipReason };
 
 /** HTTP statuses of a failed call that a later attempt may get past; any other 4xx is the request itself refused. */
 const RETRIED_4XX: ReadonlySet<number> = new Set([408, 409, 429]);
@@ -114,20 +106,9 @@ export function retryDelayMs(attempt: number): number {
   return AI_RETRY_BASE_MS * 2 ** Math.max(0, attempt - 1);
 }
 
-/** A PNG, JPEG, GIF or WebP picture, by its first bytes whatever its name or kind, or null. */
-export function pictureType(head: Uint8Array): ImageMediaType | null {
-  const starts = (bytes: readonly number[], at = 0): boolean => bytes.every((byte, index) => head[at + index] === byte);
-  if (starts([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'image/png';
-  if (starts([0xff, 0xd8, 0xff])) return 'image/jpeg';
-  if (starts([0x47, 0x49, 0x46, 0x38]) && (head[4] === 0x37 || head[4] === 0x39) && head[5] === 0x61) return 'image/gif';
-  if (starts([0x52, 0x49, 0x46, 0x46]) && starts([0x57, 0x45, 0x42, 0x50], 8)) return 'image/webp';
-  return null;
-}
-
 export function createAiReader(deps: AiReaderDeps): AiReader {
   const { stores, blobs, logger, now } = deps;
   const leaseMs = deps.leaseMs ?? LEASE_MS;
-  const extractText = deps.extractText ?? extractAiText;
   const onRead: OnAiRead = deps.onRead ?? (() => Promise.resolve(null));
   let stopped = false;
   let busy: Promise<void> | null = null;
@@ -148,55 +129,10 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
 
   const skip = (reason: AiSkipReason): Prepared => ({ kind: 'skip', reason });
 
-  /** The model's input from the original, the text to check figures against, and whether the input was cut. */
-  async function prepare(scope: OrgScope, file: FileRecord): Promise<Prepared> {
-    const head = await original(scope, file, Math.min(HEAD_BYTES, file.sizeBytes));
-    const picture = pictureType(head);
-    if (picture !== null) {
-      if (file.sizeBytes > AI_IMAGE_BYTES) return skip('too_large');
-      const bytes = file.sizeBytes <= head.length ? head : await original(scope, file);
-      return {
-        kind: 'input', input: { type: 'image', mediaType: picture, base64: bytes.toString('base64') }, sourceText: null, partial: false, pages: null,
-      };
-    }
-    switch (file.kind) {
-      case 'pdf': {
-        if (file.sizeBytes > AI_PDF_BYTES) return skip('too_large');
-        const bytes = await original(scope, file);
-        const text = await extractText({ kind: 'pdf', bytes, maxChars: AI_SOURCE_CHARS });
-        if (text.kind === 'kept') return skip(text.outcome);
-        if (text.pages !== null && text.pages > AI_PDF_PAGES) return skip('too_large');
-        // Sent whole as a document (a scanned PDF too: its text is then empty); its text is only checked against.
-        return { kind: 'input', input: { type: 'pdf', base64: bytes.toString('base64') }, sourceText: text.text, partial: false, pages: text.pages };
-      }
-      case 'text': {
-        const count = Math.min(file.sizeBytes, AI_TEXT_READ_BYTES);
-        const { text, cut } = textFileText(await original(scope, file, count), file.sizeBytes > count, AI_TEXT_CHARS);
-        return { kind: 'input', input: { type: 'text', form: 'text', text, cut }, sourceText: text, partial: cut, pages: null };
-      }
-      case 'xlsx':
-      case 'docx': {
-        if (file.sizeBytes > (file.kind === 'xlsx' ? XLSX_READ_BYTES : DOCX_READ_BYTES)) return skip('too_large');
-        const made = await extractText({ kind: file.kind, bytes: await original(scope, file), maxChars: AI_TEXT_CHARS });
-        if (made.kind === 'kept') return skip(made.outcome);
-        const input: ReaderInput = { type: 'text', form: file.kind === 'xlsx' ? 'workbook' : 'word', text: made.text, cut: made.cut };
-        return { kind: 'input', input, sourceText: made.text, partial: made.cut, pages: null };
-      }
-      case 'other':
-        // The name is read here only for its extension (a password-protected Office file); it never leaves this function.
-        return skip(sniff(file.name, head).outcome === 'encrypted' ? 'encrypted' : 'kind_not_read');
-      case 'zip': {
-        // Its entries as text, labelled by their place, never their path (parse/archive.ts readArchiveText).
-        if (file.sizeBytes > AI_ZIP_BYTES) return skip('too_large');
-        const made = await extractText({ kind: 'zip', bytes: await original(scope, file), maxChars: AI_TEXT_CHARS });
-        if (made.kind === 'kept') return skip(made.outcome);
-        const input: ReaderInput = { type: 'text', form: 'archive', text: made.text, cut: made.cut, skipped: made.skipped ?? 0 };
-        return { kind: 'input', input, sourceText: made.source ?? made.text, partial: made.cut, pages: null };
-      }
-      case 'xls':
-      case 'doc':
-        return skip('kind_not_read');
-    }
+  /** The model's input from the original (extract/input.ts, within the reader's caps), read from storage as far as it needs. */
+  function prepare(scope: OrgScope, file: FileRecord): Promise<PreparedInput> {
+    const source = { kind: file.kind, sizeBytes: file.sizeBytes, name: file.name, read: (count?: number) => original(scope, file, count) };
+    return prepareInput(source, READER_INPUT, deps.extractText);
   }
 
   async function audit(scope: OrgScope, file: FileRecord, result: AiReadResult, done: AiActionsOutcome | null): Promise<void> {

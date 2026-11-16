@@ -10,6 +10,7 @@ import {
 import type { Access, Resolution } from '../src/access/resolve.ts';
 import { assertRouteTable, ROUTE_LIMITS, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import type { TownwiseContext } from '../src/app.ts';
+import { holdSetupReadBytes } from '../src/handlers/order-setup-read.ts';
 import { createLabCallbackRouter } from '../src/lab/callback.ts';
 
 const handler: TownwiseRoute['handler'] = () => Promise.resolve();
@@ -170,7 +171,7 @@ describe('route table', () => {
     }
   });
 
-  it('orders: the board, edits, rules, the setup, item sales and counts are member routes but deleting item sales', () => {
+  it('orders: the board, edits, rules, the setup, reading it with TownwiseAI, item sales and counts are member routes but deleting item sales', () => {
     const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.orders.'))
       .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
     const base = '/org/locations/:locationId/orders';
@@ -181,15 +182,17 @@ describe('route table', () => {
       { id: 'org.orders.rule_off', method: 'POST', path: `${base}/rules/off`, policy: 'member', bodyLimit: '1kb', limiter: undefined },
       { id: 'org.orders.setup.get', method: 'GET', path: `${base}/setup`, policy: 'member', bodyLimit: 'none', limiter: undefined },
       { id: 'org.orders.setup.save', method: 'PUT', path: `${base}/setup`, policy: 'member', bodyLimit: '1mb', limiter: undefined },
+      // D41: a file of up to 5 MB as base64, or pasted text; each read is a model call, so the ai_reads limiter.
+      { id: 'org.orders.setup.read', method: 'POST', path: `${base}/setup/read`, policy: 'member', bodyLimit: '8mb', limiter: 'ai_reads' },
       { id: 'org.orders.item_sales.upload', method: 'POST', path: `${base}/item-sales`, policy: 'member', bodyLimit: '256kb', limiter: 'item_sales' },
       { id: 'org.orders.item_sales.remove', method: 'DELETE', path: `${base}/item-sales`, policy: 'org_admin', bodyLimit: 'none', limiter: undefined },
       { id: 'org.orders.counts.save', method: 'POST', path: `${base}/counts`, policy: 'member', bodyLimit: '32kb', limiter: undefined },
     ]);
   });
 
-  it('D25: Open as admin is a staff POST with no body, sharing the view-as limiter', () => {
+  it('D25: Open as admin is a staff POST with a small body (the reason, once someone has joined), sharing the view-as limiter', () => {
     expect(TOWNWISE_ROUTES.find((r) => r.id === 'admin.orgs.open_as_admin')).toMatchObject({
-      method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none', limiter: 'view-as',
+      method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: '1kb', limiter: 'view-as',
     });
   });
 
@@ -221,6 +224,26 @@ describe('route table', () => {
     expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '1mb').map((r) => r.id)).toEqual(['org.orders.setup.save']);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'POST', bodyLimit: 'stream' })]); }).toThrow(ConfigError);
     expect(() => { assertRouteTable([route({ id: 'org.files.chunk', method: 'PUT', bodyLimit: 'stream' })]); }).not.toThrow();
+  });
+
+  it('D41: boot refuses an 8 MB body on any route but reading the ordering setup with TownwiseAI, a POST', () => {
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'POST', bodyLimit: '8mb' })]); }).not.toThrow();
+    expect(() => { assertRouteTable([route({ method: 'POST', bodyLimit: '8mb' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'PUT', bodyLimit: '8mb' })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'PUT', bodyLimit: '8mb' })]); }).toThrow(ConfigError);
+    expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '8mb').map((r) => r.id)).toEqual(['org.orders.setup.read']);
+    expect(TOWNWISE_ROUTES.find((r) => r.id === 'org.orders.setup.read')).toMatchObject({ openAsAdmin: true });
+  });
+
+  it('D41: only reading the ordering setup holds its byte gate before the body is parsed; boot refuses the step anywhere else', () => {
+    const step: TownwiseRoute['beforeBody'] = () => undefined;
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'POST', bodyLimit: '8mb', beforeBody: step })]); }).not.toThrow();
+    expect(() => { assertRouteTable([route({ method: 'POST', bodyLimit: '32kb', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.data.ai_read', method: 'POST', bodyLimit: '2kb', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'POST', bodyLimit: '1kb', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'PUT', bodyLimit: 'stream', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(TOWNWISE_ROUTES.filter((r) => r.beforeBody !== undefined).map((r) => r.id)).toEqual(['org.orders.setup.read']);
+    expect(TOWNWISE_ROUTES.find((r) => r.id === 'org.orders.setup.read')?.beforeBody).toBe(holdSetupReadBytes);
   });
 
   it('declares every stored-files route with its policy, body limit and limiter, current before :importId', () => {
@@ -277,7 +300,8 @@ describe('route table', () => {
       method: 'POST', path: '/org/locations/:locationId/data/:ref/ai', policy: 'member', bodyLimit: '2kb', openAsAdmin: true, limiter: 'ai_reads',
     });
     expect(ROUTE_LIMITS.ai_reads).toEqual({ name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' });
-    expect(TOWNWISE_ROUTES.filter((entry) => entry.limiter === 'ai_reads').map((entry) => entry.id)).toEqual(['org.data.ai_read']);
+    // D41: reading the ordering setup with TownwiseAI shares it.
+    expect(TOWNWISE_ROUTES.filter((entry) => entry.limiter === 'ai_reads').map((entry) => entry.id)).toEqual(['org.data.ai_read', 'org.orders.setup.read']);
   });
 
   it('business rules are member routes with 2kb bodies on writes and no route limiter, after the notes block', () => {

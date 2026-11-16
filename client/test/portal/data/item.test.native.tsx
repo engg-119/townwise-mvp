@@ -7,7 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { cleanup, screen, within } from 'expo-router/testing-library';
+import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import type { SalesHistory } from '../../../src/portal/analytics/api';
 import { ACCESS, fakePortalApi, meOf, orgOf } from '../../helpers/portal';
@@ -15,8 +15,8 @@ import { renderApp } from '../../helpers/renderApp';
 import { locationsFake } from '../locations/fakes';
 import { dailyTotalsOf, dataFake, itemOf } from './fakes';
 
-// One item of Your data on native (P27, D28): an upload's days, as on web; a stored file is drawn on the web only,
-// so the page says where it opens, and reads nothing of it.
+// One item of Your data on native (P27, D28): an upload's days, as on web, with Turn off and Delete; a stored file is
+// drawn on the web only, so the page says where it opens, and reads nothing of it.
 
 afterEach(async () => {
   await cleanup();
@@ -65,4 +65,17 @@ test('a stored file’s page says it opens on the web, says where to download it
   expect(screen.queryByRole('button', { name: /^Download/ })).toBeNull();
   expect(screen.queryByRole('button', { name: /^(Rename|Edit)/ })).toBeNull();
   expect(fake.files.calls.filter((call) => call.path.endsWith('/raw'))).toEqual([]);
+});
+
+test('native has Turn off and Delete: Turn off acts at once, and a delete goes back to Your data, which says how it ended', async () => {
+  const { api, fake } = setup();
+  const { router } = await renderApp(`/locations/l1/data/${UPLOAD}`, api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 2, 2026' }));
+  expect(await screen.findByText(/^Turned off Daily totals, May 1, 2026 to May 2, 2026\./)).toBeTruthy();
+  expect(fake.patches).toEqual([{ ref: UPLOAD, body: { enabled: false } }]);
+  await fireEvent.press(screen.getByRole('button', { name: 'Delete: Daily totals, May 1, 2026 to May 2, 2026' }));
+  await fireEvent.press(await screen.findByRole('button', { name: 'Delete upload' }));
+  await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1/data'); });
+  expect(fake.removed).toEqual([{ locationId: 'l1', ref: UPLOAD }]);
+  expect(await screen.findByText('Deleted the upload and 5 days.')).toBeTruthy();
 });

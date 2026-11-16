@@ -1,20 +1,21 @@
 // Files attached to a person's message (spec D36, docs/portal/tuning-chat.md section 3), without Docker: the attachments
 // block's words, where it sits in the stored message, how the turn's content is built and capped (tokens, a message's
-// pictures, a replica's bytes in flight), what a turn sends against what it saves, and start_calibration's refusal in a
-// turn that read a file.
-import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
+// pictures, a replica's bytes in flight), PDF, Word and Excel files as their text, what a turn sends against what it
+// saves, read_data_item reading an attached file again, and start_calibration's refusal in a turn that read a file.
+import type { BetaContentBlockParam, BetaMessageParam, BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
 import {
-  ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_TOKEN_CAP, attachedTo, attachmentsBlock, bytesToRead, createByteGate, estimatedTokens, expandedMessage,
-  MESSAGE_PICTURE_BYTES, PICTURE_TOKENS, readAttachments, refusalOf, turnAttachments, type AttachmentCheck, type AttachmentRead, type FileRead,
+  ANSWER_TIME_MS, ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_TOKEN_CAP, attachedTo, attachmentsBlock, bytesToRead, createByteGate, estimatedTokens, expandedMessage,
+  MESSAGE_PICTURE_BYTES, PICTURE_TOKENS, readAttachments, refusalOf, turnAttachments, type AttachmentCheck, type AttachmentRead, type ByteGate,
+  type FileRead,
 } from '../src/chat/attachments.ts';
 import { startCalibrationTool } from '../src/chat/tools/calibration.ts';
-import type { ToolContext } from '../src/chat/tools/registry.ts';
+import { resultViewOf, runTool, savedResultOf, type ToolContext } from '../src/chat/tools/registry.ts';
 import { runTurn } from '../src/chat/turn.ts';
 import { historyForModel, isContextBlock, REPLACED_RULES_BLOCK, rulesBlock, userMessageOf } from '../src/chat/user-message.ts';
-import type { ItemForModel } from '../src/files/items.ts';
-import { message, messagesOf, scriptedModel, text, thinking } from './helpers/chat-model.ts';
+import type { ItemContent, ItemForModel, ItemViewer } from '../src/files/items.ts';
+import { message, messagesOf, scriptedModel, text, thinking, toolUse } from './helpers/chat-model.ts';
 
 const A = `f_${'a'.repeat(24)}`;
 const B = `f_${'b'.repeat(24)}`;
@@ -26,7 +27,9 @@ const LEAD = 'Townwise added this before the person\'s message; they didn\'t typ
 
 const read = (ref: string, value: FileRead): AttachmentRead => ({ ref, kind: null, read: value });
 const check = (ref: string, value: ItemForModel): AttachmentCheck => ({ ref, kind: null, check: value });
-const textRead = (value: string, truncated = false): FileRead => ({ status: 'text', text: value, truncated });
+const textRead = (value: string, truncated = false): FileRead => ({ status: 'text', kind: 'text', text: value, truncated });
+/** A PDF's, Word file's or workbook's text, as the AI text thread made it. */
+const docRead = (kind: 'pdf' | 'word' | 'excel', value: string, truncated = false): FileRead => ({ status: 'text', kind, text: value, truncated });
 const PICTURE: FileRead = { status: 'picture', mediaType: 'image/png', base64: 'iVBORw0KGgo=' };
 /** A file the checks found the turn can send, `bytes` long; `reads` counts its reads. */
 function readable(kind: 'text' | 'picture', bytes: number, reads: { count: number } = { count: 0 }): ItemForModel {
@@ -34,7 +37,7 @@ function readable(kind: 'text' | 'picture', bytes: number, reads: { count: numbe
     status: 'readable', kind, bytes,
     read: () => {
       reads.count += 1;
-      return Promise.resolve(kind === 'text' ? { status: 'text', text: 'Fall menu', truncated: false } : PICTURE as Extract<FileRead, { status: 'picture' }>);
+      return Promise.resolve(kind === 'text' ? { status: 'text', kind: 'text', text: 'Fall menu', truncated: false } : PICTURE as Extract<FileRead, { status: 'picture' }>);
     },
   };
 }
@@ -196,7 +199,7 @@ describe('the turn\'s content and its cap', () => {
     ];
     expect(bytesToRead(checks)).toBe(3_750_000 + 65_536 + 3_750_000);
     expect(reads.count).toBe(0);
-    const read = await readAttachments([...checks.slice(0, 4), check(`f_${'9'.repeat(24)}`, readable('text', 5, reads)), off]);
+    const read = await readAttachments([...checks.slice(0, 4), check(`f_${'9'.repeat(24)}`, readable('text', 5, reads)), off], Date.now() + 60_000, createByteGate(ATTACHMENT_BYTES_IN_FLIGHT));
     expect(reads.count).toBe(3);
     expect(read.map((file) => file.read.status)).toEqual(['picture', 'text', 'picture', 'too_much', 'too_much', 'turned_off']);
     expect(turnAttachments(read).block.split('\n').slice(2, -1)[3]).toBe(`- ${D}: a picture, not read: too much at once`);
@@ -237,6 +240,281 @@ describe('the turn\'s content and its cap', () => {
   });
 });
 
+describe('PDF, Word and Excel files, sent as their text', () => {
+  it('sends each as a document titled by its ref after the block, says when its text was cut, and counts each kind', () => {
+    const { block, content, counts } = turnAttachments([
+      read(A, docRead('pdf', 'Events for June')),
+      read(B, docRead('word', 'Spring menu', true)),
+      read(C, docRead('excel', 'Sheet: Daily\nDate\tGuests')),
+    ]);
+    expect(block.split('\n').slice(2, -1)).toEqual([
+      `- ${A}: a PDF`,
+      `- ${B}: a Word file, only its first 20,000 characters`,
+      `- ${C}: an Excel file`,
+    ]);
+    expect(content).toEqual([
+      { type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'Events for June' }, title: A },
+      { type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'Spring menu' }, title: B },
+      { type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'Sheet: Daily\nDate\tGuests' }, title: C },
+    ]);
+    expect(counts).toEqual({ pdf: 1, word: 1, excel: 1 });
+    // A token for every 3 characters, as for a text file.
+    expect(estimatedTokens(docRead('pdf', 'x'.repeat(20_000)))).toBe(6667);
+  });
+
+  it('lists one the thread refused, couldn\'t get to, or found no text in as not read, with its reason; a picture too large keeps its words', () => {
+    const { block, content, counts } = turnAttachments([
+      read(A, { status: 'encrypted', kind: 'pdf' }),
+      read(B, { status: 'damaged', kind: 'word' }),
+      read(C, { status: 'too_complex', kind: 'excel' }),
+      read(D, { status: 'busy', kind: 'pdf' }),
+      read(E, docRead('pdf', ' \n\n ')),
+    ]);
+    expect(block.split('\n').slice(2, -1)).toEqual([
+      `- ${A}: a PDF, not read: it has a password`,
+      `- ${B}: a Word file, not read: it couldn't be opened`,
+      `- ${C}: an Excel file, not read: too complex to turn into text`,
+      `- ${D}: a PDF, not read: TownwiseAI was busy reading another file; try again in a moment`,
+      `- ${E}: a PDF, not read: it has no text, so it may be a scan`,
+    ]);
+    expect(content).toEqual([]);
+    expect(counts).toEqual({ pdf: 3, word: 1, excel: 1 });
+    expect(turnAttachments([
+      read(A, { status: 'too_large', kind: 'pdf' }),
+      read(B, { status: 'too_large', kind: 'picture' }),
+      read(C, docRead('excel', '')),
+    ]).block.split('\n').slice(2, -1)).toEqual([
+      `- ${A}: a PDF, not read: too large`,
+      `- ${B}: a picture, not read: over 3.75 MB`,
+      `- ${C}: an Excel file, not read: it is empty`,
+    ]);
+  });
+});
+
+describe('a message\'s PDF, Word and Excel files, read one after another', () => {
+  /** A document check whose read the test settles; each read records when it started and ended, and the `by` it got. */
+  function documentCheck(kind: 'pdf' | 'word' | 'excel', log: string[], outcome: ItemContent, ms = 20): ItemForModel {
+    return {
+      status: 'readable', kind, bytes: 10,
+      read: async (by) => {
+        log.push(`start ${kind} ${String(by)}`);
+        await new Promise((resolve) => { setTimeout(resolve, ms); });
+        log.push(`end ${kind}`);
+        return outcome;
+      },
+    };
+  }
+
+  it('reads each document only after the one before it ended, so a message\'s own files never wait on each other', async () => {
+    const log: string[] = [];
+    const reads = { count: 0 };
+    const by = Date.now() + 120_000;
+    const read = await readAttachments([
+      check(A, documentCheck('pdf', log, { status: 'text', kind: 'pdf', text: 'June', truncated: false })),
+      check(B, readable('picture', 10, reads)),
+      check(C, documentCheck('word', log, { status: 'text', kind: 'word', text: 'Menu', truncated: false })),
+      check(D, documentCheck('excel', log, { status: 'text', kind: 'excel', text: 'Sheet', truncated: false })),
+    ], by, createByteGate(ATTACHMENT_BYTES_IN_FLIGHT));
+    expect(log).toEqual([`start pdf ${String(by)}`, 'end pdf', `start word ${String(by)}`, 'end word', `start excel ${String(by)}`, 'end excel']);
+    expect(read.map((file) => file.read.status)).toEqual(['text', 'picture', 'text', 'text']);
+    // The picture didn't wait for the documents.
+    expect(reads.count).toBe(1);
+  });
+
+  it('lists a document the turn hasn\'t the time for as too much at once, and after one found the thread busy, the rest busy without reading', async () => {
+    const log: string[] = [];
+    const by = Date.now() + 120_000;
+    const read = await readAttachments([
+      check(A, documentCheck('pdf', log, { status: 'no_time', kind: 'pdf' })),
+      check(B, documentCheck('word', log, { status: 'busy', kind: 'word' })),
+      check(C, documentCheck('excel', log, { status: 'text', kind: 'excel', text: 'Sheet', truncated: false })),
+    ], by, createByteGate(ATTACHMENT_BYTES_IN_FLIGHT));
+    expect(read.map((file) => file.read)).toEqual([
+      { status: 'too_much', kind: 'pdf' }, { status: 'busy', kind: 'word' }, { status: 'busy', kind: 'excel' },
+    ]);
+    // The Excel file was never read.
+    expect(log).toEqual([`start pdf ${String(by)}`, 'end pdf', `start word ${String(by)}`, 'end word']);
+    expect(turnAttachments(read).block.split('\n').slice(2, -1)).toEqual([
+      `- ${A}: a PDF, not read: too much at once`,
+      `- ${B}: a Word file, not read: TownwiseAI was busy reading another file; try again in a moment`,
+      `- ${C}: an Excel file, not read: TownwiseAI was busy reading another file; try again in a moment`,
+    ]);
+  });
+
+  it('reads no later document once a read failed: none opens its original or starts the thread', async () => {
+    const log: string[] = [];
+    const failing: ItemForModel = {
+      status: 'readable', kind: 'pdf', bytes: 10,
+      read: async () => {
+        log.push('start failing');
+        await new Promise((resolve) => { setTimeout(resolve, 10); });
+        throw new Error('storage down');
+      },
+    };
+    const gate = createByteGate(ATTACHMENT_BYTES_IN_FLIGHT);
+    await expect(readAttachments([
+      check(A, failing),
+      check(B, documentCheck('word', log, { status: 'text', kind: 'word', text: 'Menu', truncated: false })),
+      check(C, documentCheck('excel', log, { status: 'text', kind: 'excel', text: 'Sheet', truncated: false })),
+    ], Date.now() + 120_000, gate)).rejects.toThrow('storage down');
+    // Long enough for the chain behind it to have run, had it read.
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+    expect(log).toEqual(['start failing']);
+  });
+
+  it('gives a document\'s bytes back once it is read, so another turn\'s file fits; a picture\'s stay held for the turn', async () => {
+    const reads = { count: 0 };
+    const document = { ...documentCheck('pdf', [], { status: 'text', kind: 'pdf', text: 'June', truncated: false }), bytes: 9_000_000 } as ItemForModel;
+    const checks = [check(A, document), check(B, readable('picture', 1_000_000, reads))];
+    // A replica with room for this turn's 10 MB and nothing more.
+    const gate = createByteGate(10_000_000);
+    expect(bytesToRead(checks)).toBe(10_000_000);
+    expect(gate.reserve(bytesToRead(checks))).toBe(true);
+    expect(gate.reserve(9_000_000)).toBe(false);
+    await readAttachments(checks, Date.now() + 120_000, gate);
+    expect(gate.held).toBe(1_000_000);
+    // Another turn's 9 MB document now fits.
+    expect(gate.reserve(9_000_000)).toBe(true);
+  });
+
+  it('counts the bytes of the pictures it sends, for the turn\'s cap on pictures', () => {
+    const big: FileRead = { status: 'picture', mediaType: 'image/png', base64: Buffer.alloc(3000).toString('base64') };
+    expect(turnAttachments([read(A, big), read(B, PICTURE), read(C, textRead('Menu'))]).pictureBytes).toBe(3000 + Buffer.from('iVBORw0KGgo=', 'base64').length);
+    expect(turnAttachments([read(A, textRead('Menu'))]).pictureBytes).toBe(0);
+    expect(ANSWER_TIME_MS).toBe(30_000);
+  });
+});
+
+describe('read_data_item reading an attached file again (D36)', () => {
+  const PNG_DATA = 'iVBORw0KGgo=';
+  /**
+   * A turn's tools whose items reader answers `check` for any file that isn't a text item, with the replica's bytes in a
+   * gate of `room` bytes; `pictureBytes` is what the turn's pictures already hold.
+   */
+  function toolsFor(check: ItemForModel, attached: readonly string[], opts: { room?: number; pictureBytes?: number; by?: number } = {}): {
+    tc: ToolContext; viewers: ItemViewer[]; gate: ByteGate;
+  } {
+    const viewers: ItemViewer[] = [];
+    const gate = createByteGate(opts.room ?? ATTACHMENT_BYTES_IN_FLIGHT);
+    const items = {
+      on: true,
+      readText: () => Promise.resolve({ status: 'not_readable' }),
+      readForModel: (_scope: unknown, _location: string, _fileId: string, viewer: ItemViewer) => {
+        viewers.push(viewer);
+        return Promise.resolve(check);
+      },
+    };
+    const tc = {
+      ctx: { items }, scope: {}, location: { id: 'l1' }, role: 'org_admin', actor: { actorUserId: 'u1' },
+      turn: { readUntrusted: false, readWeb: false, pictureBytes: opts.pictureBytes ?? 0 },
+      files: { attached: new Set(attached), by: opts.by ?? Date.now() + 120_000, bytes: gate },
+    } as unknown as ToolContext;
+    return { tc, viewers, gate };
+  }
+  const call = (ref: string): BetaToolUseBlock => ({ type: 'tool_use', id: 't1', name: 'read_data_item', input: { ref } } as unknown as BetaToolUseBlock);
+  const readsAs = (content: ItemContent, reads: { count: number; by?: number } = { count: 0 }): ItemForModel => ({
+    status: 'readable', kind: 'pdf', bytes: 10,
+    read: (by) => {
+      reads.count += 1;
+      reads.by = by;
+      return Promise.resolve(content);
+    },
+  });
+  const picture = (bytes: number, reads: { count: number } = { count: 0 }): ItemForModel => ({
+    status: 'readable', kind: 'picture', bytes,
+    read: () => {
+      reads.count += 1;
+      return Promise.resolve({ status: 'picture', mediaType: 'image/png', base64: PNG_DATA });
+    },
+  });
+  const reasonOf = async (tc: ToolContext, ref = A): Promise<string> => (JSON.parse((await runTool(tc, call(ref))).result.content as string) as { reason: string }).reason;
+
+  it('sends a picture as an image block after the result\'s text, marks the turn read, and saves only its stub', async () => {
+    const { tc, viewers } = toolsFor({ status: 'readable', kind: 'picture', bytes: 10, read: () => Promise.resolve({ status: 'picture', mediaType: 'image/png', base64: PNG_DATA }) }, [A]);
+    const { result } = await runTool(tc, call(A));
+    expect(result.content).toEqual([
+      { type: 'text', text: JSON.stringify({ ref: A, picture: true }) },
+      { type: 'image', source: { type: 'base64', media_type: 'image/png', data: PNG_DATA } },
+    ]);
+    expect(viewers).toEqual([{ userId: 'u1', role: 'org_admin' }]);
+    expect(tc.turn.readUntrusted).toBe(true);
+    expect(resultViewOf('read_data_item', result)).toEqual({ ref: A, available: true, picture: true });
+    const saved = savedResultOf('read_data_item', result);
+    expect(saved.content).toBe(JSON.stringify({ ref: A, picture: true, elided: true, reason: 'Seen in an earlier turn; call read_data_item again to see it.' }));
+    expect(JSON.stringify(saved)).not.toContain(PNG_DATA);
+    // The stub reads as the same card.
+    expect(resultViewOf('read_data_item', saved)).toEqual({ ref: A, available: true, picture: true });
+  });
+
+  it('hands back a PDF\'s text as a text item\'s, and saves the same stub', async () => {
+    const { tc } = toolsFor(readsAs({ status: 'text', kind: 'pdf', text: 'Events for June', truncated: true }), [A]);
+    const { result } = await runTool(tc, call(A));
+    expect(result.content).toBe(JSON.stringify({ ref: A, text: 'Events for June', truncated: true }));
+    expect(tc.turn.readUntrusted).toBe(true);
+    expect(savedResultOf('read_data_item', result).content)
+      .toBe(JSON.stringify({ ref: A, chars: 15, truncated: true, elided: true, reason: 'Read in an earlier turn; call read_data_item again for its current text.' }));
+  });
+
+  it('reads no file the path didn\'t attach, and refuses one it can\'t send with its reason, without marking the turn read', async () => {
+    const notAttached = toolsFor(readsAs({ status: 'text', kind: 'pdf', text: 'Sentinel', truncated: false }), [B]);
+    expect(JSON.parse((await runTool(notAttached.tc, call(A))).result.content as string)).toEqual({
+      available: false,
+      reason: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+    });
+    expect(notAttached.viewers).toEqual([]);
+    const reasons = await Promise.all([
+      toolsFor({ status: 'not_allowed' }, [A]),
+      toolsFor(readsAs({ status: 'busy', kind: 'pdf' }), [A]),
+      toolsFor(readsAs({ status: 'text', kind: 'pdf', text: '\n\n', truncated: false }), [A]),
+      toolsFor(readsAs({ status: 'encrypted', kind: 'excel' }), [A]),
+    ].map(async ({ tc }) => {
+      const parsed = JSON.parse((await runTool(tc, call(A))).result.content as string) as { reason: string };
+      expect(tc.turn.readUntrusted).toBe(false);
+      return parsed.reason;
+    }));
+    expect(reasons).toEqual([
+      'Only the person who added that file or an org admin can have TownwiseAI read it.',
+      'TownwiseAI was busy reading another file. Try again in a moment.',
+      'That PDF has no text, so it may be a scan. TownwiseAI reads only a PDF’s text.',
+      'That file has a password, so TownwiseAI can’t read it.',
+    ]);
+  });
+
+  it('keeps a turn\'s pictures within a message\'s: one that would pass 7.5 MB is too much at once, and nothing is read or held', async () => {
+    const reads = { count: 0 };
+    const full = toolsFor(picture(600_000, reads), [A], { pictureBytes: 7_000_000 });
+    expect(await reasonOf(full.tc)).toBe('Too much at once: this reply already has as many pictures as one message can carry. Ask about it in a new message.');
+    expect([reads.count, full.gate.held, full.tc.turn.readUntrusted]).toEqual([0, 0, false]);
+    // One that fits is read, its bytes held for the rest of the turn and counted toward its pictures.
+    const fits = toolsFor(picture(500_000, reads), [A], { pictureBytes: 7_000_000 });
+    await runTool(fits.tc, call(A));
+    expect([reads.count, fits.gate.held, fits.tc.turn.pictureBytes]).toEqual([1, 500_000, 7_500_000]);
+  });
+
+  it('holds a re-read\'s bytes against the replica\'s cap: past it nothing is read; a document\'s go back once it is read', async () => {
+    const reads = { count: 0 };
+    const crowded = toolsFor(picture(500_000, reads), [A], { room: 400_000 });
+    expect(await reasonOf(crowded.tc)).toBe('TownwiseAI is reading a lot of files right now. Try again in a moment.');
+    expect([reads.count, crowded.gate.held]).toEqual([0, 0]);
+    const document = toolsFor(readsAs({ status: 'text', kind: 'pdf', text: 'June', truncated: false }, reads), [A], { room: 400_000 });
+    await runTool(document.tc, call(A));
+    expect([reads.count, document.gate.held]).toEqual([1, 0]);
+    // A picture that turned out not to be sendable holds nothing either.
+    const broken = toolsFor({ status: 'readable', kind: 'picture', bytes: 10, read: () => Promise.resolve({ status: 'too_many_pixels', kind: 'picture' }) }, [A]);
+    expect(await reasonOf(broken.tc)).toBe('That picture is too large in pixels for TownwiseAI to read.');
+    expect(broken.gate.held).toBe(0);
+  });
+
+  it('reads by the turn\'s deadline, and one with too little time left reads nothing and says so', async () => {
+    const reads: { count: number; by?: number } = { count: 0 };
+    const by = Date.now() + 50_000;
+    const late = toolsFor(readsAs({ status: 'no_time', kind: 'pdf' }, reads), [A], { by });
+    expect(await reasonOf(late.tc)).toBe('There isn’t enough time left in this reply to read that file. Ask about it in a new message.');
+    expect(reads.by).toBe(by);
+    expect([late.tc.turn.readUntrusted, late.gate.held]).toEqual([false, 0]);
+  });
+});
+
 describe('a turn with attachments', () => {
   const stored: BetaMessageParam = { role: 'user', content: [textBlock(attachmentsBlock([`- ${A}: a text file`])), textBlock('What is on it?')] };
   const expanded = expandedMessage(stored, turnAttachments([read(A, textRead('Sentinel-file-text'))])) ?? stored;
@@ -272,6 +550,33 @@ describe('a turn with attachments', () => {
     const saved = result.kind === 'done' ? result.messages.map((m) => m.param).join('') : '';
     expect(saved).toContain('Again.');
     expect(saved).not.toContain('sig-again');
+  });
+
+  it('runs no more of a message\'s tool calls once the turn is stopped or past its time limit', async () => {
+    const stop = new AbortController();
+    let reads = 0;
+    const tools = {
+      ctx: {
+        items: {
+          on: true,
+          readText: () => {
+            reads += 1;
+            stop.abort();
+            return Promise.resolve({ status: 'turned_off' });
+          },
+        },
+      },
+      scope: {}, location: { id: 'l1' }, today: '2026-06-01', timeZone: 'America/New_York',
+      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 }, files: { attached: new Set(), by: 0, bytes: createByteGate(0) },
+    } as unknown as ToolContext;
+    const model = scriptedModel();
+    model.script({ kind: 'message', message: message([toolUse('r1', 'read_data_item', { ref: A }), toolUse('r2', 'read_data_item', { ref: B })]) });
+    const result = await runTurn({
+      ...base, tools, signal: stop.signal, model, history: [], userMessage: { role: 'user', content: 'Read both' }, expanded: null,
+      nodes: { user: { id: 'u1', parentId: null }, reply: { id: 'a1', parentId: 'u1' } },
+    });
+    expect(result.kind).toBe('aborted');
+    expect(reads).toBe(1);
   });
 
   it('start_calibration refuses in a turn that read a file, before anything is looked up', async () => {

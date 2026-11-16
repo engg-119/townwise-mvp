@@ -244,6 +244,12 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       return d.kind === 'rule' ? 'Saved an order rule TownwiseAI proposed' : 'Saved an order change TownwiseAI proposed';
     case 'order.card_dismissed':
       return d.kind === 'rule' ? 'Set aside an order rule TownwiseAI proposed' : 'Set aside an order change TownwiseAI proposed';
+    // D41: never a name or the content.
+    case 'order.setup_read': {
+      const what = d.inputKind === 'text' ? 'pasted text' : 'a file';
+      if (d.outcome === 'read') return `TownwiseAI read ${what} for the ordering setup: ${text(d.suppliers)} suppliers and ${text(d.items)} items suggested`;
+      return `TownwiseAI couldn’t read ${what} for the ordering setup (${text(d.outcome)})`;
+    }
     // U13B.
     case 'forecast.imported': return `Imported a forecast (model ${text(d.modelVersion)}) for ${text(d.from)} to ${text(d.to)}`;
     case 'forecast.published':
@@ -264,7 +270,8 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       if (d.endReason === 'replaced') return 'View-as replaced by a new one';
       return 'Ended view-as';
     // D25.
-    case 'open_as_admin.started': return 'Opened the organization as its admin, to set it up';
+    // With a reason, someone has joined (2026-11-15): the staff activity's Reason column says why.
+    case 'open_as_admin.started': return d.reason === undefined ? 'Opened the organization as its admin, to set it up' : 'Opened the organization as its admin';
     case 'open_as_admin.ended':
       if (d.endReason === 'expired') return 'Setting up as admin ended with the staff sign-in';
       if (d.endReason === 'replaced') return 'Setting up as admin ended';
@@ -317,6 +324,8 @@ export interface StaffActivityView {
   summary: string;
   /** view_as.started only. `endsAt` is the grant's scheduled end; an earlier end is its own view_as.ended row. */
   viewAs: { targetEmail: string; reason: string; endsAt: string } | null;
+  /** open_as_admin.started with a reason only (D25: once someone has joined); absent on every other row. */
+  openAsAdmin?: { reason: string };
   /** False when a staff_action.not_applied event qualifies this one; that event is never a row of its own. */
   applied: boolean;
   /** Why it didn't take effect, in plain words; null when applied. */
@@ -339,6 +348,7 @@ export async function staffActivityViews(ctx: TownwiseContext, events: readonly 
       viewAs: event.action === 'view_as.started'
         ? { targetEmail: text(event.details.targetEmail), reason: text(event.details.reason), endsAt: text(event.details.expiresAt) }
         : null,
+      ...(event.action === 'open_as_admin.started' && typeof event.details.reason === 'string' ? { openAsAdmin: { reason: event.details.reason } } : {}),
       applied: code === undefined,
       notAppliedReason: code === undefined ? null : notAppliedReason(code),
     };

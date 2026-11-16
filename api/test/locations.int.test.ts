@@ -288,8 +288,8 @@ describe('GET /api/towns/:townId', () => {
     expect(res.status).toBe(200);
     const { profile } = await res.json() as { profile: TownProfile };
     expect(profile).toMatchObject({
-      townId: 'hanover-nh', name: 'Hanover', state: 'NH', kind: 'college', county: 'Grafton County', year: 2024,
-      series: { label: 'Grafton County, NH' }, northeast: { label: 'Northeast (sum of CT ME MA NH RI VT NJ NY PA)' },
+      townId: 'hanover-nh', name: 'Hanover', state: 'NH', kind: 'college', county: 'Grafton County', year: 2025,
+      series: { label: 'Grafton County, NH' }, seriesUnavailable: null, northeast: { label: 'Northeast (sum of CT ME MA NH NJ NY PA)' },
     });
     expect(profile.drivers.length).toBe(2);
     expect(profile.dates.length).toBe(3);
@@ -297,7 +297,11 @@ describe('GET /api/towns/:townId', () => {
     expect(profile.sources.map((source) => source.url)).toEqual(['https://www.bls.gov/cew/additional-resources/open-data/']);
 
     const nantucket = await (await call(server, '/api/towns/nantucket-ma', { session: person })).json() as { profile: TownProfile };
-    expect(nantucket.profile).toMatchObject({ drivers: [], dates: [] });
+    // BLS withheld Nantucket County for April to June 2025: no series, and the reason in its place.
+    expect(nantucket.profile).toMatchObject({
+      drivers: [], dates: [], series: null,
+      seriesUnavailable: 'BLS didn’t publish Nantucket County’s food-service jobs for April to June 2025, so there’s no 2025 index.',
+    });
   });
 
   it('answers 404 for a town outside the twelve, and 401 without a session', async () => {

@@ -78,8 +78,12 @@ function YourTowns(props: { locations: readonly LocationSummary[] }): React.JSX.
               <StatusTag label={KIND_LABEL[profile.kind]} />
             </View>
             <Small>{profile.note}</Small>
-            <Small>{`Measured across ${profile.county}, ${String(DATA_YEAR)}.`}</Small>
-            <PatternLine profile={profile} />
+            {profile.series === null ? <Small>{profile.seriesUnavailable}</Small> : (
+              <>
+                <Small>{`Measured across ${profile.county}, ${String(DATA_YEAR)}.`}</Small>
+                <PatternLine profile={profile} />
+              </>
+            )}
             <Text style={styles.research}>{townResearchLine(profile.id)}</Text>
             <LinkButton href={locationHref(locationId, 'town')} label={`${profile.name}’s town profile`} />
           </Panel>

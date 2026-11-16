@@ -151,9 +151,14 @@ export function fetchAudit(api: ApiClient, query: AuditQuery): Promise<AuditPage
   return api.json(params.length === 0 ? '/api/admin/audit' : `/api/admin/audit?${params.join('&')}`, auditPageSchema);
 }
 
-/** 201 with the organization's admin access, the staff member still the user (D25). No body. */
-export function openAsAdmin(api: ApiClient, orgId: string): Promise<MeResponse> {
-  return api.json(`/api/admin/orgs/${encodeURIComponent(orgId)}/open-as-admin`, meResponseSchema, { method: 'POST' });
+/**
+ * 201 with the organization's admin access, the staff member still the user (D25). No body before anyone has joined;
+ * after, `{ reason }` (5 to 200 characters), or the server answers 400 reason_required.
+ */
+export function openAsAdmin(api: ApiClient, orgId: string, reason?: string): Promise<MeResponse> {
+  return api.json(`/api/admin/orgs/${encodeURIComponent(orgId)}/open-as-admin`, meResponseSchema, {
+    method: 'POST', ...(reason === undefined ? {} : { body: { reason } }),
+  });
 }
 
 /** 201 with the target's access and `viewAs` set. */

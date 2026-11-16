@@ -21,6 +21,7 @@ import { getDataItem, listData, removeDataItem, replaceDataItem, requestAiRead, 
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
+import { holdSetupReadBytes, readOrderSetup } from '../handlers/order-setup-read.ts';
 import { getOrders, saveOrderDecision, saveOrderRule, turnOffOrderRule } from '../handlers/orders.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
@@ -56,7 +57,7 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename, a version switch, a reply's rating, the profile
-   * edit and an order rule's turn-off;
+   * edit, an order rule's turn-off and open as admin's start (its reason);
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
    * switch, (D31) a business rule, the order decisions and rules, and the item and order change cards;
    * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
@@ -64,10 +65,11 @@ export interface TownwiseRoute {
    * the item sales upload) and (U13B) the staff forecast import; '1mb' only on the ordering setup's save (300 items
    * with 10 point-of-sale names each can pass 256kb); '2mb' only on adding an owner calendar, whose body may carry a
    * calendar file of at most 1 MB (its handler counts the file's own bytes) as a JSON string, in which each CR, LF,
-   * tab, quote and backslash takes two bytes; 'stream' only on the chunk route, whose handler reads the raw body
-   * itself after the policy has passed.
+   * tab, quote and backslash takes two bytes; '8mb' only on reading the ordering setup with TownwiseAI (D41), whose
+   * body carries a file of at most 5 MB as base64 (a third larger) or pasted text; 'stream' only on the chunk route,
+   * whose handler reads the raw body itself after the policy has passed.
    */
-  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | '2mb' | 'stream';
+  readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | '2mb' | '8mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?: 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads' | 'ai_reads';
   /**
@@ -76,6 +78,12 @@ export interface TownwiseRoute {
    * stays closed in that mode until someone decides. Never on a staff or staff_self route (boot refuses it).
    */
   readonly openAsAdmin?: true;
+  /**
+   * Runs right before the body is parsed, after the policy; a throw refuses the request unparsed. Only reading the
+   * ordering setup with TownwiseAI (D41) has one, which holds the replica's byte gate for the body before it is buffered
+   * (handlers/order-setup-read.ts holdSetupReadBytes); boot refuses it on any other route.
+   */
+  readonly beforeBody?: (ctx: TownwiseContext, req: Request, res: Response) => void;
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 
@@ -410,6 +418,12 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.orders.setup.save', method: 'PUT', path: '/org/locations/:locationId/orders/setup', policy: 'member',
     bodyLimit: '1mb', openAsAdmin: true, handler: saveOrderSetup,
   },
+  // D41: TownwiseAI reads one file or pasted text into suggestions for the setup's unsaved draft. Nothing is stored;
+  // each read is a model call, so it shares the ai_reads limiter with D34's reads.
+  {
+    id: 'org.orders.setup.read', method: 'POST', path: '/org/locations/:locationId/orders/setup/read', policy: 'member',
+    bodyLimit: '8mb', limiter: 'ai_reads', openAsAdmin: true, beforeBody: holdSetupReadBytes, handler: readOrderSetup,
+  },
   {
     id: 'org.orders.item_sales.upload', method: 'POST', path: '/org/locations/:locationId/orders/item-sales', policy: 'member',
     bodyLimit: '256kb', limiter: 'item_sales', openAsAdmin: true, handler: uploadItemSales,
@@ -494,7 +508,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   },
   // D25, open as admin: no body, and the view-as limiter, shared with view-as Start. End is view-as End.
   {
-    id: 'admin.orgs.open_as_admin', method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: 'none',
+    id: 'admin.orgs.open_as_admin', method: 'POST', path: '/admin/orgs/:orgId/open-as-admin', policy: 'staff', bodyLimit: '1kb',
     limiter: 'view-as', handler: startOpenAsAdmin,
   },
   // U13B, forecast runs from the staff console (spec 10.13, 14.4): import as a draft, publish, withdraw, delete.
@@ -579,7 +593,8 @@ export const ROUTE_LIMITS = {
   files: { name: 'townwise:files', limit: 120, windowSeconds: 3600, whenStoreDown: 'allow' },
   file_chunks: { name: 'townwise:file-chunks', limit: 1500, windowSeconds: 3600, whenStoreDown: 'allow' },
   downloads: { name: 'townwise:downloads', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
-  // Spec 11A.9: each read is a model call on a whole file, so a store outage denies (the writes limiter allows).
+  // Spec 11A.9 and D41 (the ordering setup's read): each read is a model call on a whole file or text, so a store
+  // outage denies (the writes limiter allows).
   ai_reads: { name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
 } as const;
 
@@ -587,11 +602,17 @@ export const ROUTE_LIMITS = {
 const STREAM_ROUTE = 'org.files.chunk';
 /** The only route that may take a 1 MB body: the ordering setup, saved whole. */
 const ONE_MB_ROUTE = 'org.orders.setup.save';
+/**
+ * The only route that may take an 8 MB body, and the only one with a step before its body: reading the ordering setup
+ * with TownwiseAI (D41).
+ */
+const EIGHT_MB_ROUTE = 'org.orders.setup.read';
 
 /**
  * Boot refuses a duplicate method and path, a GET with a body limit, staff_self on any other route, a PUT without a
  * streamed or 1 MB body, a streamed body on any route but the chunk route, a 1 MB body on any route but the ordering
- * setup's save, and `openAsAdmin` on a staff or staff_self route.
+ * setup's save, an 8 MB body or a `beforeBody` step on any route but the ordering setup's read (a POST with an 8 MB
+ * body), and `openAsAdmin` on a staff or staff_self route.
  */
 export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
   const seen = new Set<string>();
@@ -613,6 +634,12 @@ export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
     }
     if (route.bodyLimit === '1mb' && (route.id !== ONE_MB_ROUTE || route.method !== 'PUT')) {
       throw new ConfigError('routes', `${route.id} takes a 1 MB body, which only ${ONE_MB_ROUTE} may`);
+    }
+    if (route.bodyLimit === '8mb' && (route.id !== EIGHT_MB_ROUTE || route.method !== 'POST')) {
+      throw new ConfigError('routes', `${route.id} takes an 8 MB body, which only ${EIGHT_MB_ROUTE} may`);
+    }
+    if (route.beforeBody !== undefined && (route.id !== EIGHT_MB_ROUTE || route.method !== 'POST' || route.bodyLimit !== '8mb')) {
+      throw new ConfigError('routes', `${route.id} runs a step before its body, which only ${EIGHT_MB_ROUTE} may`);
     }
     if (route.openAsAdmin === true && (route.policy === 'staff' || route.policy === 'staff_self')) {
       throw new ConfigError('routes', `${route.id} is a staff route marked openAsAdmin`);
@@ -647,6 +674,19 @@ function authorize(ctx: TownwiseContext, route: TownwiseRoute): RequestHandler {
   });
 }
 
+/** A route's step right before its body is parsed (TownwiseRoute.beforeBody): a throw refuses the request. */
+function beforeBody(ctx: TownwiseContext, step: NonNullable<TownwiseRoute['beforeBody']>): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      step(ctx, req, res);
+    } catch (err) {
+      next(err);
+      return;
+    }
+    next();
+  };
+}
+
 function accountKey(req: Request): string {
   return `acct:${authOf(req).userId}`;
 }
@@ -673,6 +713,7 @@ export function mountTownwiseRoutes(router: Router, routes: readonly TownwiseRou
     const chain: RequestHandler[] = [ctx.auth.requireAuth];
     if (route.method !== 'GET') chain.push(writes);
     chain.push(authorize(ctx, route));
+    if (route.beforeBody !== undefined) chain.push(beforeBody(ctx, route.beforeBody));
     if (route.bodyLimit !== 'none' && route.bodyLimit !== 'stream') chain.push(express.json({ limit: route.bodyLimit }));
     if (route.limiter !== undefined) chain.push(routeLimiter(route.limiter));
     chain.push(bound(async (req, res) => {

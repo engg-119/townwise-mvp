@@ -1,7 +1,10 @@
 // Excel workbooks (.xlsx, .xlsm) to rows of text (spec 11A). The archive's guards run on its central directory before
-// anything is inflated; then read-excel-file reads up to 10 sheets. Macros are never run: cells are data. Every cell
-// becomes text the browser's readers understand: a date as YYYY-MM-DD (read in UTC), a number as String(n).
-import readXlsxFile from 'read-excel-file/node';
+// anything is inflated; then read-excel-file reads up to MAX_SHEETS sheets. Macros are never run: cells are data. Every
+// cell becomes text the browser's readers understand: a date as YYYY-MM-DD (read in UTC), a number as String(n).
+// The library's universal entry, not its node one: it unzips from the central directory, as the guards read it. The
+// node entry unzips as a stream from the local headers, and refuses Toast's exports (Apache POI writes each entry with
+// a data descriptor whose sizes are 8 bytes, which a streaming reader takes for 4: "invalid signature").
+import readXlsxFile from 'read-excel-file/universal';
 
 import { listZip, ZipFormatError } from '../zip.ts';
 import {
@@ -59,7 +62,8 @@ export async function readWorkbook(buffer: Buffer): Promise<Workbook> {
   if (check !== 'ok') return { kind: 'kept', outcome: check };
   let sheets;
   try {
-    sheets = await readXlsxFile(buffer);
+    // A copy: the universal entry takes an ArrayBuffer, and a Buffer may sit on a shared or pooled one.
+    sheets = await readXlsxFile(new Uint8Array(buffer).buffer);
   } catch {
     return { kind: 'kept', outcome: 'not_a_workbook' };
   }

@@ -3,7 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { fmt1, side } from '../../marketing/format';
 import { theme } from '../../theme';
-import { dayMonth, dayMonthRange, mondayOf } from '../analytics/week';
+import { dayMonth, dayMonthRange } from '../analytics/week';
 import { MONTH_NAMES } from '../analytics/words';
 import { fetchPeopleInTown, monthRange, type PeopleInTown, type PeoplePeriod, type TermState, type Weekday } from '../estimates/api';
 import { dayText, historyLine, noNumberLine, rangeText } from '../estimates/format';
@@ -48,9 +48,9 @@ export interface TownRun {
 export interface InTownReading {
   /** The run with today in it. */
   now: TownRun | null;
-  /** Runs that start after today and by this week's Sunday. */
+  /** Runs that start after today and within This week's seven days from today. */
   thisWeek: TownRun[];
-  /** Runs that start after this week. */
+  /** Runs that start after those seven days. */
   later: TownRun[];
   /** False for a town with no term dates at all (not a college town): there is no term to read. */
   termed: boolean;
@@ -86,14 +86,14 @@ function runsOf(periods: readonly PeoplePeriod[]): TownRun[] {
 /** The month's people in town from today on, grouped by time. */
 export function inTownReading(window: PeopleInTown, today: string): InTownReading {
   const runs = runsOf(window.periods);
-  const sunday = addDays(mondayOf(today), 6);
+  const last = addDays(today, 6);
   const now = runs.find((run) => run.from <= today && today <= run.to) ?? null;
   const ahead = runs.filter((run) => run.from > today);
   const ids = [...new Set([...(now?.sourceIds ?? []), ...ahead.flatMap((run) => run.sourceIds)])];
   return {
     now,
-    thisWeek: ahead.filter((run) => run.from <= sunday),
-    later: ahead.filter((run) => run.from > sunday),
+    thisWeek: ahead.filter((run) => run.from <= last),
+    later: ahead.filter((run) => run.from > last),
     termed: window.town.kind === 'college' || runs.some((run) => run.state !== 'unknown'),
     counted: window.periods.some((period) => period.headcount !== null),
     sources: ids.flatMap((id) => {
@@ -123,8 +123,8 @@ export function runWhen(run: TownRun, window: Pick<PeopleInTown, 'to'>): string 
 
 /**
  * The county's jobs for the month against its average month of the data year, in words, as the figure and the rest of
- * the sentence: ["2.6% fewer", " jobs in November 2024 than in an average month that year."]. The index is each
- * month's jobs over the year's monthly average, times 100, so 97.4 is 2.6% fewer.
+ * the sentence: ["4.5% fewer", " jobs in November 2025 than in an average month that year."]. The index is each
+ * month's jobs over the year's monthly average, times 100, so 95.5 is 4.5% fewer.
  */
 export function jobsWords(index: number, monthName: string): [string, string] {
   const gap = index - 100;
@@ -228,10 +228,21 @@ function People(props: { window: PeopleInTown; today: string }): React.JSX.Eleme
   );
 }
 
-/** The county's food-service jobs this month, for one of the twelve towns; nothing for another town. */
+/**
+ * The county's food-service jobs this month, for one of the twelve towns; nothing for another town. A county BLS did
+ * not publish for the whole data year has no index, so it says why instead, with no figure.
+ */
 function Jobs(props: { townId: string | null; today: string }): React.JSX.Element | null {
   const profile = townProfile(props.townId);
   if (profile === null) return null;
+  if (profile.series === null) {
+    return (
+      <Group title={`Food-service jobs in ${profile.county}`}>
+        <Small white>{profile.seriesUnavailable}</Small>
+        {BLS === undefined ? null : <SourceChips sources={[{ label: 'U.S. Bureau of Labor Statistics, QCEW', url: BLS.url }]} />}
+      </Group>
+    );
+  }
   const index = profile.series.index[Number(props.today.slice(5, 7)) - 1];
   if (index === undefined) return null;
   const [figure, rest] = jobsWords(index, monthNameOf(props.today));
