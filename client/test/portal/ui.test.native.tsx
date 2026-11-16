@@ -82,6 +82,14 @@ describe('buttons (spec 15.6, 15.7)', () => {
     expect(onPress).toHaveBeenCalledTimes(1);
   });
 
+  test('a disclosure button says whether it is expanded, beside its disabled state; a button without it says nothing', async () => {
+    const view = await render(<><Button variant="outline" label="Your calendars" expanded={false} controls="p1" onPress={() => undefined} /><Button variant="outline" label="Check again" onPress={() => undefined} /></>);
+    expect(screen.getByRole('button', { name: 'Your calendars' }).props.accessibilityState).toMatchObject({ expanded: false });
+    expect((screen.getByRole('button', { name: 'Check again' }).props.accessibilityState as { expanded?: boolean } | undefined)?.expanded).toBeUndefined();
+    await view.rerender(<Button variant="outline" label="Your calendars" expanded disabled controls="p1" onPress={() => undefined} />);
+    expect(screen.getByRole('button', { name: 'Your calendars' }).props.accessibilityState).toMatchObject({ expanded: true, disabled: true });
+  });
+
   test('the primary is white with a dark label; mint fills no button', async () => {
     await render(<Button label="Send request" onPress={() => undefined} />);
     const box = StyleSheet.flatten(screen.getByRole('button', { name: 'Send request' }).props.style) as { backgroundColor?: string };

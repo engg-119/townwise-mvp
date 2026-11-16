@@ -98,7 +98,7 @@ it('shows every row on native, whatever the message’s place', async () => {
   expect(screen.getAllByText(/^\d{1,2}:\d{2} (AM|PM)$/)).toHaveLength(2);
 });
 
-it('lists a reply’s sources under its Based on line (D37), each link named by its host, opened with Linking.openURL', async () => {
+it('shows a reply’s sources under its Based on line (D37) as source chips (D40), each named by its site and opened with Linking.openURL', async () => {
   const openURL = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
   const reply: ChatMessage = {
     ...msg('m2', 'assistant', 'The fair is on Saturday.', 'a1', 'u1'),
@@ -120,11 +120,12 @@ it('lists a reply’s sources under its Based on line (D37), each link named by 
     />,
   );
   expect(screen.getByText('Sources')).toBeTruthy();
-  // Only the two sources are links, each named by its host without www.
-  expect(screen.getAllByRole('link')).toEqual([screen.getByRole('link', { name: 'example.com' }), screen.getByRole('link', { name: 'example.org' })]);
-  await fireEvent.press(screen.getByRole('link', { name: 'example.org' }));
+  // Only the two sources are links, each a chip named by its site: for a site the manifest lacks, its host without www.
+  expect(screen.getAllByRole('link')).toEqual([screen.getByRole('link', { name: 'example.com. Source' }), screen.getByRole('link', { name: 'example.org. Source' })]);
+  expect(screen.getByText('example.com')).toBeTruthy();
+  await fireEvent.press(screen.getByRole('link', { name: 'example.org. Source' }));
   expect(openURL).toHaveBeenCalledWith('https://example.org/road?day=2');
-  await fireEvent.press(screen.getByRole('link', { name: 'example.com' }));
+  await fireEvent.press(screen.getByRole('link', { name: 'example.com. Source' }));
   expect(openURL).toHaveBeenLastCalledWith('https://www.example.com/fair');
   expect(openURL).toHaveBeenCalledTimes(2);
   openURL.mockRestore();

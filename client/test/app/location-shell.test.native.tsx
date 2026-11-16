@@ -137,9 +137,12 @@ test('on a phone the top bar’s sections scroll, without animating, to keep the
       await fireEvent(entry, 'layout', { nativeEvent: { layout: { x: index * 94, y: 0, width: 90, height: 44 } } });
     }
     expect(scrollTo).toHaveBeenLastCalledWith({ x: 576 + 16 - 320, animated: false });
+    scrollTo.mockClear();
     await fireEvent.press(within(sections).getByRole('link', { name: 'Home' }));
     expect(router.getPathname()).toBe('/locations/l1');
-    expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });
+    // The sections end at x 0, then the frame scrolls the new page to its top: a parent's effect runs after its
+    // children's in the same commit, and every ScrollView shares the one jest mock.
+    expect(scrollTo.mock.calls).toEqual([[{ x: 0, animated: false }], [{ x: 0, y: 0, animated: false }]]);
   } finally {
     spy.mockRestore();
     scrollTo.mockRestore();

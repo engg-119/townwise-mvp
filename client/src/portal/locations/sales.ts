@@ -1,11 +1,11 @@
 import { formatCount, formatDate } from '../format';
 import type { Coverage } from '../schemas';
 import type { SalesDay } from './api';
-import { addDays } from './dates';
+import { addDays, daysBetween } from './dates';
 
 // Sales data's numbers (spec P12, 15.7): the chart's range and series, its text summary, money in whole dollars,
-// and the chart's geometry, which the web chart draws and the tests check. Pure functions, no figures invented:
-// a day with no row, or no value for the series, is a gap in the line.
+// and the chart's geometry and hovered day, which the web chart draws and the tests check. Pure functions, no
+// figures invented: a day with no row, or no value for the series, is a gap in the line and "No data" on hover.
 
 /** The chart covers the last 365 days of data, ending at the last day (spec P12). */
 /**
@@ -101,8 +101,17 @@ function monthTick(date: string): string {
   return `${SHORT_MONTHS[Number(date.slice(5, 7)) - 1] ?? ''} ${date.slice(0, 4)}`;
 }
 
-/** The chart's line over `days` (oldest first), with the y scale fitted to the values (spec P12). */
-export function chartGeometry(days: readonly SalesDay[], series: Series, height: number): ChartGeometry | null {
+interface Scale {
+  first: SalesDay;
+  last: SalesDay;
+  min: number;
+  max: number;
+  x: (date: string) => number;
+  y: (value: number) => number;
+}
+
+/** The chart's scale over `days` (oldest first): x by calendar day from the first, y fitted to the values. */
+function scaleOf(days: readonly SalesDay[], series: Series, height: number): Scale | null {
   const first = days[0];
   const last = days.at(-1);
   const found = extremes(days, series);
@@ -113,6 +122,14 @@ export function chartGeometry(days: readonly SalesDay[], series: Series, height:
   const x = (date: string): number => r2((Math.round((Date.parse(date) - Date.parse(first.date)) / 86_400_000) / span) * 300);
   // A flat series sits in the middle.
   const y = (value: number): number => r2(max === min ? height / 2 : ((max - value) / (max - min)) * height);
+  return { first, last, min, max, x, y };
+}
+
+/** The chart's line over `days` (oldest first), with the y scale fitted to the values (spec P12). */
+export function chartGeometry(days: readonly SalesDay[], series: Series, height: number): ChartGeometry | null {
+  const scale = scaleOf(days, series, height);
+  if (scale === null) return null;
+  const { first, last, min, max, x, y } = scale;
   const parts: string[] = [];
   const dots: { x: number; y: number }[] = [];
   let run: { x: number; y: number }[] = [];
@@ -132,4 +149,33 @@ export function chartGeometry(days: readonly SalesDay[], series: Series, height:
   flush();
   const middle = days[Math.floor((days.length - 1) / 2)] ?? first;
   return { path: parts.join(' '), dots, min, max, ticks: [monthTick(first.date), monthTick(middle.date), monthTick(last.date)] };
+}
+
+/** The calendar days the chart spans, first to last, a day with no row included; 0 for no days. */
+export function chartDayCount(days: readonly SalesDay[]): number {
+  const first = days[0];
+  const last = days.at(-1);
+  return first === undefined || last === undefined ? 0 : daysBetween(first.date, last.date) + 1;
+}
+
+/** A day under the chart's hover: its date, its value (null for no data) and its point in `chartGeometry`'s box. */
+export interface ChartDay {
+  date: string;
+  value: number | null;
+  x: number;
+  /** Null for a day with no value, which gets no dot. */
+  y: number | null;
+}
+
+/**
+ * The chart's day `offset` calendar days after its first, as `chartDayCount` counts them, so a day with no row is a
+ * day with no value; placed where `chartGeometry` draws it. Null outside the chart or when it draws nothing.
+ */
+export function chartDay(days: readonly SalesDay[], series: Series, height: number, offset: number): ChartDay | null {
+  const scale = scaleOf(days, series, height);
+  if (scale === null || !Number.isInteger(offset) || offset < 0 || offset >= chartDayCount(days)) return null;
+  const date = addDays(scale.first.date, offset);
+  const found = days.find((day) => day.date === date);
+  const value = found === undefined ? null : valueOf(found, series);
+  return { date, value, x: scale.x(date), y: value === null ? null : scale.y(value) };
 }

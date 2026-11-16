@@ -848,7 +848,7 @@ test('no horizontal page scroll at 360px with a wide table and a chart', async (
   expect(style(first(Array.from(next.children))).overflowX).toBe('auto');
 });
 
-test('a town profile card’s sources open in a new tab', async () => {
+test('a town profile card’s sources are chips that open in a new tab, while the row’s words keep the host', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);
   await send(api, 'What drives Hanover?');
@@ -861,7 +861,9 @@ test('a town profile card’s sources open in a new tab', async () => {
   expect(screen.getByText('Based on Hanover’s town profile (dartmouth.edu).')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: /^Worked for/ }));
   fireEvent.click(screen.getByRole('button', { name: 'Read Hanover’s town profile. dartmouth.edu' }));
-  const link = screen.getByRole('link', { name: 'dartmouth.edu' });
+  // The chip names the site and shows its committed logo; the row's words above keep the host they print.
+  const link = screen.getByRole('link', { name: 'Dartmouth. Source' });
+  expect(link.textContent).toBe('Dartmouth');
   expect(link.getAttribute('href')).toBe('https://dartmouth.edu/calendar');
   expect(link.getAttribute('target')).toBe('_blank');
   expect(link.getAttribute('rel')).toContain('noopener');

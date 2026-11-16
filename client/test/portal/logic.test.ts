@@ -8,7 +8,7 @@ import {
 } from '../../src/portal/routing';
 import { meResponseSchema, orgResponseSchema, type Access } from '../../src/portal/schemas';
 import {
-  dateRange, patternOf, sourceLinks, TOWN_GROUPS, townProfile, townResearchLine,
+  dateRange, patternOf, TOWN_GROUPS, townProfile, townResearchLine,
 } from '../../src/portal/towns';
 import { checkTown } from '../../src/portal/ui/TownFields';
 import { ACCESS, meOf, openAsAdminMe, orgOf, refusal, staffMe, viewAsMe } from '../helpers/portal';
@@ -359,15 +359,11 @@ describe('towns (spec 13)', () => {
     expect(townProfile('nowhere')).toBeNull();
   });
 
-  test('date ranges and source links', () => {
+  // A source's link text went with the source chips (test/portal/sources/site.test.ts).
+  test('date ranges', () => {
     expect(dateRange('2025-11-22', null)).toBe('Nov 22, 2025');
     expect(dateRange('2025-11-22', '2025-12-01')).toBe('Nov 22 to Dec 1, 2025');
     expect(dateRange('2025-12-30', '2026-01-02')).toBe('Dec 30, 2025 to Jan 2, 2026');
-    expect(sourceLinks(['https://www.dartmouth.edu/a', 'https://example.com/a', 'https://example.org/b'])).toEqual([
-      { url: 'https://www.dartmouth.edu/a', text: 'dartmouth.edu' },
-      { url: 'https://example.com/a', text: 'Source 1' },
-      { url: 'https://example.org/b', text: 'Source 2' },
-    ]);
   });
 
   test('the Town field checks Another town’s name and state', () => {

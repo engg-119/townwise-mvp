@@ -88,6 +88,11 @@ test.each(PAGES)('%s renders the skip link, header, main and footer', (path) => 
   expect(within(footer).getByText('Townwise is a student project. It is not an official Dartmouth product.')).toBeTruthy();
 });
 
+test.each(PAGES)('%s has no aria-modal element, so the portal’s focus ring for its Modals (PortalStyles.web.tsx) styles nothing on it', (path) => {
+  renderAt(path);
+  expect(document.querySelector('[aria-modal]')).toBeNull();
+});
+
 test.each(PAGES)('every link on %s resolves', (path) => {
   renderAt(path);
   const ids = [...document.querySelectorAll('[id]')].map((element) => element.id);

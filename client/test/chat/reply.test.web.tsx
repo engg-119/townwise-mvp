@@ -775,32 +775,40 @@ const SEARCHED: ToolStep = {
   id: 'srvtoolu_01', name: 'web_search', state: 'done', input: null,
   result: { pages: 9, sources: [{ host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road' }] },
 };
-const CITED = [{ host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road?day=2' }];
+const CITED = [
+  { host: 'www.example.com', url: 'https://www.example.com/fair' }, { host: 'example.org', url: 'https://example.org/road?day=2' },
+  { host: 'home.dartmouth.edu', url: 'https://home.dartmouth.edu/events' },
+];
 
-it('lists a reply’s sources under its Based on line (D37): a list named Sources, each link named by its host, in a new tab', () => {
+it('shows a reply’s sources under its Based on line (D37) as source chips (D40) in a group named Sources, each opening in a new tab', () => {
   const reply = msg('m2', 'assistant', [{ type: 'tools', key: 'b', steps: [SEARCHED] }, text('c', 'The fair is on Saturday.')], {
     nodeId: 'a1', parentId: 'u1', sources: CITED,
   });
   const view = render(<ReplyView {...replyProps({ message: reply })} />);
-  const list = screen.getByRole('list', { name: 'Sources' });
+  const group = screen.getByRole('group', { name: 'Sources' });
   expect(screen.getByText('Sources')).toBeTruthy();
-  const links = within(list).getAllByRole('link');
-  // The host without www. names each link; the link goes to the URL as the server sent it.
-  expect(links.map((link) => [link.textContent, link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel')])).toEqual([
-    ['example.com', 'https://www.example.com/fair', '_blank', 'noopener noreferrer'],
-    ['example.org', 'https://example.org/road?day=2', '_blank', 'noopener noreferrer'],
+  const links = within(group).getAllByRole('link');
+  // Each chip shows its site's name, or for a site the manifest lacks the host without www.; the link goes to the URL
+  // as the server sent it, in a new tab, and its title is that URL.
+  expect(links.map((link) => [link.textContent, link.getAttribute('href'), link.getAttribute('target'), link.getAttribute('rel'), link.getAttribute('title')])).toEqual([
+    ['example.com', 'https://www.example.com/fair', '_blank', 'noopener noreferrer', 'https://www.example.com/fair'],
+    ['example.org', 'https://example.org/road?day=2', '_blank', 'noopener noreferrer', 'https://example.org/road?day=2'],
+    ['Dartmouth', 'https://home.dartmouth.edu/events', '_blank', 'noopener noreferrer', 'https://home.dartmouth.edu/events'],
   ]);
-  expect(within(list).getAllByRole('listitem')).toHaveLength(2);
-  expect(screen.getByRole('link', { name: 'example.org' })).toBe(links[1]);
+  expect(screen.getByRole('link', { name: 'example.org. Source' })).toBe(links[1]);
+  expect(screen.getByRole('link', { name: 'Dartmouth. Source' })).toBe(links[2]);
+  // A site the manifest lacks shows the globe, a drawing; a known one its committed logo instead (jest's asset stub draws
+  // no image, test/portal/ui/source-chip.test.web.tsx checks the logo itself).
+  expect(links.map((link) => link.querySelector('[aria-hidden="true"] svg') !== null)).toEqual([true, true, false]);
   const basedOn = screen.getByText('Based on public web pages.');
-  expect(before(basedOn, list)).toBe(true);
-  // No sources, no list; a reply that is streaming, failed or stopped shows none.
+  expect(before(basedOn, group)).toBe(true);
+  // No sources, no group; a reply that is streaming, failed or stopped shows none.
   view.rerender(<ReplyView {...replyProps({ message: { ...reply, sources: [] } })} />);
-  expect(screen.queryByRole('list', { name: 'Sources' })).toBeNull();
+  expect(screen.queryByRole('group', { name: 'Sources' })).toBeNull();
   expect(screen.queryByText('Sources')).toBeNull();
   for (const state of ['streaming', 'failed', 'stopped'] as const) {
     view.rerender(<ReplyView {...replyProps({ message: { ...reply, state } })} />);
-    expect(screen.queryByRole('list', { name: 'Sources' })).toBeNull();
+    expect(screen.queryByRole('group', { name: 'Sources' })).toBeNull();
   }
 });
 

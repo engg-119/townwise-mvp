@@ -1,6 +1,7 @@
 import type { RefObject } from 'react';
 
 import { fmt0, fmt1, fmtSigned, side } from '../format';
+import { SourceChips } from '../SourceChip.web';
 import { CAVEATS, DATA_YEAR, INDEX_DEFINITION, MONTHS, northeastSeries, SOURCES } from './countyData';
 import { KIND_LABEL, MONTH_NAMES, monthLabel, PATTERN_LABEL, patternGap, valueAt, type MapTown, type MeasuredTown } from './mapState';
 
@@ -87,26 +88,10 @@ function busiestAndQuietest(values: readonly number[]): string {
   return `Busiest month: ${busiest}. Quietest: ${quietest}.`;
 }
 
-// A source's link text is its host for a public institution (.edu, .gov) and "Source" otherwise, so no
-// business name becomes visible copy; repeats within one item are numbered.
-export function sourceLinks(urls: readonly string[]): { url: string; text: string }[] {
-  const texts = urls.map((url) => {
-    const host = new URL(url).hostname.replace(/^www\./, '');
-    return /\.(?:edu|gov)$/.test(host) ? host : 'Source';
-  });
-  return urls.map((url, index) => {
-    const text = texts[index] ?? 'Source';
-    if (texts.filter((other) => other === text).length < 2) return { url, text };
-    return { url, text: `${text} ${texts.slice(0, index + 1).filter((other) => other === text).length}` };
-  });
-}
-
-function Links(props: { urls: readonly string[] }): React.JSX.Element {
-  return (
-    <span className="lk">
-      {sourceLinks(props.urls).map((link, index) => <a key={index} href={link.url} rel="noopener">{link.text}</a>)}
-    </span>
-  );
+// A driver's or date's sources: the bundled data has their links only, so each chip is named by its site, as the
+// portal's Town profile names them (refine-calendar-and-home design decision 6).
+function Links(props: { urls: readonly string[] }): React.JSX.Element | null {
+  return <SourceChips sources={props.urls.map((url) => ({ url }))} />;
 }
 
 // Left and Up go back a month, Right and Down forward, wrapping; Home and End jump to January and December.
@@ -306,7 +291,10 @@ export function TownPanel(props: TownPanelProps): React.JSX.Element {
             <p className="fine">{INDEX_DEFINITION}</p>
           </div>
           <div className="nt-c">
-            <ul className="srcs mono-s">{SOURCES.map((source) => <li key={source.url}><a href={source.url} rel="noopener">{source.label}</a></li>)}</ul>
+            {/* Each source's label stays text above its chip, so the two Census layers and the us-atlas file (which
+                jsDelivr serves) read apart without a hover. The label is a block, so a wrapped one keeps the fine
+                print's line height (inline, its lines took the page's 28px). */}
+            <ul>{SOURCES.map((source) => <li key={source.url}><p className="fine">{source.label}</p><SourceChips sources={[source]} /></li>)}</ul>
           </div>
         </div>
       </div>

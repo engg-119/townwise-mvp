@@ -1,6 +1,5 @@
-import { Link, type Href } from 'expo-router';
-import { Fragment } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { useRef } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { formatCount } from '../format';
@@ -9,22 +8,25 @@ import { eventLine } from '../analytics/week';
 import type { Note } from '../locations/api';
 import { Loading } from '../locations/parts';
 import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/noteRules';
-import { Actions, Button, LinkButton } from '../ui/Button';
+import { Actions, Button, LinkButton, type ButtonProps } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
+import type { PopoverAnchor } from '../ui/Popover';
+import { SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
-import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLine } from './model';
+import { forecastWords, type CalendarDayView, type EffectGrade, type EffectMark, type ImportedEvent, type ReasonLine } from './model';
 
-// The Calendar's day panel (P28, spec 16.3): a region "Selected day", beside the grid from 1024px and
-// under it below. Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a
-// booked or closed day, a past day's guests against the model, or why there is none); Why (one row per reason: your
-// notes and rules first with what they did, then the run's reasons, biggest effect first, each its label, then whether
-// it usually brings more or fewer guests in words after a direction mark screen readers skip, then a small inline
-// Source link, InlineSources, which Home's day detail shares); On the calendar (the holidays, town events and term dates Why doesn't already name, with their
-// sources, the day's notes with Edit and Delete where the API allows, the business rules whose schedule covers the day
-// with their summary and a link to Rules, where they are changed (D31), events from the owner's calendar file with
-// Make a note); then
-// Add an event, or the note form open in its place. Under view-as the writes are disabled in place with the
-// read-only line. It reads and writes nothing itself: the page owns the reads, the form and the dialog.
+// The Calendar's day panel (P28, spec 16.3): a region "Selected day", beside the grid from 1024px and under it below.
+// Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a booked or closed day,
+// a past day's guests against the model, or why there is none); Why (one row per reason, from the largest rise to the
+// largest fall, model.ts inOrder: its label, then what it does to guests in words after a ▲ or ▼ in its grade's color
+// on the theme's effect ramp, or a = in text2, which screen readers skip, then its sources as chips, ui/SourceChip.tsx,
+// on their own wrapping line); On the calendar (the holidays, town events and term dates Why doesn't already name, with
+// their sources as chips, the day's notes with Edit and Delete where the API allows, the business rules whose schedule
+// covers the day with their summary and a link to Rules, where they are changed (D31), events from the location's
+// calendars (D33) with Make a note); then Add an event. Add an event, a note's Edit and an event's Make a note each
+// hand the page the button that was pressed, which anchors the page's note form popover (refine-calendar-and-home
+// design decision 2), so the panel never changes shape while the form is open. Under view-as the writes are disabled in
+// place with the read-only line. It reads and writes nothing itself: the page owns the reads, the form and the dialog.
 
 export const PANEL_ID = 'calendar-day';
 
@@ -49,50 +51,41 @@ function importedLine(event: ImportedEvent): string {
   return [datesLine(event), hoursLine(event)].filter((part) => part !== null).join(', ');
 }
 
+/** A button that hands its own host to `onPress`, so the popover it opens is anchored to it. */
+function Opener(props: Omit<ButtonProps, 'ref' | 'onPress'> & { onPress: (anchor: PopoverAnchor) => void }): React.JSX.Element {
+  const { onPress, ...button } = props;
+  const ref = useRef<React.ComponentRef<typeof View>>(null);
+  return <Button {...button} ref={ref} onPress={() => { onPress(ref); }} />;
+}
+
 /**
- * A reason's sources as small inline links ending its sentence: “Source”, or “Source 1”, “Source 2” with several. Each
- * accessible name starts with its visible words and then says where it goes, “Source 1: dartmouthsports.com” (WCAG
- * 2.5.3, label in name). `lead`: words come before the links, so the first one follows a space.
+ * A reason's ▲ or ▼ in its grade's color, or = in text2, hidden from screen readers, which hear the same in the words
+ * after it (forecast-why). Home's day detail shows it too.
  */
-export function InlineSources(props: { sources: readonly { label: string; url: string }[]; lead: boolean }): React.JSX.Element {
-  const many = props.sources.length > 1;
+export function ReasonMark(props: { mark: EffectMark; grade: EffectGrade | null }): React.JSX.Element {
   return (
-    <>
-      {props.sources.map((source, index) => {
-        const words = many ? `Source ${String(index + 1)}` : 'Source';
-        return (
-          <Fragment key={source.url}>
-            {!props.lead && index === 0 ? '' : ' '}
-            <Link href={source.url} accessibilityLabel={`${words}: ${source.label}`} style={styles.inlineSource}>{words}</Link>
-          </Fragment>
-        );
-      })}
-    </>
+    <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+      <Small style={props.grade === null ? null : grades[props.grade]}>{props.mark}</Small>
+    </View>
   );
 }
 
 /**
- * One reason under Why: its label, then what it does in words (the mark before them is hidden from screen readers,
- * which hear the same words), ending in its small inline Source links.
+ * One reason under Why: its label, then what it does in words after its mark (ReasonMark), then its sources as chips on
+ * their own wrapping line.
  */
 function WhyRow(props: { reason: ReasonLine }): React.JSX.Element {
   const { reason } = props;
   return (
     <View role="listitem" style={styles.item}>
       <Small white>{reason.label}</Small>
-      {reason.detail === null && reason.sources.length === 0 ? null : (
+      {reason.detail === null ? null : (
         <View style={styles.effect}>
-          {reason.mark === null ? null : (
-            <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-              <Small white>{reason.mark}</Small>
-            </View>
-          )}
-          <Small style={styles.words}>
-            {reason.detail ?? ''}
-            <InlineSources sources={reason.sources} lead={reason.detail !== null} />
-          </Small>
+          {reason.mark === null ? null : <ReasonMark mark={reason.mark} grade={reason.grade} />}
+          <Small style={styles.words}>{reason.detail}</Small>
         </View>
       )}
+      <SourceChips sources={reason.sources} />
     </View>
   );
 }
@@ -107,13 +100,13 @@ export function CalendarDay(props: {
   notice: string | null;
   readOnlyId: string | null;
   readOnlyText: string;
-  /** The note form, open in the panel; null when closed. */
-  form: React.ReactNode;
-  onAdd: () => void;
-  onEdit: (note: Note) => void;
+  /** Opens the note form for a new note, anchored to "Add an event". */
+  onAdd: (anchor: PopoverAnchor) => void;
+  /** Opens the note form on `note`, anchored to its Edit. */
+  onEdit: (note: Note, anchor: PopoverAnchor) => void;
   onDelete: (note: Note) => void;
-  /** Opens the note form from an event in the owner's calendar file. */
-  onMakeNote: (event: ImportedEvent) => void;
+  /** Opens the note form from an event in one of the location's calendars (D33), anchored to its Make a note. */
+  onMakeNote: (event: ImportedEvent, anchor: PopoverAnchor) => void;
 }): React.JSX.Element {
   const { view, readOnlyId } = props;
   if (view === null) {
@@ -151,9 +144,7 @@ export function CalendarDay(props: {
         {view.events.map((event) => (
           <View key={event.id} style={styles.item}>
             <Small white>{eventLine(event)}</Small>
-            {event.sources.map((source) => (
-              <Link key={source.url} href={source.url as Href} style={styles.source}>{`Source: ${source.label}`}</Link>
-            ))}
+            <SourceChips sources={event.sources} />
           </View>
         ))}
         {view.notes.map((note) => {
@@ -165,7 +156,7 @@ export function CalendarDay(props: {
               {note.detail === null ? null : <Small>{note.detail}</Small>}
               {note.canEdit ? (
                 <Actions>
-                  <Button variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={() => { props.onEdit(note); }} />
+                  <Opener variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={(anchor) => { props.onEdit(note, anchor); }} />
                   <Button variant="link" label="Delete" accessibilityLabel={`Delete ${name}`} {...ro} onPress={() => { props.onDelete(note); }} />
                 </Actions>
               ) : null}
@@ -184,34 +175,31 @@ export function CalendarDay(props: {
           </Actions>
         )}
         {view.imported.map((event) => (
-          <View key={event.uid} style={styles.item}>
+          <View key={`${event.calendarId}:${event.uid}`} style={styles.item}>
             <Small white>{`From your calendar: ${event.title}`}</Small>
             <Mono>{importedLine(event)}</Mono>
             <Actions>
-              <Button variant="link" label="Make a note" accessibilityLabel={`Make a note from ${event.title}`} {...ro} onPress={() => { props.onMakeNote(event); }} />
+              <Opener
+                variant="link"
+                label="Make a note"
+                accessibilityLabel={`Make a note from ${event.title}`}
+                {...ro}
+                onPress={(anchor) => { props.onMakeNote(event, anchor); }}
+              />
             </Actions>
           </View>
         ))}
         {view.imported.length === 0 ? null : <Small>Events from your calendar don’t change the forecast until you make a note from them.</Small>}
       </Part>
       {readOnlyId === null ? null : <ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} />}
-      {props.form ?? (
-        <Actions>
-          <Button label="Add an event" {...ro} onPress={props.onAdd} />
-        </Actions>
-      )}
+      <Actions>
+        <Opener label="Add an event" {...ro} onPress={props.onAdd} />
+      </Actions>
     </View>
   );
 }
 
 const c = theme.color;
-
-/**
- * On web, the padding that makes a link in the 14px `small` type a 44px target: 15 + 14 + 15 (inlineTarget's 13 is for
- * 18 to 20px text). An inline element's padding takes no room, so the line keeps its height. Native's nested text takes
- * no padding.
- */
-const SMALL_TARGET = Platform.OS === 'web' ? { paddingVertical: Math.ceil((44 - theme.type.small.fontSize) / 2) } : {};
 
 const styles = StyleSheet.create({
   root: { gap: theme.space[5], minWidth: 0 },
@@ -220,9 +208,12 @@ const styles = StyleSheet.create({
   value: { ...theme.type.monoUi, fontSize: 22, lineHeight: 28, fontWeight: 500, color: c.white, fontVariant: ['tabular-nums'] },
   list: { gap: theme.space[3] },
   item: { gap: 2, minWidth: 0 },
-  source: { ...theme.type.mono, color: c.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: c.line },
   effect: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
   words: { flex: 1, minWidth: 0 },
-  // Inside the effect's sentence: the sentence's own type, so the line keeps its height, with a 44px target on web.
-  inlineSource: { ...SMALL_TARGET, color: c.text2, textDecorationLine: 'underline', textDecorationColor: c.line },
+});
+
+/** The effect ramp's color for each grade (theme.ts). */
+const grades = StyleSheet.create({
+  up1: { color: c.effectUp1 }, up2: { color: c.effectUp2 }, up3: { color: c.effectUp3 },
+  down1: { color: c.effectDown1 }, down2: { color: c.effectDown2 }, down3: { color: c.effectDown3 },
 });

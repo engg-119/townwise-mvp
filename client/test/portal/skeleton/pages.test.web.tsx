@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { cellSize } from '../../../src/portal/calendar/grid';
 import { AnalyticsSkeleton } from '../../../src/portal/skeleton';
 import { readingLine, sendingLine } from '../../../src/portal/upload/copy';
 import { appRoutes, seededRoot } from '../../helpers/app';
@@ -76,6 +77,67 @@ describe('the location pages', () => {
     await expectSkeleton('calendar', 'Loading the calendar');
     expect(screen.getAllByTestId('skeleton-calendar-cell')).toHaveLength(42);
     expect(screen.getAllByTestId('skeleton-calendar-panel')).toHaveLength(1);
+  });
+
+  test('P28 Calendar at 1280: cells as tall as the loaded grid’s, the filters heading its column and the panel beside them', async () => {
+    renderPage('/locations/l1/calendar', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    const cells = screen.getAllByTestId('skeleton-calendar-cell');
+    expect(new Set(cells.map((cell) => window.getComputedStyle(cell).height))).toEqual(new Set([`${String(cellSize(1280).height)}px`]));
+    const filters = screen.getByTestId('skeleton-calendar-filters');
+    const first = cells[0];
+    if (first === undefined) throw new Error('no cells');
+    const column = filters.parentElement;
+    expect(column?.contains(first)).toBe(true);
+    expect(filters.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const panel = screen.getByTestId('skeleton-calendar-panel');
+    expect(column?.contains(panel)).toBe(false);
+    expect(column?.parentElement?.contains(panel)).toBe(true);
+    // The header row: a 216px label block between the arrows and the view switch's block.
+    expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).toBe('216px');
+  });
+
+  test('P28 Calendar: after the label the header row holds the view switch’s 130px block and the Your calendars button’s 170px block, the row’s last item', async () => {
+    renderPage('/locations/l1/calendar', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    const label = screen.getByTestId('skeleton-calendar-label');
+    const views = screen.getByTestId('skeleton-calendar-views');
+    const block = views.firstElementChild;
+    expect(block === null ? null : window.getComputedStyle(block).width).toBe('130px');
+    expect(label.compareDocumentPosition(views) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Each a header row item of its own, as the switch and "Your calendars" are in the page's row, at about their
+    // widths, so the skeleton wraps where the page does (one line at 1024, two at 375). The panel is closed on load, so
+    // nothing stands for it.
+    const row = label.parentElement?.parentElement;
+    expect(views.parentElement).toBe(row);
+    const calendars = screen.getByTestId('skeleton-calendar-calendars');
+    expect(views.nextElementSibling).toBe(calendars);
+    expect(window.getComputedStyle(calendars).width).toBe('170px');
+    expect(calendars.childElementCount).toBe(0);
+    expect(calendars.nextElementSibling).toBeNull();
+    // As tall as the controls they stand for: 44px each.
+    for (const item of [block, calendars]) expect(item === null ? null : window.getComputedStyle(item).minHeight).toBe('44px');
+  });
+
+  test('P28 Calendar at 375: the filters come after the month, and the label block is not fixed', async () => {
+    setWidth(375);
+    renderPage('/locations/l1/calendar', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    const cells = screen.getAllByTestId('skeleton-calendar-cell');
+    expect(new Set(cells.map((cell) => window.getComputedStyle(cell).height))).toEqual(new Set(['52px']));
+    const filters = screen.getByTestId('skeleton-calendar-filters');
+    const last = cells.at(-1);
+    if (last === undefined) throw new Error('no cells');
+    expect(last.compareDocumentPosition(filters) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(filters.compareDocumentPosition(screen.getByTestId('skeleton-calendar-panel')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).not.toBe('216px');
+  });
+
+  test('P11 Home: its month cells are still 52px tall', async () => {
+    renderPage('/locations/l1', hangLocal());
+    await screen.findByTestId('skeleton-home');
+    const cells = screen.getAllByTestId('skeleton-home-month-cell');
+    expect(new Set(cells.map((cell) => window.getComputedStyle(cell).height))).toEqual(new Set(['52px']));
   });
 
   test('P29 Business rules: the add form and a few rows', async () => {

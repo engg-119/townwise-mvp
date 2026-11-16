@@ -365,15 +365,17 @@ describe('get_forecast (U13B)', () => {
     const days = (await run('get_forecast', { from: '2026-11-02', to: '2026-11-07' }, context({ forecasts: reader }))).parsed.days as {
       date: string; reasons: { label: string; effectPct: number | null; effect: unknown }[];
     }[];
-    // 52 Saturdays of 170 against 110 a day: usually 55% more. A past day's reasons carry none.
+    // 52 Saturdays of 170 against 110 a day, the average open day: usually 55% more. A past day's reasons carry none.
     expect(days.find((day) => day.date === '2026-11-07')?.reasons.map((reason) => [reason.label, reason.effectPct, reason.effect])).toEqual([
-      ['Saturday', null, { direction: 'more', pct: 55, basis: 'history', days: 52 }],
-      ['Town event', 12, { direction: 'more', pct: 10, basis: 'model', days: null }],
+      ['Saturday', null, { direction: 'more', pct: 55, basis: 'history', days: 52, averageGuests: 110 }],
+      ['Town event', 12, { direction: 'more', pct: 10, basis: 'model', days: null, averageGuests: null }],
     ]);
     expect(days.find((day) => day.date === '2026-11-02')?.reasons.map((reason) => reason.effect)).toEqual([null]);
     const description = toolNamed('get_forecast')?.definition.description ?? '';
     expect(description).toContain('Say "usually"');
     expect(description).toContain('closed and likely-closed days left out');
+    expect(description).toContain('averageGuests, on a weekday\'s history effect, is the average open day\'s guests (say it: "than your average day (210)")');
+    expect(description).toContain('("Saturdays usually bring about 35% more guests than your average day (210)")');
   });
 
   it('gives a busier-or-quieter percentage only where the run recorded a usual level', async () => {

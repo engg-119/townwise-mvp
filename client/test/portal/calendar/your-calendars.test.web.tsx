@@ -1,0 +1,900 @@
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { ExpoRoot } from 'expo-router';
+import Head from 'expo-router/head';
+import { getMockContext } from 'expo-router/testing-library';
+
+import { CALENDARS_COPY } from '../../../src/portal/calendar/calendars';
+import { errorCopy } from '../../../src/portal/errors';
+import { formatDate, formatTime } from '../../../src/portal/format';
+import type { MeResponse } from '../../../src/portal/schemas';
+import { appRoutes, seededRoot } from '../../helpers/app';
+import { fakeAuth } from '../../helpers/fakes';
+import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { townEvent } from '../analytics/fakes';
+import { CALENDARS_PATH, calendarFake, forecastDay, forecastOf, ownerCalendar, ownerEvent, type CalendarFake } from './fakes';
+
+// "Your calendars" on web (P28; owner-calendar's "The Calendar page shows and manages stored calendars", refine-calendar-
+// and-home design decision 1): the header row's last control, a button with the location's calendar count that opens a
+// popover anchored to it, over the page, so nothing under the row moves. The popover lists the calendars, says when the
+// list couldn't be read, and holds "Import a calendar file", "Add a link" and "How importing works"; it keeps what was
+// typed and shown across closing, and waits while an add, an import or a refresh runs. Today is Wed, Nov 11, 2026.
+// Synthetic figures and made-up names only.
+
+class ResizeObserverPolyfill {
+  observe(): void { return undefined; }
+  unobserve(): void { return undefined; }
+  disconnect(): void { return undefined; }
+}
+if (typeof globalThis.ResizeObserver !== 'function') {
+  globalThis.ResizeObserver = ResizeObserverPolyfill;
+}
+
+// jsdom's document is 0px wide, which is a phone to react-native-web; these tests cover the desktop layout.
+Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, get: () => 1280 });
+
+// Only Date is faked, so "today" is Wed, Nov 11, 2026 and every timer stays real.
+beforeEach(() => {
+  jest.useFakeTimers({
+    now: new Date(2026, 10, 11, 12, 0, 0),
+    doNotFake: [
+      'setTimeout', 'clearTimeout', 'setInterval', 'clearInterval', 'setImmediate', 'clearImmediate', 'nextTick', 'queueMicrotask',
+      'requestAnimationFrame', 'cancelAnimationFrame', 'requestIdleCallback', 'cancelIdleCallback', 'hrtime', 'performance',
+    ],
+  });
+});
+
+afterEach(() => {
+  cleanup();
+  jest.useRealTimers();
+});
+
+const KITCHEN = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 12 });
+const BOOKINGS = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
+const DINNER = ownerEvent({ calendarId: 'c1', calendar: 'Kitchen', uid: 'i1', title: 'Smith rehearsal dinner', startDate: '2026-11-21' });
+
+function setup(
+  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents'>> = {}, me: MeResponse = meOf(ACCESS.member),
+): { api: FakePortalApi; fake: CalendarFake } {
+  const days = Array.from({ length: 20 }, (_, at) => forecastDay({ date: `2026-11-${String(11 + at)}` }));
+  const fake = calendarFake({
+    events: [townEvent({ start: '2026-11-21', title: 'Dartmouth home football' })],
+    forecasts: { '2026-11': forecastOf(days) },
+    ...init,
+  });
+  return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake }), fake };
+}
+
+async function renderAt(path: string, api: FakePortalApi, month = 'November 2026'): Promise<HTMLElement> {
+  const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
+  window.history.replaceState(null, '', path);
+  render(
+    <Head.Provider>
+      <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location={path} />
+    </Head.Provider>,
+  );
+  return screen.findByRole('grid', { name: month });
+}
+
+/** Puts keyboard focus on `element`, as Tab would (Pressable notes its focus in state, hence act). */
+function focus(element: HTMLElement): void {
+  act(() => { element.focus(); });
+}
+
+function calendarsButton(): HTMLElement {
+  return screen.getByRole('button', { name: /^Your calendars/ });
+}
+
+/** The open popover. */
+function popover(): HTMLElement {
+  return screen.getByRole('dialog', { name: 'Your calendars' });
+}
+
+/** Opens the popover from its button, which a press or Tab has focused first; returns the popover. */
+function openPopover(): HTMLElement {
+  const button = calendarsButton();
+  focus(button);
+  fireEvent.click(button);
+  return popover();
+}
+
+function escape(): void {
+  act(() => { document.dispatchEvent(new KeyboardEvent('keyup', { key: 'Escape' })); });
+}
+
+/** A press on the page around the popover, which lands on its transparent backdrop. */
+function pressOutside(): void {
+  const backdrop = popover().nextElementSibling;
+  if (backdrop === null) throw new Error('no backdrop');
+  fireEvent.mouseDown(backdrop);
+  fireEvent.mouseUp(backdrop);
+}
+
+function shown(element: Element): boolean {
+  for (let at: Element | null = element; at !== null; at = at.parentElement) {
+    if (window.getComputedStyle(at).display === 'none') return false;
+  }
+  return true;
+}
+
+/** The header row: the row the month label's group sits in. */
+function headerRow(): HTMLElement {
+  const row = screen.getByText('November 2026').parentElement?.parentElement;
+  if (row === null || row === undefined) throw new Error('no header row');
+  return row;
+}
+
+test('with 2 calendars the button reads “Your calendars (2)”, closed with aria-haspopup="dialog", no popover in the document, and the grid directly under the header row', async () => {
+  const { api } = setup({ calendars: [KITCHEN, BOOKINGS] });
+  const grid = await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const button = screen.getByRole('button', { name: 'Your calendars (2)' });
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  expect(button.getAttribute('aria-haspopup')).toBe('dialog');
+  expect(button.hasAttribute('aria-controls')).toBe(false);
+  expect(screen.queryByRole('dialog')).toBeNull();
+  const row = headerRow();
+  expect(button.parentElement).toBe(row);
+  expect(row.lastElementChild).toBe(button);
+  expect(row.nextElementSibling?.contains(grid)).toBe(true);
+});
+
+test('with none the button reads “Your calendars”', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(screen.getByRole('button', { name: 'Your calendars' }).getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByRole('button', { name: /^Your calendars \(/ })).toBeNull();
+});
+
+test('pressing the button opens the popover: aria-expanded and aria-controls name it, focus is on Close, and it lists the calendars then the import, Add a link and the help', async () => {
+  const { api } = setup({ calendars: [KITCHEN, BOOKINGS] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const button = screen.getByRole('button', { name: 'Your calendars (2)' });
+  const dialog = openPopover();
+  expect(button.getAttribute('aria-expanded')).toBe('true');
+  expect(button.getAttribute('aria-controls')).toBe(dialog.id);
+  expect(dialog.id).not.toBe('');
+  expect(document.activeElement).toBe(within(dialog).getByRole('button', { name: 'Close' }));
+  expect(within(dialog).getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Your calendars']);
+  expect(within(dialog).getByText('File, 12 events')).toBeTruthy();
+  expect(within(dialog).getByText('Link, calendar.google.com, 1 event')).toBeTruthy();
+  expect(within(dialog).queryByText(CALENDARS_COPY.none)).toBeNull();
+  const order = [
+    within(dialog).getByText('Kitchen'), within(dialog).getByText('Bookings'), within(dialog).getByRole('button', { name: 'Import a calendar file' }),
+    within(dialog).getByRole('button', { name: 'Add a link' }), within(dialog).getByRole('button', { name: 'How importing works' }),
+  ];
+  order.slice(1).forEach((element, index) => {
+    expect((order[index] as Element).compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+test('opening the popover adds nothing to the page: it floats in the Modal, the header row ends with the button, and the grid’s container still follows the row', async () => {
+  const { api } = setup({ calendars: [KITCHEN, BOOKINGS] });
+  const grid = await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const row = headerRow();
+  const children = [...row.children];
+  const next = row.nextElementSibling;
+  const dialog = openPopover();
+  expect([...row.children]).toEqual(children);
+  expect(row.nextElementSibling).toBe(next);
+  expect(next?.contains(grid)).toBe(true);
+  // The Modal renders outside the page, so nothing of the page holds the popover.
+  expect(row.parentElement?.contains(dialog)).toBe(false);
+});
+
+test('Escape closes it and gives focus back to the button; opened again it shows the form as it was, with focus on Close', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const dialog = openPopover();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Add a link' }));
+  fireEvent.change(within(dialog).getByLabelText('Name'), { target: { value: 'Bookings' } });
+  escape();
+  expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
+  const button = screen.getByRole('button', { name: 'Your calendars' });
+  expect(document.activeElement).toBe(button);
+  expect(button.getAttribute('aria-expanded')).toBe('false');
+  expect(button.hasAttribute('aria-controls')).toBe(false);
+  const again = openPopover();
+  expect(within(again).getByLabelText<HTMLInputElement>('Name').value).toBe('Bookings');
+  expect(document.activeElement).toBe(within(again).getByRole('button', { name: 'Close' }));
+  expect(writes(api)).toEqual([]);
+});
+
+test('a press outside closes it and selects no day; Close closes it too', async () => {
+  const { api } = setup({ calendars: [KITCHEN] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const selected = (): string | null => document.querySelector('[role="grid"] [aria-selected="true"]')?.getAttribute('data-date') ?? null;
+  expect(selected()).toBe('2026-11-21');
+  openPopover();
+  pressOutside();
+  expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
+  expect(selected()).toBe('2026-11-21');
+  expect(window.location.search).toBe('?day=2026-11-21');
+  fireEvent.click(within(openPopover()).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
+  expect(document.activeElement).toBe(calendarsButton());
+});
+
+test('with none the open popover says “No calendars yet.”', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(within(openPopover()).getByText('No calendars yet.')).toBeTruthy();
+});
+
+test('a failed list read leaves the page showing: “Your calendars”, and the open popover’s Try again reads the list and the stored events again', async () => {
+  const { api, fake } = setup({ calendars: refusal(503, null) });
+  const grid = await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(grid).toBeTruthy();
+  expect(document.querySelector('[role="grid"] [data-date="2026-11-21"]')?.textContent).toContain('Dartmouth home football');
+  const panel = openPopover();
+  expect(within(panel).getByText('Couldn’t load your calendars.')).toBeTruthy();
+  expect(within(panel).queryByText(CALENDARS_COPY.none)).toBeNull();
+  const reads = fake.paths.length;
+  fake.calendars = [KITCHEN];
+  fireEvent.click(within(panel).getByRole('button', { name: 'Try again' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy(); });
+  // The list and the grid's stored events, never the forecast or the notes.
+  const again = fake.paths.slice(reads);
+  expect(again).toContain(CALENDARS_PATH);
+  expect(again).toContain(`${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`);
+  expect(again.filter((path) => path.includes('/forecast?') || path.endsWith('/notes'))).toEqual([]);
+  expect(within(panel).getByText('Kitchen')).toBeTruthy();
+  expect(within(panel).queryByText('Couldn’t load your calendars.')).toBeNull();
+});
+
+test('with the list unread the grid shows no stored events and no “Your calendar”, though they were read; once Try again reads the list they show', async () => {
+  const { api, fake } = setup({ calendars: refusal(503, null), ownerEvents: [DINNER] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const day = (): string => document.querySelector('[role="grid"] [data-date="2026-11-21"]')?.textContent ?? '';
+  expect(day()).toContain('Dartmouth home football');
+  expect(day()).not.toContain('Smith rehearsal dinner');
+  expect(within(screen.getByRole('region', { name: 'Selected day' })).queryByText('From your calendar: Smith rehearsal dinner')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
+  // Only the list failed: the stored events' own notice does not show.
+  expect(fake.paths).toContain(`${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`);
+  expect(screen.queryByText('Couldn’t load the events from your calendars. Try again.')).toBeNull();
+  fake.calendars = [KITCHEN];
+  fireEvent.click(within(openPopover()).getByRole('button', { name: 'Try again' }));
+  await waitFor(() => { expect(day()).toContain('Smith rehearsal dinner'); });
+  expect(screen.getByRole('button', { name: 'Your calendar' }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
+});
+
+/** A row's lines, in order, without its actions' labels. */
+function lines(row: HTMLElement): string[] {
+  return [...row.querySelectorAll('*')]
+    .filter((element) => element.childElementCount === 0 && element.closest('[role="button"]') === null)
+    .map((element) => element.textContent)
+    .filter((text) => text !== '');
+}
+
+test('the rows are a list in the list’s order: a file’s name, kind, count and repeating events; a link’s host, count, status words and Updated time', async () => {
+  const at = '2026-11-14T20:42:00.000Z';
+  const updated = `Updated ${formatDate(at)}, ${formatTime(at)}`;
+  const { api } = setup({
+    calendars: [
+      ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', eventCount: 12, skippedRepeating: 3 }),
+      ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1, status: 'timeout', lastSuccessAt: at }),
+      ownerCalendar({ id: 'c3', label: 'Bar', kind: 'link', host: 'calendar.google.com', eventCount: 4, status: 'key_mismatch', lastSuccessAt: at }),
+      ownerCalendar({ id: 'c4', label: 'Patio', kind: 'link', host: 'example.org', eventCount: 2, status: 'ok', lastSuccessAt: at }),
+    ],
+  });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const list = within(openPopover()).getByRole('list');
+  expect(within(list).getAllByRole('listitem').map(lines)).toEqual([
+    ['Kitchen', 'File, 12 events', '3 repeating events weren’t imported. Add them as notes with weekdays.'],
+    ['Bookings', 'Link, calendar.google.com, 1 event', 'Couldn’t refresh: the link took too long to answer.', updated],
+    ['Bar', 'Link, calendar.google.com, 4 events', 'Townwise can’t open this link any more. Remove it and add the link again.', updated],
+    // An ok link has no status line.
+    ['Patio', 'Link, example.org, 2 events', updated],
+  ]);
+});
+
+test('a failed list read shows the page notice “Couldn’t load your calendars. Try again.” with the popover closed, whose Try again reads the list and the stored events again', async () => {
+  const { api, fake } = setup({ calendars: refusal(503, null) });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(screen.getByText('Couldn’t load your calendars. Try again.')).toBeTruthy();
+  expect(screen.queryByRole('dialog')).toBeNull();
+  expect(screen.getByRole('button', { name: 'Your calendars' }).getAttribute('aria-expanded')).toBe('false');
+  const reads = fake.paths.length;
+  fake.calendars = [KITCHEN];
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy(); });
+  const again = fake.paths.slice(reads);
+  expect(again).toContain(CALENDARS_PATH);
+  expect(again).toContain(`${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`);
+  expect(again.filter((path) => path.includes('/forecast?') || path.endsWith('/notes'))).toEqual([]);
+  expect(screen.queryByText('Couldn’t load your calendars. Try again.')).toBeNull();
+});
+
+test('one calendars notice at a time: the list’s wins over the stored events’, and a failed stored-events read says nothing while the list has no calendar', async () => {
+  const EVENTS_NOTICE = 'Couldn’t load the events from your calendars. Try again.';
+  const { api, fake } = setup({ calendars: refusal(503, null), ownerEvents: offline() });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  expect(screen.getByText('Couldn’t load your calendars. Try again.')).toBeTruthy();
+  expect(screen.queryByText(EVENTS_NOTICE)).toBeNull();
+  // Once the list answers with a calendar, the stored events' failure is the one to show.
+  fake.calendars = [KITCHEN];
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(await screen.findByText(EVENTS_NOTICE)).toBeTruthy();
+  expect(screen.queryByText('Couldn’t load your calendars. Try again.')).toBeNull();
+  cleanup();
+
+  // The list answered with none: there are no stored events to miss.
+  const empty = setup({ calendars: [], ownerEvents: offline() });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', empty.api);
+  expect(empty.fake.paths).toContain(`${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`);
+  expect(screen.queryByText(EVENTS_NOTICE)).toBeNull();
+  expect(screen.queryByText('Couldn’t load your calendars. Try again.')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+});
+
+/** A made-up iCal address; the API never sends one back. */
+const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
+
+/** Opens the popover and, in it, the add-a-link form; returns the popover. */
+function openForm(): HTMLElement {
+  const panel = openPopover();
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add a link' }));
+  return panel;
+}
+
+function fill(panel: HTMLElement, name: string, link: string): void {
+  fireEvent.change(within(panel).getByLabelText('Name'), { target: { value: name } });
+  fireEvent.change(within(panel).getByLabelText('Calendar link'), { target: { value: link } });
+}
+
+test('“Add a link” opens the form in its place: Name and Calendar link with their helpers, Add link and Cancel', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  expect(within(panel).queryByRole('button', { name: 'Add a link' })).toBeNull();
+  const name = within(panel).getByLabelText('Name');
+  const link = within(panel).getByLabelText('Calendar link');
+  expect(document.getElementById(name.getAttribute('aria-describedby') ?? '')?.textContent).toBe(CALENDARS_COPY.nameHelper);
+  expect(document.getElementById(link.getAttribute('aria-describedby') ?? '')?.textContent).toBe(CALENDARS_COPY.linkHelper);
+  expect(within(panel).getByRole('button', { name: 'Add link' })).toBeTruthy();
+  expect(within(panel).getByRole('button', { name: 'Cancel' })).toBeTruthy();
+  // The import stays beside it.
+  expect(within(panel).getByRole('button', { name: 'Import a calendar file' })).toBeTruthy();
+});
+
+test('Add link checks the fields first: an empty or 61-character name, an empty or 2,049-character link, each with its words, and sends nothing', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  const add = within(panel).getByRole('button', { name: 'Add link' });
+  fireEvent.click(add);
+  expect(within(panel).getByText(CALENDARS_COPY.nameEmpty)).toBeTruthy();
+  expect(within(panel).getByText(CALENDARS_COPY.linkEmpty)).toBeTruthy();
+  expect(within(panel).getByLabelText('Name').getAttribute('aria-invalid')).toBe('true');
+  fill(panel, 'x'.repeat(61), `https://example.org/${'a'.repeat(2049 - 20)}`);
+  fireEvent.click(add);
+  expect(within(panel).getByText(CALENDARS_COPY.nameLong)).toBeTruthy();
+  expect(within(panel).getByText(CALENDARS_COPY.linkLong)).toBeTruthy();
+  expect(within(panel).queryByText(CALENDARS_COPY.nameEmpty)).toBeNull();
+  expect(writes(api)).toEqual([]);
+});
+
+test('a valid link is posted with “Adding…” meanwhile; then the form closes and clears, the popover says what was added, and the list and the stored events are read again', async () => {
+  const { api, fake } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  fill(panel, '  Bookings ', ` ${URL} `);
+  const answer = deferred<unknown>();
+  api.answers[CALENDARS_PATH] = () => answer.promise;
+  const reads = fake.paths.length;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add link' }));
+  const adding = await within(panel).findByRole('button', { name: 'Adding…' });
+  expect(adding.getAttribute('aria-disabled')).toBe('true');
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } }]);
+  const added = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 3 });
+  fake.calendars = [added];
+  await act(async () => { answer.resolve({ calendar: added }); await Promise.resolve(); });
+  expect(await within(panel).findByText('Added Bookings: 3 events.')).toBeTruthy();
+  expect(within(panel).getByText('Added Bookings: 3 events.').getAttribute('role')).toBe('status');
+  expect(within(panel).queryByLabelText('Calendar link')).toBeNull();
+  await waitFor(() => { expect(within(panel).getByText('Link, calendar.google.com, 3 events')).toBeTruthy(); });
+  expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
+  const again = fake.paths.slice(reads);
+  expect(again).toContain(CALENDARS_PATH);
+  expect(again).toContain(`${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`);
+  expect(again.filter((path) => path.includes('/forecast?') || path.endsWith('/notes'))).toEqual([]);
+  // The address is never shown or kept: the form starts empty again, and only the POST carried it.
+  expect(document.body.innerHTML).not.toContain(URL);
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add a link' }));
+  expect(within(panel).getByLabelText<HTMLInputElement>('Name').value).toBe('');
+  expect(within(panel).getByLabelText<HTMLInputElement>('Calendar link').value).toBe('');
+  expect(api.calls.filter((call) => JSON.stringify(call).includes(URL))).toEqual([writes(api)[0]]);
+});
+
+test.each([
+  ['bad_link', 400, 'Paste a link that starts with https:// or webcal://.'],
+  ['blocked_address', 400, 'Townwise doesn’t read calendars from that address. Use the link from your calendar’s settings.'],
+  ['unreachable', 400, 'Couldn’t reach that link. Check it and try again.'],
+  ['timeout', 400, 'That link took too long to answer. Try again in a few minutes.'],
+  ['too_large', 400, 'That calendar is over 1 MB, more than Townwise reads.'],
+  ['http_error', 400, 'That link answered with an error. Check it and try again.'],
+  ['not_calendar', 400, 'That link doesn’t lead to a calendar. Use its iCal link, which often ends in .ics.'],
+  ['calendar_limit', 409, 'This location has 5 calendars, the most it can hold. Remove one to add another.'],
+  ['rate_limited', 429, 'Too many attempts. Try again in 2 minutes.'],
+  ['calendar_links_unavailable', 503, 'Calendar links aren’t available right now. You can still import a calendar file.'],
+])('a link refused with %s (%d) keeps the form open with what was typed, says why as an alert, and reads nothing again', async (code, status, words) => {
+  const { api, fake } = setup({ calendars: [KITCHEN] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  fill(panel, 'Bookings', URL);
+  api.answers[CALENDARS_PATH] = () => refusal(status, code, code === 'rate_limited' ? 120 : undefined);
+  const reads = fake.paths.length;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add link' }));
+  expect(await within(panel).findByText(words)).toBeTruthy();
+  expect(within(panel).getByText(words).getAttribute('role')).toBe('alert');
+  expect(within(panel).getByLabelText<HTMLInputElement>('Name').value).toBe('Bookings');
+  expect(within(panel).getByLabelText<HTMLInputElement>('Calendar link').value).toBe(URL);
+  expect(within(panel).getByRole('button', { name: 'Add link' }).getAttribute('aria-disabled')).toBeNull();
+  expect(fake.paths.slice(reads)).toEqual([]);
+  expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
+});
+
+test('while “Adding…” the popover waits: Escape, Close (disabled in place) and a press outside leave it open, no second post is sent, and a refused link then shows its words in the open form', async () => {
+  const { api, fake } = setup({ calendars: [KITCHEN] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  fill(panel, 'Bookings', URL);
+  const answer = deferred<unknown>();
+  api.answers[CALENDARS_PATH] = () => answer.promise;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add link' }));
+  const adding = await within(panel).findByRole('button', { name: 'Adding…' });
+  escape();
+  const close = within(panel).getByRole('button', { name: 'Close' });
+  expect(close.getAttribute('aria-disabled')).toBe('true');
+  fireEvent.click(close);
+  pressOutside();
+  fireEvent.click(adding);
+  expect(popover()).toBe(panel);
+  expect(writes(api)).toHaveLength(1);
+  const reads = fake.paths.length;
+  await act(async () => { answer.reject(refusal(400, 'blocked_address')); await Promise.resolve(); });
+  const words = 'Townwise doesn’t read calendars from that address. Use the link from your calendar’s settings.';
+  expect(await within(panel).findByText(words)).toBeTruthy();
+  expect(within(panel).getByLabelText<HTMLInputElement>('Name').value).toBe('Bookings');
+  expect(within(panel).getByLabelText<HTMLInputElement>('Calendar link').value).toBe(URL);
+  expect(within(panel).getByRole('button', { name: 'Close' }).getAttribute('aria-disabled')).toBeNull();
+  expect(fake.paths.slice(reads)).toEqual([]);
+  expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
+  // Answered, it closes again.
+  escape();
+  expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
+});
+
+test('a file chosen in the popover is posted named after it, “Importing…” holds the popover open, and the popover says what was added', async () => {
+  const { api, fake } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openPopover();
+  const input = panel.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input');
+  const ics = 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n';
+  const file = new File([ics], 'Kitchen bookings.ics', { type: 'text/calendar' });
+  Object.defineProperty(file, 'text', { value: () => Promise.resolve(ics) });
+  const answer = deferred<unknown>();
+  api.answers[CALENDARS_PATH] = () => answer.promise;
+  fireEvent.change(input, { target: { files: [file] } });
+  expect(await within(panel).findByRole('button', { name: 'Importing…' })).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'Kitchen bookings', ics } }]);
+  escape();
+  pressOutside();
+  expect(popover()).toBe(panel);
+  const added = ownerCalendar({ id: 'c3', label: 'Kitchen bookings', kind: 'file', eventCount: 4 });
+  fake.calendars = [added];
+  await act(async () => { answer.resolve({ calendar: added }); await Promise.resolve(); });
+  expect(await within(panel).findByText('Added Kitchen bookings: 4 events.')).toBeTruthy();
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy(); });
+  expect(screen.getByRole('button', { name: 'Your calendar' }).getAttribute('aria-pressed')).toBe('true');
+});
+
+test('Cancel closes the form and clears it', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  fill(panel, 'Bookings', URL);
+  fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
+  expect(within(panel).queryByLabelText('Calendar link')).toBeNull();
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add a link' }));
+  expect(within(panel).getByLabelText<HTMLInputElement>('Name').value).toBe('');
+  expect(within(panel).getByLabelText<HTMLInputElement>('Calendar link').value).toBe('');
+  expect(writes(api)).toEqual([]);
+});
+
+const REFRESH_PATH = `${CALENDARS_PATH}/c2/refresh` as const;
+const NOVEMBER_EVENTS = `${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`;
+
+/** The popover, opened, with Kitchen (a file) and Bookings (a link) listed. */
+async function openWithBoth(): Promise<{ api: FakePortalApi; fake: CalendarFake; panel: HTMLElement }> {
+  const { api, fake } = setup({ calendars: [KITCHEN, BOOKINGS], ownerEvents: [DINNER] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  return { api, fake, panel: openPopover() };
+}
+
+function forecastReads(fake: CalendarFake): number {
+  return fake.paths.filter((path) => path.includes('/forecast?')).length;
+}
+
+test('Refresh now on a link posts its refresh with no body, reads “Refreshing…” meanwhile, then says “Refreshed Bookings.” and reads the list and the stored events again', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  // A file is never fetched, so its row has no Refresh now.
+  const [kitchen] = within(within(panel).getByRole('list')).getAllByRole('listitem');
+  if (kitchen === undefined) throw new Error('no row');
+  expect(within(kitchen).queryByRole('button', { name: /^Refresh now/ })).toBeNull();
+  const answer = deferred<unknown>();
+  api.answers[REFRESH_PATH] = () => answer.promise;
+  const reads = fake.paths.length;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+  const refreshing = await within(panel).findByRole('button', { name: 'Refreshing…: Bookings' });
+  expect(refreshing.textContent).toBe('Refreshing…');
+  expect(refreshing.getAttribute('aria-disabled')).toBe('true');
+  expect(writes(api)).toEqual([{ method: 'POST', path: REFRESH_PATH, body: undefined }]);
+  // The popover waits for the answer.
+  expect(within(panel).getByRole('button', { name: 'Close' }).getAttribute('aria-disabled')).toBe('true');
+  escape();
+  pressOutside();
+  expect(popover()).toBe(panel);
+  expect(writes(api)[0]).not.toHaveProperty('body', expect.anything());
+  await act(async () => { answer.resolve({ calendar: BOOKINGS }); await Promise.resolve(); });
+  expect(await within(panel).findByText('Refreshed Bookings.')).toBeTruthy();
+  expect(within(panel).getByText('Refreshed Bookings.').getAttribute('role')).toBe('status');
+  await waitFor(() => { expect(fake.paths.slice(reads)).toEqual(expect.arrayContaining([CALENDARS_PATH, NOVEMBER_EVENTS])); });
+  // Enabled again once the list read again has answered.
+  await waitFor(() => { expect(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }).getAttribute('aria-disabled')).toBeNull(); });
+  expect(forecastReads(fake)).toBe(1);
+});
+
+test('a refresh that answers with a failed status shows its words on the row and as an alert', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  const failed = { ...BOOKINGS, status: 'timeout' };
+  api.answers[REFRESH_PATH] = () => { fake.calendars = [KITCHEN, failed]; return { calendar: failed }; };
+  fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+  const words = 'Couldn’t refresh: the link took too long to answer.';
+  await waitFor(() => { expect(within(panel).getAllByText(words)).toHaveLength(2); });
+  const [row, alert] = within(panel).getAllByText(words);
+  expect(row?.closest('[role="listitem"]')).not.toBeNull();
+  expect(alert?.getAttribute('role')).toBe('alert');
+  expect(within(panel).queryByText('Refreshed Bookings.')).toBeNull();
+});
+
+test.each([
+  [refusal(429, 'rate_limited', 240), 'This calendar was refreshed a few minutes ago. Try again in 4 minutes.'],
+  [refusal(503, 'calendar_links_unavailable'), 'Calendar links aren’t available right now. This calendar’s events stay as they are.'],
+])('a refused refresh says why and reads nothing again (%#)', async (error, words) => {
+  const { api, fake, panel } = await openWithBoth();
+  api.answers[REFRESH_PATH] = () => error;
+  const reads = fake.paths.length;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+  expect(await within(panel).findByText(words)).toBeTruthy();
+  expect(within(panel).getByText(words).getAttribute('role')).toBe('alert');
+  expect(fake.paths.slice(reads)).toEqual([]);
+});
+
+test('Remove asks first; Remove calendar sends one DELETE, says “Removed Kitchen.”, reads the list and the stored events again, and its events leave the grid', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  const day = (): string => document.querySelector('[role="grid"] [data-date="2026-11-21"]')?.textContent ?? '';
+  expect(day()).toContain('Smith rehearsal dinner');
+  fireEvent.click(within(panel).getByRole('button', { name: 'Remove Kitchen' }));
+  let dialog = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  expect(within(dialog).getByText('Its events leave the Calendar. Notes you made from them stay.')).toBeTruthy();
+  // Cancel sends nothing.
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull(); });
+  expect(writes(api)).toEqual([]);
+
+  fireEvent.click(within(panel).getByRole('button', { name: 'Remove Kitchen' }));
+  dialog = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  // While its Remove dialog is open, a press outside the popover leaves it open.
+  pressOutside();
+  expect(popover()).toBe(panel);
+  fake.calendars = [BOOKINGS];
+  fake.ownerEvents = [];
+  const reads = fake.paths.length;
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove calendar' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull(); });
+  // The popover stayed open under the dialog, and says how it ended.
+  expect(popover()).toBe(panel);
+  expect(writes(api)).toEqual([{ method: 'DELETE', path: `${CALENDARS_PATH}/c1`, body: undefined }]);
+  expect(within(panel).getByText('Removed Kitchen.').getAttribute('role')).toBe('status');
+  await waitFor(() => { expect(day()).not.toContain('Smith rehearsal dinner'); });
+  expect(fake.paths.slice(reads)).toEqual(expect.arrayContaining([CALENDARS_PATH, NOVEMBER_EVENTS]));
+  expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
+  expect(within(panel).queryByText('Kitchen')).toBeNull();
+  expect(forecastReads(fake)).toBe(1);
+});
+
+test('a calendar gone in the meantime: a 404 on Refresh now or Remove says “This calendar was already removed.” and reads the list again', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  api.answers[REFRESH_PATH] = () => refusal(404, 'not_found');
+  let reads = fake.paths.length;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+  expect(await within(panel).findByText('This calendar was already removed.')).toBeTruthy();
+  await waitFor(() => { expect(fake.paths.slice(reads)).toEqual(expect.arrayContaining([CALENDARS_PATH, NOVEMBER_EVENTS])); });
+  // The rows' actions wait until the list has answered.
+  await waitFor(() => { expect(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }).getAttribute('aria-disabled')).toBeNull(); });
+
+  // Another message first, so the Remove's own words are seen to arrive.
+  api.answers[REFRESH_PATH] = () => refusal(503, 'calendar_links_unavailable');
+  fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+  expect(await within(panel).findByText('Calendar links aren’t available right now. This calendar’s events stay as they are.')).toBeTruthy();
+  expect(within(panel).queryByText('This calendar was already removed.')).toBeNull();
+
+  fake.deletes[`${CALENDARS_PATH}/c1`] = refusal(404, 'not_found');
+  fireEvent.click(within(panel).getByRole('button', { name: 'Remove Kitchen' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  fake.calendars = [BOOKINGS];
+  reads = fake.paths.length;
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove calendar' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull(); });
+  expect(within(panel).getByText('This calendar was already removed.')).toBeTruthy();
+  await waitFor(() => { expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy(); });
+  expect(fake.paths.slice(reads)).toEqual(expect.arrayContaining([CALENDARS_PATH, NOVEMBER_EVENTS]));
+  expect(forecastReads(fake)).toBe(1);
+});
+
+test('the popover holds “Import a calendar file” and “How importing works”, whose help is hidden but present and describes the import', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openPopover();
+  const importButton = within(panel).getByRole('button', { name: 'Import a calendar file' });
+  const toggle = within(panel).getByRole('button', { name: 'How importing works' });
+  expect(toggle.getAttribute('aria-expanded')).toBe('false');
+  const help = within(panel).getByText(CALENDARS_COPY.help);
+  expect(help.id).not.toBe('');
+  expect(toggle.getAttribute('aria-controls')).toBe(help.id);
+  expect(importButton.getAttribute('aria-describedby')).toBe(help.id);
+  expect(shown(help)).toBe(false);
+  fireEvent.click(toggle);
+  expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  expect(shown(help)).toBe(true);
+  fireEvent.click(toggle);
+  expect(shown(help)).toBe(false);
+});
+
+test('closing the popover keeps a half-typed link, the shown message and the open help, and opening it again shows them all', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  fill(panel, 'Bookings', URL);
+  api.answers[CALENDARS_PATH] = () => refusal(400, 'timeout');
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add link' }));
+  const words = 'That link took too long to answer. Try again in a few minutes.';
+  expect(await within(panel).findByText(words)).toBeTruthy();
+  fireEvent.change(within(panel).getByLabelText('Name'), { target: { value: 'Bookings 2' } });
+  fireEvent.click(within(panel).getByRole('button', { name: 'How importing works' }));
+  fireEvent.click(within(panel).getByRole('button', { name: 'Close' }));
+  expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
+  // Nothing of it is in the page while it is closed.
+  expect(screen.queryByLabelText('Calendar link')).toBeNull();
+  expect(screen.queryByText(words)).toBeNull();
+  const again = openPopover();
+  expect(within(again).getByLabelText<HTMLInputElement>('Name').value).toBe('Bookings 2');
+  expect(within(again).getByLabelText<HTMLInputElement>('Calendar link').value).toBe(URL);
+  expect(within(again).getByText(words).getAttribute('role')).toBe('alert');
+  expect(within(again).getByRole('button', { name: 'How importing works' }).getAttribute('aria-expanded')).toBe('true');
+  expect(shown(within(again).getByText(CALENDARS_COPY.help))).toBe(true);
+  expect(writes(api)).toHaveLength(1);
+});
+
+test('a later Add link that fails the form’s own checks clears the last refusal, so the field and the alert never disagree', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openForm();
+  fill(panel, 'Bookings', URL);
+  api.answers[CALENDARS_PATH] = () => refusal(400, 'unreachable');
+  const add = within(panel).getByRole('button', { name: 'Add link' });
+  fireEvent.click(add);
+  const refused = 'Couldn’t reach that link. Check it and try again.';
+  expect(await within(panel).findByText(refused)).toBeTruthy();
+  fireEvent.change(within(panel).getByLabelText('Calendar link'), { target: { value: '' } });
+  fireEvent.click(add);
+  expect(within(panel).getByText(CALENDARS_COPY.linkEmpty)).toBeTruthy();
+  expect(within(panel).queryByText(refused)).toBeNull();
+  expect(writes(api)).toHaveLength(1);
+});
+
+test('while one link refreshes, every row’s Refresh now is disabled in place, and the others keep their own label and name', async () => {
+  const PATIO = ownerCalendar({ id: 'c3', label: 'Patio', kind: 'link', host: 'example.org', eventCount: 2 });
+  const { api } = setup({ calendars: [KITCHEN, BOOKINGS, PATIO] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openPopover();
+  const answer = deferred<unknown>();
+  api.answers[REFRESH_PATH] = () => answer.promise;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+  expect(await within(panel).findByRole('button', { name: 'Refreshing…: Bookings' })).toBeTruthy();
+  const patio = within(panel).getByRole('button', { name: 'Refresh now: Patio' });
+  expect(patio.textContent).toBe('Refresh now');
+  expect(patio.getAttribute('aria-disabled')).toBe('true');
+  fireEvent.click(patio);
+  expect(writes(api)).toEqual([{ method: 'POST', path: REFRESH_PATH, body: undefined }]);
+  await act(async () => { answer.resolve({ calendar: BOOKINGS }); await Promise.resolve(); });
+  await waitFor(() => { expect(within(panel).getByRole('button', { name: 'Refresh now: Patio' }).getAttribute('aria-disabled')).toBeNull(); });
+});
+
+test('a Remove refused for any other reason shows the shared words in the dialog, which stays open, reads nothing again, and opens again without them', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  const error = refusal(503, null);
+  fake.deletes[`${CALENDARS_PATH}/c1`] = error;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Remove Kitchen' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  const reads = fake.paths.length;
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove calendar' }));
+  expect(await within(dialog).findByText(errorCopy(error))).toBeTruthy();
+  expect(screen.getByRole('dialog', { name: 'Remove this calendar?' })).toBe(dialog);
+  expect(within(dialog).getByRole('button', { name: 'Remove calendar' }).getAttribute('aria-disabled')).toBeNull();
+  expect(writes(api)).toEqual([{ method: 'DELETE', path: `${CALENDARS_PATH}/c1`, body: undefined }]);
+  expect(fake.paths.slice(reads)).toEqual([]);
+  expect(within(panel).getByText('Kitchen')).toBeTruthy();
+  expect(within(panel).queryByText('Removed Kitchen.')).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull(); });
+  fireEvent.click(within(panel).getByRole('button', { name: 'Remove Kitchen' }));
+  const again = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  expect(within(again).queryByText(errorCopy(error))).toBeNull();
+});
+
+/** Holds the list's reads until the returned release: a change's read again is still running. */
+function holdList(fake: CalendarFake): () => void {
+  const held = deferred<undefined>();
+  const json = fake.json.bind(fake);
+  fake.json = ((...args: Parameters<typeof json>) => (args[0] === CALENDARS_PATH ? held.promise.then(() => json(...args)) : json(...args))) as typeof json;
+  return () => { held.resolve(undefined); };
+}
+
+test('while the list reads again after a change, it is busy and every row’s Refresh now and Remove are disabled, so a removed row can’t be removed twice', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  const release = holdList(fake);
+  fireEvent.click(within(panel).getByRole('button', { name: 'Remove Kitchen' }));
+  const dialog = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  fake.calendars = [BOOKINGS];
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove calendar' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull(); });
+  expect(within(panel).getByText('Removed Kitchen.')).toBeTruthy();
+  // The list hasn't answered: Kitchen is still listed, and nothing in the list can be pressed.
+  const list = within(panel).getByRole('list');
+  expect(list.getAttribute('aria-busy')).toBe('true');
+  for (const name of ['Remove Kitchen', 'Refresh now: Bookings', 'Remove Bookings']) {
+    const control = within(list).getByRole('button', { name });
+    expect(control.getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(control);
+  }
+  expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull();
+  expect(writes(api)).toEqual([{ method: 'DELETE', path: `${CALENDARS_PATH}/c1`, body: undefined }]);
+  await act(async () => { release(); await Promise.resolve(); });
+  await waitFor(() => { expect(within(panel).queryByText('Kitchen')).toBeNull(); });
+  expect(within(panel).getByRole('list').getAttribute('aria-busy')).not.toBe('true');
+  expect(within(panel).getByRole('button', { name: 'Remove Bookings' }).getAttribute('aria-disabled')).toBeNull();
+  expect(within(panel).getByText('Removed Kitchen.')).toBeTruthy();
+});
+
+/** Whether focus is on the popover's messages line that says `text`, a line that takes focus from script (tabIndex -1). */
+function focusOnLine(panel: HTMLElement, text: string): boolean {
+  const line = within(panel).queryByText(text);
+  const active = document.activeElement;
+  return line !== null && active !== null && active !== document.body && active.getAttribute('tabindex') === '-1' && active.contains(line);
+}
+
+test('focus follows the form: Add a link puts it in Name, Cancel gives it back to Add a link, a refusal leaves it on Add link, and a link added moves it to the line that says so', async () => {
+  const { api, fake } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  // Nothing takes focus on load, and opening the popover moves it to Close.
+  expect(document.activeElement).toBe(document.body);
+  const panel = openPopover();
+  expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Close' }));
+  const open = within(panel).getByRole('button', { name: 'Add a link' });
+  focus(open);
+  fireEvent.click(open);
+  expect(document.activeElement).toBe(within(panel).getByLabelText('Name'));
+  const cancel = within(panel).getByRole('button', { name: 'Cancel' });
+  focus(cancel);
+  fireEvent.click(cancel);
+  expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Add a link' }));
+
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add a link' }));
+  fill(panel, 'Bookings', URL);
+  const add = within(panel).getByRole('button', { name: 'Add link' });
+  focus(add);
+  api.answers[CALENDARS_PATH] = () => refusal(400, 'unreachable');
+  fireEvent.click(add);
+  expect(await within(panel).findByText('Couldn’t reach that link. Check it and try again.')).toBeTruthy();
+  expect(document.activeElement).toBe(add);
+
+  const added = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 3 });
+  api.answers[CALENDARS_PATH] = () => { fake.calendars = [added]; return { calendar: added }; };
+  fireEvent.click(add);
+  expect(await within(panel).findByText('Added Bookings: 3 events.')).toBeTruthy();
+  await waitFor(() => { expect(focusOnLine(panel, 'Added Bookings: 3 events.')).toBe(true); });
+  await waitFor(() => { expect(within(panel).getByText('Link, calendar.google.com, 3 events')).toBeTruthy(); });
+  expect(focusOnLine(panel, 'Added Bookings: 3 events.')).toBe(true);
+});
+
+test('Remove takes its row away, so once the dialog has closed focus moves to the line that says how it ended, as after a 404; a refresh that worked leaves it on its button', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  api.answers[REFRESH_PATH] = () => ({ calendar: BOOKINGS });
+  const refresh = within(panel).getByRole('button', { name: 'Refresh now: Bookings' });
+  focus(refresh);
+  fireEvent.click(refresh);
+  expect(await within(panel).findByText('Refreshed Bookings.')).toBeTruthy();
+  await waitFor(() => { expect(refresh.getAttribute('aria-disabled')).toBeNull(); });
+  expect(document.activeElement).toBe(refresh);
+
+  const remove = within(panel).getByRole('button', { name: 'Remove Kitchen' });
+  focus(remove);
+  fireEvent.click(remove);
+  let dialog = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  fake.calendars = [BOOKINGS];
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove calendar' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull(); });
+  await waitFor(() => { expect(focusOnLine(panel, 'Removed Kitchen.')).toBe(true); });
+  await waitFor(() => { expect(within(panel).queryByText('Kitchen')).toBeNull(); });
+  expect(focusOnLine(panel, 'Removed Kitchen.')).toBe(true);
+
+  // Bookings went in the meantime: a 404 says so, and the list read again takes its row away.
+  fake.deletes[`${CALENDARS_PATH}/c2`] = refusal(404, 'not_found');
+  const removeBookings = within(panel).getByRole('button', { name: 'Remove Bookings' });
+  focus(removeBookings);
+  fireEvent.click(removeBookings);
+  dialog = await screen.findByRole('dialog', { name: 'Remove this calendar?' });
+  fake.calendars = [];
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Remove calendar' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull(); });
+  await waitFor(() => { expect(focusOnLine(panel, 'This calendar was already removed.')).toBe(true); });
+  await waitFor(() => { expect(within(panel).getByText(CALENDARS_COPY.none)).toBeTruthy(); });
+  expect(focusOnLine(panel, 'This calendar was already removed.')).toBe(true);
+});
+
+test('a 404 on Refresh now takes the row away as the list reads again, so focus moves to the line that says so', async () => {
+  const { api, fake, panel } = await openWithBoth();
+  api.answers[REFRESH_PATH] = () => refusal(404, 'not_found');
+  fake.calendars = [KITCHEN];
+  const refresh = within(panel).getByRole('button', { name: 'Refresh now: Bookings' });
+  focus(refresh);
+  fireEvent.click(refresh);
+  await waitFor(() => { expect(focusOnLine(panel, 'This calendar was already removed.')).toBe(true); });
+  await waitFor(() => { expect(within(panel).queryByText('Bookings')).toBeNull(); });
+  expect(focusOnLine(panel, 'This calendar was already removed.')).toBe(true);
+});
+
+test('a row’s Remove waits while its own refresh runs, so the refresh can’t answer 404 for a calendar just removed; another row’s Remove still works', async () => {
+  const { api, panel } = await openWithBoth();
+  const answer = deferred<unknown>();
+  api.answers[REFRESH_PATH] = () => answer.promise;
+  fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+  expect(await within(panel).findByRole('button', { name: 'Refreshing…: Bookings' })).toBeTruthy();
+  const removeBookings = within(panel).getByRole('button', { name: 'Remove Bookings' });
+  expect(removeBookings.getAttribute('aria-disabled')).toBe('true');
+  fireEvent.click(removeBookings);
+  expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull();
+  expect(within(panel).getByRole('button', { name: 'Remove Kitchen' }).getAttribute('aria-disabled')).toBeNull();
+  expect(writes(api)).toEqual([{ method: 'POST', path: REFRESH_PATH, body: undefined }]);
+  await act(async () => { answer.resolve({ calendar: BOOKINGS }); await Promise.resolve(); });
+  await waitFor(() => { expect(within(panel).getByRole('button', { name: 'Remove Bookings' }).getAttribute('aria-disabled')).toBeNull(); });
+});
+
+test('view-as: the popover lists the calendars, and Import, Add a link, Refresh now and Remove stay disabled in place, described by its read-only line, and send nothing', async () => {
+  const { api } = setup({ calendars: [KITCHEN, BOOKINGS] }, viewAsMe(ACCESS.admin));
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openPopover();
+  expect(within(panel).getByText('File, 12 events')).toBeTruthy();
+  expect(within(panel).getByText('Link, calendar.google.com, 1 event')).toBeTruthy();
+  const line = within(panel).getByText('Read-only while viewing as gm@example.org.');
+  expect(line.id).not.toBe('');
+  const input = panel.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input');
+  const picked = jest.spyOn(input, 'click').mockImplementation(() => undefined);
+  for (const name of ['Import a calendar file', 'Add a link', 'Refresh now: Bookings', 'Remove Kitchen', 'Remove Bookings']) {
+    const control = within(panel).getByRole('button', { name });
+    expect(control.getAttribute('aria-disabled')).toBe('true');
+    expect(control.getAttribute('aria-describedby')?.split(' ')).toContain(line.id);
+    fireEvent.click(control);
+  }
+  expect(picked).not.toHaveBeenCalled();
+  expect(within(panel).queryByLabelText('Calendar link')).toBeNull();
+  expect(screen.queryByRole('dialog', { name: 'Remove this calendar?' })).toBeNull();
+  // The help still works, and so does Close.
+  expect(within(panel).getByRole('button', { name: 'How importing works' }).getAttribute('aria-disabled')).toBeNull();
+  expect(within(panel).getByRole('button', { name: 'Close' }).getAttribute('aria-disabled')).toBeNull();
+  expect(writes(api)).toEqual([]);
+});

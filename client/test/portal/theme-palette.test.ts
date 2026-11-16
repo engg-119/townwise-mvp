@@ -15,6 +15,11 @@ const DESIGN_SYSTEM = {
   scrim: 'rgba(8, 10, 13, 0.8)', shadow: 'rgba(0, 0, 0, 0.6)',
   cta: '#eff2f6', ctaHover: '#b5bbc2', onCta: '#080a0d', onMint: '#080a0d', focusRing: '#7bd2b4',
   seriesNortheast: '#9a9fa6', seriesCounty: '#7bd2b4', deltaAbove: '#7bd2b4', deltaBelow: '#7b8187',
+  // Added for Why's graded marks (refine-calendar-and-home design decision 8): the effect ramp, its own set of tokens.
+  effectUp1: '#9cc9ae', effectUp2: '#86cfa4', effectUp3: '#5fd98f',
+  effectDown1: '#d1a39e', effectDown2: '#e09a93', effectDown3: '#f2716a',
+  // Added for the source chips' logos (refine-calendar-and-home design decision 6), the same in both palettes.
+  logoGround: '#f5f6f8',
 };
 
 const TOKENS = Object.keys(DESIGN_SYSTEM) as ColorToken[];
@@ -68,6 +73,46 @@ test.each([
   for (const surface of SURFACES) expect(contrast(light[token], light[surface])).toBeGreaterThanOrEqual(ratio);
 });
 
+// The red, green and blue channels of a #rrggbb color, 0 to 255.
+function channels(hex: string): [number, number, number] {
+  return [parseInt(hex.slice(1, 3), 16), parseInt(hex.slice(3, 5), 16), parseInt(hex.slice(5, 7), 16)];
+}
+
+// HSL saturation, 0 to 1.
+function saturation(hex: string): number {
+  const [r, g, b] = channels(hex).map((value) => value / 255) as [number, number, number];
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  if (max === min) return 0;
+  return lightness > 0.5 ? (max - min) / (2 - max - min) : (max - min) / (max + min);
+}
+
+const EFFECT_RAMPS = [
+  // ▲: green less the larger of red and blue.
+  { steps: ['effectUp1', 'effectUp2', 'effectUp3'], dominance: ([r, g, b]: [number, number, number]) => g - Math.max(r, b) },
+  // ▼: red less the larger of green and blue.
+  { steps: ['effectDown1', 'effectDown2', 'effectDown3'], dominance: ([r, g, b]: [number, number, number]) => r - Math.max(g, b) },
+] as const;
+
+test.each(['dark', 'light'] as const)('%s: Why’s effect ramp meets 4.5:1 on ground, panel and raised, each step greener or redder than the last', (mode) => {
+  const palette = theme.palette[mode];
+  for (const ramp of EFFECT_RAMPS) {
+    for (const token of ramp.steps) {
+      for (const surface of SURFACES) expect(contrast(palette[token], palette[surface])).toBeGreaterThanOrEqual(4.5);
+    }
+    // Greener or redder is rising saturation and channel dominance, not hue, which stays about the same. Step 1 is
+    // held against the gray of = (text2) too, so it reads as green or red, not as that gray.
+    const colors = ['text2' as const, ...ramp.steps].map((token) => palette[token]);
+    for (let step = 1; step < colors.length; step += 1) {
+      const lower = colors[step - 1] ?? '';
+      const higher = colors[step] ?? '';
+      expect(saturation(higher)).toBeGreaterThan(saturation(lower));
+      expect(ramp.dominance(channels(higher))).toBeGreaterThan(ramp.dominance(channels(lower)));
+    }
+  }
+});
+
 test('light: labels on the primary button and on mint meet 4.5:1, and the border stays subtle', () => {
   expect(contrast(light.onCta, light.cta)).toBeGreaterThanOrEqual(4.5);
   expect(contrast(light.onCta, light.ctaHover)).toBeGreaterThanOrEqual(4.5);
@@ -87,6 +132,8 @@ test('light: aliased as dark is, so a token keeps its role in both', () => {
   // The Northeast series is text3 in dark; in light it is the lighter line gray (src/theme.ts says why).
   expect(theme.palette.dark.seriesNortheast).toBe(theme.palette.dark.text3);
   expect(light.seriesNortheast).toBe(light.line);
+  // A source chip's logo sits on the same light backing in both.
+  expect(light.logoGround).toBe(theme.palette.dark.logoGround);
   // mintRing is mint at 40%.
   const [r, g, b] = [1, 3, 5].map((at) => parseInt(light.mint.slice(at, at + 2), 16));
   expect(light.mintRing).toBe(`rgba(${String(r)}, ${String(g)}, ${String(b)}, 0.4)`);
