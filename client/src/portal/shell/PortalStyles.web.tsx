@@ -4,16 +4,21 @@ import { theme } from '../../theme';
 import { useThemeMode } from './themeMode';
 
 // The focus ring for every portal control (spec 15.7: a 2px `mint` outline offset 2px), scoped to the portal's
-// root (#tw-portal), grayscale antialiasing as the boards and the marketing pages (`.tw`) set it, and the
-// reduced-motion switch. One React-rendered <style>, as the marketing pages do, so it is covered by the existing
-// `style-src 'unsafe-inline'` and needs no header change. Scrollbars are styled for every page in public/index.html.
+// root (#tw-portal) and to every Modal (a popover, ConfirmDialog), which react-native-web renders at the end of the
+// body, outside #tw-portal, in an element with aria-modal="true" (no public page has one); grayscale antialiasing as
+// the boards and the marketing pages (`.tw`) set it, and the reduced-motion switch. One React-rendered <style>, as the
+// marketing pages do, so it is covered by the existing `style-src 'unsafe-inline'` and needs no header change.
+// Scrollbars are styled for every page in public/index.html.
 const css = [
   '#tw-portal{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}',
   `#tw-portal :focus-visible{outline:2px solid ${theme.color.focusRing};outline-offset:2px}`,
   '#tw-portal :focus:not(:focus-visible){outline:none}',
+  `[aria-modal="true"] :focus-visible{outline:2px solid ${theme.color.focusRing};outline-offset:2px}`,
+  '[aria-modal="true"] :focus:not(:focus-visible){outline:none}',
   // A control inside a box that draws its own ring (the chat composer's rounded box) opts out with data-ring="box",
   // or a square ring is drawn inside the round one.
   '#tw-portal [data-ring="box"]:focus-visible{outline:none}',
+  '[aria-modal="true"] [data-ring="box"]:focus-visible{outline:none}',
   // The row of actions under a message: the newest message's always shows (data-actions="always"); the rest are
   // transparent until the pointer is over the message or focus is in it, and stay in the tab order. No hover, no hiding.
   '#tw-portal [data-actions="hover"]{opacity:0}',
