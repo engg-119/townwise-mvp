@@ -92,9 +92,11 @@ interface HarnessProps {
   busy?: boolean;
   onClose?: () => void;
   onDismiss?: () => void;
+  /** The card's content, by default one control ("Add a link"). */
+  children?: React.ReactNode;
 }
 
-/** An opener, the popover it opens (with one control), and a control outside it. */
+/** An opener, the popover it opens (with one control unless given others), and a control outside it. */
 function Harness(props: HarnessProps): React.JSX.Element {
   const anchor = useRef<Host>(null);
   const [open, setOpen] = useState(false);
@@ -116,7 +118,7 @@ function Harness(props: HarnessProps): React.JSX.Element {
         onClose={() => { props.onClose?.(); setOpen(false); }}
         {...(props.onDismiss === undefined ? {} : { onDismiss: props.onDismiss })}
       >
-        <Button variant="outline" label="Add a link" onPress={() => undefined} />
+        {props.children ?? <Button variant="outline" label="Add a link" onPress={() => undefined} />}
       </Popover>
     </>
   );
@@ -225,6 +227,145 @@ test('where a scroll view takes focus, as Chrome’s does, opening focuses Close
     expect(scrolls(document.activeElement)).toBe(false);
     escape();
     expect(document.activeElement).toBe(opener);
+  } finally {
+    focus.mockRestore();
+  }
+});
+
+/** The note form's shape: no Close, so every control is in the scroll view, and Save disabled in place between two. */
+const FORM = (
+  <>
+    <Button variant="outline" label="Kind" onPress={() => undefined} />
+    <Button label="Save" disabled onPress={() => undefined} />
+    <Button variant="outline" label="Cancel" onPress={() => undefined} />
+  </>
+);
+
+/**
+ * Tab, or Shift+Tab, as a browser does it, which jsdom does not: the key goes to the focused element and, unless a
+ * listener cancels it, focus moves to the next (or previous) element in the tab order. Past the card's last control
+ * (before its first) that is react-native-web's focus bracket, whose focus the trap answers by searching the card again.
+ * A scroll view is not in this order, as Chrome leaves out one with controls in it, but takes focus from a script.
+ */
+function tab(shift = false): void {
+  const from = document.activeElement ?? document.body;
+  if (!fireEvent.keyDown(from, { key: 'Tab', shiftKey: shift })) return;
+  const order = [...document.body.querySelectorAll<HTMLElement>('*')].filter((element) => element.tabIndex >= 0 && !element.matches(':disabled'));
+  const following = order.filter((element) => (from.compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0);
+  const next = shift ? order.filter((element) => element !== from && !following.includes(element)).at(-1) : following[0];
+  if (next !== undefined) act(() => { next.focus(); });
+}
+
+/** The focused control's name, or what else has focus. */
+function focused(card: HTMLElement): string {
+  const active = document.activeElement;
+  if (scrolls(active)) return 'the scroll region';
+  if (active === null || !card.contains(active)) return 'outside the card';
+  return active.textContent;
+}
+
+test('where a scroll view takes focus, as Chrome’s does, Tab from the last control goes to the first and Shift+Tab from the first to the last', () => {
+  const focus = scrollViewsTakeFocus();
+  try {
+    // Your calendars: Close, then the content.
+    render(<Harness />);
+    open();
+    let card = screen.getByRole('dialog', { name: 'Your calendars' });
+    expect(focused(card)).toBe('Close');
+    tab(true);
+    expect(focused(card)).toBe('Add a link');
+    tab();
+    expect(focused(card)).toBe('Close');
+    cleanup();
+
+    // The note form: no Close, so the first and last controls are both in the scroll view.
+    render(<Harness closeButton={false} dismissOnOutsidePress={false}>{FORM}</Harness>);
+    open();
+    card = screen.getByRole('dialog', { name: 'Your calendars' });
+    expect(focused(card)).toBe('Kind');
+    tab(true);
+    expect(focused(card)).toBe('Cancel');
+    tab();
+    expect(focused(card)).toBe('Kind');
+  } finally {
+    focus.mockRestore();
+  }
+});
+
+test('where a scroll view takes focus, Tab and Shift+Tab never stop on the scroll region, round and round either way', () => {
+  const focus = scrollViewsTakeFocus();
+  try {
+    for (const harness of [<Harness key="calendars" />, <Harness key="form" closeButton={false} dismissOnOutsidePress={false}>{FORM}</Harness>]) {
+      render(harness);
+      open();
+      const card = screen.getByRole('dialog', { name: 'Your calendars' });
+      const seen: string[] = [];
+      for (const shift of [false, false, false, false, true, true, true, true]) {
+        tab(shift);
+        seen.push(focused(card));
+      }
+      expect(seen).not.toContain('the scroll region');
+      expect(seen).not.toContain('outside the card');
+      cleanup();
+    }
+  } finally {
+    focus.mockRestore();
+  }
+});
+
+test('Tab and Shift+Tab skip a disabled control: the note form’s Save while it runs, Close while busy', () => {
+  const focus = scrollViewsTakeFocus();
+  try {
+    render(<Harness closeButton={false} dismissOnOutsidePress={false}>{FORM}</Harness>);
+    open();
+    let card = screen.getByRole('dialog', { name: 'Your calendars' });
+    tab();
+    expect(focused(card)).toBe('Cancel');
+    tab(true);
+    expect(focused(card)).toBe('Kind');
+    cleanup();
+
+    // Busy, Close is disabled in place: it keeps the focus it took on open, and Tab never comes back to it.
+    render(<Harness busy />);
+    open();
+    card = screen.getByRole('dialog', { name: 'Your calendars' });
+    expect(focused(card)).toBe('Close');
+    tab();
+    expect(focused(card)).toBe('Add a link');
+    tab();
+    expect(focused(card)).toBe('Add a link');
+    tab(true);
+    expect(focused(card)).toBe('Add a link');
+  } finally {
+    focus.mockRestore();
+  }
+});
+
+test('where a scroll view takes focus, it never keeps it: not from the trap bringing focus back, nor a press on its blank space', () => {
+  const focus = scrollViewsTakeFocus();
+  try {
+    // The trap, given focus that left the card from its first control, looks for the card's last: it passes the scroll
+    // view on its way, with or without Close above it.
+    for (const harness of [<Harness key="calendars" />, <Harness key="form" closeButton={false} dismissOnOutsidePress={false}>{FORM}</Harness>]) {
+      render(harness);
+      open();
+      const card = screen.getByRole('dialog', { name: 'Your calendars' });
+      act(() => { screen.getByRole('button', { name: 'Elsewhere' }).focus(); });
+      expect(focused(card)).not.toBe('the scroll region');
+      expect(focused(card)).not.toBe('outside the card');
+      cleanup();
+    }
+
+    render(<Harness closeButton={false} dismissOnOutsidePress={false}>{FORM}</Harness>);
+    open();
+    const card = screen.getByRole('dialog', { name: 'Your calendars' });
+    tab();
+    expect(focused(card)).toBe('Cancel');
+    const region = [...card.querySelectorAll<HTMLElement>('*')].find(scrolls);
+    if (region === undefined) throw new Error('no scroll region');
+    // Chrome focuses a scroll view pressed on its blank space; focus goes back to the control it came from.
+    act(() => { region.focus(); });
+    expect(focused(card)).toBe('Cancel');
   } finally {
     focus.mockRestore();
   }
