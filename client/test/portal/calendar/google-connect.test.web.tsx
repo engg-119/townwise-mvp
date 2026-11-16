@@ -17,8 +17,8 @@ import { CALENDARS_PATH, calendarFake, forecastDay, forecastOf, type CalendarFak
 // Google for read-only calendar access only" and "The Your calendars popover connects and picks Google calendars"),
 // through the Calendar page with a fake `window.google`: Google's script loads only when "Add a Google calendar" opens
 // the section, the code client is set up in the press with exactly the three scopes and a fresh `state`, and every
-// answer for the current press ends the wait, while an answer for another press or after "Stop waiting" is dropped.
-// Today is Wed, Nov 11, 2026. A made-up client id, code and names only.
+// answer for the current press ends the wait, while an answer for another press, after "Stop waiting" or after the
+// page has gone is dropped. Today is Wed, Nov 11, 2026. A made-up client id, code and names only.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -255,6 +255,17 @@ test('a code for the current press is posted with the agreement; one carrying an
   // A second answer for a press already answered is dropped too.
   answer(second, { code: CODE, scope: SCOPES, state: second.state });
   expect(writes(api)).toHaveLength(1);
+});
+
+test('a code that lands after the page has gone is dropped and nothing is posted', async () => {
+  const gis = fakeGis();
+  const { api } = await renderPage();
+  const config = press(gis, await openSection());
+  api.answers[`${GOOGLE_PATH}/connect`] = () => ({ calendars: CHOICES });
+  cleanup();
+  answer(config, { code: CODE, scope: SCOPES, state: config.state });
+  await act(async () => { await Promise.resolve(); });
+  expect(writes(api)).toEqual([]);
 });
 
 test('the popover waits for Google: Escape and a press outside leave it open with Close disabled, and “Stop waiting” ends the wait and enables Close', async () => {
