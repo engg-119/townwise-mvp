@@ -564,13 +564,16 @@ export async function claimDueCalendar(
 export interface ClaimedGoogleConnection {
   readonly connectionId: string;
   readonly orgId: string;
+  /** The checkAt it was due at: the check pushes it on only while it is still this (a mark since keeps it due). */
+  readonly checkAt: Date;
 }
 
 /**
  * The refresh loop's claim of a connection check (openspec change connect-google-calendar, design decision 10), across
  * organizations: one Google connection that is due (`checkAt` at or before `now`) and under no live lease, the longest
  * due first. One compare-and-set takes it and sets its lease to `leaseUntil`, so of replicas claiming at once only one
- * checks each connection. Ids only: the sealed token, the person and the scopes stay in the tenant store.
+ * checks each connection. Ids and the checkAt it claimed only: the sealed token, the person and the scopes stay in the
+ * tenant store.
  */
 export async function claimDueGoogleConnection(
   connection: Connection, input: { readonly now: Date; readonly leaseUntil: Date },
@@ -578,10 +581,10 @@ export async function claimDueGoogleConnection(
   const doc = await googleConnectionModel(connection).findOneAndUpdate(
     { checkAt: trusted({ $lte: input.now }), $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }] },
     { $set: { leaseUntil: input.leaseUntil } },
-    { sort: { checkAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1 } },
+    { sort: { checkAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, checkAt: 1 } },
   ).lean();
   if (doc === null) return null;
-  return { connectionId: doc._id.toHexString(), orgId: doc.orgId.toHexString() };
+  return { connectionId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), checkAt: doc.checkAt };
 }
 
 /** A person's Google connection for calendars in some organization. Ids only: never the sealed token. */

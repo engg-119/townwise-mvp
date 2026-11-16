@@ -5,10 +5,11 @@
 // (calendar/google-access.ts), and never part of a record. No access token, email address, name or Google subject is
 // stored: the scopes granted, the person's agreement and the times are all a record holds.
 // Every connection is due for a check at checkAt, which is never null: a connect sets it 24 hours on, markForCheck sets
-// it to now before any step that may leave the connection unused or unowned, and clearCheck pushes it 24 hours on
-// again, so the refresh loop looks at each connection at least daily (its claim, by checkAt with leaseUntil, is in
-// stores/cross-tenant.ts). revokedAt is set when Google refuses the refresh token, so the connection's other
-// calendars fail without calling Google, and cleared by a reconnect. Nothing here logs.
+// it to now before any step that may leave the connection unused or unowned, and clearCheck (an add) and releaseCheck
+// (the refresh loop's check, only while no mark came in meanwhile) push it on again, so the refresh loop looks at each
+// connection at least daily (its claim, by checkAt with leaseUntil, is in stores/cross-tenant.ts). revokedAt is set
+// when Google refuses the refresh token, so the connection's other calendars fail without calling Google, and cleared
+// by a reconnect. Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, Types, type Connection, type Model } from 'mongoose';
 
@@ -102,6 +103,12 @@ export interface GoogleConnectionStore {
   markForCheck(scope: OrgScope, connectionId: string, now: Date): Promise<boolean>;
   /** Checked, or in use again: the next check 24 hours on, and any check's lease let go. False when gone. */
   clearCheck(scope: OrgScope, connectionId: string, now: Date): Promise<boolean>;
+  /**
+   * The refresh loop's end of a connection check it claimed (design decision 10), its own lease only: the next check at
+   * `nextCheckAt` while checkAt is still the `checkAt` it claimed, else (a mark came in during the check) only the lease
+   * let go, so the connection stays due. True when it set the next check.
+   */
+  releaseCheck(scope: OrgScope, connectionId: string, input: { leaseUntil: Date; checkAt: Date; nextCheckAt: Date }): Promise<boolean>;
   /** False when it was not there. */
   remove(scope: OrgScope, connectionId: string): Promise<boolean>;
   /** The organization's connections, oldest first (organization deletion revokes each). */
@@ -181,6 +188,14 @@ export function createGoogleConnectionStore(connection: Connection): GoogleConne
     async clearCheck(scope, connectionId, now) {
       const cleared = await GoogleConnection.updateOne(ofConnection(scope, connectionId), { $set: { checkAt: nextCheck(now), leaseUntil: null } });
       return cleared.matchedCount === 1;
+    },
+    async releaseCheck(scope, connectionId, input) {
+      const own = { ...ofConnection(scope, connectionId), leaseUntil: input.leaseUntil };
+      // Compare-and-set on checkAt: a mark written since the claim stays, and the next look checks again.
+      const pushed = await GoogleConnection.updateOne({ ...own, checkAt: input.checkAt }, { $set: { checkAt: input.nextCheckAt, leaseUntil: null } });
+      if (pushed.matchedCount === 1) return true;
+      await GoogleConnection.updateOne(own, { $set: { leaseUntil: null } });
+      return false;
     },
     async remove(scope, connectionId) {
       return (await GoogleConnection.deleteOne(ofConnection(scope, connectionId))).deletedCount === 1;

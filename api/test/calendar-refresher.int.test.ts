@@ -10,8 +10,9 @@
 // token, a missing connection, a seat removed with its access never ended (and one removed moments ago), a key that no
 // longer opens, the client off, Google's rate limit and the Calendar API switched off, claims across kinds; the check
 // ending an unused connection, one with no seat, an interrupted end and an interrupted location deletion, leaving a
-// seat that may yet come back, and pushing a connection in use 24 hours on; close aborting a Google read; and two
-// replicas never checking one connection twice. Every title and name here is made up.
+// seat that may yet come back, pushing a connection in use 24 hours on, and keeping a connection due when a mark comes
+// in during its check; close aborting a Google read; and two replicas never checking one connection twice. Every title
+// and name here is made up.
 import { createSecretKey, randomBytes, randomUUID, type KeyObject } from 'node:crypto';
 
 import { createLogger } from '@ckeith26/server-core';
@@ -826,7 +827,7 @@ describe('Google calendars', () => {
 });
 
 describe('the connection check', () => {
-  it('takes one due connection under no live lease, the longest due first, and answers its ids only', async () => {
+  it('takes one due connection under no live lease, the longest due first, and answers its ids and the checkAt it claimed', async () => {
     const t = await tenant();
     const notDue = (await connected(t)).connectionId;
     const leased = (await connected(t)).connectionId;
@@ -837,14 +838,14 @@ describe('the connection check', () => {
     await markDue(later);
 
     const claim = () => claimDueGoogleConnection(server.connection, { now: server.clock.now(), leaseUntil: at(LEASE) });
-    expect(await claim()).toEqual({ connectionId: due, orgId: t.orgId });
+    expect(await claim()).toEqual({ connectionId: due, orgId: t.orgId, checkAt: at(-HOUR) });
     expect(await connectionRow(due)).toMatchObject({ leaseUntil: at(LEASE) });
-    expect(await claim()).toEqual({ connectionId: later, orgId: t.orgId });
+    expect(await claim()).toEqual({ connectionId: later, orgId: t.orgId, checkAt: server.clock.now() });
     expect(await claim()).toBeNull();
     expect(await connectionRow(notDue)).toMatchObject({ leaseUntil: null });
     // A lease that ran out (its replica stopped) is taken again.
     await server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(leased) }, { $set: { leaseUntil: at(-1) } });
-    expect(await claim()).toEqual({ connectionId: leased, orgId: t.orgId });
+    expect(await claim()).toEqual({ connectionId: leased, orgId: t.orgId, checkAt: at(-2 * HOUR) });
   });
 
   it('gives a due connection to exactly one of the claims racing for it, and two refreshers draining at once revoke it once', async () => {
@@ -854,7 +855,7 @@ describe('the connection check', () => {
     const claims = await Promise.all(Array.from({ length: 8 }, () => claimDueGoogleConnection(server.connection, {
       now: server.clock.now(), leaseUntil: at(LEASE),
     })));
-    expect(claims.filter((claim) => claim !== null)).toEqual([{ connectionId, orgId: t.orgId }]);
+    expect(claims.filter((claim) => claim !== null)).toEqual([{ connectionId, orgId: t.orgId, checkAt: server.clock.now() }]);
 
     // Unused, and due again once that lease has run out.
     server.clock.advance(LEASE + 1);
@@ -995,5 +996,37 @@ describe('the connection check', () => {
     expect(await connectionRow(connectionId)).toMatchObject({ checkAt: at(24 * HOUR), leaseUntil: null, revokedAt: null });
     expect(google.calls).toEqual([]);
     expect(logged('townwise.google_access_ended')).toEqual([]);
+  });
+
+  it('keeps a connection due when a mark comes in during its check, so a calendar removed meanwhile ends it at the next look', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    const calendarId = await addGoogle(t, connectionId, { due: false });
+    await setSource(calendarId, { nextRefreshAt: at(72 * HOUR) });
+    // Due an hour ago, so a mark written now changes checkAt.
+    await server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(connectionId) }, { $set: { checkAt: at(-HOUR) } });
+    let raced = false;
+    // Once the check has counted the calendar, another replica (its refresh finding the location gone, or a Remove)
+    // marks the connection and removes the calendar.
+    const countForConnection: OwnerCalendarStore['countForConnection'] = async (scope, id) => {
+      const counted = await stores.ownerCalendars.countForConnection(scope, id);
+      if (!raced) {
+        raced = true;
+        await stores.googleConnections.markForCheck(scope, id, server.clock.now());
+        await stores.ownerCalendars.remove(scope, t.locationId, calendarId);
+      }
+      return counted;
+    };
+    const refresher = refresherOf(fakeFetcher(() => feed(LATER)), {
+      stores: { ...stores, ownerCalendars: { ...stores.ownerCalendars, countForConnection } },
+    });
+
+    // The check that counted the calendar, then the look the mark kept due.
+    expect(await refresher.drain()).toBe(2);
+
+    expect(await stored(t)).toEqual({ calendars: 0, events: 0 });
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(await connectionRow(connectionId)).toBeNull();
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'unused' }]);
   });
 });

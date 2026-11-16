@@ -21,9 +21,10 @@
 // After the due calendars, the loop claims due Google connection checks one at a time (checkAt passed, under the same
 // lease, scoped by scopeForGoogleCheck): a connection whose person holds no seat in the organization has its access
 // ended (seat_gone), one that backs no calendar too (unused), and one whose seat was removed moments ago is left due
-// for a later look; any other is checked again 24 hours on. Every connection is looked at at least daily, and at once
-// after any step that may leave it unused or unowned (they mark it first), so this check also finishes an end of
-// access, a seat removal or a location deletion that stopped part way.
+// for a later look; any other is checked again 24 hours on, only while no mark came in during the check (else it
+// stays due). Every connection is looked at at least daily, and at once after any step that may leave it unused or
+// unowned (they mark it first), so this check also finishes an end of access, a seat removal or a location deletion
+// that stopped part way.
 // Closing drops a link fetch in flight, which may take 10 seconds where a shutdown hook has 2, and aborts every Google
 // call in flight through the loop's AbortController (a Google read checks it between pages, and ending access checks it
 // before the revoke): nothing is written, and the lease runs out so a later look refreshes the calendar or checks the
@@ -42,6 +43,7 @@ import type { Connection } from 'mongoose';
 
 import { scopeForCalendarRefresh, scopeForGoogleCheck, type OrgScope } from '../access/policy.ts';
 import { claimDueCalendar, claimDueGoogleConnection, type ClaimedCalendar, type ClaimedGoogleConnection } from '../stores/cross-tenant.ts';
+import { CHECK_INTERVAL_MS } from '../stores/google-connections.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { REFRESH_INTERVAL_MS, type CalendarFailure, type ParsedCalendar } from '../stores/owner-calendars.ts';
@@ -220,9 +222,11 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
   /**
    * One claimed connection check (design decision 10): no seat in the organization ends the access (seat_gone), a seat
    * removed moments ago leaves it due for a later look (nothing is written, so the lease runs out first), no calendar
-   * ends it (unused), and otherwise it is checked again 24 hours on.
+   * ends it (unused), and otherwise it is checked again 24 hours on. The next check is set only while checkAt is still
+   * the one claimed: a mark written during the check (a calendar removed, a seat lost) leaves the connection due, and
+   * the next look checks it again.
    */
-  async function check(claim: ClaimedGoogleConnection): Promise<void> {
+  async function check(claim: ClaimedGoogleConnection, leaseUntil: Date): Promise<void> {
     const scope = scopeForGoogleCheck(claim);
     const { connectionId } = claim;
     const found = await stores.googleConnections.find(scope, connectionId);
@@ -235,7 +239,8 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
       return;
     }
     if ((await endUnusedGoogleAccess(google, scope, connectionId, 'unused')) !== null) return;
-    await stores.googleConnections.clearCheck(scope, connectionId, now());
+    const nextCheckAt = new Date(now().getTime() + CHECK_INTERVAL_MS);
+    await stores.googleConnections.releaseCheck(scope, connectionId, { leaseUntil, checkAt: claim.checkAt, nextCheckAt });
   }
 
   async function drainDue(): Promise<number> {
@@ -257,11 +262,12 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
       }
       while (!stopped) {
         const at = now();
-        const claim = await claimDueGoogleConnection(deps.connection, { now: at, leaseUntil: new Date(at.getTime() + LEASE_MS) });
+        const leaseUntil = new Date(at.getTime() + LEASE_MS);
+        const claim = await claimDueGoogleConnection(deps.connection, { now: at, leaseUntil });
         if (claim === null) break;
         claimed += 1;
         try {
-          await check(claim);
+          await check(claim, leaseUntil);
         } catch (err) {
           // The lease runs out and a later look checks it again.
           logger.error({ connectionId: claim.connectionId, errType: errType(err) }, 'townwise.calendar_refresh_failed');
