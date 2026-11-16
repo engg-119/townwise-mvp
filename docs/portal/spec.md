@@ -1153,7 +1153,7 @@ Built with the rate-limit module and keyed on `acct:<userId>`, a key the caller 
 | `townwise:files` | `POST .../files` (10.11), `POST .../data/text` and the item-proposal `POST` (keeping text TownwiseAI proposed, or setting the card aside) (10.14), together | 120 per hour | allow |
 | `townwise:file-chunks` | `PUT .../files/:fileId/chunks/:index` | 1,500 per hour | allow |
 | `townwise:downloads` | both file downloads together | 300 per hour | allow |
-| `townwise:ai-reads` | `POST .../data/:ref/ai` (letting TownwiseAI read a file, 10.14, 11A.9) and `POST .../orders/setup/read` (reading the ordering setup, D41, 10.17), together; besides it, an organization has at most 10 reads queued or reading (429 `ai_read_queue_full`) | 30 per hour [CONFIRM] | deny (503 `unavailable`) |
+| `townwise:ai-reads` | `POST .../data/:ref/ai` (letting TownwiseAI read a file, 10.14, 11A.9) and `POST .../orders/setup/read` (reading the ordering setup, D41, 10.17), together; besides it, an organization has at most 10 stored-file reads queued or reading (429 `ai_read_queue_full`) | 30 per hour [CONFIRM] | deny (503 `unavailable`) |
 
 A search is 10 to 15 debounced autocompletes and one details call, so `townwise:places` allows about 20 searches an hour. The Places routes are POSTs, so `townwise:writes` counts them too.
 
