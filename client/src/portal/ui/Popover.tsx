@@ -1,4 +1,4 @@
-import { useContext, useEffect, useState } from 'react';
+import { useContext, useEffect, useRef, useState, type RefObject } from 'react';
 import { Keyboard, Modal, Platform, ScrollView, StyleSheet, useWindowDimensions, View, type MeasureInWindowOnSuccessCallback } from 'react-native';
 import { SafeAreaInsetsContext } from 'react-native-safe-area-context';
 
@@ -11,7 +11,10 @@ import { Heading } from './text';
 // transparent and with no animation, as ConfirmDialog's: on web react-native-web traps focus in it, focusing its first
 // control on open (the card comes before the backdrop, so that control is the card's), Escape closes it, and focus
 // returns to the opener on close; on Android the back button closes it. The card is `role="dialog"` named by its heading,
-// a `panel` fill with a 1px `border` outline, the `shadow` token, square, 16px padding, its content scrolling inside it.
+// a `panel` fill with a 1px `border` outline, the `shadow` token, square, 16px padding, its heading row (the heading and
+// Close) at its top and the rest scrolling under it. The heading row is outside the scroll view, and on web the card's
+// first control takes focus as it opens (focusFirstControl), since Chrome lets a scroll view whose content overflows
+// take focus and the trap would otherwise give it to that unnamed region before Close or the note form's Kind.
 // The backdrop under it is transparent and is neither a tab stop nor a screen reader stop (a plain View, never a
 // Pressable, which is always focusable on web); it takes presses and closes the popover only where the popover allows
 // that. Placement (placePopover) is measured on open, on every window size change and every keyboard show or hide: from
@@ -112,8 +115,27 @@ export interface PopoverProps {
   children: React.ReactNode;
 }
 
+type Host = React.ComponentRef<typeof View>;
+
+/** A control in the tab order: react-native-web draws a pressable as a <button> or with tabindex 0. */
+const CONTROL = 'a[href], button, input, select, textarea, [tabindex]:not([tabindex="-1"])';
+
+/**
+ * On web, focus to the card's first control that takes it: Close where the popover has one, else its content's first
+ * (the note form's Kind). Run as the Modal shows, after its focus trap noted the opener to give focus back to and
+ * before the trap looks for a first element, which then finds focus already inside the card and leaves it there.
+ */
+function focusFirstControl(card: Host | null): void {
+  const node = card as unknown as HTMLElement | null;
+  for (const control of node?.querySelectorAll<HTMLElement>(CONTROL) ?? []) {
+    control.focus();
+    if (document.activeElement === control) return;
+  }
+}
+
 export function Popover(props: PopoverProps): React.JSX.Element {
   const busy = props.busy === true;
+  const card = useRef<Host>(null);
   return (
     <Modal
       visible={props.visible}
@@ -123,9 +145,10 @@ export function Popover(props: PopoverProps): React.JSX.Element {
       statusBarTranslucent
       navigationBarTranslucent
       onRequestClose={() => { if (!busy) props.onClose(); }}
+      {...(Platform.OS === 'web' ? { onShow: () => { focusFirstControl(card.current); } } : {})}
       {...(props.onDismiss === undefined ? {} : { onDismiss: props.onDismiss })}
     >
-      {props.visible ? <Card {...props} /> : null}
+      {props.visible ? <Card {...props} ref={card} /> : null}
     </Modal>
   );
 }
@@ -185,7 +208,7 @@ const NO_INSETS = { top: 0, bottom: 0 };
 /** In place of the opener's box when the popover opened with no opener to measure: the card is pinned at the top. */
 const NOTHING = 'nothing';
 
-function Card(props: PopoverProps): React.JSX.Element {
+function Card({ ref, ...props }: PopoverProps & { ref: RefObject<Host | null> }): React.JSX.Element {
   const { anchor, onClose } = props;
   const busy = props.busy === true;
   const dimensions = useWindowDimensions();
@@ -215,17 +238,18 @@ function Card(props: PopoverProps): React.JSX.Element {
   return (
     <View style={[styles.frame, { height }]}>
       <View
+        ref={ref}
         role="dialog"
         aria-modal
         aria-label={props.label}
         nativeID={props.nativeID}
         style={[styles.card, placement, unplaced ? styles.unplaced : null]}
       >
+        <View style={styles.head}>
+          <Heading style={styles.heading}>{props.label}</Heading>
+          {props.closeButton === true ? <Button variant="link" label="Close" disabled={busy} onPress={onClose} /> : null}
+        </View>
         <ScrollView keyboardShouldPersistTaps="handled" contentContainerStyle={styles.content}>
-          <View style={styles.head}>
-            <Heading style={styles.heading}>{props.label}</Heading>
-            {props.closeButton === true ? <Button variant="link" label="Close" disabled={busy} onPress={onClose} /> : null}
-          </View>
           {props.children}
         </ScrollView>
       </View>
@@ -251,8 +275,12 @@ const styles = StyleSheet.create({
     boxShadow: `0 12px 32px ${c.shadow}`,
   },
   unplaced: { opacity: 0 },
-  content: { padding: theme.space[4], gap: theme.space[3] },
-  head: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', columnGap: theme.space[3] },
+  // The heading row keeps the card's 16px padding above and beside it, and the content 12px under it, as one column did.
+  head: {
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', columnGap: theme.space[3],
+    paddingTop: theme.space[4], paddingHorizontal: theme.space[4],
+  },
+  content: { paddingTop: theme.space[3], paddingHorizontal: theme.space[4], paddingBottom: theme.space[4], gap: theme.space[3] },
   heading: { flexShrink: 1 },
   backdrop: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, backgroundColor: 'transparent' },
 });

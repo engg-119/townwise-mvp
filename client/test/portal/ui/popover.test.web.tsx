@@ -87,6 +87,8 @@ type Host = React.ComponentRef<typeof View>;
 
 interface HarnessProps {
   dismissOnOutsidePress?: boolean;
+  /** Whether the card has its Close (the note form's popover has none, so its content's first control comes first). */
+  closeButton?: boolean;
   busy?: boolean;
   onClose?: () => void;
   onDismiss?: () => void;
@@ -108,7 +110,7 @@ function Harness(props: HarnessProps): React.JSX.Element {
         label="Your calendars"
         nativeID="p1"
         maxWidth={440}
-        closeButton
+        closeButton={props.closeButton ?? true}
         dismissOnOutsidePress={props.dismissOnOutsidePress ?? true}
         busy={props.busy === true}
         onClose={() => { props.onClose?.(); setOpen(false); }}
@@ -170,6 +172,62 @@ test('on open focus is on the card’s first control, and the backdrop is aria-h
   // Focus that leaves the card for the page (as Tab past its last control would) is brought back into it.
   act(() => { screen.getByRole('button', { name: 'Elsewhere' }).focus(); });
   expect(card.contains(document.activeElement)).toBe(true);
+});
+
+/** Whether an element scrolls what it holds, as react-native-web's ScrollView does (overflow-y from its style sheet). */
+function scrolls(element: Element | null): boolean {
+  return element !== null && ['auto', 'scroll'].includes(window.getComputedStyle(element).overflowY);
+}
+
+/**
+ * Chrome lets a scroll view whose content overflows take focus (the note form always overflows its card, Your
+ * calendars does once Add a link is open), which jsdom, with no layout, never does; the focus trap's search for a first
+ * element then stops on that unnamed region. Until restored, focus() here focuses a scroll view as Chrome's would.
+ */
+function scrollViewsTakeFocus(): jest.SpyInstance {
+  const focus: (this: HTMLElement, options?: FocusOptions) => void = Reflect.get(HTMLElement.prototype, 'focus');
+  return jest.spyOn(HTMLElement.prototype, 'focus').mockImplementation(function focusLikeChrome(this: HTMLElement, options?: FocusOptions) {
+    if (scrolls(this) && !this.hasAttribute('tabindex')) this.setAttribute('tabindex', '-1');
+    focus.call(this, options);
+  });
+}
+
+test('the heading row sits above the card’s scroll view, outside it: the heading and Close come before the scroll region', () => {
+  render(<Harness />);
+  open();
+  const card = screen.getByRole('dialog', { name: 'Your calendars' });
+  const regions = [...card.querySelectorAll('*')].filter(scrolls);
+  expect(regions).toHaveLength(1);
+  const region = regions[0] ?? null;
+  if (region === null) throw new Error('no scroll region');
+  for (const element of [within(card).getByRole('heading', { name: 'Your calendars' }), within(card).getByRole('button', { name: 'Close' })]) {
+    expect(region.contains(element)).toBe(false);
+    expect(element.compareDocumentPosition(region) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+  expect(region.contains(within(card).getByRole('button', { name: 'Add a link' }))).toBe(true);
+});
+
+test('where a scroll view takes focus, as Chrome’s does, opening focuses Close, or with no Close the first control, never the scroll region', () => {
+  const focus = scrollViewsTakeFocus();
+  try {
+    render(<Harness />);
+    let opener = open();
+    let card = screen.getByRole('dialog', { name: 'Your calendars' });
+    expect(document.activeElement).toBe(within(card).getByRole('button', { name: 'Close' }));
+    escape();
+    expect(document.activeElement).toBe(opener);
+    cleanup();
+
+    render(<Harness closeButton={false} />);
+    opener = open();
+    card = screen.getByRole('dialog', { name: 'Your calendars' });
+    expect(document.activeElement).toBe(within(card).getByRole('button', { name: 'Add a link' }));
+    expect(scrolls(document.activeElement)).toBe(false);
+    escape();
+    expect(document.activeElement).toBe(opener);
+  } finally {
+    focus.mockRestore();
+  }
 });
 
 test('Escape closes it, focus goes back to the opener, and onDismiss runs once it has gone', () => {
