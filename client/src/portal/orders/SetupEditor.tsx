@@ -252,7 +252,13 @@ function Editor(props: {
         ) : null}
       </View>
       {props.sheet === undefined
-        ? <Small>Use a computer to download the template, import a sheet or upload item sales.</Small>
+        ? (
+          <Small>
+            {status.canReadWithAi
+              ? 'Use a computer to download the template, import a sheet, read a file with TownwiseAI or upload item sales.'
+              : 'Use a computer to download the template, import a sheet or upload item sales.'}
+          </Small>
+        )
         : props.sheet({ draft, setDraft: edit, locked, readOnlyId })}
       {status.canReadWithAi && props.read !== undefined
         ? props.read({ draft, apply: applyRead, locked, readOnlyId })
