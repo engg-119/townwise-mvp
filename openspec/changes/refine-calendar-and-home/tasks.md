@@ -64,8 +64,8 @@ Owns: `client/src/portal/analytics/week.ts`, `client/src/portal/home/ThisWeek.ts
 
 Owns: `client/src/portal/shell/Frame.tsx`, `client/test/portal/shell/frame-scroll.test.web.tsx` (new), `client/test/portal/shell/frame-scroll.test.native.tsx` (new).
 
-- [ ] 6.1 `client/src/portal/shell/Frame.tsx`: `Frame` keeps a ref to its `ScrollView` and, in an effect on `usePathname()` that skips the first render, calls `scrollTo({ x: 0, y: 0, animated: false })`; the fill frame is unchanged. Add one sentence to the file's header comment
-- [ ] 6.2 Tests: `frame-scroll.test.web.tsx` mounts `Frame` under a mocked pathname, scrolls it, changes the pathname and asserts `scrollTo` with `y: 0`; changing only the query (same pathname) asserts no call; `frame-scroll.test.native.tsx` the same on native
+- [x] 6.1 `client/src/portal/shell/Frame.tsx`: `Frame` keeps a ref to its `ScrollView` and, in an effect on `usePathname()` that skips the first render, calls `scrollTo({ x: 0, y: 0, animated: false })`; the fill frame is unchanged. Add one sentence to the file's header comment
+- [x] 6.2 Tests: `frame-scroll.test.web.tsx` mounts `Frame` under a mocked pathname, scrolls it, changes the pathname and asserts `scrollTo` with `y: 0`; changing only the query (same pathname) asserts no call; `frame-scroll.test.native.tsx` the same on native. Both mount `Frame` as the layout of a small expo-router app rather than under a mocked pathname, and `test/app/location-shell.test.native.tsx` changed with them (design.md decision 5, its group 6 note)
 - [ ] 6.3 Run `npm test -w @ckeith26/expo-shell -- test/portal/shell/frame-scroll` and `npx eslint client/src/portal/shell/Frame.tsx`
 
 ## 7. Source chips (request 6; design decision 6)

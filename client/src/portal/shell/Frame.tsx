@@ -22,7 +22,8 @@ import { VIEW_AS_LINE_ID } from './ViewAsBanner';
 // The four frames of spec 15.1 (Public is the existing sign-in). Each is a scroll view: the top bar, the page in
 // <main>, then the slim footer. TownwiseAI fills the screen instead, so its frame does not scroll and has
 // no footer. The shell around every frame holds the skip link (the first focusable element) and, during view-as,
-// the banner above the frame, where it stays in view as the page scrolls.
+// the banner above the frame, where it stays in view as the page scrolls. A move to another page (a new path) scrolls
+// the frame to its top, so the page opens there; a change of query on the same page keeps the scroll.
 
 type MainRef = RefObject<React.ComponentRef<typeof View> | null>;
 const MainContext = createContext<MainRef | null>(null);
@@ -67,6 +68,15 @@ export function Shell(props: { banner?: React.ReactNode; children: React.ReactNo
 export function Frame(props: { topBar: React.ReactNode; children: React.ReactNode; fill?: boolean }): React.JSX.Element {
   const main = useContext(MainContext);
   const insets = useSafeAreaInsets();
+  const pathname = usePathname();
+  const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
+  const shownPath = useRef(pathname);
+  // The first render scrolls nothing (the frame mounts at its top), nor does a change of query, which keeps the path.
+  useEffect(() => {
+    if (pathname === shownPath.current) return;
+    shownPath.current = pathname;
+    scroller.current?.scrollTo({ x: 0, y: 0, animated: false });
+  }, [pathname]);
   const mainProps = { ...(main === null ? {} : { ref: main }), role: 'main' as const, tabIndex: -1 as const };
   if (props.fill === true) {
     return (
@@ -78,6 +88,7 @@ export function Frame(props: { topBar: React.ReactNode; children: React.ReactNod
   }
   return (
     <ScrollView
+      ref={scroller}
       style={styles.fill}
       contentContainerStyle={styles.grow}
       keyboardShouldPersistTaps="handled"

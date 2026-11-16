@@ -129,9 +129,11 @@ test('on a phone the top bar’s sections scroll, without animating, to keep the
       await fireEvent(link, 'layout', { nativeEvent: { layout: { x: index * 94, y: 0, width: 90, height: 44 } } });
     }
     expect(scrollTo).toHaveBeenLastCalledWith({ x: 764 + 16 - 320, animated: false });
+    scrollTo.mockClear();
     await fireEvent.press(within(sections).getByRole('link', { name: 'Home' }));
     expect(router.getPathname()).toBe('/locations/l1');
-    expect(scrollTo).toHaveBeenLastCalledWith({ x: 0, animated: false });
+    // The frame then scrolls the new page to its top (x and y), so the nav's call is not the last one.
+    expect(scrollTo).toHaveBeenCalledWith({ x: 0, animated: false });
   } finally {
     spy.mockRestore();
     scrollTo.mockRestore();
