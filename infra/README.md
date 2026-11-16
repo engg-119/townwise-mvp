@@ -409,6 +409,14 @@ The same step turns on the map at the top of the confirm card. The API signs a M
 5. **Turn it on.** Add `enable_places = true` to `infra/terraform/production/terraform.tfvars`, then `terraform plan` and `terraform apply` from `infra/terraform/production`. The plan adds three role assignments (the app's identity reads `google-places-api-key`, `google-maps-static-key` and `google-maps-signing-secret` only) and changes the Container App (the three Key Vault references and the `GOOGLE_PLACES_API_KEY`, `GOOGLE_MAPS_STATIC_KEY` and `GOOGLE_MAPS_SIGNING_SECRET` env vars), which starts a new revision. A malformed signing secret stops the revision at boot with a `ConfigError` naming `GOOGLE_MAPS_SIGNING_SECRET`: reseed it and restart.
 6. **Check.** Signed in, typing a restaurant's name into the access request's search shows suggestions. A 503 `places_unavailable` with the key set means Google refused or failed: the API logs `townwise.places_failed` with Google's HTTP status. Picking one shows the dark map with a mint pin on the confirm card, with no CSP violation in the browser console. No map there with both map secrets set: open the image's request in the browser's network panel; a 403 from Google usually means the key lacks Maps Static API, or the secret and the key are from different projects.
 
+**Use it locally.** Developers share production's three secrets: `townwise-developers` has Key Vault Secrets User on each of them (only those, never the vault), granted by `infra/terraform/bootstrap` once they are seeded. Searches and map loads from a laptop count against production's quotas. Each developer, signed in with `az login`, writes them into `api/.env.local` (gitignored) and restarts the API:
+
+```sh
+for pair in GOOGLE_PLACES_API_KEY:google-places-api-key GOOGLE_MAPS_STATIC_KEY:google-maps-static-key GOOGLE_MAPS_SIGNING_SECRET:google-maps-signing-secret; do
+  printf '%s=%s\n' "${pair%%:*}" "$(az keyvault secret show --vault-name kv-townwise-2d2c15bf --name "${pair#*:}" --query value -o tsv)" >> api/.env.local
+done
+```
+
 **Rotate the Places key** by seeding a new version with the same command and running `az containerapp revision restart`, then delete the old key in Google Cloud console. **Rotate the map key** the same way with `google-maps-static-key`. **Rotate the signing secret**: generate a new one in Google, seed it as `google-maps-signing-secret`, and run `az containerapp revision restart` **within 24 hours**, because the old secret stops working 24 hours after the new one is made (until the restart, the API signs with the old one). **Turn it off** with `enable_places = false` and apply, which removes the three references, the three env vars and the three role assignments; the secrets stay in Key Vault until you delete them.
 
 ### 18. Enable file storage

@@ -32,6 +32,11 @@ locals {
     # One secret: the shared Anthropic key for local development, capped by its own Anthropic workspace
     # (infra/README.md, step 16). Seed it before applying; the assignment is scoped to the secret.
     developers_dev_key = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/anthropic-dev-key", role = "Key Vault Secrets User" }
+    # The Places search's three secrets, shared with production (infra/README.md, step 17), so developers can run the
+    # search and its map locally. Seed them before applying; each assignment is scoped to its secret.
+    developers_maps_signing_secret = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/google-maps-signing-secret", role = "Key Vault Secrets User" }
+    developers_maps_static_key     = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/google-maps-static-key", role = "Key Vault Secrets User" }
+    developers_places_key          = { group = "developers", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.KeyVault/vaults/kv-townwise-${local.suffix}/secrets/google-places-api-key", role = "Key Vault Secrets User" }
     # The production group holds one vault, so this is that vault's secrets.
     secrets_admins_reader  = { group = "secrets-admins", scope = azurerm_resource_group.prod.id, role = "Reader" }
     secrets_admins_officer = { group = "secrets-admins", scope = azurerm_resource_group.prod.id, role = "Key Vault Secrets Officer" }
