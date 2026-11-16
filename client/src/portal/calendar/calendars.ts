@@ -6,9 +6,10 @@ import type { OwnerCalendar } from './api';
 // The "Your calendars" popover's words (P28; connect-owner-calendar design decision 11, connect-google-calendar design
 // decision 15), pure: a file's name, the words for every code phase 1 answers (api/src/handlers/owner-calendars.ts) and
 // for a link's status, a row's lines, and the add-a-link form's checks, which hold the fields to the API's own limits (a
-// trimmed name of 1 to 60 UTF-16 code units, a trimmed link of 1 to 2,048), so its 400 is only a fallback; and the
-// Google section's (google-calendar's "The Your calendars popover connects and picks Google calendars"): its explainer,
-// waiting, loading and picker lines, the words for every code the Google routes and a Google add answer
+// trimmed name of 1 to 60 UTF-16 code units, a trimmed link of 1 to 2,048), so its 400 is only a fallback; the help
+// and native's line, which name Google calendars only while the list answers them on; and the Google section's
+// (google-calendar's "The Your calendars popover connects and picks Google calendars"): its explainer, waiting, loading
+// and picker lines, the words for every code the Google routes and a Google add answer
 // (api/src/handlers/google-calendars.ts), and a Google calendar's status. None of them repeats Google's own error
 // description. Anything without words of its own gets errorCopy. The IcsImport and GoogleConnect siblings and
 // YourCalendars.tsx import from here: a value one sibling exports would resolve to the .web file itself on web, so every
@@ -22,13 +23,10 @@ export const MAX_CALENDARS = 5;
 const MAX_LINK = 2048;
 
 export const CALENDARS_COPY = {
-  /** What the privacy page (app/(marketing)/privacy.tsx) says of kept calendars, in the popover's words. */
-  help: 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
   tooLarge: 'This file is over 1 MB. Export a shorter range of your calendar.',
   notCalendar: 'This doesn’t look like a calendar file (.ics).',
   unreadable: 'Couldn’t read this file. Choose it again.',
   none: 'No calendars yet.',
-  nativeLine: 'To import a calendar file or connect a Google calendar, open Townwise on the web.',
   nameLabel: 'Name',
   nameHelper: 'Up to 60 characters, for example Bookings.',
   linkLabel: 'Calendar link',
@@ -40,6 +38,26 @@ export const CALENDARS_COPY = {
   calendarLimit: 'This location has 5 calendars, the most it can hold. Remove one to add another.',
   alreadyRemoved: 'This calendar was already removed.',
 } as const;
+
+const HELP_IMPORT = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours.';
+const HELP_GOOGLE = 'Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included.';
+const HELP_KEPT = 'Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
+
+/**
+ * What the privacy page (app/(marketing)/privacy.tsx) says of kept calendars, in the popover's words, with the sentence
+ * on Google calendars only while the list answers them on (`google.available`), so a release with them off says nothing
+ * of them.
+ */
+export function helpText(google: boolean): string {
+  return [HELP_IMPORT, google ? HELP_GOOGLE : null, HELP_KEPT].filter((part) => part !== null).join(' ');
+}
+
+/** Native's line in place of the import; while Google calendars are on it also points to the web for connecting one. */
+export function nativeLine(google: boolean): string {
+  return google
+    ? 'To import a calendar file or connect a Google calendar, open Townwise on the web.'
+    : 'To add events from your own calendar file, open Townwise on the web.';
+}
 
 /** The Google section's words (google-calendar's "The Your calendars popover connects and picks Google calendars"). */
 export const GOOGLE_COPY = {

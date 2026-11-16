@@ -1,6 +1,6 @@
 import {
-  addedLines, addGoogleLabel, addRefusal, CALENDARS_COPY, GOOGLE_COPY, googleRefusal, labelOfFile, linkProblems, MAX_CALENDARS, pickerLine,
-  refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords,
+  addedLines, addGoogleLabel, addRefusal, CALENDARS_COPY, GOOGLE_COPY, googleRefusal, helpText, labelOfFile, linkProblems, MAX_CALENDARS,
+  nativeLine, pickerLine, refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords,
 } from '../../../src/portal/calendar/calendars';
 import { COPY, errorCopy } from '../../../src/portal/errors';
 import { formatDate, formatTime } from '../../../src/portal/format';
@@ -226,10 +226,19 @@ describe('the result messages', () => {
 });
 
 describe('CALENDARS_COPY', () => {
-  test('the help says the calendars are kept, and what Townwise keeps of them', () => {
-    expect(CALENDARS_COPY.help).toBe(
+  test('the help says the calendars are kept, and what Townwise keeps of them, naming Google calendars only while they are on', () => {
+    expect(helpText(true)).toBe(
       'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
     );
+    // Off (production until the owner turns them on), the help is as it was before Google calendars.
+    expect(helpText(false)).toBe(
+      'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
+    );
+  });
+
+  test('native’s line points to the web for connecting a Google calendar only while they are on', () => {
+    expect(nativeLine(true)).toBe('To import a calendar file or connect a Google calendar, open Townwise on the web.');
+    expect(nativeLine(false)).toBe('To add events from your own calendar file, open Townwise on the web.');
   });
 
   test('keeps the import’s words and adds the panel’s', () => {
@@ -237,7 +246,6 @@ describe('CALENDARS_COPY', () => {
     expect(CALENDARS_COPY.notCalendar).toBe('This doesn’t look like a calendar file (.ics).');
     expect(CALENDARS_COPY.unreadable).toBe('Couldn’t read this file. Choose it again.');
     expect(CALENDARS_COPY.none).toBe('No calendars yet.');
-    expect(CALENDARS_COPY.nativeLine).toBe('To import a calendar file or connect a Google calendar, open Townwise on the web.');
     expect(CALENDARS_COPY.nameLabel).toBe('Name');
     expect(CALENDARS_COPY.nameHelper).toBe('Up to 60 characters, for example Bookings.');
     expect(CALENDARS_COPY.linkLabel).toBe('Calendar link');

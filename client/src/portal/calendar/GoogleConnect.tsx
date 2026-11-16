@@ -1,11 +1,12 @@
 import { Mono } from '../ui/text';
-import { CALENDARS_COPY } from './calendars';
+import { nativeLine } from './calendars';
 
 // Connecting a Google calendar on native (P28; connect-google-calendar design decision 15): native connects nowhere in
 // this change. It lists, refreshes and removes Google calendars, and YourCalendars.tsx never offers "Add a Google
 // calendar" there, so this file only answers the import web resolves to GoogleConnect.web.tsx, which takes the same
-// props, and shows the line that points to the web if it is ever rendered. The siblings share only this type: on web a
-// value exported here would resolve to the .web file itself, so their words are in calendars.ts.
+// props, and shows the line that points to the web (with Google calendars on, as the section needs) if it is ever
+// rendered. The siblings share only this type: on web a value exported here would resolve to the .web file itself, so
+// their words are in calendars.ts.
 // [CONFIRM: connecting a Google calendar on the web only]
 
 export interface GoogleConnectProps {
@@ -34,4 +35,4 @@ export interface GoogleConnectProps {
   onClose: () => void;
 }
 
-export const GoogleConnect: (props: GoogleConnectProps) => React.JSX.Element = () => <Mono>{CALENDARS_COPY.nativeLine}</Mono>;
+export const GoogleConnect: (props: GoogleConnectProps) => React.JSX.Element = () => <Mono>{nativeLine(true)}</Mono>;

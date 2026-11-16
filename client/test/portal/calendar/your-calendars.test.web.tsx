@@ -6,7 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import { ApiError } from '../../../src/api/client';
 import { GIS_SRC, resetGis, type CodeClientConfig } from '../../../src/auth/gis.web';
 import type { GoogleCalendars, GoogleChoice } from '../../../src/portal/calendar/api';
-import { CALENDARS_COPY, GOOGLE_COPY } from '../../../src/portal/calendar/calendars';
+import { CALENDARS_COPY, GOOGLE_COPY, helpText } from '../../../src/portal/calendar/calendars';
 import { errorCopy } from '../../../src/portal/errors';
 import { formatDate, formatTime } from '../../../src/portal/format';
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -647,7 +647,7 @@ test('the popover holds “Import a calendar file” and “How importing works�
   const importButton = within(panel).getByRole('button', { name: 'Import a calendar file' });
   const toggle = within(panel).getByRole('button', { name: 'How importing works' });
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  const help = within(panel).getByText(CALENDARS_COPY.help);
+  const help = within(panel).getByText(helpText(false));
   expect(help.id).not.toBe('');
   expect(toggle.getAttribute('aria-controls')).toBe(help.id);
   expect(importButton.getAttribute('aria-describedby')).toBe(help.id);
@@ -680,7 +680,7 @@ test('closing the popover keeps a half-typed link, the shown message and the ope
   expect(within(again).getByLabelText<HTMLInputElement>('Calendar link').value).toBe(URL);
   expect(within(again).getByText(words).getAttribute('role')).toBe('alert');
   expect(within(again).getByRole('button', { name: 'How importing works' }).getAttribute('aria-expanded')).toBe('true');
-  expect(shown(within(again).getByText(CALENDARS_COPY.help))).toBe(true);
+  expect(shown(within(again).getByText(helpText(false)))).toBe(true);
   expect(writes(api)).toHaveLength(1);
 });
 
@@ -1008,6 +1008,8 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(within(googleRow).getAllByRole('button').map((button) => button.textContent)).toEqual(['Refresh now', 'Remove']);
     expect(lines(laterRow)).toEqual(['Later', 'Calendar, 3 events']);
     expect(within(laterRow).getAllByRole('button').map((button) => button.textContent)).toEqual(['Remove']);
+    // The help names Google calendars while they are on.
+    expect(within(panel).getByText(helpText(true))).toBeTruthy();
     // Google's script waits for the person.
     expect(document.querySelector(`script[src="${GIS_SRC}"]`)).toBeNull();
   });
@@ -1017,6 +1019,9 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     const { api } = await renderGoogle({ calendars: [google], google: { available: false, connected: false, clientId: null } });
     const panel = openPopover();
     expect(within(panel).queryByRole('button', { name: 'Add a Google calendar' })).toBeNull();
+    // The help says nothing of a Google option the popover doesn't offer.
+    expect(within(panel).getByText(helpText(false))).toBeTruthy();
+    expect(within(panel).queryByText(/Or add a Google calendar/)).toBeNull();
     expect(within(panel).getByText('Google calendar, 40 events')).toBeTruthy();
     expect(within(panel).getByRole('button', { name: 'Refresh now: Google calendar' })).toBeTruthy();
     expect(within(panel).getByRole('button', { name: 'Remove Google calendar' })).toBeTruthy();

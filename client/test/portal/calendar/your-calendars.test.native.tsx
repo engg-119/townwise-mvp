@@ -37,7 +37,10 @@ afterEach(async () => {
 });
 
 const SATURDAY = '2026-11-21';
-const NATIVE_LINE = 'To import a calendar file or connect a Google calendar, open Townwise on the web.';
+/** The line with Google calendars off, as calendarFake's list answers. */
+const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
+/** The line while the list answers Google calendars on. */
+const NATIVE_LINE_GOOGLE = 'To import a calendar file or connect a Google calendar, open Townwise on the web.';
 /** A made-up iCal address; the API never sends one back. */
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const KITCHEN = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', eventCount: 12 });
@@ -130,7 +133,8 @@ test('with Google calendars on, native offers no “Add a Google calendar”: th
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
   const card = popover();
-  expect(within(card).getByText(NATIVE_LINE)).toBeTruthy();
+  expect(within(card).getByText(NATIVE_LINE_GOOGLE)).toBeTruthy();
+  expect(within(card).queryByText(NATIVE_LINE)).toBeNull();
   expect(within(card).queryByText('Add a Google calendar')).toBeNull();
   expect(within(card).getByText('Google calendar, 40 events')).toBeTruthy();
   expect(within(card).getByText('Couldn’t refresh: Google was busy. Townwise tries again later.')).toBeTruthy();

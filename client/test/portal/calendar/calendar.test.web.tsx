@@ -148,7 +148,8 @@ const ICS = [
   'END:VCALENDAR', '',
 ].join('\r\n');
 
-const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
+// The list here answers without `google` (Google calendars off), so the help names none.
+const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
 const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar.';
 const NOT_CALENDAR = 'This doesn’t look like a calendar file (.ics).';
 const CALENDAR_LIMIT = 'This location has 5 calendars, the most it can hold. Remove one to add another.';

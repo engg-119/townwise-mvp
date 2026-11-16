@@ -21,8 +21,8 @@ import {
   type GoogleCalendars, type GoogleChoice, type OwnerCalendar,
 } from './api';
 import {
-  addedLines, addGoogleLabel, addRefusal, CALENDARS_COPY, GOOGLE_COPY, googleRefusal, labelOfFile, linkProblems, MAX_CALENDARS, pickerLine,
-  refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords,
+  addedLines, addGoogleLabel, addRefusal, CALENDARS_COPY, GOOGLE_COPY, googleRefusal, helpText, labelOfFile, linkProblems, MAX_CALENDARS,
+  pickerLine, refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords,
 } from './calendars';
 import { GoogleConnect } from './GoogleConnect';
 import { IcsImport } from './IcsImport';
@@ -43,7 +43,8 @@ import { IcsImport } from './IcsImport';
 // alerts), the import (IcsImport: the file picker on web, native's line pointing to it), "Add a link", which the
 // add-a-link form replaces while it is open, and on web, while the list answers `google.available`, "Add a Google
 // calendar", which the Google section replaces while it is open; then "How importing works" with its help, mounted
-// while hidden and describing the import, and under view-as the popover's own read-only line. A chosen file is posted as
+// while hidden and describing the import, and under view-as the popover's own read-only line. The help, and native's
+// line in place of the import, name Google calendars only while the list answers them on. A chosen file is posted as
 // `{ kind: 'file', label, ics }` (the label from its name, labelOfFile), with "Importing…" meanwhile, and a link as
 // `{ kind: 'link', label, url }` with "Adding…" while the API fetches it; on a 201 the page reads the list and the
 // grid's stored events again and turns "Your calendar" on (`onChanged(true)`). "Refresh now" (a 200, whatever its
@@ -632,7 +633,14 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
         )}
         {message === null ? null : <Messages live={message.live} takesFocus items={message.items} />}
         <Actions>
-          <IcsImport describedBy={HELP_ID} pending={importFile.pending} readOnlyId={readOnlyId} onFile={importFile.run} onRefusal={onRefused} />
+          <IcsImport
+            describedBy={HELP_ID}
+            pending={importFile.pending}
+            readOnlyId={readOnlyId}
+            google={props.google.available}
+            onFile={importFile.run}
+            onRefusal={onRefused}
+          />
           {adding ? null : (
             <Button variant="outline" label="Add a link" focusOnMount={form === 'cancelled'} {...ro} onPress={() => { setForm('opening'); }} />
           )}
@@ -701,7 +709,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
           </View>
         )}
         <Button variant="link" label="How importing works" expanded={helpOpen} controls={HELP_ID} onPress={() => { setHelpOpen((value) => !value); }} />
-        <Small nativeID={HELP_ID} style={helpOpen ? null : styles.hidden}>{CALENDARS_COPY.help}</Small>
+        <Small nativeID={HELP_ID} style={helpOpen ? null : styles.hidden}>{helpText(props.google.available)}</Small>
         {readOnlyId === null ? null : <ReadOnlyLine text={line} nativeID={readOnlyId} />}
         <ConfirmDialog
           visible={removing !== null}
