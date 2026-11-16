@@ -1132,6 +1132,32 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
   });
 
+  test('a connect reads the list again, so once it says the person is connected, “Add a Google calendar” after Cancel reads the choices instead of opening Google’s window again', async () => {
+    const revoked = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_revoked' });
+    const { api, fake, served } = await renderGoogle({ calendars: [revoked] });
+    // The connect heals that calendar, which the connection then backs, so Cancel's drop is refused.
+    fake.deletes['/api/org/google-connection'] = refusal(409, 'google_connection_in_use');
+    const panel = openPopover();
+    const lists = (): number => fake.paths.filter((path) => path === CALENDARS_PATH).length;
+    const before = lists();
+    await connectWith(panel, api, () => {
+      served.google = { ...ON, connected: true };
+      return { calendars: [{ ...PRIMARY, added: true }, SHARED] };
+    });
+    await within(panel).findByText('Choose the calendars to add to Main Street Bar.');
+    await waitFor(() => { expect(lists()).toBe(before + 1); });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(writes(api).at(-1)?.method).toBe('DELETE'); });
+    const scriptsBefore = document.querySelectorAll(`script[src="${GIS_SRC}"]`).length;
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    expect(within(panel).getByRole('button', { name: 'Loading your Google calendars…' })).toBeTruthy();
+    expect(await within(panel).findByText('Choose the calendars to add to Main Street Bar.')).toBeTruthy();
+    expect(fake.paths.filter((path) => path === GOOGLE_PATH)).toHaveLength(1);
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    expect(document.querySelectorAll(`script[src="${GIS_SRC}"]`)).toHaveLength(scriptsBefore);
+    expect(writes(api).filter((call) => call.path.endsWith('/connect'))).toHaveLength(1);
+  });
+
   test('connected: the choices are read first, the primary first with “Your main calendar”, and one already added is checked, disabled and “Added”', async () => {
     const { fake } = await renderGoogle({
       google: { ...ON, connected: true }, choices: [{ ...PRIMARY, added: true }, SHARED],

@@ -49,10 +49,10 @@ import { IcsImport } from './IcsImport';
 // `{ kind: 'link', label, url }` with "Adding…" while the API fetches it; on a 201 the page reads the list and the
 // grid's stored events again and turns "Your calendar" on (`onChanged(true)`). "Refresh now" (a 200, whatever its
 // status) and "Remove" (after "Remove this calendar?", a 204) read them again too (`onChanged(false)`), as a 404 on
-// either does ("This calendar was already removed."); nothing else reads again, and never the forecast, which stored
-// events change only through notes. Any other refusal stores nothing and reads nothing again. While the list reads
-// again (`reading`) a row may be out of date, a removed calendar still listed, so every row's Refresh now and Remove
-// wait, disabled in place, and the list is aria-busy.
+// either does ("This calendar was already removed."); nothing else reads again but a Google connect (below), and never
+// the forecast, which stored events change only through notes. Any other refusal stores nothing and reads nothing
+// again. While the list reads again (`reading`) a row may be out of date, a removed calendar still listed, so every
+// row's Refresh now and Remove wait, disabled in place, and the list is aria-busy.
 // The Google section (google-calendar's "The Your calendars popover connects and picks Google calendars"): for a person
 // the list says is connected it first reads their choices ("Add a Google calendar" reading "Loading your Google
 // calendars…" meanwhile, disabled in place), and a 409 google_not_connected or google_reconnect (with "Connect your
@@ -60,7 +60,8 @@ import { IcsImport } from './IcsImport';
 // "Continue to Google", described by the explainer since its press is the agreement, and Cancel (GoogleConnect.web.tsx,
 // which loads Google's script only now and opens Google's window in the press). While Google's window is open it says
 // "Waiting for Google…" with "Stop waiting"; a code is posted as `{ code, agreed: true }` ("Connecting your Google
-// account…"), and the answer's choices open the picker; any refusal shows the explainer again with its words. The picker
+// account…"), and the answer's choices open the picker while the list reads again (`onChanged(false)`), so it says the
+// person is connected even if they add nothing; any refusal shows the explainer again with its words. The picker
 // says "Choose the calendars to add to {location}.", then a checkbox row per calendar (the primary first, with "Your
 // main calendar"; one already on the location checked, disabled and "Added"), "This location can add {k} more." with
 // the checks capped at k, the line on sharing another account's calendar, and "Add {n} calendars" ("Add calendar" for
@@ -499,7 +500,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     pick(found, false);
   }, [api, location.id, explain, pick, focusMessage]));
 
-  // Google's code, posted with the agreement; the choices it answers open the picker.
+  // Google's code, posted with the agreement; the choices it answers open the picker. The list reads again, so its
+  // `google.connected` (and any calendar the connect healed) is current even if nothing is added.
   const connect = useAction(useCallback(async (code: string) => {
     let found: GoogleChoice[];
     try {
@@ -509,7 +511,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
       return;
     }
     pick(found, true);
-  }, [api, location.id, explain, pick]));
+    onChanged(false);
+  }, [api, location.id, explain, pick, onChanged]));
 
   // One add at a time, each with its own line. A refusal about another thing than that one calendar (the limit, the
   // account's adds, Google, the connection) would refuse the rest too, so it ends the batch.
