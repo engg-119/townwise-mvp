@@ -5,6 +5,17 @@ import { SourceChips } from '../../../src/portal/ui/SourceChip';
 // The source chip on web (source-chips: "Every source is a round chip with the site's logo and name" and "A chip is
 // named by what it shows"): an <a href> 44px tall around a 24px pill with the site's logo (hidden from screen readers)
 // or the globe, and the site's name; its accessible name starts with what it shows; its title is the source's label.
+// On web the bundler hands a committed logo over as `{ uri }` on the site's own origin; jest's asset stub is a number,
+// which react-native-web draws as no image, so each manifest entry with a logo is given such a URI here, named for its
+// host, as test/marketing/source-chip.test.web.tsx does.
+jest.mock('../../../src/portal/sources/logos', () => {
+  const actual = jest.requireActual<{ SITES: Record<string, { name: string; logo: unknown }> }>('../../../src/portal/sources/logos');
+  return {
+    SITES: Object.fromEntries(Object.entries(actual.SITES).map(([host, site]) => [
+      host, { ...site, logo: site.logo === null ? null : { uri: `/assets/assets/sources/${host}.png`, width: 152, height: 152 } },
+    ])),
+  };
+});
 
 afterEach(cleanup);
 
@@ -56,7 +67,7 @@ test('the accessible name starts with what the chip shows, number included, and 
 });
 
 test('the logo is hidden from screen readers; a host no manifest entry has shows the globe and its host', () => {
-  // The Registrar's chip has Dartmouth's committed logo (OPM's site has none, so it shows the globe too).
+  // The Registrar's chip has its committed logo (OPM's site has none, so it shows the globe too).
   render(<SourceChips sources={[REGISTRAR[0] ?? OPM, UNKNOWN]} />);
   const [known, unknown] = screen.getAllByRole('link');
   if (known === undefined || unknown === undefined) throw new Error('two chips');
@@ -64,20 +75,33 @@ test('the logo is hidden from screen readers; a host no manifest entry has shows
     const logo = link.firstElementChild?.firstElementChild;
     expect(logo?.getAttribute('aria-hidden')).toBe('true');
   }
+  // react-native-web draws the logo as a background image with a hidden <img> of the same URL, both in the hidden part.
+  const image = known.querySelector('[aria-hidden="true"] img');
+  expect(image?.getAttribute('src')).toBe('/assets/assets/sources/registrar.dartmouth.edu.png');
+  expect(known.querySelector('[aria-hidden="true"] [style*="background-image"]')?.getAttribute('style'))
+    .toContain('url("/assets/assets/sources/registrar.dartmouth.edu.png")');
   expect(known.querySelector('svg')).toBeNull();
   expect(unknown.textContent).toBe('events.example.org');
   expect(unknown.getAttribute('aria-label')).toBe('events.example.org. Source: Sample events page');
   expect(unknown.querySelector('[aria-hidden="true"] svg')).not.toBeNull();
   expect(unknown.querySelector('img')).toBeNull();
+  expect(unknown.querySelector('[style*="background-image"]')).toBeNull();
 });
 
 test('no image comes from another site', () => {
   render(<SourceChips sources={[...REGISTRAR, OPM, UNKNOWN]} />);
-  for (const image of document.querySelectorAll('img')) {
+  // The two Registrar chips draw their logo; OPM's site and the unknown host draw the globe.
+  const images = document.querySelectorAll('img');
+  expect(images).toHaveLength(2);
+  for (const image of images) {
     expect(new URL(image.src, window.location.href).origin).toBe(window.location.origin);
   }
-  for (const element of document.querySelectorAll<HTMLElement>('[style*="background-image"]')) {
-    expect(element.style.backgroundImage).not.toMatch(/url\(["']?https?:/);
+  const backgrounds = document.querySelectorAll<HTMLElement>('[style*="background-image"]');
+  expect(backgrounds).toHaveLength(2);
+  for (const element of backgrounds) {
+    const url = /url\("([^"]+)"\)/.exec(element.style.backgroundImage)?.[1] ?? '';
+    expect(url).not.toBe('');
+    expect(new URL(url, window.location.href).origin).toBe(window.location.origin);
   }
 });
 
