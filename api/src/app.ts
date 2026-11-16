@@ -138,7 +138,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     files: deps.files ?? null,
     nudgeFiles: () => { deps.fileWorker?.nudge(); },
     aiReads: deps.aiReader ?? null,
-    items: createItemReader(stores, deps.files ?? null),
+    items: createItemReader(stores, deps.files ?? null, { logger: deps.logger }),
     ports: {
       peopleInTown: createPeopleInTownReader({ stores, data: deps.peopleData ?? PEOPLE_DATA }),
       // U13B.

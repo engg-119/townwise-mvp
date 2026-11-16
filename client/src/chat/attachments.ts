@@ -2,8 +2,9 @@ import type { FileKind } from '../portal/files/api';
 import type { AttachmentKind, MessageAttachment } from './api';
 
 // The words for files attached to a TownwiseAI message (spec P25, D36), shared by the composer's chips and the person's
-// bubble. TownwiseAI reads a text file (CSV, TSV or text) and a PNG, JPEG, GIF or WebP picture in the turn it is
-// attached to; any other kind still attaches, and its chip says TownwiseAI can't read that kind yet.
+// bubble. TownwiseAI reads a text file (CSV, TSV or text), a PNG, JPEG, GIF or WebP picture, and a PDF, Word (.docx) or
+// Excel (.xlsx) file as its text in the turn it is attached to; any other kind still attaches, and its chip says
+// TownwiseAI can't read it (an old Word or Excel file, what to save it as).
 
 /** Files one message can attach (the API's limit, api/src/chat/attachments.ts). */
 export const MAX_ATTACHMENTS = 5;
@@ -23,18 +24,29 @@ export const KIND_WORD: Readonly<Record<AttachmentKind, string>> = {
   text: 'Text file', picture: 'Picture', pdf: 'PDF', word: 'Word file', excel: 'Excel file', zip: 'ZIP file', file: 'File',
 };
 
-const KIND_PLURAL: Readonly<Record<AttachmentKind, string>> = {
-  text: 'text files', picture: 'pictures', pdf: 'PDFs', word: 'Word files', excel: 'Excel files', zip: 'ZIP files', file: 'this kind of file',
-};
+/** Old Word and Excel files, which TownwiseAI doesn't read: their extension, and the one to save them as. */
+const OLD_OFFICE = { word: ['doc', 'docx'], excel: ['xls', 'xlsx'] } as const;
 
-/** A kind TownwiseAI reads in the turn it is attached to. */
-export function readable(kind: AttachmentKind): boolean {
-  return kind === 'text' || kind === 'picture';
+/**
+ * A file TownwiseAI reads in the turn it is attached to: a text file, a picture, a PDF, or a Word or Excel file that
+ * isn't an old one (.doc, .xls). The server takes a file for an old one only by that extension (api/src/files/sniff.ts),
+ * so the name tells.
+ */
+export function readable(kind: AttachmentKind, name: string): boolean {
+  if (kind === 'word' || kind === 'excel') return extensionOf(name) !== OLD_OFFICE[kind][0];
+  return kind === 'text' || kind === 'picture' || kind === 'pdf';
 }
 
-/** “TownwiseAI can’t read PDFs yet”: a composer chip's line for a kind TownwiseAI doesn't read. */
+/**
+ * A composer chip's line for a file TownwiseAI doesn't read: “TownwiseAI can’t read ZIP files yet”, or for an old Word
+ * or Excel file what to save it as.
+ */
 export function unreadLine(kind: AttachmentKind): string {
-  return `TownwiseAI can’t read ${KIND_PLURAL[kind]} yet`;
+  if (kind === 'word' || kind === 'excel') {
+    const [old, current] = OLD_OFFICE[kind];
+    return `TownwiseAI can’t read .${old} files; save it as .${current}`;
+  }
+  return kind === 'zip' ? 'TownwiseAI can’t read ZIP files yet' : 'TownwiseAI can’t read this kind of file yet';
 }
 
 // As api/src/files/sniff.ts kindOfName reads a name, with the pictures the item page shows (viewer/kinds.ts).

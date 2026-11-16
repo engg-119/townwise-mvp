@@ -96,13 +96,16 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'files/ai-reader.ts']);
   });
 
-  it('a file’s own text leaves the parse code only for a file someone let TownwiseAI read (spec 11A.9)', () => {
+  it('a file’s own text leaves the parse code only for a file someone let TownwiseAI read (spec 11A.9) or attached (D36)', () => {
     // readPdfText and readWordText are the only ways a PDF's or Word document's text outside a table leaves the parse
-    // code; only the AI text thread calls them, and only the TownwiseAI reader (and that thread) imports its runner.
+    // code; only the AI text thread calls them, and only the TownwiseAI reader, the item reader and that thread import
+    // its runner. files/items.ts reads a PDF, Word or Excel file a person attached to a TownwiseAI message and sent:
+    // attaching it and pressing Send is that turn's consent (D36), and the item reader is the door chat/* reads it
+    // through (ctx.items.readForModel).
     const imports = (file: { path: string; text: string }): string[] => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
       .map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));
     expect(sourceFiles().filter((file) => imports(file).includes('files/parse/ai-text.ts')).map((file) => file.path).sort())
-      .toEqual(['files/ai-reader.ts', 'files/parse/ai-text-thread.ts']);
+      .toEqual(['files/ai-reader.ts', 'files/items.ts', 'files/parse/ai-text-thread.ts']);
     for (const call of ['readPdfText(', 'readWordText(']) {
       const callers = sourceFiles().filter((file) => file.text.includes(call)).map((file) => file.path).sort();
       expect(callers.filter((path) => path !== 'files/parse/pdf.ts' && path !== 'files/parse/docx.ts')).toEqual(['files/parse/ai-text-thread.ts']);

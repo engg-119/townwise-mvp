@@ -142,6 +142,17 @@ export const AI_ZIP_BYTES = 25 * MIB;
 export const AI_ZIP_ENTRIES = 20;
 
 /**
+ * A PDF, Word (.docx) or Excel (.xlsx) file attached to a TownwiseAI message (spec D36) is read as text in the AI text
+ * thread, within the caps above for its kind (AI_PDF_BYTES, DOCX_READ_BYTES, XLSX_READ_BYTES). The thread's slot is
+ * shared with the sales reader and the TownwiseAI reader, whose threads may run 2 minutes, and a chat turn has 150
+ * seconds, so a chat read waits at most 15 seconds for the slot (then the file is listed not read, busy) and its thread
+ * has 30 seconds (then `too_complex`). [CONFIRM: a chat read waits at most 15 seconds for the parse thread, then has 30
+ * seconds to make the text]
+ */
+export const CHAT_SLOT_WAIT_MS = 15_000;
+export const CHAT_TEXT_TIME_MS = 30_000;
+
+/**
  * Originals are deleted this long after upload by the daily sweep (FileView.rawExpiresAt); the storage lifecycle rule is
  * the backstop at 400 days. [CONFIRM: retention periods]
  */
