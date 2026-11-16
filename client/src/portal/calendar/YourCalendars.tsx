@@ -13,7 +13,7 @@ import { FormField } from '../ui/FormField';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Popover } from '../ui/Popover';
 import { Mono, Small } from '../ui/text';
-import { addOwnerCalendar, refreshOwnerCalendar, removeOwnerCalendar, type OwnerCalendar } from './api';
+import { addOwnerCalendar, refreshOwnerCalendar, removeOwnerCalendar, type GoogleCalendars, type OwnerCalendar } from './api';
 import {
   addedLines, addRefusal, CALENDARS_COPY, labelOfFile, linkProblems, refreshedLine, refreshRefusal, removedLine, rowLines, statusWords,
 } from './calendars';
@@ -61,6 +61,8 @@ const READ_ONLY_ID = 'your-calendars-ro';
 export interface YourCalendarsProps {
   /** The location's calendars, oldest first; null before the list's first answer. */
   calendars: OwnerCalendar[] | null;
+  /** The list's `google`: whether Google calendars are on, whether the person is connected, and the client id. */
+  google: GoogleCalendars;
   /** The list's last read failed. */
   failed: boolean;
   /** The list is reading again: its rows may be out of date, so their actions wait. */
