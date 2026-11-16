@@ -105,6 +105,17 @@ variable "enable_calendar_links" {
   default     = false
 }
 
+variable "enable_google_calendar" {
+  description = "Turn on Google calendars: the API gets TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET from the Key Vault secret townwise-google-calendar-secret, which must be seeded first, and needs TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID in api/production.env (infra/README.md, Google calendars). Needs enable_calendar_links, whose key seals Google's access. False leaves Google calendars off; removing one still revokes its access."
+  type        = bool
+  default     = false
+
+  validation {
+    condition     = !var.enable_google_calendar || var.enable_calendar_links
+    error_message = "enable_google_calendar needs enable_calendar_links: TOWNWISE_CALENDAR_KEY seals Google's access."
+  }
+}
+
 variable "enable_lab" {
   description = "Turn on the forecast lab: the lab job, its identity, the API identity's right to start it, and the API's TOWNWISE_LAB_ variables (infra/README.md, step 20). Needs lab_image and lab_callback_client_id. False leaves calibrations off."
   type        = bool
