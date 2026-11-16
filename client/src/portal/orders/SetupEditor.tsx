@@ -17,6 +17,7 @@ import { ErrorNotice, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import { Lead, Small } from '../ui/text';
 import { deleteItemSales, fetchOrderSetup, saveOrderSetup, type OrderSetup, type OrderSetupAnswer } from './api';
+import type { ProposalImport } from './proposal';
 import {
   checkDraft, draftOf, fieldId, newItem, newSupplier, normalizeName, SETUP_LIMITS, type ItemDraft, type SetupDraft, type SetupProblems,
   type SupplierDraft,
@@ -27,19 +28,28 @@ import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 // item-sales specs): the location's suppliers with their deliveries, its items, and the item sales coverage, read with
 // GET .../orders/setup and saved whole with PUT over the version it loaded. Someone else's save in between answers
 // 409 `setup_changed`: the page says so and offers their changes, which replace the draft after a confirm. Shared by
-// both platforms; the web adds the template, the sheet import and the item sales upload through the slots
-// (Setup.web.tsx). Removing an item with history (item sales, counts, saved edits or rules, as the GET's
-// `itemsWithHistory` names them) asks first, in the page. Under view-as every field and write is disabled in place,
-// described by the read-only line.
+// both platforms; the web adds the template, the sheet import, reading a file with TownwiseAI (D41, only while the
+// GET's `canReadWithAi` holds) and the item sales upload through the slots (Setup.web.tsx). Removing an item with
+// history (item sales, counts, saved edits or rules, as the GET's `itemsWithHistory` names them) asks first, in the
+// page. Under view-as every field and write is disabled in place, described by the read-only line.
 
 const READ_ONLY_ID = 'setup-ro';
 
-type Status = Pick<OrderSetupAnswer, 'today' | 'coverage' | 'itemCoverage' | 'counts' | 'itemsWithHistory'>;
+type Status = Pick<OrderSetupAnswer, 'today' | 'coverage' | 'itemCoverage' | 'counts' | 'itemsWithHistory' | 'canReadWithAi'>;
 
 /** What the sheet tools (web) work on: the draft, before anything saves. */
 export interface SheetSlot {
   readonly draft: SetupDraft;
   readonly setDraft: (next: SetupDraft) => void;
+  readonly locked: boolean;
+  readonly readOnlyId: string | null;
+}
+
+/** What reading with TownwiseAI (web, D41) works on: the draft its suggestions merge into, before anything saves. */
+export interface ReadSlot {
+  readonly draft: SetupDraft;
+  /** Puts a read's merge in the draft. */
+  readonly apply: (result: ProposalImport) => void;
   readonly locked: boolean;
   readonly readOnlyId: string | null;
 }
@@ -64,6 +74,7 @@ export interface SalesSlot {
 
 export function SetupEditor(props: {
   sheet?: (slot: SheetSlot) => React.ReactNode;
+  read?: (slot: ReadSlot) => React.ReactNode;
   sales?: (slot: SalesSlot) => React.ReactNode;
 }): React.JSX.Element {
   const { api } = usePortal();
@@ -86,6 +97,7 @@ function saveFailure(error: unknown): string {
 function Editor(props: {
   initial: OrderSetupAnswer;
   sheet?: (slot: SheetSlot) => React.ReactNode;
+  read?: (slot: ReadSlot) => React.ReactNode;
   sales?: (slot: SalesSlot) => React.ReactNode;
 }): React.JSX.Element {
   const { api } = usePortal();
@@ -232,6 +244,9 @@ function Editor(props: {
       {props.sheet === undefined
         ? <Small>Use a computer to download the template, import a sheet or upload item sales.</Small>
         : props.sheet({ draft, setDraft: edit, locked, readOnlyId })}
+      {status.canReadWithAi && props.read !== undefined
+        ? props.read({ draft, apply: (result) => { edit(result.draft); }, locked, readOnlyId })
+        : null}
 
       <Section title="Suppliers">
         {draft.suppliers.length === 0 ? <Small>No suppliers yet. Add each one you order from, with its delivery days.</Small> : null}
