@@ -105,6 +105,8 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'order.rule_turned_off', label: 'Order rule turned off' },
   { value: 'order.card_saved', label: 'TownwiseAI order card saved' },
   { value: 'order.card_dismissed', label: 'TownwiseAI order card set aside' },
+  // D41, reading the ordering setup with TownwiseAI.
+  { value: 'order.setup_read', label: 'Ordering setup read by TownwiseAI' },
   // U13B, forecast runs.
   { value: 'forecast.imported', label: 'Forecast imported' },
   { value: 'forecast.published', label: 'Forecast published' },

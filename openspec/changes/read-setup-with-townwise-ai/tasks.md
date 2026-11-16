@@ -36,7 +36,7 @@
 ## 6. Privacy and console
 
 - [x] 6.1 The privacy page's "Files and text you give TownwiseAI for ordering" and the Anthropic paragraph's sentence
-- [ ] 6.2 A staff console label for `order.setup_read`
+- [x] 6.2 A staff console label for `order.setup_read`
 
 ## 7. Docs
 
