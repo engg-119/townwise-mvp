@@ -27,6 +27,7 @@ import {
   addTextItem, answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
   listEntries, listFiles, putChunk, startImport,
 } from '../handlers/files.ts';
+import { connectGoogle, dropGoogleConnection, listGoogleChoices } from '../handlers/google-calendars.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
@@ -58,7 +59,8 @@ export interface TownwiseRoute {
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename, a version switch, a reply's rating, the profile
    * edit and an order rule's turn-off;
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
-   * switch, (D31) a business rule, the order decisions and rules, and the item and order change cards;
+   * switch, (D31) a business rule, the order decisions and rules, the item and order change cards, and connecting a
+   * Google calendar;
    * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
    * ids may reach 13 KB, and an order count; '256kb' only on the upload routes (the member one, D23 staff setup's, and
    * the item sales upload) and (U13B) the staff forecast import; '1mb' only on the ordering setup's save (300 items
@@ -69,7 +71,9 @@ export interface TownwiseRoute {
    */
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | '2mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
-  readonly limiter?: 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads' | 'ai_reads';
+  readonly limiter?:
+    | 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads' | 'ai_reads'
+    | 'google_calendars';
   /**
    * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
    * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
@@ -196,8 +200,9 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   },
   // The owner's own calendars (openspec change connect-owner-calendar, design decision 7), as notes: every member, open
   // as admin included. events is declared before the :calendarId routes. "Refresh now" has no body; its handler holds
-  // it to one per calendar per 5 minutes. No route limiter: a file import fetches nothing, and adding a link spends one
-  // of the account's link adds in its handler before the fetch.
+  // it to one per calendar per 5 minutes. No route limiter: a file import fetches nothing, and adding a link or a Google
+  // calendar spends one of the account's link adds in its handler before the fetch (connect-google-calendar: the
+  // handler refuses a Google add open as admin).
   {
     id: 'org.owner_calendars.list', method: 'GET', path: '/org/locations/:locationId/owner-calendars', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: listOwnerCalendars,
@@ -217,6 +222,22 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.owner_calendars.remove', method: 'DELETE', path: '/org/locations/:locationId/owner-calendars/:calendarId',
     policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: removeOwnerCalendar,
+  },
+  // Connecting a Google calendar (openspec change connect-google-calendar, design decision 8): a member's own Google
+  // account, never staff's, so none runs open as admin (D25). Every call reaches Google, so all three spend the
+  // google_calendars limiter. The connect body is the code and the agreement; the choices and the disconnect have none.
+  // No path shadows another: the choices and connect sit under google-calendars, and the disconnect names no location.
+  {
+    id: 'org.google_calendars.connect', method: 'POST', path: '/org/locations/:locationId/google-calendars/connect', policy: 'member',
+    bodyLimit: '2kb', limiter: 'google_calendars', handler: connectGoogle,
+  },
+  {
+    id: 'org.google_calendars.list', method: 'GET', path: '/org/locations/:locationId/google-calendars', policy: 'member',
+    bodyLimit: 'none', limiter: 'google_calendars', handler: listGoogleChoices,
+  },
+  {
+    id: 'org.google_calendars.disconnect', method: 'DELETE', path: '/org/google-connection', policy: 'member', bodyLimit: 'none',
+    limiter: 'google_calendars', handler: dropGoogleConnection,
   },
   // Stored files and imports (spec 10.11, 11A). imports/current is declared before imports/:importId.
   {
@@ -581,6 +602,9 @@ export const ROUTE_LIMITS = {
   downloads: { name: 'townwise:downloads', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
   // Spec 11A.9: each read is a model call on a whole file, so a store outage denies (the writes limiter allows).
   ai_reads: { name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // connect-google-calendar, design decision 8: every call is a Google call, so a store outage denies, as for Places.
+  // [CONFIRM: 30 Google calendar calls an account an hour]
+  google_calendars: { name: 'townwise:google-calendars', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
 } as const;
 
 /** The only route that may stream its body. */
