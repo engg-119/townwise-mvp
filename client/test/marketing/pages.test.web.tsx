@@ -349,7 +349,7 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 15, 2026.');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 16, 2026.');
   // D25: open as admin before and after a join, with a reason after (owner call, 2026-11-15); otherwise view-as only.
   expect(text).toContain('Townwise staff helping you, with your consent, can open your organization as its admin, before or after anyone from it joins: they see and change what an admin can, except your team, for at most an hour each time. Once anyone has joined, they must give a reason first. Each time, with its reason, and every change they make is recorded and listed in your organization’s Townwise staff activity.');
   expect(text).toContain('Otherwise, Townwise staff can see the sales figures, your location notes and your calendars with their events only through view-as');
@@ -390,6 +390,45 @@ test('Privacy says what Townwise keeps of a location’s calendars, that it fetc
   const whoCanSee = within(screen.getByRole('region', { name: 'Your restaurant’s sales data' })).getAllByRole('listitem');
   expect(whoCanSee.some((item) => item.textContent.includes('your calendars with their events only through view-as'))).toBe(true);
   expect(screen.getByRole('main').textContent).toContain('its locations, sales data, uploads, notes, calendars, team, TownwiseAI conversations');
+});
+
+test('Privacy says what Townwise reads from Google for a connected calendar, who sees it, how its access ends, and Google’s Limited Use statement (D39)', () => {
+  renderAt('/privacy');
+  const items = within(screen.getByRole('region', { name: 'Your organization and team' })).getAllByRole('listitem');
+  const calendars = items.find((item) => item.textContent.startsWith('Your calendars.'));
+  const google = items.find((item) => item.textContent.startsWith('Google calendars.'));
+  if (calendars === undefined || google === undefined) throw new Error('no Your calendars or Google calendars item');
+  // Right after the calendars it adds to, with a bold lead-in as the other items have.
+  expect(items.indexOf(google)).toBe(items.indexOf(calendars) + 1);
+  expect(google.querySelector('strong')?.textContent).toBe('Google calendars.');
+  expect(calendars.textContent).toContain('or a Google calendar you connect by signing in with Google (below).');
+  expect(calendars.textContent).toContain('TownwiseAI conversations keep no copy of the calendar events it reads, only its replies that mention one.');
+  // What is read, and that the access is kept encrypted and used only by the server for the calendars picked.
+  expect(google.textContent).toContain('Townwise asks Google only for read-only access to your list of calendars and to their events, and for your Google account ID, to check that the account is the one you sign in with.');
+  expect(google.textContent).toContain('Our server keeps that access encrypted and uses it only to read the calendars you picked');
+  expect(google.textContent).toContain('From them it reads only each event’s title, dates and hours, repeating events included, never an event’s description, place or guests');
+  // Who sees them: the team, TownwiseAI and so Anthropic, and staff only through view-as, without names or titles.
+  expect(google.textContent).toContain('Everyone on your organization’s team can see these calendars and their events, and TownwiseAI reads their titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them.');
+  expect(google.textContent).toContain('Townwise staff see them only through view-as, and there only as “Google calendar event” in a calendar named “Google calendar”, without their names or titles, though a TownwiseAI reply they read there may mention one');
+  // How access ends, and where the person can remove it themselves.
+  expect(google.textContent).toContain('Removing your last Google calendar, leaving your organization or being removed from it, or deleting the location or the organization ends Townwise’s access: your Google calendars and their events are deleted from the location, and Townwise deletes its access and asks Google to revoke it.');
+  expect(within(google).getByRole('link', { name: 'myaccount.google.com/connections' }).getAttribute('href')).toBe('https://myaccount.google.com/connections');
+  const whoCanSee = within(screen.getByRole('region', { name: 'Your restaurant’s sales data' })).getAllByRole('listitem');
+  expect(whoCanSee.find((item) => item.textContent.startsWith('Otherwise, Townwise staff'))?.textContent).toContain('There, a Google calendar’s events show as “Google calendar event”, without their calendars’ names or their titles, though a TownwiseAI reply staff read there may mention one.');
+  const text = screen.getByRole('main').textContent;
+  // Google's script on the Calendar, and the token: no sentence still says Townwise never keeps a Google token.
+  expect(text).toContain('The Calendar loads the same script only when you choose Add a Google calendar, so Google sees that visit too.');
+  expect(text).toContain('If you connect a Google calendar, Townwise does keep a different token from Google, encrypted, which only our server uses, to read the calendars you picked');
+  expect(text).not.toMatch(/Google token itself|never keeps? (a|the|your) Google token/);
+  // Who else sees it: Google reads the picked calendars for the server, the Limited Use statement, and the no one else line.
+  const others = screen.getByRole('region', { name: 'Who else sees it' });
+  expect(within(others).getAllByRole('listitem').find((item) => item.textContent.startsWith('Google,'))?.textContent).toContain('If you connect a Google calendar, the Calendar loads that script when you choose Add a Google calendar, your browser opens Google’s window with your email address filled in, and our server then reads the calendars you picked from Google');
+  const paragraphs = [...others.querySelectorAll('p')];
+  const limitedUse = paragraphs.find((p) => p.textContent.startsWith('Google user data.'));
+  expect(limitedUse?.textContent).toBe('Google user data. Townwise’s use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.');
+  if (limitedUse === undefined) throw new Error('no Limited Use statement');
+  expect(within(limitedUse).getByRole('link', { name: 'Google API Services User Data Policy' }).getAttribute('href')).toBe('https://developers.google.com/terms/api-services-user-data-policy');
+  expect(paragraphs.find((p) => p.textContent.startsWith('Apart from'))?.textContent).toBe('Apart from Google’s sign-in script on the sign-in page, Google’s window when you connect a Google calendar (which gets your email address, so it opens on your account), and the two emails Microsoft delivers, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.');
 });
 
 test('Privacy says which two emails Townwise sends, through whom, and that it keeps only a log line with ids', () => {
