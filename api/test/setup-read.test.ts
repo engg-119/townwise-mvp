@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { pastedInput, postedSource, prepareInput, READER_INPUT, SETUP_INPUT, type InputSource, type PreparedInput } from '../src/files/extract/input.ts';
 import { createAnthropicSetupReaderModel, SETUP_FORMAT } from '../src/files/extract/model.ts';
 import { MARKER, type ReaderInput } from '../src/files/extract/reader.ts';
-import { CONTENT_IS_DATA, READER_MODEL } from '../src/files/extract/reader-prompt.ts';
+import { CONTENT_IS_DATA, READER_MODEL, redacted } from '../src/files/extract/reader-prompt.ts';
 import {
   SETUP_ITEMS_MAX, SETUP_MAX_TOKENS, SETUP_SYSTEM_PROMPT, setupResult,
 } from '../src/files/extract/setup-prompt.ts';
@@ -133,6 +133,21 @@ describe('the answer as Townwise answers it', () => {
     expect(JSON.stringify(result)).not.toMatch(/example\.test|555-01/);
     expect(result?.suppliers[0]?.name).toBe('Rep [email]');
     expect(result?.items[0]).toMatchObject({ name: 'Call [phone] IPA', posNames: [{ name: 'Tab [phone]' }], note: 'Ask [email] first' });
+  });
+
+  it('replaces only a formatted phone number of ten digits, never a name’s sizes, counts or codes', () => {
+    for (const phone of [
+      '603-555-0142', '(603) 555-0142', '(603)555-0142', '603.555.0142', '603 555 0142', '1-800-555-0199', '+1 603 555 0142',
+      '+1 (603) 555-0142', '+1-603-555-0142', '+44 20 7946 0958', '+44 161 496 0000',
+    ]) expect(redacted(`Rep ${phone}, ext`, 80)).toBe('Rep [phone], ext');
+    for (const name of [
+      'Lager 12 16 24', 'IPA 1/2 BBL 15.5 gal', 'Item 12 750 1000', 'SKU 1234-5678-9012', 'Pack 100 200 3000', 'Case 123-456-7890',
+      'Ale 1 12 750 1000', 'Rep 555-0142', 'Rep 6035550142', 'Rep +16035550142', 'Order 2026-06-14', '$3,456.50 on 120 covers',
+      'Keg 603-555-0142-9', 'Pick 603 555 0142/4',
+    ]) expect(redacted(name, 80)).toBe(name);
+    // Two items that differ by a code alone stay two.
+    const result = setupResult(answer({ items: [{ ...ITEM, name: 'Item 12 750 1000' }, { ...ITEM, name: 'Item 12 750 2000' }] }), null);
+    expect(result?.items.map((item) => item.name)).toEqual(['Item 12 750 1000', 'Item 12 750 2000']);
   });
 
   it('says whether each item’s name is written in the content’s text, and nothing for a picture or a PDF with no text', () => {
