@@ -15,6 +15,7 @@ import { z } from 'zod';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
+import { endUnusedGoogleAccess, googleAccessDeps, markLocationForCheck } from '../calendar/google-access.ts';
 import { calibrationOf, type Calibration } from '../calibration.ts';
 import { placeIdSchema } from '../place-id.ts';
 import { PlacesUnavailableError, type PlaceDetails } from '../places/google.ts';
@@ -251,8 +252,15 @@ export async function assertNoLocationData(ctx: TownwiseContext, scope: OrgScope
   }
 }
 
-/** DELETE's effect, shared with staff setup (D23): the location, then what only it reached. False when it was already gone. */
+/**
+ * DELETE's effect, shared with staff setup (D23): the location, then what only it reached. False when it was already
+ * gone. First the Google connections backing its Google calendars are marked for a check (connect-google-calendar,
+ * design decision 11), since a request that stops once the location row is gone leaves calendars the refresh loop
+ * removes, and the check then ends a connection left backing nothing; at the end each one now backing nothing is ended.
+ */
 export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<boolean> {
+  const google = googleAccessDeps(ctx);
+  const connections = await markLocationForCheck(google, scope, locationId);
   if (!(await ctx.stores.locations.remove(scope, locationId))) return false;
   // Records of uploads that never wrote a day (a crash leaves `applying`) go with it, and so do its tuning chats,
   // which nothing could reach without the location.
@@ -276,6 +284,8 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.orderSetups.removeForLocation(scope, locationId);
   await ctx.stores.itemSales.removeForLocation(scope, locationId);
   await ctx.stores.orderCounts.removeForLocation(scope, locationId);
+  // A connection that still backs a calendar of another location stays.
+  for (const connectionId of connections) await endUnusedGoogleAccess(google, scope, connectionId, 'location_deleted');
   return true;
 }
 

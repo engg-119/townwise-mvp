@@ -18,7 +18,7 @@ import {
 
 // P28 Calendar on native (spec 16.3): the same reads and grid as on web, a Pressable grid with the day
 // panel under it, adding a note from the day, the location's stored calendar events, and "Your calendars" with links
-// but no calendar file import (no file picker is installed). Today is Wed, Nov 11, 2026. Synthetic figures and made-up
+// and Google calendars but no calendar file import (no file picker is installed) and no Google connect. Today is Wed, Nov 11, 2026. Synthetic figures and made-up
 // titles and addresses only.
 
 beforeEach(() => {
@@ -40,6 +40,7 @@ const GAME_REASON = {
   kind: 'event', label: 'Dartmouth home football', effectPct: null, effect: { direction: 'more', pct: 20, basis: 'history', days: 5 } as const, sources: [], note: null,
 };
 const SATURDAY = '2026-11-21';
+/** The list here answers without `google` (Google calendars off), so the line names no Google connect. */
 const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const LABEL = 'Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.';
@@ -131,6 +132,32 @@ test('Your calendars: no file import, the line points to the web, and a link can
     { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } },
     { method: 'POST', path: `${CALENDARS_PATH}/c2/refresh`, body: undefined },
     { method: 'DELETE', path: `${CALENDARS_PATH}/c2`, body: undefined },
+  ]);
+});
+
+test('a Google calendar on native: listed as “Google calendar, 40 events”, refreshed and removed from the panel, with no connect', async () => {
+  const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40 });
+  const { api, fake } = setup({ calendars: [google] });
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (1)' }));
+  expect(screen.getByText('Google calendar, 40 events')).toBeTruthy();
+  expect(screen.getByText(NATIVE_LINE)).toBeTruthy();
+  expect(screen.queryByText('Add a Google calendar')).toBeNull();
+
+  api.answers[`${CALENDARS_PATH}/c3/refresh`] = () => ({ calendar: { ...google, status: 'google_not_found' } });
+  await fireEvent.press(screen.getByRole('button', { name: 'Refresh now: Google calendar' }));
+  expect((await screen.findAllByText('Couldn’t refresh: this Google calendar was deleted or is no longer shared with the account that added it.')).length)
+    .toBeGreaterThan(0);
+
+  await fireEvent.press(screen.getByRole('button', { name: 'Remove Google calendar' }));
+  expect(await screen.findByText('Remove this calendar?')).toBeTruthy();
+  fake.calendars = [];
+  await fireEvent.press(screen.getByRole('button', { name: 'Remove calendar' }));
+  expect(await screen.findByText('Removed Google calendar.')).toBeTruthy();
+  expect(await screen.findByText('No calendars yet.')).toBeTruthy();
+  expect(writes(api)).toEqual([
+    { method: 'POST', path: `${CALENDARS_PATH}/c3/refresh`, body: undefined },
+    { method: 'DELETE', path: `${CALENDARS_PATH}/c3`, body: undefined },
   ]);
 });
 

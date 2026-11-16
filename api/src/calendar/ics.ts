@@ -12,6 +12,10 @@
 // town's today are kept, at most 2,000, the first by start. An event keeps its UID, its title (cut at 200 characters),
 // its dates and its hours, nothing else: DESCRIPTION, LOCATION, ATTENDEE and ORGANIZER are never read. The callers cap
 // the file at 1 MB. [CONFIRM: 1 MB and 2,000 events for a calendar file]
+// Google calendars (openspec change connect-google-calendar, design decision 7) share these rules through the exports
+// townClock, spanOf, titleOf and keepWindow (calendar/google-events.ts): the same town clock, dates, hours, title cut,
+// 400-day window and 2,000 events, except that a Google calendar keeps the events ahead of the town's today first
+// (keepWindow's aheadFirst), and its repeating events arrive from Google as single events.
 import { isCalendarDate, utcDay } from '../dates.ts';
 
 /** A calendar file, imported or fetched, is at most this many bytes (1 MB); its callers hold it to that. */
@@ -46,14 +50,15 @@ export interface IcsTown {
   readonly timeZone: string;
 }
 
-interface Moment {
+/** A date and, for a timed value, its wall time. */
+export interface Moment {
   date: string;
   /** 'HH:MM'; null for a date-only value. */
   time: string | null;
 }
 
 /** The town's wall date and time of an instant, or null for a date outside the years 1000 to 9999. */
-type TownClock = (at: Date) => Moment | null;
+export type TownClock = (at: Date) => Moment | null;
 
 /** The only VEVENT properties read; every other one is passed over as the line is read. */
 const READ = new Set(['UID', 'SUMMARY', 'DTSTART', 'DTEND', 'STATUS', 'RRULE', 'RDATE', 'RECURRENCE-ID']);
@@ -65,7 +70,7 @@ function plusDays(day: string, days: number): string {
 }
 
 /** One formatter per parse: a file may hold thousands of UTC times. */
-function townClock(timeZone: string): TownClock {
+export function townClock(timeZone: string): TownClock {
   const format = new Intl.DateTimeFormat('en-CA', {
     timeZone, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
   });
@@ -107,10 +112,17 @@ function momentOf(value: string | undefined, clock: TownClock): Moment | null {
   return isCalendarDate(date) ? { date, time: `${hour}:${minute}` } : null;
 }
 
-/** SUMMARY's text: "\," "\;" "\\" and "\n" unescaped, on one line, cut at 200 characters (never half a pair). */
-function titleOf(value: string | undefined): string {
-  const text = (value ?? '').replace(/\\([\\;,nN])/g, (_match, char: string) => (char === 'n' || char === 'N' ? '\n' : char));
-  const title = text.replace(/\s+/g, ' ').trim() || 'Untitled event';
+/** SUMMARY's text with "\," "\;" "\\" and "\n" unescaped. */
+function unescaped(value: string | undefined): string {
+  return (value ?? '').replace(/\\([\\;,nN])/g, (_match, char: string) => (char === 'n' || char === 'N' ? '\n' : char));
+}
+
+/**
+ * A title from plain text: on one line, "Untitled event" when empty, cut at 200 characters (never half a pair). A
+ * file's SUMMARY is unescaped first; a Google event's summary is plain text, so a backslash in it stays.
+ */
+export function titleOf(text: string | undefined): string {
+  const title = (text ?? '').replace(/\s+/g, ' ').trim() || 'Untitled event';
   if (title.length <= MAX_TITLE_CHARS) return title;
   const cut = title.slice(0, MAX_TITLE_CHARS);
   const last = cut.charCodeAt(cut.length - 1);
@@ -120,7 +132,8 @@ function titleOf(value: string | undefined): string {
 /** An event that ends by this time the next morning is its start day's late night, not two days. [CONFIRM: 06:00 cutoff] */
 const LATE_NIGHT_END = '06:00';
 
-function spanOf(start: Moment, end: Moment | null): Pick<IcsEvent, 'startDate' | 'endDate' | 'startTime' | 'endTime'> {
+/** An event's dates and, by the rules above, its hours; with no end it is its start's day. */
+export function spanOf(start: Moment, end: Moment | null): Pick<IcsEvent, 'startDate' | 'endDate' | 'startTime' | 'endTime'> {
   let endDate = end?.date ?? start.date;
   let endTime = end?.time ?? null;
   // A date-only end is exclusive, and an end at midnight closes the day before.
@@ -171,7 +184,7 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
     for (; uids.has(uid); suffix += 1) uid = `${base}#${String(suffix)}`;
     if (uid !== base) nextSuffix.set(base, suffix);
     uids.add(uid);
-    events.push({ uid, title: titleOf(props.get('SUMMARY')), ...spanOf(start, momentOf(props.get('DTEND'), clock)) });
+    events.push({ uid, title: titleOf(unescaped(props.get('SUMMARY'))), ...spanOf(start, momentOf(props.get('DTEND'), clock)) });
   };
 
   for (const line of lines) {
@@ -191,12 +204,26 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
     }
   }
   if (!calendar) return { error: 'not_calendar' };
+  return { events: keepWindow(events, town.today), skippedRepeating };
+}
 
-  const first = plusDays(town.today, -WINDOW_DAYS);
-  const last = plusDays(town.today, WINDOW_DAYS);
-  const kept = events
-    .filter((event) => event.endDate >= first && event.startDate <= last)
-    .sort((a, b) => (startKey(a) < startKey(b) ? -1 : startKey(a) > startKey(b) ? 1 : 0))
-    .slice(0, MAX_EVENTS);
-  return { events: kept, skippedRepeating };
+function byStart(a: IcsEvent, b: IcsEvent): number {
+  return startKey(a) < startKey(b) ? -1 : startKey(a) > startKey(b) ? 1 : 0;
+}
+
+/**
+ * The events within 400 days of `today`, by start (a stable sort, so events that start together keep their order), at
+ * most 2,000: the first by start; or, with `aheadFirst` (a Google calendar's), the first 2,000 by start of those that
+ * end on or after `today`, then as many of the earlier ones as still fit, the latest of them first.
+ * [CONFIRM: a Google calendar keeps its next 2,000 events first, then earlier ones]
+ */
+export function keepWindow(events: readonly IcsEvent[], today: string, options?: { readonly aheadFirst?: boolean }): IcsEvent[] {
+  const first = plusDays(today, -WINDOW_DAYS);
+  const last = plusDays(today, WINDOW_DAYS);
+  const inWindow = events.filter((event) => event.endDate >= first && event.startDate <= last).sort(byStart);
+  if (options?.aheadFirst !== true) return inWindow.slice(0, MAX_EVENTS);
+  const ahead = inWindow.filter((event) => event.endDate >= today).slice(0, MAX_EVENTS);
+  const before = inWindow.filter((event) => event.endDate < today);
+  const room = Math.min(MAX_EVENTS - ahead.length, before.length);
+  return [...before.slice(before.length - room), ...ahead].sort(byStart);
 }

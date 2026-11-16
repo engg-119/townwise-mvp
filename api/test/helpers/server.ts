@@ -18,6 +18,7 @@ import { z } from 'zod';
 import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi, createTownwiseContext, createTownwiseLab } from '../../src/app.ts';
 import type { CalendarFetcher } from '../../src/calendar/fetch.ts';
+import type { GoogleCalendarClient, revokeGoogleGrant } from '../../src/calendar/google.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import { createAiReadActions } from '../../src/files/ai-actions.ts';
@@ -142,6 +143,11 @@ export async function startTownwiseServer(opts?: {
   calendarKey?: KeyObject;
   /** Fetches owner calendar links (helpers over a local server); absent, the guarded fetcher over the network. */
   calendarFetcher?: CalendarFetcher;
+  /** Google calendars, over a fake client (helpers/google.ts) with its client id; absent, they are off (503). */
+  googleCalendar?: GoogleCalendarClient;
+  googleCalendarClientId?: string;
+  /** Revokes a Google grant (helpers/google.ts has a fake that records each call); absent, nothing is revoked. */
+  revokeGoogle?: typeof revokeGoogleGrant;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -207,7 +213,8 @@ export async function startTownwiseServer(opts?: {
       setupReadText: opts?.setupReadText,
       peopleData: opts?.peopleData, labRunner: opts?.labRunner,
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
-      calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher,
+      calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher, googleCalendar: opts?.googleCalendar,
+      googleCalendarClientId: opts?.googleCalendarClientId, revokeGoogle: opts?.revokeGoogle,
     };
     const { aroundOnRead = (actions: OnAiRead) => actions, ...readerOpts } = opts?.aiReader ?? { model: undefined };
     const aiReader = files === undefined || readerOpts.model === undefined ? null : createAiReader({

@@ -3,7 +3,10 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
-import { CALENDARS_COPY } from '../../../src/portal/calendar/calendars';
+import { ApiError } from '../../../src/api/client';
+import { GIS_SRC, resetGis, type CodeClientConfig } from '../../../src/auth/gis.web';
+import type { GoogleCalendars, GoogleChoice } from '../../../src/portal/calendar/api';
+import { CALENDARS_COPY, GOOGLE_COPY, helpText } from '../../../src/portal/calendar/calendars';
 import { errorCopy } from '../../../src/portal/errors';
 import { formatDate, formatTime } from '../../../src/portal/format';
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -17,8 +20,11 @@ import { CALENDARS_PATH, calendarFake, forecastDay, forecastOf, ownerCalendar, o
 // and-home design decision 1): the header row's last control, a button with the location's calendar count that opens a
 // popover anchored to it, over the page, so nothing under the row moves. The popover lists the calendars, says when the
 // list couldn't be read, and holds "Import a calendar file", "Add a link" and "How importing works"; it keeps what was
-// typed and shown across closing, and waits while an add, an import or a refresh runs. Today is Wed, Nov 11, 2026.
-// Synthetic figures and made-up names only.
+// typed and shown across closing, and waits while an add, an import or a refresh runs. With Google calendars on
+// (google-calendar's "The Your calendars popover connects and picks Google calendars", connect-google-calendar design
+// decision 15) it also holds "Add a Google calendar" and its section: the explainer, Google's window (a fake
+// `window.google`), the picker and its adds. Today is Wed, Nov 11, 2026. Synthetic figures and made-up names, codes
+// and Google ids only.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -641,7 +647,7 @@ test('the popover holds “Import a calendar file” and “How importing works�
   const importButton = within(panel).getByRole('button', { name: 'Import a calendar file' });
   const toggle = within(panel).getByRole('button', { name: 'How importing works' });
   expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  const help = within(panel).getByText(CALENDARS_COPY.help);
+  const help = within(panel).getByText(helpText(false));
   expect(help.id).not.toBe('');
   expect(toggle.getAttribute('aria-controls')).toBe(help.id);
   expect(importButton.getAttribute('aria-describedby')).toBe(help.id);
@@ -674,7 +680,7 @@ test('closing the popover keeps a half-typed link, the shown message and the ope
   expect(within(again).getByLabelText<HTMLInputElement>('Calendar link').value).toBe(URL);
   expect(within(again).getByText(words).getAttribute('role')).toBe('alert');
   expect(within(again).getByRole('button', { name: 'How importing works' }).getAttribute('aria-expanded')).toBe('true');
-  expect(shown(within(again).getByText(CALENDARS_COPY.help))).toBe(true);
+  expect(shown(within(again).getByText(helpText(false)))).toBe(true);
   expect(writes(api)).toHaveLength(1);
 });
 
@@ -897,4 +903,475 @@ test('view-as: the popover lists the calendars, and Import, Add a link, Refresh 
   expect(within(panel).getByRole('button', { name: 'How importing works' }).getAttribute('aria-disabled')).toBeNull();
   expect(within(panel).getByRole('button', { name: 'Close' }).getAttribute('aria-disabled')).toBeNull();
   expect(writes(api)).toEqual([]);
+});
+
+describe('Google calendars (connect-google-calendar design decision 15)', () => {
+  const CLIENT_ID = '123-abc.apps.googleusercontent.com';
+  const CODE = '4/0Afake-code';
+  const GOOGLE_PATH = '/api/org/locations/l1/google-calendars';
+  const PRIMARY: GoogleChoice = { id: 'primary-id', name: 'Owner', primary: true, added: false };
+  const SHARED: GoogleChoice = { id: 'c_fake0123@group.calendar.google.com', name: 'Bookings', primary: false, added: false };
+  const STAFF: GoogleChoice = { id: 'c_fake4567@group.calendar.google.com', name: 'Staff rota', primary: false, added: false };
+  const PRIVATE: GoogleChoice = { id: 'c_fake89ab@group.calendar.google.com', name: 'Private dining', primary: false, added: false };
+  const ON: GoogleCalendars = { available: true, connected: false, clientId: CLIENT_ID };
+
+  interface Served {
+    google: GoogleCalendars;
+    /** What GET .../google-calendars answers, or a promise of it that a test holds. */
+    choices: GoogleChoice[] | ApiError | Promise<GoogleChoice[]>;
+  }
+
+  beforeEach(() => {
+    resetGis();
+    delete (window as { google?: unknown }).google;
+  });
+
+  /** The list answers `served.google`, and the choices `served.choices`; calendarFake answers neither. */
+  function serveGoogle(fake: CalendarFake, served: Served): void {
+    const json = fake.json.bind(fake);
+    fake.json = ((...args: Parameters<typeof json>) => {
+      const [path, schema, opts] = args;
+      if ((opts?.method ?? 'GET') !== 'GET') return json(...args);
+      if (path === CALENDARS_PATH && !(fake.calendars instanceof ApiError)) {
+        fake.paths.push(path);
+        return Promise.resolve(schema.parse({ calendars: fake.calendars, google: served.google }));
+      }
+      if (path === GOOGLE_PATH) {
+        fake.paths.push(path);
+        const { choices } = served;
+        return choices instanceof ApiError ? Promise.reject(choices) : Promise.resolve(choices).then((found) => schema.parse({ calendars: found }));
+      }
+      return json(...args);
+    }) as typeof json;
+  }
+
+  async function renderGoogle(
+    init: Partial<Pick<CalendarFake, 'calendars'>> & Partial<Served> = {}, me: MeResponse = meOf(ACCESS.member),
+  ): Promise<{ api: FakePortalApi; fake: CalendarFake; served: Served }> {
+    const { api, fake } = setup(init.calendars === undefined ? {} : { calendars: init.calendars }, me);
+    const served: Served = { google: init.google ?? ON, choices: init.choices ?? [PRIMARY, SHARED] };
+    serveGoogle(fake, served);
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    return { api, fake, served };
+  }
+
+  /** Google's script as a fake `window.google`, whose code clients record their configs. */
+  function fakeGis(): CodeClientConfig[] {
+    const configs: CodeClientConfig[] = [];
+    const initCodeClient = (config: CodeClientConfig): { requestCode: () => void } => {
+      configs.push(config);
+      return { requestCode: () => undefined };
+    };
+    (window as { google?: unknown }).google = { accounts: { id: { initialize: jest.fn(), renderButton: jest.fn() }, oauth2: { initCodeClient } } };
+    return configs;
+  }
+
+  /** "Add a Google calendar", the script's load, "Continue to Google", and Google's code for that press. */
+  async function connectWith(panel: HTMLElement, api: FakePortalApi, answer: () => unknown): Promise<void> {
+    const configs = fakeGis();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    act(() => { document.querySelector(`script[src="${GIS_SRC}"]`)?.dispatchEvent(new Event('load')); });
+    fireEvent.click(await within(panel).findByRole('button', { name: 'Continue to Google' }));
+    const config = configs.at(-1);
+    if (config === undefined) throw new Error('no code client');
+    api.answers[`${GOOGLE_PATH}/connect`] = answer;
+    act(() => { config.callback({ code: CODE, state: config.state }); });
+  }
+
+  function box(panel: HTMLElement, name: string): HTMLInputElement {
+    return within(panel).getByRole<HTMLInputElement>('checkbox', { name });
+  }
+
+  function closeOf(panel: HTMLElement): HTMLElement {
+    return within(panel).getByRole('button', { name: 'Close' });
+  }
+
+  test('the actions in order with Google calendars on: Import, Add a link, Add a Google calendar, then the help; a Google row and an unknown kind’s row', async () => {
+    const at = '2026-11-14T20:42:00.000Z';
+    const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_revoked', lastSuccessAt: at });
+    const later = ownerCalendar({ id: 'c4', label: 'Later', kind: 'outlook', host: 'outlook.example.com', eventCount: 3, lastSuccessAt: at });
+    await renderGoogle({ calendars: [KITCHEN, BOOKINGS, google, later] });
+    const panel = openPopover();
+    const order = [
+      within(panel).getByRole('button', { name: 'Import a calendar file' }), within(panel).getByRole('button', { name: 'Add a link' }),
+      within(panel).getByRole('button', { name: 'Add a Google calendar' }), within(panel).getByRole('button', { name: 'How importing works' }),
+    ];
+    order.slice(1).forEach((element, index) => {
+      expect((order[index] as Element).compareDocumentPosition(element) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    });
+    const [, , googleRow, laterRow] = within(within(panel).getByRole('list')).getAllByRole('listitem');
+    if (googleRow === undefined || laterRow === undefined) throw new Error('rows missing');
+    expect(lines(googleRow)).toEqual([
+      'Google calendar', 'Google calendar, 40 events',
+      'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.',
+      `Updated ${formatDate(at)}, ${formatTime(at)}`,
+    ]);
+    expect(within(googleRow).getAllByRole('button').map((button) => button.textContent)).toEqual(['Refresh now', 'Remove']);
+    expect(lines(laterRow)).toEqual(['Later', 'Calendar, 3 events']);
+    expect(within(laterRow).getAllByRole('button').map((button) => button.textContent)).toEqual(['Remove']);
+    // The help names Google calendars while they are on.
+    expect(within(panel).getByText(helpText(true))).toBeTruthy();
+    // Google's script waits for the person.
+    expect(document.querySelector(`script[src="${GIS_SRC}"]`)).toBeNull();
+  });
+
+  test('Google calendars not available: no “Add a Google calendar”, and a stored Google calendar still lists with Refresh now and Remove', async () => {
+    const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40 });
+    const { api } = await renderGoogle({ calendars: [google], google: { available: false, connected: false, clientId: null } });
+    const panel = openPopover();
+    expect(within(panel).queryByRole('button', { name: 'Add a Google calendar' })).toBeNull();
+    // The help says nothing of a Google option the popover doesn't offer.
+    expect(within(panel).getByText(helpText(false))).toBeTruthy();
+    expect(within(panel).queryByText(/Or add a Google calendar/)).toBeNull();
+    expect(within(panel).getByText('Google calendar, 40 events')).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: 'Refresh now: Google calendar' })).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: 'Remove Google calendar' })).toBeTruthy();
+    api.answers[`${CALENDARS_PATH}/c3/refresh`] = () => ({ calendar: { ...google, status: 'google_unavailable' } });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Google calendar' }));
+    expect((await within(panel).findAllByText('Couldn’t refresh: Townwise couldn’t reach Google.')).length).toBeGreaterThan(0);
+  });
+
+  test('connect and pick: the code is posted with the agreement, the picker opens, two adds post one after the other with a line each, the list and the stored events read once, and focus moves to the messages line', async () => {
+    const { api, fake } = await renderGoogle();
+    const panel = openPopover();
+    await connectWith(panel, api, () => ({ calendars: [PRIMARY, SHARED] }));
+    expect(await within(panel).findByText('Choose the calendars to add to Main Street Bar.')).toBeTruthy();
+    expect(writes(api)).toEqual([{ method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true } }]);
+    // The picker took the place of Google's wait, so its first control has focus.
+    expect(document.activeElement).toBe(box(panel, 'Owner'));
+    fireEvent.click(box(panel, 'Owner'));
+    fireEvent.click(box(panel, 'Bookings'));
+    const first = deferred<unknown>();
+    const second = deferred<unknown>();
+    const answers = [first, second];
+    api.answers[CALENDARS_PATH] = () => (answers.shift() ?? first).promise;
+    const reads = fake.paths.length;
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add 2 calendars' }));
+    expect(await within(panel).findByRole('button', { name: 'Adding…' })).toBeTruthy();
+    // One at a time: the second waits for the first's answer.
+    expect(writes(api).slice(1)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'google', googleCalendarId: PRIMARY.id } }]);
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBe('true');
+    const owner = ownerCalendar({ id: 'c5', label: 'Google calendar', kind: 'google', eventCount: 40 });
+    const bookings = ownerCalendar({ id: 'c6', label: 'Bookings', kind: 'google', eventCount: 3 });
+    await act(async () => { first.resolve({ calendar: owner }); await Promise.resolve(); });
+    await waitFor(() => { expect(writes(api)).toHaveLength(3); });
+    expect(writes(api)[2]).toEqual({ method: 'POST', path: CALENDARS_PATH, body: { kind: 'google', googleCalendarId: SHARED.id } });
+    expect(within(panel).getByText('Added Google calendar: 40 events.')).toBeTruthy();
+    fake.calendars = [owner, bookings];
+    await act(async () => { second.resolve({ calendar: bookings }); await Promise.resolve(); });
+    expect(await within(panel).findByText('Added Bookings: 3 events.')).toBeTruthy();
+    await waitFor(() => { expect(focusOnLine(panel, 'Added Bookings: 3 events.')).toBe(true); });
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Your calendars (2)' })).toBeTruthy(); });
+    const again = fake.paths.slice(reads);
+    expect(again.filter((path) => path === CALENDARS_PATH)).toHaveLength(1);
+    expect(again.filter((path) => path === NOVEMBER_EVENTS)).toHaveLength(1);
+    expect(again.filter((path) => path.includes('/forecast?') || path.endsWith('/notes'))).toEqual([]);
+    // The section closed, and "Add a Google calendar" is back.
+    expect(within(panel).queryByText('Choose the calendars to add to Main Street Bar.')).toBeNull();
+    expect(within(panel).getByRole('button', { name: 'Add a Google calendar' })).toBeTruthy();
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
+    // No code, token or Google id in any path.
+    for (const call of api.calls) {
+      expect(call.path).not.toContain(CODE);
+      expect(call.path).not.toContain(SHARED.id);
+    }
+  });
+
+  test('a refusal of the connect shows the explainer again with its words, between the explainer and Continue', async () => {
+    const { api } = await renderGoogle();
+    const panel = openPopover();
+    await connectWith(panel, api, () => refusal(409, 'google_other_account'));
+    const words = await within(panel).findByText(
+      'Choose the Google account you sign in to Townwise with. To add another account’s calendar, share it with that account in Google Calendar first.',
+    );
+    const explainer = within(panel).getByText(GOOGLE_COPY.explainer);
+    const go = within(panel).getByRole('button', { name: 'Continue to Google' });
+    expect(document.activeElement).toBe(go);
+    // In view next to the focused button, not in the messages line above the long explainer (UI check, 2026-11-16).
+    expect(explainer.compareDocumentPosition(words) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(words.compareDocumentPosition(go) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(words.getAttribute('role')).toBe('alert');
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test('a window blocked inside the press shows its words above “Continue to Google” and scrolls Continue into view, each time', async () => {
+    await renderGoogle();
+    const panel = openPopover();
+    // A blocked window answers inside requestCode, in the press itself, so Continue never remounts.
+    const initCodeClient = (config: CodeClientConfig): { requestCode: () => void } => ({
+      requestCode: () => { config.error_callback({ type: 'popup_failed_to_open' }); },
+    });
+    (window as { google?: unknown }).google = { accounts: { id: { initialize: jest.fn(), renderButton: jest.fn() }, oauth2: { initCodeClient } } };
+    const scrolled: Element[] = [];
+    const scrollIntoView = jest.fn(function (this: Element) { scrolled.push(this); });
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', { value: scrollIntoView, configurable: true, writable: true });
+    try {
+      fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+      act(() => { document.querySelector(`script[src="${GIS_SRC}"]`)?.dispatchEvent(new Event('load')); });
+      const go = await within(panel).findByRole('button', { name: 'Continue to Google' });
+      fireEvent.click(go);
+      const words = await within(panel).findByText(GOOGLE_COPY.popupBlocked);
+      expect(words.compareDocumentPosition(go) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+      expect(document.activeElement).toBe(go);
+      expect(scrolled).toEqual([go]);
+      fireEvent.click(go);
+      await waitFor(() => { expect(scrolled).toEqual([go, go]); });
+      expect(scrollIntoView).toHaveBeenLastCalledWith({ block: 'nearest' });
+    } finally {
+      delete (HTMLElement.prototype as { scrollIntoView?: unknown }).scrollIntoView;
+    }
+  });
+
+  test('while the code is posted the popover waits: Escape and a press outside do nothing and Close is disabled', async () => {
+    const { api } = await renderGoogle();
+    const panel = openPopover();
+    const answer = deferred<unknown>();
+    await connectWith(panel, api, () => answer.promise);
+    expect(within(panel).getByText('Connecting your Google account…')).toBeTruthy();
+    expect(within(panel).queryByText('Waiting for Google…')).toBeNull();
+    // "Stop waiting" stays in place, disabled, so the focus it had stays in the section.
+    const stop = within(panel).getByRole('button', { name: 'Stop waiting' });
+    expect(stop.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(stop);
+    fireEvent.click(stop);
+    expect(within(panel).getByText('Connecting your Google account…')).toBeTruthy();
+    escape();
+    pressOutside();
+    expect(screen.getByRole('dialog', { name: 'Your calendars' })).toBe(panel);
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBe('true');
+    await act(async () => { answer.resolve({ calendars: [PRIMARY] }); await Promise.resolve(); });
+    expect(await within(panel).findByRole('checkbox', { name: 'Owner' })).toBeTruthy();
+    await waitFor(() => { expect(document.activeElement).toBe(box(panel, 'Owner')); });
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test('while a connected person’s choices are read, “Add a Google calendar” stays in place as “Loading your Google calendars…”, disabled with focus, and the popover waits for them', async () => {
+    const choices = deferred<GoogleChoice[]>();
+    await renderGoogle({ google: { ...ON, connected: true }, choices: choices.promise });
+    const panel = openPopover();
+    const action = within(panel).getByRole('button', { name: 'Add a Google calendar' });
+    focus(action);
+    fireEvent.click(action);
+    expect(within(panel).getByRole('button', { name: 'Loading your Google calendars…' })).toBe(action);
+    expect(action.getAttribute('aria-disabled')).toBe('true');
+    expect(document.activeElement).toBe(action);
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    escape();
+    pressOutside();
+    expect(screen.getByRole('dialog', { name: 'Your calendars' })).toBe(panel);
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBe('true');
+    await act(async () => { choices.resolve([PRIMARY, SHARED]); await Promise.resolve(); });
+    await waitFor(() => { expect(document.activeElement).toBe(box(panel, 'Owner')); });
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test('a connect reads the list again, so once it says the person is connected, “Add a Google calendar” after Cancel reads the choices instead of opening Google’s window again', async () => {
+    const revoked = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_revoked' });
+    const { api, fake, served } = await renderGoogle({ calendars: [revoked] });
+    // The connect heals that calendar, which the connection then backs, so Cancel's drop is refused.
+    fake.deletes['/api/org/google-connection'] = refusal(409, 'google_connection_in_use');
+    const panel = openPopover();
+    const lists = (): number => fake.paths.filter((path) => path === CALENDARS_PATH).length;
+    const before = lists();
+    await connectWith(panel, api, () => {
+      served.google = { ...ON, connected: true };
+      return { calendars: [{ ...PRIMARY, added: true }, SHARED] };
+    });
+    await within(panel).findByText('Choose the calendars to add to Main Street Bar.');
+    await waitFor(() => { expect(lists()).toBe(before + 1); });
+    fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(writes(api).at(-1)?.method).toBe('DELETE'); });
+    const scriptsBefore = document.querySelectorAll(`script[src="${GIS_SRC}"]`).length;
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    expect(within(panel).getByRole('button', { name: 'Loading your Google calendars…' })).toBeTruthy();
+    expect(await within(panel).findByText('Choose the calendars to add to Main Street Bar.')).toBeTruthy();
+    expect(fake.paths.filter((path) => path === GOOGLE_PATH)).toHaveLength(1);
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    expect(document.querySelectorAll(`script[src="${GIS_SRC}"]`)).toHaveLength(scriptsBefore);
+    expect(writes(api).filter((call) => call.path.endsWith('/connect'))).toHaveLength(1);
+  });
+
+  test('connected: the choices are read first, the primary first with “Your main calendar”, and one already added is checked, disabled and “Added”', async () => {
+    const { fake } = await renderGoogle({
+      google: { ...ON, connected: true }, choices: [{ ...PRIMARY, added: true }, SHARED],
+      calendars: [ownerCalendar({ id: 'c5', label: 'Google calendar', kind: 'google', eventCount: 40 })],
+    });
+    const panel = openPopover();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    expect(within(panel).getByText('Loading your Google calendars…')).toBeTruthy();
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    expect(await within(panel).findByText('Choose the calendars to add to Main Street Bar.')).toBeTruthy();
+    expect(fake.paths).toContain(GOOGLE_PATH);
+    expect(document.querySelector(`script[src="${GIS_SRC}"]`)).toBeNull();
+    const boxes = within(panel).getAllByRole('checkbox');
+    expect(boxes.map((each) => each.closest('label')?.textContent)).toEqual(['Owner', 'Bookings']);
+    const owner = box(panel, 'Owner');
+    expect(owner.checked).toBe(true);
+    expect(owner.getAttribute('aria-disabled')).toBe('true');
+    const described = (owner.getAttribute('aria-describedby') ?? '').split(' ').map((id) => document.getElementById(id)?.textContent);
+    expect(described).toEqual(['Your main calendar', 'Added']);
+    expect(box(panel, 'Bookings').checked).toBe(false);
+    expect(box(panel, 'Bookings').getAttribute('aria-disabled')).toBeNull();
+    expect(within(panel).getByText('This location can add 4 more.')).toBeTruthy();
+    expect(within(panel).getByText('To add another Google account’s calendar, share it with this account in Google Calendar first.')).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: 'Add calendars' }).getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(box(panel, 'Bookings'));
+    expect(within(panel).getByRole('button', { name: 'Add calendar' }).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test.each([
+    ['google_reconnect', 'the reconnect words', 'Connect your Google account again to add calendars.'],
+    ['google_not_connected', 'no message', null],
+  ])('connected, but the choices answer 409 %s: the explainer, with %s', async (code, _shown, words) => {
+    await renderGoogle({ google: { ...ON, connected: true }, choices: refusal(409, code) });
+    const panel = openPopover();
+    fakeGis();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    expect(await within(panel).findByText(GOOGLE_COPY.explainer)).toBeTruthy();
+    if (words === null) expect(within(panel).queryByRole('alert')).toBeNull();
+    else expect(within(panel).getByText(words)).toBeTruthy();
+  });
+
+  test('connected, but Google can’t be reached: the section closes with the words, and “Add a Google calendar” is back', async () => {
+    await renderGoogle({ google: { ...ON, connected: true }, choices: refusal(503, 'google_unavailable') });
+    const panel = openPopover();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    expect(await within(panel).findByText('Townwise couldn’t reach Google. Try again in a few minutes.')).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: 'Add a Google calendar' })).toBeTruthy();
+  });
+
+  test('room for two more: with 3 calendars and 4 choices it says “This location can add 2 more.”, and a third check is disabled until one is unchecked', async () => {
+    const three = [KITCHEN, BOOKINGS, ownerCalendar({ id: 'c3', label: 'Bar', kind: 'link', host: 'example.org' })];
+    await renderGoogle({ calendars: three, google: { ...ON, connected: true }, choices: [PRIMARY, SHARED, STAFF, PRIVATE] });
+    const panel = openPopover();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    expect(await within(panel).findByText('This location can add 2 more.')).toBeTruthy();
+    fireEvent.click(box(panel, 'Owner'));
+    fireEvent.click(box(panel, 'Bookings'));
+    expect(box(panel, 'Staff rota').getAttribute('aria-disabled')).toBe('true');
+    fireEvent.click(box(panel, 'Staff rota'));
+    expect(box(panel, 'Staff rota').checked).toBe(false);
+    expect(within(panel).getByRole('button', { name: 'Add 2 calendars' })).toBeTruthy();
+    fireEvent.click(box(panel, 'Owner'));
+    expect(box(panel, 'Staff rota').getAttribute('aria-disabled')).toBeNull();
+    fireEvent.click(box(panel, 'Staff rota'));
+    expect(box(panel, 'Staff rota').checked).toBe(true);
+  });
+
+  test('Cancel after connecting, with nothing added, drops the connection and closes the section; Cancel after reading a connected person’s choices drops nothing', async () => {
+    const { api } = await renderGoogle();
+    const panel = openPopover();
+    await connectWith(panel, api, () => ({ calendars: [PRIMARY, SHARED] }));
+    await within(panel).findByText('Choose the calendars to add to Main Street Bar.');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
+    expect(within(panel).queryByText('Choose the calendars to add to Main Street Bar.')).toBeNull();
+    expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    await waitFor(() => { expect(writes(api).at(-1)).toEqual({ method: 'DELETE', path: '/api/org/google-connection', body: undefined }); });
+    cleanup();
+
+    const connected = await renderGoogle({ google: { ...ON, connected: true } });
+    const again = openPopover();
+    fireEvent.click(within(again).getByRole('button', { name: 'Add a Google calendar' }));
+    await within(again).findByText('Choose the calendars to add to Main Street Bar.');
+    fireEvent.click(within(again).getByRole('button', { name: 'Cancel' }));
+    expect(writes(connected.api)).toEqual([]);
+  });
+
+  test('Cancel’s drop answered 409 or 404 changes nothing on the page', async () => {
+    const { api, fake } = await renderGoogle();
+    fake.deletes['/api/org/google-connection'] = refusal(409, 'google_connection_in_use');
+    const panel = openPopover();
+    await connectWith(panel, api, () => ({ calendars: [PRIMARY] }));
+    await within(panel).findByText('Choose the calendars to add to Main Street Bar.');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(writes(api).at(-1)?.method).toBe('DELETE'); });
+    expect(within(panel).queryByRole('alert')).toBeNull();
+    expect(within(panel).getByRole('button', { name: 'Add a Google calendar' })).toBeTruthy();
+  });
+
+  test('the section survives closing: the picker and its checks show again when the popover opens, with focus on Close', async () => {
+    await renderGoogle({ google: { ...ON, connected: true } });
+    let panel = openPopover();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    await within(panel).findByText('Choose the calendars to add to Main Street Bar.');
+    fireEvent.click(box(panel, 'Bookings'));
+    escape();
+    expect(screen.queryByRole('dialog', { name: 'Your calendars' })).toBeNull();
+    panel = openPopover();
+    expect(within(panel).getByText('Choose the calendars to add to Main Street Bar.')).toBeTruthy();
+    expect(box(panel, 'Bookings').checked).toBe(true);
+    expect(within(panel).getByRole('button', { name: 'Add calendar' })).toBeTruthy();
+    await waitFor(() => { expect(document.activeElement).toBe(closeOf(panel)); });
+  });
+
+  test('a refused add with nothing added keeps the picker and its checks, with the refusal named by the calendar and focus on the add button', async () => {
+    const { api } = await renderGoogle({ google: { ...ON, connected: true } });
+    const panel = openPopover();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    await within(panel).findByText('Choose the calendars to add to Main Street Bar.');
+    fireEvent.click(box(panel, 'Owner'));
+    fireEvent.click(box(panel, 'Bookings'));
+    const refusals = [refusal(409, 'calendar_already_added'), refusal(400, 'google_forbidden')];
+    api.answers[CALENDARS_PATH] = () => refusals.shift();
+    const add = within(panel).getByRole('button', { name: 'Add 2 calendars' });
+    act(() => { add.focus(); });
+    fireEvent.click(add);
+    expect(await within(panel).findByText('Bookings: Google won’t share that calendar’s events with Townwise.')).toBeTruthy();
+    expect(within(panel).getByText('Owner: This calendar is already on this location.')).toBeTruthy();
+    expect(writes(api).filter((call) => call.path === CALENDARS_PATH)).toHaveLength(2);
+    expect(box(panel, 'Bookings').checked).toBe(true);
+    await waitFor(() => { expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Add 2 calendars' })); });
+  });
+
+  test('a refusal that isn’t about one calendar ends the batch; one that says the connection is gone shows the explainer', async () => {
+    const { api } = await renderGoogle({ google: { ...ON, connected: true } });
+    const panel = openPopover();
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add a Google calendar' }));
+    await within(panel).findByText('Choose the calendars to add to Main Street Bar.');
+    fireEvent.click(box(panel, 'Owner'));
+    fireEvent.click(box(panel, 'Bookings'));
+    fakeGis();
+    api.answers[CALENDARS_PATH] = () => refusal(409, 'google_reconnect');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Add 2 calendars' }));
+    expect(await within(panel).findByText('Owner: Connect your Google account again to add calendars.')).toBeTruthy();
+    expect(within(panel).getByText(GOOGLE_COPY.explainer)).toBeTruthy();
+    expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'google', googleCalendarId: PRIMARY.id } }]);
+    await waitFor(() => { expect(focusOnLine(panel, 'Owner: Connect your Google account again to add calendars.')).toBe(true); });
+  });
+
+  test('Refresh now on a Google calendar answered google_revoked shows its words above its Updated time', async () => {
+    const at = '2026-11-14T20:42:00.000Z';
+    const google = ownerCalendar({ id: 'c2', label: 'Google calendar', kind: 'google', eventCount: 40, lastSuccessAt: at });
+    const { api, fake } = await renderGoogle({ calendars: [google] });
+    const panel = openPopover();
+    api.answers[REFRESH_PATH] = () => {
+      fake.calendars = [{ ...google, status: 'google_revoked' }];
+      return { calendar: { ...google, status: 'google_revoked' } };
+    };
+    fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Google calendar' }));
+    const words = 'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.';
+    await waitFor(() => {
+      expect(lines(within(within(panel).getByRole('list')).getByRole('listitem'))).toEqual([
+        'Google calendar', 'Google calendar, 40 events', words, `Updated ${formatDate(at)}, ${formatTime(at)}`,
+      ]);
+    });
+  });
+
+  test('view-as: “Add a Google calendar” stays in place, disabled and described by the read-only line; no choices are read and nothing is sent', async () => {
+    const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40 });
+    const { api, fake } = await renderGoogle({ calendars: [google] }, viewAsMe(ACCESS.admin));
+    const panel = openPopover();
+    const line = within(panel).getByText('Read-only while viewing as gm@example.org.');
+    const action = within(panel).getByRole('button', { name: 'Add a Google calendar' });
+    expect(action.getAttribute('aria-disabled')).toBe('true');
+    expect(action.getAttribute('aria-describedby')?.split(' ')).toContain(line.id);
+    fireEvent.click(action);
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    expect(fake.paths).not.toContain(GOOGLE_PATH);
+    expect(document.querySelector(`script[src="${GIS_SRC}"]`)).toBeNull();
+    for (const name of ['Refresh now: Google calendar', 'Remove Google calendar']) {
+      expect(within(panel).getByRole('button', { name }).getAttribute('aria-disabled')).toBe('true');
+    }
+    expect(writes(api)).toEqual([]);
+  });
 });

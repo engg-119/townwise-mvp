@@ -148,6 +148,7 @@ const ICS = [
   'END:VCALENDAR', '',
 ].join('\r\n');
 
+// The list here answers without `google` (Google calendars off), so the help names none.
 const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
 const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar.';
 const NOT_CALENDAR = 'This doesn’t look like a calendar file (.ics).';

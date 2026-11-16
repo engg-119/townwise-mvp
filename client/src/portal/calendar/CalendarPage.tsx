@@ -29,7 +29,7 @@ import { Popover, type PopoverAnchor, type PopoverProps } from '../ui/Popover';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
 import { CalendarWeek } from './CalendarWeek';
-import { fetchOwnerCalendarEvents, fetchOwnerCalendars, type OwnerCalendarEvent } from './api';
+import { fetchOwnerCalendarEvents, fetchOwnerCalendars, GOOGLE_OFF, type OwnerCalendarEvent } from './api';
 import {
   buildGrid, buildWeek, gridMonthFor, pastRangeFor, readRangeFor, shownFor, stepWeek, weekLabel, weekStartFor, type DateRange,
 } from './grid';
@@ -52,7 +52,7 @@ import { YourCalendars } from './YourCalendars';
 // or last row, browser back or forward, a link). It reads the notes with the business rules (D31; the day lists the
 // rules whose schedule covers it, edited on Rules), the location's calendars for "Your calendars" (spec 10.18,
 // YourCalendars.tsx: part of the first load, so the button's name never changes after the page shows, and its failure
-// leaves the page showing), and over the shown view's range (grid.ts readRangeFor: the grid's, and the week's own days
+// leaves the page showing; with the list's `google`, whether Google calendars are on, the last one read is kept), and over the shown view's range (grid.ts readRangeFor: the grid's, and the week's own days
 // only when they run past the grid's) its town calendar, its stored days (the past part only), its calendars' stored
 // events and its forecast (one read of at most 42 days each), keyed by the range, so a switch or a day keeping it reads
 // nothing. On a change of range the new grid or week shows at once, dimmed, with the days the kept reads cover and
@@ -69,9 +69,9 @@ import { YourCalendars } from './YourCalendars';
 // forecast from notes on read (spec 14.5) and the client never adds a note's guests itself; meanwhile the old figures
 // stay, dimmed and aria-busy, and a save's notice says “Saved.” until the new read says what the note did to the day.
 // Under view-as the page shows in full with its writes disabled in place. The location's own calendars (spec 16.3 P28
-// and 17, D33) are kept by the API, each an imported .ics file or a link, and their events show as "Your calendar"
-// on web and native; after one is added the list and the range's stored events read again (never the forecast: stored
-// events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
+// and 17, D33, D39) are kept by the API, each an imported .ics file, a link or a Google calendar, and their events show
+// as "Your calendar" on web and native; after one is added the list and the range's stored events read again (never
+// the forecast: stored events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
 // events with its dates and hours but never its title; it is disabled under view-as. "Today" is the device's date.
 
 const READ_ONLY_ID = 'calendar-ro';
@@ -251,7 +251,7 @@ function CalendarView(): React.JSX.Element {
   const forecastWindow = forecastFailed || forecast.data === null || !sameRange(shown?.range, forecast.data.range) ? null : forecast.data.window;
   // The stored events and "Your calendar" show only while the list's last read answered with a calendar: a failed list
   // read leaves the grid without them (design decision 11), as the button then reads "Your calendars".
-  const hasCalendars = calendars.error === null && (calendars.data ?? []).length > 0;
+  const hasCalendars = calendars.error === null && (calendars.data?.calendars ?? []).length > 0;
   const input = useMemo<CalendarInput | null>(() => (shown === null || notes.data === null ? null : {
     today, covered: shown.range, forecast: forecastWindow, salesDays: shown.days, events: shown.calendar.events, notes: notes.data.list,
     rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], filters,
@@ -457,7 +457,8 @@ function CalendarView(): React.JSX.Element {
         onView={onView}
         trailing={(
           <YourCalendars
-            calendars={calendars.data}
+            calendars={calendars.data?.calendars ?? null}
+            google={calendars.data?.google ?? GOOGLE_OFF}
             failed={calendars.error !== null}
             reading={calendars.busy}
             onRetry={readCalendarsAgain}

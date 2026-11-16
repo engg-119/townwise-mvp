@@ -197,7 +197,12 @@ describe('route table', () => {
   });
 
   // D25's route classification: people, seats and requests stay closed while open as admin; every other non-staff route runs.
-  const REFUSED = ['me.join', 'me.decline', 'me.welcome', 'requests.create', 'org.leave', 'org.members.list', 'org.members.add', 'org.members.update', 'org.members.remove'];
+  // connect-google-calendar (design decision 8): connecting Google calendars is a member's own Google account, which
+  // staff never connect to someone else's organization, so its three routes stay closed too.
+  const REFUSED = [
+    'me.join', 'me.decline', 'me.welcome', 'requests.create', 'org.leave', 'org.members.list', 'org.members.add', 'org.members.update', 'org.members.remove',
+    'org.google_calendars.connect', 'org.google_calendars.list', 'org.google_calendars.disconnect',
+  ];
   it('D25: every route runs while open as admin except staff routes and the people, seat and request routes', () => {
     for (const r of TOWNWISE_ROUTES) {
       const staffRoute = r.policy === 'staff' || r.policy === 'staff_self';
@@ -331,6 +336,20 @@ describe('route table', () => {
       { id: 'org.owner_calendars.remove', method: 'DELETE', path: `${base}/:calendarId`, bodyLimit: 'none', ...row },
     ]);
     expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '2mb').map((r) => r.id)).toEqual(['org.owner_calendars.create']);
+  });
+
+  it('Google calendars: three member routes closed open as admin, sharing the google_calendars limiter, a 2kb body on connect only', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.google_calendars.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    const row = { policy: 'member', limiter: 'google_calendars', openAsAdmin: undefined };
+    expect(rows).toEqual([
+      { id: 'org.google_calendars.connect', method: 'POST', path: '/org/locations/:locationId/google-calendars/connect', bodyLimit: '2kb', ...row },
+      { id: 'org.google_calendars.list', method: 'GET', path: '/org/locations/:locationId/google-calendars', bodyLimit: 'none', ...row },
+      { id: 'org.google_calendars.disconnect', method: 'DELETE', path: '/org/google-connection', bodyLimit: 'none', ...row },
+    ]);
+    // [CONFIRM: 30 Google calendar calls an account an hour]; every call reaches Google, so a store outage denies.
+    expect(ROUTE_LIMITS.google_calendars).toEqual({ name: 'townwise:google-calendars', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' });
+    expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'google_calendars').map((r) => r.id)).toEqual(rows.map((r) => r.id));
   });
 
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {

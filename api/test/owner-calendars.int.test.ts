@@ -7,6 +7,9 @@
 // certificate names the link hosts. The injected lookup answers the test names; the injected transport only changes the
 // port, trusts that certificate alone, and, as a NAT on the way would, moves the one public address the names resolve
 // to onto 127.0.0.1. No answer, audit event or log line may hold a link's address. Every title here is made up.
+// connect-google-calendar: the list answers `google` (off here unless a Google client is passed), and "Refresh now"
+// takes a Google calendar, read through helpers/google.ts's fake client, while a file still answers not_a_link. The
+// Google routes and the Google add are tested in google-calendars.int.test.ts, ending access in google-access.int.test.ts.
 import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 import type { LookupAddress } from 'node:dns';
 import { once } from 'node:events';
@@ -26,6 +29,7 @@ import { LINK_ADD_BUDGET, type OwnerCalendarView } from '../src/handlers/owner-c
 import { MAX_CALENDARS, REFRESH_INTERVAL_MS } from '../src/stores/owner-calendars.ts';
 import { localDay } from '../src/time-zones.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addOwnerCalendar, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { allDay, AUTH_CODE, createFakeGoogle, GOOGLE_CLIENT_ID, linkGoogle, SHARED_ID } from './helpers/google.ts';
 import {
   call, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -73,6 +77,8 @@ const SECOND = ics(
   vevent('UID:lunch@example.test', 'SUMMARY:Graduation lunch', 'DTSTART;VALUE=DATE:20260627'),
 );
 const JUNE = '?from=2026-06-01&to=2026-06-30';
+/** The list's `google` while Google calendars are off (connect-google-calendar): no Google client is passed here. */
+const GOOGLE_OFF = { available: false, connected: false, clientId: null };
 
 /** FIRST padded to exactly `bytes` bytes with lines of 40 to 79 bytes that the parser passes over: about 26,000 CRLFs. */
 function padded(bytes: number): string {
@@ -221,7 +227,7 @@ describe('with the calendar key', () => {
       lastSuccessAt: now, lastAttemptAt: now, createdAt: now,
     });
     expect(sent).toEqual([]);
-    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [calendar] });
+    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
 
     // An event keeps its UID, title, dates and hours: never its description, location, attendees or organizer.
     const rows = await eventRows(calendar.id);
@@ -300,7 +306,7 @@ describe('with the calendar key', () => {
     expect(open(KEY, String(raw?.sealedAddress))).toEqual({ ok: true, text: ADDRESS });
 
     const listed = await send(base(t), t.member);
-    expect(listed.body).toEqual({ calendars: [calendar] });
+    expect(listed.body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
     expect(await titles(t)).toEqual(['Rehearsal dinner', 'Office party']);
     const [event] = await auditOf(calendar.id);
     expect(event?.action).toBe('owner_calendar.added');
@@ -451,7 +457,7 @@ describe('with the calendar key', () => {
     expect((await send(`${base(t)}/${gone.id}`, t.member, { method: 'DELETE' })).status).toBe(204);
     expect(await eventRows(gone.id)).toEqual([]);
     expect(await titles(t)).toEqual(['Kept event']);
-    expect((await send(base(t), t.member)).body).toEqual({ calendars: [kept] });
+    expect((await send(base(t), t.member)).body).toEqual({ calendars: [kept], google: GOOGLE_OFF });
     const removed = (await auditOf(gone.id)).at(-1);
     expect(removed).toMatchObject({ action: 'owner_calendar.removed', target: { type: 'owner_calendar', id: gone.id } });
     expect(removed?.details).toEqual({ locationId: t.locationId, calendarId: gone.id, kind: 'link', eventCount: 2 });
@@ -506,7 +512,7 @@ describe('with the calendar key', () => {
     await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: t.member.userId, orgId: t.orgId });
     const before = (await auditEvents(server)).length;
     sent.length = 0;
-    expect((await send(base(t), staff)).body).toEqual({ calendars: [calendar] });
+    expect((await send(base(t), staff)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
     expect((await send(`${base(t)}/events${JUNE}`, staff)).status).toBe(200);
     for (const [path, init] of [
       [base(t), { json: { kind: 'file', label: LABEL, ics: FIRST } }], [`${base(t)}/${calendar.id}/refresh`, { method: 'POST' }],
@@ -577,5 +583,51 @@ describe('without the calendar key', () => {
 
     expect(await addFile(t, LABEL)).toMatchObject({ status: 201, body: { calendar: { kind: 'file', eventCount: 2 } } });
     expect(fetch).not.toHaveBeenCalled();
+  });
+});
+
+describe('with Google calendars on', () => {
+  const google = createFakeGoogle();
+
+  beforeAll(async () => {
+    server = await startTownwiseServer({
+      calendarKey: KEY, calendarFetcher: fetcher, googleCalendar: google.client, googleCalendarClientId: GOOGLE_CLIENT_ID, revokeGoogle: google.revoke,
+    });
+  });
+  afterAll(async () => { await server.close(); });
+  beforeEach(async () => {
+    await server.redis.flushdb();
+    google.reset();
+    sent.length = 0;
+  });
+
+  it('lists a Google calendar with the list’s google, refreshes it now as any member, and still refuses a file’s refresh with not_a_link', async () => {
+    const t = await tenant('Google Grill');
+    await linkGoogle(server, t.member.userId, 'google-subject-grill');
+    google.state.subject = 'google-subject-grill';
+    google.state.events = { [SHARED_ID]: [allDay('shared-1', 'Wine tasting', '2026-06-12')] };
+    const file = calendarOf(await addFile(t, LABEL));
+    expect((await send(`/api/org/locations/${t.locationId}/google-calendars/connect`, t.member, { json: { code: AUTH_CODE, agreed: true } })).status).toBe(200);
+    const added = await send(base(t), t.member, { json: { kind: 'google', googleCalendarId: SHARED_ID } });
+    expect(added.status).toBe(201);
+    const calendar = calendarOf(added);
+    expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok' });
+    // Connected is the caller's own: the admin, who never connected, reads false.
+    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID } });
+    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID } });
+
+    google.state.events[SHARED_ID] = [allDay('shared-2', 'Book club', '2026-06-15'), allDay('shared-3', 'Graduation lunch', '2026-06-27')];
+    server.clock.advance(MINUTE);
+    const refreshed = await send(`${base(t)}/${calendar.id}/refresh`, t.admin, { method: 'POST' });
+    const at = server.clock.now().toISOString();
+    expect(refreshed.status).toBe(200);
+    expect(calendarOf(refreshed)).toEqual({ ...calendar, eventCount: 2, lastSuccessAt: at, lastAttemptAt: at });
+    expect(await titles(t)).toEqual(['Rehearsal dinner', 'Book club', 'Office party', 'Graduation lunch']);
+    expect((await auditOf(calendar.id)).map((event) => [event.action, event.details])).toEqual([
+      ['owner_calendar.added', { locationId: t.locationId, calendarId: calendar.id, kind: 'google', eventCount: 1, status: 'ok' }],
+      ['owner_calendar.refreshed', { locationId: t.locationId, calendarId: calendar.id, kind: 'google', eventCount: 2, status: 'ok' }],
+    ]);
+    expect(await send(`${base(t)}/${file.id}/refresh`, t.member, { method: 'POST' })).toMatchObject({ status: 400, body: { error: 'not_a_link' } });
+    expect(sent).toEqual([]);
   });
 });

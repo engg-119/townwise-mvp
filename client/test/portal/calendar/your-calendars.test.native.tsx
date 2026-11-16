@@ -9,14 +9,16 @@ jest.mock('expo-splash-screen', () => ({
 
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
+import type { GoogleCalendars } from '../../../src/portal/calendar/api';
 import { ACCESS, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
 import { CALENDARS_PATH, calendarFake, forecastDay, forecastOf, ownerCalendar, type CalendarFake } from './fakes';
 
 // "Your calendars" on native (P28; owner-calendar's "The Calendar page shows and manages stored calendars", its Native
-// scenario): the header row's button, with an expanded state, opens the popover in a Modal; there is no calendar file
-// import, so the line pointing to the web shows in its place; Add a link works inside it; and Android's back button
+// scenario, and google-calendar's): the header row's button, with an expanded state, opens the popover in a Modal;
+// there is no calendar file import and no "Add a Google calendar", so the line pointing to the web shows in their
+// place, while Google calendars list with Refresh now and Remove; Add a link works inside it; and Android's back button
 // closes it, keeping what was typed. Today is Wed, Nov 11, 2026. Synthetic figures and made-up names only.
 
 beforeEach(() => {
@@ -35,7 +37,10 @@ afterEach(async () => {
 });
 
 const SATURDAY = '2026-11-21';
+/** The line with Google calendars off, as calendarFake's list answers. */
 const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
+/** The line while the list answers Google calendars on. */
+const NATIVE_LINE_GOOGLE = 'To import a calendar file or connect a Google calendar, open Townwise on the web.';
 /** A made-up iCal address; the API never sends one back. */
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const KITCHEN = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', eventCount: 12 });
@@ -107,5 +112,35 @@ test('the back button closes it, and opened again it keeps what was typed', asyn
   expect(screen.getByRole('button', { name: 'Your calendars' }).props.accessibilityState).toMatchObject({ expanded: false });
   await fireEvent.press(screen.getByRole('button', { name: 'Your calendars' }));
   expect(within(popover()).getByLabelText('Name').props.value).toBe('Bookings');
+  expect(writes(api)).toEqual([]);
+});
+
+/** The list answers `google` as given; calendarFake answers without it. */
+function serveGoogle(fake: CalendarFake, google: GoogleCalendars): void {
+  const json = fake.json.bind(fake);
+  fake.json = ((...args: Parameters<typeof json>) => {
+    const [path, schema, opts] = args;
+    if (path !== CALENDARS_PATH || (opts?.method ?? 'GET') !== 'GET' || !Array.isArray(fake.calendars)) return json(...args);
+    fake.paths.push(path);
+    return Promise.resolve(schema.parse({ calendars: fake.calendars, google }));
+  }) as typeof json;
+}
+
+test('with Google calendars on, native offers no “Add a Google calendar”: the native line shows, and a Google calendar lists with Refresh now and Remove', async () => {
+  const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_rate_limited' });
+  const { api, fake } = setup({ calendars: [KITCHEN, google] });
+  serveGoogle(fake, { available: true, connected: true, clientId: '123-abc.apps.googleusercontent.com' });
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
+  const card = popover();
+  expect(within(card).getByText(NATIVE_LINE_GOOGLE)).toBeTruthy();
+  expect(within(card).queryByText(NATIVE_LINE)).toBeNull();
+  expect(within(card).queryByText('Add a Google calendar')).toBeNull();
+  expect(within(card).getByText('Google calendar, 40 events')).toBeTruthy();
+  expect(within(card).getByText('Couldn’t refresh: Google was busy. Townwise tries again later.')).toBeTruthy();
+  expect(within(card).getByRole('button', { name: 'Refresh now: Google calendar' })).toBeTruthy();
+  expect(within(card).getByRole('button', { name: 'Remove Google calendar' })).toBeTruthy();
+  expect(within(card).queryByRole('button', { name: 'Refresh now: Kitchen' })).toBeNull();
+  expect(fake.paths.filter((path) => path.includes('google-calendars'))).toEqual([]);
   expect(writes(api)).toEqual([]);
 });

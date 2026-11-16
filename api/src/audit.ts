@@ -161,8 +161,9 @@ function noteSummary(verb: string, d: AuditDetails): string {
   return `${verb} a note (${NOTE_KINDS[text(d.kind)] ?? text(d.kind)}), ${text(d.startDate)} to ${text(d.endDate)}`;
 }
 
-/** An owner calendar by its kind only: its label, host and address are never in the record. */
+/** An owner calendar by its kind only: its label, host, address and Google calendar id are never in the record. */
 function calendarWords(d: AuditDetails): string {
+  if (d.kind === 'google') return 'a Google calendar';
   return d.kind === 'link' ? 'a calendar link' : 'a calendar file';
 }
 
@@ -222,6 +223,8 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'owner_calendar.removed': return `Removed ${calendarWords(d)}`;
     case 'owner_calendar.refreshed':
       return d.status === 'ok' ? `Refreshed ${calendarWords(d)}: ${text(d.eventCount)} events` : `Refreshing ${calendarWords(d)} failed (${text(d.status)})`;
+    case 'google_calendar.connected': return 'Connected a Google account for calendars';
+    case 'google_calendar.disconnected': return 'Disconnected a Google account from calendars';
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
     case 'chat.conversation_deleted': return 'Deleted a tuning chat conversation';
     case 'agent.question_answered':

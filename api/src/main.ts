@@ -13,9 +13,12 @@ import {
   createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli, type AzureTokenSource,
 } from './azure-identity.ts';
 import { createTownwiseStores } from './stores/index.ts';
+import { createGoogleCalendarClient, revokeGoogleGrant } from './calendar/google.ts';
 import { createCalendarRefresher } from './calendar/refresher.ts';
 import { createAnthropicChatModel } from './chat/model.ts';
-import { configSchema as townwiseSchema, filesBackendOf, labRunnerOf, resolveTownwiseConfig, type FilesBackend } from './config.ts';
+import {
+  configSchema as townwiseSchema, filesBackendOf, googleCalendarOf, labRunnerOf, resolveTownwiseConfig, type FilesBackend,
+} from './config.ts';
 import { createSendMagicLink } from './email.ts';
 import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type FileBlobs } from './files/blobs.ts';
 import { createAiReadActions } from './files/ai-actions.ts';
@@ -35,11 +38,15 @@ import { createStaticMapSigner, signingSecretSchema } from './places/static-map.
 // managed identity, and AZURE_CLIENT_ID by containerapp.tf; they are read only when email, stored files or the lab's Azure runner are on. The confirm card's
 // map needs both GOOGLE_MAPS_STATIC_KEY and GOOGLE_MAPS_SIGNING_SECRET: without either there is no map, never an
 // unsigned one. A malformed secret refuses boot. PATH and HOME go only to a local lab job (TOWNWISE_LAB_RUNNER=local).
-// TOWNWISE_CALENDAR_KEY (config.ts checks it) seals owner calendar links; absent, links are off (no refresh loop) and
-// calendar files still import. Like the API keys, it is kept out of `config` and goes only into deps and the refresh loop.
+// TOWNWISE_CALENDAR_KEY (config.ts checks it) seals owner calendar links and Google calendars' tokens and ids; absent,
+// links and Google calendars are off (no refresh loop) and calendar files still import. Like the API keys, it is kept out
+// of `config` and goes only into deps and the refresh loop. So is TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET, which goes only
+// into the Google calendar client, built when it, TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID and the key are all set (config.ts
+// googleCalendarOf).
 const {
   ANTHROPIC_API_KEY, GOOGLE_PLACES_API_KEY, GOOGLE_MAPS_STATIC_KEY, GOOGLE_MAPS_SIGNING_SECRET,
-  IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, PATH, HOME, TOWNWISE_CALENDAR_KEY, ...config
+  IDENTITY_ENDPOINT, IDENTITY_HEADER, AZURE_CLIENT_ID, PATH, HOME, TOWNWISE_CALENDAR_KEY, TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET,
+  ...config
 } = loadEnv(z.object({
   ...serverSchema.shape, ...mongoSchema.shape, ...redisSchema.shape, ...authSchema.shape, ...townwiseSchema.shape,
   ANTHROPIC_API_KEY: z.string().optional(),
@@ -112,10 +119,19 @@ const fileWorker = files === undefined ? undefined : createFileWorker({
 const fileSweeper = files === undefined ? undefined : createFileSweeper({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), blobs: files, logger, now,
 });
-// Calendar links refresh in this process while TOWNWISE_CALENDAR_KEY is set (calendar/refresher.ts); each due link is
-// claimed by one replica at a time.
+// Google calendars (openspec change connect-google-calendar, design decision 14) are on only with the client id, its
+// secret and TOWNWISE_CALENDAR_KEY all set, and a client id that is not one of AUTH_GOOGLE_CLIENT_IDS refuses boot. The
+// client is built only then. Revoking a grant needs no client id or secret, only a token the key opens, so it is passed
+// whenever the key is set, Google calendars on or off: removing a Google calendar, a seat loss, a deletion and the
+// connection check still revoke while they are off.
+const googleCalendarConfig = googleCalendarOf({ ...config, TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET, TOWNWISE_CALENDAR_KEY });
+const googleCalendar = googleCalendarConfig === null ? undefined : createGoogleCalendarClient(googleCalendarConfig);
+const revokeGoogle = TOWNWISE_CALENDAR_KEY === undefined ? undefined : revokeGoogleGrant;
+// Calendar links and Google calendars refresh in this process while TOWNWISE_CALENDAR_KEY is set (calendar/refresher.ts),
+// and due Google connections are checked there; each due calendar or check is claimed by one replica at a time.
 const calendarRefresher = TOWNWISE_CALENDAR_KEY === undefined ? undefined : createCalendarRefresher({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), key: TOWNWISE_CALENDAR_KEY, logger, now,
+  googleCalendar, revokeGoogle,
 });
 // The forecast lab (calibrations) is off unless TOWNWISE_LAB_RUNNER is set: in Azure the API's identity starts the
 // Container Apps job, which calls back on /lab signed in as the lab identity (lab/caller.ts checks its Entra token);
@@ -142,7 +158,8 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
 const setupReader = ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAnthropicSetupReaderModel(ANTHROPIC_API_KEY);
 const baseDeps = {
   config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
-  files, fileWorker, setupReader, calendarKey: TOWNWISE_CALENDAR_KEY, ...labFor(),
+  files, fileWorker, setupReader, calendarKey: TOWNWISE_CALENDAR_KEY, googleCalendar, googleCalendarClientId: googleCalendarConfig?.clientId,
+  revokeGoogle, ...labFor(),
 };
 // Reading with TownwiseAI (files/ai-reader.ts): a file a person opted in is read whole by Claude, with the same
 // ANTHROPIC_API_KEY and within the same TOWNWISE_FILES_MONTHLY_BUDGET_USD as the AI column step, whose 0 turns it off
@@ -168,8 +185,8 @@ const server = createServer({
   routes: [{ path: '/auth', router: auth.router }, { path: '/api', router: api }, { path: '/lab', router: labRouter }],
   middleware: [rateLimit({ limiter: ceiling, key: ipKey, whenStoreDown: 'allow', logger })],
   // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The readers, the
-  // sweeper and the calendar refresh loop stop next (each waits for its work in flight, but the refresh loop drops a fetch
-  // rather than wait out its 10 seconds), while the database is still open.
+  // sweeper and the calendar refresh loop stop next (each waits for its work in flight, but the refresh loop drops a link
+  // fetch and aborts a Google call rather than wait out their 10 seconds), while the database is still open.
   onShutdown: [
     { name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]),
     ...(aiReader === undefined ? [] : [aiReader]), ...(fileSweeper === undefined ? [] : [fileSweeper]),

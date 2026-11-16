@@ -2,11 +2,13 @@
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
 // deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the TownwiseAI reader's
 // claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
-// existingFileIds, and the calendar refresh loop's claimDueCalendar.
+// existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, and Google access's
+// hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
+// 10 and 11).
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
 // (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
-// callback (lab/callback.ts) and the calendar refresh loop (calendar/refresher.ts) import this file (test/isolation.test.ts
-// enforces the list).
+// callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts) and Google access
+// (calendar/google-access.ts) import this file (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
@@ -19,6 +21,7 @@ import { chatProposalModel } from './chat-proposals.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
 import { forecastRunModel } from './forecasts.ts';
+import { googleConnectionModel } from './google-connections.ts';
 import { importModel } from './imports.ts';
 import { locationModel } from './locations.ts';
 import { memberModel } from './members.ts';
@@ -269,8 +272,8 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, their tuning chat conversations, live turns, proposal records and order cards, and their welcome markers, in every
- * organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
+ * removed seats, their tuning chat conversations, live turns, proposal records and order cards, their welcome markers
+ * and their Google connections for calendars, in every organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
@@ -320,6 +323,9 @@ export async function deletePersonRecords(
   await calibrationModel(connection).updateMany({ 'requestedBy.userId': userId }, { $set: { 'requestedBy.userId': null } });
   // And the staff member who last switched an organization's forecasts, in every organization; the switch stays as it is.
   await orgModel(connection).updateMany({ 'forecasts.by': userId }, { $set: { 'forecasts.by': null } });
+  // Google access for calendars (connect-google-calendar): the handler has already ended any still found, revoking
+  // each; this is the backstop for one left by a crash. Not counted, so the audit details are unchanged.
+  await googleConnectionModel(connection).deleteMany({ userId });
   return { requests, seats: invites + removed, conversations, liveTurns };
 }
 
@@ -515,27 +521,90 @@ export async function existingFileIds(connection: Connection, ids: readonly stri
   return new Set(docs.map((doc) => doc._id.toHexString()));
 }
 
-/** A link calendar the refresh loop claimed. Only access/policy.ts's scopeForCalendarRefresh turns it into an OrgScope. */
+/**
+ * A link or Google calendar the refresh loop claimed, and its kind, which picks how it is read. Only access/policy.ts's
+ * scopeForCalendarRefresh turns it into an OrgScope.
+ */
 export interface ClaimedCalendar {
   readonly calendarId: string;
   readonly orgId: string;
   readonly locationId: string;
+  readonly kind: 'link' | 'google';
 }
 
 /**
  * The calendar refresh loop's claim (openspec change connect-owner-calendar, design decision 6), across organizations:
- * one link calendar that is due (`nextRefreshAt` at or before `now`) and under no live lease, the longest due first. One
- * compare-and-set takes it and sets its lease to `leaseUntil`, so of replicas claiming at once only one gets each
- * calendar. Ids only: the address, host, label and events stay in the tenant store.
+ * one link or Google calendar (connect-google-calendar, design decision 10) that is due (`nextRefreshAt` at or before
+ * `now`) and under no live lease, the longest due first whatever its kind. One compare-and-set takes it and sets its
+ * lease to `leaseUntil`, so of replicas claiming at once only one gets each calendar. Ids and the kind only: the
+ * address, the Google calendar id, the host, label and events stay in the tenant store.
  */
 export async function claimDueCalendar(
   connection: Connection, input: { readonly now: Date; readonly leaseUntil: Date },
 ): Promise<ClaimedCalendar | null> {
   const doc = await calendarSourceModel(connection).findOneAndUpdate(
-    { kind: 'link', nextRefreshAt: trusted({ $lte: input.now }), $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }] },
+    {
+      kind: trusted({ $in: ['link', 'google'] }), nextRefreshAt: trusted({ $lte: input.now }),
+      $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }],
+    },
     { $set: { leaseUntil: input.leaseUntil } },
-    { sort: { nextRefreshAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, locationId: 1 } },
+    { sort: { nextRefreshAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, locationId: 1, kind: 1 } },
   ).lean();
   if (doc === null) return null;
-  return { calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
+  return {
+    calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(),
+    kind: doc.kind === 'google' ? 'google' : 'link',
+  };
+}
+
+/**
+ * A Google connection whose check the refresh loop claimed. Only access/policy.ts's scopeForGoogleCheck turns it into
+ * an OrgScope.
+ */
+export interface ClaimedGoogleConnection {
+  readonly connectionId: string;
+  readonly orgId: string;
+  /** The checkAt it was due at: the check pushes it on only while it is still this (a mark since keeps it due). */
+  readonly checkAt: Date;
+}
+
+/**
+ * The refresh loop's claim of a connection check (openspec change connect-google-calendar, design decision 10), across
+ * organizations: one Google connection that is due (`checkAt` at or before `now`) and under no live lease, the longest
+ * due first. One compare-and-set takes it and sets its lease to `leaseUntil`, so of replicas claiming at once only one
+ * checks each connection. Ids and the checkAt it claimed only: the sealed token, the person and the scopes stay in the
+ * tenant store.
+ */
+export async function claimDueGoogleConnection(
+  connection: Connection, input: { readonly now: Date; readonly leaseUntil: Date },
+): Promise<ClaimedGoogleConnection | null> {
+  const doc = await googleConnectionModel(connection).findOneAndUpdate(
+    { checkAt: trusted({ $lte: input.now }), $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }] },
+    { $set: { leaseUntil: input.leaseUntil } },
+    { sort: { checkAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, checkAt: 1 } },
+  ).lean();
+  if (doc === null) return null;
+  return { connectionId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), checkAt: doc.checkAt };
+}
+
+/** A person's Google connection for calendars in some organization. Ids only: never the sealed token. */
+export interface PersonGoogleConnection {
+  readonly id: string;
+  readonly orgId: string;
+}
+
+/**
+ * Whether the person holds a Google connection for calendars in an organization other than `orgId` (openspec change
+ * connect-google-calendar, design decision 11): Google's revoke ends every grant the account gave the project, so a
+ * connection ended in one organization is revoked only when this is false. Ids only.
+ */
+export async function hasGoogleConnectionElsewhere(connection: Connection, userId: string, orgId: string): Promise<boolean> {
+  const found = await googleConnectionModel(connection).exists({ userId, orgId: trusted({ $ne: new Types.ObjectId(orgId) }) });
+  return found !== null;
+}
+
+/** Every Google connection the person still holds, in any organization, oldest first: the person deletion's backstop. */
+export async function googleConnectionsOfPerson(connection: Connection, userId: string): Promise<PersonGoogleConnection[]> {
+  const docs = await googleConnectionModel(connection).find({ userId }, { _id: 1, orgId: 1 }).sort({ connectedAt: 1, _id: 1 }).lean();
+  return docs.map((doc) => ({ id: doc._id.toHexString(), orgId: doc.orgId.toHexString() }));
 }
