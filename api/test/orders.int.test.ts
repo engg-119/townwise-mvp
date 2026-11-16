@@ -133,8 +133,10 @@ describe('ordering setup', () => {
     const locationId = await addLocation(server, { orgId, name: 'Empty Bar' });
     const res = await call(server, `${base(locationId)}/setup`, { session: member.session });
     expect(res.status).toBe(200);
-    // Every setup and board answer carries the town's date (A7, C7).
-    expect(await res.json()).toEqual({ setup: null, coverage: null, itemCoverage: {}, counts: {}, itemsWithHistory: [], today: TODAY });
+    // Every setup and board answer carries the town's date (A7, C7). This server has no setup reader (D39).
+    expect(await res.json()).toEqual({
+      setup: null, coverage: null, itemCoverage: {}, counts: {}, itemsWithHistory: [], today: TODAY, canReadWithAi: false,
+    });
     const orders = await call(server, base(locationId), { session: member.session });
     expect(await orders.json()).toEqual({ available: false, reason: ORDER_UNAVAILABLE, missing: ['the supplier schedule', 'the items'], today: TODAY });
     const decision = await call(server, `${base(locationId)}/decisions`, {
@@ -463,6 +465,7 @@ describe('who may reach the order routes', () => {
       { method: 'GET', path },
       { method: 'GET', path: `${path}/setup` },
       { method: 'PUT', path: `${path}/setup`, json: { expectedVersion: 1, setup: SETUP } },
+      { method: 'POST', path: `${path}/setup/read`, json: { source: { type: 'text', text: 'House Lager, 24 bottles a case' } } },
       { method: 'POST', path: `${path}/item-sales`, json: { from: '2026-05-01', to: '2026-05-01', days: [{ date: '2026-05-01', items: { [lager]: 1 } }] } },
       { method: 'DELETE', path: `${path}/item-sales` },
       { method: 'POST', path: `${path}/counts`, json: { date: TODAY, items: { [lager]: 2 } } },

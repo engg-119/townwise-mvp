@@ -17,6 +17,7 @@ import { loadSetupState, townClock } from '../orders/live.ts';
 import { checkSetup, mintIds, setupInput } from '../orders/setup.ts';
 import type { StoredSetup } from '../stores/order-setups.ts';
 import { loadLocation, memberOf } from './locations.ts';
+import { canReadWithAi } from './order-setup-read.ts';
 import { actorOf, orgAdmin } from './team.ts';
 
 const setupBody = z.strictObject({
@@ -67,13 +68,14 @@ function assertKnownItems(setup: StoredSetup | null, ids: readonly string[]): vo
 
 /**
  * GET .../orders/setup: the setup (null when none was saved), item-sales coverage, each item's covered days with any
- * servings in the last 8 weeks, each item's latest count in the last 400 days, and `today`, the town's date.
+ * servings in the last 8 weeks, each item's latest count in the last 400 days, `today`, the town's date, and
+ * `canReadWithAi`, whether reading the setup with TownwiseAI is on (D39; the page shows its section only then).
  */
 export async function getOrderSetup(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const { scope } = memberOf(principal);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const { today } = townClock(ctx, location);
-  res.status(200).json({ ...(await loadSetupState(ctx, scope, location, today)), today });
+  res.status(200).json({ ...(await loadSetupState(ctx, scope, location, today)), today, canReadWithAi: canReadWithAi(ctx) });
 }
 
 /** PUT .../orders/setup { expectedVersion, setup }: the whole setup, saved only over the version the editor loaded. */

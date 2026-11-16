@@ -120,6 +120,12 @@ export async function startTownwiseServer(opts?: {
    */
   aiReader?: { model: FileReaderModel; aroundOnRead?: (actions: OnAiRead) => OnAiRead }
     & Partial<Pick<AiReaderDeps, 'leaseMs' | 'extractText' | 'onRead' | 'filesMonthlyBudgetUsd'>>;
+  /**
+   * Reading the ordering setup with TownwiseAI (D39), over a scripted model (no call leaves the test); absent, it is off
+   * and its route answers 503 ai_unavailable. `setupReadTimeMs` shortens its time limit.
+   */
+  setupReader?: FileReaderModel;
+  setupReadTimeMs?: number;
   /** U13A: synthetic headcount inputs for people in town; absent, the committed (empty) sources. */
   peopleData?: PeopleData;
   /** The forecast lab's runner (helpers/lab.ts has a fake); absent, calibrations are off. /lab is mounted either way. */
@@ -194,7 +200,8 @@ export async function startTownwiseServer(opts?: {
     const baseDeps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
       chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
-      files, fileWorker: reader ?? undefined, peopleData: opts?.peopleData, labRunner: opts?.labRunner,
+      files, fileWorker: reader ?? undefined, setupReader: opts?.setupReader, setupReadTimeMs: opts?.setupReadTimeMs,
+      peopleData: opts?.peopleData, labRunner: opts?.labRunner,
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
       calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher,
     };

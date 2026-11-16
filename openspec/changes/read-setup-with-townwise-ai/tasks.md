@@ -5,24 +5,24 @@
 
 ## 2. API: the reader
 
-- [ ] 2.1 Move the reader's input preparation from `files/ai-reader.ts` to `files/extract/input.ts`, taking bytes; `ai-read.int.test.ts` stays green
-- [ ] 2.2 `files/extract/setup-prompt.ts`: the prompt, the structured-output schema (no par, no never run out), the server's check of the answer (caps, dedupe, redaction, `inFile`)
-- [ ] 2.3 `files/extract/setup-reader.ts`: the request (content plus the saved setup's supplier and item names only) and the cost ceiling
-- [ ] 2.4 The model factory in `files/extract/model.ts`; wire `setupReader` through `main.ts` and `app.ts`
+- [x] 2.1 Move the reader's input preparation from `files/ai-reader.ts` to `files/extract/input.ts`, taking bytes; `ai-read.int.test.ts` stays green
+- [x] 2.2 `files/extract/setup-prompt.ts`: the prompt, the structured-output schema (no par, no never run out), the server's check of the answer (caps, dedupe, redaction, `inFile`)
+- [x] 2.3 `files/extract/setup-reader.ts`: the request (content plus the saved setup's supplier and item names only) and the cost ceiling
+- [x] 2.4 The model factory in `files/extract/model.ts`; wire `setupReader` through `main.ts` and `app.ts`
 
 ## 3. API: the route
 
-- [ ] 3.1 Allow an `'8mb'` body on this route only and pin it in `assertRouteTable` and `routes.test.ts`
-- [ ] 3.2 The `org.orders.setup.read` entry in `TOWNWISE_ROUTES` (member, open as admin, `ai_reads`)
-- [ ] 3.3 The handler: on, budget, byte gate, input, reserve, one call, correct, check, answer; every error code of the spec
-- [ ] 3.4 The `order.setup_read` audit allowlist and the two counts-only log lines
-- [ ] 3.5 `canReadWithAi` on `GET .../orders/setup`
+- [x] 3.1 Allow an `'8mb'` body on this route only and pin it in `assertRouteTable` and `routes.test.ts`
+- [x] 3.2 The `org.orders.setup.read` entry in `TOWNWISE_ROUTES` (member, open as admin, `ai_reads`)
+- [x] 3.3 The handler: on, budget, byte gate, input, reserve, one call, correct, check, answer; every error code of the spec
+- [x] 3.4 The `order.setup_read` audit allowlist and the two counts-only log lines
+- [x] 3.5 `canReadWithAi` on `GET .../orders/setup`
 
 ## 4. API: tests
 
-- [ ] 4.1 Unit: the prompt and schema (no par or never-run-out keys), the answer's check, the request holds no point-of-sale, organization, location or file name, a picture's metadata is gone, a cut is said
-- [ ] 4.2 Integration (`test/setup-read.int.test.ts`, fake model): each input kind; off, spent, reserved, corrected, a failure charges 0, a refusal is charged; view-as 403; staff open as admin audited; cross-tenant 404; the 400 caps; `extract_busy`; nothing stored and the setup version unchanged; logs and audit carry no name sentinel
-- [ ] 4.3 Update the `isolation.test.ts` lists the move touches
+- [x] 4.1 Unit: the prompt and schema (no par or never-run-out keys), the answer's check, the request holds no point-of-sale, organization, location or file name, a picture's metadata is gone, a cut is said
+- [x] 4.2 Integration (`test/setup-read.int.test.ts`, fake model): each input kind; off, spent, reserved, corrected, a failure charges 0, a refusal is charged; view-as 403; staff open as admin audited; cross-tenant 404; the 400 caps; `extract_busy`; nothing stored and the setup version unchanged; logs and audit carry no name sentinel
+- [x] 4.3 Update the `isolation.test.ts` lists the move touches
 
 ## 5. Client
 

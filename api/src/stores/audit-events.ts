@@ -75,6 +75,10 @@ export const AUDIT_DETAIL_KEYS = {
   'order.rule_turned_off': ['locationId', 'ruleId'],
   'order.card_saved': ['locationId', 'conversationId', 'kind'],
   'order.card_dismissed': ['locationId', 'conversationId', 'kind'],
+  // D39, reading the ordering setup with TownwiseAI: whether a file or pasted text was read, the call's outcome ('read',
+  // 'refused', 'too_long', 'invalid_answer' or 'failed') and how many suppliers and items it suggested. Never a name,
+  // a point-of-sale name, a note or the content.
+  'order.setup_read': ['locationId', 'inputKind', 'outcome', 'suppliers', 'items'],
   // U13B, forecast runs (spec 14.4): ids, the model version, the dates and the day count, never a figure.
   'forecast.imported': ['locationId', 'modelVersion', 'from', 'to', 'dayCount'],
   'forecast.published': ['locationId', 'modelVersion', 'from', 'to', 'dayCount', 'via', 'calibrationId'],
