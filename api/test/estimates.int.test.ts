@@ -319,12 +319,13 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       expect(res.status).toBe(200);
       const body = await res.json() as ForecastWindow;
       const reasonsOn = (date: string) => body.days.find((day) => day.date === date)?.reasons.map((reason) => [reason.label, reason.effect]);
-      // 51 Saturdays of 170 against about 110 a day: 55% more. Fridays of 100: 10% fewer.
+      // 51 Saturdays of 170 against about 110 a day: 55% more. Fridays of 100: 10% fewer. The average open day, which a
+      // weekday's effect carries, is (51 × 170 + 312 × 100) / 363 open days, 109.8, so 110; the model's carries none.
       expect(reasonsOn('2026-06-06')).toEqual([
-        ['Saturday', { direction: 'more', pct: 55, basis: 'history', days: 51 }],
-        ['Town event', { direction: 'more', pct: 30, basis: 'model', days: null }],
+        ['Saturday', { direction: 'more', pct: 55, basis: 'history', days: 51, averageGuests: 110 }],
+        ['Town event', { direction: 'more', pct: 30, basis: 'model', days: null, averageGuests: null }],
       ]);
-      expect(reasonsOn('2026-06-05')).toEqual([['Friday', { direction: 'fewer', pct: 10, basis: 'history', days: 52 }]]);
+      expect(reasonsOn('2026-06-05')).toEqual([['Friday', { direction: 'fewer', pct: 10, basis: 'history', days: 52, averageGuests: 110 }]]);
       // A day before today keeps its reasons without an effect.
       expect(reasonsOn('2026-05-30')).toEqual([['Saturday', null]]);
       expect(JSON.stringify(body)).not.toContain('sentinel');

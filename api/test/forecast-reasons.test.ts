@@ -1,8 +1,8 @@
 // A note's reason on a forecast day (spec 14.5), without Docker: its words are made in code from the note's kind, guest
 // count and hours, never from its detail, and carry the note's id, guests and outcome; a run's reasons carry no note.
 // A reason's effect (spec 14.4): the model's where the run recorded one, otherwise how the location's own last 52 weeks
-// usually ran, closed and likely-closed days left out, rounded to the nearest 5 and null below each kind's minimum.
-// Synthetic notes and days.
+// usually ran, closed and likely-closed days left out, rounded to the nearest 5 and null below each kind's minimum; a
+// weekday's carries the average open day's guests it is held against. Synthetic notes and days.
 import { describe, expect, it } from 'vitest';
 
 import { utcDay } from '../src/dates.ts';
@@ -118,12 +118,13 @@ describe('reason effects', () => {
   }
 
   it('rounds the size to the nearest 5, and 5 or less reads as about the same', () => {
-    expect(effectFrom(54.5, 'history', 52)).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 52 });
-    expect(effectFrom(-9.1, 'history', 20)).toEqual({ direction: 'fewer', pct: 10, basis: 'history', days: 20 });
-    expect(effectFrom(7.4, 'model', null)).toEqual({ direction: 'same', pct: 5, basis: 'model', days: null });
-    expect(effectFrom(-2, 'history', 8)).toEqual({ direction: 'same', pct: 0, basis: 'history', days: 8 });
+    expect(effectFrom(54.5, 'history', 52)).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 52, averageGuests: null });
+    expect(effectFrom(-9.1, 'history', 20)).toEqual({ direction: 'fewer', pct: 10, basis: 'history', days: 20, averageGuests: null });
+    expect(effectFrom(7.4, 'model', null)).toEqual({ direction: 'same', pct: 5, basis: 'model', days: null, averageGuests: null });
+    expect(effectFrom(-2, 'history', 8)).toEqual({ direction: 'same', pct: 0, basis: 'history', days: 8, averageGuests: null });
     expect(effectFrom(7.5, 'history', 8)).toMatchObject({ direction: 'more', pct: 10 });
     expect(effectFrom(-7.5, 'history', 8)).toMatchObject({ direction: 'fewer', pct: 10 });
+    expect(effectFrom(-35.1, 'history', 52, 210)).toEqual({ direction: 'fewer', pct: 35, basis: 'history', days: 52, averageGuests: 210 });
   });
 
   it('reads the 52 weeks before today, and the 8 weeks before them that likely closed needs', () => {
@@ -132,18 +133,29 @@ describe('reason effects', () => {
 
   it('a run’s recorded effect is the model’s, whatever the history says', () => {
     const effectOf = reasonEffects(history(base));
-    expect(effectOf('2026-11-21', reason('weekday', null, 23), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 25, basis: 'model', days: null });
-    expect(effectOf('2026-11-21', reason('level', null, -4), hanover('2026-11-21'))).toEqual({ direction: 'same', pct: 5, basis: 'model', days: null });
+    expect(effectOf('2026-11-21', reason('weekday', null, 23), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 25, basis: 'model', days: null, averageGuests: null });
+    expect(effectOf('2026-11-21', reason('level', null, -4), hanover('2026-11-21'))).toEqual({ direction: 'same', pct: 5, basis: 'model', days: null, averageGuests: null });
   });
 
   it('weekday: that weekday’s mean against the mean of every open day; under 8 of its days, none', () => {
     const effectOf = reasonEffects(history(base));
     // Saturdays 170 against 110 a day: 55% more; Fridays 100 against 110: 10% fewer.
-    expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 52 });
-    expect(effectOf('2026-11-20', reason('weekday'), hanover('2026-11-20'))).toEqual({ direction: 'fewer', pct: 10, basis: 'history', days: 52 });
+    expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 52, averageGuests: 110 });
+    expect(effectOf('2026-11-20', reason('weekday'), hanover('2026-11-20'))).toEqual({ direction: 'fewer', pct: 10, basis: 'history', days: 52, averageGuests: 110 });
     const since = (from: string) => reasonEffects(history((date) => (date < from ? null : base(date))));
     expect(since('2026-09-24')('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toBeNull();
-    expect(since('2026-09-17')('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 8 });
+    expect(since('2026-09-17')('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 8, averageGuests: 110 });
+  });
+
+  it('weekday: carries the average open day’s guests it is held against, rounded to the nearest guest', () => {
+    // Tuesdays 136, Saturdays 232, other days 220, and four Mondays with no sales: 75,456 guests over 360 open days is
+    // 209.6 a day, so 210; Tuesdays run 35% under it.
+    const noSales = new Set(['2025-11-17', '2025-11-24', '2025-12-01', '2025-12-08']);
+    const guestsOf = (date: string): number | null => (noSales.has(date) ? null : weekdayOf(date) === 'Tue' ? 136 : weekdayOf(date) === 'Sat' ? 232 : 220);
+    const effectOf = reasonEffects(history(guestsOf));
+    expect(effectOf('2026-11-17', reason('weekday'), hanover('2026-11-17'))).toEqual({ direction: 'fewer', pct: 35, basis: 'history', days: 52, averageGuests: 210 });
+    // The model's own effect on a weekday reason has none.
+    expect(effectOf('2026-11-17', reason('weekday', null, -35), hanover('2026-11-17'))).toMatchObject({ basis: 'model', averageGuests: null });
   });
 
   it('leaves closed and likely-closed days out of every comparison', () => {
@@ -152,7 +164,7 @@ describe('reason effects', () => {
     const effectOf = reasonEffects(history(guestsOf, {
       covering: (date) => ({ notes: date === '2026-10-17' ? [{ kind: 'closure', effect: 'closed' }] : [], rules: [] }),
     }));
-    expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 49 });
+    expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 49, averageGuests: 110 });
   });
 
   it('keeps a Saturday’s real guests under a standing closure rule, and leaves out the ones it closed (spec D31, D32)', () => {
@@ -161,7 +173,7 @@ describe('reason effects', () => {
     const closedSaturdays = { kind: 'closure', effect: 'closed' } as const;
     const covering = (date: string) => ({ notes: [], rules: date >= '2026-10-01' && new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? [closedSaturdays] : [] });
     const effectOf = reasonEffects(history(guestsOf, { covering }));
-    expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 51 });
+    expect(effectOf('2026-11-21', reason('weekday'), hanover('2026-11-21'))).toEqual({ direction: 'more', pct: 55, basis: 'history', days: 51, averageGuests: 110 });
   });
 
   it('term state: each day in it against the same weekday in the other known term states; 6 a side', () => {
@@ -169,7 +181,7 @@ describe('reason effects', () => {
     const effectOf = reasonEffects(history(guestsOf));
     // Fall 2025 (6 days), winter (5), spring (5) and summer (4) finals, each 20% under its weekday.
     expect(effectOf('2026-11-21', reason('term', 'hanover-nh:finals:fall'), hanover('2026-11-21')))
-      .toEqual({ direction: 'fewer', pct: 20, basis: 'history', days: 20 });
+      .toEqual({ direction: 'fewer', pct: 20, basis: 'history', days: 20, averageGuests: null });
     // A day whose term state is unknown (between classes and finals), and a history with no finals in it, say nothing.
     expect(effectOf('2026-11-19', reason('term'), hanover('2026-11-19'))).toBeNull();
     const sinceSummer = reasonEffects(history((date) => (date < '2026-09-02' ? null : guestsOf(date))));
@@ -182,7 +194,7 @@ describe('reason effects', () => {
     const effectOf = reasonEffects(history(guestsOf));
     // Four Saturday games and a Friday one, each half again its weekday.
     expect(effectOf('2026-11-21', reason('event', 'hanover-nh:home-football'), hanover('2026-11-21')))
-      .toEqual({ direction: 'more', pct: 50, basis: 'history', days: 5 });
+      .toEqual({ direction: 'more', pct: 50, basis: 'history', days: 5, averageGuests: null });
     // An event the ref doesn't name, and a history with two games, say nothing.
     expect(effectOf('2026-11-21', reason('event'), hanover('2026-11-21'))).toBeNull();
     const late = reasonEffects(history((date) => (date < '2026-10-04' ? null : guestsOf(date))));
@@ -193,7 +205,7 @@ describe('reason effects', () => {
     // Thanksgiving 2025 had 30 guests against Thursdays of 100; Christmas, a Thursday 4 weeks on, is left out.
     const guestsOf = (date: string): number => (date === '2025-11-27' ? 30 : date === '2025-12-25' ? 40 : base(date));
     const effectOf = reasonEffects(history(guestsOf));
-    expect(effectOf('2026-11-26', reason('holiday'), hanover('2026-11-26'))).toEqual({ direction: 'fewer', pct: 70, basis: 'history', days: 1 });
+    expect(effectOf('2026-11-26', reason('holiday'), hanover('2026-11-26'))).toEqual({ direction: 'fewer', pct: 70, basis: 'history', days: 1, averageGuests: null });
     const closed = reasonEffects(history(guestsOf, { covering: (date) => ({ notes: date === '2025-11-27' ? [{ kind: 'closure', effect: 'closed' }] : [], rules: [] }) }));
     expect(closed('2026-11-26', reason('holiday'), hanover('2026-11-26'))).toBeNull();
   });
@@ -206,11 +218,12 @@ describe('reason effects', () => {
   });
 
   it('reasonViews puts each reason’s effect on its view; without effects (a past day) every effect is null', () => {
+    // The forecast route's day reasons (reader.ts), the weekday's average open day included.
     const effectOf = reasonEffects(history(base));
     const run = [reason('weekday'), reason('event', 'hanover-nh:home-football', 12)];
     expect(reasonViews('2026-11-21', run, hanover('2026-11-21'), effectOf).map((view) => [view.label, view.effectPct, view.effect])).toEqual([
-      ['Saturday', null, { direction: 'more', pct: 55, basis: 'history', days: 52 }],
-      ['Home football vs Brown', 12, { direction: 'more', pct: 10, basis: 'model', days: null }],
+      ['Saturday', null, { direction: 'more', pct: 55, basis: 'history', days: 52, averageGuests: 110 }],
+      ['Home football vs Brown', 12, { direction: 'more', pct: 10, basis: 'model', days: null, averageGuests: null }],
     ]);
     expect(reasonViews('2026-11-21', run, hanover('2026-11-21')).map((view) => view.effect)).toEqual([null, null]);
   });
