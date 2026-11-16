@@ -2,8 +2,9 @@
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
 // deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the TownwiseAI reader's
 // claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
-// existingFileIds, the calendar refresh loop's claimDueCalendar, and Google access's hasGoogleConnectionElsewhere and
-// googleConnectionsOfPerson (openspec change connect-google-calendar, design decision 11).
+// existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, and Google access's
+// hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
+// 10 and 11).
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
 // (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts) and Google access
@@ -520,29 +521,67 @@ export async function existingFileIds(connection: Connection, ids: readonly stri
   return new Set(docs.map((doc) => doc._id.toHexString()));
 }
 
-/** A link calendar the refresh loop claimed. Only access/policy.ts's scopeForCalendarRefresh turns it into an OrgScope. */
+/**
+ * A link or Google calendar the refresh loop claimed, and its kind, which picks how it is read. Only access/policy.ts's
+ * scopeForCalendarRefresh turns it into an OrgScope.
+ */
 export interface ClaimedCalendar {
   readonly calendarId: string;
   readonly orgId: string;
   readonly locationId: string;
+  readonly kind: 'link' | 'google';
 }
 
 /**
  * The calendar refresh loop's claim (openspec change connect-owner-calendar, design decision 6), across organizations:
- * one link calendar that is due (`nextRefreshAt` at or before `now`) and under no live lease, the longest due first. One
- * compare-and-set takes it and sets its lease to `leaseUntil`, so of replicas claiming at once only one gets each
- * calendar. Ids only: the address, host, label and events stay in the tenant store.
+ * one link or Google calendar (connect-google-calendar, design decision 10) that is due (`nextRefreshAt` at or before
+ * `now`) and under no live lease, the longest due first whatever its kind. One compare-and-set takes it and sets its
+ * lease to `leaseUntil`, so of replicas claiming at once only one gets each calendar. Ids and the kind only: the
+ * address, the Google calendar id, the host, label and events stay in the tenant store.
  */
 export async function claimDueCalendar(
   connection: Connection, input: { readonly now: Date; readonly leaseUntil: Date },
 ): Promise<ClaimedCalendar | null> {
   const doc = await calendarSourceModel(connection).findOneAndUpdate(
-    { kind: 'link', nextRefreshAt: trusted({ $lte: input.now }), $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }] },
+    {
+      kind: trusted({ $in: ['link', 'google'] }), nextRefreshAt: trusted({ $lte: input.now }),
+      $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }],
+    },
     { $set: { leaseUntil: input.leaseUntil } },
-    { sort: { nextRefreshAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, locationId: 1 } },
+    { sort: { nextRefreshAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1, locationId: 1, kind: 1 } },
   ).lean();
   if (doc === null) return null;
-  return { calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString() };
+  return {
+    calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(),
+    kind: doc.kind === 'google' ? 'google' : 'link',
+  };
+}
+
+/**
+ * A Google connection whose check the refresh loop claimed. Only access/policy.ts's scopeForGoogleCheck turns it into
+ * an OrgScope.
+ */
+export interface ClaimedGoogleConnection {
+  readonly connectionId: string;
+  readonly orgId: string;
+}
+
+/**
+ * The refresh loop's claim of a connection check (openspec change connect-google-calendar, design decision 10), across
+ * organizations: one Google connection that is due (`checkAt` at or before `now`) and under no live lease, the longest
+ * due first. One compare-and-set takes it and sets its lease to `leaseUntil`, so of replicas claiming at once only one
+ * checks each connection. Ids only: the sealed token, the person and the scopes stay in the tenant store.
+ */
+export async function claimDueGoogleConnection(
+  connection: Connection, input: { readonly now: Date; readonly leaseUntil: Date },
+): Promise<ClaimedGoogleConnection | null> {
+  const doc = await googleConnectionModel(connection).findOneAndUpdate(
+    { checkAt: trusted({ $lte: input.now }), $or: [{ leaseUntil: null }, { leaseUntil: trusted({ $lt: input.now }) }] },
+    { $set: { leaseUntil: input.leaseUntil } },
+    { sort: { checkAt: 1, _id: 1 }, returnDocument: 'after', projection: { orgId: 1 } },
+  ).lean();
+  if (doc === null) return null;
+  return { connectionId: doc._id.toHexString(), orgId: doc.orgId.toHexString() };
 }
 
 /** A person's Google connection for calendars in some organization. Ids only: never the sealed token. */

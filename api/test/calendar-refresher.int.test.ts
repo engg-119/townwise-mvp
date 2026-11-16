@@ -4,8 +4,14 @@
 // success that replaces the events, a failure that keeps them and records its code, the backoff (6 hours, then 24), an
 // address the key no longer opens, a suspended organization, a location or organization deleted mid-refresh, a refresh
 // that throws and one that outlives its lease, the loop's start and close (a fetch in flight dropped inside a shutdown
-// hook's 2 seconds, the writes in flight waited for), and log lines that hold no address, host, label or title. Every
-// title here is made up.
+// hook's 2 seconds, the writes in flight waited for), and log lines that hold no address, host, label or title.
+// Google calendars and the connection check (openspec change connect-google-calendar: the google-calendar spec, design
+// decision 10), through the fake client of helpers/google.ts, which records every call: a refresh, a refused refresh
+// token, a missing connection, a seat removed with its access never ended (and one removed moments ago), a key that no
+// longer opens, the client off, Google's rate limit and the Calendar API switched off, claims across kinds; the check
+// ending an unused connection, one with no seat, an interrupted end and an interrupted location deletion, leaving a
+// seat that may yet come back, and pushing a connection in use 24 hours on; close aborting a Google read; and two
+// replicas never checking one connection twice. Every title and name here is made up.
 import { createSecretKey, randomBytes, randomUUID, type KeyObject } from 'node:crypto';
 
 import { createLogger } from '@ckeith26/server-core';
@@ -14,16 +20,23 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import type { CalendarFetcher, CalendarFetchResult } from '../src/calendar/fetch.ts';
+import { SEAT_SETTLE_MS } from '../src/calendar/google-access.ts';
 import type { IcsEvent } from '../src/calendar/ics.ts';
 import { createCalendarRefresher, type CalendarRefresher } from '../src/calendar/refresher.ts';
-import { seal } from '../src/calendar/secret.ts';
-import { claimDueCalendar } from '../src/stores/cross-tenant.ts';
+import { open, seal } from '../src/calendar/secret.ts';
+import { claimDueCalendar, claimDueGoogleConnection } from '../src/stores/cross-tenant.ts';
+import type { GoogleConnectionStore } from '../src/stores/google-connections.ts';
 import { createTownwiseStores, type TownwiseStores } from '../src/stores/index.ts';
 import type { OwnerCalendarRecord, OwnerCalendarStore } from '../src/stores/owner-calendars.ts';
-import { addLocation, createOrg } from './helpers/fixtures.ts';
+import { addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
+import {
+  ACCESS_TOKEN, addGoogleCalendar, addGoogleConnection, allDay, createFakeGoogle, googleError, PRIMARY_ID, REFRESH_TOKEN, SHARED_ID,
+} from './helpers/google.ts';
 import { MINUTE, startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
 
 const HOUR = 60 * MINUTE;
+/** A claim's lease, calendars and connection checks alike (refresher.ts LEASE_MS). */
+const LEASE = 5 * MINUTE;
 const STAFF = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
 const KEY = createSecretKey(randomBytes(32));
 /** The secret part of every address here: no log line may hold it, nor the host, the label or a title. */
@@ -57,11 +70,18 @@ const ADDED_TITLES = ['Rehearsal dinner', 'Office party'];
 const LATER_TITLES = ['Wine tasting', 'Book club', 'Graduation lunch'];
 /** server-core's budget for each shutdown hook (lifecycle.ts): Redis and Mongo close after it, done or not. */
 const HOOK_BUDGET_MS = 2000;
+/** What every Google calendar here holds when it is added (helpers/google.ts addGoogleCalendar). */
+const STORED_TITLE = 'Private dinner';
+/** What the fake answers for the shared calendar later. */
+const GOOGLE_TITLES = ['Staff holiday party', 'Wine dinner'];
+/** A refresh token Google sends with an access token, replacing the stored one. */
+const ROTATED_TOKEN = '1//fake-rotated-refresh-token-5e0d';
 
 let server: TownwiseTestServer;
 let stores: TownwiseStores;
 const logs: string[] = [];
 const logger = createLogger({ LOG_LEVEL: 'info' }, { destination: { write: (line: string) => { logs.push(line); } } });
+const google = createFakeGoogle();
 
 beforeAll(async () => {
   server = await startTownwiseServer();
@@ -69,10 +89,13 @@ beforeAll(async () => {
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
-  // Each test sees only its own calendars: the loop claims due links in every organization.
+  // Each test sees only its own calendars and connections: the loop claims due ones in every organization.
   await server.connection.collection('tw_calendar_sources').deleteMany({});
   await server.connection.collection('tw_calendar_events').deleteMany({});
+  await server.connection.collection('tw_google_connections').deleteMany({});
   logs.length = 0;
+  google.reset();
+  google.state.events = { [SHARED_ID]: [allDay('google-1', 'Staff holiday party', '2026-06-12'), allDay('google-2', 'Wine dinner', '2026-06-18')] };
 });
 
 interface Tenant { orgId: string; locationId: string; scope: OrgScope }
@@ -136,9 +159,11 @@ function fakeFetcher(answer: (address: string) => CalendarFetchResult | Promise<
 
 const feed = (text: string): CalendarFetchResult => ({ ok: true, text, host: HOST });
 
-function refresherOf(fetcher: CalendarFetcher, opts: { key?: KeyObject; firstTickMs?: number; stores?: TownwiseStores } = {}): CalendarRefresher {
+/** A refresher over `fetcher` for links and the fake Google client (null with `googleOff`, the revoke kept). */
+function refresherOf(fetcher: CalendarFetcher, opts: { key?: KeyObject; firstTickMs?: number; stores?: TownwiseStores; googleOff?: true } = {}): CalendarRefresher {
   return createCalendarRefresher({
     connection: server.connection, stores: opts.stores ?? stores, key: opts.key ?? KEY, logger, now: server.clock.now, fetcher,
+    googleCalendar: opts.googleOff === true ? null : google.client, revokeGoogle: google.revoke,
     ...(opts.firstTickMs === undefined ? {} : { firstTickMs: opts.firstTickMs }),
   });
 }
@@ -164,6 +189,70 @@ async function within(ms: number, work: Promise<unknown>): Promise<'done' | 'lat
   }
 }
 
+/** A refresher for Google calendars: no link is fetched. */
+function googleRefresher(opts: { googleOff?: true } = {}): CalendarRefresher {
+  return refresherOf(fakeFetcher(() => feed(LATER)), opts);
+}
+
+/** A person with a seat in `t`'s organization and a Google connection there, as a connect leaves it (the check a day away). */
+async function connected(t: Tenant, opts: { key?: KeyObject } = {}): Promise<{ userId: string; connectionId: string }> {
+  const userId = `user-${randomUUID()}`;
+  await addSeat(server, { orgId: t.orgId, userId, email: `${userId}@example.test` });
+  return { userId, connectionId: await addGoogleConnection(server, { orgId: t.orgId, userId, key: opts.key ?? KEY }) };
+}
+
+/** A Google calendar on `t`'s location read through `connectionId`, holding STORED_TITLE, due now unless `due` is false. */
+async function addGoogle(t: Tenant, connectionId: string, opts: { googleCalendarId?: string; key?: KeyObject; due?: false } = {}): Promise<string> {
+  const slot = await server.connection.collection('tw_calendar_sources').countDocuments({ locationId: new Types.ObjectId(t.locationId) });
+  const calendarId = await addGoogleCalendar(server, {
+    orgId: t.orgId, locationId: t.locationId, connectionId, key: opts.key ?? KEY, googleCalendarId: opts.googleCalendarId ?? SHARED_ID, slot, label: LABEL,
+    title: STORED_TITLE,
+  });
+  if (opts.due !== false) await makeDue(calendarId);
+  return calendarId;
+}
+
+function connectionRow(connectionId: string) {
+  return server.connection.collection('tw_google_connections').findOne({ _id: new Types.ObjectId(connectionId) });
+}
+
+/** Due for a check now, as markForCheck leaves it before a step that may leave it unused or unowned. */
+function markDue(connectionId: string) {
+  return server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(connectionId) }, { $set: { checkAt: server.clock.now() } });
+}
+
+/** The person's seat removed at `removedAt`, as the members store writes it. */
+function removeSeat(userId: string, removedAt: Date) {
+  return server.connection.collection('tw_members').updateOne(
+    { activeUserId: userId }, { $set: { status: 'removed', removedAt, removedBy: 'user-admin' }, $unset: { activeUserId: '' } },
+  );
+}
+
+/** The seat put back, as a last admin's refused removal restores it. */
+function restoreSeat(userId: string) {
+  return server.connection.collection('tw_members').updateOne(
+    { userId, status: 'removed' }, { $set: { status: 'active', activeUserId: userId, removedAt: null, removedBy: null } },
+  );
+}
+
+/** The location's calendars and their events. */
+async function stored(t: Tenant): Promise<{ calendars: number; events: number }> {
+  const filter = { locationId: new Types.ObjectId(t.locationId) };
+  return {
+    calendars: await server.connection.collection('tw_calendar_sources').countDocuments(filter),
+    events: await server.connection.collection('tw_calendar_events').countDocuments(filter),
+  };
+}
+
+/** The tokens Google was asked to revoke, in order. */
+function revoked(): unknown[] {
+  return google.callsOf('revoke').map((call) => call.args[0]);
+}
+
+function googleMethods(): string[] {
+  return google.calls.map((call) => call.method);
+}
+
 describe('the claim', () => {
   it('takes one due link under no live lease, the longest due first, and answers its ids only', async () => {
     const t = await tenant();
@@ -179,10 +268,10 @@ describe('the claim', () => {
 
     const leaseUntil = at(2 * MINUTE);
     expect(await claimDueCalendar(server.connection, { now: server.clock.now(), leaseUntil }))
-      .toEqual({ calendarId: due.calendar.id, orgId: t.orgId, locationId: t.locationId });
+      .toEqual({ calendarId: due.calendar.id, orgId: t.orgId, locationId: t.locationId, kind: 'link' });
     expect(await source(due.calendar.id)).toMatchObject({ leaseUntil });
     expect(await claimDueCalendar(server.connection, { now: server.clock.now(), leaseUntil }))
-      .toEqual({ calendarId: later.calendar.id, orgId: t.orgId, locationId: t.locationId });
+      .toEqual({ calendarId: later.calendar.id, orgId: t.orgId, locationId: t.locationId, kind: 'link' });
     // The file, the link not due yet and the two under live leases are not claimed.
     expect(await claimDueCalendar(server.connection, { now: server.clock.now(), leaseUntil })).toBeNull();
 
@@ -192,13 +281,32 @@ describe('the claim', () => {
       .toMatchObject({ calendarId: leased.calendar.id });
   });
 
+  it('takes link and Google calendars alike, the longest due first, and answers the kind', async () => {
+    const t = await tenant();
+    await stores.ownerCalendars.add(t.scope, t.locationId, { kind: 'file', label: 'Imported' }, { events: ADDED, skippedRepeating: 0 },
+      { createdBy: 'user-0001', now: server.clock.now() });
+    const recent = await addLink(t);
+    await setSource(recent.calendar.id, { nextRefreshAt: at(-HOUR) });
+    const googleId = await addGoogle(t, new Types.ObjectId().toHexString());
+    await setSource(googleId, { nextRefreshAt: at(-3 * HOUR) });
+    const older = await addLink(t);
+    await setSource(older.calendar.id, { nextRefreshAt: at(-2 * HOUR) });
+
+    const claim = () => claimDueCalendar(server.connection, { now: server.clock.now(), leaseUntil: at(LEASE) });
+    expect(await claim()).toEqual({ calendarId: googleId, orgId: t.orgId, locationId: t.locationId, kind: 'google' });
+    expect(await claim()).toEqual({ calendarId: older.calendar.id, orgId: t.orgId, locationId: t.locationId, kind: 'link' });
+    expect(await claim()).toEqual({ calendarId: recent.calendar.id, orgId: t.orgId, locationId: t.locationId, kind: 'link' });
+    // The file is never due.
+    expect(await claim()).toBeNull();
+  });
+
   it('gives a due link to exactly one of the claims racing for it', async () => {
     const t = await tenant();
     const { calendar } = await addLink(t);
     const claims = await Promise.all(Array.from({ length: 8 }, () => claimDueCalendar(server.connection, {
       now: server.clock.now(), leaseUntil: at(2 * MINUTE),
     })));
-    expect(claims.filter((claim) => claim !== null)).toEqual([{ calendarId: calendar.id, orgId: t.orgId, locationId: t.locationId }]);
+    expect(claims.filter((claim) => claim !== null)).toEqual([{ calendarId: calendar.id, orgId: t.orgId, locationId: t.locationId, kind: 'link' }]);
   });
 });
 
@@ -220,7 +328,7 @@ describe('refreshing', () => {
     }
   });
 
-  it('replaces the events on success, records it, holds a 2 minute lease meanwhile, and is next due in 6 hours', async () => {
+  it('replaces the events on success, records it, holds a 5 minute lease meanwhile, and is next due in 6 hours', async () => {
     const t = await tenant();
     const { calendar, address } = await addLink(t);
     await setSource(calendar.id, { status: 'timeout', consecutiveFailures: 1 });
@@ -234,7 +342,7 @@ describe('refreshing', () => {
     expect(await refresherOf(fetcher).drain()).toBe(1);
 
     expect(fetcher.calls).toEqual([address]);
-    expect(lease).toEqual(at(2 * MINUTE));
+    expect(lease).toEqual(at(LEASE));
     expect(await titlesOf(t)).toEqual(LATER_TITLES);
     // The older generation's rows are gone.
     expect(await eventRows(calendar.id)).toBe(3);
@@ -347,12 +455,12 @@ describe('refreshing', () => {
     expect(await refresherOf(fetcher).drain()).toBe(2);
 
     expect(await calendarOf(t, next.calendar.id)).toMatchObject({ status: 'ok', eventCount: 3, leaseUntil: null });
-    expect(await calendarOf(t, broken.calendar.id)).toEqual({ ...before, leaseUntil: at(2 * MINUTE) });
+    expect(await calendarOf(t, broken.calendar.id)).toEqual({ ...before, leaseUntil: at(LEASE) });
     expect(logged('townwise.calendar_refresh_failed')).toEqual([{ calendarId: broken.calendar.id, errType: 'TypeError' }]);
     const text = logs.join('\n');
     for (const secret of [TOKEN, HOST, LABEL, ...ADDED_TITLES]) expect(text).not.toContain(secret);
     // Once its lease has run out, a later look tries it again.
-    server.clock.advance(2 * MINUTE + 1);
+    server.clock.advance(LEASE + 1);
     expect(await refresherOf(fakeFetcher(() => feed(LATER))).drain()).toBe(1);
     expect(await calendarOf(t, broken.calendar.id)).toMatchObject({ status: 'ok', eventCount: 3, leaseUntil: null });
   });
@@ -361,11 +469,11 @@ describe('refreshing', () => {
     const t = await tenant();
     const { calendar } = await addLink(t);
     const before = await calendarOf(t, calendar.id);
-    const takeover = at(2 * MINUTE + 1 + 2 * MINUTE);
+    const takeover = at(LEASE + 1 + LEASE);
     let claimed: unknown;
     const fetcher = fakeFetcher(async () => {
-      // The fetch outlives the 2 minute lease, and another replica claims the link meanwhile.
-      server.clock.advance(2 * MINUTE + 1);
+      // The fetch outlives the 5 minute lease, and another replica claims the link meanwhile.
+      server.clock.advance(LEASE + 1);
       claimed = await claimDueCalendar(server.connection, { now: server.clock.now(), leaseUntil: takeover });
       return feed(LATER);
     });
@@ -459,12 +567,12 @@ describe('the loop', () => {
     // Its answer, come too late, writes nothing: the link keeps its events, and its lease runs out.
     release();
     await new Promise((resolve) => { setTimeout(resolve, 20); });
-    expect(await calendarOf(t, calendar.id)).toEqual({ ...before, leaseUntil: at(2 * MINUTE) });
+    expect(await calendarOf(t, calendar.id)).toEqual({ ...before, leaseUntil: at(LEASE) });
     expect(await titlesOf(t)).toEqual(ADDED_TITLES);
     expect(logged('townwise.calendar_refresh_skipped')).toEqual([{ calendarId: calendar.id, reason: 'stopped' }]);
     // Closed, it claims nothing more; once the lease has run out, another replica refreshes the link.
     expect(await refresher.drain()).toBe(0);
-    server.clock.advance(2 * MINUTE + 1);
+    server.clock.advance(LEASE + 1);
     expect(await refresherOf(fakeFetcher(() => feed(LATER))).drain()).toBe(1);
     expect(await calendarOf(t, calendar.id)).toMatchObject({ status: 'ok', eventCount: 3, leaseUntil: null });
   });
@@ -514,5 +622,378 @@ describe('the loop', () => {
     ]));
     const text = logs.join('\n');
     for (const secret of [TOKEN, HOST, LABEL, ...ADDED_TITLES, ...LATER_TITLES, 'Weekly trivia']) expect(text).not.toContain(secret);
+  });
+});
+
+describe('Google calendars', () => {
+  it('refreshes a Google calendar through google-access.ts: one token call, then the events, replaced and logged with ids and counts only', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    const calendarId = await addGoogle(t, connectionId);
+    google.state.rotatedRefreshToken = ROTATED_TOKEN;
+    expect(await titlesOf(t)).toEqual([STORED_TITLE]);
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(await titlesOf(t)).toEqual(GOOGLE_TITLES);
+    expect(await eventRows(calendarId)).toBe(2);
+    expect(await calendarOf(t, calendarId)).toMatchObject({
+      status: 'ok', eventCount: 2, skippedRepeating: 0, consecutiveFailures: 0, lastSuccessAt: server.clock.now(), nextRefreshAt: at(6 * HOUR),
+      leaseUntil: null,
+    });
+    // The window ahead and the four slices before, each with the opened Google calendar id, under the loop's close signal.
+    expect(googleMethods()).toEqual(['refreshAccess', 'listEvents', 'listEvents', 'listEvents', 'listEvents', 'listEvents']);
+    expect(google.callsOf('refreshAccess')[0]?.args[0]).toBe(REFRESH_TOKEN);
+    for (const call of google.calls) expect((call.args.at(-1) as { signal?: unknown }).signal).toBeInstanceOf(AbortSignal);
+    for (const call of google.callsOf('listEvents')) expect(call.args[1]).toBe(SHARED_ID);
+    // The refresh token Google sent replaced the stored one, sealed, through google-access.ts.
+    const sealed = (await connectionRow(connectionId))?.sealedRefreshToken as string;
+    expect(sealed).not.toContain(ROTATED_TOKEN);
+    expect(open(KEY, sealed)).toEqual({ ok: true, text: ROTATED_TOKEN });
+    expect(logged('townwise.calendar_refreshed')).toEqual([{ calendarId, status: 'ok', eventCount: 2, skippedRepeating: 0, durationMs: 0 }]);
+    const text = logs.join('\n');
+    for (const secret of [REFRESH_TOKEN, ROTATED_TOKEN, ACCESS_TOKEN, SHARED_ID, LABEL, STORED_TITLE, ...GOOGLE_TITLES]) expect(text).not.toContain(secret);
+  });
+
+  it('records google_revoked on invalid_grant, marks the connection revoked, and fails its second calendar with no Google call', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    const first = await addGoogle(t, connectionId, { googleCalendarId: SHARED_ID });
+    await setSource(first, { nextRefreshAt: at(-HOUR) });
+    const second = await addGoogle(t, connectionId, { googleCalendarId: PRIMARY_ID });
+    google.on('refreshAccess', () => Promise.reject(googleError('invalid_grant', 400)));
+
+    expect(await googleRefresher().drain()).toBe(2);
+
+    for (const calendarId of [first, second]) {
+      expect(await calendarOf(t, calendarId)).toMatchObject({ status: 'google_revoked', eventCount: 1, consecutiveFailures: 1, nextRefreshAt: at(6 * HOUR), leaseUntil: null });
+    }
+    expect(await titlesOf(t)).toEqual([STORED_TITLE, STORED_TITLE]);
+    expect(googleMethods()).toEqual(['refreshAccess']);
+    expect(await connectionRow(connectionId)).toMatchObject({ revokedAt: server.clock.now() });
+    expect(logged('townwise.google_calendar_failed')).toEqual([{ op: 'token', status: 400, code: 'invalid_grant' }]);
+  });
+
+  it('removes a Google calendar whose connection is gone, with its events, and calls Google for nothing', async () => {
+    const t = await tenant();
+    const calendarId = await addGoogle(t, new Types.ObjectId().toHexString());
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(await source(calendarId)).toBeNull();
+    expect(await eventRows(calendarId)).toBe(0);
+    expect(google.calls).toEqual([]);
+    expect(logged('townwise.calendar_refresh_skipped')).toEqual([{ calendarId, reason: 'removed' }]);
+  });
+
+  it('ends the access of a person whose seat was removed with their access never ended, without reading Google', async () => {
+    const t = await tenant();
+    const { userId, connectionId } = await connected(t);
+    const first = await addGoogle(t, connectionId, { googleCalendarId: SHARED_ID });
+    await setSource(first, { nextRefreshAt: at(-HOUR) });
+    await addGoogle(t, connectionId, { googleCalendarId: PRIMARY_ID });
+    // The removal stopped before endGoogleAccess, and longer ago than a refused removal takes to put a seat back.
+    await removeSeat(userId, at(-2 * SEAT_SETTLE_MS));
+    // The connection's own check is a day away: the seat check on the Google read is what finds it.
+    expect(await connectionRow(connectionId)).toMatchObject({ checkAt: at(24 * HOUR) });
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(await stored(t)).toEqual({ calendars: 0, events: 0 });
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(await connectionRow(connectionId)).toBeNull();
+    // No token refresh and no events call: only the revoke reached Google.
+    expect(googleMethods()).toEqual(['revoke']);
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 2, reason: 'seat_gone' }]);
+    expect(logged('townwise.calendar_refresh_skipped')).toEqual([{ calendarId: first, reason: 'removed' }]);
+  });
+
+  it('neither reads nor ends a Google calendar whose person lost their seat moments ago, writing nothing, and decides once it settles', async () => {
+    const t = await tenant();
+    const { userId, connectionId } = await connected(t);
+    const calendarId = await addGoogle(t, connectionId);
+    // removeActiveSeat has taken the seat; a last admin's refusal may yet put it back.
+    await removeSeat(userId, at(-10_000));
+    const before = await calendarOf(t, calendarId);
+    const row = await connectionRow(connectionId);
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(google.calls).toEqual([]);
+    expect(await calendarOf(t, calendarId)).toEqual({ ...before, leaseUntil: at(LEASE) });
+    expect(await connectionRow(connectionId)).toEqual(row);
+    expect(await stored(t)).toEqual({ calendars: 1, events: 1 });
+    expect(logged('townwise.calendar_refresh_skipped')).toEqual([{ calendarId, reason: 'unsettled' }]);
+    expect(logged('townwise.google_access_ended')).toEqual([]);
+
+    // The removal stood: once the lease has run out, the next look finds no seat and ends the access.
+    server.clock.advance(LEASE + 1);
+    expect(await googleRefresher().drain()).toBe(1);
+    expect(googleMethods()).toEqual(['revoke']);
+    expect(await stored(t)).toEqual({ calendars: 0, events: 0 });
+    expect(await connectionRow(connectionId)).toBeNull();
+  });
+
+  it('records key_mismatch, with no Google call, for a Google calendar id or a refresh token the key no longer opens, and keeps the events', async () => {
+    const t = await tenant();
+    const other = createSecretKey(randomBytes(32));
+    const idMismatch = await addGoogle(t, (await connected(t)).connectionId, { key: other });
+    const tokenMismatch = await addGoogle(t, (await connected(t, { key: other })).connectionId);
+
+    expect(await googleRefresher().drain()).toBe(2);
+
+    for (const calendarId of [idMismatch, tokenMismatch]) {
+      expect(await calendarOf(t, calendarId)).toMatchObject({ status: 'key_mismatch', eventCount: 1, consecutiveFailures: 1, nextRefreshAt: at(6 * HOUR), leaseUntil: null });
+    }
+    expect(google.calls).toEqual([]);
+    expect(await titlesOf(t)).toEqual([STORED_TITLE, STORED_TITLE]);
+  });
+
+  it('records google_unavailable with the Google client off, keeps the events, and calls Google for nothing', async () => {
+    const t = await tenant();
+    const calendarId = await addGoogle(t, (await connected(t)).connectionId);
+
+    expect(await googleRefresher({ googleOff: true }).drain()).toBe(1);
+
+    expect(await calendarOf(t, calendarId)).toMatchObject({ status: 'google_unavailable', eventCount: 1, consecutiveFailures: 1, nextRefreshAt: at(6 * HOUR) });
+    expect(await titlesOf(t)).toEqual([STORED_TITLE]);
+    expect(google.calls).toEqual([]);
+  });
+
+  it('records google_rate_limited when Google is busy, keeps the events, and tries again 6 hours later', async () => {
+    const t = await tenant();
+    const calendarId = await addGoogle(t, (await connected(t)).connectionId);
+    google.on('listEvents', () => Promise.reject(googleError('rate_limited', 403)));
+    const refresher = googleRefresher();
+
+    expect(await refresher.drain()).toBe(1);
+
+    expect(await calendarOf(t, calendarId)).toMatchObject({ status: 'google_rate_limited', eventCount: 1, consecutiveFailures: 1, nextRefreshAt: at(6 * HOUR), leaseUntil: null });
+    expect(await titlesOf(t)).toEqual([STORED_TITLE]);
+    // The read stops at the refusal.
+    expect(googleMethods()).toEqual(['refreshAccess', 'listEvents']);
+    expect(logged('townwise.google_calendar_failed')).toEqual([{ op: 'events', status: 403, code: 'rate_limited' }]);
+    server.clock.advance(6 * HOUR - MINUTE);
+    expect(await refresher.drain()).toBe(0);
+    server.clock.advance(MINUTE);
+    expect(await refresher.drain()).toBe(1);
+    expect(google.callsOf('listEvents')).toHaveLength(2);
+  });
+
+  it('records google_unavailable, not google_forbidden, when the Calendar API is not enabled, logging exactly the op, status and code', async () => {
+    const t = await tenant();
+    const calendarId = await addGoogle(t, (await connected(t)).connectionId);
+    // calendar/google.ts maps a 403 accessNotConfigured (or SERVICE_DISABLED) to api_disabled.
+    google.on('listEvents', () => Promise.reject(googleError('api_disabled', 403)));
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(await calendarOf(t, calendarId)).toMatchObject({ status: 'google_unavailable', eventCount: 1, consecutiveFailures: 1 });
+    expect(logged('townwise.google_calendar_failed')).toEqual([{ op: 'events', status: 403, code: 'api_disabled' }]);
+  });
+
+  it('close during a Google events page aborts the call, requests no further page and writes nothing', async () => {
+    const t = await tenant();
+    const calendarId = await addGoogle(t, (await connected(t)).connectionId);
+    const before = await calendarOf(t, calendarId);
+    let signal: AbortSignal | undefined;
+    // A page that would take its whole 10 seconds, ended only by the signal (calendar/google.ts answers an aborted call unavailable).
+    google.on('listEvents', (_token, _calendarId, _query, opts) => new Promise((_resolve, reject) => {
+      signal = opts?.signal;
+      signal?.addEventListener('abort', () => { reject(googleError('unavailable')); });
+    }));
+    const refresher = googleRefresher();
+    const draining = refresher.drain();
+    await vi.waitFor(() => { expect(google.callsOf('listEvents')).toHaveLength(1); });
+
+    expect(await within(HOOK_BUDGET_MS, refresher.close())).toBe('done');
+
+    expect(await draining).toBe(1);
+    expect(signal?.aborted).toBe(true);
+    expect(google.callsOf('listEvents')).toHaveLength(1);
+    expect(await calendarOf(t, calendarId)).toEqual({ ...before, leaseUntil: at(LEASE) });
+    expect(await titlesOf(t)).toEqual([STORED_TITLE]);
+    expect(logged('townwise.calendar_refresh_skipped')).toEqual([{ calendarId, reason: 'stopped' }]);
+    // An aborted read is not Google failing.
+    expect(logged('townwise.google_calendar_failed')).toEqual([]);
+    // Once the lease has run out, another replica refreshes it.
+    google.reset();
+    google.state.events = { [SHARED_ID]: [allDay('google-1', 'Staff holiday party', '2026-06-12')] };
+    server.clock.advance(LEASE + 1);
+    expect(await googleRefresher().drain()).toBe(1);
+    expect(await calendarOf(t, calendarId)).toMatchObject({ status: 'ok', eventCount: 1, leaseUntil: null });
+  });
+});
+
+describe('the connection check', () => {
+  it('takes one due connection under no live lease, the longest due first, and answers its ids only', async () => {
+    const t = await tenant();
+    const notDue = (await connected(t)).connectionId;
+    const leased = (await connected(t)).connectionId;
+    await server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(leased) }, { $set: { checkAt: at(-2 * HOUR), leaseUntil: at(1) } });
+    const due = (await connected(t)).connectionId;
+    await server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(due) }, { $set: { checkAt: at(-HOUR) } });
+    const later = (await connected(t)).connectionId;
+    await markDue(later);
+
+    const claim = () => claimDueGoogleConnection(server.connection, { now: server.clock.now(), leaseUntil: at(LEASE) });
+    expect(await claim()).toEqual({ connectionId: due, orgId: t.orgId });
+    expect(await connectionRow(due)).toMatchObject({ leaseUntil: at(LEASE) });
+    expect(await claim()).toEqual({ connectionId: later, orgId: t.orgId });
+    expect(await claim()).toBeNull();
+    expect(await connectionRow(notDue)).toMatchObject({ leaseUntil: null });
+    // A lease that ran out (its replica stopped) is taken again.
+    await server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(leased) }, { $set: { leaseUntil: at(-1) } });
+    expect(await claim()).toEqual({ connectionId: leased, orgId: t.orgId });
+  });
+
+  it('gives a due connection to exactly one of the claims racing for it, and two refreshers draining at once revoke it once', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    await markDue(connectionId);
+    const claims = await Promise.all(Array.from({ length: 8 }, () => claimDueGoogleConnection(server.connection, {
+      now: server.clock.now(), leaseUntil: at(LEASE),
+    })));
+    expect(claims.filter((claim) => claim !== null)).toEqual([{ connectionId, orgId: t.orgId }]);
+
+    // Unused, and due again once that lease has run out.
+    server.clock.advance(LEASE + 1);
+    const counts = await Promise.all([googleRefresher().drain(), googleRefresher().drain()]);
+    expect(counts[0] + counts[1]).toBe(1);
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(await connectionRow(connectionId)).toBeNull();
+  });
+
+  it('goes on to the next connection after a check that throws, logs its id and error type only, and leaves its lease to run out', async () => {
+    const t = await tenant();
+    const broken = (await connected(t)).connectionId;
+    await server.connection.collection('tw_google_connections').updateOne({ _id: new Types.ObjectId(broken) }, { $set: { checkAt: at(-HOUR) } });
+    const next = (await connected(t)).connectionId;
+    await markDue(next);
+    const find: GoogleConnectionStore['find'] = (scope, connectionId) => (connectionId === broken
+      ? Promise.reject(new TypeError('check failed'))
+      : stores.googleConnections.find(scope, connectionId));
+    const refresher = refresherOf(fakeFetcher(() => feed(LATER)), { stores: { ...stores, googleConnections: { ...stores.googleConnections, find } } });
+
+    expect(await refresher.drain()).toBe(2);
+
+    expect(await connectionRow(next)).toBeNull();
+    expect(await connectionRow(broken)).toMatchObject({ checkAt: at(-HOUR), leaseUntil: at(LEASE) });
+    expect(logged('townwise.calendar_refresh_failed')).toEqual([{ connectionId: broken, errType: 'TypeError' }]);
+  });
+
+  it('ends a connection still unused 24 hours after a connect, revoking it with the Google client off too', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    // Google calendars switched off: the revoke needs only the stored token and the key (design decision 14).
+    const refresher = googleRefresher({ googleOff: true });
+
+    expect(await refresher.drain()).toBe(0);
+    server.clock.advance(24 * HOUR - MINUTE);
+    expect(await refresher.drain()).toBe(0);
+    expect(google.calls).toEqual([]);
+    server.clock.advance(MINUTE);
+    expect(await refresher.drain()).toBe(1);
+
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(googleMethods()).toEqual(['revoke']);
+    expect(await connectionRow(connectionId)).toBeNull();
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'unused' }]);
+  });
+
+  it('ends a connection whose person holds no seat in the organization, with its calendars and their events', async () => {
+    const t = await tenant();
+    const { userId, connectionId } = await connected(t);
+    await addGoogle(t, connectionId, { due: false });
+    await removeSeat(userId, at(-2 * SEAT_SETTLE_MS));
+    // Seat loss marks the connection before the seat goes.
+    await markDue(connectionId);
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(await stored(t)).toEqual({ calendars: 0, events: 0 });
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(googleMethods()).toEqual(['revoke']);
+    expect(await connectionRow(connectionId)).toBeNull();
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 1, reason: 'seat_gone' }]);
+  });
+
+  it('completes an interrupted end: a departed member’s calendars removed and the grant not yet revoked', async () => {
+    const t = await tenant();
+    const { userId, connectionId } = await connected(t);
+    await removeSeat(userId, at(-2 * SEAT_SETTLE_MS));
+    // endGoogleAccess marked the connection and removed its calendars, then stopped before the revoke.
+    await markDue(connectionId);
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(await connectionRow(connectionId)).toBeNull();
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'seat_gone' }]);
+  });
+
+  it('completes an interrupted location deletion: the refresh marks the connection as it removes the calendar, and the check ends it', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    const calendarId = await addGoogle(t, connectionId);
+    // removeLocation stopped after the location row went, before its calendars did.
+    await stores.locations.remove(t.scope, t.locationId);
+    expect(await connectionRow(connectionId)).toMatchObject({ checkAt: at(24 * HOUR) });
+
+    // The calendar, then the check its removal made due.
+    expect(await googleRefresher().drain()).toBe(2);
+
+    expect(await source(calendarId)).toBeNull();
+    expect(await eventRows(calendarId)).toBe(0);
+    expect(revoked()).toEqual([REFRESH_TOKEN]);
+    expect(googleMethods()).toEqual(['revoke']);
+    expect(await connectionRow(connectionId)).toBeNull();
+    expect(logged('townwise.calendar_refresh_skipped')).toEqual([{ calendarId, reason: 'removed' }]);
+    expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'unused' }]);
+  });
+
+  it('pushes a connection in use 24 hours on, every day, and ends nothing', async () => {
+    const t = await tenant();
+    const { connectionId } = await connected(t);
+    const calendarId = await addGoogle(t, connectionId, { due: false });
+    // Not due for a refresh in the two days below, so only the check runs.
+    await setSource(calendarId, { nextRefreshAt: at(72 * HOUR) });
+    await markDue(connectionId);
+    const refresher = googleRefresher();
+
+    expect(await refresher.drain()).toBe(1);
+    expect(await connectionRow(connectionId)).toMatchObject({ checkAt: at(24 * HOUR), leaseUntil: null, revokedAt: null });
+    server.clock.advance(24 * HOUR);
+    expect(await refresher.drain()).toBe(1);
+    expect(await connectionRow(connectionId)).toMatchObject({ checkAt: at(24 * HOUR), leaseUntil: null });
+
+    expect(google.calls).toEqual([]);
+    expect(await stored(t)).toEqual({ calendars: 1, events: 1 });
+    expect(logged('townwise.google_access_ended')).toEqual([]);
+  });
+
+  it('leaves a connection due while its person’s seat may yet come back, and pushes it 24 hours on once a last admin’s refusal restores it', async () => {
+    const t = await tenant();
+    const { userId, connectionId } = await connected(t);
+    await addGoogle(t, connectionId, { due: false });
+    // A last admin's removal: the connection marked, the seat taken, the recount not yet done.
+    await markDue(connectionId);
+    await removeSeat(userId, at(-10_000));
+    const before = await connectionRow(connectionId);
+
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(google.calls).toEqual([]);
+    expect(await stored(t)).toEqual({ calendars: 1, events: 1 });
+    // Nothing written but the claim's lease, so it is still due once that runs out.
+    expect(await connectionRow(connectionId)).toEqual({ ...before, leaseUntil: at(LEASE) });
+    await restoreSeat(userId);
+    expect(await googleRefresher().drain()).toBe(0);
+    server.clock.advance(LEASE + 1);
+    expect(await googleRefresher().drain()).toBe(1);
+
+    expect(await connectionRow(connectionId)).toMatchObject({ checkAt: at(24 * HOUR), leaseUntil: null, revokedAt: null });
+    expect(google.calls).toEqual([]);
+    expect(logged('townwise.google_access_ended')).toEqual([]);
   });
 });

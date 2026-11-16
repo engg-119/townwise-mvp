@@ -5,7 +5,9 @@ import { AppError } from '@ckeith26/server-core';
 import type { Request } from 'express';
 
 import type { ListedBlob } from '../files/blobs.ts';
-import type { ClaimedAiRead, ClaimedCalendar, ClaimedImport, JoinedSeat, LabCallbackClaim, SweptFile, SweptImport } from '../stores/cross-tenant.ts';
+import type {
+  ClaimedAiRead, ClaimedCalendar, ClaimedGoogleConnection, ClaimedImport, JoinedSeat, LabCallbackClaim, SweptFile, SweptImport,
+} from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
 import type { Access, ResolvedSeat, Resolution, Role } from './resolve.ts';
@@ -53,8 +55,16 @@ export function scopeForSweep(found: SweptFile | SweptImport | ListedBlob): OrgS
   return mint(found.orgId);
 }
 
-/** The calendar refresh loop only (calendar/refresher.ts), for the organization of the link calendar it just claimed. */
+/** The calendar refresh loop only (calendar/refresher.ts), for the organization of the calendar it just claimed. */
 export function scopeForCalendarRefresh(claim: ClaimedCalendar): OrgScope {
+  return mint(claim.orgId);
+}
+
+/**
+ * The calendar refresh loop's connection check only (calendar/refresher.ts), for the organization of the Google
+ * connection whose check it just claimed (openspec change connect-google-calendar, design decision 10).
+ */
+export function scopeForGoogleCheck(claim: ClaimedGoogleConnection): OrgScope {
   return mint(claim.orgId);
 }
 

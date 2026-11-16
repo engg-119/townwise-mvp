@@ -22,8 +22,9 @@ describe('isolation (source)', () => {
     // lab/callback.ts holds the forecast lab job's callback, which finds its calibration by id and token before any
     // organization is known. files/ai-reader.ts (spec 11A.9) claims the next file someone asked TownwiseAI to read,
     // across organizations, as the file reader claims the next import. calendar/refresher.ts claims a due calendar link
-    // in any organization. calendar/google-access.ts checks a person's seat before reading their Google calendar, and
-    // whether they hold a Google connection in another organization before revoking (connect-google-calendar).
+    // or Google calendar, and a due Google connection check, in any organization. calendar/google-access.ts checks a
+    // person's seat before reading their Google calendar, and whether they hold a Google connection in another
+    // organization before revoking (connect-google-calendar).
     expect(importers).toEqual([
       'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
@@ -126,6 +127,15 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the calendar refresh’s scope, and only calendar/refresher.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForCalendarRefresh(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'calendar/refresher.ts']);
+  });
+
+  it('only access/policy.ts mints the connection check’s scope, and only calendar/refresher.ts asks for it, opening no token itself (connect-google-calendar)', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForGoogleCheck(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'calendar/refresher.ts']);
+    // The loop reaches a Google token only through calendar/google-access.ts: it seals nothing and reads no token back.
+    const loop = sourceFiles().find((file) => file.path === 'calendar/refresher.ts')?.text ?? '';
+    expect(loop).not.toMatch(/\bseal\(/);
+    expect(loop).not.toContain('.sealedToken(');
   });
 
   it('only the calendar routes, the refresh loop and Google access open a sealed secret or read one back from the store, and only the routes and Google access seal one', () => {
