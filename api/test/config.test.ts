@@ -1,10 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
+import { configSchema as authSchema } from '@ckeith26/auth';
 import { ConfigError, loadEnv } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
 
-import { configSchema, filesBackendOf, labRunnerOf, resolveTownwiseConfig } from '../src/config.ts';
+import { configSchema, filesBackendOf, googleCalendarOf, labRunnerOf, resolveTownwiseConfig } from '../src/config.ts';
 
 function parse(value: string | undefined): readonly string[] {
   return loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: value }).TOWNWISE_SUPERADMIN_EMAILS;
@@ -235,6 +236,98 @@ describe('config', () => {
           expect(String(err)).not.toContain(bad.trim());
         }
       }
+    });
+  });
+
+  describe('Google calendars (connect-google-calendar, design decision 14)', () => {
+    const WEB_ID = '123456789012-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com';
+    const IOS_ID = '123456789012-zyxwvutsrqponmlkjihgfedcba543210.apps.googleusercontent.com';
+    const OTHER_PROJECT_ID = '987654321098-abcdefghijklmnopqrstuvwxyz012345.apps.googleusercontent.com';
+    const SECRET = 'sentinel-google-client-secret';
+    const KEY = randomBytes(32).toString('base64');
+    const SIGN_IN = `${WEB_ID},${IOS_ID}`;
+    // As main.ts reads them: Townwise's schema with the auth kit's AUTH_GOOGLE_CLIENT_IDS beside it.
+    const schema = configSchema.extend({ AUTH_GOOGLE_CLIENT_IDS: authSchema.shape.AUTH_GOOGLE_CLIENT_IDS });
+    const google = (env: Record<string, string>) => googleCalendarOf(loadEnv(schema, { AUTH_GOOGLE_CLIENT_IDS: SIGN_IN, ...env }));
+
+    function refusal(run: () => unknown): ConfigError {
+      try {
+        run();
+      } catch (err) {
+        // Every bad value and the secret hold "sentinel", in either case.
+        expect(err).toBeInstanceOf(ConfigError);
+        expect(String(err).toLowerCase()).not.toContain('sentinel');
+        expect((err as ConfigError).problems.map((problem) => problem.problem).join(' ').toLowerCase()).not.toContain('sentinel');
+        return err as ConfigError;
+      }
+      return expect.unreachable();
+    }
+
+    it('is off unless the client id, its secret and the calendar key are all set; empty values count as unset', () => {
+      expect(google({})).toBeNull();
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: WEB_ID })).toBeNull();
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: SECRET })).toBeNull();
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: WEB_ID, TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: SECRET })).toBeNull();
+      // The release adds the id before Terraform adds the secret: the revision boots with Google calendars off.
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: WEB_ID, TOWNWISE_CALENDAR_KEY: KEY })).toBeNull();
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: SECRET, TOWNWISE_CALENDAR_KEY: KEY })).toBeNull();
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: '', TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: '', TOWNWISE_CALENDAR_KEY: KEY })).toBeNull();
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: WEB_ID, TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: SECRET, TOWNWISE_CALENDAR_KEY: KEY }))
+        .toEqual({ clientId: WEB_ID, clientSecret: SECRET });
+    });
+
+    it('refuses boot for a client id that is not in Google’s format, naming the variable and never the value or the secret', () => {
+      for (const bad of [
+        'sentinel-not-a-client-id',
+        '123456789012-sentinel.apps.googleusercontent.com.example.test',
+        '123456789012-SENTINEL.apps.googleusercontent.com',
+        'sentinel-abcdef.apps.googleusercontent.com',
+        ` ${WEB_ID.replace('abcdef', 'sentinel')}`,
+      ]) {
+        const err = refusal(() => google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: bad, TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: SECRET, TOWNWISE_CALENDAR_KEY: KEY }));
+        expect(err.problems.map((problem) => problem.variable)).toEqual(['TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID']);
+      }
+    });
+
+    it('refuses boot for a client id that is not one of AUTH_GOOGLE_CLIENT_IDS, whether or not the rest is set', () => {
+      const all = { TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET: SECRET, TOWNWISE_CALENDAR_KEY: KEY };
+      for (const env of [
+        { TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: OTHER_PROJECT_ID, ...all },
+        { TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: OTHER_PROJECT_ID },
+        // Google sign-in off: no client id can match.
+        { TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: WEB_ID, AUTH_GOOGLE_CLIENT_IDS: '', ...all },
+      ]) {
+        const err = refusal(() => google(env));
+        expect(err.problems).toEqual([
+          { variable: 'TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID', problem: 'must be one of AUTH_GOOGLE_CLIENT_IDS (the sign-in web client)' },
+        ]);
+        expect(String(err)).not.toContain(OTHER_PROJECT_ID);
+      }
+      // Any entry of the list matches, spaces around the commas ignored, as the auth kit reads it.
+      expect(google({ TOWNWISE_GOOGLE_CALENDAR_CLIENT_ID: WEB_ID, AUTH_GOOGLE_CLIENT_IDS: `${IOS_ID} , ${WEB_ID}`, ...all }))
+        .toEqual({ clientId: WEB_ID, clientSecret: SECRET });
+    });
+
+    it('main.ts keeps the secret out of the config it passes around and hands it only to googleCalendarOf', () => {
+      // The google-calendar spec: the client secret is read only in main.ts and is not part of the parsed config.
+      const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+      const code = main.split('\n').filter((line) => !line.trimStart().startsWith('//')).join('\n');
+      const taken = code.slice(code.indexOf('const {'), code.indexOf('} = loadEnv('));
+      expect(taken).toMatch(/\bTOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET,\s+\.\.\.config\s*$/);
+      expect(code.match(/\bTOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET\b/g)).toHaveLength(2);
+      expect(code).toMatch(/^const googleCalendarConfig = googleCalendarOf\(\{ \.\.\.config, TOWNWISE_GOOGLE_CALENDAR_CLIENT_SECRET, TOWNWISE_CALENDAR_KEY \}\);$/m);
+    });
+
+    it('main.ts builds the Google client only when on, and passes the revoke whenever the calendar key is set', () => {
+      // Design decision 14: ending access revokes with Google calendars off too.
+      const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+      expect(main.match(/\bcreateGoogleCalendarClient\(/g)).toHaveLength(1);
+      expect(main).toMatch(/^const googleCalendar = googleCalendarConfig === null \? undefined : createGoogleCalendarClient\(googleCalendarConfig\);$/m);
+      expect(main).toMatch(/^const revokeGoogle = TOWNWISE_CALENDAR_KEY === undefined \? undefined : revokeGoogleGrant;$/m);
+      const refresher = main.slice(main.indexOf('const calendarRefresher ='), main.indexOf('});', main.indexOf('const calendarRefresher =')));
+      expect(refresher).toMatch(/\bgoogleCalendar, revokeGoogle,/);
+      const deps = main.slice(main.indexOf('const baseDeps = {'), main.indexOf('};', main.indexOf('const baseDeps = {')));
+      expect(deps).toMatch(/\bgoogleCalendar, googleCalendarClientId: googleCalendarConfig\?\.clientId,\s+revokeGoogle,/);
     });
   });
 
