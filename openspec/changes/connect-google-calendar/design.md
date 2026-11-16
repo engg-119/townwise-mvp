@@ -212,6 +212,7 @@ Seat loss, location deletion, organization deletion and the check write no new a
 - Native connects nowhere in this change: native lists, refreshes and removes Google calendars and shows the native line. [CONFIRM: connecting a Google calendar on the web only] The installed `@react-native-google-signin/google-signin` can do it later without a new dependency (`configure({ webClientId, offlineAccess: true, scopes })` gives a `serverAuthCode`), but its `configure` is global, so sign-in's would have to be restored afterwards, and iOS sign-in is not configured in production yet.
 - No new primitive: refine's `Popover`, `Button`, `Actions`, `Checkbox`, `Messages`, `Small`, `Mono` and `ConfirmDialog`. No new npm dependency.
 - The CSP is expected to stay as it is: GIS is already an allowed script and its `connect-src` and `frame-src` entries cover its calls; the popup is a top-level window no directive governs; COOP `same-origin-allow-popups` keeps the opener; the token calls are the server's. The browser check confirms it, and any new origin updates `client/MODULE.md` (## Security), `infra/web/staticwebapp.config.json` and the tftest's CSP assertion together.
+- *Correction (task 5.3, 2026-11-16):* the help's added sentence also changes the help that `client/test/portal/calendar/calendar.test.web.tsx` pins word for word, a file no group owned, so group 5 updated that one constant and its Owns line names the file.
 
 ### 16. TownwiseAI: no description change, and a saved stub (Claude's call)
 

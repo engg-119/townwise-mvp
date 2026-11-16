@@ -111,7 +111,7 @@ function CalendarRow(props: {
 }): React.JSX.Element {
   const { calendar, ro } = props;
   const row = rowLines(calendar);
-  const status = calendar.kind === 'link' ? statusWords(calendar.status) : null;
+  const status = calendar.kind === 'link' ? statusWords(calendar.status, calendar.kind) : null;
   return (
     <View role="listitem" style={styles.row}>
       <Small white>{calendar.label}</Small>
@@ -288,7 +288,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
       }
       return;
     }
-    const words = statusWords(saved.status);
+    const words = statusWords(saved.status, saved.kind);
     setMessage(words === null ? { live: 'status', items: [refreshedLine(calendar.label)] } : { live: 'alert', items: [words] });
     onChanged(false);
   }, [api, location.id, onChanged, onRefused, focusMessage]));

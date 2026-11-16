@@ -3,27 +3,32 @@ import { errorCopy, hasCode } from '../errors';
 import { formatCount, formatDate, formatTime, plural } from '../format';
 import type { OwnerCalendar } from './api';
 
-// The "Your calendars" popover's words (P28; connect-owner-calendar design decision 11), pure: a file's name, the words
-// for every code phase 1 answers (api/src/handlers/owner-calendars.ts) and for a link's status, a row's lines, and the
-// add-a-link form's checks, which hold the fields to the API's own limits (a trimmed name of 1 to 60 UTF-16 code units,
-// a trimmed link of 1 to 2,048), so its 400 is only a fallback. Anything without words of its own gets errorCopy. Both
-// IcsImport siblings and YourCalendars.tsx import from here: a value one IcsImport sibling exports would resolve to the
-// .web file itself on web, so every value they share lives in this module. Pinned by
-// test/portal/calendar/calendars.test.ts.
+// The "Your calendars" popover's words (P28; connect-owner-calendar design decision 11, connect-google-calendar design
+// decision 15), pure: a file's name, the words for every code phase 1 answers (api/src/handlers/owner-calendars.ts) and
+// for a link's status, a row's lines, and the add-a-link form's checks, which hold the fields to the API's own limits (a
+// trimmed name of 1 to 60 UTF-16 code units, a trimmed link of 1 to 2,048), so its 400 is only a fallback; and the
+// Google section's (google-calendar's "The Your calendars popover connects and picks Google calendars"): its explainer,
+// waiting, loading and picker lines, the words for every code the Google routes and a Google add answer
+// (api/src/handlers/google-calendars.ts), and a Google calendar's status. None of them repeats Google's own error
+// description. Anything without words of its own gets errorCopy. The IcsImport and GoogleConnect siblings and
+// YourCalendars.tsx import from here: a value one sibling exports would resolve to the .web file itself on web, so every
+// value they share lives in this module. Pinned by test/portal/calendar/calendars.test.ts.
 
 /** The API's `max(60)` on a calendar's name, counted as `String.length`. */
 const MAX_LABEL = 60;
+/** A location's most calendars, of every kind (D33). */
+export const MAX_CALENDARS = 5;
 /** The API's `max(2048)` on a link. */
 const MAX_LINK = 2048;
 
 export const CALENDARS_COPY = {
   /** What the privacy page (app/(marketing)/privacy.tsx) says of kept calendars, in the popover's words. */
-  help: 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
+  help: 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.',
   tooLarge: 'This file is over 1 MB. Export a shorter range of your calendar.',
   notCalendar: 'This doesn’t look like a calendar file (.ics).',
   unreadable: 'Couldn’t read this file. Choose it again.',
   none: 'No calendars yet.',
-  nativeLine: 'To add events from your own calendar file, open Townwise on the web.',
+  nativeLine: 'To import a calendar file or connect a Google calendar, open Townwise on the web.',
   nameLabel: 'Name',
   nameHelper: 'Up to 60 characters, for example Bookings.',
   linkLabel: 'Calendar link',
@@ -36,6 +41,78 @@ export const CALENDARS_COPY = {
   alreadyRemoved: 'This calendar was already removed.',
 } as const;
 
+/** The Google section's words (google-calendar's "The Your calendars popover connects and picks Google calendars"). */
+export const GOOGLE_COPY = {
+  add: 'Add a Google calendar',
+  /** Before "Continue to Google", whose press is the person's agreement (the connect body's `agreed: true`). */
+  explainer: 'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included. Everyone on your team can see these events, and TownwiseAI reads their titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one. Removing your last Google calendar, or leaving your organization, ends Townwise’s access to your Google account. Google may warn that Townwise isn’t verified yet while Google reviews it.',
+  continue: 'Continue to Google',
+  /** In place of "Continue to Google" until Google's script has loaded. */
+  loadingGoogle: 'Loading Google…',
+  loadFailed: 'Google’s sign-in didn’t load. Try again.',
+  waiting: 'Waiting for Google…',
+  stopWaiting: 'Stop waiting',
+  connecting: 'Connecting your Google account…',
+  loadingChoices: 'Loading your Google calendars…',
+  mainCalendar: 'Your main calendar',
+  added: 'Added',
+  shareLine: 'To add another Google account’s calendar, share it with this account in Google Calendar first.',
+  popupBlocked: 'Your browser blocked Google’s window. Allow pop-ups for townwise.tech and try again.',
+  /** Any other error Google answers the current press with, and an `unknown` error; never Google's own description. */
+  notConnected: 'Google didn’t connect Townwise. Try again.',
+  reconnect: 'Connect your Google account again to add calendars.',
+} as const;
+
+/** The picker's first line. */
+export function pickerLine(location: string): string {
+  return `Choose the calendars to add to ${location}.`;
+}
+
+/** The picker's room: how many more calendars the location takes, or the limit's words when it takes none. */
+export function roomLine(room: number): string {
+  return room > 0 ? `This location can add ${formatCount(room)} more.` : CALENDARS_COPY.calendarLimit;
+}
+
+/** The picker's add button: "Add calendar" for one, "Add {n} calendars" for more, "Add calendars" with none checked. */
+export function addGoogleLabel(checked: number): string {
+  if (checked === 1) return 'Add calendar';
+  return checked === 0 ? 'Add calendars' : `Add ${formatCount(checked)} calendars`;
+}
+
+/** A refused Google add's line in a batch, named by the calendar's name in the person's Google account. */
+export function refusedLine(name: string, words: string): string {
+  return `${name}: ${words}`;
+}
+
+/** The Google routes' and a Google add's refusals, by status and code. */
+const GOOGLE_REFUSALS: readonly { status: number; code: string; words: string }[] = [
+  { status: 503, code: 'google_calendar_unavailable', words: 'Google calendars aren’t available right now. You can still add a link or import a file.' },
+  { status: 409, code: 'google_connect_again', words: 'Google didn’t give Townwise lasting access. Press Continue to Google again.' },
+  { status: 400, code: 'google_code_invalid', words: 'Google’s sign-in expired. Try again.' },
+  { status: 400, code: 'google_scope_missing', words: 'Townwise needs to see your calendars and their events. Try again and leave both boxes checked.' },
+  {
+    status: 409, code: 'google_other_account',
+    words: 'Choose the Google account you sign in to Townwise with. To add another account’s calendar, share it with that account in Google Calendar first.',
+  },
+  { status: 409, code: 'google_reconnect', words: GOOGLE_COPY.reconnect },
+  // A connection ended while the person was picking (the add's check after storing): connect again.
+  { status: 409, code: 'google_not_connected', words: GOOGLE_COPY.reconnect },
+  { status: 409, code: 'calendar_already_added', words: 'This calendar is already on this location.' },
+  { status: 400, code: 'google_not_found', words: 'That calendar is no longer in your Google account.' },
+  { status: 400, code: 'google_forbidden', words: 'Google won’t share that calendar’s events with Townwise.' },
+  { status: 503, code: 'google_unavailable', words: 'Townwise couldn’t reach Google. Try again in a few minutes.' },
+];
+
+/**
+ * The words for a refused connect, choices read or Google add; `calendar_limit` and a 429 (the account's adds that
+ * fetch, the Google limiter or the writes limiter) are as for links.
+ */
+export function googleRefusal(error: unknown): string {
+  if (hasCode(error, 409, 'calendar_limit')) return CALENDARS_COPY.calendarLimit;
+  const found = GOOGLE_REFUSALS.find((refusal) => hasCode(error, refusal.status, refusal.code));
+  return found?.words ?? errorCopy(error);
+}
+
 /** A link's add refused for what Townwise read from it (400). */
 const LINK_REFUSALS: Readonly<Record<string, string>> = {
   bad_link: 'Paste a link that starts with https:// or webcal://.',
@@ -45,6 +122,16 @@ const LINK_REFUSALS: Readonly<Record<string, string>> = {
   too_large: 'That calendar is over 1 MB, more than Townwise reads.',
   http_error: 'That link answered with an error. Check it and try again.',
   not_calendar: 'That link doesn’t lead to a calendar. Use its iCal link, which often ends in .ics.',
+};
+
+/** A Google calendar's status after a failed refresh; its last good events stay. */
+const GOOGLE_STATUS_WORDS: Readonly<Record<string, string>> = {
+  google_revoked: 'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.',
+  google_not_found: 'Couldn’t refresh: this Google calendar was deleted or is no longer shared with the account that added it.',
+  google_forbidden: 'Couldn’t refresh: Google refused to share this calendar’s events.',
+  google_rate_limited: 'Couldn’t refresh: Google was busy. Townwise tries again later.',
+  google_unavailable: 'Couldn’t refresh: Townwise couldn’t reach Google.',
+  key_mismatch: 'Townwise can’t open this Google connection any more. Remove the calendar and add it again.',
 };
 
 /** A link's status after a failed refresh; its last good events stay. */
@@ -60,6 +147,7 @@ const STATUS_WORDS: Readonly<Record<string, string>> = {
 };
 
 const UNKNOWN_STATUS = 'Couldn’t refresh this link.';
+const UNKNOWN_CALENDAR_STATUS = 'Couldn’t refresh this calendar.';
 
 /** At most `max` UTF-16 code units, one fewer when the last would open a surrogate pair. */
 function cut(text: string, max: number): string {
@@ -74,9 +162,13 @@ export function labelOfFile(fileName: string): string {
   return label === '' ? 'Calendar file' : label;
 }
 
-/** The words for a refused import (`file`) or link add (`link`); `platform` words the link-less API for native. */
-export function addRefusal(error: unknown, kind: 'file' | 'link', platform: 'web' | 'native'): string {
+/**
+ * The words for a refused import (`file`), link add (`link`) or Google add (`google`, googleRefusal's); `platform`
+ * words the link-less API for native.
+ */
+export function addRefusal(error: unknown, kind: 'file' | 'link' | 'google', platform: 'web' | 'native'): string {
   if (hasCode(error, 409, 'calendar_limit')) return CALENDARS_COPY.calendarLimit;
+  if (kind === 'google') return googleRefusal(error);
   if (kind === 'file') {
     if (hasCode(error, 400, 'too_large') || (error instanceof ApiError && error.kind === 'http' && error.status === 413)) return CALENDARS_COPY.tooLarge;
     if (hasCode(error, 400, 'not_calendar')) return CALENDARS_COPY.notCalendar;
@@ -107,14 +199,21 @@ export function refreshRefusal(error: unknown): string {
     return `This calendar was refreshed a few minutes ago. Try again ${inMinutes(error.retryAfterSeconds)}.`;
   }
   if (hasCode(error, 503, 'calendar_links_unavailable')) return 'Calendar links aren’t available right now. This calendar’s events stay as they are.';
+  if (hasCode(error, 503, 'google_calendar_unavailable')) return 'Google calendars aren’t available right now. This calendar’s events stay as they are.';
+  if (hasCode(error, 503, 'google_unavailable')) return 'Townwise couldn’t reach Google. Try again in a few minutes.';
   if (hasCode(error, 404, 'not_found')) return CALENDARS_COPY.alreadyRemoved;
   return errorCopy(error);
 }
 
-/** A link's status in words: null for `ok`, generic words for a code the client doesn't know. */
-export function statusWords(status: string): string | null {
+/**
+ * A refreshed calendar's status in words, by its kind: null for `ok`, a link's or a Google calendar's own words, and
+ * generic words for a code the client doesn't know or a kind without words of its own.
+ */
+export function statusWords(status: string, kind: string): string | null {
   if (status === 'ok') return null;
-  return STATUS_WORDS[status] ?? UNKNOWN_STATUS;
+  if (kind === 'link') return STATUS_WORDS[status] ?? UNKNOWN_STATUS;
+  if (kind === 'google') return GOOGLE_STATUS_WORDS[status] ?? UNKNOWN_CALENDAR_STATUS;
+  return UNKNOWN_CALENDAR_STATUS;
 }
 
 /** The repeating events a calendar counted and left out; null for none. */
@@ -125,22 +224,35 @@ function repeatingLine(skipped: number): string | null {
 }
 
 export interface RowLines {
-  /** “File, 12 events” or “Link, calendar.google.com, 1 event”. */
+  /**
+   * “File, 12 events”, “Link, calendar.google.com, 1 event”, “Google calendar, 40 events”, or for a kind the client
+   * doesn't know “Calendar, 3 events”.
+   */
   summary: string;
   repeating: string | null;
-  /** A link's last refresh that worked, “Updated Nov 14, 2026, 3:42 PM”; null for a file or before one. */
+  /**
+   * A link's or a Google calendar's last refresh that worked, “Updated Nov 14, 2026, 3:42 PM”; null for a file, a kind
+   * the client doesn't know, or before one.
+   */
   updated: string | null;
 }
 
-/** A calendar row's lines but its name and status (statusWords, which a link's row shows before `updated`). */
+/** Whether a calendar of this kind is read again: "Refresh now", its status and its "Updated" time. */
+export function refreshable(kind: string): boolean {
+  return kind === 'link' || kind === 'google';
+}
+
+/** A calendar row's lines but its name and status (statusWords, which a link's or Google calendar's row shows before `updated`). */
 export function rowLines(calendar: OwnerCalendar): RowLines {
   const events = plural(calendar.eventCount, 'event', 'events');
-  const link = calendar.kind === 'link';
   const at = calendar.lastSuccessAt;
+  const summary = calendar.kind === 'link'
+    ? ['Link', calendar.host, events].filter((part) => part !== null).join(', ')
+    : `${calendar.kind === 'file' ? 'File' : calendar.kind === 'google' ? 'Google calendar' : 'Calendar'}, ${events}`;
   return {
-    summary: link ? ['Link', calendar.host, events].filter((part) => part !== null).join(', ') : `File, ${events}`,
+    summary,
     repeating: repeatingLine(calendar.skippedRepeating),
-    updated: link && at !== null ? `Updated ${formatDate(at)}, ${formatTime(at)}` : null,
+    updated: refreshable(calendar.kind) && at !== null ? `Updated ${formatDate(at)}, ${formatTime(at)}` : null,
   };
 }
 

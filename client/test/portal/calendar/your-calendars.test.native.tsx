@@ -35,7 +35,7 @@ afterEach(async () => {
 });
 
 const SATURDAY = '2026-11-21';
-const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
+const NATIVE_LINE = 'To import a calendar file or connect a Google calendar, open Townwise on the web.';
 /** A made-up iCal address; the API never sends one back. */
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const KITCHEN = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', eventCount: 12 });

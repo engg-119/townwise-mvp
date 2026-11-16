@@ -40,7 +40,7 @@ const GAME_REASON = {
   kind: 'event', label: 'Dartmouth home football', effectPct: null, effect: { direction: 'more', pct: 20, basis: 'history', days: 5 } as const, sources: [], note: null,
 };
 const SATURDAY = '2026-11-21';
-const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
+const NATIVE_LINE = 'To import a calendar file or connect a Google calendar, open Townwise on the web.';
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const LABEL = 'Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.';
 
