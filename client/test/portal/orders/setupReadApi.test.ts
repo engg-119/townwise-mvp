@@ -32,16 +32,16 @@ const READ = {
   partial: false,
 };
 
-test('posts the source alone, waits 170 seconds, and passes the caller’s signal; answers the checked suggestions', async () => {
+test('posts the source alone, waits 230 seconds, and passes the caller’s signal; answers the checked suggestions', async () => {
   const { api, calls } = clientAnswering({ read: READ });
   const controller = new AbortController();
   const read = await readSetupWithAi(api, 'l1', { type: 'file', kind: 'pdf', data: 'JVBERi0x' }, controller.signal);
   expect(read).toEqual(READ);
   expect(calls).toEqual([{
     path: '/api/org/locations/l1/orders/setup/read',
-    opts: { method: 'POST', body: { source: { type: 'file', kind: 'pdf', data: 'JVBERi0x' } }, signal: controller.signal, timeoutMs: 170_000 },
+    opts: { method: 'POST', body: { source: { type: 'file', kind: 'pdf', data: 'JVBERi0x' } }, signal: controller.signal, timeoutMs: 230_000 },
   }]);
-  expect(SETUP_READ_TIMEOUT_MS).toBe(170_000);
+  expect(SETUP_READ_TIMEOUT_MS).toBe(230_000);
   await readSetupWithAi(api, 'l1', { type: 'text', text: 'Sample IPA, 1 keg' }, controller.signal);
   expect(calls[1]?.opts?.body).toEqual({ source: { type: 'text', text: 'Sample IPA, 1 keg' } });
 });

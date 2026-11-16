@@ -78,7 +78,8 @@ const REFUSED: Readonly<Record<number, Readonly<Record<string, string>>>> = {
     extract_too_large: 'That’s more than TownwiseAI reads: a file of up to 5 MB, a PDF of up to 30 pages, and a picture of up to 3.75 MB and 8,000 pixels a side.',
     extract_kind_not_read: 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and pictures.',
     extract_kind_mismatch: 'That file isn’t the kind its name says. Save it again in its own format and choose it again.',
-    extract_encrypted: 'That file has a password. Save a copy without one and choose it again.',
+    // An old Excel or Word file renamed .xlsx or .docx answers this too: it has the container a password-protected one has.
+    extract_encrypted: 'That file has a password, or it’s an old Excel (.xls) or Word (.doc) file. Save a copy without a password, or as .xlsx or .docx, and choose it again.',
     extract_not_readable: 'TownwiseAI couldn’t open that file, so it may be damaged. Save it again and choose it again.',
     extract_empty: 'There’s no text in that for TownwiseAI to read.',
     invalid_request: 'Townwise couldn’t send that. Reload the page and try again.',
@@ -94,6 +95,7 @@ const REFUSED: Readonly<Record<number, Readonly<Record<string, string>>>> = {
     ai_unavailable: 'TownwiseAI can’t read files right now. Try again later.',
     extract_busy: 'TownwiseAI is reading other files right now. Try again in a moment.',
     extract_failed: 'TownwiseAI couldn’t finish reading this. Try again in a minute.',
+    extract_timed_out: 'TownwiseAI took too long to read this. Try a shorter file, or paste part of it.',
   },
 };
 

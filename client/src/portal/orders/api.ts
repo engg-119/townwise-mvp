@@ -204,8 +204,11 @@ export type SetupReadSource =
   | { readonly type: 'file'; readonly kind: 'pdf' | 'xlsx' | 'docx' | 'text' | 'picture'; readonly data: string }
   | { readonly type: 'text'; readonly text: string };
 
-/** A read waits this long for its answer; the server ends its own at 150 seconds from the request's start. */
-export const SETUP_READ_TIMEOUT_MS = 170_000;
+/**
+ * A read waits this long for its answer. The server ends its own 150 seconds from its handler's start, which comes only
+ * after the upload, and the ingress closes a request at about 240 seconds.
+ */
+export const SETUP_READ_TIMEOUT_MS = 230_000;
 
 /**
  * POST .../orders/setup/read { source }: TownwiseAI reads it once and answers suggestions for the unsaved draft; nothing
