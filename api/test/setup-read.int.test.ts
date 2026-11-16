@@ -1,18 +1,23 @@
 // Reading the ordering setup with TownwiseAI (spec D39) end to end against the database, over a scripted model (no call
 // leaves the test): each input kind and what the request holds (the content and the saved names, never a point-of-sale,
 // organization, location or file name), the answer, `canReadWithAi`, off, the files AI budget (spent, reserved before
-// the call, corrected after it, a failure charged nothing, a refusal charged), the time limit, who may read (view-as,
-// staff opened as admin, another organization), the 400s and the body limit, the bytes a replica holds, nothing stored,
-// and logs and audit that carry no name. Synthetic content only.
+// the call, corrected after it, a failed call charged what its stream reported, a refusal charged), the person leaving,
+// the time limit from the request's start, a busy parse thread, who may read (view-as, staff opened as admin, another
+// organization), the 400s and the body limit, the bytes a replica holds, nothing stored, and logs and audit that carry
+// no name. Synthetic content only.
 import { randomUUID } from 'node:crypto';
+import { request as httpRequest } from 'node:http';
+import { gzipSync } from 'node:zlib';
 
 import { createRateLimiter } from '@ckeith26/rate-limit';
 import { Types } from 'mongoose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { FileReaderModel, ReaderAnswer, ReaderRequest } from '../src/files/extract/reader.ts';
+import type { AiTextInput, AiTextOutcome } from '../src/files/parse/ai-text.ts';
+import { SlotBusy } from '../src/files/parse/thread-slot.ts';
 import { setupCeilingMicroUsd } from '../src/files/extract/setup-reader.ts';
-import { SETUP_FILE_BYTES, SETUP_READ_BYTES_IN_FLIGHT } from '../src/files/limits.ts';
+import { SETUP_FILE_BYTES, SETUP_READ_BODY_BYTES, SETUP_READ_BYTES_IN_FLIGHT } from '../src/files/limits.ts';
 import { setupReadBytes } from '../src/handlers/order-setup-read.ts';
 import { addGrant, addInvite, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { pdfOf } from './helpers/pdf.ts';
@@ -65,20 +70,47 @@ const model: FileReaderModel = {
     return answers.shift() ?? { kind: 'answered', output: ANSWER, costMicroUsd: 3000 };
   },
 };
-/** Answers only once its signal ends the call, as the real client does. */
+/** What the slow model answers once its signal ends the call: by default, a call whose stream reported nothing. */
+let endedAnswer: ReaderAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null };
+/** Each slow call: its signal, and how long after it began the signal ended it. */
+const calls: { signal: AbortSignal; endedAfterMs: number | null }[] = [];
+/** Answers only once its signal ends the call, as the real client does; `started` resolves once a call has begun. */
 const slowModel: FileReaderModel = {
   readFile(request, signal) {
     requests.push(request);
+    const call: { signal: AbortSignal; endedAfterMs: number | null } = { signal, endedAfterMs: null };
+    calls.push(call);
+    const begun = Date.now();
+    started?.();
     return new Promise((resolve) => {
-      signal.addEventListener('abort', () => { resolve({ kind: 'failed', errType: 'APIUserAbortError', status: null }); }, { once: true });
+      signal.addEventListener('abort', () => {
+        call.endedAfterMs = Date.now() - begun;
+        resolve(endedAnswer);
+      }, { once: true });
     });
   },
 };
+
+// ---- The scripted AI text thread (a workbook's, Word file's or PDF's text) ----------------------------------------
+
+/** While set, making a file's text waits for it; `textBegun` resolves once it has begun. */
+let textGate: Promise<void> | null = null;
+let textBegun: (() => void) | null = null;
+/** Thrown instead of the text (SlotBusy: the parse thread stayed busy). */
+let textThrows: Error | null = null;
+async function scriptedText(input: AiTextInput): Promise<AiTextOutcome> {
+  textBegun?.();
+  if (textGate !== null) await textGate;
+  if (textThrows !== null) throw textThrows;
+  return { kind: 'text', text: `${SENTINEL} IPA, half-barrel`, cut: false, pages: input.kind === 'pdf' ? 1 : null };
+}
 
 let server: TownwiseTestServer;
 let off: TownwiseTestServer;
 let noBudget: TownwiseTestServer;
 let slow: TownwiseTestServer;
+/** The slow model, the scripted text thread, and a second's time limit. */
+let scripted: TownwiseTestServer;
 
 interface Person { session: TestSession; email: string }
 let orgId: string;
@@ -107,6 +139,7 @@ beforeAll(async () => {
   off = await startTownwiseServer();
   noBudget = await startTownwiseServer({ setupReader: model, env: { TOWNWISE_FILES_MONTHLY_BUDGET_USD: '0' } });
   slow = await startTownwiseServer({ setupReader: slowModel, setupReadTimeMs: 300 });
+  scripted = await startTownwiseServer({ setupReader: slowModel, setupReadTimeMs: 1000, setupReadText: scriptedText });
   server = await startTownwiseServer({ setupReader: model });
   orgId = await createOrg(server, { name: `${ORG_SENTINEL} Tavern` });
   member = await person(orgId, 'member', 'member');
@@ -123,12 +156,18 @@ afterAll(async () => {
   await off.close();
   await noBudget.close();
   await slow.close();
+  await scripted.close();
 });
 beforeEach(async () => {
   answers = [];
   requests.length = 0;
   gate = null;
   started = null;
+  endedAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null };
+  calls.length = 0;
+  textGate = null;
+  textBegun = null;
+  textThrows = null;
   await server.redis.flushdb();
   await server.connection.collection('tw_files_usage').deleteMany({});
 });
@@ -145,15 +184,62 @@ async function errorOf(res: Response): Promise<{ status: number; error: string }
   return { status: res.status, error: (await res.json() as { error: string }).error };
 }
 
+/** A read the person leaves: its fetch, which `leaving` aborts; resolves to the error's name once aborted. */
+function readLeaving(on: TownwiseTestServer, session: TestSession, json: unknown, leaving: AbortSignal): Promise<unknown> {
+  return fetch(new URL(readPath(), on.url), {
+    method: 'POST', body: JSON.stringify(json), signal: leaving,
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${session.accessToken}` },
+  }).catch((err: unknown) => (err instanceof Error ? err.name : 'error'));
+}
+
+/** Once the replica's byte gate holds `bytes` again (each read gives back what it held when its response is done). */
+async function gateHolds(bytes = 0): Promise<void> {
+  await vi.waitFor(() => { expect(setupReadBytes.held).toBe(bytes); });
+}
+
+/** A request over a bare socket, for headers fetch always sets: `body` sent chunked unless `headers` has a length. */
+function rawRead(session: TestSession, headers: Record<string, string>, body?: string): Promise<{ status: number; error: string }> {
+  return new Promise((resolve, reject) => {
+    const url = new URL(readPath(), server.url);
+    const req = httpRequest(url, {
+      method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${session.accessToken}`, ...headers },
+    }, (res) => {
+      let text = '';
+      res.setEncoding('utf8');
+      res.on('data', (chunk: string) => { text += chunk; });
+      res.on('end', () => {
+        req.destroy();
+        resolve({ status: res.statusCode ?? 0, error: (JSON.parse(text) as { error: string }).error });
+      });
+    });
+    req.on('error', reject);
+    if (body !== undefined) req.write(body);
+    // A declared length with no body: the headers go now, and the answer comes before the body would.
+    if (headers['content-length'] === undefined) req.end();
+    else req.flushHeaders();
+  });
+}
+
+/** The last townwise.setup_read_failed line `on` logged since `from`, once there is one. */
+async function failedLine(on: TownwiseTestServer, from: number): Promise<Record<string, unknown>> {
+  let line: Record<string, unknown> | undefined;
+  await vi.waitFor(() => {
+    line = logLines(on).slice(from).findLast((each) => each.msg === 'townwise.setup_read_failed');
+    expect(line).toBeDefined();
+  });
+  return line ?? {};
+}
+
 async function usage(org = orgId): Promise<number> {
   const doc = await server.connection.collection('tw_files_usage').findOne({ orgId: new Types.ObjectId(org) });
   return Number(doc?.costMicroUsd ?? 0);
 }
 
 async function setUsage(costMicroUsd: number): Promise<void> {
-  await server.connection.collection('tw_files_usage').insertOne({
-    orgId: new Types.ObjectId(orgId), month: server.clock.now().toISOString().slice(0, 7), costMicroUsd, updatedAt: server.clock.now(),
-  });
+  await server.connection.collection('tw_files_usage').updateOne(
+    { orgId: new Types.ObjectId(orgId), month: server.clock.now().toISOString().slice(0, 7) },
+    { $set: { costMicroUsd, updatedAt: server.clock.now() } }, { upsert: true },
+  );
 }
 
 async function readEvents(): Promise<Record<string, unknown>[]> {
@@ -213,7 +299,7 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       partial: false, costMicroUsd: 3000,
     });
     expect(typeof line?.durationMs).toBe('number');
-    expect(setupReadBytes.held).toBe(0);
+    await gateHolds(0);
   });
 
   it('sends each kind of file as the model reads it: a PDF as a document, a workbook, a Word file and a text file as text, a picture without its metadata', async () => {
@@ -346,12 +432,13 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       expect(await usage()).toBe(5_000_000 - reserved + 1);
     });
 
-    it('charges a refusal, an answer cut at max_tokens and an answer that is not JSON (422), and nothing for a failed call (503 extract_failed)', async () => {
+    it('charges a refusal, an answer cut at max_tokens and an answer that is not JSON (422), nothing for an API error before the stream, and what the stream reported for one during it (503 extract_failed)', async () => {
       answers = [
         { kind: 'refused', costMicroUsd: 700 },
         { kind: 'too_long', costMicroUsd: 900 },
         { kind: 'answered', output: 'not an answer', costMicroUsd: 1100 },
         { kind: 'failed', errType: 'InternalServerError', status: 529 },
+        { kind: 'failed', errType: 'APIError', status: null, streamedMicroUsd: 400 },
       ];
       expect(await errorOf(await read(pasted()))).toEqual({ status: 422, error: 'extract_refused' });
       expect(await usage()).toBe(700);
@@ -364,15 +451,93 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       expect(await usage()).toBe(2700);
       expect(logLines(server).slice(before).find((line) => line.msg === 'townwise.setup_read_failed'))
         .toMatchObject({ code: 'extract_failed', errType: 'InternalServerError', status: 529 });
-      expect((await readEvents()).slice(-4).map((event) => (event.details as { outcome: unknown }).outcome))
-        .toEqual(['refused', 'too_long', 'invalid_answer', 'failed']);
+      expect(await errorOf(await read(pasted()))).toEqual({ status: 503, error: 'extract_failed' });
+      expect(await usage()).toBe(3100);
+      expect((await readEvents()).slice(-5).map((event) => (event.details as { outcome: unknown }).outcome))
+        .toEqual(['refused', 'too_long', 'invalid_answer', 'failed', 'failed']);
     });
 
-    it('ends the call at the read’s time limit, charging nothing (503 extract_failed)', async () => {
+    it('ends the call at the read’s time limit, charging what its stream reported (503 extract_timed_out, logged as such)', async () => {
+      endedAnswer = { kind: 'failed', errType: 'APIUserAbortError', status: null, streamedMicroUsd: 2500 };
       const session = await signIn(slow, member.email);
-      const res = await read(pasted(), session, slow);
-      expect(await errorOf(res)).toEqual({ status: 503, error: 'extract_failed' });
+      const before = logLines(slow).length;
+      expect(await errorOf(await read(pasted(), session, slow))).toEqual({ status: 503, error: 'extract_timed_out' });
+      expect(await failedLine(slow, before)).toMatchObject({ code: 'extract_timed_out', errType: 'APIUserAbortError', status: null });
       expect(requests).toHaveLength(1);
+      expect(await usage()).toBe(2500);
+    });
+
+    it('keeps the whole reservation for a call the time limit ends before its stream reported anything', async () => {
+      const session = await signIn(slow, member.email);
+      expect(await errorOf(await read(pasted(), session, slow))).toEqual({ status: 503, error: 'extract_timed_out' });
+      expect(requests).toHaveLength(1);
+      expect(await usage()).toBe(ceilingOf(requests[0]));
+    });
+  });
+
+  describe('when the person leaves, the time runs out or the parse thread is busy', () => {
+    const docx = (): unknown => file('docx', docxOf([`${SENTINEL} IPA, half-barrel`]));
+
+    it('makes no call and charges nothing when the person leaves while the content is parsed (logged extract_left)', async () => {
+      const session = await signIn(scripted, member.email);
+      let release: () => void = () => undefined;
+      textGate = new Promise<void>((resolve) => { release = resolve; });
+      const begun = new Promise<void>((resolve) => { textBegun = resolve; });
+      const before = logLines(scripted).length;
+      const leaving = new AbortController();
+      const pending = readLeaving(scripted, session, docx(), leaving.signal);
+      await begun;
+      leaving.abort();
+      expect(await pending).toBe('AbortError');
+      // Give the server the closed connection before the text is done.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      release();
+      expect(await failedLine(scripted, before)).toMatchObject({ code: 'extract_left', inputKind: 'file', fileKind: 'docx', errType: null });
+      expect(requests).toHaveLength(0);
+      expect(await usage()).toBe(0);
+    });
+
+    it('ends the call when the person leaves during it: the model’s signal aborts, charged by what its stream reported (logged extract_left)', async () => {
+      const session = await signIn(scripted, member.email);
+      const begun = new Promise<void>((resolve) => { started = resolve; });
+      const before = logLines(scripted).length;
+      const leaving = new AbortController();
+      const pending = readLeaving(scripted, session, pasted(), leaving.signal);
+      await begun;
+      leaving.abort();
+      expect(await pending).toBe('AbortError');
+      await vi.waitFor(() => { expect(calls[0]?.signal.aborted).toBe(true); });
+      expect(await failedLine(scripted, before)).toMatchObject({ code: 'extract_left', inputKind: 'text', errType: 'APIUserAbortError' });
+      // Its stream reported nothing, so the whole reservation stays.
+      expect(await usage()).toBe(ceilingOf(requests[0]));
+    });
+
+    it('counts the time limit from the request’s start: time spent making the text is taken from the call’s', async () => {
+      const session = await signIn(scripted, member.email);
+      textGate = new Promise<void>((resolve) => { setTimeout(resolve, 600); });
+      expect(await errorOf(await read(docx(), session, scripted))).toEqual({ status: 503, error: 'extract_timed_out' });
+      expect(calls).toHaveLength(1);
+      // About 400 ms of the second were left; counted from the call it would have run the whole 1,000.
+      expect(calls[0]?.endedAfterMs).toBeLessThan(800);
+    });
+
+    it('makes no call for a read already past its time limit once the text is made (503 extract_timed_out, nothing charged)', async () => {
+      const session = await signIn(scripted, member.email);
+      textGate = new Promise<void>((resolve) => { setTimeout(resolve, 1200); });
+      const before = logLines(scripted).length;
+      expect(await errorOf(await read(docx(), session, scripted))).toEqual({ status: 503, error: 'extract_timed_out' });
+      expect(await failedLine(scripted, before)).toMatchObject({ code: 'extract_timed_out', errType: null });
+      expect(requests).toHaveLength(0);
+      expect(await usage()).toBe(0);
+    });
+
+    it('answers 503 extract_busy when the parse thread stays busy, with no call and nothing charged', async () => {
+      const session = await signIn(scripted, member.email);
+      textThrows = new SlotBusy();
+      const res = await read(docx(), session, scripted);
+      expect(res.headers.get('retry-after')).toBe('5');
+      expect(await errorOf(res)).toEqual({ status: 503, error: 'extract_busy' });
+      expect(requests).toHaveLength(0);
       expect(await usage()).toBe(0);
     });
   });
@@ -448,7 +613,7 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
       }
       expect(requests).toHaveLength(0);
       expect(await usage()).toBe(0);
-      expect(setupReadBytes.held).toBe(0);
+      await gateHolds(0);
     });
 
     it('refuses a malformed body (400 invalid_request) and one over 8 MB (413)', async () => {
@@ -472,7 +637,117 @@ describe('POST /api/org/locations/:locationId/orders/setup/read', () => {
         setupReadBytes.release(SETUP_READ_BYTES_IN_FLIGHT);
       }
       expect((await read(pasted())).status).toBe(200);
-      expect(setupReadBytes.held).toBe(0);
+      await gateHolds(0);
+    });
+  });
+
+  describe('the bytes a replica holds, counted before the body is parsed', () => {
+    afterEach(async () => {
+      setupReadBytes.release(SETUP_READ_BYTES_IN_FLIGHT);
+      await gateHolds(0);
+    });
+
+    it('holds two full bodies at most (16 MiB)', () => {
+      expect(SETUP_READ_BODY_BYTES).toBe(8 * 1024 * 1024);
+      expect(SETUP_READ_BYTES_IN_FLIGHT).toBe(2 * SETUP_READ_BODY_BYTES);
+    });
+
+    it('refuses a read by its Content-Length before parsing it when the gate is full: 503 extract_busy, even for a body that is not JSON', async () => {
+      const body = JSON.stringify(pasted());
+      expect(setupReadBytes.reserve(SETUP_READ_BYTES_IN_FLIGHT - Buffer.byteLength(body) + 1)).toBe(true);
+      const before = logLines(server).length;
+      const notJson = await call(server, readPath(), { session: member.session, rawBody: 'not json'.padEnd(body.length, ' ') });
+      expect(notJson.headers.get('retry-after')).toBe('5');
+      expect(await errorOf(notJson)).toEqual({ status: 503, error: 'extract_busy' });
+      expect(await errorOf(await call(server, readPath(), { session: member.session, rawBody: body }))).toEqual({ status: 503, error: 'extract_busy' });
+      expect(logLines(server).slice(before).find((line) => line.msg === 'townwise.setup_read_failed')).toEqual(expect.objectContaining({
+        code: 'extract_busy', locationId: null, inputKind: null, fileKind: null,
+      }));
+      expect(requests).toHaveLength(0);
+      // One byte more room, and the same body is read.
+      setupReadBytes.release(1);
+      expect((await call(server, readPath(), { session: member.session, rawBody: body })).status).toBe(200);
+      await gateHolds(SETUP_READ_BYTES_IN_FLIGHT - Buffer.byteLength(body));
+    });
+
+    it('refuses a body with no length or one longer than 8 MiB as the parser does (413), before reading it', async () => {
+      expect(await rawRead(member.session, { 'transfer-encoding': 'chunked' }, JSON.stringify(pasted()))).toEqual({ status: 413, error: 'payload_too_large' });
+      expect(await rawRead(member.session, { 'content-length': String(SETUP_READ_BODY_BYTES + 1) })).toEqual({ status: 413, error: 'payload_too_large' });
+      expect(requests).toHaveLength(0);
+      await gateHolds(0);
+    });
+
+    it('holds the whole 8 MiB for a compressed body, which may inflate to it', async () => {
+      expect(setupReadBytes.reserve(SETUP_READ_BYTES_IN_FLIGHT - SETUP_READ_BODY_BYTES + 1)).toBe(true);
+      const json = JSON.stringify(pasted());
+      const gzipped = await fetch(new URL(readPath(), server.url), {
+        method: 'POST', body: gzipSync(json),
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip', authorization: `Bearer ${member.session.accessToken}` },
+      });
+      expect(await errorOf(gzipped)).toEqual({ status: 503, error: 'extract_busy' });
+      expect((await call(server, readPath(), { session: member.session, rawBody: json })).status).toBe(200);
+      setupReadBytes.release(SETUP_READ_BYTES_IN_FLIGHT - SETUP_READ_BODY_BYTES + 1);
+      expect((await fetch(new URL(readPath(), server.url), {
+        method: 'POST', body: gzipSync(json),
+        headers: { 'content-type': 'application/json', 'content-encoding': 'gzip', authorization: `Bearer ${member.session.accessToken}` },
+      })).status).toBe(200);
+    });
+
+    it('gives back exactly what each read held, once, on every answer', async () => {
+      // Held by "another read" throughout: giving back twice would take from it.
+      const other = 1000;
+      expect(setupReadBytes.reserve(other)).toBe(true);
+      const offSession = await signIn(off, member.email);
+      const scriptedSession = await signIn(scripted, member.email);
+      const slowSession = await signIn(slow, member.email);
+      const answersTo: [() => Promise<Response>, number, string | null][] = [
+        [() => read(pasted()), 200, null],
+        [() => read(pasted(), otherMember.session), 404, 'not_found'],
+        [() => read(pasted(), offSession, off), 503, 'ai_unavailable'],
+        [() => read({ source: { type: 'text', text: '' } }), 400, 'invalid_request'],
+        [() => call(server, readPath(), { session: member.session, rawBody: '{not json' }), 400, 'malformed_json'],
+        [() => read(file('text', zipOf([{ name: 'a.txt', data: 'x' }]))), 400, 'extract_kind_not_read'],
+        [() => { answers = [{ kind: 'refused', costMicroUsd: 1 }]; return read(pasted()); }, 422, 'extract_refused'],
+        [() => { answers = [{ kind: 'failed', errType: 'InternalServerError', status: 500 }]; return read(pasted()); }, 503, 'extract_failed'],
+        [() => { textThrows = new SlotBusy(); return read(file('docx', docxOf(['x'])), scriptedSession, scripted); }, 503, 'extract_busy'],
+        [() => read(pasted(), slowSession, slow), 503, 'extract_timed_out'],
+        [() => call(server, readPath(), { session: member.session, rawBody: JSON.stringify({ source: { type: 'text', text: 'x'.repeat(8.5 * 1024 * 1024) } }) }), 413, 'payload_too_large'],
+        [async () => { await setUsage(5_000_000); return read(pasted()); }, 409, 'files_ai_budget_exhausted'],
+        [async () => {
+          const limiter = createRateLimiter({ redis: server.redis, name: 'townwise:ai-reads', limit: 30, windowSeconds: 3600 });
+          for (let index = 0; index < 30; index += 1) await limiter.consume(`acct:${member.session.userId}`);
+          return read(pasted());
+        }, 429, 'rate_limited'],
+      ];
+      for (const [send, status, error] of answersTo) {
+        const res = await send();
+        expect(error === null ? { status: res.status } : await errorOf(res)).toEqual(error === null ? { status } : { status, error });
+        await gateHolds(other);
+      }
+      setupReadBytes.release(other);
+    });
+
+    it('gives back what a read held when the person leaves, during the parse and during the call', async () => {
+      const session = await signIn(scripted, member.email);
+      let release: () => void = () => undefined;
+      textGate = new Promise<void>((resolve) => { release = resolve; });
+      const parsing = new Promise<void>((resolve) => { textBegun = resolve; });
+      const leaving = new AbortController();
+      const pending = readLeaving(scripted, session, file('docx', docxOf(['x'])), leaving.signal);
+      await parsing;
+      expect(setupReadBytes.held).toBeGreaterThan(0);
+      leaving.abort();
+      await pending;
+      await gateHolds(0);
+      release();
+      const calling = new Promise<void>((resolve) => { started = resolve; });
+      const leavingCall = new AbortController();
+      const pendingCall = readLeaving(scripted, session, pasted(), leavingCall.signal);
+      await calling;
+      expect(setupReadBytes.held).toBeGreaterThan(0);
+      leavingCall.abort();
+      await pendingCall;
+      await gateHolds(0);
     });
   });
 });

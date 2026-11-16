@@ -10,6 +10,7 @@ import {
 import type { Access, Resolution } from '../src/access/resolve.ts';
 import { assertRouteTable, ROUTE_LIMITS, TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import type { TownwiseContext } from '../src/app.ts';
+import { holdSetupReadBytes } from '../src/handlers/order-setup-read.ts';
 import { createLabCallbackRouter } from '../src/lab/callback.ts';
 
 const handler: TownwiseRoute['handler'] = () => Promise.resolve();
@@ -232,6 +233,17 @@ describe('route table', () => {
     expect(() => { assertRouteTable([route({ id: 'org.orders.setup.save', method: 'PUT', bodyLimit: '8mb' })]); }).toThrow(ConfigError);
     expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '8mb').map((r) => r.id)).toEqual(['org.orders.setup.read']);
     expect(TOWNWISE_ROUTES.find((r) => r.id === 'org.orders.setup.read')).toMatchObject({ openAsAdmin: true });
+  });
+
+  it('D39: only reading the ordering setup holds its byte gate before the body is parsed; boot refuses the step anywhere else', () => {
+    const step: TownwiseRoute['beforeBody'] = () => undefined;
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'POST', bodyLimit: '8mb', beforeBody: step })]); }).not.toThrow();
+    expect(() => { assertRouteTable([route({ method: 'POST', bodyLimit: '32kb', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.data.ai_read', method: 'POST', bodyLimit: '2kb', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'POST', bodyLimit: '1kb', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(() => { assertRouteTable([route({ id: 'org.orders.setup.read', method: 'PUT', bodyLimit: 'stream', beforeBody: step })]); }).toThrow(ConfigError);
+    expect(TOWNWISE_ROUTES.filter((r) => r.beforeBody !== undefined).map((r) => r.id)).toEqual(['org.orders.setup.read']);
+    expect(TOWNWISE_ROUTES.find((r) => r.id === 'org.orders.setup.read')?.beforeBody).toBe(holdSetupReadBytes);
   });
 
   it('declares every stored-files route with its policy, body limit and limiter, current before :importId', () => {

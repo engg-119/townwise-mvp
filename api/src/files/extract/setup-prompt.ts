@@ -199,8 +199,9 @@ function uniqueBy<T>(list: readonly T[], key: (entry: T) => string | number): T[
  * `other` and an unknown confidence as `low`; a supplier or item without a usable name is dropped, as is a delivery
  * without a weekday, and any other field that does not pass is null (a note empty, a sale's servings 1). Suppliers and
  * items keep the first of each name (as the setup page matches names) and deliveries the first of each weekday, within
- * their caps; `itemsCut` when the answer had more items or said the content did. An item's supplier that names a
- * suggested supplier takes that supplier's spelling. A servings figure that is null is never an estimate.
+ * their caps; `itemsCut` when the answer had more items or said the content did. An item's supplier is one of the
+ * suggested suppliers as kept (within their cap), in that supplier's spelling, or null: so items never bring more
+ * suppliers than the cap. A servings figure that is null is never an estimate.
  */
 export function setupResult(raw: unknown, sourceText: string | null): SetupReadResult | null {
   if (!isRecord(raw)) return null;
@@ -218,7 +219,7 @@ export function setupResult(raw: unknown, sourceText: string | null): SetupReadR
   const unique = uniqueBy(entries(raw.items, itemEntry, Number.MAX_SAFE_INTEGER), (item) => nameKey(item.name));
   const items: SuggestedItem[] = unique.slice(0, SETUP_ITEMS_MAX).map((item) => ({
     ...item,
-    supplier: item.supplier === null ? null : spelling.get(nameKey(item.supplier)) ?? item.supplier,
+    supplier: item.supplier === null ? null : spelling.get(nameKey(item.supplier)) ?? null,
     servingsEstimated: item.servingsPerUnit !== null && item.servingsEstimated,
     posNames: uniqueBy(entries(item.posNames, posEntry, Number.MAX_SAFE_INTEGER), (pos) => nameKey(pos.name)).slice(0, SETUP_POS_NAMES_MAX),
     inFile: text === null ? null : text.includes(nameKey(item.name)),

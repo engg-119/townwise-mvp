@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 import { pastedInput, postedSource, prepareInput, READER_INPUT, SETUP_INPUT, type InputSource, type PreparedInput } from '../src/files/extract/input.ts';
 import { createAnthropicSetupReaderModel, SETUP_FORMAT } from '../src/files/extract/model.ts';
 import { MARKER, type ReaderInput } from '../src/files/extract/reader.ts';
-import { CONTENT_IS_DATA, READER_MODEL } from '../src/files/extract/reader-prompt.ts';
+import { CONTENT_IS_DATA, READER_MODEL, redacted } from '../src/files/extract/reader-prompt.ts';
 import {
   SETUP_ITEMS_MAX, SETUP_MAX_TOKENS, SETUP_SYSTEM_PROMPT, setupResult,
 } from '../src/files/extract/setup-prompt.ts';
@@ -125,6 +125,20 @@ describe('the answer as Townwise answers it', () => {
     expect(setupResult(answer({ itemsCut: true }), null)?.itemsCut).toBe(true);
   });
 
+  it('gives an item no supplier unless it names one of the suppliers kept, so items never add suppliers past the cap', () => {
+    const suppliers = Array.from({ length: 21 }, (_, index) => ({ name: `Supplier ${String(index)}`, deliveries: [] }));
+    const result = setupResult(answer({
+      suppliers,
+      items: [
+        { ...ITEM, name: 'Kept', supplier: 'supplier 3' },
+        { ...ITEM, name: 'Past the cap', supplier: 'Supplier 20' },
+        { ...ITEM, name: 'Never listed', supplier: 'Elsewhere Beverage' },
+      ],
+    }), null);
+    expect(result?.suppliers).toHaveLength(20);
+    expect(result?.items.map((item) => [item.name, item.supplier])).toEqual([['Kept', 'Supplier 3'], ['Past the cap', null], ['Never listed', null]]);
+  });
+
   it('replaces an email address or a phone number in any name or note', () => {
     const result = setupResult(answer({
       suppliers: [{ name: 'Rep pat@example.test', deliveries: [] }],
@@ -133,6 +147,21 @@ describe('the answer as Townwise answers it', () => {
     expect(JSON.stringify(result)).not.toMatch(/example\.test|555-01/);
     expect(result?.suppliers[0]?.name).toBe('Rep [email]');
     expect(result?.items[0]).toMatchObject({ name: 'Call [phone] IPA', posNames: [{ name: 'Tab [phone]' }], note: 'Ask [email] first' });
+  });
+
+  it('replaces only a formatted phone number of ten digits, never a name’s sizes, counts or codes', () => {
+    for (const phone of [
+      '603-555-0142', '(603) 555-0142', '(603)555-0142', '603.555.0142', '603 555 0142', '1-800-555-0199', '+1 603 555 0142',
+      '+1 (603) 555-0142', '+1-603-555-0142', '+44 20 7946 0958', '+44 161 496 0000',
+    ]) expect(redacted(`Rep ${phone}, ext`, 80)).toBe('Rep [phone], ext');
+    for (const name of [
+      'Lager 12 16 24', 'IPA 1/2 BBL 15.5 gal', 'Item 12 750 1000', 'SKU 1234-5678-9012', 'Pack 100 200 3000', 'Case 123-456-7890',
+      'Ale 1 12 750 1000', 'Rep 555-0142', 'Rep 6035550142', 'Rep +16035550142', 'Order 2026-06-14', '$3,456.50 on 120 covers',
+      'Keg 603-555-0142-9', 'Pick 603 555 0142/4',
+    ]) expect(redacted(name, 80)).toBe(name);
+    // Two items that differ by a code alone stay two.
+    const result = setupResult(answer({ items: [{ ...ITEM, name: 'Item 12 750 1000' }, { ...ITEM, name: 'Item 12 750 2000' }] }), null);
+    expect(result?.items.map((item) => item.name)).toEqual(['Item 12 750 1000', 'Item 12 750 2000']);
   });
 
   it('says whether each item’s name is written in the content’s text, and nothing for a picture or a PDF with no text', () => {
@@ -319,5 +348,64 @@ describe('the model’s client', () => {
       model: 'claude-opus-5-5', max_tokens: 20_000, system: SETUP_SYSTEM_PROMPT, messages: request.messages,
       output_config: { effort: 'low', format: SETUP_FORMAT }, fallbacks: 'default', stream: true,
     }]);
+  });
+
+  describe('a call that ends before its answer', () => {
+    const start = (model = 'claude-opus-5-5'): string => sse({
+      type: 'message_start',
+      message: {
+        id: 'msg_test', type: 'message', role: 'assistant', model, content: [], stop_reason: null, stop_sequence: null,
+        usage: { input_tokens: 1000, output_tokens: 1, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 },
+      },
+    });
+    const textDelta = (text: string): string => sse({ type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text } });
+    const aborted = (): DOMException => new DOMException('The operation was aborted.', 'AbortError');
+    /** A stream that sends `events`, then stays open until the call's signal ends it, as the API's does mid-answer. */
+    const hanging = (events: string): typeof globalThis.fetch => (_input, init) => {
+      const body = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(events));
+          init?.signal?.addEventListener('abort', () => { controller.error(aborted()); }, { once: true });
+        },
+      });
+      return Promise.resolve(new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } }));
+    };
+    const request = setupRequest({ type: 'text', form: 'text', text: 'Vorlan IPA', cut: false }, NAMES);
+    async function readUntilAborted(fetch: typeof globalThis.fetch): Promise<unknown> {
+      const left = new AbortController();
+      const pending = createAnthropicSetupReaderModel('test-key', fetch).readFile(request, left.signal);
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      left.abort();
+      return pending;
+    }
+
+    it('says what the stream had reported: the input tokens from message_start and the output streamed, a token for every 3 characters', async () => {
+      const fetch = hanging(start() + sse({ type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } }) + textDelta('x'.repeat(1500)) + textDelta('y'.repeat(1500)));
+      // 1,000 input tokens at $4 a million (4,000) and 3,000 characters as 1,000 output tokens at $20 a million (20,000).
+      expect(await readUntilAborted(fetch)).toEqual({ kind: 'failed', errType: 'APIUserAbortError', status: null, streamedMicroUsd: 24_000 });
+    });
+
+    it('prices it at the answering model’s rates once a refusal fallback takes over', async () => {
+      const fallback = sse({
+        type: 'content_block_start', index: 0,
+        content_block: { type: 'fallback', from: { model: 'claude-opus-5-5' }, to: { model: 'claude-opus-5' }, trigger: { type: 'refusal' } },
+      });
+      const fetch = hanging(start() + fallback + sse({ type: 'content_block_start', index: 1, content_block: { type: 'text', text: '' } })
+        + sse({ type: 'content_block_delta', index: 1, delta: { type: 'text_delta', text: 'z'.repeat(3000) } }));
+      // At $5 and $25 a million: 5,000 + 25,000.
+      expect(await readUntilAborted(fetch)).toEqual({ kind: 'failed', errType: 'APIUserAbortError', status: null, streamedMicroUsd: 30_000 });
+    });
+
+    it('says nothing when it ends before any stream event, aborted or refused by the API', async () => {
+      const waiting: typeof globalThis.fetch = (_input, init) => new Promise((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => { reject(aborted()); }, { once: true });
+      });
+      expect(await readUntilAborted(waiting)).toEqual({ kind: 'failed', errType: 'APIUserAbortError', status: null });
+      const refused: typeof globalThis.fetch = () => Promise.resolve(new Response(
+        JSON.stringify({ type: 'error', error: { type: 'invalid_request_error', message: 'Zqxj' } }), { status: 400, headers: { 'content-type': 'application/json' } },
+      ));
+      expect(await createAnthropicSetupReaderModel('test-key', refused).readFile(request, new AbortController().signal))
+        .toEqual({ kind: 'failed', errType: 'BadRequestError', status: 400 });
+    });
   });
 });

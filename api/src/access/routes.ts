@@ -21,7 +21,7 @@ import { getDataItem, listData, removeDataItem, replaceDataItem, requestAiRead, 
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
-import { readOrderSetup } from '../handlers/order-setup-read.ts';
+import { holdSetupReadBytes, readOrderSetup } from '../handlers/order-setup-read.ts';
 import { getOrders, saveOrderDecision, saveOrderRule, turnOffOrderRule } from '../handlers/orders.ts';
 import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
@@ -78,6 +78,12 @@ export interface TownwiseRoute {
    * stays closed in that mode until someone decides. Never on a staff or staff_self route (boot refuses it).
    */
   readonly openAsAdmin?: true;
+  /**
+   * Runs right before the body is parsed, after the policy; a throw refuses the request unparsed. Only reading the
+   * ordering setup with TownwiseAI (D39) has one, which holds the replica's byte gate for the body before it is buffered
+   * (handlers/order-setup-read.ts holdSetupReadBytes); boot refuses it on any other route.
+   */
+  readonly beforeBody?: (ctx: TownwiseContext, req: Request, res: Response) => void;
   readonly handler: (ctx: TownwiseContext, req: Request, res: Response, principal: Principal) => Promise<void>;
 }
 
@@ -416,7 +422,7 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   // each read is a model call, so it shares the ai_reads limiter with D34's reads.
   {
     id: 'org.orders.setup.read', method: 'POST', path: '/org/locations/:locationId/orders/setup/read', policy: 'member',
-    bodyLimit: '8mb', limiter: 'ai_reads', openAsAdmin: true, handler: readOrderSetup,
+    bodyLimit: '8mb', limiter: 'ai_reads', openAsAdmin: true, beforeBody: holdSetupReadBytes, handler: readOrderSetup,
   },
   {
     id: 'org.orders.item_sales.upload', method: 'POST', path: '/org/locations/:locationId/orders/item-sales', policy: 'member',
@@ -596,14 +602,17 @@ export const ROUTE_LIMITS = {
 const STREAM_ROUTE = 'org.files.chunk';
 /** The only route that may take a 1 MB body: the ordering setup, saved whole. */
 const ONE_MB_ROUTE = 'org.orders.setup.save';
-/** The only route that may take an 8 MB body: reading the ordering setup with TownwiseAI (D39). */
+/**
+ * The only route that may take an 8 MB body, and the only one with a step before its body: reading the ordering setup
+ * with TownwiseAI (D39).
+ */
 const EIGHT_MB_ROUTE = 'org.orders.setup.read';
 
 /**
  * Boot refuses a duplicate method and path, a GET with a body limit, staff_self on any other route, a PUT without a
  * streamed or 1 MB body, a streamed body on any route but the chunk route, a 1 MB body on any route but the ordering
- * setup's save, an 8 MB body on any route but the ordering setup's read (a POST), and `openAsAdmin` on a staff or
- * staff_self route.
+ * setup's save, an 8 MB body or a `beforeBody` step on any route but the ordering setup's read (a POST with an 8 MB
+ * body), and `openAsAdmin` on a staff or staff_self route.
  */
 export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
   const seen = new Set<string>();
@@ -628,6 +637,9 @@ export function assertRouteTable(routes: readonly TownwiseRoute[]): void {
     }
     if (route.bodyLimit === '8mb' && (route.id !== EIGHT_MB_ROUTE || route.method !== 'POST')) {
       throw new ConfigError('routes', `${route.id} takes an 8 MB body, which only ${EIGHT_MB_ROUTE} may`);
+    }
+    if (route.beforeBody !== undefined && (route.id !== EIGHT_MB_ROUTE || route.method !== 'POST' || route.bodyLimit !== '8mb')) {
+      throw new ConfigError('routes', `${route.id} runs a step before its body, which only ${EIGHT_MB_ROUTE} may`);
     }
     if (route.openAsAdmin === true && (route.policy === 'staff' || route.policy === 'staff_self')) {
       throw new ConfigError('routes', `${route.id} is a staff route marked openAsAdmin`);
@@ -662,6 +674,19 @@ function authorize(ctx: TownwiseContext, route: TownwiseRoute): RequestHandler {
   });
 }
 
+/** A route's step right before its body is parsed (TownwiseRoute.beforeBody): a throw refuses the request. */
+function beforeBody(ctx: TownwiseContext, step: NonNullable<TownwiseRoute['beforeBody']>): RequestHandler {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    try {
+      step(ctx, req, res);
+    } catch (err) {
+      next(err);
+      return;
+    }
+    next();
+  };
+}
+
 function accountKey(req: Request): string {
   return `acct:${authOf(req).userId}`;
 }
@@ -688,6 +713,7 @@ export function mountTownwiseRoutes(router: Router, routes: readonly TownwiseRou
     const chain: RequestHandler[] = [ctx.auth.requireAuth];
     if (route.method !== 'GET') chain.push(writes);
     chain.push(authorize(ctx, route));
+    if (route.beforeBody !== undefined) chain.push(beforeBody(ctx, route.beforeBody));
     if (route.bodyLimit !== 'none' && route.bodyLimit !== 'stream') chain.push(express.json({ limit: route.bodyLimit }));
     if (route.limiter !== undefined) chain.push(routeLimiter(route.limiter));
     chain.push(bound(async (req, res) => {
