@@ -162,6 +162,41 @@ export function fetchOrderSetup(api: ApiClient, locationId: string): Promise<Ord
   return api.json(`${locationPath(locationId)}/setup`, orderSetupAnswerSchema);
 }
 
+// Reading the ordering setup with TownwiseAI (D41): what TownwiseAI suggests from one file or pasted text, checked again
+// by the server (api/src/files/extract/setup-prompt.ts). Never a par or never run out.
+
+export const setupReadItemSchema = z.object({
+  name: z.string(),
+  supplier: z.string().nullable(),
+  category: orderCategorySchema.nullable(),
+  unit: orderUnitSchema.nullable(),
+  servingsPerUnit: z.number().nullable(),
+  /** TownwiseAI's estimate for a standard container, not a figure the content gave. */
+  servingsEstimated: z.boolean(),
+  dealSize: z.number().nullable(),
+  posNames: z.array(posNameSchema),
+  /** A short note, '' when nothing needs saying. */
+  note: z.string(),
+  /** The name is written in the content's text; null for a picture or a PDF with no text. */
+  inFile: z.boolean().nullable(),
+});
+export type SetupReadItem = z.infer<typeof setupReadItemSchema>;
+
+export const setupReadSchema = z.object({
+  kind: z.string(),
+  confidence: z.string(),
+  suppliers: z.array(z.object({
+    name: z.string(),
+    deliveries: z.array(z.object({ deliveryWeekday: weekdaySchema, cutoffWeekday: weekdaySchema.nullable(), cutoffTime: z.string().nullable() })),
+  })),
+  items: z.array(setupReadItemSchema),
+  /** The content held more items than TownwiseAI gives at once. */
+  itemsCut: z.boolean(),
+  /** The text was cut before it was read. */
+  partial: z.boolean(),
+});
+export type SetupRead = z.infer<typeof setupReadSchema>;
+
 /** A supplier as PUT sends it: a stored one by its `id`, a new one with a `key` its items name it by. */
 export interface SetupSupplierInput {
   readonly id?: string;

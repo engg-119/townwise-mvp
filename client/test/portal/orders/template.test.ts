@@ -1,4 +1,5 @@
-import type { OrderSetup } from '../../../src/portal/orders/api';
+import type { OrderSetup, SetupRead, SetupReadItem } from '../../../src/portal/orders/api';
+import { importProposal, problemLine, proposalSummary, pruneMarks, withMarks } from '../../../src/portal/orders/proposal';
 import {
   checkDraft, draftOf, fieldId, newItem, newSupplier, parseServings, parseTime, SETUP_COPY, type SetupDraft,
 } from '../../../src/portal/orders/setupDraft';
@@ -232,5 +233,209 @@ describe('the draft', () => {
   test('order-by times are HH:MM, 24 hour', () => {
     expect(['14:00', '9:05', '00:00', '23:59'].map(parseTime)).toEqual(['14:00', '09:05', '00:00', '23:59']);
     for (const text of ['24:00', '2pm', '14:0', '14.00', '']) expect(parseTime(text)).toBeNull();
+  });
+});
+
+// Reading the ordering setup with TownwiseAI (D41): its suggestions go through the sheet import's merge (merge.ts) with
+// the same parsers. Every supplier and item here is synthetic.
+
+function suggestion(name: string, fields: Partial<SetupReadItem> = {}): SetupReadItem {
+  return {
+    name, supplier: null, category: null, unit: null, servingsPerUnit: null, servingsEstimated: false, dealSize: null, posNames: [],
+    note: '', inFile: true, ...fields,
+  };
+}
+
+function readOf(items: SetupReadItem[], suppliers: SetupRead['suppliers'] = [], flags: Partial<Pick<SetupRead, 'itemsCut' | 'partial'>> = {}): SetupRead {
+  return { kind: 'order_guide', confidence: 'high', suppliers, items, itemsCut: false, partial: false, ...flags };
+}
+
+describe('reading with TownwiseAI (D41)', () => {
+  test('a new item keeps a blank par, category, unit, servings and supplier blank, so the checks name each at Save', () => {
+    const result = importProposal(readOf([suggestion('Sample Stout')]), draftOf(null));
+    expect(result).toMatchObject({ found: 1, added: 1, replaced: 0, problems: [] });
+    const [stout] = result.draft.items;
+    if (stout === undefined) throw new Error('no item');
+    expect(stout).toMatchObject({ id: null, name: 'Sample Stout', supplierKey: '', category: '', unit: '', servingsPerUnit: '', par: '', neverRunOut: false, dealSize: '', posNames: [] });
+    const check = checkDraft(result.draft);
+    if (check.ok) throw new Error('accepted');
+    for (const field of ['supplier', 'category', 'unit', 'servings', 'par'] as const) {
+      expect(check.problems[fieldId.item(stout.key, field)]).toBeDefined();
+    }
+    expect(check.problems[fieldId.item(stout.key, 'par')]).toEqual([SETUP_COPY.par]);
+  });
+
+  test('a new item takes what TownwiseAI filled, but never a par or never run out', () => {
+    const read = readOf([suggestion('Sample IPA', {
+      supplier: 'New Brewery', category: 'draft', unit: 'kegs', servingsPerUnit: 124, servingsEstimated: true, dealSize: 2,
+      posNames: [{ name: 'IPA Pint', perSale: 1 }, { name: 'IPA Pitcher', perSale: 4 }],
+    })]);
+    const result = importProposal(read, draftOf(null));
+    expect(result.newSuppliers).toEqual(['New Brewery']);
+    expect(result.draft.items[0]).toMatchObject({
+      category: 'draft', unit: 'kegs', servingsPerUnit: '124', dealSize: '2', par: '', neverRunOut: false,
+      supplierKey: result.draft.suppliers[0]?.key, posNames: [{ name: 'IPA Pint', perSale: '1' }, { name: 'IPA Pitcher', perSale: '4' }],
+    });
+  });
+
+  test('a replaced item always keeps its par and never run out, and its own values where the suggestion is blank', () => {
+    const saved: OrderSetup = { ...SAVED, items: [{ ...SAVED.items[0], par: 4, neverRunOut: true } as OrderSetup['items'][number]] };
+    const read = readOf([suggestion('sample  LAGER', { supplier: 'New Distributor', unit: 'cases', servingsPerUnit: 30 })]);
+    const result = importProposal(read, draftOf(saved));
+    expect(result).toMatchObject({ added: 0, replaced: 1, newSuppliers: ['New Distributor'] });
+    expect(result.draft.items).toHaveLength(1);
+    expect(result.draft.items[0]).toMatchObject({
+      id: 'bbbbbbbbbbbbbbbbbbbbbbb1', par: '4', neverRunOut: true, category: 'bottles_cans', unit: 'cases', servingsPerUnit: '30',
+      dealSize: '5', posNames: [{ name: 'Lager Can', perSale: '1' }], supplierKey: result.draft.suppliers[1]?.key,
+    });
+    expect(result.kept).toEqual([{ item: 'sample  LAGER', fields: ['category', 'point-of-sale names', 'deal size'] }]);
+
+    // A blank supplier keeps the item's own, and TownwiseAI's servings, unit and category replace its.
+    const own = importProposal(readOf([suggestion('Sample Lager', { category: 'draft', unit: 'kegs', servingsPerUnit: 124 })]), draftOf(saved));
+    expect(own.draft.items[0]).toMatchObject({ supplierKey: 'aaaaaaaaaaaaaaaaaaaaaaa1', category: 'draft', unit: 'kegs', servingsPerUnit: '124', par: '4', neverRunOut: true });
+    expect(own.kept).toEqual([{ item: 'Sample Lager', fields: ['supplier', 'point-of-sale names', 'deal size'] }]);
+    expect(checkDraft(own.draft).ok).toBe(true);
+  });
+
+  test('proposed deliveries fill only a supplier that has none', () => {
+    const draft: SetupDraft = {
+      suppliers: [
+        ...draftOf(SAVED).suppliers,
+        { key: 'new-supplier-blank', id: null, name: 'Sample Brewery', deliveries: [{ deliveryWeekday: '', cutoffWeekday: '', cutoffTime: '' }] },
+      ],
+      items: [],
+    };
+    const read = readOf([], [
+      { name: 'sample distributor', deliveries: [{ deliveryWeekday: 1, cutoffWeekday: 0, cutoffTime: '10:00' }] },
+      { name: 'Sample Brewery', deliveries: [{ deliveryWeekday: 2, cutoffWeekday: 1, cutoffTime: '09:00' }] },
+      { name: 'New Spirits', deliveries: [{ deliveryWeekday: 5, cutoffWeekday: null, cutoffTime: null }] },
+      { name: 'New Wines', deliveries: [] },
+    ]);
+    const result = importProposal(read, draft);
+    expect(result.draft.suppliers.map((supplier) => [supplier.name, supplier.deliveries])).toEqual([
+      ['Sample Distributor', [{ deliveryWeekday: '4', cutoffWeekday: '2', cutoffTime: '14:00' }]],
+      ['Sample Brewery', [{ deliveryWeekday: '2', cutoffWeekday: '1', cutoffTime: '09:00' }]],
+      ['New Spirits', [{ deliveryWeekday: '5', cutoffWeekday: '', cutoffTime: '' }]],
+      ['New Wines', []],
+    ]);
+    expect(result).toMatchObject({ deliveriesFilled: ['Sample Brewery'], newSuppliers: ['New Spirits', 'New Wines'], suppliersLeftOut: [] });
+    // An order-by day or time TownwiseAI left blank is the person's to fill in at Save.
+    const check = checkDraft(result.draft);
+    if (check.ok) throw new Error('accepted');
+    expect(check.problems[fieldId.delivery(result.draft.suppliers[2]?.key ?? '', 0, 'cutoff')]).toEqual([SETUP_COPY.cutoffDay]);
+  });
+
+  test('marks an estimated servings value with its note and a name not found in the file; a picture marks no name', () => {
+    const read = readOf([
+      suggestion('Sample IPA', { servingsPerUnit: 124, servingsEstimated: true, note: 'A half-barrel holds about 124 pints.', inFile: false }),
+      suggestion('Sample Gin', { servingsPerUnit: 17, servingsEstimated: true }),
+      suggestion('Sample Cider', { servingsPerUnit: 24, inFile: null }),
+    ]);
+    const result = importProposal(read, draftOf(null));
+    const [ipa, gin, cider] = result.draft.items;
+    expect(result.marks[ipa?.key ?? '']).toEqual({
+      servings: { value: '124', text: 'TownwiseAI estimated this: A half-barrel holds about 124 pints. Check it.' },
+      name: { value: 'Sample IPA', text: 'TownwiseAI didn’t find this name in the file. Check it.' },
+    });
+    expect(result.marks[gin?.key ?? '']).toEqual({ servings: { value: '17', text: 'TownwiseAI estimated this. Check it.' } });
+    expect(result.marks[cider?.key ?? '']).toBeUndefined();
+    expect(result).toMatchObject({ estimated: 2, notInFile: 1 });
+    // From pasted text, the name is not in the text.
+    const pasted = importProposal(readOf([suggestion('Sample IPA', { inFile: false })]), draftOf(null), 'text');
+    expect(Object.values(pasted.marks)[0]?.name?.text).toBe('TownwiseAI didn’t find this name in the text. Check it.');
+  });
+
+  test('a replaced item that keeps its own servings carries no estimate mark', () => {
+    const read = readOf([suggestion('Sample Lager', { servingsPerUnit: null, servingsEstimated: false })]);
+    expect(importProposal(read, draftOf(SAVED)).marks).toEqual({});
+  });
+
+  test('a mark clears once its field changes or its item goes, and a new read adds to the marks', () => {
+    const read = readOf([suggestion('Sample IPA', { servingsPerUnit: 124, servingsEstimated: true, inFile: false })]);
+    const result = importProposal(read, draftOf(null));
+    const [ipa] = result.draft.items;
+    if (ipa === undefined) throw new Error('no item');
+    expect(pruneMarks(result.marks, result.draft)).toBe(result.marks);
+    const edited = pruneMarks(result.marks, { ...result.draft, items: [{ ...ipa, servingsPerUnit: '120' }] });
+    expect(edited).toEqual({ [ipa.key]: { name: result.marks[ipa.key]?.name } });
+    expect(pruneMarks(edited, { ...result.draft, items: [{ ...ipa, servingsPerUnit: '120', name: 'IPA' }] })).toEqual({});
+    expect(pruneMarks(result.marks, { ...result.draft, items: [] })).toEqual({});
+    const more = withMarks(edited, { [ipa.key]: { servings: { value: '120', text: 'x' } }, other: { name: { value: 'Other', text: 'y' } } });
+    expect(more).toEqual({ [ipa.key]: { name: result.marks[ipa.key]?.name, servings: { value: '120', text: 'x' } }, other: { name: { value: 'Other', text: 'y' } } });
+  });
+
+  test('a suggestion that fails a check is left out with why, by its number, and so is a second of one name', () => {
+    const read = readOf([
+      suggestion('Sample IPA'),
+      suggestion('', { servingsPerUnit: 5000 }),
+      suggestion('Sample Gin', { dealSize: 0, posNames: [{ name: 'Gin', perSale: 60 }, { name: ' gin ', perSale: 1 }] }),
+      suggestion('sample ipa'),
+    ]);
+    const result = importProposal(read, draftOf(null));
+    expect(result).toMatchObject({ found: 4, added: 1 });
+    expect(result.problems).toEqual([
+      { row: 2, item: '', reason: 'Its name is empty or longer than 80 characters. Its servings per unit isn’t a number from 0.1 to 2,000.' },
+      {
+        row: 3, item: 'Sample Gin',
+        reason: 'Its deal size isn’t a whole number from 1 to 999. A point-of-sale name is listed twice. A point-of-sale name’s servings per sale isn’t above 0, up to 50.',
+      },
+      { row: 4, item: 'sample ipa', reason: 'It’s the same item as item 1.' },
+    ]);
+  });
+
+  test('the setup’s limits hold: 300 items, 20 suppliers', () => {
+    const full: SetupDraft = { suppliers: [], items: Array.from({ length: 299 }, (_, i) => ({ ...newItem(''), name: `Item ${String(i)}` })) };
+    const items = importProposal(readOf([suggestion('Sample IPA'), suggestion('Sample Gin'), suggestion('Item 3', { servingsPerUnit: 24 })]), full);
+    expect(items.draft.items).toHaveLength(300);
+    expect(items.problems).toEqual([{ row: 2, item: 'Sample Gin', reason: 'The setup holds up to 300 items.' }]);
+    expect(items.replaced).toBe(1);
+    const many: SetupDraft = { suppliers: Array.from({ length: 19 }, (_, i) => newSupplier(`Supplier ${String(i)}`)), items: [] };
+    const suppliers = importProposal(readOf([suggestion('Sample IPA', { supplier: 'Second New' })], [{ name: 'First New', deliveries: [] }, { name: 'Third New', deliveries: [] }]), many);
+    expect(suppliers.draft.suppliers).toHaveLength(20);
+    expect(suppliers).toMatchObject({ newSuppliers: ['First New'], suppliersLeftOut: ['Third New'] });
+    expect(suppliers.problems).toEqual([{ row: 1, item: 'Sample IPA', reason: 'The setup holds up to 20 suppliers.' }]);
+  });
+
+  test('the summary: what it found, what to set and check, new suppliers’ deliveries, a cut or partial read', () => {
+    const saved: OrderSetup = {
+      ...SAVED,
+      items: ['Sample Lager', 'Sample Porter', 'Sample Rum'].map((name, i) => ({ ...SAVED.items[0], id: `bbbbbbbbbbbbbbbbbbbbbbc${String(i)}`, name } as OrderSetup['items'][number])),
+    };
+    const items = [
+      ...['Sample Lager', 'Sample Porter', 'Sample Rum'].map((name) => suggestion(name, { category: 'liquor' })),
+      ...Array.from({ length: 11 }, (_, i) => suggestion(`New Item ${String(i)}`, i < 4 ? { servingsPerUnit: 124, servingsEstimated: true } : {})),
+    ];
+    items[5] = { ...items[5], inFile: false } as SetupReadItem;
+    items[6] = { ...items[6], inFile: false } as SetupReadItem;
+    const read = readOf(items, [{ name: 'New Brewery', deliveries: [{ deliveryWeekday: 2, cutoffWeekday: 1, cutoffTime: '09:00' }, { deliveryWeekday: 5, cutoffWeekday: null, cutoffTime: null }] }, { name: 'New Spirits', deliveries: [] }], { itemsCut: true });
+    const result = importProposal(read, draftOf(saved));
+    expect(proposalSummary(result)).toEqual([
+      'TownwiseAI found 14 items: 11 new, 3 replaced by name. Nothing is saved yet: check them below, then save the setup.',
+      'Set the par of the 11 new items.',
+      'Replaced items keep their par and never run out, and their own values where TownwiseAI left a field blank.',
+      'Check the servings per unit of 4 items: TownwiseAI estimated them.',
+      'TownwiseAI didn’t find 2 of these names in the file: check them.',
+      'Added 1 supplier with the delivery days TownwiseAI found: New Brewery (Tuesday and Friday). Check each delivery’s order-by day and time.',
+      'Add the delivery days of the new suppliers: New Spirits.',
+      'The file lists more items than TownwiseAI reads at once (150), so some were left out. Read the rest separately.',
+    ]);
+
+    const one = importProposal(readOf([suggestion('Sample Stout', { servingsPerUnit: 124, servingsEstimated: true, inFile: false }), suggestion('')], [], { partial: true }), draftOf(null), 'text');
+    expect(proposalSummary(one, 'text')).toEqual([
+      'TownwiseAI found 2 items: 1 new, 0 replaced by name. Nothing is saved yet: check them below, then save the setup.',
+      'Set the par of the new item.',
+      'Check the servings per unit of 1 item: TownwiseAI estimated it.',
+      'TownwiseAI didn’t find 1 of these names in the text: check it.',
+      'The text was too long to read whole, so TownwiseAI read only the start of it.',
+      'Left out 1 item that failed a check:',
+    ]);
+    expect(problemLine(one.problems[0] ?? { row: 0, item: '', reason: '' })).toBe('Item 2: Its name is empty or longer than 80 characters.');
+
+    const filled = importProposal(readOf([], [{ name: 'Sample Distributor', deliveries: [{ deliveryWeekday: 1, cutoffWeekday: 0, cutoffTime: '10:00' }] }]), { ...draftOf(SAVED), suppliers: [{ ...newSupplier('Sample Distributor'), deliveries: [] }] });
+    expect(proposalSummary(filled)).toEqual([
+      'TownwiseAI found no items. Nothing is saved yet: check the suppliers below, then save the setup.',
+      'Filled in the delivery days TownwiseAI found for Sample Distributor, which had none. Check each delivery’s order-by day and time.',
+    ]);
+    expect(proposalSummary(importProposal(readOf([]), draftOf(null)))).toEqual(['TownwiseAI found nothing to add from the file.']);
   });
 });
