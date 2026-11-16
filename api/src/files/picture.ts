@@ -1,9 +1,11 @@
 // A picture attached to a TownwiseAI message, before its bytes go to the model (spec D36): its size in pixels, read from
 // its header, and its bytes without the metadata a camera or an editor writes beside the pixels (where and when it was
-// taken, the device, the author, a caption). JPEG drops its APP1 (EXIF, XMP), APP13 (IPTC) and COM segments and
-// anything after its end; PNG its tEXt, iTXt, zTXt and eXIf chunks and anything after IEND; WebP its EXIF and XMP chunks
-// (with the VP8X flags that announce them). Every other segment or chunk, the pixels among them, is kept byte for
-// byte. A GIF is sent as it is. Bytes that don't parse as their type are null: such a picture is never sent. Pure; no
+// taken, the device, the author, a caption). JPEG drops every APPn segment but APP0 (JFIF), an APP2 ICC profile and
+// APP14 (Adobe's colour transform), among them APP1 (EXIF, XMP), APP12 (Ducky), APP13 (IPTC) and APP11 (JUMBF), its COM
+// segments and anything after its end; PNG its tEXt, iTXt, zTXt, eXIf and tIME chunks and anything after IEND; WebP its
+// EXIF and XMP chunks (with the VP8X flags that announce them); GIF its comment and application extensions (XMP, an
+// editor's name, the loop count) and anything after its trailer. Every other segment, chunk or block, the pixels among
+// them, is kept byte for byte. Bytes that don't parse as their type are null: such a picture is never sent. Pure; no
 // dependency.
 import type { PictureType } from './sniff.ts';
 
@@ -49,8 +51,11 @@ function sized(width: number, height: number): PictureSize | null {
 const SOI = 0xd8;
 const EOI = 0xd9;
 const SOS = 0xda;
-/** Dropped: APP1 (EXIF, XMP), APP13 (Photoshop's IPTC) and COM. */
-const JPEG_METADATA: ReadonlySet<number> = new Set([0xe1, 0xed, 0xfe]);
+const APP0 = 0xe0;
+const APP2 = 0xe2;
+const APP14 = 0xee;
+const APP15 = 0xef;
+const COM = 0xfe;
 /** Start of frame, which carries the size: C0 to CF except DHT (C4), JPG (C8) and DAC (CC). */
 const SOF: ReadonlySet<number> = new Set([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf]);
 
@@ -109,16 +114,28 @@ function jpegSize(bytes: Uint8Array): PictureSize | null {
   return sized(u16be(bytes, frame.start + 7), u16be(bytes, frame.start + 5));
 }
 
+/**
+ * Dropped: COM, and every APPn but APP0 (JFIF), APP2 holding an ICC profile (the colours) and APP14 (Adobe's, which
+ * says how the colours are coded). The others hold EXIF and XMP (APP1), FlashPix and MPF (APP2), JUMBF (APP11),
+ * Ducky's comment (APP12), IPTC (APP13) and makers' notes.
+ */
+function isJpegMetadata(bytes: Uint8Array, part: JpegPart): boolean {
+  if (part.marker === COM) return true;
+  if (part.marker < APP0 || part.marker > APP15 || part.marker === APP0 || part.marker === APP14) return false;
+  // FF, the marker, the length (2), then the segment's name.
+  return part.marker !== APP2 || ascii(bytes, part.start + 4, 12) !== 'ICC_PROFILE\0';
+}
+
 function stripJpeg(bytes: Uint8Array): Buffer | null {
   const parts = jpegParts(bytes);
   if (parts === null) return null;
-  const kept = parts.filter((part) => !JPEG_METADATA.has(part.marker)).map((part) => bytes.subarray(part.start, part.end));
+  const kept = parts.filter((part) => !isJpegMetadata(bytes, part)).map((part) => bytes.subarray(part.start, part.end));
   return Buffer.concat([Buffer.from([0xff, SOI]), ...kept]);
 }
 
 // PNG: its 8-byte signature, then chunks (a four-byte length, a four-letter type, the data, a CRC), IHDR first, IEND last.
 const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-const PNG_METADATA: ReadonlySet<string> = new Set(['tEXt', 'iTXt', 'zTXt', 'eXIf']);
+const PNG_METADATA: ReadonlySet<string> = new Set(['tEXt', 'iTXt', 'zTXt', 'eXIf', 'tIME']);
 
 interface PngChunk { readonly type: string; readonly start: number; readonly end: number }
 
@@ -212,6 +229,59 @@ function gifSize(bytes: Uint8Array): PictureSize | null {
   return ascii(bytes, 0, 4) !== 'GIF8' || bytes.length < 10 ? null : sized(u16le(bytes, 6), u16le(bytes, 8));
 }
 
+// GIF: its 6-byte header, the logical screen descriptor (7 bytes, its flags saying whether a global colour table of 3
+// times 2^(n+1) bytes follows), then blocks up to the trailer (0x3B): an image (0x2C, a 9-byte descriptor, a local
+// colour table when its flags say so, the LZW code size, then data sub-blocks) or an extension (0x21, a label, then
+// sub-blocks). Sub-blocks are a size byte and that many bytes, ending at a size of 0.
+const GIF_IMAGE = 0x2c;
+const GIF_EXTENSION = 0x21;
+const GIF_TRAILER = 0x3b;
+/** Dropped extensions: comment (0xFE) and application (0xFF: XMP, an editor's data, the loop count). */
+const GIF_METADATA: ReadonlySet<number> = new Set([0xfe, 0xff]);
+
+/** The bytes a colour table takes, from a flags byte whose top bit says one follows. */
+function colourTable(flags: number): number {
+  return (flags & 0x80) === 0 ? 0 : 3 * 2 ** ((flags & 0x07) + 1);
+}
+
+/** Past the sub-blocks that start at `at`, or -1 when they run past the end. */
+function pastSubBlocks(bytes: Uint8Array, at: number): number {
+  let next = at;
+  for (;;) {
+    const size = byteAt(bytes, next);
+    if (size === -1) return -1;
+    next += 1 + size;
+    if (size === 0) return next;
+  }
+}
+
+function stripGif(bytes: Uint8Array): Buffer | null {
+  if (gifSize(bytes) === null || (ascii(bytes, 0, 6) !== 'GIF87a' && ascii(bytes, 0, 6) !== 'GIF89a') || bytes.length < 13) return null;
+  const head = 13 + colourTable(byteAt(bytes, 10));
+  if (head > bytes.length) return null;
+  const kept: Uint8Array[] = [bytes.subarray(0, head)];
+  let images = 0;
+  let at = head;
+  while (at < bytes.length && byteAt(bytes, at) !== GIF_TRAILER) {
+    const start = at;
+    const block = byteAt(bytes, at);
+    if (block === GIF_IMAGE) {
+      // The separator and the descriptor's position and size (8 bytes), then its flags; then the LZW code size.
+      const flags = byteAt(bytes, at + 9);
+      if (flags === -1) return null;
+      at = pastSubBlocks(bytes, at + 10 + colourTable(flags) + 1);
+      images += 1;
+    } else if (block === GIF_EXTENSION) {
+      at = pastSubBlocks(bytes, at + 2);
+    } else {
+      return null;
+    }
+    if (at === -1 || at > bytes.length) return null;
+    if (block === GIF_IMAGE || !GIF_METADATA.has(byteAt(bytes, start + 1))) kept.push(bytes.subarray(start, at));
+  }
+  return images === 0 ? null : Buffer.concat([...kept, Buffer.from([GIF_TRAILER])]);
+}
+
 /** The picture's width and height in pixels, from its header; null when its bytes don't parse as `type`. */
 export function pictureSize(bytes: Uint8Array, type: PictureType): PictureSize | null {
   switch (type) {
@@ -228,6 +298,6 @@ export function withoutMetadata(bytes: Uint8Array, type: PictureType): Buffer | 
     case 'image/jpeg': return stripJpeg(bytes);
     case 'image/png': return stripPng(bytes);
     case 'image/webp': return stripWebp(bytes);
-    case 'image/gif': return gifSize(bytes) === null ? null : Buffer.from(bytes);
+    case 'image/gif': return stripGif(bytes);
   }
 }

@@ -316,6 +316,19 @@ test('Privacy says what letting TownwiseAI read a file sends, adds and keeps, an
   expect(text).not.toMatch(/stored but never read\./);
 });
 
+test('Privacy says what reading a file or text for ordering with TownwiseAI sends, never keeps and never sets (D41)', () => {
+  renderAt('/privacy');
+  const paragraphs = [...screen.getByRole('region', { name: 'Your restaurant’s sales data' }).querySelectorAll('p')];
+  const sales = paragraphs.map((p) => p.textContent);
+  const paragraph = sales.find((line) => line.startsWith('Files and text you give TownwiseAI for ordering.'));
+  expect(paragraph).toBe('Files and text you give TownwiseAI for ordering. On Ordering setup, on the web, you can drop or choose one file, or paste text, for TownwiseAI to suggest your suppliers and items from. Nothing is sent until you press Read. Then Townwise sends it once to Anthropic’s Claude, with the names of the suppliers and items already in your setup, and nothing else: not the file’s name, your organization’s or location’s name, or anyone’s email. A picture is sent without its metadata, such as where and when it was taken. A PDF is sent as it is, so its document properties, which can hold a title or an author’s name, go with it. Townwise doesn’t keep what you gave it: it isn’t stored or added to Your data, and our logs and audit record hold only how many suppliers and items it suggested, never the content or a name from it. An invoice or an export can hold people’s names, and Claude reads all of it. Claude is told to leave out names, email addresses and phone numbers, and Townwise takes out any email address, or phone number written like (603) 555-0123, that it writes anyway. Its suggestions go into your setup unsaved, for you to check, until you save it, and TownwiseAI never sets a par or never run out. A register export read this way sends its item names and quantities to Anthropic, unlike the item sales upload, which reads an export in your browser and sends only how many servings of each item sold each day.');
+  // Bold lead-in, right after the paragraph on files you let TownwiseAI read.
+  expect(paragraphs.find((p) => p.textContent.startsWith('Files and text you give'))?.firstElementChild?.textContent).toBe('Files and text you give TownwiseAI for ordering.');
+  expect(sales.indexOf(paragraph ?? '')).toBe(sales.findIndex((line) => line.startsWith('Files you let TownwiseAI read.')) + 1);
+  const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
+  expect(anthropic?.textContent).toContain('When you let TownwiseAI read a file, the whole file is sent to it. When you have TownwiseAI read a file or text on Ordering setup, that file or text is sent to it once, with the names of the setup’s suppliers and items. Townwise never sends it your team’s names');
+});
+
 test('Privacy says notes hold optional hours and change the published forecast (spec 17, D30)', () => {
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;

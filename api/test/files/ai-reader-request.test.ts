@@ -3,7 +3,8 @@
 // for one bad entry.
 import { describe, expect, it } from 'vitest';
 
-import { pictureType, retryDelayMs } from '../../src/files/ai-reader.ts';
+import { retryDelayMs } from '../../src/files/ai-reader.ts';
+import { pictureType } from '../../src/files/extract/input.ts';
 import { readerCeilingMicroUsd, readerRequest } from '../../src/files/extract/reader.ts';
 import {
   DAYS_MAX, EVENTS_MAX, FACTS_MAX, READER_MAX_TOKENS, READER_MODEL, READER_SYSTEM_PROMPT, readerResult, redacted,

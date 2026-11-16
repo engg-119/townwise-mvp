@@ -72,6 +72,7 @@ const ANSWER: OrderSetupAnswer = {
   itemCoverage: { [LAGER_ID]: 20, [IPA_ID]: 0 },
   counts: { [LAGER_ID]: { quantity: 3, date: '2026-11-10' } },
   itemsWithHistory: [LAGER_ID],
+  canReadWithAi: false,
 };
 
 /** The saved setup as the server answers a PUT: the sent rows, new ones with minted ids, at `version`. */
