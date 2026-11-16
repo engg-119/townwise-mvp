@@ -29,9 +29,9 @@ import { open, seal } from '../calendar/secret.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
 
-/** A Google calendar's name for the primary calendar, an email-like name, and every Google calendar under view-as. */
+/** A Google calendar's name for the primary calendar, an email-like name, and every Google calendar staff read. */
 export const GOOGLE_CALENDAR_LABEL = 'Google calendar';
-/** A Google calendar's event's title under view-as (design decision 12). */
+/** A Google calendar's event's title as staff read it, under view-as or open as admin (design decision 12). */
 export const GOOGLE_EVENT_TITLE = 'Google calendar event';
 
 /** One of the picker's choices: the calendar's id and Google name go to its person only. */

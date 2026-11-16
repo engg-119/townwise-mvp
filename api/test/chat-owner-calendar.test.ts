@@ -2,8 +2,9 @@
 // takes get_town_calendar's ranges, refuses any other before reading, lists the location's stored events with their
 // calendars' names, titles, dates, weekdays and hours, answers available false when the location has no calendar,
 // and its cards show the dates and counts only, never a title or a calendar's name. The saved conversation keeps a
-// stub of a read that listed events, with its counts only (connect-google-calendar, design decision 16). Synthetic
-// data only.
+// stub of a read that listed events, with its counts only (connect-google-calendar, design decision 16), and a turn
+// staff run open as admin reads a Google calendar's events without its name or their titles (design decision 12).
+// Synthetic data only.
 import type { BetaToolUseBlock } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { describe, expect, it } from 'vitest';
 
@@ -173,6 +174,39 @@ describe('get_owner_calendar result', () => {
     expect(outcome.result.is_error).toBeUndefined();
     expect(JSON.parse(outcome.result.content as string)).toEqual({ available: false, reason: 'No calendar is connected to this location.' });
     expect(reads.map((read) => read.method)).toEqual(['list']);
+  });
+
+  it('lists a Google calendar’s events as “Google calendar event” from “Google calendar” in a turn staff run open as admin, a link’s as they are (connect-google-calendar)', async () => {
+    const google = calendar({ id: '0000000000000000000000c1', kind: 'google', label: 'Sentinel Google bookings', host: null, skippedRepeating: 0 });
+    const googleEvent: OwnerCalendarEvent = {
+      calendarId: google.id, calendar: google.label, uid: 'google-event-0001', title: 'Sentinel Google buyout',
+      startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '21:00',
+    };
+    // A calendar the list didn't read (added meanwhile) is hidden too.
+    const lateEvent: OwnerCalendarEvent = { ...googleEvent, calendarId: '0000000000000000000000c2', calendar: 'Sentinel late calendar', title: 'Sentinel late title' };
+    const events = [...EVENTS.slice(0, 1), googleEvent, lateEvent];
+    const run = async (actorRole: 'member' | 'superadmin') => {
+      const { tc } = context([calendar(), google], events);
+      const staffTc: ToolContext = { ...tc, actor: { ...tc.actor, actorRole } };
+      const { content } = await toolNamed('get_owner_calendar')?.run(staffTc, { from: '2026-11-16', to: '2026-11-30' }) ?? { content: '' };
+      return { content, events: (JSON.parse(content) as { events: { calendar: string; title: string; startDate: string; startTime: string | null }[] }).events };
+    };
+
+    const staff = await run('superadmin');
+    expect(staff.events.map(({ calendar: name, title, startDate, startTime }) => ({ name, title, startDate, startTime }))).toEqual([
+      { name: SENTINEL_LABEL, title: SENTINEL_TITLE, startDate: '2026-11-21', startTime: '18:00' },
+      { name: 'Google calendar', title: 'Google calendar event', startDate: '2026-11-24', startTime: '17:00' },
+      { name: 'Google calendar', title: 'Google calendar event', startDate: '2026-11-24', startTime: '17:00' },
+    ]);
+    expect(staff.content).not.toMatch(/Sentinel Google|Sentinel late/);
+
+    // The team's own turns read them as they are.
+    const member = await run('member');
+    expect(member.events.map(({ calendar: name, title }) => ({ name, title }))).toEqual([
+      { name: SENTINEL_LABEL, title: SENTINEL_TITLE },
+      { name: 'Sentinel Google bookings', title: 'Sentinel Google buyout' },
+      { name: 'Sentinel late calendar', title: 'Sentinel late title' },
+    ]);
   });
 });
 

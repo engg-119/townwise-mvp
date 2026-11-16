@@ -7,11 +7,14 @@
 // or a calendar's name, and tool inputs and results are never logged. An event's title reaches the model only in the
 // turn that read it: the saved conversation keeps a stub with the counts (`saved`, connect-google-calendar design
 // decision 16), so a later turn calls the tool again and reads what is stored then, and a removed calendar's events
-// never come back. The tool's name, description and input are unchanged by that (its frozen prefix). An event becomes
-// a note only through propose_note, which the owner saves.
+// never come back. The tool's name, description and input are unchanged by that (its frozen prefix). In a turn staff
+// run with the organization open as its admin, a Google calendar's events are listed as "Google calendar event" from
+// "Google calendar", as the Calendar shows them to staff (connect-google-calendar design decision 12), so its reply
+// can't quote one. An event becomes a note only through propose_note, which the owner saves.
 import { z } from 'zod';
 
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../../dates.ts';
+import { GOOGLE_CALENDAR_LABEL, GOOGLE_EVENT_TITLE } from '../../handlers/google-calendars.ts';
 import { weekdayOf } from '../../time-zones.ts';
 import type { ChatTool } from './registry.ts';
 import { DATE, viewOf } from './shared.ts';
@@ -89,13 +92,22 @@ export const ownerCalendarTool: ChatTool<OwnerCalendarRange> = {
     const store = tc.ctx.stores.ownerCalendars;
     const calendars = await store.list(tc.scope, tc.location.id);
     if (calendars.length === 0) return { content: JSON.stringify({ available: false, reason: NO_CALENDAR }) };
+    // Staff open as admin (actorOf's `superadmin`; view-as sends no turn): only files' and links' events keep their
+    // names and titles, the calendars read first, so a Google calendar added meanwhile is covered too.
+    const shown = tc.actor.actorRole === 'superadmin'
+      ? new Set(calendars.filter((calendar) => calendar.kind !== 'google').map((calendar) => calendar.id))
+      : null;
     const events = await store.eventsBetween(tc.scope, tc.location.id, range);
     return {
       content: JSON.stringify({
-        events: events.slice(0, MAX_EVENTS_LISTED).map((event) => ({
-          calendar: event.calendar, title: event.title, startDate: event.startDate, startWeekday: weekdayOf(event.startDate),
-          endDate: event.endDate, endWeekday: weekdayOf(event.endDate), startTime: event.startTime, endTime: event.endTime,
-        })),
+        events: events.slice(0, MAX_EVENTS_LISTED).map((event) => {
+          const hidden = shown !== null && !shown.has(event.calendarId);
+          return {
+            calendar: hidden ? GOOGLE_CALENDAR_LABEL : event.calendar, title: hidden ? GOOGLE_EVENT_TITLE : event.title,
+            startDate: event.startDate, startWeekday: weekdayOf(event.startDate), endDate: event.endDate, endWeekday: weekdayOf(event.endDate),
+            startTime: event.startTime, endTime: event.endTime,
+          };
+        }),
         truncated: events.length > MAX_EVENTS_LISTED,
         calendars: calendars.length,
         skippedRepeating: calendars.reduce((sum, calendar) => sum + calendar.skippedRepeating, 0),

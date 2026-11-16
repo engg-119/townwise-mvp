@@ -681,7 +681,7 @@ describe('Google connections are audited and logged without content', () => {
   });
 });
 
-describe('staff never connect, and view-as shows no Google calendar’s name or event title', () => {
+describe('staff never connect, and read no Google calendar’s name or event title under view-as or open as admin', () => {
   it('under view-as the list and the events show "Google calendar" and "Google calendar event", while a link keeps its own; google.connected is false', async () => {
     const t = await tenant('Private Pavilion');
     google.state.calendars = [{ id: SHARED_ID, name: 'Bookings', primary: false, accessRole: 'reader' }];
@@ -712,6 +712,41 @@ describe('staff never connect, and view-as shows no Google calendar’s name or 
     // The person themselves sees both.
     const own = await send(`${calendarsPath(t)}/events?from=2026-06-01&to=2026-06-30`, t.member.session);
     expect(JSON.stringify(own.body)).toContain(TITLE);
+    expect(JSON.stringify(own.body)).toContain('Bookings');
+  });
+
+  it('open as admin after its people joined (D25), the list, the events and Refresh now show "Google calendar" and "Google calendar event", while a link keeps its own', async () => {
+    const t = await tenant('Opened Oyster Bar');
+    google.state.calendars = [{ id: SHARED_ID, name: 'Bookings', primary: false, accessRole: 'reader' }];
+    const calendar = await connectedWith(t, t.member, SHARED_ID);
+    expect(calendar.label).toBe('Bookings');
+    const linkId = await insertSource(t, { slot: 4, kind: 'link', label: 'Trivia nights', title: 'Quiz finals' });
+    const staff = await signInStaff(server);
+    await addOpenAsAdminGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId: t.orgId });
+    google.calls.length = 0;
+    const listed = await send(calendarsPath(t), staff);
+    expect(listed.status).toBe(200);
+    expect((listed.body.calendars as OwnerCalendarView[]).map(({ id, label, kind }) => ({ id, label, kind })).sort((a, b) => a.id.localeCompare(b.id)))
+      .toEqual([{ id: calendar.id, label: 'Google calendar', kind: 'google' }, { id: linkId, label: 'Trivia nights', kind: 'link' }].sort((a, b) => a.id.localeCompare(b.id)));
+    expect(listed.body.google).toEqual({ available: false, connected: false, clientId: null });
+    const events = await send(`${calendarsPath(t)}/events?from=2026-06-01&to=2026-06-30`, staff);
+    expect(events.status).toBe(200);
+    expect(events.body.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ calendarId: calendar.id, calendar: 'Google calendar', title: 'Google calendar event', startDate: '2026-06-05', endDate: '2026-06-05' }),
+      expect.objectContaining({ calendarId: linkId, calendar: 'Trivia nights', title: 'Quiz finals' }),
+    ]));
+    expect(google.calls).toEqual([]);
+    // Staff may refresh it (it runs open as admin), and its answer names it "Google calendar" too.
+    server.clock.advance(MINUTE);
+    const refreshed = await refreshNow(t, { ...t.member, session: staff }, calendar.id);
+    expect(refreshed).toMatchObject({ status: 200, body: { calendar: { id: calendar.id, label: 'Google calendar', kind: 'google', status: 'ok' } } });
+    for (const text of [JSON.stringify(listed.body), JSON.stringify(events.body), JSON.stringify(refreshed.body)]) {
+      expect(text).not.toContain('Bookings');
+      expect(text).not.toContain(TITLE);
+    }
+    await removeStaffFactor(server);
+    // The team still sees both.
+    const own = await send(calendarsPath(t), t.teammate.session);
     expect(JSON.stringify(own.body)).toContain('Bookings');
   });
 });

@@ -6,11 +6,11 @@
 // location or organization answers 404, as an unknown id does. A link or a Google calendar is read before anything is
 // stored, so a failed one stores nothing. A link's address and a Google calendar's id are secrets: sealed
 // (calendar/secret.ts) before they are stored, opened only to read them, and never answered, logged or audited; a link
-// shows as its label and host, a Google calendar as its label with a null host, and under view-as a Google calendar as
-// "Google calendar" and its events as "Google calendar event" (Google's rule on people reading its users' data). Every
-// use of a Google token goes through calendar/google-access.ts, which logs each Google failure; nothing else here logs,
-// and the audit events carry ids, the kind, the event count and the status only, never a label, host, address, Google
-// calendar id or title.
+// shows as its label and host, a Google calendar as its label with a null host, and to staff, under view-as or with the
+// organization open as its admin, a Google calendar as "Google calendar" and its events as "Google calendar event"
+// (Google's rule on people reading its users' data). Every use of a Google token goes through
+// calendar/google-access.ts, which logs each Google failure; nothing else here logs, and the audit events carry ids,
+// the kind, the event count and the status only, never a label, host, address, Google calendar id or title.
 import type { KeyObject } from 'node:crypto';
 
 import { objectId } from '@ckeith26/mongo';
@@ -200,10 +200,18 @@ function recordCalendar(ctx: TownwiseContext, caller: MemberPrincipal, action: C
   });
 }
 
-/** A calendar as the caller may see it: under view-as a Google calendar is "Google calendar" (design decision 12). */
-function shownView(calendar: OwnerCalendarRecord, viewAs: boolean): OwnerCalendarView {
+/**
+ * Whether the caller is Townwise staff, under view-as or with the organization open as its admin (D25, which outlasts
+ * the first join): either way they read no Google calendar's name or event title (design decision 12).
+ */
+function staffReads(caller: MemberPrincipal): boolean {
+  return caller.viewAs !== null || caller.openAsAdmin !== null;
+}
+
+/** A calendar as the caller may see it: to staff a Google calendar is "Google calendar" (design decision 12). */
+function shownView(calendar: OwnerCalendarRecord, staff: boolean): OwnerCalendarView {
   const view = ownerCalendarView(calendar);
-  return viewAs && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
+  return staff && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
 }
 
 /**
@@ -226,7 +234,7 @@ export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const calendars = await ctx.stores.ownerCalendars.list(caller.scope, location.id);
-  res.status(200).json({ calendars: calendars.map((calendar) => shownView(calendar, caller.viewAs !== null)), google: await googleView(ctx, caller) });
+  res.status(200).json({ calendars: calendars.map((calendar) => shownView(calendar, staffReads(caller))), google: await googleView(ctx, caller) });
 }
 
 function googleNotFound(): AppError {
@@ -397,7 +405,7 @@ async function refreshGoogle(ctx: TownwiseContext, scope: OrgScope, location: Lo
  * file answers 400 not_a_link), with the calendar key (503 calendar_links_unavailable) or Google calendars on (503
  * google_calendar_unavailable), at most once per calendar per 5 minutes (429 rate_limited, and nothing is fetched). The
  * calendar is read: success replaces the events, and a failure keeps them and records its code as the calendar's
- * status. 200 with the calendar either way.
+ * status. 200 with the calendar either way, a Google calendar's named "Google calendar" for staff open as admin.
  */
 export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -422,7 +430,7 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
   const refreshed = await calendars.find(scope, location.id, found.id);
   if (refreshed === null) throw notFound();
   await recordCalendar(ctx, caller, 'owner_calendar.refreshed', refreshed, now);
-  res.status(200).json({ calendar: ownerCalendarView(refreshed) });
+  res.status(200).json({ calendar: shownView(refreshed, staffReads(caller)) });
 }
 
 /**
@@ -465,16 +473,16 @@ function rangeOf(raw: unknown, today: string): { from: string; to: string } {
 /**
  * GET /api/org/locations/:locationId/owner-calendars/events?from=&to=: the location's stored events overlapping the
  * range (inclusive dates), each with its calendar's id and label, by start; any other range answers 400 bad_range.
- * Under view-as every event of a calendar that is not a file or a link shows as "Google calendar event" from "Google
- * calendar", with its dates and hours (design decision 12): the calendars are read first, so one added meanwhile is
- * covered too.
+ * To staff, under view-as or open as admin, every event of a calendar that is not a file or a link shows as "Google
+ * calendar event" from "Google calendar", with its dates and hours (design decision 12): the calendars are read first,
+ * so one added meanwhile is covered too.
  */
 export async function listOwnerCalendarEvents(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const { scope } = caller;
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const range = rangeOf(req.query, townOf(location, ctx.now()).today);
-  const shown = caller.viewAs === null
+  const shown = !staffReads(caller)
     ? null
     : new Set((await ctx.stores.ownerCalendars.list(scope, location.id)).filter((calendar) => calendar.kind !== 'google').map((calendar) => calendar.id));
   const events = await ctx.stores.ownerCalendars.eventsBetween(scope, location.id, range);

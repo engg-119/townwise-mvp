@@ -560,6 +560,8 @@ describe('the saved turn, the owner’s calendar (connect-google-calendar, desig
       },
     },
     scope: {}, location: { id: 'l1' }, today: '2026-06-01', timeZone: 'America/New_York', turn: { readUntrusted: false },
+    // A member's turn: one staff run open as admin reads no Google calendar's title (chat-owner-calendar.test.ts).
+    actor: { actorRole: 'member' },
   } as unknown as ToolContext;
 
   function turnInput(model: ReturnType<typeof scriptedModel>, history: BetaMessageParam[], content: string) {
