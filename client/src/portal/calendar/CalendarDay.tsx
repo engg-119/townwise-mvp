@@ -13,14 +13,14 @@ import { Notice, ReadOnlyLine } from '../ui/feedback';
 import type { PopoverAnchor } from '../ui/Popover';
 import { SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
-import { forecastWords, type CalendarDayView, type ImportedEvent, type ReasonLine } from './model';
+import { forecastWords, type CalendarDayView, type EffectGrade, type EffectMark, type ImportedEvent, type ReasonLine } from './model';
 
 // The Calendar's day panel (P28, spec 16.3): a region "Selected day", beside the grid from 1024px and under it below.
 // Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a booked or closed day,
-// a past day's guests against the model, or why there is none); Why (one row per reason: your notes and rules first
-// with what they did, then the run's reasons, biggest effect first, each its label, then whether it usually brings more
-// or fewer guests in words after a direction mark screen readers skip, then its sources as chips, ui/SourceChip.tsx, on
-// their own wrapping line); On the calendar (the holidays, town events and term dates Why doesn't already name, with
+// a past day's guests against the model, or why there is none); Why (one row per reason, from the largest rise to the
+// largest fall, model.ts inOrder: its label, then what it does to guests in words after a ▲ or ▼ in its grade's color
+// on the theme's effect ramp, or a = in text2, which screen readers skip, then its sources as chips, ui/SourceChip.tsx,
+// on their own wrapping line); On the calendar (the holidays, town events and term dates Why doesn't already name, with
 // their sources as chips, the day's notes with Edit and Delete where the API allows, the business rules whose schedule
 // covers the day with their summary and a link to Rules, where they are changed (D31), events from the location's
 // calendars (D33) with Make a note); then Add an event. Add an event, a note's Edit and an event's Make a note each
@@ -59,8 +59,20 @@ function Opener(props: Omit<ButtonProps, 'ref' | 'onPress'> & { onPress: (anchor
 }
 
 /**
- * One reason under Why: its label, then what it does in words (the mark before them is hidden from screen readers,
- * which hear the same words), then its sources as chips on their own wrapping line.
+ * A reason's ▲ or ▼ in its grade's color, or = in text2, hidden from screen readers, which hear the same in the words
+ * after it (forecast-why). Home's day detail shows it too.
+ */
+export function ReasonMark(props: { mark: EffectMark; grade: EffectGrade | null }): React.JSX.Element {
+  return (
+    <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
+      <Small style={props.grade === null ? null : grades[props.grade]}>{props.mark}</Small>
+    </View>
+  );
+}
+
+/**
+ * One reason under Why: its label, then what it does in words after its mark (ReasonMark), then its sources as chips on
+ * their own wrapping line.
  */
 function WhyRow(props: { reason: ReasonLine }): React.JSX.Element {
   const { reason } = props;
@@ -69,11 +81,7 @@ function WhyRow(props: { reason: ReasonLine }): React.JSX.Element {
       <Small white>{reason.label}</Small>
       {reason.detail === null ? null : (
         <View style={styles.effect}>
-          {reason.mark === null ? null : (
-            <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden>
-              <Small white>{reason.mark}</Small>
-            </View>
-          )}
+          {reason.mark === null ? null : <ReasonMark mark={reason.mark} grade={reason.grade} />}
           <Small style={styles.words}>{reason.detail}</Small>
         </View>
       )}
@@ -202,4 +210,10 @@ const styles = StyleSheet.create({
   item: { gap: 2, minWidth: 0 },
   effect: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
   words: { flex: 1, minWidth: 0 },
+});
+
+/** The effect ramp's color for each grade (theme.ts). */
+const grades = StyleSheet.create({
+  up1: { color: c.effectUp1 }, up2: { color: c.effectUp2 }, up3: { color: c.effectUp3 },
+  down1: { color: c.effectDown1 }, down2: { color: c.effectDown2 }, down3: { color: c.effectDown3 },
 });

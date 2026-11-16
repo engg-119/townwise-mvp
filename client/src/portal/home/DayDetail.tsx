@@ -5,6 +5,7 @@ import { theme } from '../../theme';
 import { noteWords } from '../analytics/panel';
 import { eventLine, thisDayLine, type MonthDay } from '../analytics/week';
 import { shortDate, type Metric } from '../analytics/words';
+import { ReasonMark } from '../calendar/CalendarDay';
 import { shortReasons, type ShortReason } from '../calendar/model';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay } from '../estimates/api';
 import { formatCount, plural } from '../format';
@@ -18,8 +19,9 @@ import { PastCell } from './ThisWeek';
 
 // The selected day of This month (spec P11), beside the grid from where they fit side by side, under it otherwise:
 // from today on, the published forecast's day when there is one (its figure and range, the guests your notes and
-// business rules add, and its top three reasons in the Calendar's order and short words, “Saturday: usually more
-// guests”, a rule's among them, each with its sources as chips, ui/SourceChip.tsx; spec 16.3 P11, 14.4, D31), how
+// business rules add, and its three reasons with the largest effect either way, in the Calendar's order and short words,
+// “Saturday: usually more guests” after the Calendar's colored mark, which a note's or a rule's line, its label alone,
+// goes without, a rule's among them, each with its sources as chips, ui/SourceChip.tsx; spec 16.3 P11, 14.4, D31), how
 // the next order relates to the day (P30, from Home's one read of the orders, with a link to the day on Orders), the
 // day's holidays and town events with their sources less those Why already names (as the Calendar's panel leaves
 // them out), your notes, then, with any history, the day's own figure (only for a past day with data; a day after today
@@ -91,7 +93,10 @@ export function DayDetail(props: {
         <Part label="Why">
           {why.map((row, index) => (
             <View key={String(index)} style={styles.item}>
-              <Small>{row.line}</Small>
+              <View style={styles.line}>
+                {row.mark === null ? null : <ReasonMark mark={row.mark} grade={row.grade} />}
+                <Small style={styles.words}>{row.line}</Small>
+              </View>
               <SourceChips sources={row.reason.sources} />
             </View>
           ))}
@@ -134,5 +139,7 @@ const styles = StyleSheet.create({
   root: { gap: theme.space[4], minWidth: 0 },
   part: { gap: theme.space[1], minWidth: 0 },
   item: { gap: 0, minWidth: 0 },
+  line: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
+  words: { flex: 1, minWidth: 0 },
   source: { ...theme.type.mono, color: c.text2, paddingVertical: 14, textDecorationLine: 'underline', textDecorationColor: c.line },
 });
