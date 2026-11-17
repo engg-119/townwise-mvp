@@ -83,7 +83,7 @@ function Tagline(props: { kind: 'progress' | 'planned'; text: string }): React.J
 }
 
 /**
- * The count of TownwiseAI's open questions (GET .../agent, its side panel's read), linked to its page. It reads on its
+ * The count of TownwiseAI's open questions and weekly suggestions (GET .../agent, its side panel's read), linked to its page. It reads on its
  * own, so Home never waits for it or fails with it: while it loads, when the read fails and when there are none, the
  * lead shows nothing here (the page itself says "No questions right now" or the error).
  */
@@ -91,9 +91,11 @@ function QuestionsLink(props: { locationId: string }): React.JSX.Element | null 
   const { api } = usePortal();
   const { locationId } = props;
   const { state } = useLoad(useCallback(() => loadAgentPanel(api, locationId), [api, locationId]));
-  if (state.status !== 'ready' || state.data.questions.length === 0) return null;
+  // Weekly suggestions count as questions (openspec change weekly-forecast-suggestions): each asks the owner to decide.
+  const count = state.status === 'ready' ? state.data.questions.length + state.data.suggestions.length : 0;
+  if (count === 0) return null;
   // ?panel=questions: the page opens with its questions showing.
-  return <LinkButton href={`${locationHref(locationId, 'agent')}?panel=questions`} label={questionsLabel(state.data.questions.length)} />;
+  return <LinkButton href={`${locationHref(locationId, 'agent')}?panel=questions`} label={questionsLabel(count)} />;
 }
 
 function HomeView(props: {

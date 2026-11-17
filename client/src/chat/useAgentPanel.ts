@@ -3,7 +3,8 @@ import { useCallback, useRef, useState } from 'react';
 import { ApiError, type ApiClient } from '../api/client';
 import { useLoad, type LoadState } from '../portal/hooks';
 import type { Note } from '../portal/locations/api';
-import { answerQuestion, loadAgentPanel, type AgentPanel, type QuestionAnswer } from './api';
+import type { Rule } from '../portal/rules/api';
+import { answerQuestion, decideSuggestion, loadAgentPanel, setWeeklySuggestions, type AgentPanel, type QuestionAnswer } from './api';
 
 // The side panel's data (spec P25): the questions TownwiseAI has for the person and what it has been
 // doing, both read at once from GET .../agent. An answered question stays on the panel with what the answer did
@@ -17,11 +18,24 @@ import { answerQuestion, loadAgentPanel, type AgentPanel, type QuestionAnswer } 
 // and they are dropped once the question is answered or the field is canceled, and never stored.
 // A card drawn in both places (the column beside the landing) announces what happens only from the copy the person
 // last used, so a screen reader hears it once.
+//
+// Weekly suggestions (openspec change weekly-forecast-suggestions): an org admin accepts or dismisses each one, one at
+// a time; a decided suggestion stays on the panel with what it did until the panel is read again, and one the server no
+// longer has open (a 404: dismissed or decided elsewhere, or its date has come) reads the panel again. The switch keeps
+// what the person last set here over what was read.
 
 export interface Answered {
   answer: QuestionAnswer;
   /** The note the answer saved (a closure note, or a likely-closed question's open-day note), or null. */
   note: Note | null;
+}
+
+/** What an org admin's decision on a suggestion did. */
+export interface Decided {
+  status: 'accepted' | 'dismissed';
+  /** The note or rule an accepted suggestion wrote, or null. */
+  note: Note | null;
+  rule: Rule | null;
 }
 
 /** Something else… on one question. */
@@ -67,6 +81,19 @@ export interface AgentPanelState {
   typeOther: (questionId: string, text: string) => void;
   /** Sends `message` with `send`, then, once its turn is saved, answers `other`. One at a time, as answers are. */
   tell: (questionId: string, message: string, send: SendToChat, place: QuestionPlace) => void;
+  /** Weekly suggestions decided here, by suggestion id. */
+  decided: Readonly<Record<string, Decided>>;
+  /** The suggestion whose decision is being sent. */
+  deciding: string | null;
+  /** A failed decision's words, by suggestion id. */
+  suggestionErrors: Readonly<Record<string, string>>;
+  decide: (suggestionId: string, decision: 'accept' | 'dismiss') => void;
+  /** The organization's weekly suggestions switch as last set here; null when it was not set here since the read. */
+  weeklyOn: boolean | null;
+  switching: boolean;
+  switchError: string | null;
+  /** Turns weekly suggestions on or off (`orgId` from openAsAdminOrgId). */
+  setWeekly: (on: boolean, orgId: string | null) => void;
 }
 
 export function answerErrorText(error: unknown): string {
@@ -76,6 +103,23 @@ export function answerErrorText(error: unknown): string {
     if (error.status === 429) return 'You’ve made a lot of changes. Try again later.';
   }
   return 'Couldn’t save your answer. Try again.';
+}
+
+export function decideErrorText(error: unknown): string {
+  if (error instanceof ApiError && error.kind === 'http') {
+    if (error.code === 'note_limit') return 'This location has 1,000 notes. Delete old ones to add more.';
+    if (error.code === 'rule_limit') return 'This location has 30 business rules. Delete one to add this.';
+    if (error.code === 'rule_exists') return 'That rule is already saved.';
+    if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t accept or dismiss suggestions.';
+    if (error.status === 429) return 'You’ve made a lot of changes. Try again later.';
+  }
+  return 'Couldn’t save that. Try again.';
+}
+
+/** The weekly suggestions not decided yet; null while they load or when they can't be read. */
+export function openSuggestions(panel: AgentPanelState): number | null {
+  if (panel.state.status !== 'ready') return null;
+  return panel.state.data.suggestions.filter((suggestion) => panel.decided[suggestion.id] === undefined).length;
 }
 
 /** The questions not answered yet; null while they load or when they can't be read. */
@@ -100,12 +144,54 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
   const [telling, setTelling] = useState<string | null>(null);
   const [actedIn, setActedIn] = useState<Record<string, QuestionPlace>>({});
   const inflight = useRef(false);
+  const [decided, setDecided] = useState<Record<string, Decided>>({});
+  const [deciding, setDeciding] = useState<string | null>(null);
+  const [suggestionErrors, setSuggestionErrors] = useState<Record<string, string>>({});
+  const [weeklyOn, setWeeklyOn] = useState<boolean | null>(null);
+  const [switching, setSwitching] = useState(false);
+  const [switchError, setSwitchError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     setAnswered({});
     setErrors({});
+    setDecided({});
+    setSuggestionErrors({});
+    setWeeklyOn(null);
     read();
   }, [read]);
+
+  function decide(suggestionId: string, decision: 'accept' | 'dismiss'): void {
+    if (deciding !== null || decided[suggestionId] !== undefined) return;
+    setDeciding(suggestionId);
+    setSuggestionErrors((current) => without(current, suggestionId));
+    decideSuggestion(api, locationId, suggestionId, decision).then(
+      (result) => {
+        setDecided((current) => ({ ...current, [suggestionId]: { status: result.suggestion.status, note: result.note, rule: result.rule } }));
+        if (result.note !== null) onNoteAdded?.();
+      },
+      (error: unknown) => {
+        if (error instanceof ApiError && error.kind === 'http' && error.status === 404) {
+          reload();
+          return;
+        }
+        setSuggestionErrors((current) => ({ ...current, [suggestionId]: decideErrorText(error) }));
+      },
+    ).finally(() => { setDeciding(null); });
+  }
+
+  function setWeekly(on: boolean, orgId: string | null): void {
+    if (switching) return;
+    setSwitching(true);
+    setSwitchError(null);
+    setWeeklySuggestions(api, on, orgId).then(
+      (now) => { setWeeklyOn(now); },
+      (error: unknown) => {
+        setSwitchError(error instanceof ApiError && error.kind === 'http' && error.code === 'view_as_read_only'
+          ? 'View-as is read-only, so you can’t change this.'
+          : 'Couldn’t change weekly suggestions. Try again.');
+      },
+    ).finally(() => { setSwitching(false); });
+  }
 
   function patchOther(questionId: string, patch: Partial<SomethingElse>): void {
     setOthers((current) => ({ ...current, [questionId]: { ...(current[questionId] ?? CLOSED), ...patch } }));
@@ -170,6 +256,7 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
 
   return {
     state, reload, answered, answering, errors, answer, actedIn, others, telling, tell,
+    decided, deciding, suggestionErrors, decide, weeklyOn, switching, switchError, setWeekly,
     openOther: (questionId) => { patchOther(questionId, { open: true }); },
     foldOther: (questionId) => { patchOther(questionId, { open: false }); },
     closeOther: (questionId) => { setOthers((current) => without(current, questionId)); },

@@ -16,7 +16,8 @@ Lands after `autonomous-forecasts` phase 3b. Tests first.
 
 ## 3. Client and docs
 
-- [ ] 3.1 `GET .../agent` lists open suggestions, and Home's question count includes them. P25's Questions panel shows suggestions with Accept and Dismiss for org admins, and the switch with its words. Tests: `client/test/portal/chat/questions.test.web.tsx` and `.test.native.tsx`, plus Home's count test.
+- [x] 3.1 `GET .../agent` lists open suggestions, and Home's question count includes them. P25's Questions panel shows suggestions with Accept and Dismiss for org admins, and the switch with its words. Tests: `client/test/portal/chat/questions.test.web.tsx` and `.test.native.tsx`, plus Home's count test.
+  - Done: GET .../agent adds `suggestions` and `weeklySuggestions { on, available, canChange }` (the shared fixture `agent-panel.json` holds one of each type); the panel shows them in their own section, "Suggested for the next 3 months", after Questions for you and also in the column beside the landing (which lists only questions), with Accept and Dismiss and the switch's button for org admins only; Home's link counts questions plus suggestions; the console names the three new audit actions. Tests: new `client/test/chat/suggestions.test.web.tsx` (5) and `.test.native.tsx` (2), `agent-panel.test.ts`, `home.test.web.tsx`, `words.test.ts`, and `questions.test.web.tsx`'s heading order (the test files live in `client/test/chat/`, not `client/test/portal/chat/`).
 - [ ] 3.2 `docs/portal/spec.md` (D42's suggestions part, P25, 6.x, 10.12), `docs/portal/tuning-chat.md` (the pass's prompt and what it sends), `api/README.md`, `api/production.env` (`TOWNWISE_WEEKLY_SUGGESTIONS=true`, explicit), `api/.env.example` (true).
 - [ ] 3.3 Draft the suggestions sentence of the privacy paragraph in `client/app/(marketing)/privacy.tsx` (with "Last updated" bumped and a test) and in `docs/portal/estimates.md` section 5, for the owner's approval before push.
 

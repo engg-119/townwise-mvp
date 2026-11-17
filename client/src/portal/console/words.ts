@@ -95,6 +95,10 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'chat.conversation_deleted', label: 'Tuning chat deleted' },
   // U9, TownwiseAI's questions.
   { value: 'agent.question_answered', label: 'TownwiseAI question answered' },
+  // TownwiseAI's weekly suggestions: an org admin's decision on one, and the organization's switch.
+  { value: 'agent.suggestion_accepted', label: 'TownwiseAI suggestion accepted' },
+  { value: 'agent.suggestion_dismissed', label: 'TownwiseAI suggestion dismissed' },
+  { value: 'org.weekly_suggestions_changed', label: 'Weekly suggestions switched' },
   // Orders: the ordering setup, item sales, counts, a line's edit, rules, and TownwiseAI's order cards.
   { value: 'order.setup_saved', label: 'Ordering setup saved' },
   { value: 'order.item_sales_uploaded', label: 'Item sales uploaded' },
@@ -199,6 +203,11 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
       return OPEN_AS_END_REASON[text(d.endReason)] ?? '';
     case 'agent.question_answered':
       return questionAnswer(text(d.questionId), text(d.answer));
+    case 'agent.suggestion_accepted':
+    case 'agent.suggestion_dismissed':
+      return d.type === 'rule' ? 'Business rule' : d.type === 'note' ? 'Note' : '';
+    case 'org.weekly_suggestions_changed':
+      return d.on === true ? 'On' : d.on === false ? 'Off' : '';
     // U13B: the model version, the dates and the day count, never a figure.
     case 'forecast.imported':
     case 'forecast.published':

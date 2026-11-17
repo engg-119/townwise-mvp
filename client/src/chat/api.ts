@@ -1,8 +1,10 @@
 import { z } from 'zod';
 
 import type { ApiClient } from '../api/client';
+import { withOrgId } from '../portal/api';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
-import { createNote, noteSchema, type Note } from '../portal/locations/api';
+import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
+import { ruleScheduleSchema, ruleSchema, type Rule } from '../portal/rules/api';
 import type { SseEvent } from '../api/sse';
 import type { SourceLink } from './tools';
 import type { TreeNode } from './tree';
@@ -486,11 +488,54 @@ const activitySchema = z.discriminatedUnion('kind', [
 ]);
 export type ActivityItem = z.infer<typeof activitySchema>;
 
-// Items are read one by one: a question or an activity kind this client doesn't know yet is left out, never shown
-// as a placeholder.
-const panelSchema = z.object({ questions: z.array(z.unknown()), activity: z.array(z.unknown()) });
+/** A calendar entry a weekly suggestion rests on: public town calendar data. */
+const suggestionCalendarSchema = z.object({ id: z.string(), title: z.string(), start: dateSchema, end: dateSchema });
 
-export interface AgentPanel { questions: Question[]; activity: ActivityItem[] }
+/** A suggested note: every field of the notes route's body, hours included. */
+const suggestedNoteSchema = z.object({
+  kind: z.enum(NOTE_KINDS), startDate: dateSchema, endDate: dateSchema, weekdays: z.array(z.number().int()).nullable(),
+  effect: z.enum(NOTE_EFFECTS), expectedGuests: z.number().int().nullable(), detail: z.string().nullable(),
+  startTime: z.string().nullable(), endTime: z.string().nullable(),
+});
+
+/**
+ * A weekly suggestion (openspec change weekly-forecast-suggestions): a note, or a business rule with its words and
+ * schedule, with TownwiseAI's one-sentence why and the calendar entries it names. It changes nothing until an org admin
+ * accepts it.
+ */
+const suggestionSchema = z.discriminatedUnion('type', [
+  z.object({
+    id: z.string(), why: z.string(), calendar: z.array(suggestionCalendarSchema), createdAt: z.string(),
+    type: z.literal('note'), note: suggestedNoteSchema,
+  }),
+  z.object({
+    id: z.string(), why: z.string(), calendar: z.array(suggestionCalendarSchema), createdAt: z.string(),
+    type: z.literal('rule'), text: z.string(), schedule: ruleScheduleSchema, scheduleSummary: z.string(),
+  }),
+]);
+export type Suggestion = z.infer<typeof suggestionSchema>;
+
+/**
+ * The organization's switch: `on` unless an org admin turned it off, `available` while the server can run passes (its
+ * switch and TownwiseAI on), `canChange` for an org admin outside view-as.
+ */
+const weeklySuggestionsSchema = z.object({ on: z.boolean(), available: z.boolean(), canChange: z.boolean() });
+export type WeeklySuggestions = z.infer<typeof weeklySuggestionsSchema>;
+
+// Items are read one by one: a question, an activity kind or a suggestion this client doesn't know yet is left out,
+// never shown as a placeholder. An API from before weekly suggestions sends neither of their keys.
+const panelSchema = z.object({
+  questions: z.array(z.unknown()), activity: z.array(z.unknown()), suggestions: z.array(z.unknown()).optional(),
+  weeklySuggestions: z.unknown().optional(),
+});
+
+export interface AgentPanel {
+  questions: Question[]; activity: ActivityItem[];
+  /** Open weekly suggestions, soonest first. */
+  suggestions: Suggestion[];
+  /** Null from an API before weekly suggestions. */
+  weeklySuggestions: WeeklySuggestions | null;
+}
 
 function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
   return items.flatMap((item) => {
@@ -501,7 +546,11 @@ function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
 
 export async function loadAgentPanel(api: ApiClient, locationId: string): Promise<AgentPanel> {
   const panel = await api.json(`${locationPath(locationId)}/agent`, panelSchema);
-  return { questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema) };
+  const weekly = weeklySuggestionsSchema.safeParse(panel.weeklySuggestions);
+  return {
+    questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema),
+    suggestions: known(panel.suggestions ?? [], suggestionSchema), weeklySuggestions: weekly.success ? weekly.data : null,
+  };
 }
 
 export type QuestionAnswer = 'closed' | 'open' | 'not_sure' | 'other';
@@ -521,4 +570,36 @@ export function answerQuestion(api: ApiClient, locationId: string, questionId: s
   return api.json(`${locationPath(locationId)}/agent/questions/${encodeURIComponent(questionId)}`, answerResultSchema, {
     method: 'POST', body: { answer },
   });
+}
+
+const decideResultSchema = z.object({
+  suggestion: z.object({ id: z.string(), status: z.enum(['accepted', 'dismissed']) }),
+  note: noteSchema.nullable(),
+  rule: ruleSchema.nullable(),
+});
+export interface DecideResult {
+  suggestion: { id: string; status: 'accepted' | 'dismissed' };
+  /** What an accepted suggestion wrote (null when dismissed, or deleted since). */
+  note: Note | null;
+  rule: Rule | null;
+}
+
+/**
+ * Accept writes the suggestion's note or rule, as written by the org admin; Dismiss writes nothing. The body is empty.
+ * 404 when it is gone (dismissed, accepted elsewhere as dismissed, or its first date has come).
+ */
+export function decideSuggestion(
+  api: ApiClient, locationId: string, suggestionId: string, decision: 'accept' | 'dismiss',
+): Promise<DecideResult> {
+  return api.json(`${locationPath(locationId)}/agent/suggestions/${encodeURIComponent(suggestionId)}/${decision}`, decideResultSchema, {
+    method: 'POST', body: {},
+  });
+}
+
+const switchedSchema = z.object({ weeklySuggestions: z.object({ on: z.boolean() }) });
+
+/** PATCH /api/org/weekly-suggestions { on, orgId? } (orgId from openAsAdminOrgId): the organization's switch. */
+export async function setWeeklySuggestions(api: ApiClient, on: boolean, orgId: string | null): Promise<boolean> {
+  const body = await api.json('/api/org/weekly-suggestions', switchedSchema, { method: 'PATCH', body: withOrgId({ on }, orgId) });
+  return body.weeklySuggestions.on;
 }
