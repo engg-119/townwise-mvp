@@ -4,21 +4,21 @@
 
 ## Goals / Non-Goals
 
-**Goals:** suggest the notes and rules a busy owner would otherwise forget (closures on holidays, counted private events around town events); spend nothing without an organization's opt-in; never change a forecast without a person.
+**Goals:** suggest the notes and rules a busy owner would otherwise forget (closures on holidays, counted private events around town events); on by default, with an org admin able to turn it off; never change a forecast without a person.
 
 **Non-Goals:** an LLM computing a forecast figure; auto-applying a suggestion; owner calendars (D33, D39) as input.
 
 ## Decisions
 
-### 1. Opt-in per organization, off by default
+### 1. On by default, and an org admin can turn it off
 
-`tw_orgs.weeklySuggestions` (`{ on, at, by }`, absent meaning off), set by an org admin. It is off by default because it sends the owner's notes and rules to Anthropic and spends the organization's budget with nobody pressing anything, which no feature does today. Consent should be a person's act, and the privacy page must say it first.
+`tw_orgs.weeklySuggestions` (`{ on, at, by }`, absent meaning on), turned off or on by an org admin. Owner directive, 2026-11-16: "any features that I tell you to create should be on by default unless i tell you it shoul dbe off". The first draft of this change had it off by default, because it sends the owner's notes and rules to Anthropic and spends the organization's budget with nobody pressing anything. That concern is met instead by the privacy page saying so before suggestions run in production, the switch's words in P25, and an org admin's off switch.
 
-Alternatives: on by default (an unprompted data flow and spend); per location (organizations decide budget and consent as a whole today, D27).
+Alternatives: off by default with an opt-in (the first draft; reversed by the owner's directive); per location (organizations decide budget and consent as a whole today, D27).
 
-### 2. One call on the weekly tick
+### 2. One call in the weekly worker
 
-The pass runs after the tick's calibrations (`autonomous-forecasts` decision 2), at most once per location per week, recorded on the week row. It is one Claude call: the chat's model, structured output, no tools, low effort and 8,000 output tokens. It sends the next 91 days of the town's researched calendar (titles, dates, kinds, public source URLs), the location's notes and scheduled rules covering those days (as TownwiseAI already reads them in chat), and history effects for those calendar groups (percentages and day counts, as `get_forecast` sends). The call reserves $0.30 of the organization's TownwiseAI month and corrects it after. A kill switch, `TOWNWISE_WEEKLY_SUGGESTIONS`, is off by default, and the pass is off without `ANTHROPIC_API_KEY`.
+The pass runs in the `autonomous-forecasts` worker after each pass's calibrations (`autonomous-forecasts` decision 2), at most once per location per week, recorded on the week row. It is one Claude call: the chat's model, structured output, no tools, low effort and 8,000 output tokens. It sends the next 91 days of the town's researched calendar (titles, dates, kinds, public source URLs), the location's notes and scheduled rules covering those days (as TownwiseAI already reads them in chat), and history effects for those calendar groups (percentages and day counts, as `get_forecast` sends). The call reserves $0.30 of the organization's TownwiseAI month and corrects it after. A kill switch, `TOWNWISE_WEEKLY_SUGGESTIONS`, is on by default, and the pass is off without `ANTHROPIC_API_KEY`; the worker job gains the `anthropic-api-key` Key Vault reference.
 
 Alternatives: a chat conversation per pass (needs an author, and grows the chat history); tools (more calls and cost for data that fits in one message).
 
@@ -30,12 +30,12 @@ Alternatives: any member accepts (notes allow that, but a suggestion was not wri
 
 ## Risks / Trade-offs
 
-- [Notes and rules reach Anthropic unprompted] → Opt-in, and the privacy paragraph is a prerequisite.
+- [Notes and rules reach Anthropic with nobody pressing anything, by default] → The privacy paragraph is a prerequisite before push, P25 says it, and an org admin can turn it off.
 - [Suggestions with no forecast effect ("more guests" without a count)] → The prompt says only closures, buyouts and counted private events move the forecast; the rest are dropped by the check or shown as reminders.
 
 ## Migration Plan
 
-None: a new optional field and a new collection. Rollback: `TOWNWISE_WEEKLY_SUGGESTIONS=false`.
+None: a new optional field (absent meaning on) and a new collection. Rollback: `TOWNWISE_WEEKLY_SUGGESTIONS=false`.
 
 ## Open Questions
 

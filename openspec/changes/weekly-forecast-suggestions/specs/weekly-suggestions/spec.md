@@ -1,25 +1,25 @@
 ## ADDED Requirements
 
-### Requirement: Weekly suggestions are an org admin's opt-in
-An organization SHALL have `weeklySuggestions` (`{ on, at, by }` on `tw_orgs`, absent meaning off). Only an org admin, outside view-as, SHALL turn it on or off with `PATCH /api/org/weekly-suggestions { on }` (2 KB body, the `writes` limiter), which records `org.weekly_suggestions_changed`. P25's Questions panel SHALL show the switch to org admins with "Each Monday TownwiseAI reads the next 3 months of {Town}'s calendar with your notes and rules, and suggests notes or rules for you to accept. It sends them to Anthropic and uses this organization's TownwiseAI budget." and a link to the privacy page; members see whether it is on. Weekly suggestions SHALL run only while `TOWNWISE_WEEKLY_SUGGESTIONS` is true (default false) and `ANTHROPIC_API_KEY` is set, and SHALL not need the lab. [CONFIRM: weekly TownwiseAI suggestions are opt-in per organization and off by default]
+### Requirement: Weekly suggestions are on by default, and an org admin can turn them off
+An organization SHALL have `weeklySuggestions` (`{ on, at, by }` on `tw_orgs`, absent meaning on). Only an org admin, outside view-as, SHALL turn it off or on with `PATCH /api/org/weekly-suggestions { on }` (2 KB body, the `writes` limiter), which records `org.weekly_suggestions_changed`. P25's Questions panel SHALL show the switch to org admins with "Each Monday TownwiseAI reads the next 3 months of {Town}'s calendar with your notes and rules, and suggests notes or rules for you to accept. It sends them to Anthropic and uses this organization's TownwiseAI budget." and a link to the privacy page; members see whether it is on. Weekly suggestions SHALL run only while `TOWNWISE_WEEKLY_SUGGESTIONS` is true (default true, written explicitly in `api/production.env`) and `ANTHROPIC_API_KEY` is set, and SHALL not need the lab. They SHALL not run in production before the privacy page says what they send. [CONFIRM: weekly TownwiseAI suggestions are on by default for every organization (owner directive, 2026-11-16: features are on by default unless the owner says otherwise), and an org admin can turn them off]
 
-#### Scenario: An org admin turns it on
-- **WHEN** an org admin sends `{ on: true }`
-- **THEN** the API answers 200, the organization's `weeklySuggestions.on` is true, and the audit log records `org.weekly_suggestions_changed`
+#### Scenario: An org admin turns it off
+- **WHEN** an org admin sends `{ on: false }`
+- **THEN** the API answers 200, the organization's `weeklySuggestions.on` is false, the audit log records `org.weekly_suggestions_changed`, and no pass runs for its locations from then on
 
 #### Scenario: A member tries
-- **WHEN** a member sends `{ on: true }`
+- **WHEN** a member sends `{ on: false }`
 - **THEN** the API answers 403 and nothing changes
 
 #### Scenario: Default
 - **WHEN** an organization never set it
-- **THEN** no weekly pass runs for its locations
+- **THEN** its locations get one weekly pass each, as if it were on
 
 ### Requirement: One bounded pass per location per week
-After the weekly refresh's calibrations on a tick, the lease holder SHALL run at most one suggestions pass per location of an opted-in organization per week (recorded on the location's `tw_forecast_weeks` row), from Monday 03:00 in the town. A pass SHALL be one Claude call with no tools and at most 8,000 output tokens, sending: the next 91 days of the town's researched calendar (titles, dates, kinds and public source URLs), the location's notes and scheduled rules covering those days (kind, dates, effect, guest count and text), and the location's history effects for those calendar groups (percentages and day counts). It SHALL never send a sales figure, an email, a person's or organization's name, or an id other than calendar ids. It SHALL reserve $0.30 of the organization's TownwiseAI month before the call and correct it after, and be skipped (`budget`) when less is left. Its log lines and audit events SHALL carry ids and counts only. [CONFIRM: a weekly suggestions pass reserves $0.30 of the organization's TownwiseAI month and suggests at most 5 items]
+After the weekly refresh's calibrations in a pass of the worker (`api/src/workers/weekly-forecasts.ts`), the lease holder SHALL run at most one suggestions pass per location of an organization with weekly suggestions on per week (recorded on the location's `tw_forecast_weeks` row), from Monday 03:00 in the town. A pass SHALL be one Claude call with no tools and at most 8,000 output tokens, sending: the next 91 days of the town's researched calendar (titles, dates, kinds and public source URLs), the location's notes and scheduled rules covering those days (kind, dates, effect, guest count and text), and the location's history effects for those calendar groups (percentages and day counts). It SHALL never send a sales figure, an email, a person's or organization's name, or an id other than calendar ids. It SHALL reserve $0.30 of the organization's TownwiseAI month before the call and correct it after, and be skipped (`budget`) when less is left. Its log lines and audit events SHALL carry ids and counts only. [CONFIRM: a weekly suggestions pass reserves $0.30 of the organization's TownwiseAI month and suggests at most 5 items]
 
 #### Scenario: A pass
-- **WHEN** it is Monday 04:00 in Hanover and the organization opted in
+- **WHEN** it is Monday 04:00 in Hanover and the organization never turned weekly suggestions off
 - **THEN** one call is made for each of its locations that has no pass this week, and the week row records the pass
 
 #### Scenario: Budget spent

@@ -11,6 +11,8 @@ What exists (develop at 564c17c):
 - **Notes and scheduled rules** act from today on at read time (`api/src/forecasts/adjust.ts`) and feed the lab input's flags (14.5).
 - **Home's Last week** (`client/src/portal/home/LastWeek.tsx`, `client/src/portal/analytics/week.ts:351-423`) is the seven days before today against the same weekdays 52 weeks earlier, history only. The spec promises "When forecasts arrive (14.3) this card compares forecast with what happened; until then it never shows a prediction" (P11).
 - **Calibration state** (`api/src/calibration.ts`) is `no_sales_data | not_calibrated`, derived; `calibrated` and `stale` are reserved (14.3). The client parses the state strictly (`client/src/portal/schemas.ts`).
+- **Jobs.** `infra/terraform/production/jobs.tf` runs the backup, restore, smoke and db-users jobs, each with its own identity holding only its Key Vault references (`jobs.tf:19-46`); the backup job runs on a schedule (`jobs.tf:118-123`). Valkey runs as a sidecar of the API's container app (`containerapp.tf:175`), so a job cannot reach it. The deploy workflow sets the API's image on every release (`containerapp.tf:211`).
+- **The forecasts switch (G1)** is off until staff switch it on: an absent `forecasts` field reads as off (`api/src/stores/orgs.ts:107`), and the switch needs the staff member's word that the owner agreed (`api/src/handlers/calibrations.ts:29`).
 - **Precedents for a background loop**: the daily file sweep under a Mongo lease (`api/src/files/sweeper.ts`, `claimFileSweep` in `api/src/stores/cross-tenant.ts:435`) and the calendar refresher's tick (`api/src/calendar/refresher.ts:1-35,290-296`). The API runs 1 to 2 replicas (`containerapp.tf:81-82`).
 - **Production**: the lab is not enabled (`TOWNWISE_LAB_RUNNER` off, step 20 not applied). Sawtooth's history spans 2025-01-01 to 2026-10-21, a span of 658 days with 553 days of data. The minimum is a span, so Sawtooth is eligible for the model engine, and the baseline runs beside it. Whether the model's backtest gives 12 weeks with a range across Sawtooth's missing days is only known by running it; if not, the gate answers `too_few_weeks` and the baseline is the fallback.
 
@@ -20,15 +22,16 @@ What exists (develop at 564c17c):
 - Every location of every switched-on organization has a published forecast reaching 91 days past today, refreshed weekly with no person starting anything.
 - A location with too little history for the model still gets an honest, labeled forecast.
 - Home's Last week says how the forecast did, or shows it where guest counts are missing, and never shows an unpublished figure.
-- Cost, runtime and blast radius are bounded; there are three ways to stop it; everything is off by default; develop stays releasable after each phase.
+- Cost, runtime and blast radius are bounded, and there are three ways to stop it. Every part is on by default (owner directive, 2026-11-16) and inert while the lab runner is off, so develop stays releasable after each phase.
+- It runs as a background worker, and the whole loop is tested end to end, and shown to the owner locally, before anything is pushed.
 - No Sawtooth-specific code; the full loop runs locally with the local lab runner.
 
 **Non-Goals:**
-- Switching forecasts on for any organization (G1 stays a staff act with the owner's word).
+- Enabling the lab in production (infra step 20, an owner action). Until then on-by-default publishes nothing there.
 - TownwiseAI's weekly suggestions of notes and rules: moved to the follow-up change `weekly-forecast-suggestions` (decision 16).
 - Owner calendars (D33, D39) in the lab input.
 - Item-level forecasts, Analytics forecasts, and changing the 28-day gate horizon.
-- A new Azure resource or scheduler service.
+- A scheduler service beyond one Container Apps scheduled job.
 
 ## Decisions
 
@@ -38,23 +41,31 @@ D42 "Autonomous forecasts" (next free after D41) is the decision row; 14.6 "Week
 
 Alternatives: amending D27 in place (an owner decision; editing its text would hide what changed) or a new top-level section (the forecast rules already live in 14).
 
-### 2. The weekly refresh lives in the API process, under a Mongo lease
+### 2. The weekly refresh is a background worker: a scheduled job running one pass, under a Mongo lease
 
-`api/src/lab/schedule.ts`, shaped as `createForecastSchedule(deps)` like `createCalendarRefresher`, starts in `main.ts` only when `labRunner !== null` and `TOWNWISE_WEEKLY_FORECASTS` is true. Every hour (and once 2 minutes after boot) it claims the lease on the single `tw_forecast_schedule` document (`_id: 'weekly'`, `owner`, `leaseUntil`, 10 minutes) by compare-and-set, as `claimFileSweep` does, and renews it by compare-and-set before each location. A failed renewal stops the pass at once, so two holders never start in parallel. The holder lists candidates through a new cross-tenant lookup (`weeklyCandidates` in `stores/cross-tenant.ts`: locations of active organizations with `forecasts.on`), and `scopeForWeeklyRefresh` in `access/policy.ts` mints each `OrgScope`. Locations are taken one at a time. At most 3 scheduled calibrations are live at once across all organizations; a due location past that waits for a later tick without a week row.
+Owner directive, 2026-11-16: "these should be background workers". The pass lives in `api/src/lab/schedule.ts` as `createForecastSchedule(deps)` and is run by a separate entry point, `api/src/workers/weekly-forecasts.ts`. That entry point reads the config through `config.ts`'s schema, builds only the stores and the lab runner the pass needs (Mongo, no Valkey: a scheduled start uses no limiter, and Valkey is the API's sidecar), runs one pass, closes the connection and exits with 0, or 1 on an error. `main.ts` starts no loop. In production a Container Apps scheduled job, `caj-townwise-forecasts`, runs it in `jobs.tf`, following the backup job's pattern (`jobs.tf:104-123`):
+- the API image with a command override (`node src/workers/weekly-forecasts.ts`) and an hourly cron (`"5 * * * *"`), parallelism 1, a 600-second replica timeout and no retry;
+- its own managed identity with AcrPull, the `mongodb-uri` Key Vault reference and a role assignment to start the lab job (the `lab_starter` role, `lab.tf:41-56`);
+- `identitySettings` lifecycle `Main`, since the runner signs in to Resource Manager from the container;
+- a `terraform test` in `production.tftest.hcl`.
 
-Week rows (`tw_forecast_weeks`, unique `{ orgId, locationId, week }`) go `starting` before `launch`, then `started` with the calibration id or `start_failed`. A `starting` row older than the lease is resolved by looking for a system calibration of that location created after the row; this covers a holder that dies between the insert and the start.
+`deploy.yml` sets the job's image to the API's digest on each release, so the two never drift. Locally `npm run worker:forecasts -w @townwise/api` runs one pass, and `-- --loop` ticks hourly (and once at start) for development.
 
-Mongo, not Valkey, because the record that a week was done must survive a cache flush or a Valkey restart (a lost key would start a second calibration), because DocumentDB supports the same `findOneAndUpdate` lease the sweeper uses, and because it needs no new dependency or failure mode.
+Each pass claims the lease on the single `tw_forecast_schedule` document (`_id: 'weekly'`, `owner`, `leaseUntil`, 10 minutes) by compare-and-set, as `claimFileSweep` does, and renews it before each location. The lease stays even with parallelism 1: a slow execution and the next hour's, a manual start, or a developer's `--loop` against the same database can overlap. A failed renewal stops the pass at once. The pass lists candidates through a new cross-tenant lookup (`weeklyCandidates` in `stores/cross-tenant.ts`: locations of active organizations whose forecasts are on, an absent switch counting as on), and `scopeForWeeklyRefresh` in `access/policy.ts` mints each `OrgScope`. Locations are taken one at a time. At most 3 scheduled calibrations are live at once across all organizations; a due location past that waits for a later pass without a week row.
 
-Alternatives considered: an Azure Container Apps scheduled job (a new resource, a new identity grant, and duplicate start logic outside the API); a cron trigger on the lab job (the lab holds no secret and cannot read Mongo); starting a refresh lazily on a read (GET is side-effect free, spec 7.3); a Valkey `SET NX` lease (above); no live cap (a Monday with many due locations would start dozens of 1 vCPU jobs at once).
+Week rows (`tw_forecast_weeks`, unique `{ orgId, locationId, week }`) go `starting` before `launch`, then `started` with the calibration id or `start_failed`. A `starting` row older than the lease is resolved by looking for a system calibration of that location created after the row; this covers a pass that dies between the insert and the start.
 
-*Claude's call:* the start is 03:00 Monday town time, so a weekend's uploads made by Sunday night are in. A start blocked by a live calibration (someone started one by hand) is tried again each tick until Monday ends in the town; once a scheduled calibration has started, a failure is not retried that week. The live cap of 3 is a [CONFIRM].
+Mongo, not Valkey, holds the lease and the week rows. The record that a week was done must survive a cache flush, the job cannot reach the sidecar Valkey, and DocumentDB supports the same `findOneAndUpdate` lease the sweeper uses.
+
+Alternatives considered: an hourly timer inside every API replica (the earlier design of this change; the owner asked for background workers, and it would run scheduling work in the request-serving process and in every replica); a long-running worker container app (an always-on replica billed around the clock for a few minutes of work an hour); a cron trigger on the lab job itself (the lab holds no secret and cannot read Mongo); starting a refresh lazily on a read (GET is side-effect free, spec 7.3); a Valkey `SET NX` lease (above); no live cap (a Monday with many due locations would start dozens of 1 vCPU jobs at once).
+
+*Claude's call:* the start is 03:00 Monday town time, so a weekend's uploads made by Sunday night are in. A start blocked by a live calibration (someone started one by hand) is tried again each hour until Monday ends in the town; once a scheduled calibration has started, a failure is not retried that week. The live cap of 3 is a [CONFIRM].
 
 ### 3. Scheduled calibrations are system-paid, bounded and stoppable
 
 `requestedBy` becomes `{ userId: null, role: 'system', via: 'scheduled' }`. `launch` skips the org limiter (`service.ts:178`) and the charge (`service.ts:205`) for this requester and records `chargedMicroUsd: 0`; `checkStart`'s `budget_exhausted` does not apply. Bounds: one week row per location per week; the live cap of 3; a weekly cap of roughly `TOWNWISE_WEEKLY_FORECAST_CAP` (default 200), counted on this week's `starting` and `started` rows (approximate only by the rows a stopped holder leaves `starting`). At about $0.03 of compute a run (`infra/README.md:644`) that is roughly $6 a week at most.
 
-Three ways to stop it: `TOWNWISE_WEEKLY_FORECASTS` (deploy level: false in `config.ts` and `.env.example`, written explicitly as `false` in `api/production.env` until the owner turns it on); `paused` on the schedule document, set by staff from the console (`POST /api/admin/forecast-schedule { paused }`, audited), effective at the next tick; and G1 off for one organization, effective at once. None cancels a live calibration.
+Three ways to stop it: `TOWNWISE_WEEKLY_FORECASTS` (deploy level: true by default in `config.ts` and `.env.example`, and written explicitly as `true` in `api/production.env`, by the owner's directive); `paused` on the schedule document, set by staff from the console (`POST /api/admin/forecast-schedule { paused }`, audited), effective at the next tick; and G1 off for one organization, effective at once. None cancels a live calibration.
 
 Visibility: each start records `calibration.scheduled` (system actor, ids only). Each pass logs `townwise.weekly_refresh_pass { started, failed, skipped, capped, ms }`, and `infra/README.md` gains a log search alert like the daily-cap alert (`infra/README.md:650`) for failures or a missing pass. The console's Forecasts section shows each location's latest week row.
 
@@ -148,7 +159,7 @@ Alternatives: scoring in the client (Home "never computes or adds to" a forecast
 
 ### 13. Generic and locally runnable
 
-Nothing reads a town or organization by name: candidates come from `forecasts.on`, the time zone from `timeZoneOf(location.town)`, the calendar from `townEvents(townId)` (no researched calendar gives holidays only). `createForecastSchedule` takes `now`, `tickMs`, the runner and the stores as deps, so `api/test/weekly-refresh.int.test.ts` drives Mondays with a fake clock and a fake runner, and a local run with `TOWNWISE_LAB_RUNNER=local` and `TOWNWISE_WEEKLY_FORECASTS=true` exercises the real lab end to end.
+Nothing reads a town or organization by name: candidates come from `forecasts.on`, the time zone from `timeZoneOf(location.town)`, the calendar from `townEvents(townId)` (no researched calendar gives holidays only). `createForecastSchedule` takes `now`, `tickMs`, the runner and the stores as deps, so `api/test/weekly-refresh.int.test.ts` drives Mondays with a fake clock and a fake runner, and `api/test/weekly-forecasts-e2e.int.test.ts` runs the worker's pass against the real local lab end to end (decision 19). A developer runs it with `TOWNWISE_LAB_RUNNER=local` and `npm run worker:forecasts -w @townwise/api`.
 
 ### 14. Runtime headroom gates the lab work
 
@@ -158,18 +169,60 @@ The job is killed at 900 seconds (`lab.tf:89`) at 1 vCPU and 2 GiB (`lab.tf:99`)
 
 ### 15. Order of landing
 
-Each phase lands on develop with everything off: (1) docs and additive shapes, with the client and the staff view accepting new states, fields, `via: 'scheduled'` and role `system` before the API sends them; (2) the lab and the API's input version 2 together, after the runtime check; (3a) the gate, the system requester, the fingerprint and the ranged reader, with no loop; (3b) the scheduler behind its switch; (4) the client; (5) config and infra; (6) owner actions.
+Each phase lands with every part on by default and inert while the lab runner is off (owner directive, 2026-11-16, replacing "everything off by default"): (1) docs and additive shapes, with the client and the staff view accepting new states, fields, `via: 'scheduled'` and role `system` before the API sends them; (2) the lab and the API's input version 2 together, after the runtime check; (3a) the gate, the system requester, the fingerprint and the ranged reader, with no loop; (3b) the worker, the scheduler and forecasts on by default; (4) the client, and the public and privacy copy; (5) the worker's scheduled job, config and its alert; (6) the owner's approvals; (7) the end-to-end test and the owner's local demo. Nothing is pushed before phase 7 and the owner's go; the branch's commits stay local until then.
 
 ### 16. Weekly suggestions moved to a follow-up change
 
 The owner's "agentic ... rules" (TownwiseAI reading the next 3 months of the town calendar and suggesting notes and rules each week) is the follow-up change `openspec/changes/weekly-forecast-suggestions/`. It runs on this change's tick and week rows. It is split out because it sends the owner's notes and rules to Anthropic unprompted, needs its own consent and privacy wording, and should not hold back the refresh.
+
+### 17. On by default, G1 included
+
+Owner directive, 2026-11-16: "turn them on by deafult ... any features that I tell you to create should be on by default unless i tell you it shoul dbe off", and for the forecasts switch, "On by default for all orgs". So:
+- `TOWNWISE_WEEKLY_FORECASTS` defaults to true in code, `.env.example` and `production.env`.
+- Forecasts are on for every organization, existing and new. `OrgStore` reads an absent `forecasts` field as `{ on: true, at: null }` (`api/src/stores/orgs.ts:107`), and staff can still switch one off, which is stored with `at` and `by` and stays off.
+- The console's switch shows "On (default)" for an organization nobody switched. Switching one off and back on works as today, including the staff member's word that the owner agreed when turning it on.
+- The original G1 text stays in the spec as history beside a build note and a [CONFIRM], since it was the team's guardrail.
+- The weekly suggestions (follow-up change) default to on per organization by the same directive.
+
+Production stays inert until the lab runs there (infra step 20), which is why the privacy copy (decision 18) and Sawtooth's consent are owner actions before that step, not after.
+
+Alternatives considered: keep G1 off by default with the env switch on (the owner chose otherwise; it would also make the weekly worker do nothing for every existing organization); a migration writing `forecasts: { on: true }` on every organization (a write to every row for a value the read can default, and new organizations would need it too).
+
+### 18. Public and privacy copy ships in this branch
+
+With forecasts on by default, the public site's "not built yet" and "the app shows no forecasts" become false the day the lab runs. So the branch redrafts:
+- the privacy page's forecasts paragraph (`client/app/(marketing)/privacy.tsx:208`: weekly refits by a background job on Townwise's own servers from the location's own days, notes and the public town calendar, the baseline engine, forecasts on unless the organization asks Townwise staff to turn them off), with its "Last updated" date bumped (`privacy.tsx:278`);
+- every public line found by grepping `client/src/marketing` and `client/app/(marketing)`:
+  - `client/src/marketing/HowItWorks.web.tsx:238` ("Calibration itself is not built yet, so the app shows no forecasts.") and `:234`;
+  - `client/app/(marketing)/about.tsx:58` and `:63`;
+  - `client/src/marketing/Home.web.tsx:209` ("Not for forecasts yet ... The forecasts themselves are being built and tested now.") and `:57`, whose "No forecasts are for sale yet" stays true and is kept unless the owner says otherwise.
+
+Each is pinned by its existing test (`client/test/marketing/home.test.web.tsx`, `how.test.web.tsx`, `pages.test.web.tsx` and `pages.test.native.tsx`) and a new privacy test. `docs/portal/estimates.md` section 5 carries the same paragraph. Every new line is marked for the owner's approval before push (task 6.1); the existing `[CONFIRM]` comments in `privacy.tsx` stay.
+
+Alternatives: shipping the copy later (the site would say something false for as long as forecasts publish); leaving the copy to the owner (the owner asked for this to be ready; drafting it with an approval gate keeps their say).
+
+### 19. Tested before push
+
+Owner directive: "test it before we push everything". A phase before review:
+- (a) `api/test/weekly-forecasts-e2e.int.test.ts` (testcontainers Mongo):
+  - seeds an organization with no `forecasts` field and a location with about 300 synthetic days, never `data/`;
+  - runs the worker's pass with the local lab runner and a fake clock at Monday 03:05 in the town;
+  - lets the real lab job call back to an in-process API;
+  - asserts a run publishes (baseline at 300 days);
+  - asserts the Last week forecast read returns forecast-only days (the 7 days after the last seeded day) and scored days (when the seed covers them). It needs `uv` and is skipped with a stated reason where `uv` is missing, as the lab's own suite needs it; CI runs it.
+- (b) A manual local demo for the owner on their stack, with Sawtooth's local location, after the owner's go to restart their dev servers. Push and the PR follow only after both and the owner's go.
+
+Alternatives: the fake-runner integration test alone (it never exercises the real lab callback, which is where a contract mismatch would show); a demo only (not repeatable).
 
 ## Risks / Trade-offs
 
 - [A refit publishes a slightly worse forecast within the tolerance] → Measured against the streak's best, so it cannot compound; absolute checks and the jump guard apply; staff can withdraw.
 - [Runtime passes the 900-second job limit with two engines and a longer reach] → Decision 14 measures first and stops at 600 seconds.
 - [A bug starts calibrations in a loop] → One week row per location per week, the live cap of 3, the weekly cap, the staff pause and the env switch.
-- [The lease holder dies or loses the lease mid-pass] → Renewal before each location; a failed renewal stops the holder; `starting` rows are resolved by the next holder.
+- [Every organization publishes as soon as the lab runs in production, G1 being on by default] → The privacy and public copy ship in this branch with the owner's approval, Sawtooth's consent is an owner action before step 20, and staff can switch any organization off.
+- [The worker's image drifts from the API's] → `deploy.yml` sets both to the same digest on each release.
+- [The worker cannot reach Valkey] → It needs none: Valkey is the API's sidecar, and a scheduled start uses no limiter.
+- [A pass dies or loses the lease mid-pass, or two executions overlap] → Renewal before each location; a failed renewal stops the pass; `starting` rows are resolved by the next pass.
 - [Close engines alternate week to week] → The current engine sticks unless the other is 0.5 points better on the same weeks.
 - [A bad upload produces a wild forecast] → The jump guard holds it for staff.
 - [The baseline's seasonal shape misreads a year with a closure] → Closed and likely-closed days are left out, the shape is clamped, and the backtest's coverage, bias and weekday-median checks refuse a bad fit.
@@ -178,9 +231,11 @@ The owner's "agentic ... rules" (TownwiseAI reading the next 3 months of the tow
 
 ## Migration Plan
 
-No data migration. New fields are optional or derived: `dataSha256` absent on old calibrations (counted as changed), `requestedBy.role: 'system'` only on new rows, `engine` derived from the family, `paused` absent meaning not paused. Rollback: set `TOWNWISE_WEEKLY_FORECASTS=false` or pause from the console; published runs stay (G3) and staff can withdraw any.
+No data migration. New fields are optional or derived: `dataSha256` absent on old calibrations (counted as changed), `requestedBy.role: 'system'` only on new rows, `engine` derived from the family, `paused` absent meaning not paused. Existing organizations with no `forecasts` field read as on once phase 3b lands; one staff switched off stays off. Rollback: set `TOWNWISE_WEEKLY_FORECASTS=false` or pause from the console; published runs stay (G3) and staff can withdraw any.
 
 ## Open Questions
+
+- `CLAUDE.md` says `api/src/main.ts` is the only file that reads the environment. The worker is a second composition root that resolves the same `config.ts` schema; updating `CLAUDE.md`'s line needs the owner's yes, since that file is theirs.
 
 - Who sees `stale` first: the model card only, or also a line on Home? This change shows it on the model card and in TownwiseAI only.
 - If decision 14's measurement fails, should the lab job grow (cost) or the backtest shrink (fewer folds)?

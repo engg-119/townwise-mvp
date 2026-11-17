@@ -1,4 +1,4 @@
-Each phase lands on develop on its own with everything off by default (design decision 15). Tests first: write the named test, see it fail, then make it pass. Heavy local runs: one workspace at a time, and ask the release session before a full suite.
+Each phase lands on its own with every part on by default and inert while the lab runner is off (owner directive, 2026-11-16, design decisions 15 and 17; this replaced "everything off by default" after phase 1). Nothing is pushed before phase 7 and the owner's go. Tests first: write the named test, see it fail, then make it pass. Heavy local runs: one workspace at a time, and ask the release session before a full suite.
 
 ## 0. Before starting
 
@@ -58,7 +58,7 @@ Needs 0.3's headroom. The lab and the API's input change land in one commit.
 - [ ] 3a.6 `api/src/forecasts/reader.ts:193`: read rows by range (the window plus the past days live accuracy and `accuracy` score) instead of every row. Test: `api/test/estimates.int.test.ts` with 52 published weekly runs; the answer equals the unranged reader's, and the store is asked for a bounded range.
 - [ ] 3a.7 Run the touched suites, typecheck, lint. Commit (`feat: judge every forecast draft by one set of rules`).
 
-## 3b. API: the scheduler (design decisions 2, 3, 4, 13)
+## 3b. API: the worker, the scheduler and forecasts on by default (design decisions 2, 3, 4, 13, 17)
 
 - [ ] 3b.1 Stores: new `api/src/stores/forecast-weeks.ts` (`tw_forecast_weeks`, unique `{ orgId, locationId, week }`, `starting` then `started`), the `tw_forecast_schedule` document (lease, `paused`), and `weeklyCandidates` in `api/src/stores/cross-tenant.ts`. Also `scopeForWeeklyRefresh` in `api/src/access/policy.ts`, indexes in `ensureIndexes`, and deletion with the location and the organization. Tests: `api/test/isolation.test.ts` (the importer list gains `lab/schedule.ts`) and `api/test/forecast-weeks.int.test.ts`.
 - [ ] 3b.2 `api/src/lab/schedule.ts` (`createForecastSchedule(deps)`). Tests first in `api/test/weekly-refresh.int.test.ts`, with a fake clock and a fake runner, one per scenario of the weekly-forecast-refresh delta. They must include:
@@ -70,9 +70,10 @@ Needs 0.3's headroom. The lab and the API's input change land in one commit.
   - a location in another time zone, and organizations with forecasts on and off.
 - [ ] 3b.3 The staff pause: `POST /api/admin/forecast-schedule { paused }` (staff), audit `forecast_schedule.paused` and `forecast_schedule.resumed`. The console's Forecasts section shows the pause toggle and each location's latest week row. Tests: `api/test/forecast-schedule.int.test.ts` (staff only; the next tick starts nothing while paused) and `client/test/portal/console/forecasts.test.web.tsx`.
 - [ ] 3b.4 The pass's log line `townwise.weekly_refresh_pass { started, failed, skipped, capped, ms }` and `calibration.scheduled` in the audit allowlists (`api/src/audit.ts`) and console labels. Tests: `api/test/weekly-refresh.int.test.ts` (no id or figure in the line) and `api/test/audit.test.ts`.
-- [ ] 3b.5 `api/src/config.ts` and `api/src/main.ts`: `TOWNWISE_WEEKLY_FORECASTS` (default false) and `TOWNWISE_WEEKLY_FORECAST_CAP` (default 200); start the loop only with the lab runner on and the switch true, and stop it on shutdown. Test: `api/test/config.test.ts`.
-- [ ] 3b.6 Local end to end, by hand: `TOWNWISE_LAB_RUNNER=local`, `TOWNWISE_WEEKLY_FORECASTS=true`, a seeded location with 300 days and forecasts on, and the clock at a Monday 03:05. A baseline run publishes. Record the steps in `api/README.md`.
-- [ ] 3b.7 Run the touched suites. Commit (`feat: refresh forecasts weekly`).
+- [ ] 3b.5 The worker (design decision 2): new `api/src/workers/weekly-forecasts.ts` builds the stores and the lab runner from `config.ts`'s schema (Mongo only, no Valkey), runs one pass of `createForecastSchedule`, closes its connections and exits 0, or 1 on an error; `--loop` ticks hourly and once at start. Add `worker:forecasts` to `api/package.json` (`node src/workers/weekly-forecasts.ts`). `api/src/config.ts`: `TOWNWISE_WEEKLY_FORECASTS` (default true) and `TOWNWISE_WEEKLY_FORECAST_CAP` (default 200). `api/src/main.ts` starts no loop. Tests: `api/test/config.test.ts` (true by default), `api/test/weekly-forecasts-worker.int.test.ts` (one pass then exit 0; switch false or runner off exits 0 having started nothing; an error exits 1; `--loop` runs a second pass on its interval with a fake timer), and `api/test/app.test.ts` or the main test pinning that the server schedules no weekly timer.
+- [ ] 3b.6 Forecasts on by default (design decision 17): `api/src/stores/orgs.ts:107` reads an absent `forecasts` field as `{ on: true, at: null }`; `weeklyCandidates` counts an absent switch as on; the console's `ForecastsSwitch.tsx` shows "On (default)" for an organization nobody switched; switching off and on works as today. Tests: `api/test/orgs-store.int.test.ts` (absent reads on; a staff off stays off with `at` and `by`), `api/test/lab-publish.int.test.ts` (a draft of an organization with no field publishes; one switched off answers `forecasts_off`), `client/test/portal/console/forecasts-switch.test.web.tsx`.
+- [ ] 3b.7 Local run, by hand (the worker's `--now` is Claude's call for development: refused in production, as `TOWNWISE_LAB_RUNNER=local` is): `TOWNWISE_LAB_RUNNER=local`, a seeded location with 300 synthetic days in an organization with no `forecasts` field, `npm run dev -w @townwise/api` for the callback, then `npm run worker:forecasts -w @townwise/api` with the clock at a Monday 03:05 (the worker's `--now` for development only, refused in production). A baseline run publishes. Record the steps in `api/README.md`.
+- [ ] 3b.8 Run the touched suites. Commit (`feat: refresh forecasts weekly in a worker`).
 
 ## 4. Client: Last week, the states and the engine words (design decisions 5, 10, 12)
 
@@ -86,26 +87,60 @@ Needs 0.3's headroom. The lab and the API's input change land in one commit.
 - [ ] 4.4 Calendar reach: no code change expected. Add a test in `client/test/portal/calendar/` that a day 91 days after today shows its forecast and a day past the run says "The published forecast doesn't cover this day." Do not edit `refine-calendar-and-home`'s files beyond this test.
 - [ ] 4.5 `client/MODULE.md` under Local changes, and `client/src/portal/README.md` if a shared piece changed. Run the client suites for home, estimates, console and calendar (web and native). Commit (`feat: show the forecast on home's last week`).
 
-## 5. Infra and config
+## 4b. Public and privacy copy (design decision 18)
 
-- [ ] 5.1 `api/production.env`: `TOWNWISE_WEEKLY_FORECASTS=false`, explicit, with a comment pointing at D42 and the owner's step, and `TOWNWISE_WEEKLY_FORECAST_CAP=200`. `api/.env.example`: the same names, off, with the local run's note.
-- [ ] 5.2 `infra/README.md` step 20: the weekly refresh runs in the API once the lab is on and the switch is true; the cost line (about $0.03 a run, roughly 200 a week); the three ways to stop it; the measured runtime from 0.3. Add a log search alert beside the daily-cap alert (`infra/README.md:650`), as Terraform in `infra/terraform/production/` with its `terraform test`, firing when `townwise.weekly_refresh_pass` reports `failed` above 0 or no pass line appears for 8 days while the switch is on; add its line to the cost table.
-- [ ] 5.3 `docs/portal/estimates.md` section 5: draft the privacy page's forecasts paragraph for the owner's approval (weekly refits on Townwise's servers from the location's own days and notes and the public town calendar, and the baseline). Do not edit `privacy.tsx`: that is the owner's.
+- [ ] 4b.1 `client/app/(marketing)/privacy.tsx`: redraft the Forecasts paragraph (`privacy.tsx:208`) and the short version if it mentions forecasts. The new wording says Townwise refits each location's forecast weekly, by a background job on its own servers, from that location's days, notes and rules and the public town calendar; a baseline engine may make it; forecasts are on unless the organization asks Townwise staff to turn them off; results kept, model not. Bump "Last updated" (`privacy.tsx:278`). Keep every existing `[CONFIRM]` comment and add `// [CONFIRM: forecasts paragraph for autonomous forecasts, awaiting the owner]`. Test: new `client/test/marketing/privacy-forecasts.test.web.tsx` (the paragraph's key sentences and the date).
+- [ ] 4b.2 Find every public statement that becomes false: `grep -rn -i "no forecasts\|not built yet\|Calibration itself\|Not for forecasts yet\|shows no forecasts" client/src/marketing "client/app/(marketing)"`. Rewrite each honestly, with a `[CONFIRM: wording, awaiting the owner]` comment beside it. Known on 2026-11-16:
+  - `client/src/marketing/HowItWorks.web.tsx:238` ("Calibration itself is not built yet, so the app shows no forecasts."; it becomes what runs: weekly refits from the restaurant's own history) and `:234` (the models now refit each week on Townwise's servers; the agent that chooses models is still not built);
+  - `client/app/(marketing)/about.tsx:58` and `:63` (the same facts, and the status tags);
+  - `client/src/marketing/Home.web.tsx:209` ("Not for forecasts yet ... being built and tested now");
+  - `Home.web.tsx:57`'s "No forecasts are for sale yet" stays true: keep it unless the owner says otherwise.
+
+  Update the tests that pin them: `client/test/marketing/home.test.web.tsx:146,261`, `how.test.web.tsx`, `pages.test.web.tsx`, `pages.test.native.tsx`; `client/test/app/sign-in.test.native.tsx:51` and `client/test/app/totp.test.web.tsx:61` only if the homepage line changes.
+- [ ] 4b.3 `docs/portal/estimates.md` section 5: the same forecasts paragraph as 4b.1, word for word.
+- [ ] 4b.4 Run `npm test -w @ckeith26/expo-shell -- test/marketing test/app` (web and native). Commit (`docs: say forecasts refit weekly on the public pages`).
+
+## 5. Infra and config (design decisions 2, 3)
+
+- [ ] 5.1 `api/production.env`: `TOWNWISE_WEEKLY_FORECASTS=true`, explicit, with a comment pointing at D42 (on by default by the owner's directive; inert until the lab runs, step 20), and `TOWNWISE_WEEKLY_FORECAST_CAP=200`. `api/.env.example`: the same names, true, with the worker's local run.
+- [ ] 5.2 `infra/terraform/production/jobs.tf`: `caj-townwise-forecasts`, following the backup job (`jobs.tf:104-123`):
+  - the API image (`var.api_image`) with `command = ["node", "src/workers/weekly-forecasts.ts"]`;
+  - `triggerType = "Schedule"`, `cronExpression = "5 * * * *"`, parallelism 1, `replicaTimeout = 600`, `replicaRetryLimit = 0`, 0.25 vCPU and 0.5 GiB;
+  - its own identity in `job_secrets` with `mongodb-uri` only and lifecycle `Main`, plus AcrPull;
+  - a role assignment of the `lab_starter` role on `caj-townwise-lab` (`lab.tf:41-56`);
+  - env from `production.env` baked in the image plus `AZURE_CLIENT_ID`, `TOWNWISE_LAB_JOB_ID` and the Mongo secret ref;
+  - created only with the lab (`count` on the same variable as `lab.tf`).
+
+  Add a `terraform test` run in `infra/terraform/production/production.tftest.hcl` (the job exists with the lab on, uses the API image and that command, the cron, parallelism 1, only `mongodb-uri`). Run `terraform fmt -check`, `validate`, `tflint` and `terraform test` as CI does.
+- [ ] 5.3 `.github/workflows/deploy.yml`: set `caj-townwise-forecasts`'s image to the API's digest in the same deploy step as the API, and give the deploy identity the update right on the job as it has on the lab job. Test: the workflow's existing checks (`id-token-guard` unchanged: only `jobs.deploy` requests a token).
+- [ ] 5.4 Alert: a log search rule beside the daily-cap alert (`infra/README.md:650`) in Terraform, firing when `townwise.weekly_refresh_pass` reports `failed` above 0, when a `caj-townwise-forecasts` execution fails, or when no pass line appears for 8 days while the lab is on. Add it and the job's measured cost (a pass's seconds at 0.25 vCPU, hourly) to the cost table, with its `terraform test`.
+- [ ] 5.5 `infra/README.md` step 20: the new job and why it is a job (owner directive); its identity and grants; the owner's targeted apply (`terraform apply -target=azapi_resource.job_forecasts -target=...` for the job, its identity, role assignments and alert); its cost; that forecasts are on by default for every organization, so enabling the lab publishes; the three ways to stop it.
 
 ## 6. Owner actions (not done by an agent)
 
-- [ ] 6.1 Owner: approve or edit the privacy paragraph drafted in 5.3, then apply it to the privacy page.
-- [ ] 6.2 Owner: confirm Sawtooth's consent (owner decision 2026-11-05) and have staff switch its forecasts on (G1). Its 658-day span makes it eligible for the model engine.
-- [ ] 6.3 Owner: enable the lab in production (infra step 20: `terraform apply`, the lab image, `TOWNWISE_LAB_RUNNER=azure`), then set `TOWNWISE_WEEKLY_FORECASTS=true` in `api/production.env` and release.
+- [ ] 6.1 Owner: approve or edit the drafted copy (4b.1 to 4b.3: the privacy page's forecasts paragraph and the public pages' rewritten lines) before anything is pushed.
+- [ ] 6.2 Owner: confirm Sawtooth's consent (owner decision 2026-11-05) before the lab is enabled in production. Forecasts are on by default, so enabling the lab publishes its forecast without a further switch. Its 658-day span makes it eligible for the model engine.
+- [ ] 6.3 Owner, after merge: enable the lab in production (infra step 20: `terraform apply`, including the targeted apply of 5.5; the lab image; `TOWNWISE_LAB_RUNNER=azure`) and release.
 - [ ] 6.4 Owner: decide each `[CONFIRM]` listed under Owner sign-offs in proposal.md.
 
-## 7. Review and verification
+## 7. Test before push (design decision 19)
 
-- [ ] 7.1 Independent UI review before merge: an agent that did not build phase 4 checks against the deltas and the design system, and must judge the UI ready. It covers:
+- [ ] 7.1 Automated end to end: new `api/test/weekly-forecasts-e2e.int.test.ts` (testcontainers Mongo):
+  - seed an active organization with no `forecasts` field and a location with about 300 synthetic days (never `data/`);
+  - start an in-process API for the lab callback, and run the worker's pass with the local lab runner (real `uv` job) and a fake clock at Monday 03:05 in the town;
+  - assert the week row is `started`, the calibration succeeds, and a run publishes (baseline at 300 days; model when the seed spans 595 or more);
+  - read the forecast for the seven days after the last seeded day and assert forecast-only days (no stored guests, a published figure), then store guests for some of them and read again, asserting `scored` days and `accuracy`;
+  - skip with a stated reason only where `uv` is missing; CI runs it.
+- [ ] 7.2 Manual local demo for the owner on their local stack, with Sawtooth's local location: only after the owner's go to restart their dev servers (they run detached from the main checkout). Run the worker once, show the published forecast on the Calendar, Home's Last week and the model card, then restore the servers as they were. Record what was shown.
+
+## 8. Review and verification
+
+- [ ] 8.1 Independent UI review before merge: an agent that did not build phase 4 checks against the deltas and the design system, and must judge the UI ready. It covers:
   - Home's Last week in its states, at 375, 640, 1024 and 1280 px on web, and on native;
   - the tile;
   - the model card's states;
   - the console's week outcomes and pause.
-- [ ] 7.2 Code review of the whole branch (`/review`), with a security pass on the staff route, the cross-tenant lookup and the system requester.
-- [ ] 7.3 When `refine-calendar-and-home` is archived (not before, and not in this change), reconcile its `design.md:35` and its Open Questions `[CONFIRM]` that say Home's Last week stays Monday to Sunday. Since 5132bcd, Last week is the seven days before today (spec 22.2 item 62), which this change builds on.
-- [ ] 7.4 `/verify` (what CI runs: `npm run verify`, plus `uv run pytest` in `modeling/lab` and the Terraform checks for the alert), green before the PR to develop.
+- [ ] 8.2 Code review of the whole branch (`/review`), with a security pass on the staff route, the cross-tenant lookup, the system requester, and the worker job's identity, Key Vault reference and lab-start grant.
+- [ ] 8.3 When `refine-calendar-and-home` is archived (not before, and not in this change), reconcile its `design.md:35` and its Open Questions `[CONFIRM]` that say Home's Last week stays Monday to Sunday. Since 5132bcd, Last week is the seven days before today (spec 22.2 item 62), which this change builds on.
+- [ ] 8.4 `/verify` (what CI runs: `npm run verify`, plus `uv run pytest` in `modeling/lab` and the Terraform checks for the alert), green before the PR to develop.
+- [ ] 8.5 Push and open the PR to develop only after 7.1 passes, 7.2 is done, 6.1 is approved, 8.1 to 8.4 are done, and the owner says go.
