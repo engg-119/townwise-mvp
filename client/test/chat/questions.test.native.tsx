@@ -79,7 +79,7 @@ test('?panel=questions opens the column from 1024px', async () => {
   await renderAgent('/locations/l1/agent?panel=questions');
   expect(await screen.findByTestId('agent-side')).toBeTruthy();
   expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Questions and activity (3)' }).props.accessibilityState).toMatchObject({ expanded: true });
+  expect(screen.getByRole('button', { name: 'Questions and activity (5)' }).props.accessibilityState).toMatchObject({ expanded: true });
 });
 
 test('Something else… from the sheet on a phone closes it once the turn starts, not before', async () => {
@@ -140,6 +140,6 @@ test('the landing shows the questions under the chips, and Something else… sen
   await waitFor(() => {
     expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/gap_2026-05-12_2026-05-13', body: { answer: 'other' } }]);
   });
-  expect(screen.getByRole('button', { name: 'Questions and activity (2)' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
   for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
 });

@@ -116,7 +116,7 @@ function WeeklySwitch(props: { panel: AgentPanelState; town: string; readOnlyId:
         <Link href="/privacy" style={styles.link}>Privacy</Link>
       </Text>
       <Text style={styles.body}>{on ? 'Weekly suggestions are on.' : 'Weekly suggestions are off.'}</Text>
-      {on && !weekly.available ? <Text style={styles.help}>TownwiseAI isn’t available here right now, so no suggestions are being made.</Text> : null}
+      {on && !weekly.available ? <Text style={styles.help}>Weekly suggestions aren’t running right now, so none are being made.</Text> : null}
       {weekly.canChange ? (
         <Button
           variant="outline"

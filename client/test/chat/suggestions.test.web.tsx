@@ -162,3 +162,25 @@ test('with none open, the section says so and still shows the switch', async () 
   expect(within(panel).getByText('No suggestions right now.')).toBeTruthy();
   expect(within(panel).getByText('Weekly suggestions are on.')).toBeTruthy();
 });
+
+test('the header’s Questions and activity button counts open questions and open suggestions, as Home’s link does', async () => {
+  // The fixture asks 3 questions and has 2 suggestions open: Home's link reads "5 questions from TownwiseAI".
+  const api = chatApi(true);
+  api.respond['/api/org/locations/l1/agent/suggestions/0000000000000000000000c2/dismiss'] = () => (
+    { suggestion: { id: '0000000000000000000000c2', status: 'dismissed' }, note: null, rule: null }
+  );
+  renderAt(api, meOf(ACCESS.admin));
+  const panel = await side();
+  expect(screen.getByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
+  fireEvent.click(within(card(panel, RULE_HEADING)).getByRole('button', { name: 'Dismiss' }));
+  expect(await screen.findByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
+});
+
+test('while weekly passes aren’t running, the panel says only that, never that TownwiseAI is unavailable', async () => {
+  const api = chatApi(false);
+  api.panel = { ...(api.panel as object), weeklySuggestions: { on: true, available: false, canChange: false } };
+  renderAt(api, meOf(ACCESS.member));
+  const panel = await side();
+  expect(within(panel).getByText('Weekly suggestions aren’t running right now, so none are being made.')).toBeTruthy();
+  expect(within(panel).queryByText(/isn’t available here/)).toBeNull();
+});

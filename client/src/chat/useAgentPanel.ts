@@ -128,6 +128,15 @@ export function openQuestions(panel: AgentPanelState): number | null {
   return panel.state.data.questions.filter((question) => panel.answered[question.id] === undefined).length;
 }
 
+/**
+ * What the panel asks the person to decide: its open questions and open weekly suggestions, as Home's link counts them
+ * ("{n} questions from TownwiseAI"); null while they load or when they can't be read.
+ */
+export function openToDecide(panel: AgentPanelState): number | null {
+  const questions = openQuestions(panel);
+  return questions === null ? null : questions + (openSuggestions(panel) ?? 0);
+}
+
 const CLOSED: SomethingElse = { open: false, text: '', sent: false, error: null };
 
 function without<T>(record: Readonly<Record<string, T>>, key: string): Record<string, T> {
