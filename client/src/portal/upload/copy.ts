@@ -161,6 +161,16 @@ export function resultLines(role: Role, location: string, upload: { dayCount: nu
   return lines;
 }
 
+/**
+ * Spec 14.1, the heading of the calibration state: "Not calibrated yet" until a run is published, then that a forecast
+ * is published, and for a stale one how many newer days with guests it doesn't have yet (D42).
+ */
+export function calibrationHeading(calibration: Calibration): string {
+  if (calibration.state === 'calibrated') return 'Forecast published';
+  if (calibration.state === 'stale') return `Forecast published, ${plural(calibration.newerDays, 'newer day', 'newer days')} not in it yet`;
+  return 'Not calibrated yet';
+}
+
 /** Spec 14.1, the body of the calibration state. */
 export function calibrationLine(calibration: Calibration): string {
   if (calibration.state === 'no_sales_data') {

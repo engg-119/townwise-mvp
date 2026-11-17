@@ -1807,6 +1807,10 @@ Who is likely in a location's town each day, from public sources, in `api/src/pe
 |---|---|---|---|
 | `no_sales_data` | no day with guests or net sales | “Not calibrated yet” | “Upload your sales history to start. The upload sends Townwise only the date, guest count and net sales for each day.” |
 | `not_calibrated` | one or more days | “Not calibrated yet” | “Your sales history is in: {n} days, {first} to {last}.” |
+| `calibrated` (D42, 14.6) | a published run whose `dataThrough` is on or after the last day with guests | “Forecast published” | “Your sales history is in: {n} days, {first} to {last}.” |
+| `stale` (D42, 14.6) | a published run whose `dataThrough` is before the last day with guests | “Forecast published, {n} newer days not in it yet” | “Your sales history is in: {n} days, {first} to {last}.” |
+
+[Build note, 2026-11-17 review: with forecasts on by default and refreshed weekly, P9's Calibration cell and the upload's result (11.2 step 4) read these headings from the location's `calibration`, so a location with a published forecast no longer reads “Not calibrated yet”. The model card keeps its own `stale` line (14.6).] [CONFIRM: the headings “Forecast published” and “Forecast published, {n} newer days not in it yet” for `calibrated` and `stale`]
 
 Mockups add the chip [DECISION NEEDED: minimum days of history before calibration] under the `not_calibrated` body. When the user decides, a `needs_more_history` state with the copy “Calibration needs {min} days of history. You have {n}.” joins the table. Until then, no page states a threshold. [Build note: since D27 the console’s Calibrate refusal and TownwiseAI’s `start_calibration` state the lab’s minimum history, 595 days (409 `not_enough_history`), decided by the owner on 2026-11-10 (D27). The states above and their copy still state no threshold, and this DECISION NEEDED stays open.]
 
