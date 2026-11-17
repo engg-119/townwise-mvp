@@ -298,7 +298,7 @@ def golden_baseline(inp: dict | None = None) -> dict:
     """calibrate on the golden input (or `inp`), returning the baseline's run whichever engine would be chosen."""
     from fixture import synthetic_input
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(pipeline, "choose_engine", lambda *args: "baseline")
+        patch.setattr(pipeline, "choose_engine", lambda *args, **kwargs: "baseline")
         return pipeline.calibrate(synthetic_input(0) if inp is None else inp, "0" * 40)
 
 

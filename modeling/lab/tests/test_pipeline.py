@@ -212,7 +212,7 @@ def calibrate_as(inp: dict, engine: str) -> dict:
     """calibrate(inp) returning `engine`'s run whichever engine its backtest would choose, so each engine's output is
     checked on the same fixture. Everything else, the engines' figures included, is calibrate's own."""
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(pipeline, "choose_engine", lambda *args: engine)
+        patch.setattr(pipeline, "choose_engine", lambda *args, **kwargs: engine)
         return pipeline.calibrate(copy.deepcopy(inp), CODE)
 
 
@@ -790,9 +790,13 @@ def without_level_jump(lab_input: dict) -> dict:
 
 
 def test_the_model_wins_a_first_forecast(lab_input):
+    # This fixture's model bands hold 8 of 25 weeks, which the gate refuses (the next test), so its checks are taken
+    # as passed here to pin the WAPE rule alone
     inp = without_level_jump(lab_input)
     inp["champion"] = None
-    out = pipeline.calibrate(inp, CODE)
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "passes", lambda bt, engine: True)
+        out = pipeline.calibrate(inp, CODE)
     engines = out["scorecard"]["engines"]
     assert engines["model"]["weeklyWape"] <= engines["baseline"]["weeklyWape"] - pipeline.ENGINE_MARGIN
     assert out["scorecard"]["engine"] == "model" and out["run"]["model"]["family"] == "hybrid_linear_xgboost"
@@ -1119,3 +1123,50 @@ def test_a_six_tenths_win_switches_engines():
 
 def test_a_current_model_that_could_not_run_returns_the_baseline():
     assert pipeline.choose_engine("model", None, 0.100) == "baseline"  # the gate holds it (model_not_run)
+
+
+# An engine the gate would refuse on its own checks (coverage, and the baseline's bias) is not returned when the other
+# passes them: a WAPE winner whose ranges miss would leave a location with no current run without a forecast.
+
+def test_with_no_current_run_a_winner_that_fails_its_checks_falls_back_to_the_other():
+    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False) == "baseline"
+    assert pipeline.choose_engine(None, 0.100, 0.090, baseline_ok=False) == "model"
+    # With neither passing, the WAPE rule stands and the gate says why
+    assert pipeline.choose_engine(None, 0.090, 0.100, model_ok=False, baseline_ok=False) == "model"
+
+
+def test_an_engine_switch_needs_the_other_to_pass_its_checks():
+    assert pipeline.choose_engine("baseline", 0.090, 0.100, model_ok=False) == "baseline"
+    assert pipeline.choose_engine("model", 0.100, 0.090, baseline_ok=False) == "model"
+    # A current engine that fails does not switch to a worse one: the current run stays until it lapses
+    assert pipeline.choose_engine("model", 0.090, 0.100, model_ok=False) == "model"
+
+
+def test_passes_mirrors_the_gates_absolute_checks():
+    def bt(inside, weeks, bias=0.0):
+        return {"scores": {"coverage80": {"inside": inside, "weeks": weeks}}, "bias": bias}
+    assert pipeline.passes(bt(16, 20), "model")
+    assert not pipeline.passes(bt(7, 20), "model")  # 35%: under 65%
+    assert not pipeline.passes(bt(20, 20), "model")  # 100%: over 95%
+    assert not pipeline.passes(bt(10, 11), "model")  # fewer than 12 weeks with a range
+    assert pipeline.passes(bt(13, 20), "baseline") and pipeline.passes(bt(19, 20), "baseline")  # 65% and 95% pass
+    assert pipeline.passes(bt(16, 20, bias=-0.05), "baseline")
+    assert not pipeline.passes(bt(16, 20, bias=0.06), "baseline")  # biased
+    assert pipeline.passes(bt(16, 20, bias=0.06), "model")  # the model's bias is judged by weekday
+
+
+def test_a_model_that_wins_on_wape_but_fails_coverage_returns_the_baseline(lab_input):
+    # With the level jump taken out and no current run, the model is 1.3 points better than the baseline on the same
+    # weeks, but its 80% bands hold 8 of 25 weeks (under 65%), so the gate would hold its draft
+    # (coverage_out_of_band); the baseline passes every check, so it is returned
+    inp = without_level_jump(lab_input)
+    inp["champion"] = None
+    out = pipeline.calibrate(inp, CODE)
+    engines = out["scorecard"]["engines"]
+    assert engines["model"]["weeklyWape"] <= engines["baseline"]["weeklyWape"] - pipeline.ENGINE_MARGIN
+    model_coverage = engines["model"]["coverage80"]
+    assert model_coverage["inside"] / model_coverage["weeks"] < pipeline.COVERAGE_MIN
+    assert out["scorecard"]["engine"] == "baseline" and out["run"]["model"]["family"] == "seasonal_baseline"
+    baseline_coverage = out["scorecard"]["backtest"]["metrics"]["coverage80"]
+    assert pipeline.COVERAGE_MIN <= baseline_coverage["inside"] / baseline_coverage["weeks"] <= pipeline.COVERAGE_MAX
+    assert abs(out["scorecard"]["backtest"]["weeklyBias"]) <= pipeline.BASELINE_BIAS_MAX

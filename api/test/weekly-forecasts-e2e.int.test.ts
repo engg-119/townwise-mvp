@@ -49,8 +49,9 @@ function addDays(day: string, days: number): string {
 // 0.12). Seed 1 was chosen because, with the lab input the API builds for this Hanover history (its town calendar
 // included) on this Monday and on the Mondays a week either side, modeling/lab returns the baseline with room on every
 // check: on this Monday 34 of 40 weeks inside their range, weekly bias -0.8%, weekly WAPE 10.4% against the model's
-// 11.1% and the weekday median's 15.9% (checked with the lab directly, model v8). Other seeds publish the model, or are
-// held when the model wins with ranges that hold under 65% of weeks (design.md, Open Questions).
+// 11.1% and the weekday median's 15.9% (checked with the lab directly, model v8). Other seeds publish the model; where
+// the model wins with ranges that hold under 65% of weeks, the lab returns the baseline when the baseline passes its
+// checks (design.md, decision 8 and Open Questions).
 const WEEKDAY_LEVEL = [50, 30, 38, 45, 55, 85, 95]; // Sunday to Saturday
 const SEED = 1;
 /** Days after the last seeded day the generator also covers: Last week's. */

@@ -3,10 +3,10 @@
 Runs two engines (design decision 8): the baseline engine (baseline.py) always, and the notebook's model (hybrid,
 holiday multipliers, optional weekday regime) when the history spans MIN_HISTORY_DAYS. Both are backtested on the same
 weeks (the model's quarterly refits, the baseline's weekly cutoffs, each week scored 28 and 7 days ahead), and the one
-returned is the current run's engine unless the other's backtest weekly WAPE is at least 0.5 points lower
-(choose_engine). The returned engine's backtest, six-month folds and comparison with the current published run make
-the scorecard, with each engine's own figures beside them, and its run reaches today plus 91 days (forecast.run_end).
-Nothing here logs or prints.
+returned is the current run's engine unless the other's backtest weekly WAPE is at least 0.5 points lower and it passes
+the gate's coverage and bias checks (choose_engine, passes). The returned engine's backtest, six-month folds and
+comparison with the current published run make the scorecard, with each engine's own figures beside them, and its run
+reaches today plus 91 days (forecast.run_end). Nothing here logs or prints.
 """
 
 import re
@@ -27,6 +27,10 @@ HORIZON = 28  # the scorecard's horizon: each week forecast from a refit at leas
 SHORT_HORIZON = 7
 LONG_HORIZON = forecast.REACH_DAYS  # reported, never gated: each week forecast at least 91 days before its Monday
 ENGINE_MARGIN = 0.005  # an engine switch needs the other's backtest weekly WAPE 0.5 points lower on the same weeks
+# The publish gate's absolute checks an engine must pass to be returned over the other (api/src/lab/gate.ts GATE)
+WEEKS_WITH_RANGE_MIN = 12  # GATE.heldOutWeeksMin
+COVERAGE_MIN, COVERAGE_MAX = 0.65, 0.95  # GATE.coverageMin and GATE.coverageMax
+BASELINE_BIAS_MAX = 0.05  # GATE.baselineBiasMax
 CODE_VERSION = re.compile(r"[0-9a-f]{40}")
 
 
@@ -50,18 +54,37 @@ def _failure(calibration_id: str | None, code: str) -> dict:
     return {"schema": schema.RESULT_SCHEMA, "calibrationId": calibration_id, "ok": False, "code": code}
 
 
-def choose_engine(current: str | None, model_wape: float | None, baseline_wape: float) -> str:
+def passes(bt: dict, engine: str) -> bool:
+    """Whether an engine's backtest passes the gate's absolute checks that need no current run (gate.ts `absolute`):
+    12 or more weeks with an 80% range, 65% to 95% of them inside it, and for the baseline a weekly bias within 5
+    points either way. The weekday median's check is left to the gate."""
+    coverage = bt["scores"]["coverage80"]
+    if coverage["weeks"] < WEEKS_WITH_RANGE_MIN:
+        return False
+    if not COVERAGE_MIN <= coverage["inside"] / coverage["weeks"] <= COVERAGE_MAX:
+        return False
+    return engine != "baseline" or abs(bt["bias"]) <= BASELINE_BIAS_MAX + 1e-12
+
+
+def choose_engine(current: str | None, model_wape: float | None, baseline_wape: float, *, model_ok: bool = True,
+                  baseline_ok: bool = True) -> str:
     """The engine a calibration returns: the current run's (`current`) unless the other's backtest weekly WAPE is at
-    least 0.5 points lower on the same weeks; with no current run, the model when it is 0.5 points lower than the
-    baseline. A tie keeps the current engine. Without a model (`model_wape` None), the baseline."""
+    least 0.5 points lower on the same weeks and the other passes its checks (`model_ok`, `baseline_ok`: passes); with
+    no current run, the model when it is 0.5 points lower than the baseline, else the baseline, but the other when that
+    one fails its checks and the other passes them. A tie keeps the current engine, and a current engine that fails is
+    kept (its run stays published until it lapses; then there is no current run). Without a model (`model_wape` None),
+    the baseline."""
     if model_wape is None:
         return "baseline"
+    ok = {"model": model_ok, "baseline": baseline_ok}
     lower = {"model": model_wape <= baseline_wape - ENGINE_MARGIN + 1e-12,
              "baseline": baseline_wape <= model_wape - ENGINE_MARGIN + 1e-12}
     if current is None:
-        return "model" if lower["model"] else "baseline"
+        winner = "model" if lower["model"] else "baseline"
+        other = "baseline" if winner == "model" else "model"
+        return other if not ok[winner] and ok[other] else winner
     other = "baseline" if current == "model" else "model"
-    return other if lower[other] else current
+    return other if lower[other] and ok[other] else current
 
 
 def _folds(frame: pd.DataFrame, hist: pd.DataFrame, through: pd.Timestamp, base_cols: list[str],
@@ -235,7 +258,8 @@ def calibrate(inp: dict, code_version: str) -> dict:
 
     current = None if inp["champion"] is None else inp["champion"]["engine"]
     engine = choose_engine(current, None if model_bt is None else model_bt["scores"]["weeklyWape"],
-                           base_bt["scores"]["weeklyWape"])
+                           base_bt["scores"]["weeklyWape"], model_ok=model_bt is not None and passes(model_bt, "model"),
+                           baseline_ok=passes(base_bt, "baseline"))
     bt, preds = (model_bt, model_preds) if engine == "model" else (base_bt, base_preds)
     days28, weeks28, log_err, scores, window = bt["days28"], bt["weeks28"], bt["log_err"], bt["scores"], bt["window"]
 
