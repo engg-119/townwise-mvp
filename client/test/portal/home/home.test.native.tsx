@@ -218,12 +218,13 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByRole('link', { name: 'See it in Analytics' })).toBeTruthy();
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
 
-  // Three reads in parallel, then the questions, the business rules, the month's forecast, its people in town and the
-  // next orders on their own: the board once, for Bar order and the selected day's Reorder part (#68 review C6); no
-  // write, nothing stored.
+  // Three reads in parallel, then the questions, the business rules, the month's forecast, Last week's forecast (D42),
+  // its people in town and the next orders on their own: the board once, for Bar order and the selected day's Reorder
+  // part (#68 review C6); no write, nothing stored.
   const reads = api.calls.filter((call) => call.path.startsWith(PATH)).map((call) => call.path);
   expect(reads.sort()).toEqual([
-    AGENT, CALENDAR, FORECAST, PEOPLE, `${PATH}/notes`, `${PATH}/rules`, `${PATH}/sales/history`, `${PATH}/orders`,
+    AGENT, CALENDAR, FORECAST, `${PATH}/forecast?from=2026-10-29&to=2026-11-04`, PEOPLE, `${PATH}/notes`, `${PATH}/rules`, `${PATH}/sales/history`,
+    `${PATH}/orders`,
   ].sort());
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
   for (const name of NO_STORE) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();

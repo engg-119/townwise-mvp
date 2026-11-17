@@ -16,7 +16,7 @@ import { inject } from 'vitest';
 import { z } from 'zod';
 
 import type { TownwiseRoute } from '../../src/access/routes.ts';
-import { createTownwiseApi, createTownwiseContext, createTownwiseLab } from '../../src/app.ts';
+import { createTownwiseApi, createTownwiseContext, createTownwiseLab, type TownwiseContext } from '../../src/app.ts';
 import type { CalendarFetcher } from '../../src/calendar/fetch.ts';
 import type { GoogleCalendarClient, revokeGoogleGrant } from '../../src/calendar/google.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
@@ -63,6 +63,8 @@ export interface TownwiseTestServer {
   readonly commands: string[];
   /** The /api router createTownwiseApi returned. */
   readonly apiRouter: Router;
+  /** The context the server's routes run with, for calling services directly (the weekly refresh's starts, say). */
+  readonly ctx: TownwiseContext;
   readonly mail: MagicLinkMessage[];
   /** Townwise's mailer: over `mailTransport` when one was given, else OFF_MAILER. Await idle() before asserting. */
   readonly mailer: Mailer;
@@ -243,6 +245,7 @@ export async function startTownwiseServer(opts?: {
       logs,
       commands,
       apiRouter,
+      ctx: createTownwiseContext(deps),
       mail,
       mailer,
       reader,

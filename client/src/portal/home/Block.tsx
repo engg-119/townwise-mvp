@@ -39,15 +39,16 @@ export function Block(props: {
 
 export interface BlockItem {
   key: string;
-  /** Columns of 12 from 1024px. */
+  /** Columns of 12 from 1024px; 12 takes a line of the row to itself. */
   span: number;
   /** Null leaves the block out; the others keep their spans. */
   node: React.ReactNode;
 }
 
 /**
- * A row of blocks: side by side by span from 1024px (from 641px when `tablet`, for small tiles), each as tall as the
- * row; stacked below.
+ * A row of blocks: side by side by span from 1024px (from 641px when `tablet`, for small tiles), each as tall as its
+ * line; stacked below. A block of span 12 wraps onto a line of its own, so a row can widen one block without moving it
+ * to another row (which would mount it again).
  */
 export function BlockRow(props: { items: readonly BlockItem[]; tablet?: boolean }): React.JSX.Element | null {
   const { phone, desktop } = useBreakpoint();
@@ -57,7 +58,7 @@ export function BlockRow(props: { items: readonly BlockItem[]; tablet?: boolean 
   return (
     <View style={side ? styles.row : styles.stack}>
       {shown.map((item) => (
-        <View key={item.key} style={side ? [styles.cell, { flex: item.span }] : null}>{item.node}</View>
+        <View key={item.key} style={side ? [styles.cell, item.span >= 12 ? styles.line : { flex: item.span }] : null}>{item.node}</View>
       ))}
     </View>
   );
@@ -67,7 +68,8 @@ const styles = StyleSheet.create({
   grow: { flexGrow: 1 },
   head: { gap: theme.space[2] },
   eyebrowRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
-  row: { flexDirection: 'row', alignItems: 'stretch', columnGap: GUTTER },
+  row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'stretch', columnGap: GUTTER, rowGap: GUTTER },
   stack: { gap: GUTTER },
   cell: { minWidth: 0 },
+  line: { flexGrow: 1, flexBasis: '100%' },
 });

@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { TownwiseContext } from '../src/app.ts';
 import { canonicalSha256, type FileIssue } from '../src/forecasts/file.ts';
-import { labInputSchema, type LabInput } from '../src/lab/input.ts';
+import { labInputFingerprint, labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { LabStartError } from '../src/lab/runner.ts';
 import { CALIBRATION_CHARGE_MICRO_USD, CALIBRATION_TIMEOUT_MS, checkStart, launch, type StartRequest } from '../src/lab/service.ts';
 import type { CalibrationView } from '../src/lab/views.ts';
@@ -176,8 +176,10 @@ describe('starting a calibration', () => {
     const started_ = logLines(server).filter((line) => line.msg === 'townwise.calibration_started');
     expect(started_).toHaveLength(1);
     expect(started_[0]).toMatchObject({ orgId: t.orgId, locationId: t.locationId, calibrationId: calibration.id, via: 'console' });
-    // The list shows it, with the organization's forecasts switch.
-    expect(await list(t)).toEqual({ forecasts: { on: false, at: null }, calibrations: [calibration] });
+    // The list shows it, with the organization's forecasts switch (on by default, D42), the weekly refresh and no week yet.
+    expect(await list(t)).toEqual({
+      forecasts: { on: true, at: null }, schedule: { running: true, paused: null }, weeks: [], calibrations: [calibration],
+    });
   });
 
   it('a second start for the same location is 409 calibration_in_progress; a fifth start in a day is 429', async () => {
@@ -323,10 +325,13 @@ describe('the job’s callback', () => {
     expect(input.days[0]?.date).toBe('2024-10-01');
     expect(input.days.find((day) => day.date === '2026-02-03')).toMatchObject({ closed: true });
     expect(input.champion?.runId).toBe(championId);
+    expect(input.champion?.recordedWeekdayBiasMeanAbs).toBeNull(); // an imported run has no recorded backtest
     expect(input.champion?.days).toHaveLength(70);
     expect(JSON.stringify(input)).not.toContain('private reason');
     const stored = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
-    expect(stored).toMatchObject({ championRunId: championId, dataThrough: '2026-05-31', inputSha256: canonicalSha256(input) });
+    expect(stored).toMatchObject({
+      championRunId: championId, dataThrough: '2026-05-31', inputSha256: canonicalSha256(input), dataSha256: labInputFingerprint(input),
+    });
 
     const result = labResultFor(input);
     const res = await jobCall(server, job, 'result', result);
@@ -436,9 +441,9 @@ describe('the job’s callback', () => {
     const other = (await started(await team())).job;
     await inputFor(other);
     const result = labResultFor(labInputSchema.parse({
-      schema: 'townwise.lab-input/1', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
+      schema: 'townwise.lab-input/2', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
       horizonDays: 182, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false }],
-      champion: null,
+      calendar: [], champion: null,
     }));
     server.logs.length = 0;
     for (const resultToken of [null, 'A'.repeat(43), resultTokenOf(other.calibrationId) ?? '']) {
@@ -673,7 +678,9 @@ describe('the job’s callback', () => {
     }
     const own = logLines(server).filter((line) => String(line.msg).startsWith('townwise.calibration') || String(line.msg).startsWith('townwise.lab'));
     expect(own.map((line) => line.msg)).toEqual(['townwise.calibration_started', 'townwise.calibration_finished']);
-    expect(own[1]).toMatchObject({ orgId: t.orgId, locationId: t.locationId, calibrationId: calibration.id, status: 'succeeded', failure: null, heldOutWeeks: 12 });
+    expect(own[1]).toMatchObject({
+      orgId: t.orgId, locationId: t.locationId, calibrationId: calibration.id, status: 'succeeded', failure: null, heldOutWeeks: 12, via: 'console',
+    });
   });
 });
 

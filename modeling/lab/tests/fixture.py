@@ -4,7 +4,8 @@ synthetic_frame(seed) is the frame the lab builds from a LabInput (date, weekday
 ev_<group> column per town event group, private_event, closed, booked and the holiday flags), plus the notebook's own
 column names for the same facts (is_2026, football_home) and two show flags only the notebook has, so one frame feeds
 both the lab and the notebook's functions in the parity tests. synthetic_input(seed) is the same history as the
-LabInput the API sends, with synthetic_champion as the current published run.
+LabInput the API sends, with synthetic_calendar as its town calendar and synthetic_champion as the current published
+run.
 """
 
 import numpy as np
@@ -125,11 +126,47 @@ def _iso(day: pd.Timestamp) -> str:
     return day.strftime("%Y-%m-%d")
 
 
+HOLIDAY_SLUGS = {"New Year's Day": "new-years-day", "Birthday of Martin Luther King, Jr.": "martin-luther-king-jr-day",
+                 "Washington's Birthday": "washingtons-birthday", "Memorial Day": "memorial-day",
+                 "Juneteenth National Independence Day": "juneteenth", "Independence Day": "independence-day",
+                 "Labor Day": "labor-day", "Columbus Day": "columbus-day", "Veterans Day": "veterans-day",
+                 "Thanksgiving Day": "thanksgiving", "Christmas Day": "christmas"}
+
+
+def synthetic_calendar(frame: pd.DataFrame) -> list[dict]:
+    """The town calendar the API sends for `frame`'s dates (townEvents, api/src/lab/input.ts): the federal holidays
+    (group us:<slug>), each term (group test-town:classes:<season>), each festival and each home football Saturday,
+    with ids, groups, kinds, dates and confidence only. Sorted by start, then id, as townEvents sorts."""
+    first, last = frame.date.min(), frame.date.max()
+    entries = []
+    federal = USFederalHolidayCalendar().holidays(first, last, return_name=True)
+    for when, name in federal.items():
+        slug = HOLIDAY_SLUGS[name]
+        entries.append({"id": f"us:{slug}:{when.year}", "group": f"us:{slug}", "kind": "holiday", "start": _iso(when),
+                        "end": _iso(when), "confidence": None})
+    for year in range(first.year, last.year + 1):
+        for season, ((m1, d1), (m2, d2)) in TERMS.items():
+            start, end = pd.Timestamp(year, m1, d1), pd.Timestamp(year, m2, d2)
+            if start <= last and end >= first:
+                entries.append({"id": f"test-town:{_iso(start)}:{season}-term", "group": f"test-town:classes:{season}",
+                                "kind": "term", "start": _iso(start), "end": _iso(end), "confidence": "high"})
+    for start in pd.to_datetime(FESTIVAL_STARTS):
+        if first <= start <= last:
+            entries.append({"id": f"test-town:{_iso(start)}:festival", "group": FESTIVAL.removeprefix("ev_"),
+                            "kind": "event", "start": _iso(start), "end": _iso(start + pd.Timedelta(days=2)),
+                            "confidence": "medium"})
+    for when in frame.date[frame[FOOTBALL] == 1]:
+        entries.append({"id": f"test-town:{_iso(when)}:home-football", "group": FOOTBALL.removeprefix("ev_"),
+                        "kind": "event", "start": _iso(when), "end": _iso(when), "confidence": "high"})
+    return sorted(entries, key=lambda e: (e["start"], e["id"]))
+
+
 def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THROUGH) -> dict:
     """A published run made at `through` for the 182 days after it (the LabInput's champion): each weekday's median
     guests over the days before it as the forecast, 20% below to 25% above as the daily range and 15% either side as
     the weekly one; closures, the holidays the place closes on and Mondays from the regime on are closed, buyouts
-    booked. Weeks run Monday to Sunday, clipped to its days."""
+    booked. Weeks run Monday to Sunday, clipped to its days. No recorded weekday bias, as for an imported run, so the
+    model's weekday-bias check (pipeline.passes) has nothing to compare with."""
     past = frame[(frame.date <= through) & frame.guests.gt(0) & ~frame.closed & ~frame.booked]
     median = past.groupby("weekday").guests.median()
     rows = frame[(frame.date > through) & (frame.date <= through + pd.Timedelta(days=FUTURE_DAYS))]
@@ -145,12 +182,14 @@ def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THR
         weeks.append({"from": _iso(week.date.min()), "to": _iso(week.date.max()),
                       "openDays": int(week.mid.notna().sum()),
                       "low": round(0.85 * total, 2), "mid": total, "high": round(1.15 * total, 2)})
-    return {"runId": CHAMPION_RUN_ID, "dataThrough": _iso(through), "days": days, "weeks": weeks}
+    return {"runId": CHAMPION_RUN_ID, "engine": "model", "recordedWeekdayBiasMeanAbs": None, "dataThrough": _iso(through),
+            "days": days, "weeks": weeks}
 
 
 def synthetic_input(seed: int = 0) -> dict:
     """synthetic_frame(seed) as the LabInput the API sends: every date from the first day with guests to the data
-    cutoff plus 182 days, no regime start, and synthetic_champion as the current published run."""
+    cutoff plus 182 days, no regime start, synthetic_calendar over those days, and synthetic_champion (a model run) as
+    the current published run."""
     f = synthetic_frame(seed)
     has = f.guests.gt(0)
     first, through = f.date[has].min(), f.date[has].max()
@@ -161,6 +200,42 @@ def synthetic_input(seed: int = 0) -> dict:
              "events": sorted(c.removeprefix("ev_") for c in groups if row[c] == 1),
              "closed": bool(row.closed), "privateEvent": bool(row.private_event), "booked": bool(row.booked)}
             for _, row in rows.iterrows()]
-    return {"schema": "townwise.lab-input/1", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
+    return {"schema": "townwise.lab-input/2", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
             "dataThrough": _iso(through), "horizonDays": FUTURE_DAYS, "regimeStart": None, "days": days,
-            "champion": synthetic_champion(f)}
+            "calendar": synthetic_calendar(rows), "champion": synthetic_champion(f)}
+
+
+# Two-year histories of other shapes (two_year_input), for the coverage check (test_coverage.py): no events, terms or
+# closures, so what a range has to cover is the season, the week-to-week swings and the daily noise.
+TWO_YEAR_LEVEL = {"Monday": 30, "Tuesday": 38, "Wednesday": 45, "Thursday": 55, "Friday": 85, "Saturday": 95,
+                  "Sunday": 50}
+TWO_YEAR_SHAPES = ("steady", "calm", "drifting", "growing", "closed_mondays")
+
+
+def two_year_input(seed: int, shape: str, days: int = 700, through: str = "2026-11-15") -> dict:
+    """A LabInput of `days` days of guests through `through`, plus 182 days after: each weekday's level times a yearly
+    season (25% either way, peaking in summer) times a weekly swing times daily noise (lognormal, sigma 0.12). The
+    weekly swing by `shape`: "steady" an independent 8% each week, "calm" 4%, "drifting" a random walk of 3% a week,
+    "growing" steady with 15% more guests a year, "closed_mondays" steady with no Monday row. No calendar, no champion."""
+    if shape not in TWO_YEAR_SHAPES:
+        raise ValueError(shape)
+    rng = np.random.default_rng(seed)
+    end = pd.Timestamp(through)
+    first = end - pd.Timedelta(days=days - 1)
+    dates = pd.Series(pd.date_range(first, end + pd.Timedelta(days=FUTURE_DAYS)))
+    week = ((dates - first).dt.days // 7).to_numpy()
+    weeks = int(week.max()) + 1
+    swing = (np.exp(np.cumsum(rng.normal(0.0, 0.03, weeks))) if shape == "drifting"
+             else np.exp(rng.normal(0.0, 0.04 if shape == "calm" else 0.08, weeks)))
+    season = 1 + 0.25 * np.sin(2 * np.pi * (dates.dt.day_of_year.to_numpy() - 100) / 365.25)
+    growth = 1 + (0.15 * np.arange(len(dates)) / 365 if shape == "growing" else 0.0)
+    level = dates.dt.day_name().map(TWO_YEAR_LEVEL).to_numpy(dtype=float)
+    guests = np.round(level * season * growth * swing[week] * rng.lognormal(0.0, 0.12, len(dates)))
+    no_row = (dates > end) | ((dates.dt.day_name() == "Monday") & (shape == "closed_mondays"))
+    out = [{"date": _iso(day), "guests": None if missing else int(count), "term": "interim", "weekOfTerm": -1,
+            "events": [], "closed": False, "privateEvent": False, "booked": False}
+           for day, count, missing in zip(dates, guests, no_row)]
+    first_with = next(i for i, d in enumerate(out) if d["guests"])
+    return {"schema": "townwise.lab-input/2", "calibrationId": CALIBRATION_ID, "metric": "guests",
+            "today": _iso(end + pd.Timedelta(days=1)), "dataThrough": through, "horizonDays": FUTURE_DAYS,
+            "regimeStart": None, "days": out[first_with:], "calendar": [], "champion": None}

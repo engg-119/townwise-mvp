@@ -1,5 +1,7 @@
-"""The forecast window: the 182 days after the data cutoff as a townwise.forecast-run/1 run file
-(api/src/forecasts/file.ts), with each day's status, 80% range and reasons, and Monday-to-Sunday weeks."""
+"""The forecast window as a townwise.forecast-run/1 run file (api/src/forecasts/file.ts): the days after the data cutoff
+through the run's end (run_end), with each day's status, 80% range and reasons, and the Monday-to-Sunday weeks wholly
+inside them. Ranges past 28 days of lead widen by the backtest's longer-horizon bands (lead_ratios). Both engines'
+runs are assembled here: the model's by run_file, the baseline's by baseline.run_file."""
 
 import numpy as np
 import pandas as pd
@@ -10,7 +12,10 @@ from townwise_lab.holidays import holiday_multiplier
 from townwise_lab.version import MODEL_VERSION
 
 RUN_SCHEMA = "townwise.forecast-run/1"
-HORIZON_DAYS = 182
+HORIZON_DAYS = 182  # the input's future days; a run's own end is run_end's
+GATE_HORIZON = 28  # the gate's horizon: leads up to it take the range as backtested
+REACH_DAYS = 91  # a run reaches the calibration's today plus this many days
+MIN_HORIZON_WEEKS = 8  # backtest weeks a longer horizon needs before the run reaches it
 MAX_DAY_GUESTS = 20_000  # the run file's limits: a day's guests, and at most 6 reasons a day
 MAX_REASONS = 6
 CLOSED_WEEKDAY_DATES = 8  # a weekday with no guests on any of its last 8 dates (in weeks open otherwise) is closed
@@ -90,51 +95,83 @@ def reasons(status: str, term: str, holiday: bool, groups: list[str]) -> list[di
     return [{"kind": kind, "ref": ref, "effectPct": None} for kind, ref in kinds[:MAX_REASONS]]
 
 
-def run_file(frame: pd.DataFrame, fit: model.HybridFit, effects: dict[str, float], widen_k: float,
-             weekly_log_range: dict[str, float], *, trained_from: pd.Timestamp, data_through: pd.Timestamp,
-             made_at: str, code_version: str, backtest_block: dict) -> dict:
-    """The run file for the days of `frame` (the frame `fit` was made on) after `data_through`.
+def run_end(today: pd.Timestamp, data_through: pd.Timestamp, weeks91: int, weeks_reach: int | None) -> pd.Timestamp:
+    """The run's last day: today + 91, at most data_through + 182 (the input's reach). Where a horizon has fewer than 8
+    backtest weeks, the run stops at the last day the shorter one covers: 28 days of lead without 91-day evidence, 91
+    without the reach's (only asked for when the end is more than 91 days after data_through)."""
+    end = min(today + pd.Timedelta(days=REACH_DAYS), data_through + pd.Timedelta(days=HORIZON_DAYS))
+    if weeks91 < MIN_HORIZON_WEEKS:
+        return min(end, data_through + pd.Timedelta(days=GATE_HORIZON))
+    if (end - data_through).days > REACH_DAYS and (weeks_reach or 0) < MIN_HORIZON_WEEKS:
+        return data_through + pd.Timedelta(days=REACH_DAYS)
+    return end
 
-    Open days: the hybrid's quantiles times the holiday multipliers, bounded, the range widened by widen_k (section
-    9e); baseline is the linear median baseline alone. Closed and booked days carry no number. Each week is a
-    Monday-to-Sunday span of the window: the sum of its open days' forecasts, and the weekly log range around it."""
+
+def reach_horizon(today: pd.Timestamp, data_through: pd.Timestamp) -> int | None:
+    """The run's longest lead in whole weeks when it is beyond 91 days (sales lag), else None."""
+    longest = (min(today + pd.Timedelta(days=REACH_DAYS), data_through + pd.Timedelta(days=HORIZON_DAYS))
+               - data_through).days
+    return 7 * -(-longest // 7) if longest > REACH_DAYS else None
+
+
+def lead_ratios(dates: pd.Series, data_through: pd.Timestamp, widening: list[tuple[int, float]]) -> pd.Series:
+    """How much each date's range widens for its lead (days after data_through): 1 up to 28 days, then from each
+    (first lead, ratio) of `widening` on, in order."""
+    leads = (dates - data_through).dt.days
+    ratio = pd.Series(1.0, index=dates.index)
+    for first, value in widening:
+        ratio[leads >= first] = value
+    return ratio
+
+
+def window(frame: pd.DataFrame, data_through: pd.Timestamp, end: pd.Timestamp) -> tuple[pd.DataFrame, pd.Series]:
+    """The rows of `frame` after data_through through `end`, and their statuses."""
     status = statuses(frame, data_through)
-    rows = frame.loc[status.index]
-    open_rows = rows[status == "open"]
-    quantiles = model.hybrid_predict(fit, open_rows)
-    multiplier = holiday_multiplier(open_rows, effects)
-    lo, mid, hi = bounded(quantiles[0.1] * multiplier, quantiles[0.5] * multiplier, quantiles[0.9] * multiplier)
-    lo, hi = metrics.widen(mid, lo, hi, widen_k)
-    linear, X = fit.base[0.5]
-    baseline = pd.Series(linear.predict(X.loc[open_rows.index]), index=open_rows.index)
-    numbers = pd.DataFrame({"low": lo, "mid": mid, "high": hi, "baseline": baseline}).clip(lower=0,
-                                                                                         upper=MAX_DAY_GUESTS)
-    table = rows[["date"]].assign(status=status).join(numbers)
+    status = status[(frame.date[status.index] <= end).to_numpy()]
+    return frame.loc[status.index], status
 
-    groups = [c for c in frame.columns if c.startswith(EVENT_PREFIX)]
+
+def assemble(rows: pd.DataFrame, status: pd.Series, numbers: pd.DataFrame, weekly_log_range: dict[str, float],
+             ratio: pd.Series, effect_pct=None) -> tuple[list[dict], list[dict]]:
+    """A run's days and weeks. `numbers` has low, mid, high and baseline for the open rows; `effect_pct(index, reason)`,
+    when given, sets an open day's reason's effectPct. Each week is a Monday-to-Sunday span wholly inside the rows: the
+    sum of its open days' forecasts, and the weekly log range around it, widened by its first day's ratio."""
+    table = rows[["date"]].assign(status=status).join(numbers)
+    groups = [c for c in rows.columns if c.startswith(EVENT_PREFIX)]
     holiday = rows[list(HOLIDAY_FLAGS)].eq(1).any(axis=1)
     days = []
     for (index, row), (_, source) in zip(table.iterrows(), rows.iterrows()):
         is_open = row.status == "open"
+        why = reasons(row.status, source.term, bool(holiday[index]),
+                      [g.removeprefix(EVENT_PREFIX) for g in groups if source[g] == 1])
+        if is_open and effect_pct is not None:
+            why = [reason | {"effectPct": effect_pct(index, reason)} for reason in why]
         days.append({
             "date": iso(row.date), "status": str(row.status),
             **{key: float(row[key]) if is_open else None for key in ("low", "mid", "high", "baseline")},
-            "reasons": reasons(row.status, source.term, bool(holiday[index]),
-                               [g.removeprefix(EVENT_PREFIX) for g in groups if source[g] == 1]),
+            "reasons": why,
         })
 
-    lo_factor, hi_factor = np.exp(weekly_log_range["lo"]), np.exp(weekly_log_range["hi"])
     weeks = []
-    for _, week in table.groupby(_monday(table.date)):
+    for monday, week in table.groupby(_monday(table.date)):
+        if len(week) < 7:  # a week only partly inside the run has no week row
+            continue
+        widened = float(ratio[week.index[0]])
+        lo_factor = np.exp(weekly_log_range["lo"] * widened)
+        hi_factor = np.exp(weekly_log_range["hi"] * widened)
         total = float(week.mid.sum())  # open days only: the others have no number
-        weeks.append({"from": iso(week.date.min()), "to": iso(week.date.max()),
+        weeks.append({"from": iso(monday), "to": iso(week.date.max()),
                       "openDays": int((week.status == "open").sum()), "low": float(total * lo_factor), "mid": total,
                       "high": float(min(total * hi_factor, 7 * MAX_DAY_GUESTS))})
+    return days, weeks
 
+
+def run_document(family: str, *, trained_from: pd.Timestamp, data_through: pd.Timestamp, made_at: str,
+                 code_version: str, backtest_block: dict | None, days: list[dict], weeks: list[dict]) -> dict:
     return {
         "schema": RUN_SCHEMA,
         "metric": "guests",
-        "model": {"family": "hybrid_linear_xgboost", "version": MODEL_VERSION, "notebookCommit": code_version},
+        "model": {"family": family, "version": MODEL_VERSION, "notebookCommit": code_version},
         "trainingSource": "townwise_lab",
         "trainedFrom": iso(trained_from),
         "dataThrough": iso(data_through),
@@ -145,3 +182,29 @@ def run_file(frame: pd.DataFrame, fit: model.HybridFit, effects: dict[str, float
         "days": days,
         "weeks": weeks,
     }
+
+
+def run_file(frame: pd.DataFrame, fit: model.HybridFit, effects: dict[str, float], widen_k: float,
+             weekly_log_range: dict[str, float], *, trained_from: pd.Timestamp, data_through: pd.Timestamp,
+             end: pd.Timestamp, widening: list[tuple[int, float]], made_at: str, code_version: str,
+             backtest_block: dict | None) -> dict:
+    """The model's run file for the days of `frame` (the frame `fit` was made on) after `data_through` through `end`.
+
+    Open days: the hybrid's quantiles times the holiday multipliers, bounded, the range widened by widen_k (section
+    9e) times the day's lead ratio; baseline is the linear median baseline alone. Closed and booked days carry no
+    number. Weeks as assemble makes them."""
+    rows, status = window(frame, data_through, end)
+    open_rows = rows[status == "open"]
+    quantiles = model.hybrid_predict(fit, open_rows)
+    multiplier = holiday_multiplier(open_rows, effects)
+    lo, mid, hi = bounded(quantiles[0.1] * multiplier, quantiles[0.5] * multiplier, quantiles[0.9] * multiplier)
+    ratio = lead_ratios(rows.date, data_through, widening)
+    lo, hi = metrics.widen(mid, lo, hi, widen_k * ratio[open_rows.index])
+    linear, X = fit.base[0.5]
+    baseline = pd.Series(linear.predict(X.loc[open_rows.index]), index=open_rows.index)
+    numbers = pd.DataFrame({"low": lo, "mid": mid, "high": hi, "baseline": baseline}).clip(lower=0,
+                                                                                         upper=MAX_DAY_GUESTS)
+    days, weeks = assemble(rows, status, numbers, weekly_log_range, ratio)
+    return run_document("hybrid_linear_xgboost", trained_from=trained_from, data_through=data_through,
+                        made_at=made_at, code_version=code_version, backtest_block=backtest_block, days=days,
+                        weeks=weeks)

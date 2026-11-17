@@ -279,10 +279,13 @@ describe('get_forecast (U13B)', () => {
     forecasts: createForecastReader({ stores: forecastStores(rows, runs, notes, rules) }),
   });
 
-  it('takes { from, to } of at most 31 days, starting at most 92 days back, though the forecast route reads 42', () => {
-    expect(MAX_FORECAST_RANGE_DAYS).toBe(42);
-    expect(parse({ from: '2026-11-01', to: '2026-12-01' })).toEqual({ from: '2026-11-01', to: '2026-12-01' });
-    expect(parse({ from: '2026-11-01', to: '2026-12-02' })).toBeNull();
+  it('takes { from, to } of at most 92 days, as the forecast route reads (D42), starting at most 92 days back', () => {
+    expect(MAX_FORECAST_RANGE_DAYS).toBe(92);
+    expect(parse({ from: '2026-11-01', to: '2027-01-31' })).toEqual({ from: '2026-11-01', to: '2027-01-31' });
+    expect(parse({ from: '2026-11-01', to: '2027-02-01' })).toBeNull();
+    const tool = toolNamed('get_forecast');
+    expect(tool?.invalidInput).toContain('at most 92 days apart counting both ends');
+    expect(tool?.definition.description).toContain('for a date range of at most 92 days');
     expect(parse({ from: '2026-08-05', to: '2026-08-10' })).not.toBeNull();
     expect(parse({ from: '2026-08-04', to: '2026-08-10' })).toBeNull();
     expect(parse({ from: '2026-11-02', to: '2026-11-01' })).toBeNull();
@@ -303,7 +306,7 @@ describe('get_forecast (U13B)', () => {
       available: true, metric: 'guests',
       model: {
         label: 'Townwise demand model v9', version: 'v9', trainedOn: 'sales exports the owner sent Townwise', trainedFrom: '2025-01-01',
-        dataThrough: '2026-10-31', madeAt: '2026-11-01', frozen: true, rangesWidened: true,
+        dataThrough: '2026-10-31', madeAt: '2026-11-01', frozen: true, rangesWidened: true, engine: 'model',
         accuracy: { backtest: { weeks: 10, weeklyTypicalErrorPct: 10, weeksOver20Pct: 1 }, live: null },
       },
       interval: { level: 0.8, meaning: 'About 8 in 10 days should land inside the model\'s own range: a day\'s modelRange when a note changed it, otherwise its low to high. A range that includes guests from notes is not the model\'s.' },
@@ -319,6 +322,12 @@ describe('get_forecast (U13B)', () => {
     expect(resultViewOf('get_forecast', ok(content))).toEqual({
       available: true, modelVersion: 'v9', madeAt: '2026-11-01', dataThrough: '2026-10-31', days: 2, notCovered: 1,
     });
+  });
+
+  it('names the engine of each run: a seasonal_baseline run is the baseline, with its label (D42)', async () => {
+    const runs = [publishedRun({ model: { family: 'seasonal_baseline', version: 'v1', notebookCommit: '0000000' } })];
+    const { parsed } = await run('get_forecast', { from: '2026-11-02', to: '2026-11-02' }, withRows([dayRow('2026-11-02')], runs));
+    expect(parsed.model).toMatchObject({ engine: 'baseline', label: 'Townwise\'s baseline from your recent weeks and the town calendar', version: 'v1' });
   });
 
   it('gives each run its own live accuracy, so a newer run is never credited with an older run’s days', async () => {

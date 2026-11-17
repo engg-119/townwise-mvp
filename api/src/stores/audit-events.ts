@@ -69,6 +69,11 @@ export const AUDIT_DETAIL_KEYS = {
   'chat.conversation_deleted': ['locationId', 'conversationId'],
   // U9, TownwiseAI's questions: the question's id holds only dates and a weekday number.
   'agent.question_answered': ['locationId', 'questionId', 'answer'],
+  // TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions): the switch, and an org admin's
+  // decision on one suggestion, with whether it was a note or a rule. Never its dates, words, why or guests.
+  'org.weekly_suggestions_changed': ['on'],
+  'agent.suggestion_accepted': ['locationId', 'suggestionId', 'type'],
+  'agent.suggestion_dismissed': ['locationId', 'suggestionId', 'type'],
   // Orders: ids, dates, counts and a card's kind (change or rule), never an item or supplier name, a servings figure, a
   // quantity, or the owner's reason or situation.
   'order.setup_saved': ['locationId', 'supplierCount', 'itemCount'],
@@ -92,7 +97,11 @@ export const AUDIT_DETAIL_KEYS = {
   // The forecast lab: ids, codes and counts, never a figure.
   'calibration.requested': ['locationId', 'calibrationId', 'via', 'hasRegime'],
   'calibration.finished': ['locationId', 'calibrationId', 'status', 'gate', 'failure', 'runId', 'heldOutWeeks'],
+  // D42, the weekly refresh: a start by the system (ids only), and the staff pause of every scheduled start.
+  'calibration.scheduled': ['locationId', 'calibrationId'],
   'org.forecasts_switched': ['on'],
+  'forecast_schedule.paused': [],
+  'forecast_schedule.resumed': [],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
   // D25, open as admin: the grant is the target and the organization the event's orgId; no name or email. `reason`, the
@@ -117,7 +126,9 @@ export type AuditTargetType =
   // Owner calendars.
   | 'owner_calendar'
   // A person's Google access for calendars (connect-google-calendar).
-  | 'google_connection';
+  | 'google_connection'
+  // D42, the weekly refresh's schedule.
+  | 'forecast_schedule';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

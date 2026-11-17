@@ -53,8 +53,8 @@ async function seat(orgId: string, role: 'org_admin' | 'member', on = server): P
 }
 
 /** An organization with an org admin, a member and a Hanover location holding guests from `from` to 2026-05-31. */
-async function team(from = '2024-10-01'): Promise<Team> {
-  const orgId = await createOrg(server, { name: `Lab Chat ${randomUUID().slice(0, 6)}` });
+async function team(from = '2024-10-01', forecastsOn = false): Promise<Team> {
+  const orgId = await createOrg(server, { name: `Lab Chat ${randomUUID().slice(0, 6)}`, forecastsOn });
   const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
   await seedHistory(server, { orgId, locationId, from, to: '2026-05-31' });
   return { orgId, locationId, admin: await seat(orgId, 'org_admin'), member: await seat(orgId, 'member') };
@@ -192,6 +192,15 @@ describe('start_calibration', () => {
     });
     expect(await count('tw_calibrations', { orgId: new Types.ObjectId(t.orgId), requestedBy: { userId: t.admin.userId, role: 'org_admin', via: 'chat' } })).toBe(1);
     expect(reply.views).toEqual([{ input: { hasRegimeStart: false }, result: { started: true, status: 'running', code: null } }]);
+    // Forecasts off: the weekly refresh does not consider the location, so the words say nothing of it
+    expect(reply.result.message).toBe('The calibration is running on Townwise’s servers and usually takes a few minutes. It used part of this month’s TownwiseAI budget.');
+  });
+
+  it('while the weekly refresh considers the location (D42), its words say Townwise refits it each Monday at no charge', async () => {
+    // Today is Mon, Jun 1 in Hanover: the next Monday is Jun 8
+    const reply = await ask(await team('2024-10-01', true), 'admin', 'start_calibration');
+    expect(reply.result).toMatchObject({ started: true });
+    expect(reply.result.message).toBe('The calibration is running on Townwise’s servers and usually takes a few minutes. It used part of this month’s TownwiseAI budget. Townwise also refits this location by itself each Monday at no charge, next on Mon, Jun 8.');
   });
 
   it('started by staff who have the organization open as admin (D25), it is recorded as staff’s, under the grant', async () => {

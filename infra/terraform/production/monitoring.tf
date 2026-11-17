@@ -169,3 +169,149 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "backup_missing" {
     action_groups = [azurerm_monitor_action_group.ops.id]
   }
 }
+
+# The weekly forecast worker (jobs.tf, caj-townwise-forecasts), only with the lab. Its pass logs one line an hour,
+# townwise.weekly_refresh_pass, even while it is switched off or paused, and its failures log their own lines
+# (api/src/lab/schedule.ts, api/src/workers/weekly-forecasts.ts). Each line is pino JSON in the Log column.
+#
+# A pass that failed a start, a location or a weekly suggestions call, a worker that stopped on an error, or a pass
+# on a Sunday (UTC) still holding locations back at a cap, checked every hour. A location the live cap holds back is
+# caught up later in its week (api/src/lab/schedule.ts), so one still held on Sunday may miss the week. Also a
+# scheduled calibration that failed after it started: its lab job crashed, timed out, or answered a failure or a
+# result the API refused. The API logs townwise.calibration_finished with the requester's via, status and failure code
+# and ids only (api/src/lab/service.ts), from the API when the lab answers and from the worker or the API when it times
+# one out, and that calibration is not retried that week, so a broken lab image would otherwise skip every location's
+# refresh unseen until forecasts lapse. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_failed" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-failed"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "The weekly forecast worker failed a start, a location or a suggestions call, stopped on an error, or still held locations back on a Sunday; or a scheduled calibration failed after it started."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 2
+  evaluation_frequency = "PT1H"
+  window_duration      = "PT1H"
+
+  criteria {
+    query                   = <<-KQL
+      ContainerAppConsoleLogs
+      | where Log has "townwise.weekly_" or Log has "townwise.calibration_finished"
+      | extend line = parse_json(Log)
+      | extend msg = tostring(line.msg)
+      | where msg in (
+            "townwise.weekly_worker_failed", "townwise.weekly_worker_refused", "townwise.weekly_refresh_location_failed",
+            "townwise.weekly_suggestions_location_failed"
+          )
+          or (msg in ("townwise.weekly_refresh_pass", "townwise.weekly_suggestions_pass") and toint(line.failed) > 0)
+          or (msg == "townwise.weekly_refresh_pass" and toint(line.capped) > 0 and dayofweek(TimeGenerated) == 0d)
+          or (msg == "townwise.calibration_finished" and tostring(line.via) == "scheduled" and tostring(line.status) == "failed")
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}
+
+# No pass line for a day: the job is not running, or every execution died before its pass finished (a bad
+# environment, the image, the timeout). Log search windows stop at two days, and a pass runs every hour, so a day
+# is the tighter check. It also fires if the daily cap stopped ingestion. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_missing" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-missing"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "No weekly forecast worker pass in the last 24 hours."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 2
+  evaluation_frequency = "PT6H"
+  window_duration      = "P1D"
+
+  criteria {
+    query                   = "ContainerAppConsoleLogs | where Log has \"townwise.weekly_refresh_pass\""
+    time_aggregation_method = "Count"
+    operator                = "LessThan"
+    threshold               = 1
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}
+
+# An execution that logged its start and never its end: killed by the job's 600-second replica timeout (jobs.tf), or
+# crashed, after its first line. The worker logs townwise.weekly_worker_started first, then its pass line or its error
+# line, from one replica, whose name is pino's hostname, so a start older than 15 minutes (past the timeout) with no
+# end from the same host is one that died. forecasts_missing sees only a whole day of dead executions; this sees one.
+# Each start is in two hourly windows, so one death can email twice. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_killed" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-killed"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "A weekly forecast worker execution started and never logged its pass: killed by the timeout or crashed."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 2
+  evaluation_frequency = "PT1H"
+  window_duration      = "PT2H"
+
+  criteria {
+    query                   = <<-KQL
+      let lines = ContainerAppConsoleLogs
+      | where Log has "townwise.weekly_"
+      | extend line = parse_json(Log)
+      | extend msg = tostring(line.msg), host = tostring(line.hostname);
+      lines
+      | where msg == "townwise.weekly_worker_started" and TimeGenerated < ago(15m)
+      | join kind=leftanti (
+          lines
+          | where msg in ("townwise.weekly_refresh_pass", "townwise.weekly_worker_failed", "townwise.weekly_worker_refused")
+        ) on host
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}
+
+# A draft the publish gate held jump_held (api/src/lab/gate.ts): its next 28 days differ from the current forecast's
+# by more than 25%, so it waits in the staff console's Forecasts for staff to publish or withdraw (spec 14.6). Nothing
+# else tells staff: after a real level shift every weekly refit is held while the old forecast stays published, and
+# past its lapse until its days run out. The API logs townwise.calibration_finished with the gate's code and ids only
+# (api/src/lab/service.ts) when the lab's result comes back, scheduled or started by a person. Checked every hour, so
+# a held refit emails once, and again each week it is held. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_held" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-held"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "A forecast draft was held jump_held: its next 28 days differ from the current forecast's by more than 25%. Publish or withdraw it in the staff console."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 3
+  evaluation_frequency = "PT1H"
+  window_duration      = "PT1H"
+
+  criteria {
+    query                   = <<-KQL
+      ContainerAppConsoleLogs
+      | where Log has "townwise.calibration_finished"
+      | extend line = parse_json(Log)
+      | where tostring(line.msg) == "townwise.calibration_finished" and tostring(line.gate) == "jump_held"
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}

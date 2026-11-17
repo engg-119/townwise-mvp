@@ -7,6 +7,7 @@ import { formatCount, formatDate, plural, townLabel } from '../../../../src/port
 import { useBreakpoint } from '../../../../src/portal/hooks';
 import { useOrg, usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
 import { allUploadsOff } from '../../../../src/portal/locations/sales';
+import { calibrationHeading } from '../../../../src/portal/upload/copy';
 import { locationHref } from '../../../../src/portal/routing';
 import type { LocationSummary } from '../../../../src/portal/schemas';
 import { Page } from '../../../../src/portal/shell/Page';
@@ -160,7 +161,7 @@ export default function LocationsPage(): React.JSX.Element {
               location: <Link href={locationHref(location.id) as Href} style={styles.name}>{location.name}</Link>,
               town: townLabel(location.town),
               sales: <SalesHistory location={location} />,
-              calibration: 'Not calibrated yet',
+              calibration: calibrationHeading(location.calibration),
               notes: location.notesCount === 0 ? 'No notes yet' : plural(location.notesCount, 'note', 'notes'),
               next: <NextStep location={location} readOnly={readOnly} />,
             },

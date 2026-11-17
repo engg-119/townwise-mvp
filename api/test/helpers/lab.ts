@@ -12,7 +12,7 @@ import { createEntraLabCaller, ENTRA_LOGIN, type LabCaller } from '../../src/lab
 import type { LabInput } from '../../src/lab/input.ts';
 import type { LabResult, LabSuccess } from '../../src/lab/result.ts';
 import type { LabJob, LabRunner, LabStart } from '../../src/lab/runner.ts';
-import type { Scorecard } from '../../src/lab/scorecard.ts';
+import type { LabScorecard } from '../../src/lab/scorecard.ts';
 import { comparisonWith, scorecardWith } from './lab-scorecard.ts';
 import type { TownwiseTestServer } from './server.ts';
 
@@ -165,7 +165,7 @@ export function runDays(dataThrough: string, days: number): Pick<LabSuccess['run
 }
 
 /** The lab's answer to `input`: a draft run for the 14 days after its last day, compared with its champion if it has one. */
-export function labResultFor(input: LabInput, overrides?: { scorecard?: Scorecard; run?: Partial<LabSuccess['run']> }): LabSuccess {
+export function labResultFor(input: LabInput, overrides?: { scorecard?: LabScorecard; run?: Partial<LabSuccess['run']> }): LabSuccess {
   const firstDate = input.days[0]?.date ?? '';
   const scorecard = overrides?.scorecard ?? scorecardWith({
     history: { firstDate, lastDate: input.dataThrough, spanDays: daysBetween(firstDate, input.dataThrough) },

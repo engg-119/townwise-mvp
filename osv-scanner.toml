@@ -6,11 +6,6 @@
 # test tooling (Expo CLI and config, Jest, ESLint), or notebook tooling for eda/ and modeling/ (checked 2026-11-13).
 
 [[IgnoredVulns]]
-id = "GHSA-5cjw-f85j-cv6r"
-ignoreUntil = 2026-11-17
-reason = "tornado 6.6 (eda/uv.lock and modeling/uv.lock, under ipykernel and jupyter-client for the notebooks only) is affected; the fix, tornado 6.6.1, was released 2026-11-09 and is inside the 7-day release-age gate until 2026-11-16."
-
-[[IgnoredVulns]]
 id = "GHSA-3g3m-2fjr-6pw4"
 ignoreUntil = 2026-12-04
 reason = "glob 13.0.6 (@expo/cli, @expo/config, jest-config) and 10.5.0 (test-exclude, archiver-utils) are affected; the only fix is glob 14.0.2, a new major outside every dependent's ^10 or ^13 range, with no 10.x or 13.x patch."

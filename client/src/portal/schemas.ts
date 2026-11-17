@@ -110,9 +110,18 @@ export const coverageSchema = z.object({
 });
 export type Coverage = z.infer<typeof coverageSchema>;
 
+const historyFields = { dayCount: z.number(), firstDate: z.string(), lastDate: z.string() };
+/**
+ * Calibrated and stale (14.3, D42) are accepted before the API sends them: the newest published run's `dataThrough`,
+ * the days with guests after it, and the Monday the weekly refresh next considers the location (null while it is off).
+ */
+const publishedFields = { ...historyFields, dataThrough: z.string(), newerDays: z.number(), nextRefresh: z.string().nullable() };
+
 export const calibrationSchema = z.discriminatedUnion('state', [
   z.object({ state: z.literal('no_sales_data') }),
-  z.object({ state: z.literal('not_calibrated'), dayCount: z.number(), firstDate: z.string(), lastDate: z.string() }),
+  z.object({ state: z.literal('not_calibrated'), ...historyFields }),
+  z.object({ state: z.literal('calibrated'), ...publishedFields }),
+  z.object({ state: z.literal('stale'), ...publishedFields }),
 ]);
 export type Calibration = z.infer<typeof calibrationSchema>;
 

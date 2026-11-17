@@ -2,10 +2,12 @@ import { useCallback } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { shortDate } from '../analytics/words';
 import { formatDate } from '../format';
 import { useLoad } from '../hooks';
 import { shownLocationName } from '../locations/naming';
 import { usePortal } from '../PortalProvider';
+import type { Calibration } from '../schemas';
 import { useShownOrg } from '../shell/LocationShell';
 import { DefinitionList } from '../ui/DataTable';
 import { ErrorNotice, LoadingLine, StatusTag } from '../ui/feedback';
@@ -19,7 +21,9 @@ import { dayText } from './format';
 // TownwiseAI say the same thing. Then this location's state, said plainly: no forecast yet (In progress) or (U13B) the
 // forecast staff published, which model made it, from which sales and when, its backtest and how it has done so far,
 // misses included; how far its town's calendar is researched; and whether any headcount input is (Planned until one
-// is). Mounted on Analytics and opened from the Agent page's "How TownwiseAI works".
+// is). A baseline run (D42) is named as Townwise's baseline, built from the sales rather than trained, and says what it
+// is; inside a location's pages, a `stale` calibration says when Townwise refits it and with how many days. Mounted on
+// Analytics and opened from the Agent page's "How TownwiseAI works".
 
 export const MODEL_CARD_TITLE = 'How Townwise estimates';
 
@@ -38,10 +42,21 @@ function pct(value: number): string {
   return `${String(Math.round(value * 10) / 10)}%`;
 }
 
-/** U13B: "Forecast: Townwise demand model v3, trained on sales exports you sent Townwise from ... made Nov 1, 2026." */
+/** D42: a run of the baseline engine; `engine` is missing from an API before engines, so the family says it too. */
+function isBaseline(run: ForecastRun): boolean {
+  return run.engine === 'baseline' || run.model.family === 'seasonal_baseline';
+}
+
+/**
+ * U13B: "Forecast: Townwise demand model v3, trained on sales exports you sent Townwise from ... made Nov 1, 2026." A
+ * baseline run (D42) is "built from" its sales, not trained on them, and says it is not the trained demand model.
+ */
 export function runLines(run: ForecastRun): string[] {
+  const baseline = isBaseline(run);
+  const from = `${baseline ? 'built from' : 'trained on'} ${trainedOnWords(run.trainingSource)} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}`;
   const lines = [
-    `Forecast: ${run.model.label}, trained on ${trainedOnWords(run.trainingSource)} from ${formatDate(run.trainedFrom)} to ${formatDate(run.dataThrough)}, made ${formatDate(run.madeAt)}. It saw no sales after ${formatDate(run.dataThrough)}.`,
+    `Forecast: ${run.model.label}, ${from}, made ${formatDate(run.madeAt)}. It saw no sales after ${formatDate(run.dataThrough)}.`,
+    ...(baseline ? ['A baseline, not Townwise’s trained demand model: each day is its weekday’s recent level, times last year’s seasonal shape and the town calendar’s effects.'] : []),
     'Each day and week is a range that about 8 in 10 days should land inside.',
   ];
   if (run.interval.widened) lines.push('Its ranges were widened after they ran narrow in backtests.');
@@ -59,6 +74,20 @@ export function liveLine(live: LiveAccuracy | null): string {
   return `So far: ${String(live.inRange)} of ${String(live.days)} days inside the range${miss}, from ${formatDate(live.from)} to ${formatDate(live.to)}.`;
 }
 
+/**
+ * D42: the words for a `stale` calibration, as the API's calibrationWords gives them: "Forecast made from your sales
+ * through Sun, Nov 15. Townwise refits on Mon, Nov 23 with the 6 days since.", or with the weekly refresh off "… The 6
+ * days since aren’t in it yet."; null in every other state (a `calibrated` run's own line already says what it saw).
+ */
+export function staleLine(calibration: Calibration): string | null {
+  if (calibration.state !== 'stale') return null;
+  const day = (date: string): string => shortDate(date).replace(/, \d{4}$/, '');
+  const made = `Forecast made from your sales through ${day(calibration.dataThrough)}.`;
+  const since = calibration.newerDays === 1 ? '1 day since' : `${String(calibration.newerDays)} days since`;
+  if (calibration.nextRefresh === null) return `${made} The ${since} ${calibration.newerDays === 1 ? 'isn’t' : 'aren’t'} in it yet.`;
+  return `${made} Townwise refits on ${day(calibration.nextRefresh)} with the ${since}.`;
+}
+
 export function calendarLine(about: Pick<EstimatesAbout, 'location' | 'calendar'>): string {
   const { town } = about.location;
   const { covers } = about.calendar;
@@ -73,11 +102,14 @@ export function peopleInputsLine(about: Pick<EstimatesAbout, 'location' | 'peopl
   return `${String(count)} of the public counts behind a headcount are researched for ${town.name}, from ${String(about.people.sources.length)} ${about.people.sources.length === 1 ? 'source' : 'sources'}.`;
 }
 
-function Card(props: { about: EstimatesAbout }): React.JSX.Element {
+function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.Element {
   const { about } = props;
   // Inside a location's pages, the shown name (D29); rendered on its own, the API's.
   const org = useShownOrg();
   const name = org === null ? about.location.name : shownLocationName(about.location, org);
+  // Inside a location's pages, its calibration state (D42) from the organization's read; rendered on its own, none.
+  const calibration = org?.locations.find((location) => location.id === props.locationId)?.calibration;
+  const stale = calibration === undefined ? null : staleLine(calibration);
   const { card, today } = about;
   const noHeadcount = about.people.headcountInputs.length === 0;
   const { run } = about.forecast;
@@ -93,6 +125,7 @@ function Card(props: { about: EstimatesAbout }): React.JSX.Element {
         <Stack gap={theme.space[2]}>
           {runLines(run).map((line, index) => (index === 0 ? <Small key={line} white>{line}</Small> : <Small key={line}>{line}</Small>))}
           <Small white>{liveLine(about.forecast.live)}</Small>
+          {stale === null ? null : <Small white>{stale}</Small>}
         </Stack>
       )}
       <DefinitionList items={[
@@ -138,7 +171,7 @@ export function ModelCard(props: { locationId: string }): React.JSX.Element {
         <Heading>{MODEL_CARD_TITLE}</Heading>
         {state.status === 'loading' ? <LoadingLine text="Loading how Townwise estimates…" /> : null}
         {state.status === 'failed' ? <ErrorNotice error={state.error} onRetry={reload} /> : null}
-        {state.status === 'ready' ? <Card about={state.data} /> : null}
+        {state.status === 'ready' ? <Card about={state.data} locationId={locationId} /> : null}
       </Stack>
     </Panel>
   );

@@ -1,7 +1,7 @@
 import type { z } from 'zod';
 
 import type { ApiClient, RequestOptions } from '../../../src/api/client';
-import { fetchForecast, forecastWindowSchema } from '../../../src/portal/estimates/api';
+import { fetchForecast, forecastRunSchema, forecastWindowSchema } from '../../../src/portal/estimates/api';
 
 // The one client read of a location's published forecast (spec 10.13, GET .../forecast), shared by the Calendar,
 // Home and TownwiseAI's pages. The fixture is the shape api/src/forecasts/reader.ts sends (ForecastWindow, as
@@ -94,6 +94,27 @@ describe('forecastWindowSchema', () => {
     const reasons = forecastWindowSchema.parse({ ...WINDOW, days: [day] }).days[0]?.reasons ?? [];
     // Each effect still parses, so the page reads it as before.
     expect(reasons.map((reason) => [reason.effect?.pct, reason.effect?.averageGuests])).toEqual([[35, 210], [35, undefined], [35, null]]);
+  });
+
+  test('a run’s engine, a day’s scored and the window’s accuracy (D42), and none from an API before them', () => {
+    const baseline = { ...RUN, id: 'r2', engine: 'baseline', model: { family: 'seasonal_baseline', version: 'v1', label: 'Townwise\'s baseline from your recent weeks and the town calendar' } };
+    const accuracy = { days: 6, inRange: 5, typicalErrorPct: 11.6, from: '2026-05-01', to: '2026-05-06' };
+    const parsed = forecastWindowSchema.parse({
+      ...WINDOW, runs: [baseline], accuracy, days: [{ ...PAST_DAY, scored: true }, { ...NOTED_DAY, scored: false }],
+    });
+    expect(parsed.runs[0]).toMatchObject({ engine: 'baseline', model: { label: 'Townwise\'s baseline from your recent weeks and the town calendar' } });
+    expect(parsed.days.map((day) => day.scored)).toEqual([true, false]);
+    expect(parsed.accuracy).toEqual(accuracy);
+    // Under 5 scored days the window has no accuracy, and an engine this client doesn't know still parses.
+    const few = forecastWindowSchema.parse({ ...WINDOW, runs: [{ ...RUN, engine: 'something_new' }], accuracy: null });
+    expect([few.accuracy, few.runs[0]?.engine]).toEqual([null, 'something_new']);
+    const before = forecastWindowSchema.parse(WINDOW);
+    expect([before.accuracy, before.runs[0]?.engine, before.days[0]?.scored]).toEqual([undefined, undefined, undefined]);
+  });
+
+  test('the model card’s run carries its engine, and one from an API before it parses', () => {
+    expect(forecastRunSchema.parse({ ...RUN, engine: 'baseline' }).engine).toBe('baseline');
+    expect(forecastRunSchema.parse(RUN).engine).toBeUndefined();
   });
 
   test('no published forecast', () => {

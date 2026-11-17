@@ -73,7 +73,7 @@ const runFileSchema = z.strictObject({
   schema: z.literal('townwise.forecast-run/1'),
   metric: z.literal('guests'),
   model: z.strictObject({
-    family: z.enum(['hybrid_linear_xgboost', 'linear_median', 'weekday_median']),
+    family: z.enum(['hybrid_linear_xgboost', 'linear_median', 'weekday_median', 'seasonal_baseline']),
     version: z.string().regex(/^v[0-9]{1,3}$/),
     notebookCommit: z.string().regex(/^[0-9a-f]{7,40}$/),
   }),

@@ -17,8 +17,9 @@ export async function createOrg(
     _id, name: opts.name, status: opts.status ?? 'active', createdAt: server.clock.now(), createdBy: 'fixture',
     fromRequestId: opts.fromRequestId === undefined ? null : new Types.ObjectId(opts.fromRequestId),
     suspendedAt: opts.status === 'suspended' ? server.clock.now() : null,
-    // G1: forecasts switched on, as staff do with the owner's agreement.
-    ...(opts.forecastsOn === true ? { forecasts: { on: true, at: server.clock.now(), by: 'fixture' } } : {}),
+    // G1 as staff switched it: true on (with the owner's agreement), false off; absent, never switched, which reads as on
+    // since D42.
+    ...(opts.forecastsOn === undefined ? {} : { forecasts: { on: opts.forecastsOn, at: server.clock.now(), by: 'fixture' } }),
   });
   return _id.toHexString();
 }

@@ -1,9 +1,10 @@
-// The forecast lab's input (schema townwise.lab-input/1): what the job fetches from the callback, built here from one
+// The forecast lab's input (schema townwise.lab-input/2, D42): what the job fetches from the callback, built here from one
 // location's stored days, its notes and scheduled business rules, the town calendar and the current published run. Outputs
-// only the facts the model reads: guests per day, the term and week of term, town event groups, and three flags from the
-// notes and rules. Never a note's detail, a rule's text, a calendar entry's title, a holiday (the lab computes holidays
-// from the dates) or any name. labInputOf is pure; buildLabInput reads the stores under the calibration's scope. Nothing
-// here logs.
+// only the facts the lab reads: guests per day, the term and week of term, town event groups, three flags from the notes
+// and rules, the town calendar's entries (id, group, kind, dates and confidence, which the baseline engine reads its
+// holidays and events from) and the current run's engine and recorded weekday bias. Never a note's detail, a rule's text, a calendar entry's title,
+// URL or source, or any name. labInputOf is pure; buildLabInput reads the stores under the calibration's scope. The lab
+// accepts version 2 only, so the two move together. Nothing here logs.
 import { z } from 'zod';
 
 import type { OrgScope } from '../access/policy.ts';
@@ -12,7 +13,8 @@ import type { TownwiseContext } from '../app.ts';
 import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-days.ts';
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
 import { scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
-import { eachDay } from '../forecasts/file.ts';
+import { canonicalSha256, eachDay } from '../forecasts/file.ts';
+import { engineOf } from '../forecasts/reader.ts';
 import { termEntries } from '../people-in-town/term.ts';
 import type { CalibrationRecord } from '../stores/calibrations.ts';
 import type { ForecastRow, ForecastRunRecord } from '../stores/forecasts.ts';
@@ -21,14 +23,22 @@ import type { NoteRecord } from '../stores/notes.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { townEvents } from '../town-calendar.ts';
+import { scorecardSchema, type Metrics } from './scorecard.ts';
 
-export const LAB_INPUT_SCHEMA = 'townwise.lab-input/1';
+export const LAB_INPUT_SCHEMA = 'townwise.lab-input/2';
+/**
+ * The lab's model version (modeling/lab/townwise_lab/version.py's MODEL_VERSION; lab-contract.test.ts holds the two
+ * equal). The weekly refresh's fingerprint includes it (D42), so a bump refits every location once.
+ */
+export const LAB_MODEL_VERSION = 'v8';
 /** Days the lab forecasts after the last day with guests (the run's window). */
 export const HORIZON_DAYS = 182;
 /** The event a calendar entry with no group stands for. */
 export const ONE_OFF = 'one_off';
 /** A calendar group, as a run file's reason refs allow it. */
 const GROUP = /^[a-z0-9][a-z0-9:-]{0,119}$/;
+/** A calendar entry's id ('us:thanksgiving:2026', 'hanover-nh:2026-11-17:fall-term-classes-end'), as the lab allows it. */
+const ENTRY_ID = /^[a-z0-9][a-z0-9:-]{0,199}$/;
 /** How far before the first day the calendar is read, so a term already under way has its first day of classes. */
 const TERM_LOOKBACK_DAYS = 180;
 
@@ -45,8 +55,26 @@ const labDaySchema = z.strictObject({
   booked: z.boolean(),
 });
 
+/** A town calendar entry as the lab reads it: never its title, URL or source label. */
+const calendarEntrySchema = z.strictObject({
+  id: z.string().regex(ENTRY_ID),
+  group: z.string().regex(GROUP).nullable(),
+  kind: z.enum(['event', 'holiday', 'term', 'season']),
+  start: isoDate,
+  end: isoDate,
+  confidence: z.enum(['high', 'medium', 'low']).nullable(),
+});
+
 const championSchema = z.strictObject({
   runId: z.string().min(1),
+  /** The engine that made the current run (D42): the lab keeps it unless the other is 0.5 points better. */
+  engine: z.enum(['model', 'baseline']),
+  /**
+   * The current run's recorded backtest weekdayBiasMeanAbs (its calibration's scorecard), null for an imported run or
+   * one whose scorecard is gone: the gate holds a model draft more than GATE.weekdayBiasAllowance over it
+   * (weekday_bias_worse), so the lab switches to the model only within it.
+   */
+  recordedWeekdayBiasMeanAbs: z.number().min(0).nullable(),
   dataThrough: isoDate,
   days: z.array(z.strictObject({
     date: isoDate,
@@ -73,12 +101,27 @@ export const labInputSchema = z.strictObject({
   horizonDays: z.literal(HORIZON_DAYS),
   regimeStart: isoDate.nullable(),
   days: z.array(labDaySchema).min(1),
+  calendar: z.array(calendarEntrySchema),
   champion: championSchema.nullable(),
 }).refine((input) => input.dataThrough <= input.today, { path: ['today'], message: 'dataThrough is after today' });
 
 export type LabInput = z.infer<typeof labInputSchema>;
+
+/** The input's keys the fingerprint leaves out: the calibration's own id, its date and the run it is compared with. */
+const NOT_FINGERPRINTED: ReadonlySet<string> = new Set(['calibrationId', 'today', 'champion']);
+
+/**
+ * The fingerprint the weekly refresh compares (D42, `dataSha256`): the sha256 of the canonical JSON of the input
+ * without calibrationId, today and champion (so its schema version, days, flags from notes and rules, calendar and
+ * pattern change date), together with the lab's model version, so a change to the lab's model refits every location once.
+ */
+export function labInputFingerprint(input: LabInput, modelVersion: string = LAB_MODEL_VERSION): string {
+  const data = Object.fromEntries(Object.entries(input).filter(([key]) => !NOT_FINGERPRINTED.has(key)));
+  return canonicalSha256({ modelVersion, input: data });
+}
 export type LabDay = LabInput['days'][number];
 type LabChampion = z.infer<typeof championSchema>;
+type LabCalendarEntry = z.infer<typeof calendarEntrySchema>;
 
 function plusDays(day: string, days: number): string {
   return utcDay(new Date(`${day}T00:00:00.000Z`), days);
@@ -139,7 +182,20 @@ function eventsOf(townId: string | null, from: string, to: string): Map<string, 
   return new Map([...groups].map(([date, set]) => [date, [...set].sort()]));
 }
 
-function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastRow[] }): LabChampion {
+/**
+ * Every town calendar entry overlapping `from` to `to` (holidays, terms, seasons and events, in townEvents' order), as
+ * ids, groups, kinds, dates and confidence only. An id or group the lab's pattern would refuse is left out.
+ */
+function calendarOf(townId: string | null, from: string, to: string): LabCalendarEntry[] {
+  return townEvents(townId, { from, to })
+    .filter((event) => ENTRY_ID.test(event.id) && (event.group === null || GROUP.test(event.group)))
+    .map((event) => ({ id: event.id, group: event.group, kind: event.kind, start: event.start, end: event.end, confidence: event.confidence }));
+}
+
+/** The current run as the input names it: its rows and its recorded backtest's weekday bias (null without one). */
+interface ChampionArgs { run: ForecastRunRecord; rows: readonly ForecastRow[]; recordedWeekdayBiasMeanAbs: number | null }
+
+function championOf(champion: ChampionArgs): LabChampion {
   const days: LabChampion['days'] = [];
   const weeks: LabChampion['weeks'] = [];
   for (const row of champion.rows) {
@@ -151,7 +207,10 @@ function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastR
   }
   days.sort((a, b) => (a.date < b.date ? -1 : 1));
   weeks.sort((a, b) => (a.from < b.from ? -1 : 1));
-  return { runId: champion.run.id, dataThrough: champion.run.dataThrough, days, weeks };
+  return {
+    runId: champion.run.id, engine: engineOf(champion.run.model.family), recordedWeekdayBiasMeanAbs: champion.recordedWeekdayBiasMeanAbs,
+    dataThrough: champion.run.dataThrough, days, weeks,
+  };
 }
 
 /** A note or a rule's schedule, as the flags read it. */
@@ -201,7 +260,7 @@ export function labInputOf(args: {
   /** The location's business rules with a schedule. */
   rules: readonly ScheduledRule[];
   today: string;
-  champion: { run: ForecastRunRecord; rows: readonly ForecastRow[] } | null;
+  champion: ChampionArgs | null;
 }): LabInput | null {
   const span = guestSpan(args.days, args.today);
   if (span === null) return null;
@@ -249,6 +308,7 @@ export function labInputOf(args: {
     horizonDays: HORIZON_DAYS,
     regimeStart: args.calibration.regimeStart,
     days,
+    calendar: calendarOf(townId, span.first, last),
     champion: args.champion === null ? null : championOf(args.champion),
   };
 }
@@ -256,9 +316,13 @@ export function labInputOf(args: {
 /**
  * The input for a live calibration, read under its organization's scope: the location's stored days, notes and
  * scheduled business rules, the town's local date, and the run that was current when it started. Null when the location
- * or its history is gone.
+ * or its history is gone. The weekly refresh (D42) builds one for a calibration not yet started, with no champion, to
+ * compare its fingerprint.
  */
-export async function buildLabInput(ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord): Promise<LabInput | null> {
+export async function buildLabInput(
+  ctx: Pick<TownwiseContext, 'stores' | 'now'>, scope: OrgScope,
+  calibration: Pick<CalibrationRecord, 'id' | 'locationId' | 'regimeStart' | 'championRunId'>,
+): Promise<LabInput | null> {
   const { stores } = ctx;
   const location = await stores.locations.find(scope, calibration.locationId);
   if (location === null) return null;
@@ -270,7 +334,28 @@ export async function buildLabInput(ctx: TownwiseContext, scope: OrgScope, calib
     stores.businessRules.scheduled(scope, location.id),
   ]);
   const run = calibration.championRunId === null ? null : await stores.forecasts.find(scope, calibration.championRunId);
-  const champion = run === null ? null : { run, rows: await stores.forecasts.rows(scope, location.id, [run.id]) };
+  const champion = run === null ? null : {
+    run, rows: await stores.forecasts.rows(scope, location.id, [run.id]),
+    recordedWeekdayBiasMeanAbs: (await recordedBacktest(ctx, scope, run))?.weekdayBiasMeanAbs ?? null,
+  };
   const today = localDay(ctx.now(), timeZoneOf(location.town).timeZone);
   return labInputOf({ calibration, location, days, notes, rules: scheduledRules(scheduled), today, champion });
+}
+
+/**
+ * A lab run's recorded backtest metrics: its calibration's scorecard, or null for an imported run or one now gone. The
+ * gate judges a draft against them (service.ts), and the input names the weekday bias for the lab to judge the same way.
+ */
+export async function recordedBacktest(ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, run: ForecastRunRecord): Promise<Metrics | null> {
+  if (run.lab === null) return null;
+  const json = (await ctx.stores.calibrations.find(scope, run.lab.calibrationId))?.scorecardJson ?? null;
+  if (json === null) return null;
+  let raw: unknown;
+  try {
+    raw = JSON.parse(json);
+  } catch {
+    return null;
+  }
+  const parsed = scorecardSchema.safeParse(raw);
+  return parsed.success ? parsed.data.backtest.metrics : null;
 }

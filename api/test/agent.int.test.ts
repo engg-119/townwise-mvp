@@ -94,6 +94,9 @@ async function addRules(locationId: string, schedules: readonly (Record<string, 
   })));
 }
 
+/** A member's panel at a location with no weekly suggestions (openspec change weekly-forecast-suggestions). */
+const NO_SUGGESTIONS = { suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false } };
+
 async function panel(locationId: string, session = member): Promise<{ status: number; body: AgentPanel }> {
   const res = await call(server, `/api/org/locations/${locationId}/agent`, { session });
   return { status: res.status, body: await res.json() as AgentPanel };
@@ -191,13 +194,14 @@ describe('GET /api/org/locations/:locationId/agent', () => {
       body: {
         questions: [WEEKDAY, GAP],
         activity: [{ at: at.toISOString(), kind: 'upload_applied', firstDate: FROM, lastDate: TO, dayCount: 78 }],
+        ...NO_SUGGESTIONS,
       },
     });
   });
 
   it('asks about a usually busy day with almost no guests, between the weekday and the gap (newest first)', async () => {
     const locationId = await askedLocation({ nearEmpty: true });
-    expect(await panel(locationId)).toEqual({ status: 200, body: { questions: [WEEKDAY, LIKELY, GAP], activity: [] } });
+    expect(await panel(locationId)).toEqual({ status: 200, body: { questions: [WEEKDAY, LIKELY, GAP], activity: [], ...NO_SUGGESTIONS } });
   });
 
   it('reads the 56 days before the window for typical guests, and never asks about a day before it', async () => {
@@ -249,7 +253,7 @@ describe('GET /api/org/locations/:locationId/agent', () => {
 
   it('asks nothing and lists nothing for a location with no records', async () => {
     const locationId = await addLocation(server, { orgId, name: 'Empty Room' });
-    expect(await panel(locationId)).toEqual({ status: 200, body: { questions: [], activity: [] } });
+    expect(await panel(locationId)).toEqual({ status: 200, body: { questions: [], activity: [], ...NO_SUGGESTIONS } });
   });
 });
 
@@ -792,6 +796,26 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
         kept: 0, closedDates: [], missingDays: 0, uploadId: '0000000000000000000000b1',
       },
     });
+
+    // Two weekly suggestions a pass stored, a rule and a note (openspec change weekly-forecast-suggestions).
+    const suggestion = (id: string, over: Record<string, unknown>) => ({
+      _id: new Types.ObjectId(id), orgId: org, locationId: location, week: '2026-06-01', calendarIds: [], status: 'open', decidedBy: null,
+      decidedAt: null, createdAt: new Date('2026-06-01T06:00:00.000Z'), updatedAt: new Date('2026-06-01T06:00:00.000Z'), ...over,
+    });
+    await server.connection.collection('tw_agent_suggestions').insertMany([
+      suggestion('0000000000000000000000c1', {
+        type: 'note', text: null, why: 'Independence Day is Sat, Jul 4, and you were closed on it last year.', calendarIds: ['us:independence-day:2026'],
+        content: { kind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04', weekdays: null, effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null },
+      }),
+      suggestion('0000000000000000000000c2', {
+        type: 'rule', text: 'Private party after Commencement', why: 'Commencement is Sun, Jun 14, and you booked a party after it last year.',
+        calendarIds: ['hanover-nh:2026-06-14:commencement'],
+        content: {
+          kind: 'private_event', startDate: '2026-06-14', endDate: '2026-06-14', weekdays: null, effect: 'more_guests', expectedGuests: 40, detail: null,
+          startTime: '18:00', endTime: '22:00',
+        },
+      }),
+    ]);
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
     expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });

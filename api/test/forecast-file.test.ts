@@ -80,6 +80,13 @@ describe('the run file', () => {
     expect(runFileSha256(FIXTURE)).toBe(canonicalSha256(FIXTURE));
   });
 
+  it('takes the lab baseline’s family, seasonal_baseline (D42), in a lab run file and an import, and no family it doesn’t know', () => {
+    const baseline = (copy: ForecastRunFile) => { (copy.model as Record<string, unknown>).family = 'seasonal_baseline'; };
+    expect(issuesOf(file(baseline))).toEqual([]);
+    expect(checkLabRunFile(file((copy) => { baseline(copy); (copy as Record<string, unknown>).trainingSource = 'townwise_lab'; }), TODAY).ok).toBe(true);
+    expect(issuesOf(file((copy) => { (copy.model as Record<string, unknown>).family = 'something_new'; }))).toEqual([{ path: 'model.family', code: 'invalid_value' }]);
+  });
+
   it('needs low <= mid <= high on open days, and words the issue on the field that is out of order', () => {
     expect(issuesOf(file((copy) => { day(copy, '2026-05-02').high = 90; }))).toEqual([{ path: 'days[1].high', code: 'below_mid' }]);
     expect(issuesOf(file((copy) => { day(copy, '2026-05-02').mid = 70; }))).toEqual([{ path: 'days[1].mid', code: 'below_low' }]);

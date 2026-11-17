@@ -91,6 +91,25 @@ export const configSchema = z.object({
   /** `azure` only: the Entra tenant the lab job's token comes from. */
   TOWNWISE_LAB_TENANT_ID: z.guid({ message: 'expected a GUID' }).optional(),
   /**
+   * D42, the weekly refresh: whether the worker (workers/weekly-forecasts.ts) starts scheduled calibrations. On unless
+   * set false, by the owner's directive (2026-11-16); inert while TOWNWISE_LAB_RUNNER is off.
+   */
+  TOWNWISE_WEEKLY_FORECASTS: z.stringbool().default(true),
+  /** D42: roughly how many scheduled calibrations may start in one week across all organizations. [CONFIRM] */
+  TOWNWISE_WEEKLY_FORECAST_CAP: z.coerce.number().int().min(0).max(10_000).default(200),
+  /**
+   * TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions): whether the weekly worker makes one
+   * suggestions call per location a week. On unless set false, by the owner's directive (2026-11-16); off without
+   * ANTHROPIC_API_KEY, and needs no lab.
+   */
+  TOWNWISE_WEEKLY_SUGGESTIONS: z.stringbool().default(true),
+  /**
+   * Development only: the secret a local lab job calls back with, shared by the API and the weekly worker so a job the
+   * worker started can call back to the API (both refuse it in production, as they refuse TOWNWISE_LAB_RUNNER=local).
+   * Unset, the API makes its own per process and the worker can't start a local job.
+   */
+  TOWNWISE_LAB_LOCAL_SECRET: z.preprocess((value) => (value === '' ? undefined : value), z.string().min(32).meta({ secret: true }).optional()),
+  /**
    * Seals owner calendar links (openspec change connect-owner-calendar, design decision 4), and Google connections'
    * refresh tokens and Google calendars' ids (connect-google-calendar, design decision 5). Absent turns calendar links
    * and Google calendars off (503 calendar_links_unavailable, google_calendar_unavailable) while calendar files still
@@ -125,6 +144,12 @@ export interface ResolvedTownwiseConfig {
   readonly emailReplyTo: string | null;
   /** A bare origin, with no trailing slash. */
   readonly webUrl: string;
+  /** D42: TOWNWISE_WEEKLY_FORECASTS, the weekly refresh's deploy-level switch. */
+  readonly weeklyForecasts: boolean;
+  /** D42: TOWNWISE_WEEKLY_FORECAST_CAP. */
+  readonly weeklyForecastCap: number;
+  /** TOWNWISE_WEEKLY_SUGGESTIONS, the weekly suggestions' deploy-level switch. */
+  readonly weeklySuggestions: boolean;
 }
 
 /** The URL's origin, or null when it has a path, query, fragment or credentials. */
@@ -164,12 +189,12 @@ export interface LabCallerConfig {
 
 /** How the forecast lab starts a job and who may call back (main.ts builds both from it), or null while the lab is off. */
 export type LabRunnerConfig =
-  | { readonly kind: 'local'; readonly apiUrl: string; readonly projectDir: string }
+  | { readonly kind: 'local'; readonly apiUrl: string; readonly projectDir: string; readonly secret: string | null }
   | { readonly kind: 'azure'; readonly jobId: string; readonly caller: LabCallerConfig };
 
 type LabKeys =
   | 'TOWNWISE_LAB_RUNNER' | 'TOWNWISE_LAB_API_URL' | 'TOWNWISE_LAB_JOB_ID' | 'TOWNWISE_LAB_PROJECT_DIR'
-  | 'TOWNWISE_LAB_AUDIENCE' | 'TOWNWISE_LAB_CALLER_ID' | 'TOWNWISE_LAB_TENANT_ID';
+  | 'TOWNWISE_LAB_AUDIENCE' | 'TOWNWISE_LAB_CALLER_ID' | 'TOWNWISE_LAB_TENANT_ID' | 'TOWNWISE_LAB_LOCAL_SECRET';
 
 /**
  * A runner missing a variable refuses boot, naming each missing one, and so does `local` in production (it is for
@@ -184,7 +209,7 @@ export function labRunnerOf(config: Pick<TownwiseConfig, LabKeys> & Partial<Pick
       if (config.TOWNWISE_LAB_API_URL === undefined) throw new ConfigError('TOWNWISE_LAB_API_URL', 'required with TOWNWISE_LAB_RUNNER=local');
       const apiUrl = bareOrigin(config.TOWNWISE_LAB_API_URL);
       if (apiUrl === null) throw new ConfigError('TOWNWISE_LAB_API_URL', 'expected a bare origin, with no path or query');
-      return { kind: 'local', apiUrl, projectDir: config.TOWNWISE_LAB_PROJECT_DIR };
+      return { kind: 'local', apiUrl, projectDir: config.TOWNWISE_LAB_PROJECT_DIR, secret: config.TOWNWISE_LAB_LOCAL_SECRET ?? null };
     }
     case 'azure': {
       const {
@@ -264,5 +289,8 @@ export function resolveTownwiseConfig(
     email: endpoint === null || config.EMAIL_SENDER === undefined ? null : { endpoint, sender: config.EMAIL_SENDER },
     emailReplyTo: config.TOWNWISE_EMAIL_REPLY_TO ?? null,
     webUrl,
+    weeklyForecasts: config.TOWNWISE_WEEKLY_FORECASTS,
+    weeklyForecastCap: config.TOWNWISE_WEEKLY_FORECAST_CAP,
+    weeklySuggestions: config.TOWNWISE_WEEKLY_SUGGESTIONS,
   };
 }

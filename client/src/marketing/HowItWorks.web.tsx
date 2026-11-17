@@ -231,11 +231,13 @@ export function HowItWorks(): React.JSX.Element {
         </Step>
         <Step index={1} active={isActive(1)} inline={!pinned} title="Build the forecast">
           <p>A forecasting agent will turn the town profile into model inputs, choose modeling approaches, then train, test and refine the models itself.</p>
-          <p><span className="lbl">Today:</span> candidate models run in our research notebooks, including quantile regression, an event model and gradient-boosted trees, tested with a rolling backtest. The agent that will build and refine models on its own is not built yet.</p>
+          {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
+          <p><span className="lbl">Today:</span> candidate models run in our research notebooks, including quantile regression, an event model and gradient-boosted trees, tested with a rolling backtest. In the app, Townwise’s trained demand model and a simpler baseline are both tested on each restaurant’s own past weeks, and its forecast switches between them only when the other does clearly better. The agent that will build and refine models on its own is not built yet.</p>
         </Step>
         <Step index={2} active={isActive(2)} inline={!pinned} title="Calibrate with your sales">
           <p>Your point-of-sale history will tune the town model to your restaurant, and the forecast is designed to get sharper as more history comes in. We are testing how much history it takes to make a difference.</p>
-          <p><span className="lbl">Today:</span> restaurants with early access upload their daily guests and net sales in the web app, and add notes about closures and other unusual days. Calibration itself is not built yet, so the app shows no forecasts.</p>
+          {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
+          <p><span className="lbl">Today:</span> restaurants with early access upload their daily guests and net sales in the web app, and add notes about closures and other unusual days. Once a location’s history spans 230 days, Townwise refits its daily guest forecast every week from those days, its notes and the town calendar, and publishes it when it passes our accuracy checks. Each forecast says whether Townwise’s trained model or a simpler baseline made it.</p>
         </Step>
         <Step index={3} active={isActive(3)} inline={!pinned} planned title="Turn the forecast into orders">
           <p>Plain-language recommendations for when to reorder and how much, starting with bar and drink inventory.</p>

@@ -100,11 +100,14 @@ function Row(props: { calibration: Calibration; location: string }): React.JSX.E
   // Staff can start one from TownwiseAI, or by letting it read a file (D34), while they have the organization open as
   // admin (D25).
   const staff = calibration.requestedByRole === 'superadmin';
-  const by = calibration.via === 'console'
-    ? 'Started by Townwise staff'
-    : calibration.via === 'file'
-      ? (staff ? 'Started by Townwise staff from a file TownwiseAI read' : 'Started by an org admin from a file TownwiseAI read')
-      : (staff ? 'Started by Townwise staff in TownwiseAI' : 'Started by an org admin in TownwiseAI');
+  // The weekly refresh (D42) is no person's start.
+  const by = calibration.via === 'scheduled'
+    ? 'Started by Townwise (weekly)'
+    : calibration.via === 'console'
+      ? 'Started by Townwise staff'
+      : calibration.via === 'file'
+        ? (staff ? 'Started by Townwise staff from a file TownwiseAI read' : 'Started by an org admin from a file TownwiseAI read')
+        : (staff ? 'Started by Townwise staff in TownwiseAI' : 'Started by an org admin in TownwiseAI');
   return (
     <Stack gap={4}>
       <Small white>{`${location}, ${formatDate(calibration.requestedAt)}`}</Small>

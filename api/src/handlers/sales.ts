@@ -9,7 +9,7 @@ import { z } from 'zod';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
-import { calibrationOf, type Calibration } from '../calibration.ts';
+import { calibrationFor, calibrationOf, type Calibration } from '../calibration.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../dates.ts';
 import { removeStoredFiles } from '../files/remove.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
@@ -124,7 +124,7 @@ export async function getSales(ctx: TownwiseContext, req: Request, res: Response
   res.status(200).json({
     coverage,
     uploadsOff: await uploadsOffOf(ctx, scope, location.id, coverage),
-    calibration: calibrationOf(coverage),
+    calibration: await calibrationFor(ctx, scope, location, coverage),
     months,
     uploads: await Promise.all(uploads.map(async (upload) => uploadView(upload, await uploaderOf(ctx, upload)))),
   });
@@ -242,8 +242,11 @@ export async function applyUpload(ctx: TownwiseContext, scope: OrgScope, locatio
 export async function uploadAnswer(
   ctx: TownwiseContext, scope: OrgScope, locationId: string, upload: UploadRecord, uploadedByEmail: string,
 ): Promise<{ upload: UploadView; coverage: Coverage; calibration: Calibration }> {
-  const coverage = await ctx.stores.salesDays.coverage(scope, locationId);
-  return { upload: uploadView(upload, uploadedByEmail), coverage, calibration: calibrationOf(coverage) };
+  const [coverage, location] = await Promise.all([
+    ctx.stores.salesDays.coverage(scope, locationId), ctx.stores.locations.find(scope, locationId),
+  ]);
+  const calibration = location === null ? calibrationOf(coverage) : await calibrationFor(ctx, scope, location, coverage);
+  return { upload: uploadView(upload, uploadedByEmail), coverage, calibration };
 }
 
 /**

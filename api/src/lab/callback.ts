@@ -30,7 +30,7 @@ import type { TownwiseContext } from '../app.ts';
 import { canonicalSha256 } from '../forecasts/file.ts';
 import { findLabCallback, type LabCallbackClaim } from '../stores/cross-tenant.ts';
 import type { LabCallerRefusal } from './caller.ts';
-import { buildLabInput } from './input.ts';
+import { buildLabInput, labInputFingerprint } from './input.ts';
 import { finishCalibration, ingestLabResult } from './service.ts';
 
 /** The result token: randomBytes(32) as base64url, 43 characters. */
@@ -128,7 +128,8 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
     }
     const resultToken = randomBytes(32).toString('base64url');
     const recorded = await calibrations.recordInput(scope, calibration.id, {
-      inputSha256: canonicalSha256(input), dataThrough: input.dataThrough, resultTokenSha256: sha256(resultToken),
+      inputSha256: canonicalSha256(input), dataSha256: labInputFingerprint(input), dataThrough: input.dataThrough,
+      resultTokenSha256: sha256(resultToken),
     });
     // A concurrent fetch recorded its input first.
     if (!recorded) throw refused(ctx, 'input', 'not_live');

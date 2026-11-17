@@ -13,24 +13,28 @@
 # | caj-townwise-db-restore  | manual   | mongodb-restore-uri                           | read                 | download |
 # | caj-townwise-db-smoke    | manual   | mongodb-uri                                   | none                 | nothing  |
 # | caj-townwise-lab         | manual   | none (lab.tf, enable_lab)                     | none                 | main     |
+# | caj-townwise-forecasts   | hourly   | mongodb-uri, anthropic-api-key (enable_chat)  | none                 | main     |
 
 locals {
   mongo_image = "${azurerm_container_registry.main.login_server}/mongo@${var.mongo_image_digest}"
   kv_secrets  = "${azurerm_key_vault.main.vault_uri}secrets/"
 
   # Key Vault secrets per job. Only db-users reads the admin password.
-  job_secrets = {
+  # The weekly forecast worker (below) exists only with the lab, which it starts; with the chat on it also reads the
+  # Anthropic key, for TownwiseAI's weekly suggestions.
+  job_secrets = merge({
     backup   = ["mongodb-backup-uri"]
     db-users = ["db-admin-password", "mongodb-uri", "mongodb-backup-uri", "mongodb-restore-uri"]
     restore  = ["mongodb-restore-uri"]
     smoke    = ["mongodb-uri"]
-  }
+  }, var.enable_lab ? { forecasts = concat(["mongodb-uri"], var.enable_chat ? ["anthropic-api-key"] : []) } : {})
   # Which containers may obtain a token for the job's identity.
   job_identity_lifecycle = {
-    backup   = "Main" # the upload container; mongodump (init) gets none
-    db-users = "None"
-    restore  = "Init" # the download container; mongorestore (main) gets none
-    smoke    = "None"
+    backup    = "Main" # the upload container; mongodump (init) gets none
+    db-users  = "None"
+    restore   = "Init" # the download container; mongorestore (main) gets none
+    smoke     = "None"
+    forecasts = "Main" # the worker signs in to Resource Manager to start the lab job
   }
 
   job_secret_reads = toset(flatten([for job, secrets in local.job_secrets : [for secret in secrets : "${job}/${secret}"]]))
@@ -290,6 +294,99 @@ resource "azapi_resource" "job_smoke" {
   }
 
   lifecycle {
+    precondition {
+      condition     = var.api_image != null
+      error_message = "Set api_image to the first API image's digest (infra/README.md, step 6)."
+    }
+  }
+
+  depends_on = [azurerm_role_assignment.job_acr_pull, azurerm_role_assignment.job_secret_read]
+}
+
+# The weekly forecast worker (spec D42, 14.6; infra/README.md, step 20). The owner asked for background workers, so
+# the weekly refresh is not a timer in the API: every hour this job runs one pass of api/src/workers/weekly-forecasts.ts
+# in the API's own image (the deploy workflow keeps the two on one digest) and exits. A pass starts calibrations in
+# the lab job for the locations that are due, under a Mongo lease, so an overlapping execution does nothing.
+#
+# Its identity holds AcrPull, the mongodb-uri reference (the same database user as the API: the pass reads and
+# writes the app's collections), with enable_chat the anthropic-api-key reference (the pass also makes TownwiseAI's
+# weekly suggestions, OpenSpec change weekly-forecast-suggestions; without the key they are off), and the lab starter
+# role at the lab job, which is what api/src/lab/runner.ts calls with it. It needs no Valkey (the API's sidecar) and
+# holds no other secret. Starting this job is permission to use
+# that identity (above), and it can start lab executions, which the API identity can already do.
+#
+# The image's CMD starts node with --env-file=api/production.env, so the override keeps that flag: the worker reads
+# the same public config as the API, and the variables below win over it. TOWNWISE_LAB_AUDIENCE, _CALLER_ID and
+# _TENANT_ID are the API's values: the worker never checks a callback, but labRunnerOf (api/src/config.ts) requires
+# all four with the azure runner, so the worker and the API resolve one configuration.
+resource "azurerm_role_assignment" "forecasts_lab_start" {
+  count              = var.enable_lab ? 1 : 0
+  scope              = azapi_resource.job_lab[0].id
+  role_definition_id = azurerm_role_definition.lab_starter[0].role_definition_resource_id
+  principal_id       = azurerm_user_assigned_identity.job["forecasts"].principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+# What deploy.tf grants the deploy identity on the API app, on this job: read it and update its image.
+resource "azurerm_role_assignment" "deployer_forecasts_job" {
+  count              = var.enable_lab ? 1 : 0
+  scope              = azapi_resource.job_forecasts[0].id
+  role_definition_id = azurerm_role_definition.deployer.role_definition_resource_id
+  principal_id       = data.azurerm_user_assigned_identity.deploy.principal_id
+  principal_type     = "ServicePrincipal"
+}
+
+resource "azapi_resource" "job_forecasts" {
+  count     = var.enable_lab ? 1 : 0
+  type      = "Microsoft.App/jobs@2025-07-01"
+  name      = "caj-townwise-forecasts"
+  parent_id = data.azurerm_resource_group.prod.id
+  location  = local.location
+
+  identity {
+    type         = "UserAssigned"
+    identity_ids = [azurerm_user_assigned_identity.job["forecasts"].id]
+  }
+
+  body = {
+    properties = {
+      environmentId       = azurerm_container_app_environment.main.id
+      workloadProfileName = "Consumption"
+      configuration = merge(local.job_configuration["forecasts"], {
+        triggerType = "Schedule"
+        # Hourly, at five past (UTC). A town's week starts at 03:00 on Monday local time, and a blocked or held-back
+        # start is tried again each hour until that week ends (api/src/lab/schedule.ts).
+        scheduleTriggerConfig = { cronExpression = "5 * * * *", parallelism = 1, replicaCompletionCount = 1 }
+        # Inside the pass's 10-minute lease, and above the pass's own 8-minute budget (SCHEDULE_PASS_BUDGET_MS), so a
+        # pass ends on its own before it is killed; what it leaves is picked up by the next hour's.
+        replicaTimeout    = 600
+        replicaRetryLimit = 0
+      })
+      template = {
+        containers = [{
+          name      = "weekly-forecasts"
+          image     = coalesce(var.api_image, "unset")
+          command   = ["node", "--env-file=api/production.env", "api/src/workers/weekly-forecasts.ts"]
+          resources = { cpu = 0.25, memory = "0.5Gi" }
+          env = concat([
+            { name = "MONGODB_URI", secretRef = "mongodb-uri" },
+            # The user-assigned identity the worker asks for tokens as (api/src/azure-identity.ts).
+            { name = "AZURE_CLIENT_ID", value = azurerm_user_assigned_identity.job["forecasts"].client_id },
+            { name = "TOWNWISE_LAB_RUNNER", value = "azure" },
+            { name = "TOWNWISE_LAB_JOB_ID", value = local.lab_job_id },
+            { name = "TOWNWISE_LAB_AUDIENCE", value = coalesce(var.lab_callback_client_id, "unset") },
+            { name = "TOWNWISE_LAB_CALLER_ID", value = azurerm_user_assigned_identity.lab[0].principal_id },
+            { name = "TOWNWISE_LAB_TENANT_ID", value = data.azurerm_client_config.current.tenant_id },
+          ], var.enable_chat ? [{ name = "ANTHROPIC_API_KEY", secretRef = "anthropic-api-key" }] : [])
+        }]
+      }
+    }
+  }
+
+  lifecycle {
+    # The deploy workflow sets the image to the API's digest (pinned) on every release.
+    ignore_changes = [body.properties.template.containers[0].image]
+
     precondition {
       condition     = var.api_image != null
       error_message = "Set api_image to the first API image's digest (infra/README.md, step 6)."

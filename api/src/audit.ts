@@ -3,7 +3,10 @@ import { AppError } from '@ckeith26/server-core';
 import type { TownwiseContext } from './app.ts';
 import type { AuditAction, AuditDetails, AuditEventInput, AuditEventRecord } from './stores/audit-events.ts';
 
-function logFailure(ctx: TownwiseContext, event: AuditEventInput): void {
+/** What writing an event after its effect needs: the API's context, or the weekly worker's (D42). */
+export type AuditContext = Pick<TownwiseContext, 'stores' | 'logger'>;
+
+function logFailure(ctx: AuditContext, event: AuditEventInput): void {
   ctx.logger.error({ action: event.action, orgId: event.orgId, targetId: event.target.id }, 'townwise.audit_write_failed');
 }
 
@@ -11,7 +14,7 @@ function logFailure(ctx: TownwiseContext, event: AuditEventInput): void {
  * Client actions (org members and org admins) are recorded after the effect succeeds. A failed write
  * leaves the action standing: it logs ids only, and the response is still success (spec 9.3).
  */
-export async function recordAfter(ctx: TownwiseContext, event: AuditEventInput): Promise<void> {
+export async function recordAfter(ctx: AuditContext, event: AuditEventInput): Promise<void> {
   try {
     await ctx.stores.audit.insert(event);
   } catch {
@@ -232,6 +235,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
         return `Answered TownwiseAI’s question about a day with almost no guests: ${LIKELY_CLOSED_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
       }
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
+    case 'org.weekly_suggestions_changed': return d.on === true ? 'Turned TownwiseAI’s weekly suggestions on' : 'Turned TownwiseAI’s weekly suggestions off';
+    case 'agent.suggestion_accepted': return d.type === 'rule' ? 'Accepted a business rule TownwiseAI suggested' : 'Accepted a note TownwiseAI suggested';
+    case 'agent.suggestion_dismissed': return d.type === 'rule' ? 'Dismissed a business rule TownwiseAI suggested' : 'Dismissed a note TownwiseAI suggested';
     // Orders.
     case 'order.setup_saved': return `Saved the ordering setup: ${text(d.supplierCount)} suppliers and ${text(d.itemCount)} items`;
     case 'order.item_sales_uploaded':
@@ -266,7 +272,11 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'calibration.finished':
       if (d.status === 'failed') return 'A calibration failed';
       return d.gate === 'published' ? 'A calibration published a new forecast' : 'A calibration made a draft forecast';
+    // D42.
+    case 'calibration.scheduled': return 'Townwise started its weekly calibration';
     case 'org.forecasts_switched': return d.on === true ? 'Switched forecasts on, with the owner’s agreement' : 'Switched forecasts off';
+    case 'forecast_schedule.paused': return 'Paused Townwise’s weekly forecast refresh for every organization';
+    case 'forecast_schedule.resumed': return 'Resumed Townwise’s weekly forecast refresh for every organization';
     case 'view_as.started': return `Viewed as ${text(d.targetEmail)}`;
     case 'view_as.ended':
       if (d.endReason === 'expired') return 'View-as expired';

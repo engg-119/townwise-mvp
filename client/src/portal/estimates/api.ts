@@ -67,6 +67,8 @@ export const forecastRunSchema = z.object({
   id: z.string(),
   metric: z.literal('guests'),
   model: z.object({ family: z.string(), version: z.string(), label: z.string() }),
+  /** 'model' or 'baseline' (D42), any string so an engine this client doesn't know never fails the card; missing from an API before it. */
+  engine: z.string().optional(),
   // Any string: a source this client doesn’t know yet reads as sales history (trainedOnWords), never fails the card.
   trainingSource: z.string(),
   trainedFrom: z.string(),
@@ -182,6 +184,8 @@ const forecastDaySchema = z.object({
   runId: z.string(),
   actual: z.number().nullable(),
   inRange: z.boolean().nullable(),
+  /** Counted in the window's `accuracy` (open in the model, not closed, likely closed or booked, with guests); missing from an API before it. */
+  scored: z.boolean().optional(),
 });
 export type ForecastDay = z.infer<typeof forecastDaySchema>;
 
@@ -192,8 +196,12 @@ export type ForecastDay = z.infer<typeof forecastDaySchema>;
 export const forecastWindowSchema = z.object({
   available: z.boolean(),
   reason: z.enum(['no_published_forecast', 'not_covered']).nullable(),
-  runs: z.array(z.object({ id: z.string(), model: z.object({ label: z.string() }), madeAt: z.string(), live: liveAccuracySchema.nullable() })),
+  runs: z.array(z.object({
+    id: z.string(), model: z.object({ label: z.string() }), engine: z.string().optional(), madeAt: z.string(), live: liveAccuracySchema.nullable(),
+  })),
   days: z.array(forecastDaySchema),
+  /** Live accuracy over the window's own scored days, each from its own run (D42); null under 5, missing from an API before it. */
+  accuracy: liveAccuracySchema.nullable().optional(),
   weeks: z.array(z.object({
     from: z.string(), to: z.string(), openDays: z.number(), low: z.number(), mid: z.number(), high: z.number(), runId: z.string(),
     noteGuests: z.number().default(0),
@@ -228,7 +236,7 @@ export function fetchPeopleInTown(api: ApiClient, locationId: string, range: { f
   return api.json(`${locationPath(locationId)}/people-in-town?from=${range.from}&to=${range.to}`, peopleInTownSchema);
 }
 
-/** The published forecast from `from` to `to`, inclusive, at most 42 days (the API's rule: a six-week calendar grid). */
+/** The published forecast from `from` to `to`, inclusive, at most 92 days (the API's rule, D42); the Calendar reads six-week grids. */
 export function fetchForecast(api: ApiClient, locationId: string, range: { from: string; to: string }): Promise<ForecastWindow> {
   return api.json(`${locationPath(locationId)}/forecast?from=${range.from}&to=${range.to}`, forecastWindowSchema);
 }

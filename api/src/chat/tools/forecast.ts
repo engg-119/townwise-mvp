@@ -1,8 +1,8 @@
-// get_forecast (U13B, spec 14.4): Townwise's published forecast of guests for a range of at most 31 days, read through
+// get_forecast (U13B, spec 14.4): Townwise's published forecast of guests for a range of at most 92 days, read through
 // ctx.ports.forecasts, so a draft or withdrawn run never reaches the model. Each day and whole week comes as an 80%
 // range (low rounded down, high up, mid to the nearest guest, so the model never repeats a falsely exact figure),
 // with the reasons the run recorded in code-made words, and for each run the days came from its version, training
-// range, made-at date and its own accuracy (backtest, and live over the days it supplied, misses included), so a
+// range, made-at date, engine (D42) and its own accuracy (backtest, and live over the days it supplied, misses included), so a
 // newer run is never credited with an older one's days; and how past days compared with what happened. From the town's
 // today on, each day already includes the owner's saved notes (forecasts/adjust.ts, spec 14.5): modelRange is the model's
 // own figures when a note changed them, noteGuests the guests notes add, and a note's reason gives its guest count and
@@ -17,12 +17,12 @@ import { z } from 'zod';
 
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../../dates.ts';
 import { MODEL_CARD } from '../../estimates/about.ts';
-import type { ForecastDayView, ForecastWindow, ForecastWindowRun } from '../../forecasts/reader.ts';
+import { MAX_FORECAST_RANGE_DAYS, type ForecastDayView, type ForecastWindow, type ForecastWindowRun } from '../../forecasts/reader.ts';
 import type { ChatTool } from './registry.ts';
 import { DATE, viewOf } from './shared.ts';
 
-/** How many days a range covers at most, both ends included: the tool's own, under the forecast route's 42. */
-const MAX_RANGE_DAYS = 31;
+/** How many days a range covers at most, both ends included: the forecast route's 92 (D42), today and the next 91. */
+const MAX_RANGE_DAYS = MAX_FORECAST_RANGE_DAYS;
 /** How far back a range may start: about a quarter, so recent misses can be discussed. */
 const MAX_DAYS_BACK = 92;
 const MAX_DAYS_AHEAD = 400;
@@ -54,7 +54,7 @@ const high = (value: number) => Math.ceil(value);
 function modelOf(run: ForecastWindowRun) {
   return {
     label: run.model.label, version: run.model.version, trainedOn: TRAINED_ON[run.trainingSource], trainedFrom: run.trainedFrom,
-    dataThrough: run.dataThrough, madeAt: run.madeAt, frozen: run.frozen, rangesWidened: run.interval.widened,
+    dataThrough: run.dataThrough, madeAt: run.madeAt, frozen: run.frozen, rangesWidened: run.interval.widened, engine: run.engine,
     accuracy: { backtest: run.backtest, live: run.live },
   };
 }
@@ -122,7 +122,7 @@ const forecastResult = z.object({
 export const forecastTool: ChatTool<ForecastRange> = {
   definition: {
     name: 'get_forecast',
-    description: 'Townwise\'s published forecast of guests per day for a date range of at most 31 days (both ends included, starting at most 92 days before today), with an 80% range for each day and for whole weeks, the reasons the model recorded, each model\'s version, training range and made-at date with its own accuracy in backtests and so far (over the days it supplied), and how past forecast days compared with what happened (actual and inRange). A booked day is a private buyout with no walk-in range. From today on, each day includes the owner\'s saved notes: a closure closes the day; otherwise a buyout books it, even a day the model expects closed; a private event with a guest count adds its guests, and opens a day the model expects closed with only those guests. modelRange is the model\'s own figures when a note changed them. The owner\'s business rules with a schedule apply the same way, each as a reason with rule set in place of note, except that a note on the day beats a rule\'s closure or buyout (a one-day opening or party note opens a day a standing closure rule would close). A note or rule reason\'s outcome says what it did: added, booked, closed, already_in_forecast (the model counted the event already), no_guest_count, not_counted (only private events change numbers), day_closed (the day stays closed), day_booked (the day is booked), overridden (a rule\'s closure or buyout a note on the day set aside) or past_day. A day lists at most 6 rule and 6 note reasons; moreRules and moreNotes count the rest, whose guests still count. A week\'s range shifts by its days\' note and rule changes: a day they closed or booked takes the model\'s middle for it off, and their guests add. From today on, each other reason carries effect { direction: more, fewer or same, pct (rounded to the nearest 5; same at 5 or less), basis, days, averageGuests }: basis model is the effect the model recorded; basis history is how this location\'s own last 52 weeks usually ran, closed and likely-closed days left out, over days days: a weekday against the average open day, a term state against the same weekday in other term states, a holiday against the same weekday in the 4 weeks around it, an event against the same weekday without it; averageGuests, on a weekday\'s history effect, is the average open day\'s guests (say it: "than your average day (210)"). A history effect is not why the model made its figure. Say "usually" ("Saturdays usually bring about 35% more guests than your average day (210)"), and say how few days it rests on when they are few. effect is null before today, on a note or rule reason, and when the history is too short to say, which you say plainly. vsBaselinePct is set only when the model recorded its usual level for the day. Says when no forecast exists, and what to use instead.',
+    description: 'Townwise\'s published forecast of guests per day for a date range of at most 92 days (both ends included, starting at most 92 days before today), with an 80% range for each day and for whole weeks, the reasons the model recorded, each model\'s version, training range, made-at date and engine (model: the trained demand model; baseline: Townwise\'s baseline from the location\'s recent weeks and the town calendar) with its own accuracy in backtests and so far (over the days it supplied), and how past forecast days compared with what happened (actual and inRange). A booked day is a private buyout with no walk-in range. From today on, each day includes the owner\'s saved notes: a closure closes the day; otherwise a buyout books it, even a day the model expects closed; a private event with a guest count adds its guests, and opens a day the model expects closed with only those guests. modelRange is the model\'s own figures when a note changed them. The owner\'s business rules with a schedule apply the same way, each as a reason with rule set in place of note, except that a note on the day beats a rule\'s closure or buyout (a one-day opening or party note opens a day a standing closure rule would close). A note or rule reason\'s outcome says what it did: added, booked, closed, already_in_forecast (the model counted the event already), no_guest_count, not_counted (only private events change numbers), day_closed (the day stays closed), day_booked (the day is booked), overridden (a rule\'s closure or buyout a note on the day set aside) or past_day. A day lists at most 6 rule and 6 note reasons; moreRules and moreNotes count the rest, whose guests still count. A week\'s range shifts by its days\' note and rule changes: a day they closed or booked takes the model\'s middle for it off, and their guests add. From today on, each other reason carries effect { direction: more, fewer or same, pct (rounded to the nearest 5; same at 5 or less), basis, days, averageGuests }: basis model is the effect the model recorded; basis history is how this location\'s own last 52 weeks usually ran, closed and likely-closed days left out, over days days: a weekday against the average open day, a term state against the same weekday in other term states, a holiday against the same weekday in the 4 weeks around it, an event against the same weekday without it; averageGuests, on a weekday\'s history effect, is the average open day\'s guests (say it: "than your average day (210)"). A history effect is not why the model made its figure. Say "usually" ("Saturdays usually bring about 35% more guests than your average day (210)"), and say how few days it rests on when they are few. effect is null before today, on a note or rule reason, and when the history is too short to say, which you say plainly. vsBaselinePct is set only when the model recorded its usual level for the day. Says when no forecast exists, and what to use instead.',
     input_schema: {
       type: 'object',
       properties: { from: DATE, to: DATE },
@@ -131,7 +131,7 @@ export const forecastTool: ChatTool<ForecastRange> = {
     },
     eager_input_streaming: true,
   },
-  invalidInput: 'Invalid input: from and to are YYYY-MM-DD dates, from on or before to, at most 31 days apart counting both ends, from at most 92 days before today and to at most 400 days after it.',
+  invalidInput: 'Invalid input: from and to are YYYY-MM-DD dates, from on or before to, at most 92 days apart counting both ends, from at most 92 days before today and to at most 400 days after it.',
   parse(raw, today) {
     const range = rangeSchema(today).safeParse(raw);
     return range.success ? { from: range.data.from, to: range.data.to } : null;

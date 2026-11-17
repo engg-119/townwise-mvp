@@ -113,6 +113,8 @@ export interface SalesDayStore {
   history(scope: OrgScope, locationId: string): Promise<SalesDayWithUpload[]>;
   /** D28: whether a turned-off upload holds any day at the location (so an empty read may be uploads turned off, not no history). */
   holdsOffDays(scope: OrgScope, locationId: string): Promise<boolean>;
+  /** D42: how many days after `after` have guests above zero, except the days a turned-off upload holds (D28). A count only. */
+  guestDayCountAfter(scope: OrgScope, locationId: string, after: string): Promise<number>;
   /** D28: per location id, how many days turned-off uploads hold; a location with none is left out. A count only. */
   offDayCountByLocation(scope: OrgScope): Promise<Map<string, number>>;
   /** D28: the dates from `from` to `to`, inclusive, whose day a turned-off upload holds, oldest first. */
@@ -257,6 +259,10 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
       const ids = await offIds(scope, locationId);
       if (ids.length === 0) return false;
       return (await SalesDay.exists({ ...ofLocation(scope, locationId), uploadId: trusted({ $in: ids }) })) !== null;
+    },
+    async guestDayCountAfter(scope, locationId, after) {
+      const ids = await offIds(scope, locationId);
+      return SalesDay.countDocuments({ ...ofLocation(scope, locationId), date: trusted({ $gt: after }), guests: trusted({ $gt: 0 }), ...onlyOnFilter(ids) });
     },
     async disabledDates(scope, locationId, range) {
       const ids = await offIds(scope, locationId);

@@ -1,8 +1,8 @@
 // What staff (and, from Task 8, TownwiseAI) read of a calibration: its state, the gate's words and a summary of its
 // scorecard as percentages and counts only (spec D7: no guest figure outside view-as). Pure.
-import type { CalibrationFailure, CalibrationRecord, CalibrationStatus } from '../stores/calibrations.ts';
-import { GATE_REASONS, gateWords, type GateReason } from './gate.ts';
-import { scorecardSchema, type Metrics } from './scorecard.ts';
+import type { CalibrationFailure, CalibrationRecord, CalibrationRequester, CalibrationStatus } from '../stores/calibrations.ts';
+import { engineSwitchOf, GATE_REASONS, gateWords, type GateReason } from './gate.ts';
+import { scorecardSchema, type Metrics, type Scorecard } from './scorecard.ts';
 import { FAILURE_WORDS } from './service.ts';
 
 export interface CalibrationSummary {
@@ -26,8 +26,8 @@ export interface CalibrationView {
   status: CalibrationStatus;
   failure: CalibrationFailure | null;
   failureWords: string | null;
-  via: 'chat' | 'console' | 'file';
-  requestedByRole: 'org_admin' | 'superadmin';
+  via: CalibrationRequester['via'];
+  requestedByRole: CalibrationRequester['role'];
   regimeStart: string | null;
   requestedAt: string;
   startedAt: string | null;
@@ -47,7 +47,8 @@ function isGateReason(reason: string): reason is GateReason {
   return (GATE_REASONS as readonly string[]).includes(reason);
 }
 
-function summaryOf(scorecardJson: string | null): CalibrationSummary | null {
+/** The stored scorecard, or null when there is none or it no longer parses. */
+function scorecardOf(scorecardJson: string | null): Scorecard | null {
   if (scorecardJson === null) return null;
   let raw: unknown;
   try {
@@ -56,8 +57,12 @@ function summaryOf(scorecardJson: string | null): CalibrationSummary | null {
     return null;
   }
   const parsed = scorecardSchema.safeParse(raw);
-  if (!parsed.success) return null;
-  const { backtest, comparison } = parsed.data;
+  return parsed.success ? parsed.data : null;
+}
+
+function summaryOf(scorecard: Scorecard | null): CalibrationSummary | null {
+  if (scorecard === null) return null;
+  const { backtest, comparison } = scorecard;
   const of = (weeks: number, metrics: Metrics, champion: Metrics | null): CalibrationSummary => ({
     weeks,
     weeklyWapePct: pct(metrics.weeklyWape),
@@ -72,7 +77,8 @@ function summaryOf(scorecardJson: string | null): CalibrationSummary | null {
 }
 
 export function calibrationView(record: CalibrationRecord): CalibrationView {
-  const summary = summaryOf(record.scorecardJson);
+  const scorecard = scorecardOf(record.scorecardJson);
+  const summary = summaryOf(scorecard);
   return {
     id: record.id,
     locationId: record.locationId,
@@ -90,7 +96,9 @@ export function calibrationView(record: CalibrationRecord): CalibrationView {
     gate: record.gate === null ? null : {
       published: record.gate.published,
       reason: record.gate.reason,
-      words: isGateReason(record.gate.reason) ? gateWords(record.gate.reason, summary?.championWeeklyWapePct === null) : null,
+      words: isGateReason(record.gate.reason)
+        ? gateWords(record.gate.reason, summary?.championWeeklyWapePct === null, scorecard === null ? null : engineSwitchOf(scorecard))
+        : null,
     },
     summary,
   };

@@ -13,8 +13,9 @@ import { problemOf } from './problems';
 import type { StaffOrg } from './schemas';
 
 // The organization's forecasts switch (G1): while it is off nothing is published, by staff or by a calibration.
-// Switching on needs the staff member's word that the owner agreed to see forecasts and to their going to Anthropic
-// through TownwiseAI; the organization's admins see either change in their Townwise staff activity.
+// Forecasts are on by default for an organization nobody switched (D42, owner directive 2026-11-16): it shows "On
+// (default)". Switching on needs the staff member's word that the owner agreed to see forecasts and to their going to
+// Anthropic through TownwiseAI; the organization's admins see either change in their Townwise staff activity.
 
 const ACTIVITY = 'Its admins see this in their Townwise staff activity.';
 
@@ -59,7 +60,7 @@ export function ForecastsSwitch(props: { org: StaffOrg; forecasts: ForecastsStat
         {on && forecasts.at !== null
           ? `Forecasts are on for ${org.name} since ${formatDate(forecasts.at)}.`
           : on
-            ? `Forecasts are on for ${org.name}.`
+            ? `On (default). Forecasts are on for ${org.name}, as for every organization Townwise staff haven’t switched off.`
             : `Forecasts are off for ${org.name}. Nothing is published, by you or by a calibration, until they’re on.`}
       </Small>
       <Button variant={on ? 'outline' : 'primary'} label={on ? 'Switch off' : 'Switch on'} onPress={() => { setOpen(true); }} />

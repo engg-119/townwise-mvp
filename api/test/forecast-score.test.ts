@@ -2,7 +2,7 @@
 // under 5 scored days, misses kept, and a week compared only when all its open days have passed. Synthetic numbers.
 import { describe, expect, it } from 'vitest';
 
-import { inRangeOf, liveAccuracy, MIN_SCORED_DAYS, weekActual, type ScoredDay } from '../src/forecasts/score.ts';
+import { inRangeOf, liveAccuracy, MIN_SCORED_DAYS, scoredDay, weekActual, type ScoredDay } from '../src/forecasts/score.ts';
 
 function open(date: string, actual: number | null): ScoredDay {
   return { date, status: 'open', low: 80, mid: 100, high: 120, actual };
@@ -36,6 +36,33 @@ describe('live accuracy', () => {
   it('rounds to one decimal, and has no typical miss when no guests came', () => {
     expect(liveAccuracy([open('a1', 99), open('a2', 100), open('a3', 100), open('a4', 100), open('a5', 100)])?.typicalErrorPct).toBe(0.2);
     expect(liveAccuracy([open('a1', 0), open('a2', 0), open('a3', 0), open('a4', 0), open('a5', 0)])?.typicalErrorPct).toBeNull();
+  });
+
+  it('scores a window over days of two runs, each day against its own run’s figures, and each run’s own accuracy is unchanged (D42)', () => {
+    // The first 3 days from a run made May 8, the rest from one made May 15 with other figures.
+    const older = [open('2026-05-12', 90), open('2026-05-13', 100), open('2026-05-14', 130)];
+    const newer: ScoredDay[] = [
+      { date: '2026-05-15', status: 'open', low: 160, mid: 200, high: 240, actual: 210 },
+      { date: '2026-05-16', status: 'open', low: 160, mid: 200, high: 240, actual: 150 },
+      { date: '2026-05-17', status: 'open', low: 160, mid: 200, high: 240, actual: 200 },
+    ];
+    // |10| + |0| + |30| + |10| + |50| + |0| = 100 over 880 guests; 4 of 6 in their own run's range.
+    expect(liveAccuracy([...older, ...newer])).toEqual({ days: 6, inRange: 4, typicalErrorPct: 11.4, from: '2026-05-12', to: '2026-05-17' });
+    expect(liveAccuracy(older)).toBeNull();
+    expect(liveAccuracy([...newer, open('2026-05-18', 100), open('2026-05-19', 100)])).toMatchObject({ days: 5, inRange: 4 });
+  });
+
+  it('scoredDay is the day live accuracy counts: forecast open with a middle and stored guests, not closed or likely closed', () => {
+    const booked: ScoredDay = { date: 'b', status: 'booked', low: null, mid: null, high: null, actual: 400 };
+    const closed: ScoredDay = { date: 'c', status: 'closed', low: null, mid: null, high: null, actual: 0 };
+    expect([
+      scoredDay(open('a', 100)), scoredDay(open('a', 0)), scoredDay(open('a', null)), scoredDay({ ...open('a', 100), closed: true }),
+      scoredDay(booked), scoredDay(closed), scoredDay({ ...open('a', 100), mid: null }),
+    ]).toEqual([true, true, false, false, false, false, false]);
+    // Under 5 scored days the window has no accuracy, and its days are still scored.
+    const three = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100)];
+    expect(liveAccuracy(three)).toBeNull();
+    expect(three.map(scoredDay)).toEqual([true, true, true]);
   });
 
   it('counts a day in range at either end of it', () => {
