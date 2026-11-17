@@ -196,6 +196,11 @@ export interface AgentSuggestionStore {
    * and resolves `{ microUsd: 0 }`. Null when it is no longer running and stale (a compare-and-set, so it settles once).
    */
   resolveStalePass(scope: OrgScope, input: { locationId: string; week: string; before: Date; now: Date }): Promise<HeldReservation | null>;
+  /**
+   * Removes a running pass row whose call failed before it reported anything (it cost nothing), so a later pass that
+   * week makes it. Resolves the reservation it held to hand back, or null when it was no longer running (a compare-and-set).
+   */
+  releasePass(scope: OrgScope, input: { locationId: string; week: string }): Promise<HeldReservation | null>;
   findPass(scope: OrgScope, locationId: string, week: string): Promise<SuggestionPassRecord | null>;
   /** Stores a pass's kept suggestions, each `open`. */
   insert(scope: OrgScope, input: { locationId: string; week: string; suggestions: readonly NewSuggestion[]; now: Date }): Promise<SuggestionRecord[]>;
@@ -301,6 +306,10 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
       const before = await Pass.findOneAndUpdate(
         stale, { $set: { status: 'failed', reservedMicroUsd: 0, updatedAt: input.now } }, { returnDocument: 'before' },
       ).lean();
+      return before === null ? null : { month: before.month ?? '', microUsd: before.reservedMicroUsd ?? 0 };
+    },
+    async releasePass(scope, input) {
+      const before = await Pass.findOneAndDelete({ ...of(scope, input.locationId), week: input.week, status: 'running' }).lean();
       return before === null ? null : { month: before.month ?? '', microUsd: before.reservedMicroUsd ?? 0 };
     },
     async findPass(scope, locationId, week) {

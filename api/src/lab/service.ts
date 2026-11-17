@@ -159,6 +159,23 @@ function systemPaid(req: StartRequest): boolean {
   return req.requester.role === 'system';
 }
 
+/** A pattern change date falls inside the history, at least 8 weeks before its last day. */
+function regimeFits(regimeStart: string, history: { first: string; last: string }): boolean {
+  return regimeStart >= history.first && daysBetween(regimeStart, history.last) >= REGIME_TAIL_DAYS;
+}
+
+/**
+ * Whether checkStart would take `regimeStart` for the location now: the weekly refresh (D42) carries the date of the
+ * calibration that made the newest published run, which the history can since have moved past (an upload turned off,
+ * D28). False with no history.
+ */
+export async function regimeStartFits(
+  ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, locationId: string, today: string, regimeStart: string,
+): Promise<boolean> {
+  const history = await historyOf(ctx, scope, locationId, today);
+  return history !== null && regimeFits(regimeStart, history);
+}
+
 /**
  * The checks before a start, in order: the lab is on; the history (first to last day with guests) spans at least
  * GATE.minHistoryDays, the span that always gives the gate 12 weeks to judge (GATE.baselineMinHistoryDays for the
@@ -172,9 +189,7 @@ export async function checkStart(ctx: LabStartContext, req: StartRequest): Promi
   const history = await historyOf(ctx, scope, location.id, req.today);
   const minDays = systemPaid(req) ? GATE.baselineMinHistoryDays : GATE.minHistoryDays;
   if (history === null || daysBetween(history.first, history.last) < minDays) return 'not_enough_history';
-  if (req.regimeStart !== null && (req.regimeStart < history.first || daysBetween(req.regimeStart, history.last) < REGIME_TAIL_DAYS)) {
-    return 'invalid_regime_start';
-  }
+  if (req.regimeStart !== null && !regimeFits(req.regimeStart, history)) return 'invalid_regime_start';
   if (!systemPaid(req) && await budgetSpent(ctx, scope)) return 'budget_exhausted';
   const live = await ctx.stores.calibrations.live(scope, location.id);
   if (live !== null && isLive(await expireStale(ctx, scope, live))) return 'in_progress';

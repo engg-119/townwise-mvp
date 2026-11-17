@@ -75,7 +75,7 @@ export interface ForecastWeekStore {
   find(scope: OrgScope, locationId: string, week: string): Promise<ForecastWeekRecord | null>;
   /** Compare-and-set from `starting` to `started` (with the calibration's id) or `start_failed`. */
   resolve(scope: OrgScope, id: string, outcome: { status: 'started'; calibrationId: string } | { status: 'start_failed' }, now: Date): Promise<boolean>;
-  /** Removes a `starting` row whose start never happened because another calibration held the location. */
+  /** Removes a `starting` row whose start never happened: another calibration held the location, or the runner refused the job (D42: a later pass that Monday tries again). */
   removeStarting(scope: OrgScope, id: string): Promise<boolean>;
   /** The newest row of each location of the organization, from `sinceWeek` on (the staff console). */
   latestByLocation(scope: OrgScope, sinceWeek: string): Promise<ForecastWeekRecord[]>;

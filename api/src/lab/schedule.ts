@@ -12,7 +12,9 @@
 //      fingerprint equals its reference calibration's (stores/calibrations.ts reference), `not_enough_history` under the
 //      baseline's 230 days, held without a row past the live cap, `cap_reached` past the weekly cap, and otherwise
 //      started as the system (no charge, not one of the 4 a day) with the regimeStart of the calibration that made its
-//      newest published run.
+//      newest published run (dropped, with a log line of ids, when the history no longer holds it, so the start is not
+//      refused every week). A job that cannot start leaves no row, so a later pass that Monday tries again, up to
+//      SCHEDULE_START_TRIES starts; the last records start_failed.
 // After the calibrations, under the same lease, the pass runs TownwiseAI's weekly suggestions (openspec change
 // weekly-forecast-suggestions, lab/suggestions.ts) while TOWNWISE_WEEKLY_SUGGESTIONS is true and the model is set
 // (ANTHROPIC_API_KEY), with or without the lab: for each location of an active organization whose weekly suggestions
@@ -41,7 +43,7 @@ import {
 import { localDay, localMinutes, timeZoneOf, weekdayOf } from '../time-zones.ts';
 import { GATE } from './gate.ts';
 import { buildLabInput, labInputFingerprint } from './input.ts';
-import { checkStart, expireStale, launch, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
+import { checkStart, expireStale, launch, regimeStartFits, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
 import { suggestFor, suggestionsWeek } from './suggestions.ts';
 
 /** The lease a pass holds and renews before each location. */
@@ -50,6 +52,8 @@ export const SCHEDULE_LEASE_MS = 10 * 60_000;
 export const SCHEDULE_LIVE_CAP = 3;
 /** A location's week starts at this hour on Monday, in its town's time zone. [CONFIRM] */
 export const SCHEDULE_START_HOUR = 3;
+/** Starts a location's job may fail (the runner refusing it) on its Monday before its row records start_failed. [CONFIRM] */
+export const SCHEDULE_START_TRIES = 3;
 /** How far back the staff console looks for each location's latest week row. */
 export const WEEK_ROWS_LOOKBACK_DAYS = 56;
 /**
@@ -171,9 +175,14 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       counts.skipped += 1;
       return;
     }
-    const regimeStart = await regimeOf(scope, location.id);
-    const input = await buildLabInput(ctx, scope, { id: new Types.ObjectId().toHexString(), locationId: location.id, regimeStart, championRunId: null });
     const now = ctx.now();
+    let regimeStart = await regimeOf(scope, location.id);
+    if (regimeStart !== null && !(await regimeStartFits(ctx, scope, location.id, localDay(now, timeZone), regimeStart))) {
+      // The history moved past it (an upload turned off, D28): refit without it rather than fail every week.
+      ctx.logger.info({ orgId: scope.orgId, locationId: location.id }, 'townwise.weekly_refresh_regime_dropped');
+      regimeStart = null;
+    }
+    const input = await buildLabInput(ctx, scope, { id: new Types.ObjectId().toHexString(), locationId: location.id, regimeStart, championRunId: null });
     const record = (status: 'unchanged' | 'not_enough_history' | 'cap_reached', dataSha256: string | null) =>
       stores.forecastWeeks.insert(scope, { locationId: location.id, week, status, dataSha256, now });
     const first = input?.days[0]?.date;
@@ -227,8 +236,17 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       counts.skipped += 1;
       return;
     }
-    await stores.forecastWeeks.resolve(scope, row.id, { status: 'start_failed' }, ctx.now());
     counts.failed += 1;
+    // The runner refused the job (an outage): leave the week open for a later pass that Monday, up to the tries.
+    if (launched.code === 'start_failed') {
+      const since = new Date(now.getTime() - 24 * 60 * 60_000);
+      if (await stores.calibrations.scheduledStartFailures(scope, location.id, since) < SCHEDULE_START_TRIES) {
+        await stores.forecastWeeks.removeStarting(scope, row.id);
+        pass.weekCounts.set(week, counted);
+        return;
+      }
+    }
+    await stores.forecastWeeks.resolve(scope, row.id, { status: 'start_failed' }, ctx.now());
   }
 
   /**

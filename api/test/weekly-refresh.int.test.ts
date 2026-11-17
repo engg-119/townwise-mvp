@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { OrgScope } from '../src/access/policy.ts';
 import { utcDay } from '../src/dates.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
-import { createForecastSchedule, SCHEDULE_LIVE_CAP, type PassResult, type ScheduleContext } from '../src/lab/schedule.ts';
+import { createForecastSchedule, SCHEDULE_LIVE_CAP, SCHEDULE_START_TRIES, type PassResult, type ScheduleContext } from '../src/lab/schedule.ts';
 import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
 import { removeLocation } from '../src/handlers/locations.ts';
 import { SUGGESTIONS_RESERVE_MICRO_USD, suggestionsReserveMicroUsd } from '../src/lab/suggestions.ts';
@@ -225,6 +225,25 @@ describe('which locations a Monday starts', () => {
     expect(await calibration(job?.calibrationId ?? '')).toMatchObject({ requestedBy: SYSTEM_REQUESTER, regimeStart: '2026-01-05' });
   });
 
+  it('drops a carried regimeStart the history no longer holds, and starts without one instead of failing every week', async () => {
+    const p = await place({ span: 620 });
+    const person = await personStart(p, '2024-12-02');
+    await finishJob(person.id);
+    expect(await calibration(person.id)).toMatchObject({ regimeStart: '2024-12-02', gate: { published: true } });
+    // The days before 2025-01-01 leave the history, as turning their upload off does (D28): the pattern change date is
+    // now before the first day, which a start refuses (invalid_regime_start).
+    await server.connection.collection('tw_sales_days').deleteMany({ locationId: new Types.ObjectId(p.locationId), date: { $lt: '2025-01-01' } });
+    await seedHistory(server, { orgId: p.orgId, locationId: p.locationId, from: '2026-06-01', to: '2026-06-07' });
+    server.clock.advance(7 * DAY);
+    server.logs.length = 0;
+    expect(await pass()).toMatchObject({ started: 1, failed: 0 });
+    expect(await weekRow(p, '2026-06-08')).toMatchObject({ status: 'started' });
+    expect(await calibration(jobs().at(-1)?.calibrationId ?? '')).toMatchObject({ requestedBy: SYSTEM_REQUESTER, regimeStart: null });
+    expect(logLines(server).filter((line) => line.msg === 'townwise.weekly_refresh_regime_dropped')).toEqual([
+      expect.objectContaining({ orgId: p.orgId, locationId: p.locationId }),
+    ]);
+  });
+
   it('someone already calibrating: no row, and a later pass that Monday starts it', async () => {
     const p = await place({ span: 600 });
     const person = await personStart(p);
@@ -246,11 +265,26 @@ describe('which locations a Monday starts', () => {
     expect(jobs()).toHaveLength(1);
   });
 
-  it('records start_failed when the job cannot start', async () => {
+  it('a job that cannot start leaves no row, so a later pass that Monday tries again', async () => {
     const p = await place();
     runner.failNext(new Error('no job'));
     expect(await pass()).toMatchObject({ started: 0, failed: 1 });
+    expect(await weekRow(p)).toBeNull();
+    server.clock.advance(HOUR);
+    expect(await pass()).toMatchObject({ started: 1, failed: 0 });
+    expect(await weekRow(p)).toMatchObject({ status: 'started', calibrationId: jobs().at(-1)?.calibrationId });
+  });
+
+  it('records start_failed once the job could not start 3 times that Monday', async () => {
+    const p = await place();
+    for (let i = 0; i < SCHEDULE_START_TRIES; i += 1) {
+      runner.failNext(new Error('no job'));
+      expect(await pass()).toMatchObject({ started: 0, failed: 1 });
+      server.clock.advance(HOUR);
+    }
     expect(await weekRow(p)).toMatchObject({ status: 'start_failed' });
+    expect(await pass()).toMatchObject({ started: 0, failed: 0 });
+    expect(jobs()).toHaveLength(0);
   });
 });
 
@@ -469,13 +503,19 @@ describe('weekly suggestions', () => {
     expect(await spent(p)).toBe(19_800_000);
   });
 
-  it('a failed call records failed and charges nothing it never reported', async () => {
+  it('a call that fails before reporting anything costs nothing, hands its reservation back and leaves the week to a later pass', async () => {
     const p = await place();
     const model = scriptedModel();
     model.script({ kind: 'error', error: new Error('overloaded') });
     expect((await pass({ chat: model })).suggestions).toMatchObject({ failed: 1, passes: 0 });
-    expect(await passRow(p)).toMatchObject({ status: 'failed' });
+    expect(await passRow(p)).toBeNull();
     expect(await spent(p)).toBe(0);
+    // An hour later the model answers: the week's one call is made after all.
+    model.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: [JULY_4] }))], { usage: { input: 10_000, output: 500 } }) });
+    server.clock.advance(HOUR);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ failed: 0, passes: 1, suggested: 1 });
+    expect(await passRow(p)).toMatchObject({ status: 'suggested' });
+    expect(model.calls).toHaveLength(2);
   });
 
   it('sends the calendar, the notes as written and the rules; never an email, the organization’s or location’s name, or a figure', async () => {

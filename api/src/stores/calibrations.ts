@@ -178,6 +178,8 @@ export interface CalibrationStore {
   reference(scope: OrgScope, locationId: string): Promise<CalibrationRecord | null>;
   /** The location's newest calibration requested by the system at or after `since` (D42: a week row left starting). */
   scheduledSince(scope: OrgScope, locationId: string, since: Date): Promise<CalibrationRecord | null>;
+  /** How many of the location's calibrations requested by the system at or after `since` failed start_failed (D42). */
+  scheduledStartFailures(scope: OrgScope, locationId: string, since: Date): Promise<number>;
   /** Location deletion and deleting its sales data. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion. Resolves the number deleted. */
@@ -308,6 +310,12 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
         ...org(scope), locationId: new Types.ObjectId(locationId), 'requestedBy.role': 'system', requestedAt: trusted({ $gte: since }),
       }).sort({ requestedAt: -1, _id: -1 }).lean();
       return doc === null ? null : toCalibration(doc);
+    },
+    async scheduledStartFailures(scope, locationId, since) {
+      return Calibration.countDocuments({
+        ...org(scope), locationId: new Types.ObjectId(locationId), 'requestedBy.role': 'system', failure: 'start_failed',
+        requestedAt: trusted({ $gte: since }),
+      });
     },
     async removeForLocation(scope, locationId) {
       return (await Calibration.deleteMany({ ...org(scope), locationId: new Types.ObjectId(locationId) })).deletedCount;

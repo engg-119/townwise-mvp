@@ -18,7 +18,8 @@
 // reserves $0.30 of the organization's TownwiseAI month (tw_chat_usage, the chat's budget), or the request's ceiling at
 // the most expensive model's prices when that is more, before it starts, and is skipped (`budget`) when less is left;
 // the pass row holds the reservation, and finishing the row hands it back in the same write, corrected to what the call
-// cost, so a pass that dies is settled by a later one (lab/schedule.ts). 8,000 output tokens, low effort and a 2-minute
+// cost, so a pass that dies is settled by a later one (lab/schedule.ts). A call that fails before reporting anything
+// cost nothing: its row is removed with its reservation, so a later pass that week makes the call. 8,000 output tokens, low effort and a 2-minute
 // limit. A location deleted while its call ran keeps nothing of it. Nothing here logs, and nothing it reads or answers
 // reaches a log or an audit event.
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
@@ -426,6 +427,14 @@ export async function suggestFor(
     if ((await stores.locations.find(scope, location.id)) === null) await stores.agentSuggestions.removeForPass(scope, location.id, week);
     return outcome;
   };
+  /** A call that failed before it reported anything cost nothing: the row goes, with its reservation, so the week can still run. */
+  const release = async (): Promise<SuggestionsOutcome> => {
+    const held = await stores.agentSuggestions.releasePass(scope, { locationId: location.id, week });
+    row.finished = true;
+    const charge = -unheld - (held?.microUsd ?? 0);
+    if (charge !== 0) await stores.chatUsage.add(scope, month, charge, ctx.now());
+    return { status: 'failed' };
+  };
   const today = localDay(now, timeZoneOf(location.town).timeZone);
   try {
     await stores.agentSuggestions.expire(scope, location.id, today, now);
@@ -441,7 +450,7 @@ export async function suggestFor(
     if (await stores.agentSuggestions.holdReservation(scope, { locationId: location.id, week, month, microUsd: reserve, now: ctx.now() })) unheld = 0;
     const call = await callModel(model, params);
     spent = call.costMicroUsd;
-    if (call.kind === 'failed') return await finish({ status: 'failed' });
+    if (call.kind === 'failed') return await (call.costMicroUsd === 0 ? release() : finish({ status: 'failed' }));
     const kept = keptSuggestions(call.output, checks);
     const stored = await stores.agentSuggestions.insert(scope, { locationId: location.id, week, suggestions: kept, now: ctx.now() });
     return await finish(stored.length > 0 ? { status: 'suggested', suggested: stored.length } : { status: 'none' });
