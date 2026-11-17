@@ -275,3 +275,37 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_killed" {
     action_groups = [azurerm_monitor_action_group.ops.id]
   }
 }
+
+# A draft the publish gate held jump_held (api/src/lab/gate.ts): its next 28 days differ from the current forecast's
+# by more than 25%, so it waits in the staff console's Forecasts for staff to publish or withdraw (spec 14.6). Nothing
+# else tells staff: after a real level shift every weekly refit is held while the old forecast stays published, and
+# past its lapse until its days run out. The API logs townwise.calibration_finished with the gate's code and ids only
+# (api/src/lab/service.ts) when the lab's result comes back, scheduled or started by a person. Checked every hour, so
+# a held refit emails once, and again each week it is held. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_held" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-held"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "A forecast draft was held jump_held: its next 28 days differ from the current forecast's by more than 25%. Publish or withdraw it in the staff console."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 3
+  evaluation_frequency = "PT1H"
+  window_duration      = "PT1H"
+
+  criteria {
+    query                   = <<-KQL
+      ContainerAppConsoleLogs
+      | where Log has "townwise.calibration_finished"
+      | extend line = parse_json(Log)
+      | where tostring(line.msg) == "townwise.calibration_finished" and tostring(line.gate) == "jump_held"
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}

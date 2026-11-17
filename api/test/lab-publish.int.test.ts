@@ -294,6 +294,9 @@ describe('one set of rules for every calibration (D42)', () => {
     const jumped = await calibrateWith(t, 0.17, 65);
     expect(jumped.gate).toMatchObject({ published: false, reason: 'jump_held', words: GATE_WORDS.jump_held });
     expect(await runDoc(jumped.runId ?? '')).toMatchObject({ status: 'draft' });
+    // The line the ops alert forecasts_held reads (infra monitoring.tf): ids and the gate's code, never a figure.
+    const held = logLines(server).filter((line) => line.msg === 'townwise.calibration_finished' && line.calibrationId === jumped.id);
+    expect(held).toEqual([expect.objectContaining({ orgId: t.orgId, calibrationId: jumped.id, status: 'succeeded', gate: 'jump_held' })]);
     expect((await calibrateWith(t, 0.17, 60)).gate).toMatchObject({ published: true, reason: 'refreshed' });
   });
 

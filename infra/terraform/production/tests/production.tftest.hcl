@@ -1179,7 +1179,8 @@ run "lab_disabled" {
       length(azurerm_role_assignment.forecasts_lab_start) == 0 && length(azurerm_role_assignment.deployer_forecasts_job) == 0 &&
       length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed) == 0 &&
       length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing) == 0 &&
-      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed) == 0
+      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed) == 0 &&
+      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held) == 0
     )
     error_message = "With enable_lab false, the weekly forecast worker, its identity, its grants and its alerts do not exist."
   }
@@ -1531,6 +1532,23 @@ run "forecasts_worker" {
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
     )
     error_message = "An execution that logged its start and never its pass (killed by the job's timeout, or crashed) emails the ops address; the lines it pairs are the ones the worker logs."
+  }
+
+  assert {
+    condition = (
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].scopes == tolist([azurerm_log_analytics_workspace.main.id]) &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].evaluation_frequency == "PT1H" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].window_duration == "PT1H" &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].criteria[0].query, "ContainerAppConsoleLogs") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].criteria[0].query, "\"townwise.calibration_finished\"") &&
+      strcontains(file("../../../api/src/lab/service.ts"), "'townwise.calibration_finished'") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].criteria[0].query, "tostring(line.gate) == \"jump_held\"") &&
+      strcontains(file("../../../api/src/lab/gate.ts"), "'jump_held'") &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].criteria[0].operator == "GreaterThan" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].criteria[0].threshold == 0 &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_held[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
+    )
+    error_message = "A draft the gate held jump_held emails the ops address within the hour, so staff publish or withdraw it; the line and reason it reads are the ones the API logs."
   }
 }
 
