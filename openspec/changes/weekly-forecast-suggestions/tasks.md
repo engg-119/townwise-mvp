@@ -27,4 +27,6 @@ Lands after `autonomous-forecasts` phase 3b. Tests first.
 
 - [ ] 4.1 Owner: approve the privacy sentence, and decide both `[CONFIRM]` markers.
 - [ ] 4.2 Independent UI review of the Questions panel (web and native).
+  - Open: needs an agent that did not build the panel (`client/src/chat/ui/SuggestionCard.tsx`).
 - [ ] 4.3 An end-to-end test with the worker and a fake model (one pass makes suggestions for an organization with no field), then `/review`, then `/verify`. Push only after the owner's go.
+  - Partly done: the end-to-end test is in `api/test/weekly-forecasts-worker.int.test.ts` (the worker with a scripted model and the lab off makes one call and stores the suggestion for an organization with no field; without a model the suggestions are off). `/review` and `/verify` (the full `npm run verify`) are left for the session that merges, since this branch's run was limited to the suites it touched; nothing is pushed.
