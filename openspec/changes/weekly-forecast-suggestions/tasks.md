@@ -26,7 +26,7 @@ Lands after `autonomous-forecasts` phase 3b. Tests first.
 ## 4. Owner, review and verification
 
 - [ ] 4.1 Owner: approve the privacy sentence, and decide the `[CONFIRM]` markers (both in the spec, and the panel's 3-hour window added with the review fixes).
-  - Integration note (2026-11-17): this change merged into `feat/autonomous-forecasts`, so its privacy wording ships with that change's, which the owner approved as drafted on 2026-11-17 (`autonomous-forecasts` task 6.1). The same approval of this change's sentence is still pending the owner; its `[DECISION NEEDED]` (spec 18, `api/production.env`) stays until then.
+  - Integration note (2026-11-17): this change merged into `feat/autonomous-forecasts`, so its privacy wording ships with that change's, which the owner approved as drafted on 2026-11-17 (`autonomous-forecasts` task 6.1). The same approval of this change's sentence is still pending the owner; its `[DECISION NEEDED]` (spec 18, `api/production.env`) stays until then. This approval blocks enabling the lab in production (`autonomous-forecasts` tasks 6.5 and 6.3, infra/README.md step 20), since the weekly worker the lab creates runs these suggestions.
 - [ ] 4.2 Independent UI review of the Questions panel (web and native).
   - Open: needs an agent that did not build the panel (`client/src/chat/ui/SuggestionCard.tsx`).
 - [ ] 4.3 An end-to-end test with the worker and a fake model (one pass makes suggestions for an organization with no field), then `/review`, then `/verify`. Push only after the owner's go.
