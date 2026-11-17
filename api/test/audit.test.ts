@@ -18,3 +18,18 @@ describe('the weekly refresh’s audit events', () => {
     expect(summaryOf('forecast_schedule.resumed', {})).toBe('Resumed Townwise’s weekly forecast refresh for every organization');
   });
 });
+
+describe('the weekly suggestions’ audit events', () => {
+  it('allow the switch’s state, and ids and the type of a decided suggestion: never its dates, words or why', () => {
+    expect(AUDIT_DETAIL_KEYS['org.weekly_suggestions_changed']).toEqual(['on']);
+    expect(AUDIT_DETAIL_KEYS['agent.suggestion_accepted']).toEqual(['locationId', 'suggestionId', 'type']);
+    expect(AUDIT_DETAIL_KEYS['agent.suggestion_dismissed']).toEqual(['locationId', 'suggestionId', 'type']);
+  });
+
+  it('read in plain words in the console', () => {
+    expect(summaryOf('org.weekly_suggestions_changed', { on: false })).toBe('Turned TownwiseAI’s weekly suggestions off');
+    expect(summaryOf('org.weekly_suggestions_changed', { on: true })).toBe('Turned TownwiseAI’s weekly suggestions on');
+    expect(summaryOf('agent.suggestion_accepted', { type: 'note' })).toBe('Accepted a note TownwiseAI suggested');
+    expect(summaryOf('agent.suggestion_dismissed', { type: 'rule' })).toBe('Dismissed a business rule TownwiseAI suggested');
+  });
+});

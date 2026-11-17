@@ -2,8 +2,10 @@ Lands after `autonomous-forecasts` phase 3b. Tests first.
 
 ## 1. Switch and store
 
-- [ ] 1.1 `tw_orgs.weeklySuggestions`, `PATCH /api/org/weekly-suggestions` in `TOWNWISE_ROUTES` (`org_admin`, 2 KB, `writes`), audit `org.weekly_suggestions_changed`. Tests: `api/test/weekly-suggestions.int.test.ts` (admin 200 for off and on, member 403, view-as refused; an organization with no field reads as on).
-- [ ] 1.2 `api/src/stores/agent-suggestions.ts` (`tw_agent_suggestions`), deletion with the location and the organization; accept and dismiss routes (org admin), accept writing the note or rule with the suggestion's id, and expiry by first date. Tests: same file (one write on a retried accept; dismiss; an expired suggestion not listed; another organization's id is 404).
+- [x] 1.1 `tw_orgs.weeklySuggestions`, `PATCH /api/org/weekly-suggestions` in `TOWNWISE_ROUTES` (`org_admin`, 2 KB, `writes`), audit `org.weekly_suggestions_changed`. Tests: `api/test/weekly-suggestions.int.test.ts` (admin 200 for off and on, member 403, view-as refused; an organization with no field reads as on).
+  - Done: `stores/orgs.ts` reads an absent field as `{ on: true }`; `handlers/weekly-suggestions.ts` `switchWeeklySuggestions` (event before the effect, `{ on, orgId? }` with D25's tab check, open as admin like every org route, which `routes.test.ts` requires); person deletion nulls `weeklySuggestions.by`. Written alongside the code rather than strictly before it.
+- [x] 1.2 `api/src/stores/agent-suggestions.ts` (`tw_agent_suggestions`), deletion with the location and the organization; accept and dismiss routes (org admin), accept writing the note or rule with the suggestion's id, and expiry by first date. Tests: same file (one write on a retried accept; dismiss; an expired suggestion not listed; another organization's id is 404).
+  - Done: `tw_agent_suggestions` plus `tw_suggestion_passes` (the week's pass row, see 2.2); accept writes through `addNote`/`addRule` with the suggestion's id, then compare-and-sets `open|dismissed` to `accepted` (only that request records the event); dismiss is `open` to `dismissed`; an open one whose first date is today or past is not listed and answers 404; deletion with the location (`handlers/locations.ts`) and the organization (both sweeps in `handlers/deletion.ts`); person deletion nulls `decidedBy`. 13 tests in `weekly-suggestions.int.test.ts`, with `deletion.int.test.ts` and `indexes.test.ts` updated.
 
 ## 2. The pass
 

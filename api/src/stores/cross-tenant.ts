@@ -4,18 +4,20 @@
 // claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
 // existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, Google access's
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
-// 10 and 11), and the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
-// countedWeekRows (D42).
+// 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
+// countedWeekRows (D42), and the weekly suggestions' suggestionCandidates (openspec change weekly-forecast-suggestions).
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
 // (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
-// (calendar/google-access.ts) and the weekly refresh (lab/schedule.ts) import this file (test/isolation.test.ts enforces
+// (calendar/google-access.ts) and the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) import
+// this file (test/isolation.test.ts enforces
 // the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
+import { agentSuggestionModel } from './agent-suggestions.ts';
 import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
@@ -278,7 +280,8 @@ export interface DeletedPersonRecords {
  * removed seats, their tuning chat conversations, live turns, proposal records and order cards, their welcome markers
  * and their Google connections for calendars, in every organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
- * and from the forecasts switch they last set (the forecast lab). Never an active
+ * and from the forecasts switch they last set (the forecast lab), and from the weekly suggestions switch they last set
+ * and the suggestions they decided. Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
@@ -326,6 +329,10 @@ export async function deletePersonRecords(
   await calibrationModel(connection).updateMany({ 'requestedBy.userId': userId }, { $set: { 'requestedBy.userId': null } });
   // And the staff member who last switched an organization's forecasts, in every organization; the switch stays as it is.
   await orgModel(connection).updateMany({ 'forecasts.by': userId }, { $set: { 'forecasts.by': null } });
+  // Weekly suggestions: the org admin who last turned them on or off, and who accepted or dismissed a suggestion. The
+  // switch and the decisions stay. Not counted.
+  await orgModel(connection).updateMany({ 'weeklySuggestions.by': userId }, { $set: { 'weeklySuggestions.by': null } });
+  await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
   // Google access for calendars (connect-google-calendar): the handler has already ended any still found, revoking
   // each; this is the backstop for one left by a crash. Not counted, so the audit details are unchanged.
   await googleConnectionModel(connection).deleteMany({ userId });
@@ -629,6 +636,23 @@ export interface WeeklyCandidate {
 export async function weeklyCandidates(connection: Connection): Promise<WeeklyCandidate[]> {
   const orgs = await orgModel(connection).find(
     { status: 'active', $or: [{ forecasts: trusted({ $exists: false }) }, { forecasts: null }, { 'forecasts.on': true }] },
+    { _id: 1 },
+  ).lean();
+  if (orgs.length === 0) return [];
+  const docs = await locationModel(connection).find({ orgId: trusted({ $in: orgs.map((org) => org._id) }) }, { _id: 1, orgId: 1 })
+    .sort({ createdAt: 1, _id: 1 }).lean();
+  return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString() }));
+}
+
+/**
+ * The weekly suggestions' candidates (openspec change weekly-forecast-suggestions), across organizations: every location
+ * of an active organization whose weekly suggestions are on, an organization with no `weeklySuggestions` field counting
+ * as on (owner directive 2026-11-16). The forecasts switch (G1) does not apply: a suggestion changes no forecast until a
+ * person accepts it. Ids only, oldest location first; scoped by access/policy.ts's scopeForWeeklyRefresh.
+ */
+export async function suggestionCandidates(connection: Connection): Promise<WeeklyCandidate[]> {
+  const orgs = await orgModel(connection).find(
+    { status: 'active', $or: [{ weeklySuggestions: trusted({ $exists: false }) }, { weeklySuggestions: null }, { 'weeklySuggestions.on': true }] },
     { _id: 1 },
   ).lean();
   if (orgs.length === 0) return [];

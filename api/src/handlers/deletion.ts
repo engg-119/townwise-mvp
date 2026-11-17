@@ -70,8 +70,9 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatUsage.removeForOrg(scope);
     await stores.welcomes.removeForOrg(scope);
     await stores.chatProposals.removeForOrg(scope);
-    // U9, TownwiseAI's questions.
+    // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
     await stores.agentAnswers.removeForOrg(scope);
+    await stores.agentSuggestions.removeForOrg(scope);
     // Orders: edits, rules, setups, item sales and counts are the locations', so they go with the organization.
     await stores.orders.removeForOrg(scope);
     await stores.orderSetups.removeForOrg(scope);
@@ -95,7 +96,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     logFiles(ctx, scope.orgId, files, late === 'files_unavailable' ? { deletedFiles: 0, deletedBlobs: 0 } : late);
     // With the row gone no new request starts, so this second sweep catches sales days, ordering's records and chat
     // usage that requests already running wrote after the first. It narrows the gap, not closes it: a tuning chat turn
-    // started before the suspension can still add chat usage for up to 150 seconds (its time limit), an upload still
+    // started before the suspension can still add chat usage for up to 150 seconds (its time limit), as can a weekly
+    // suggestions call for up to 2 minutes (lab/suggestions.ts), an upload still
     // running can write days after this sweep, and its tw_uploads row, if written after the first sweep, is never
     // swept. Those rows carry only the deleted organization's id.
     const lateDays = await stores.salesDays.removeForOrg(scope);
@@ -106,8 +108,9 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.orders.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
     await stores.calibrations.removeForOrg(scope);
-    // D42: a weekly pass already past its candidates can still write a week row.
+    // D42: a weekly pass already past its candidates can still write a week row, and its suggestions.
     await stores.forecastWeeks.removeForOrg(scope);
+    await stores.agentSuggestions.removeForOrg(scope);
     // U13B: a staff forecast import already past its organization check can still write a run and rows.
     await stores.forecasts.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };

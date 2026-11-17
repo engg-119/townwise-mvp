@@ -70,8 +70,9 @@ export function scopeForGoogleCheck(claim: ClaimedGoogleConnection): OrgScope {
 }
 
 /**
- * The weekly refresh only (lab/schedule.ts, D42), for the organization of a location it considers, a live calibration it
- * started, or a week row it left starting, each found by a cross-tenant lookup.
+ * The weekly refresh only (lab/schedule.ts, D42), for the organization of a location it considers (for a calibration or,
+ * from suggestionCandidates, for weekly suggestions), a live calibration it started, or a week row it left starting,
+ * each found by a cross-tenant lookup.
  */
 export function scopeForWeeklyRefresh(found: WeeklyCandidate | LiveScheduledCalibration | StaleStartingWeek): OrgScope {
   return mint(found.orgId);

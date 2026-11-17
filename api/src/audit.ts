@@ -235,6 +235,9 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
         return `Answered TownwiseAI’s question about a day with almost no guests: ${LIKELY_CLOSED_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
       }
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
+    case 'org.weekly_suggestions_changed': return d.on === true ? 'Turned TownwiseAI’s weekly suggestions on' : 'Turned TownwiseAI’s weekly suggestions off';
+    case 'agent.suggestion_accepted': return d.type === 'rule' ? 'Accepted a business rule TownwiseAI suggested' : 'Accepted a note TownwiseAI suggested';
+    case 'agent.suggestion_dismissed': return d.type === 'rule' ? 'Dismissed a business rule TownwiseAI suggested' : 'Dismissed a note TownwiseAI suggested';
     // Orders.
     case 'order.setup_saved': return `Saved the ordering setup: ${text(d.supplierCount)} suppliers and ${text(d.itemCount)} items`;
     case 'order.item_sales_uploaded':
