@@ -126,11 +126,15 @@ Each pass SHALL end with one log line `townwise.weekly_refresh_pass { started, f
 - **THEN** each location shows this week's outcome, such as "Mon, Nov 23: started, published (refreshed)" or "unchanged"
 
 ### Requirement: Calibrated and stale states
-The derived calibration state (`api/src/calibration.ts`, spec 14.1) SHALL add `calibrated` and `stale` for a location with a published run: `calibrated` when the newest published run's `dataThrough` is on or after the last day with guests, and `stale` when it is before it. Both SHALL carry the run's `dataThrough`, `newerDays` (days with guests after it) and `nextRefresh`, the date of the Monday the weekly refresh will next consider the location, or null while the lab runner is off, `TOWNWISE_WEEKLY_FORECASTS` is false, the schedule is paused, or the organization's forecasts are off. It SHALL be derived on every read and never stored, and the client SHALL accept both states before the API sends them. Where the state shows, `stale` SHALL read "Forecast made from your sales through {Sun, Nov 15}. Townwise refits on {Mon, Nov 23} with the {6} days since." or, with `nextRefresh` null, "Forecast made from your sales through {Sun, Nov 15}. The {6} days since aren't in it yet." `queued`, `calibrating` and `failed` SHALL stay reserved.
+The derived calibration state (`api/src/calibration.ts`, spec 14.1) SHALL add `calibrated` and `stale` for a location with a published run: `calibrated` when the newest published run's `dataThrough` is on or after the last day with guests, and `stale` when it is before it. Both SHALL carry the run's `dataThrough`, `newerDays` (days with guests after it) and `nextRefresh`, the date of the Monday the weekly refresh will next consider the location, or null while the lab runner is off, `TOWNWISE_WEEKLY_FORECASTS` is false, the schedule is paused, or the organization's forecasts are off, or, for a stale location, when its reference calibration (the weekly refresh's) already read every day with guests, since that refit was refused and the next Monday finds the data unchanged (so the words never promise a refit the schedule will skip). It SHALL be derived on every read and never stored, and the client SHALL accept both states before the API sends them. Where the state shows, `stale` SHALL read "Forecast made from your sales through {Sun, Nov 15}. Townwise refits on {Mon, Nov 23} with the {6} days since." or, with `nextRefresh` null, "Forecast made from your sales through {Sun, Nov 15}. The {6} days since aren't in it yet." `queued`, `calibrating` and `failed` SHALL stay reserved.
 
 #### Scenario: New days after the run
 - **WHEN** the newest published run's `dataThrough` is Nov 15, 2026, the owner uploaded Nov 16 to 21, and the weekly refresh is on
 - **THEN** the state is `stale` with `newerDays` 6 and `nextRefresh` 2026-11-23
+
+#### Scenario: A refit of those days was refused
+- **WHEN** Monday's scheduled refit read Nov 16 to 21 and was refused `refresh_worse`, and no new day has come since
+- **THEN** the state is `stale` with `nextRefresh` null, and reads "The 6 days since aren't in it yet." rather than promising next Monday's refit, which would record `unchanged`
 
 #### Scenario: The lab is off
 - **WHEN** the same location's API runs with `TOWNWISE_LAB_RUNNER` off

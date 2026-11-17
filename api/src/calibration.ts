@@ -1,8 +1,9 @@
 // Calibration states (spec 14.1, 14.3): derived from a location's own sales data and its newest published forecast on
 // every read, never stored. No forecast, no progress, no “calibrating” and no day threshold until a run is published
 // (14.2). Once one is (D42), `calibrated` when its last day of data is the last day with guests, `stale` when days with
-// guests came after it, each with the Monday the weekly refresh next considers the location. Notes and rules are left
-// out of `stale` on purpose: they act on the forecast at read time (14.5). queued, calibrating and failed stay reserved.
+// guests came after it, each with the Monday the weekly refresh next considers the location (none for a stale one whose
+// days a refused refit already read). Notes and rules are left out of `stale` on purpose: they act on the forecast at
+// read time (14.5). queued, calibrating and failed stay reserved.
 import type { OrgScope } from './access/policy.ts';
 import type { TownwiseContext } from './app.ts';
 import { utcDay } from './dates.ts';
@@ -62,7 +63,10 @@ export function calibrationWords(calibration: Calibration): string | null {
 
 /**
  * The location's calibration state as a read answers it: its coverage, its newest published run (newest dataThrough
- * first) with the days with guests after that run's last day, and the next refresh in the town's today.
+ * first) with the days with guests after that run's last day, and the next refresh in the town's today. A stale
+ * location whose reference calibration (the weekly refresh's, stores/calibrations.ts) already read every day with
+ * guests has no next refresh: that refit was refused, so the next Monday finds the same data and records unchanged, and
+ * the words say the days aren't in it yet rather than promise a refit that won't come.
  */
 export async function calibrationFor(
   ctx: TownwiseContext, scope: OrgScope, location: LocationRecord, coverage: Coverage,
@@ -70,8 +74,14 @@ export async function calibrationFor(
   if (coverage.lastDate === null) return calibrationOf(coverage);
   const [newest] = await ctx.stores.forecasts.published(scope, location.id);
   if (newest === undefined) return calibrationOf(coverage);
-  const newerDays = await ctx.stores.salesDays.guestDayCountAfter(scope, location.id, newest.dataThrough);
-  return calibrationOf(coverage, { dataThrough: newest.dataThrough, newerDays }, await nextRefreshFor(ctx, scope, location));
+  const { salesDays } = ctx.stores;
+  const newerDays = await salesDays.guestDayCountAfter(scope, location.id, newest.dataThrough);
+  let nextRefresh = await nextRefreshFor(ctx, scope, location);
+  if (newerDays > 0 && nextRefresh !== null) {
+    const read = (await ctx.stores.calibrations.reference(scope, location.id))?.dataThrough ?? null;
+    if (read !== null && read > newest.dataThrough && await salesDays.guestDayCountAfter(scope, location.id, read) === 0) nextRefresh = null;
+  }
+  return calibrationOf(coverage, { dataThrough: newest.dataThrough, newerDays }, nextRefresh);
 }
 
 /**

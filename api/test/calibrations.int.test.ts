@@ -169,6 +169,31 @@ describe('calibrated and stale (14.3, D42)', () => {
     expect(await stateOf(p)).toMatchObject({ nextRefresh: '2026-06-08' });
   });
 
+  it('promises no refit when a refit already read the days since and was refused, since next Monday finds nothing changed', async () => {
+    const p = await place(300, true);
+    await publishRun(p, '2026-05-24');
+    expect(await stateOf(p)).toMatchObject({ state: 'stale', newerDays: 7, nextRefresh: '2026-06-08' });
+    // This Monday's refit read every day through LAST and was refused (refresh_worse): it is the reference now, so the
+    // next Monday's fingerprint matches it and the week records unchanged.
+    const { calibrations } = server.ctx.stores;
+    const id = new Types.ObjectId().toHexString();
+    const now = server.clock.now();
+    await calibrations.insertQueued(p.scope, {
+      id, locationId: p.locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, regimeStart: null, championRunId: null,
+      tokenExpiresAt: new Date(now.getTime() + 20 * 60_000), now,
+    });
+    await calibrations.markRunning(p.scope, id, { now, imageDigest: null });
+    await calibrations.recordInput(p.scope, id, { inputSha256: 'a'.repeat(64), dataSha256: 'b'.repeat(64), dataThrough: LAST, resultTokenSha256: 'c'.repeat(64) });
+    await calibrations.recordGate(p.scope, id, { published: false, reason: 'refresh_worse' });
+    await calibrations.finish(p.scope, id, { status: 'succeeded' }, now);
+    const stale = await stateOf(p);
+    expect(stale).toMatchObject({ state: 'stale', newerDays: 7, nextRefresh: null });
+    expect(calibrationWords(stale)).toBe('Forecast made from your sales through Sun, May 24. The 7 days since aren’t in it yet.');
+    // A new day with guests is one the reference hasn't read: the next Monday refits again.
+    await seedHistory(server, { orgId: p.orgId, locationId: p.locationId, from: '2026-06-01', to: '2026-06-01' });
+    expect(await stateOf(p)).toMatchObject({ state: 'stale', newerDays: 8, nextRefresh: '2026-06-08' });
+  });
+
   it('has no next refresh while the organization’s forecasts are off', async () => {
     const p = await place(300);
     await publishRun(p, '2026-05-24');
