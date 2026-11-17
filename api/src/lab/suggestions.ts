@@ -5,7 +5,8 @@
 // percentage and day count of forecasts/effects.ts, and how many of its past days were open, closed or had no sales),
 // the location's notes and scheduled business rules covering those days (kind, dates, effect, guest count and text, as
 // TownwiseAI's chat already reads them), and what it suggested before for those days. It never sends a sales figure, an
-// email, a person's, organization's or location's name, or an id other than calendar ids.
+// email, a person's, organization's or location's name (apart from any the team wrote in a note's detail or a rule's
+// words, which go as written), or an id other than calendar ids.
 //
 // The answer is at most 5 suggestions, each a note or a business rule with a schedule (D31), a one-sentence why and the
 // calendar ids it rests on. Each is checked by the note rules (spec 12) or D31's schedule rules, and dropped when it
