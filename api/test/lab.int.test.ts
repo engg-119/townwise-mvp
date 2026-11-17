@@ -11,7 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { TownwiseContext } from '../src/app.ts';
 import { canonicalSha256, type FileIssue } from '../src/forecasts/file.ts';
-import { labInputSchema, type LabInput } from '../src/lab/input.ts';
+import { labInputFingerprint, labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { LabStartError } from '../src/lab/runner.ts';
 import { CALIBRATION_CHARGE_MICRO_USD, CALIBRATION_TIMEOUT_MS, checkStart, launch, type StartRequest } from '../src/lab/service.ts';
 import type { CalibrationView } from '../src/lab/views.ts';
@@ -326,7 +326,9 @@ describe('the job’s callback', () => {
     expect(input.champion?.days).toHaveLength(70);
     expect(JSON.stringify(input)).not.toContain('private reason');
     const stored = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
-    expect(stored).toMatchObject({ championRunId: championId, dataThrough: '2026-05-31', inputSha256: canonicalSha256(input) });
+    expect(stored).toMatchObject({
+      championRunId: championId, dataThrough: '2026-05-31', inputSha256: canonicalSha256(input), dataSha256: labInputFingerprint(input),
+    });
 
     const result = labResultFor(input);
     const res = await jobCall(server, job, 'result', result);

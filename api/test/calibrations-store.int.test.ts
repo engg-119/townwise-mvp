@@ -100,7 +100,7 @@ describe('calibrations', () => {
     const now = server.clock.now();
     expect((await findLabCallback(server.connection, record.id, now, null))?.calibrationId).toBe(record.id);
     expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(true);
-    const input = { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    const input = { inputSha256: sha('input'), dataSha256: sha('data-input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
     expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
     expect(await calibrations.finish(t.scope, record.id, { status: 'succeeded' }, now)).toBe(true);
     const raw = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(record.id) });
@@ -130,7 +130,7 @@ describe('calibrations', () => {
     // With one (the result post): only once the input fetch recorded that hash, and only for that calibration.
     expect(await findLabCallback(server.connection, record.id, now, sha('result-a'))).toBeNull();
     await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null });
-    expect(await calibrations.recordInput(t.scope, record.id, { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') }))
+    expect(await calibrations.recordInput(t.scope, record.id, { inputSha256: sha('input'), dataSha256: sha('data-input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') }))
       .toBe(true);
     expect((await findLabCallback(server.connection, record.id, now, sha('result-a')))?.calibrationId).toBe(record.id);
     expect(await findLabCallback(server.connection, record.id, now, sha('wrong'))).toBeNull();
@@ -146,7 +146,7 @@ describe('calibrations', () => {
     // Not running yet.
     expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(false);
     await calibrations.markRunning(t.scope, record.id, { now, imageDigest: 'sha256:abc' });
-    const input = { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    const input = { inputSha256: sha('input'), dataSha256: sha('data-input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
     expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
     expect(await calibrations.recordResult(t.scope, record.id, result)).toBe(true);
     expect(await calibrations.recordResult(t.scope, record.id, { ...result, runId: new Types.ObjectId().toHexString() })).toBe(false);
@@ -159,21 +159,23 @@ describe('calibrations', () => {
     const t = await tenant();
     const record = await queued(t);
     const now = server.clock.now();
-    const input = { inputSha256: sha('input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
+    const input = { inputSha256: sha('input'), dataSha256: sha('data-input'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-a') };
     // Not running yet.
     expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(false);
     expect(await calibrations.markRunning(t.scope, record.id, { now, imageDigest: null })).toBe(true);
     // findLabCallback resolves a running calibration.
     expect((await findLabCallback(server.connection, record.id, now, null))?.calibrationId).toBe(record.id);
     expect(await calibrations.recordInput(t.scope, record.id, input)).toBe(true);
+    // The fingerprint (D42) is recorded with the input's hash, on every calibration
+    expect(await calibrations.find(t.scope, record.id)).toMatchObject({ inputSha256: sha('input'), dataSha256: sha('data-input') });
     // The result token works; a second fetch, whatever it brings, changes nothing.
     expect((await findLabCallback(server.connection, record.id, now, sha('result-a')))?.calibrationId).toBe(record.id);
     expect(await calibrations.recordInput(t.scope, record.id, { ...input, inputSha256: sha('other') })).toBe(false);
     expect(await calibrations.recordInput(t.scope, record.id, {
-      inputSha256: sha('other'), dataThrough: '2026-05-01', resultTokenSha256: sha('result-b'),
+      inputSha256: sha('other'), dataSha256: sha('data-other'), dataThrough: '2026-05-01', resultTokenSha256: sha('result-b'),
     })).toBe(false);
     expect(await findLabCallback(server.connection, record.id, now, sha('result-b'))).toBeNull();
-    expect(await calibrations.find(t.scope, record.id)).toMatchObject({ inputSha256: sha('input'), dataThrough: '2026-04-30' });
+    expect(await calibrations.find(t.scope, record.id)).toMatchObject({ inputSha256: sha('input'), dataSha256: sha('data-input'), dataThrough: '2026-04-30' });
   });
 
   it('recordImageDigest records the image once, on a running calibration with none', async () => {
@@ -218,7 +220,7 @@ describe('calibrations', () => {
     expect(await calibrations.list(other.scope, 10, t.locationId)).toEqual([]);
     expect(await calibrations.markRunning(other.scope, record.id, { now, imageDigest: null })).toBe(false);
     expect(await calibrations.recordInput(other.scope, record.id, {
-      inputSha256: sha('x'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-x'),
+      inputSha256: sha('x'), dataSha256: sha('data-x'), dataThrough: '2026-04-30', resultTokenSha256: sha('result-x'),
     })).toBe(false);
     expect(await calibrations.recordImageDigest(other.scope, record.id, 'sha256:other')).toBe(false);
     expect(await calibrations.recordResult(other.scope, record.id, { runId: 'r', scorecardJson: '{}', codeVersion: 'c' })).toBe(false);

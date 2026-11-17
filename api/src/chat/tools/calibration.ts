@@ -12,6 +12,7 @@ import { objectId } from '@ckeith26/mongo';
 import { z } from 'zod';
 
 import { recordAfter } from '../../audit.ts';
+import { nextRefreshFor } from '../../calibration.ts';
 import { isoDate } from '../../dates.ts';
 import {
   backtestChart, comparisonChart, comparisonTable, metricCards, NEXT_STEPS, type ChatComponent, type NextStepsKind,
@@ -19,6 +20,7 @@ import {
 import { GATE_REASONS, gateWords, type GateReason } from '../../lab/gate.ts';
 import { scorecardSchema, type Scorecard } from '../../lab/scorecard.ts';
 import { checkStart, expireStale, FAILURE_WORDS, launch, START_REFUSAL_WORDS, type StartRequest } from '../../lab/service.ts';
+import { shortDate } from '../../orders/dates.ts';
 import type { CalibrationRecord } from '../../stores/calibrations.ts';
 import type { AuditEventInput } from '../../stores/audit-events.ts';
 import { Types } from 'mongoose';
@@ -133,9 +135,12 @@ export const startCalibrationTool: ChatTool<StartInput> = {
     // refusals left none.
     if (launched.ok || launched.code === 'start_failed') await recordAfter(ctx, event);
     if (!launched.ok) return json({ started: false, code: launched.code, message: START_REFUSAL_WORDS[launched.code] });
+    // While the weekly refresh considers the location (D42), say that it refits by itself at no charge.
+    const nextRefresh = await nextRefreshFor(ctx, scope, location);
+    const weekly = nextRefresh === null ? '' : ` Townwise also refits this location by itself each Monday at no charge, next on ${shortDate(nextRefresh)}.`;
     return json({
       started: true, status: launched.calibration.status, calibrationId: launched.calibration.id,
-      message: 'The calibration is running on Townwise’s servers and usually takes a few minutes. It used part of this month’s TownwiseAI budget.',
+      message: `The calibration is running on Townwise’s servers and usually takes a few minutes. It used part of this month’s TownwiseAI budget.${weekly}`,
       suggestedNextSteps: stepsFor('started'),
     });
   },

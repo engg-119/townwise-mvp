@@ -1,13 +1,14 @@
 // The forecast lab's result (schema townwise.lab-result/1), as the job posts it to the callback: the draft run file,
 // its scorecard and the parameters that reproduce it, or a failure code. checkLabResult also holds it to the
 // calibration it answers (the same id, the same last day of data, the same current forecast compared, no scorecard week
-// after that last day). Issues carry a path and a code only, never a value. Pure.
+// after that last day), and the engine its scorecard names to its run and its params (D42). Issues carry a path and a code only, never a value. Pure.
 import { z } from 'zod';
 
 import { isoDate } from '../dates.ts';
 import { checkLabRunFile, issueOf, labRunFileSchema, MAX_ISSUES, type FileIssue } from '../forecasts/file.ts';
 import type { CalibrationRecord } from '../stores/calibrations.ts';
-import { scorecardSchema } from './scorecard.ts';
+import { engineOf } from '../forecasts/reader.ts';
+import { labScorecardSchema } from './scorecard.ts';
 
 export const LAB_RESULT_SCHEMA = 'townwise.lab-result/1';
 /** The codes a failed result carries. */
@@ -70,7 +71,7 @@ export const labResultSchema = z.discriminatedUnion('ok', [
     ok: z.literal(true),
     codeVersion: z.string().regex(/^[0-9a-f]{40}$/),
     params: labParamsSchema,
-    scorecard: scorecardSchema,
+    scorecard: labScorecardSchema,
     run: labRunFileSchema,
   }),
   z.strictObject({
@@ -91,7 +92,8 @@ export type LabResultCheck = { ok: true; result: LabResult } | { ok: false; issu
  * The result for `calibration`, checked against today (UTC): its shape, the run file's own rules (checkLabRunFile),
  * the calibration's id, the last day of the input it was given, the current forecast it was compared with, and that
  * every scorecard week starts on or before that last day: those weeks reach TownwiseAI (lab/components.ts), and a later
- * one would be a forecast week, not the owner's history.
+ * one would be a forecast week, not the owner's history. The engine the scorecard names (which the gate judges by) is
+ * the run's (its model family), the params' (the baseline's carry `engine`), and has its own figures in `engines`.
  */
 export function checkLabResult(
   raw: unknown,
@@ -107,6 +109,11 @@ export function checkLabResult(
     const run = checkLabRunFile(result.run, today);
     if (!run.ok) issues.push(...run.issues.map((issue) => ({ path: issue.path === '' ? 'run' : `run.${issue.path}`, code: issue.code })));
     if (result.run.dataThrough !== calibration.dataThrough) issues.push({ path: 'run.dataThrough', code: 'data_through_mismatch' });
+    const { engine, engines } = result.scorecard;
+    const paramsEngine = 'engine' in result.params ? result.params.engine : 'model';
+    if (engineOf(result.run.model.family) !== engine || paramsEngine !== engine || engines[engine] === null) {
+      issues.push({ path: 'scorecard.engine', code: 'engine_mismatch' });
+    }
     const compared = result.scorecard.comparison;
     if (compared !== null && compared.championRunId !== calibration.championRunId) {
       issues.push({ path: 'scorecard.comparison.championRunId', code: 'champion_mismatch' });

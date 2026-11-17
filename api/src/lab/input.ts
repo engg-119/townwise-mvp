@@ -13,7 +13,7 @@ import type { TownwiseContext } from '../app.ts';
 import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-days.ts';
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
 import { scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
-import { eachDay } from '../forecasts/file.ts';
+import { canonicalSha256, eachDay } from '../forecasts/file.ts';
 import { engineOf } from '../forecasts/reader.ts';
 import { termEntries } from '../people-in-town/term.ts';
 import type { CalibrationRecord } from '../stores/calibrations.ts';
@@ -99,6 +99,19 @@ export const labInputSchema = z.strictObject({
 }).refine((input) => input.dataThrough <= input.today, { path: ['today'], message: 'dataThrough is after today' });
 
 export type LabInput = z.infer<typeof labInputSchema>;
+
+/** The input's keys the fingerprint leaves out: the calibration's own id, its date and the run it is compared with. */
+const NOT_FINGERPRINTED: ReadonlySet<string> = new Set(['calibrationId', 'today', 'champion']);
+
+/**
+ * The fingerprint the weekly refresh compares (D42, `dataSha256`): the sha256 of the canonical JSON of the input
+ * without calibrationId, today and champion (so its schema version, days, flags from notes and rules, calendar and
+ * pattern change date), together with the lab's model version, so a change to the lab's model refits every location once.
+ */
+export function labInputFingerprint(input: LabInput, modelVersion: string = LAB_MODEL_VERSION): string {
+  const data = Object.fromEntries(Object.entries(input).filter(([key]) => !NOT_FINGERPRINTED.has(key)));
+  return canonicalSha256({ modelVersion, input: data });
+}
 export type LabDay = LabInput['days'][number];
 type LabChampion = z.infer<typeof championSchema>;
 type LabCalendarEntry = z.infer<typeof calendarEntrySchema>;

@@ -1,8 +1,9 @@
 // The scorecard a calibration returns (the lab result's `scorecard`). Strict: unknown keys and non-finite numbers are
 // refused, and so are a negative error and more weeks inside a range than weeks with one, since the gate trusts them.
 // Since lab-input/2 (D42) the lab also names the engine it returned, both engines' figures on the same weeks, its weekly
-// bias and the longer-horizon reports. Those are optional, so a stored scorecard from before still parses
-// (lab/views.ts, chat/tools/calibration.ts); the gate reads them from autonomous-forecasts phase 3a.
+// bias and the longer-horizon reports. Those are optional in scorecardSchema, so a stored scorecard from before still
+// parses (lab/views.ts, chat/tools/calibration.ts), and required in labScorecardSchema, the one a result is posted
+// with (lab/result.ts), since the gate reads them (lab/gate.ts).
 import { z } from 'zod';
 
 import { isoDate } from '../dates.ts';
@@ -44,29 +45,38 @@ export const metricsSchema = z.strictObject({
   weekdayBiasMeanAbs: error,
 });
 
+const engineSchema = z.enum(['model', 'baseline']);
+export type Engine = z.infer<typeof engineSchema>;
+
+const backtestSchema = z.strictObject({
+  from: isoDate,
+  to: isoDate,
+  origins: z.array(isoDate),
+  weeks: count,
+  weeksWithRange: count,
+  metrics: metricsSchema,
+  metrics7: metricsSchema,
+  weekdayMedianWeeklyWape: error,
+  /** The backtest weeks' forecasts minus actuals, over the actuals. */
+  weeklyBias: num.optional(),
+  folds: z.array(
+    z.strictObject({ trainThrough: isoDate, from: isoDate, to: isoDate, weeks: count, weeklyWape: error, weeksOver20: count }),
+  ),
+  series: z.array(
+    z.strictObject({ week: isoDate, actual: z.number().int(), mid: num, low: nullableNum, high: nullableNum }),
+  ),
+});
+
+/** Each engine's figures on the same weeks; the model's null when it did not run (a span under 595 days). */
+const enginesSchema = z.strictObject({ model: engineFiguresSchema.nullable(), baseline: engineFiguresSchema });
+
+/** A scorecard as stored: one from before lab-input/2 has no engine fields. */
 export const scorecardSchema = z.strictObject({
   horizonDays: z.literal(28),
   /** The engine whose run this is. */
-  engine: z.enum(['model', 'baseline']).optional(),
+  engine: engineSchema.optional(),
   history: z.strictObject({ firstDate: isoDate, lastDate: isoDate, days: count, spanDays: count }),
-  backtest: z.strictObject({
-    from: isoDate,
-    to: isoDate,
-    origins: z.array(isoDate),
-    weeks: count,
-    weeksWithRange: count,
-    metrics: metricsSchema,
-    metrics7: metricsSchema,
-    weekdayMedianWeeklyWape: error,
-    /** The backtest weeks' forecasts minus actuals, over the actuals. */
-    weeklyBias: num.optional(),
-    folds: z.array(
-      z.strictObject({ trainThrough: isoDate, from: isoDate, to: isoDate, weeks: count, weeklyWape: error, weeksOver20: count }),
-    ),
-    series: z.array(
-      z.strictObject({ week: isoDate, actual: z.number().int(), mid: num, low: nullableNum, high: nullableNum }),
-    ),
-  }),
+  backtest: backtestSchema,
   comparison: z
     .strictObject({
       championRunId: z.string().min(1),
@@ -88,11 +98,20 @@ export const scorecardSchema = z.strictObject({
       ),
     })
     .nullable(),
-  /** Each engine's figures on the same weeks; the model's null when it did not run (a span under 595 days). */
-  engines: z.strictObject({ model: engineFiguresSchema.nullable(), baseline: engineFiguresSchema }).optional(),
+  engines: enginesSchema.optional(),
   horizon91: horizonReportSchema.optional(),
   horizonReach: horizonReportSchema.optional(),
 });
 
+/** The scorecard a lab result is posted with (lab-input/2): every engine field present, since the gate reads them. */
+export const labScorecardSchema = scorecardSchema.extend({
+  engine: engineSchema,
+  backtest: backtestSchema.extend({ weeklyBias: num }),
+  engines: enginesSchema,
+  horizon91: horizonReportSchema,
+  horizonReach: horizonReportSchema,
+});
+
 export type Scorecard = z.infer<typeof scorecardSchema>;
+export type LabScorecard = z.infer<typeof labScorecardSchema>;
 export type Metrics = z.infer<typeof metricsSchema>;

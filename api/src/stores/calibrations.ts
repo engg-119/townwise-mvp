@@ -45,6 +45,8 @@ interface CalibrationFields {
   championRunId: string | null;
   dataThrough: string | null;
   inputSha256: string | null;
+  /** The fingerprint the weekly refresh compares (D42, lab/input.ts labInputFingerprint); null on one from before it. */
+  dataSha256: string | null;
   imageDigest: string | null;
   codeVersion: string | null;
   runId: string | null;
@@ -81,6 +83,7 @@ function calibrationSchema(): Schema<CalibrationFields> {
     championRunId: { type: String, default: null },
     dataThrough: { type: String, default: null },
     inputSha256: { type: String, default: null },
+    dataSha256: { type: String, default: null },
     imageDigest: { type: String, default: null },
     codeVersion: { type: String, default: null },
     runId: { type: String, default: null },
@@ -117,6 +120,8 @@ export interface CalibrationRecord {
   readonly championRunId: string | null;
   readonly dataThrough: string | null;
   readonly inputSha256: string | null;
+  /** The fingerprint the weekly refresh compares (D42), set with the input; null before the fetch or on one from before D42. */
+  readonly dataSha256: string | null;
   readonly imageDigest: string | null;
   readonly codeVersion: string | null;
   readonly runId: string | null;
@@ -149,10 +154,12 @@ export interface CalibrationStore {
   recordImageDigest(scope: OrgScope, id: string, imageDigest: string): Promise<boolean>;
   /**
    * The job's one input fetch, by compare-and-set on running with no input recorded yet: the hash of the input it is
-   * given, the last day it holds, and the sha256 of the result token the API hands only to that fetch, the one the
-   * result is posted with. False for any second fetch.
+   * given, its fingerprint (D42), the last day it holds, and the sha256 of the result token the API hands only to that
+   * fetch, the one the result is posted with. False for any second fetch.
    */
-  recordInput(scope: OrgScope, id: string, input: { inputSha256: string; dataThrough: string; resultTokenSha256: string }): Promise<boolean>;
+  recordInput(
+    scope: OrgScope, id: string, input: { inputSha256: string; dataSha256: string; dataThrough: string; resultTokenSha256: string },
+  ): Promise<boolean>;
   /** Compare-and-set on running with no run recorded yet: a run id, once set, is kept. */
   recordResult(scope: OrgScope, id: string, result: { runId: string; scorecardJson: string; codeVersion: string }): Promise<boolean>;
   /** Compare-and-set on running with no gate yet: the gate is set once. */
@@ -178,6 +185,7 @@ function toCalibration(doc: CalibrationDoc): CalibrationRecord {
     championRunId: doc.championRunId,
     dataThrough: doc.dataThrough,
     inputSha256: doc.inputSha256,
+    dataSha256: doc.dataSha256 ?? null,
     imageDigest: doc.imageDigest,
     codeVersion: doc.codeVersion,
     runId: doc.runId,
@@ -244,7 +252,7 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
     async recordInput(scope, id, input) {
       const result = await Calibration.updateOne(
         { ...ofId(scope, id), status: 'running', inputSha256: null },
-        { $set: { inputSha256: input.inputSha256, dataThrough: input.dataThrough, tokenSha256: input.resultTokenSha256 } },
+        { $set: { inputSha256: input.inputSha256, dataSha256: input.dataSha256, dataThrough: input.dataThrough, tokenSha256: input.resultTokenSha256 } },
       );
       return result.modifiedCount === 1;
     },

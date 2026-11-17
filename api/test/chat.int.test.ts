@@ -299,6 +299,7 @@ describe('tools', () => {
       timeZone: 'America/New_York',
       coverage: { firstDate: '2026-05-01', lastDate: '2026-05-02', dayCount: 2, guestsDayCount: 2, netSalesDayCount: 1, missingDays: 0 },
       calibration: 'not_calibrated',
+      calibrationWords: null,
       townProfile: true,
       months: [{ month: '2026-05', days: 2, guests: 230, netSalesUsd: 5123.45 }],
     });

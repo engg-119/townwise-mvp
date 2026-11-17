@@ -17,6 +17,7 @@ import type { CalibrationView } from '../src/lab/views.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { holdCalls } from './helpers/hold.ts';
 import { fakeLabRunner, jobCall, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
+import { metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
 import {
   call, logLines, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -235,6 +236,51 @@ describe('the gate decides', () => {
     expect(await runDoc(view.runId ?? '')).toMatchObject({ status: 'draft' });
     expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId), status: 'published' })).toBe(0);
     expect((await actionsOf(t.orgId, 'forecast.published')).map((event) => (event.target as { id: string }).id)).toEqual([championId]);
+  });
+});
+
+describe('one set of rules for every calibration (D42)', () => {
+  /** A 70-day run after the history's last day with every middle `mid`, so the run is the current one once published. */
+  function run70(mid: number): Partial<LabSuccess['run']> {
+    const { days, weeks } = runDays('2026-05-31', 70);
+    return {
+      days: days.map((day) => ({ ...day, low: mid * 0.8, mid, high: mid * 1.25, baseline: mid })),
+      weeks: weeks.map((week) => ({ ...week, low: week.openDays * mid * 0.8, mid: week.openDays * mid, high: week.openDays * mid * 1.25 })),
+    };
+  }
+
+  /** A calibration of `t` whose job posts a model draft with backtest weekly WAPE `wape`, no held-out week and middles `mid`. */
+  async function calibrateWith(t: Team, wape: number, mid = 50): Promise<CalibrationView> {
+    const { calibration, job } = await started(t);
+    const input = await inputFor(job);
+    const scorecard = scorecardWith({
+      comparison: null, backtest: { metrics: metricsWith({ weeklyWape: wape }) },
+      history: { firstDate: input.days[0]?.date ?? '', lastDate: input.dataThrough, spanDays: 607 },
+    });
+    expect(await post(job, labResultFor(input, { scorecard, run: run70(mid) }))).toEqual(SUCCEEDED);
+    return viewOf(t, calibration.id);
+  }
+
+  it('a refit against a one-week-old lab run is judged on the streak’s best recorded backtest, not held-out weeks', async () => {
+    const t = await team({ forecastsOn: true });
+    expect((await calibrateWith(t, 0.17)).gate).toMatchObject({ published: true, reason: 'published' });
+    // 0.6 points above the run's recorded 17.0%: worse, and no held-out week would have answered too_few_weeks
+    expect((await calibrateWith(t, 0.176, 51)).gate).toMatchObject({ published: false, reason: 'refresh_worse', words: GATE_WORDS.refresh_worse });
+    // 0.5 points above: a tie publishes
+    const refreshed = await calibrateWith(t, 0.175, 52);
+    expect(refreshed.gate).toMatchObject({ published: true, reason: 'refreshed', words: GATE_WORDS.refreshed });
+    expect(await runDoc(refreshed.runId ?? '')).toMatchObject({ status: 'published' });
+    // The streak's best is still the first run's 17.0%, so 17.9% is held, though it is within 0.5 points of 17.5%
+    expect((await calibrateWith(t, 0.179, 53)).gate).toMatchObject({ published: false, reason: 'refresh_worse' });
+  });
+
+  it('a passing refit whose next 28 days move more than 25% from the current run’s is held for staff', async () => {
+    const t = await team({ forecastsOn: true });
+    expect((await calibrateWith(t, 0.17)).gate?.reason).toBe('published');
+    const jumped = await calibrateWith(t, 0.17, 65);
+    expect(jumped.gate).toMatchObject({ published: false, reason: 'jump_held', words: GATE_WORDS.jump_held });
+    expect(await runDoc(jumped.runId ?? '')).toMatchObject({ status: 'draft' });
+    expect((await calibrateWith(t, 0.17, 60)).gate).toMatchObject({ published: true, reason: 'refreshed' });
   });
 });
 

@@ -11,13 +11,17 @@ import { readFileSync } from 'node:fs';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { utcDay } from '../src/dates.ts';
+import type { OrgScope } from '../src/access/policy.ts';
+import { daysBetween, utcDay } from '../src/dates.ts';
 import { MODEL_CARD, MODEL_CARD_VERSION, type EstimatesAbout } from '../src/estimates/about.ts';
-import type { ForecastWindow } from '../src/forecasts/reader.ts';
+import { eachDay, runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
+import { createForecastReader, type ForecastWindow } from '../src/forecasts/reader.ts';
+import { rowsOf } from '../src/handlers/forecast-runs.ts';
 import type { PeopleInTownWindow } from '../src/people-in-town/estimate.ts';
 import type { PeopleData } from '../src/people-in-town/sources.ts';
 import type { Town } from '../src/towns.ts';
 import { addGrant, addLocation, addNote, addOwnerCalendar, addSalesDay, addSeat, createOrg } from './helpers/fixtures.ts';
+import { runDays } from './helpers/lab.ts';
 import {
   call, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -625,6 +629,84 @@ describe('both routes', () => {
 });
 
 // U13B. Last in the file: it moves the clock into the evening of June 1 in Hanover (June 2 in UTC).
+describe('the forecast reader with a year of weekly runs (D42)', () => {
+  it('reads rows by a bounded range, and answers exactly as a reader that reads every row', async () => {
+    const locationId = await addLocation(server, { orgId, name: `Weekly Room ${randomUUID().slice(0, 6)}` });
+    const scope = { orgId } as OrgScope;
+    const today = '2026-06-01';
+    // Synthetic guests on every day for a year and a quarter, a closure note on one of them
+    await server.connection.collection('tw_sales_days').insertMany(eachDay('2025-03-01', '2026-05-31').map((date, index) => ({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date, guests: 60 + (index % 7) * 9 + (index % 5),
+      netSalesCents: null, uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+    })));
+    await addNote(server, { orgId, locationId, detail: 'Closed for a staff party', startDate: '2026-04-18' });
+    // 52 published weekly runs, each reaching 91 days past its last day of data, each a little different
+    for (let week = 0; week < 52; week += 1) {
+      const dataThrough = utcDay(new Date('2025-06-01T00:00:00.000Z'), 7 * week);
+      const { days, weeks } = runDays(dataThrough, 91);
+      const mid = 60 + (week % 9);
+      const file: ForecastRunFile = {
+        schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+        trainingSource: 'files_from_owner', trainedFrom: '2025-03-01', dataThrough, madeAt: utcDay(new Date(`${dataThrough}T00:00:00.000Z`), 1),
+        frozen: null, interval: { level: 0.8, widened: true }, backtest: null,
+        days: days.map((day) => ({ ...day, low: mid - 12, mid, high: mid + 15, baseline: mid })),
+        weeks: weeks.map((each) => ({ ...each, low: (mid - 12) * each.openDays, mid: mid * each.openDays, high: (mid + 15) * each.openDays })),
+      };
+      const { run } = await server.ctx.stores.forecasts.upsertRun(scope, locationId, {
+        id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: 'staff-0000', lab: null, now: server.clock.now(),
+      });
+      await server.ctx.stores.forecasts.writeRows(scope, locationId, run.id, rowsOf(file, 'hanover-nh'));
+      await server.ctx.stores.forecasts.setStatus(scope, run.id, { from: ['importing'], to: 'published', at: server.clock.now(), by: 'staff-0000' });
+    }
+    const location = await server.ctx.stores.locations.find(scope, locationId);
+    if (location === null) throw new Error('no location');
+    const stores = server.ctx.stores;
+    const asked: ({ from: string; to: string } | undefined)[] = [];
+    const counted: number[] = [];
+    const ranged = createForecastReader({
+      stores: {
+        ...stores,
+        forecasts: {
+          ...stores.forecasts,
+          rows: async (...args: Parameters<typeof stores.forecasts.rows>) => {
+            asked.push(args[3]);
+            const rows = await stores.forecasts.rows(...args);
+            counted.push(rows.length);
+            return rows;
+          },
+        },
+      },
+    });
+    // Today's reader, which reads every row of every run
+    const unranged = createForecastReader({
+      stores: { ...stores, forecasts: { ...stores.forecasts, rows: (s, id, runIds) => stores.forecasts.rows(s, id, runIds) } },
+    });
+    const all = await stores.forecasts.rows(scope, locationId, (await stores.forecasts.published(scope, locationId)).map((run) => run.id));
+    for (const range of [
+      { from: '2026-05-11', to: '2026-06-21' }, // last weeks and the next three: 42 days
+      { from: '2025-12-01', to: '2026-01-11' }, // in the past, every day scored
+      { from: '2026-06-01', to: '2026-08-31' }, // the next 92 days
+    ]) {
+      asked.length = 0;
+      counted.length = 0;
+      const answer = await ranged.window(scope, location, range, today);
+      expect(answer.available).toBe(true);
+      expect(answer).toEqual(await unranged.window(scope, location, range, today));
+      // Bounded: the window, a week either side, and the days of the runs it uses
+      expect(asked.length).toBeGreaterThan(0);
+      for (const bound of asked) {
+        if (bound === undefined) return expect.unreachable('every read is ranged');
+        expect(daysBetween(bound.from, bound.to)).toBeLessThanOrEqual(daysBetween(range.from, range.to) + 2 * 91 + 12);
+      }
+      // Every day is in about 13 weekly runs, so a span's rows grow with its days, never with the number of runs
+      expect(Math.max(...counted)).toBeLessThan(all.length);
+    }
+    asked.length = 0;
+    expect(await ranged.latest(scope, locationId, today)).toEqual(await unranged.latest(scope, locationId, today));
+    expect(asked.every((bound) => bound !== undefined && daysBetween(bound.from, bound.to) <= 91)).toBe(true);
+  });
+});
+
 describe('the forecast read’s today', () => {
   it('is the town’s local day, so a day still under way there is not yet past', async () => {
     await removeStaffFactor(server);

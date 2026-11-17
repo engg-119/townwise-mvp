@@ -3,13 +3,14 @@
 // words for yet reads with none. Synthetic records.
 import { describe, expect, it } from 'vitest';
 
+import { GATE_WORDS } from '../src/lab/gate.ts';
 import { calibrationView } from '../src/lab/views.ts';
 import type { CalibrationRecord } from '../src/stores/calibrations.ts';
 
 function record(fields: Partial<CalibrationRecord> = {}): CalibrationRecord {
   return {
     id: 'c1', locationId: 'l1', requestedBy: { userId: 'admin-0001', role: 'org_admin', via: 'chat' }, regimeStart: null,
-    status: 'succeeded', championRunId: null, dataThrough: '2026-11-15', inputSha256: null, imageDigest: null, codeVersion: null,
+    status: 'succeeded', championRunId: null, dataThrough: '2026-11-15', inputSha256: null, dataSha256: null, imageDigest: null, codeVersion: null,
     runId: null, scorecardJson: null, gate: null, failure: null, chargedMicroUsd: 100_000,
     requestedAt: new Date('2026-11-23T08:10:00.000Z'), startedAt: null, finishedAt: null, ...fields,
   };
@@ -28,7 +29,9 @@ describe('calibrationView', () => {
   });
 
   it('gives a gate reason it has no words for no words, never a failure', () => {
-    const view = calibrationView(record({ gate: { published: false, reason: 'jump_held' } }));
-    expect(view.gate).toEqual({ published: false, reason: 'jump_held', words: null });
+    const view = calibrationView(record({ gate: { published: false, reason: 'a_later_reason' } }));
+    expect(view.gate).toEqual({ published: false, reason: 'a_later_reason', words: null });
+    // D42's reasons have their words since phase 3a
+    expect(calibrationView(record({ gate: { published: false, reason: 'jump_held' } })).gate?.words).toBe(GATE_WORDS.jump_held);
   });
 });

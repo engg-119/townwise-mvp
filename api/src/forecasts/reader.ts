@@ -16,7 +16,10 @@
 // the 52 weeks the effects need when the range reaches today and over the 8 weeks before the first scored day that
 // likely closed reads, and one read of the notes and rules marks the closed days for the effects and the accuracy. The
 // town calendar's term entries are made once for the labels and the effects. A read also scores its own days, each
-// against the run chosen for it, as the window's accuracy (D42). It logs nothing and stores nothing.
+// against the run chosen for it, as the window's accuracy (D42). Rows are read by range (D42, about 52 weekly runs a
+// year): every run's rows over the days the answer needs, which are the read's days and a week either side, and every
+// past day of each run that could supply one of them, for its live accuracy; the model card's, over the newest run's
+// days. It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
 import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
@@ -182,6 +185,27 @@ function chooseDays(runs: readonly ForecastRunRecord[], rows: readonly ForecastR
   return chosen;
 }
 
+/** `date` moved by `days`. */
+function shifted(date: string, days: number): string {
+  return utcDay(new Date(`${date}T00:00:00.000Z`), days);
+}
+
+/**
+ * The rows a window read needs (D42): the days from 6 before `range` to 6 after it (its days and the weeks holding
+ * them), and every day to yesterday of each run reaching into those, so each run used keeps its live accuracy over all
+ * its own past days. Every run's rows over these days choose each date exactly as all of their rows would.
+ */
+function windowRows(runs: readonly ForecastRunRecord[], range: { from: string; to: string }, today: string): { from: string; to: string } {
+  const from = shifted(range.from, -6);
+  const to = shifted(range.to, 6);
+  const yesterday = shifted(today, -1);
+  const reaching = runs.filter((run) => run.range.from <= to && run.range.to >= from);
+  return {
+    from: firstOf([from, ...reaching.map((run) => run.range.from)]) ?? from,
+    to: lastOf([to, ...reaching.map((run) => (run.range.to < yesterday ? run.range.to : yesterday))]) ?? to,
+  };
+}
+
 function spans(dates: readonly string[]): { from: string; to: string }[] {
   const out: { from: string; to: string }[] = [];
   for (const date of dates) {
@@ -208,10 +232,16 @@ export function createForecastReader(deps: {
    * read when no run supplies a day.
    */
   async function load(
-    scope: OrgScope, locationId: string, today: string, reach: { historyFrom?: string; notes?: { from: string; to: string } } = {},
+    scope: OrgScope, locationId: string, today: string,
+    reach: {
+      historyFrom?: string; notes?: { from: string; to: string };
+      /** The days whose rows the answer needs (windowRows), from the published runs. */
+      rows: (runs: readonly ForecastRunRecord[]) => { from: string; to: string } | null;
+    },
   ) {
     const runs = await forecasts.published(scope, locationId);
-    const rows = await forecasts.rows(scope, locationId, runs.map((run) => run.id));
+    const span = reach.rows(runs);
+    const rows = span === null ? [] : await forecasts.rows(scope, locationId, runs.map((run) => run.id), span);
     const chosen = chooseDays(runs, rows);
     const dates = [...chosen.keys()].sort();
     const [first] = dates;
@@ -256,6 +286,7 @@ export function createForecastReader(deps: {
       const { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn } = await load(scope, location.id, today, {
         ...(history === null ? {} : { historyFrom: history.readFrom }),
         notes: { from: firstOf([at(range.from, -6), history?.from]) ?? range.from, to: at(range.to, 6) },
+        rows: (published) => (published.length === 0 ? null : windowRows(published, range, today)),
       });
       const dates = eachDay(range.from, range.to);
       if (runs.length === 0) {
@@ -327,7 +358,8 @@ export function createForecastReader(deps: {
       };
     },
     async latest(scope, locationId, today) {
-      const { runs, liveOf } = await load(scope, locationId, today);
+      // The newest run supplies every one of its own days, so its rows' days are all its live accuracy needs.
+      const { runs, liveOf } = await load(scope, locationId, today, { rows: (published) => published[0]?.range ?? null });
       const [newest] = runs;
       return newest === undefined ? null : { run: runView(newest), live: liveOf(newest.id) };
     },

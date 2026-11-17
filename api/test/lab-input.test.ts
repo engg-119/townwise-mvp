@@ -7,8 +7,8 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { daysBetween } from '../src/dates.ts';
-import { eachDay } from '../src/forecasts/file.ts';
-import { HORIZON_DAYS, labInputOf, labInputSchema, type LabInput } from '../src/lab/input.ts';
+import { canonicalSha256, eachDay } from '../src/forecasts/file.ts';
+import { HORIZON_DAYS, LAB_MODEL_VERSION, labInputFingerprint, labInputOf, labInputSchema, type LabInput } from '../src/lab/input.ts';
 import type { ScheduledRule } from '../src/forecasts/adjust.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord } from '../src/stores/forecasts.ts';
@@ -426,6 +426,50 @@ describe('labInputOf', () => {
       days: history('2025-01-02', '2026-05-31'), notes: [], rules: [], today: TODAY, champion: null,
     });
     expect(input?.days.every((each) => each.term === 'interim' && each.weekOfTerm === -1 && each.events.length === 0)).toBe(true);
+  });
+});
+
+describe('labInputFingerprint (D42, the weekly refresh’s “changed since its last fit”)', () => {
+  const days = history('2025-01-02', '2026-05-31');
+  const base = inputOf(days);
+  const fingerprint = labInputFingerprint(base);
+  const run = { id: 'd4'.repeat(12), dataThrough: '2026-03-31', model: { family: 'hybrid_linear_xgboost' } } as ForecastRunRecord;
+  const championRow: ForecastRow = {
+    runId: run.id, span: 'day', from: '2026-04-01', to: '2026-04-01', status: 'open', low: 1, mid: 2, high: 3, baseline: 2, openDays: null, reasons: [],
+  };
+
+  it('is a sha256 of the input without its calibration id, today and current run, with the schema and LAB_MODEL_VERSION', () => {
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(fingerprint).not.toBe(canonicalSha256(base));
+    const { schema, metric, dataThrough, horizonDays, regimeStart, calendar } = base;
+    expect(fingerprint).toBe(canonicalSha256({
+      modelVersion: LAB_MODEL_VERSION, input: { schema, metric, dataThrough, horizonDays, regimeStart, days: base.days, calendar },
+    }));
+  });
+
+  it('is unchanged when only the calibration, today or the current run changes', () => {
+    expect(labInputFingerprint({ ...base, calibrationId: 'e5'.repeat(12) })).toBe(fingerprint);
+    expect(labInputFingerprint({ ...base, today: '2026-06-09' })).toBe(fingerprint);
+    expect(labInputFingerprint(inputOf(days, [], { run, rows: [championRow] }))).toBe(fingerprint);
+  });
+
+  it('changes with a rule, a note, a day, a deleted day, a pattern change date or a model version bump', () => {
+    const rule: ScheduledRule = {
+      id: '1'.repeat(24),
+      // A party every Saturday with no guest count: privateEvent on history and future Saturdays alike
+      schedule: { kind: 'private_event', startDate: '2026-01-03', endDate: null, weekdays: [6], effect: 'more_guests', expectedGuests: null, startTime: null, endTime: null },
+    };
+    const changed = [
+      inputOf(days, [], null, [rule]),
+      inputOf(days, [note({ kind: 'private_event', startDate: '2026-04-11' })]),
+      inputOf([...days, day('2026-06-01', 52)]),
+      inputOf(days.filter((each) => each.date !== '2026-03-14')),
+      inputOf(days.map((each) => (each.date === '2026-03-14' ? { ...each, guests: (each.guests ?? 0) + 1 } : each))),
+      { ...base, regimeStart: '2026-01-05' },
+    ];
+    for (const input of changed) expect(labInputFingerprint(input)).not.toBe(fingerprint);
+    expect(labInputFingerprint(base, 'v8')).not.toBe(fingerprint);
+    expect(labInputFingerprint(base, LAB_MODEL_VERSION)).toBe(fingerprint);
   });
 });
 

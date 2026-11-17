@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { scorecardWith } from './helpers/lab-scorecard.ts';
+import { scorecardWith, storedScorecard } from './helpers/lab-scorecard.ts';
 import { scorecardSchema } from '../src/lab/scorecard.ts';
 
 describe('scorecardSchema', () => {
@@ -11,7 +11,8 @@ describe('scorecardSchema', () => {
   it('accepts the engine fields of a lab-input/2 calibration (D42), and a stored scorecard from before without them', () => {
     const figures = { weeks: 37, weeklyWape: 0.097, weeklyBias: -0.034, coverage80: { inside: 15, weeks: 25 } };
     const report = { weeks: 28, weeklyWape: 0.094, coverage80: { inside: 4, weeks: 7 } };
-    const base = scorecardWith();
+    // A stored scorecard from before lab-input/2: no engine fields at all
+    const base = storedScorecard();
     const withEngines = {
       ...base, engine: 'baseline', backtest: { ...base.backtest, weeklyBias: -0.034 },
       engines: { model: { ...figures, weeklyWape: 0.168 }, baseline: figures }, horizon91: report, horizonReach: null,
