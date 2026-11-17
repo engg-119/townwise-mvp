@@ -31,6 +31,9 @@ import { call, refresh, signIn, startTownwiseServer, type TestSession, type Town
 
 const LAB_DIR = fileURLToPath(new URL('../../modeling/lab', import.meta.url));
 const HAS_UV = spawnSync('uv', ['--version'], { stdio: 'ignore' }).status === 0;
+// Opt-in: building the lab's Python environment from scratch takes minutes, which `npm run verify` in CI cannot
+// afford (its job stops at 30 minutes). Run it before a release with TOWNWISE_LAB_E2E=1 (api/README.md).
+const RUN_E2E = process.env.TOWNWISE_LAB_E2E === '1';
 const TITLE = 'the weekly forecast worker, end to end with the real local lab';
 
 /** Days of guests seeded before Last week, ending the day before it starts. */
@@ -96,7 +99,10 @@ function mongoUri(): string {
 /** The pass's clock: Monday 16 November 2026, 03:05 in Hanover (EST), when the location is due. */
 const MONDAY_0305 = '2026-11-16T08:05:00.000Z';
 
-describe.skipIf(!HAS_UV)(HAS_UV ? TITLE : `${TITLE} (skipped: uv is not on PATH, and this test runs the lab job with it)`, () => {
+describe.skipIf(!RUN_E2E || !HAS_UV)(
+  !RUN_E2E ? `${TITLE} (skipped: set TOWNWISE_LAB_E2E=1 to run it)`
+    : HAS_UV ? TITLE : `${TITLE} (skipped: uv is not on PATH, and this test runs the lab job with it)`,
+  () => {
   let server: TownwiseTestServer;
   let member: TestSession;
   let orgId: string;
