@@ -8853,6 +8853,7 @@
  "champion": {
   "runId": "d4d4d4d4d4d4d4d4d4d4d4d4",
   "engine": "model",
+  "recordedWeekdayBiasMeanAbs": 0.04,
   "dataThrough": "2026-01-31",
   "days": [
    {

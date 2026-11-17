@@ -8865,6 +8865,7 @@
  "champion": {
   "runId": "fedcba9876543210fedcba98",
   "engine": "model",
+  "recordedWeekdayBiasMeanAbs": null,
   "dataThrough": "2025-06-30",
   "days": [
    {

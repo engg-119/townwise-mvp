@@ -4,7 +4,7 @@ Runs two engines (design decision 8): the baseline engine (baseline.py) always, 
 holiday multipliers, optional weekday regime) when the history spans MIN_HISTORY_DAYS. Both are backtested on the same
 weeks (the model's quarterly refits, the baseline's weekly cutoffs, each week scored 28 and 7 days ahead), and the one
 returned is the current run's engine unless the other's backtest weekly WAPE is at least 0.5 points lower and it passes
-the gate's coverage, bias and weekday-median checks (choose_engine, passes). The returned engine's backtest, six-month folds and
+the gate's coverage, bias, weekday-bias and weekday-median checks (choose_engine, passes). The returned engine's backtest, six-month folds and
 comparison with the current published run make the scorecard, with each engine's own figures beside them, and its run
 reaches today plus 91 days (forecast.run_end). Nothing here logs or prints.
 """
@@ -31,6 +31,7 @@ ENGINE_MARGIN = 0.005  # an engine switch needs the other's backtest weekly WAPE
 WEEKS_WITH_RANGE_MIN = 12  # GATE.heldOutWeeksMin
 COVERAGE_MIN, COVERAGE_MAX = 0.65, 0.95  # GATE.coverageMin and GATE.coverageMax
 BASELINE_BIAS_MAX = 0.05  # GATE.baselineBiasMax
+WEEKDAY_BIAS_ALLOWANCE = 0.02  # GATE.weekdayBiasAllowance: a model's weekday bias over the current run's recorded one
 MEDIAN_MARGIN = 0.005  # GATE.wapeMargin: the model's backtest weekly WAPE must be this far under its weekday median's
 CODE_VERSION = re.compile(r"[0-9a-f]{40}")
 
@@ -55,12 +56,14 @@ def _failure(calibration_id: str | None, code: str) -> dict:
     return {"schema": schema.RESULT_SCHEMA, "calibrationId": calibration_id, "ok": False, "code": code}
 
 
-def passes(bt: dict, engine: str) -> bool:
-    """Whether an engine's backtest passes the gate's absolute checks that need no current run (gate.ts `absolute`):
-    12 or more weeks with an 80% range, 65% to 95% of them inside it, a backtest weekly WAPE under the engine's own
-    weekday median's (`median_wape`, from its training medians on its own cutoffs, so the two engines' differ): the
-    model's at least 0.5 points under, the baseline's strictly under; and for the baseline a weekly bias within 5
-    points either way. Each comparison is written as the gate writes it."""
+def passes(bt: dict, engine: str, recorded_bias: float | None = None) -> bool:
+    """Whether an engine's backtest passes the gate's absolute checks (gate.ts `absolute`): 12 or more weeks with an
+    80% range, 65% to 95% of them inside it, a backtest weekly WAPE under the engine's own weekday median's
+    (`median_wape`, from its training medians on its own cutoffs, so the two engines' differ): the model's at least 0.5
+    points under, the baseline's strictly under; for the model a mean absolute weekday bias no more than 2 points over
+    `recorded_bias` (the current run's recorded backtest, champion.recordedWeekdayBiasMeanAbs; None with no current
+    run or one without a recorded backtest, when there is nothing to compare with); and for the baseline a weekly bias
+    within 5 points either way. Each comparison is written as the gate writes it."""
     coverage = bt["scores"]["coverage80"]
     if coverage["weeks"] < WEEKS_WITH_RANGE_MIN:
         return False
@@ -68,6 +71,9 @@ def passes(bt: dict, engine: str) -> bool:
         return False
     wape = bt["scores"]["weeklyWape"]
     if engine == "model":
+        weekday_bias = bt["scores"]["weekdayBiasMeanAbs"]
+        if recorded_bias is not None and weekday_bias > recorded_bias + WEEKDAY_BIAS_ALLOWANCE + 1e-12:
+            return False
         return not wape > bt["median_wape"] - MEDIAN_MARGIN
     return abs(bt["bias"]) <= BASELINE_BIAS_MAX + 1e-12 and wape < bt["median_wape"]
 
@@ -265,9 +271,11 @@ def calibrate(inp: dict, code_version: str) -> dict:
                          baseline.shaped_from(history.first_day)))
 
     current = None if inp["champion"] is None else inp["champion"]["engine"]
+    recorded_bias = None if inp["champion"] is None else inp["champion"]["recordedWeekdayBiasMeanAbs"]
     engine = choose_engine(current, None if model_bt is None else model_bt["scores"]["weeklyWape"],
-                           base_bt["scores"]["weeklyWape"], model_ok=model_bt is not None and passes(model_bt, "model"),
-                           baseline_ok=passes(base_bt, "baseline"))
+                           base_bt["scores"]["weeklyWape"],
+                           model_ok=model_bt is not None and passes(model_bt, "model", recorded_bias),
+                           baseline_ok=passes(base_bt, "baseline", recorded_bias))
     bt, preds = (model_bt, model_preds) if engine == "model" else (base_bt, base_preds)
     days28, weeks28, log_err, scores, window = bt["days28"], bt["weeks28"], bt["log_err"], bt["scores"], bt["window"]
 

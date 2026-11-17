@@ -409,6 +409,8 @@ describe('retries, races and existing runs', () => {
     const second = await started(t);
     const input = await inputFor(second.job);
     expect(input.champion?.runId).toBe(runId);
+    // The lab holds an engine switch to the gate's weekday-bias check against the run's recorded backtest (D42).
+    expect(input.champion?.recordedWeekdayBiasMeanAbs).toBe(firstResult.scorecard.backtest.metrics.weekdayBiasMeanAbs);
     expect(await post(second.job, labResultFor(input, { run: firstResult.run }))).toEqual(SUCCEEDED);
     expect(await runDoc(runId)).toEqual(before);
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(runId) })).toBe(rows);

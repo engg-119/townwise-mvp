@@ -795,7 +795,7 @@ def test_the_model_wins_a_first_forecast(lab_input):
     inp = without_level_jump(lab_input)
     inp["champion"] = None
     with pytest.MonkeyPatch.context() as patch:
-        patch.setattr(pipeline, "passes", lambda bt, engine: True)
+        patch.setattr(pipeline, "passes", lambda bt, engine, recorded_bias=None: True)
         out = pipeline.calibrate(inp, CODE)
     engines = out["scorecard"]["engines"]
     assert engines["model"]["weeklyWape"] <= engines["baseline"]["weeklyWape"] - pipeline.ENGINE_MARGIN
@@ -856,10 +856,13 @@ def _set(path, value):
     _set(["champion", "weeks", 0, "openDays"], 8),
     _set(["champion", "runId"], ""),
     _set(["champion", "engine"], None),
+    _set(["champion", "recordedWeekdayBiasMeanAbs"], -0.01),
+    _set(["champion", "recordedWeekdayBiasMeanAbs"], "0.03"),
     _set(["calendar", 0, "title"], "Test Town Festival"),
 ], ids=["schema", "gap", "unsorted", "metric", "calibration_id", "horizon", "today", "regime_start", "unknown_key",
         "negative_guests", "nan_guests", "guests_after_cutoff", "closed_not_bool", "term", "week_of_term",
-        "event_group", "champion_day", "champion_week", "champion_run_id", "champion_engine", "calendar_title"])
+        "event_group", "champion_day", "champion_week", "champion_run_id", "champion_engine",
+        "champion_recorded_bias_negative", "champion_recorded_bias_not_a_number", "calendar_title"])
 def test_invalid_input_codes(lab_input, break_it):
     inp = copy.deepcopy(lab_input)
     break_it(inp)
@@ -1142,10 +1145,10 @@ def test_an_engine_switch_needs_the_other_to_pass_its_checks():
     assert pipeline.choose_engine("model", 0.090, 0.100, model_ok=False) == "model"
 
 
-def bt_of(inside, weeks, bias=0.0, wape=0.10, median=0.15):
+def bt_of(inside, weeks, bias=0.0, wape=0.10, median=0.15, weekday_bias=0.03):
     """The parts of an engine's backtest (pipeline._backtest) that passes reads."""
-    return {"scores": {"coverage80": {"inside": inside, "weeks": weeks}, "weeklyWape": wape}, "bias": bias,
-            "median_wape": median}
+    return {"scores": {"coverage80": {"inside": inside, "weeks": weeks}, "weeklyWape": wape,
+                       "weekdayBiasMeanAbs": weekday_bias}, "bias": bias, "median_wape": median}
 
 
 def test_passes_mirrors_the_gates_absolute_checks():
@@ -1179,6 +1182,52 @@ def test_a_wape_winner_that_fails_only_its_weekday_median_gives_way():
     assert ok == {"model_ok": True, "baseline_ok": False}
     assert pipeline.choose_engine(None, 0.140, 0.132, **ok) == "model"
     assert pipeline.choose_engine("model", 0.140, 0.132, **ok) == "model"  # no switch to a draft the gate holds
+
+
+def test_a_model_needs_weekday_bias_within_two_points_of_the_current_runs_recorded_backtest():
+    # The gate holds a model draft whose weekday bias is more than 2 points worse than the current run's recorded
+    # backtest (gate.ts absolute, weekday_bias_worse); with no current run, or one with no recorded backtest (an
+    # import), there is nothing to compare with. The baseline is not judged by weekday.
+    model = bt_of(16, 20, wape=0.10, median=0.20, weekday_bias=0.06)
+    assert pipeline.passes(model, "model") and pipeline.passes(model, "model", recorded_bias=None)
+    assert pipeline.passes(model, "model", recorded_bias=0.04)  # exactly 2 points worse passes
+    assert not pipeline.passes(model, "model", recorded_bias=0.03)
+    assert pipeline.passes(bt_of(16, 20, wape=0.10, median=0.20, weekday_bias=0.50), "baseline", recorded_bias=0.03)
+
+
+def test_no_switch_to_a_model_the_gate_would_hold_for_weekday_bias():
+    # The current run is a baseline run whose calibration recorded a weekday bias of 3 points. The model is 2 points
+    # better on the same weeks and passes coverage and its weekday median, but its weekday bias is 6 points: the gate
+    # would hold its draft weekday_bias_worse, while the baseline's refit would publish (refreshed), so the lab keeps
+    # the baseline
+    model, base = bt_of(16, 20, wape=0.10, median=0.20, weekday_bias=0.06), bt_of(16, 20, wape=0.12, median=0.20)
+    ok = {"model_ok": pipeline.passes(model, "model", recorded_bias=0.03),
+          "baseline_ok": pipeline.passes(base, "baseline", recorded_bias=0.03)}
+    assert ok == {"model_ok": False, "baseline_ok": True}
+    assert pipeline.choose_engine("baseline", 0.10, 0.12, **ok) == "baseline"
+
+
+def test_calibrate_judges_the_model_by_the_current_runs_recorded_weekday_bias(lab_input):
+    judged = []
+
+    def record(bt, engine, recorded_bias=None):
+        judged.append((engine, recorded_bias))
+        return True
+
+    inp = copy.deepcopy(lab_input)
+    for recorded in (0.031, None):
+        inp["champion"]["recordedWeekdayBiasMeanAbs"] = recorded
+        judged.clear()
+        with pytest.MonkeyPatch.context() as patch:
+            patch.setattr(pipeline, "passes", record)
+            pipeline.calibrate(inp, CODE)
+        assert ("model", recorded) in judged
+    inp["champion"] = None
+    judged.clear()
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "passes", record)
+        pipeline.calibrate(inp, CODE)
+    assert ("model", None) in judged
 
 
 def test_calibrate_judges_each_engine_by_its_own_weekday_median(lab_input):

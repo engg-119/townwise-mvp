@@ -325,6 +325,7 @@ describe('the job’s callback', () => {
     expect(input.days[0]?.date).toBe('2024-10-01');
     expect(input.days.find((day) => day.date === '2026-02-03')).toMatchObject({ closed: true });
     expect(input.champion?.runId).toBe(championId);
+    expect(input.champion?.recordedWeekdayBiasMeanAbs).toBeNull(); // an imported run has no recorded backtest
     expect(input.champion?.days).toHaveLength(70);
     expect(JSON.stringify(input)).not.toContain('private reason');
     const stored = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });

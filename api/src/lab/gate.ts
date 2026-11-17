@@ -177,7 +177,8 @@ export function decideGate(input: GateInput): GateDecision {
     if (refusal === null && scorecard.backtest.metrics.weeklyWape > best + GATE.refreshMargin + SLACK) refusal = 'refresh_worse';
     reason = 'refreshed';
   } else {
-    // An engine switch: the lab's same-weeks comparison stands, so no second one against a recorded backtest.
+    // An engine switch: the lab's same-weeks WAPE comparison stands, so no second one against a recorded backtest; the
+    // model's weekday bias is still held to the current run's record, which the lab checks too (pipeline.passes).
     refusal = absolute(scorecard, current.recorded.weekdayBiasMeanAbs);
     reason = 'engine_switched';
   }

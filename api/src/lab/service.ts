@@ -20,10 +20,10 @@ import type { ForecastRunRecord } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { currentChampion, decideGate, GATE, jumpSums, streakOf, type CurrentRun } from './gate.ts';
-import { guestSpan } from './input.ts';
+import { guestSpan, recordedBacktest } from './input.ts';
 import { checkLabResult, type LabSuccess } from './result.ts';
 import { LabStartError } from './runner.ts';
-import { scorecardSchema, type LabScorecard, type Metrics } from './scorecard.ts';
+import type { LabScorecard } from './scorecard.ts';
 
 export { HORIZON_DAYS } from './input.ts';
 
@@ -282,21 +282,6 @@ async function publishDraft(ctx: TownwiseContext, scope: OrgScope, calibration: 
     return;
   }
   ctx.logger.info({ orgId: scope.orgId, runId: run.id, status: 'published' }, 'townwise.forecast_status');
-}
-
-/** A lab run's recorded backtest metrics: its calibration's scorecard, or null for an imported run or one now gone. */
-async function recordedBacktest(ctx: TownwiseContext, scope: OrgScope, run: ForecastRunRecord): Promise<Metrics | null> {
-  if (run.lab === null) return null;
-  const json = (await ctx.stores.calibrations.find(scope, run.lab.calibrationId))?.scorecardJson ?? null;
-  if (json === null) return null;
-  let raw: unknown;
-  try {
-    raw = JSON.parse(json);
-  } catch {
-    return null;
-  }
-  const parsed = scorecardSchema.safeParse(raw);
-  return parsed.success ? parsed.data.backtest.metrics : null;
 }
 
 /** The current run as the gate judges a draft against it (D42): its engine, its recorded backtest and its streak's best. */

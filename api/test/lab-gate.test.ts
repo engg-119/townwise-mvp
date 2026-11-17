@@ -283,6 +283,23 @@ describe('decideGate against a current lab run (D42, one set of rules for every 
       .toBe('baseline_not_beaten');
   });
 
+  it('an engine switch to a model over 2 points worse by weekday than the current run’s record is held; the baseline refit publishes', () => {
+    // The current run is a baseline run whose calibration recorded 12% and a weekday bias of 3 points. The model is 2
+    // points better on the same weeks, in band and under its weekday median, but 6 points off by weekday: the gate
+    // holds it, so the lab keeps the baseline (pipeline.passes with champion.recordedWeekdayBiasMeanAbs), whose refit
+    // publishes
+    const current = labCurrent('baseline', 0.12, 0.03);
+    const coverage80 = { inside: 16, weeks: 20 };
+    const engines = { model: { weeks: 20, weeklyWape: 0.1, weeklyBias: 0, coverage80 }, baseline: { weeks: 20, weeklyWape: 0.12, weeklyBias: 0, coverage80 } };
+    const model = { weeks: 20, weeksWithRange: 20, metrics: metricsWith({ weeklyWape: 0.1, coverage80, weekdayBiasMeanAbs: 0.06 }), weekdayMedianWeeklyWape: 0.2 };
+    expect(decideGate(refresh('model', current, model, {}, engines))).toEqual({ publish: false, reason: 'weekday_bias_worse' });
+    const baseline = { ...model, metrics: metricsWith({ weeklyWape: 0.12, coverage80, weekdayBiasMeanAbs: 0.06 }), weeklyBias: 0 };
+    expect(decideGate(refresh('baseline', current, baseline, {}, { ...engines }))).toEqual({ publish: true, reason: 'refreshed' });
+    // The lab holds the model to the same allowance
+    const lab = readFileSync(new URL('../../modeling/lab/townwise_lab/pipeline.py', import.meta.url), 'utf8');
+    expect(lab).toMatch(new RegExp(`^WEEKDAY_BIAS_ALLOWANCE = ${String(GATE.weekdayBiasAllowance)} `, 'm'));
+  });
+
   it('a baseline draft made because the model could not run, against a model run, is model_not_run', () => {
     const notRun = { model: null, baseline: { weeks: 14, weeklyWape: 0.11, weeklyBias: -0.02, coverage80: { inside: 11, weeks: 14 } } };
     const input = refresh('baseline', labCurrent('model', 0.09), YOUNG, {}, notRun);

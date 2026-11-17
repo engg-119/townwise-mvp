@@ -165,7 +165,8 @@ def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THR
     """A published run made at `through` for the 182 days after it (the LabInput's champion): each weekday's median
     guests over the days before it as the forecast, 20% below to 25% above as the daily range and 15% either side as
     the weekly one; closures, the holidays the place closes on and Mondays from the regime on are closed, buyouts
-    booked. Weeks run Monday to Sunday, clipped to its days."""
+    booked. Weeks run Monday to Sunday, clipped to its days. No recorded weekday bias, as for an imported run, so the
+    model's weekday-bias check (pipeline.passes) has nothing to compare with."""
     past = frame[(frame.date <= through) & frame.guests.gt(0) & ~frame.closed & ~frame.booked]
     median = past.groupby("weekday").guests.median()
     rows = frame[(frame.date > through) & (frame.date <= through + pd.Timedelta(days=FUTURE_DAYS))]
@@ -181,7 +182,8 @@ def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THR
         weeks.append({"from": _iso(week.date.min()), "to": _iso(week.date.max()),
                       "openDays": int(week.mid.notna().sum()),
                       "low": round(0.85 * total, 2), "mid": total, "high": round(1.15 * total, 2)})
-    return {"runId": CHAMPION_RUN_ID, "engine": "model", "dataThrough": _iso(through), "days": days, "weeks": weeks}
+    return {"runId": CHAMPION_RUN_ID, "engine": "model", "recordedWeekdayBiasMeanAbs": None, "dataThrough": _iso(through),
+            "days": days, "weeks": weeks}
 
 
 def synthetic_input(seed: int = 0) -> dict:

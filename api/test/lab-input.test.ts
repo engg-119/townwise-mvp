@@ -359,7 +359,7 @@ describe('labInputOf', () => {
     expect(input?.calendar.every((entry) => entry.kind === 'holiday' && entry.id.startsWith('us:'))).toBe(true);
   });
 
-  it('includes the current champion run rows, its engine from the run’s model family, and null without one', () => {
+  it('includes the current champion run rows, its engine from the run’s model family, its recorded weekday bias, and null without one', () => {
     const run = { id: 'd4'.repeat(12), dataThrough: '2026-03-31', model: { family: 'hybrid_linear_xgboost' } } as ForecastRunRecord;
     const row = (overrides: Partial<ForecastRow>): ForecastRow => ({
       runId: run.id, span: 'day', from: '2026-04-01', to: '2026-04-01', status: 'open', low: 1, mid: 2, high: 3, baseline: 2,
@@ -371,9 +371,9 @@ describe('labInputOf', () => {
       row({}),
       row({ from: '2026-04-03', to: '2026-04-03', status: 'booked', low: null, mid: null, high: null, baseline: null }),
     ];
-    const input = inputOf(history('2025-01-02', '2026-05-31'), [], { run, rows });
+    const input = inputOf(history('2025-01-02', '2026-05-31'), [], { run, rows, recordedWeekdayBiasMeanAbs: 0.031 });
     expect(input.champion).toEqual({
-      runId: run.id, engine: 'model', dataThrough: '2026-03-31',
+      runId: run.id, engine: 'model', recordedWeekdayBiasMeanAbs: 0.031, dataThrough: '2026-03-31',
       days: [
         { date: '2026-04-01', status: 'open', low: 1, mid: 2, high: 3 },
         { date: '2026-04-02', status: 'closed', low: null, mid: null, high: null },
@@ -384,9 +384,12 @@ describe('labInputOf', () => {
     expect(inputOf(history('2025-01-02', '2026-05-31')).champion).toBeNull();
     // A baseline run (D42) is the baseline engine; every other family, an import's included, is the model.
     const baseline = { ...run, model: { ...run.model, family: 'seasonal_baseline' } } as ForecastRunRecord;
-    expect(inputOf(history('2025-01-02', '2026-05-31'), [], { run: baseline, rows }).champion?.engine).toBe('baseline');
+    expect(inputOf(history('2025-01-02', '2026-05-31'), [], { run: baseline, rows, recordedWeekdayBiasMeanAbs: 0.031 }).champion?.engine).toBe('baseline');
+    // An import has no recorded backtest: null, and the lab then has no weekday bias to hold the model to (as the gate).
     const imported = { ...run, model: { ...run.model, family: 'linear_median' } } as ForecastRunRecord;
-    expect(inputOf(history('2025-01-02', '2026-05-31'), [], { run: imported, rows }).champion?.engine).toBe('model');
+    expect(inputOf(history('2025-01-02', '2026-05-31'), [], { run: imported, rows, recordedWeekdayBiasMeanAbs: null }).champion)
+      .toMatchObject({ engine: 'model', recordedWeekdayBiasMeanAbs: null });
+    expect(labInputSchema.safeParse({ ...input, champion: { ...input.champion, recordedWeekdayBiasMeanAbs: -0.01 } }).success).toBe(false);
   });
 
   it('labInputSchema refuses version 1, as the lab does', () => {
@@ -450,7 +453,7 @@ describe('labInputFingerprint (D42, the weekly refresh’s “changed since its 
   it('is unchanged when only the calibration, today or the current run changes', () => {
     expect(labInputFingerprint({ ...base, calibrationId: 'e5'.repeat(12) })).toBe(fingerprint);
     expect(labInputFingerprint({ ...base, today: '2026-06-09' })).toBe(fingerprint);
-    expect(labInputFingerprint(inputOf(days, [], { run, rows: [championRow] }))).toBe(fingerprint);
+    expect(labInputFingerprint(inputOf(days, [], { run, rows: [championRow], recordedWeekdayBiasMeanAbs: 0.04 }))).toBe(fingerprint);
   });
 
   it('changes with a rule, a note, a day, a deleted day, a pattern change date or a model version bump', () => {
@@ -510,7 +513,7 @@ describe('the input the API builds, against the lab', () => {
     }
     const input = labInputOf({
       calibration: { id: 'ab'.repeat(12), regimeStart: '2026-01-05' }, location: HANOVER,
-      days: [...days, day('2026-06-02', 61)], notes, rules: [], today: '2026-06-01', champion: { run, rows },
+      days: [...days, day('2026-06-02', 61)], notes, rules: [], today: '2026-06-01', champion: { run, rows, recordedWeekdayBiasMeanAbs: 0.04 },
     });
     if (input === null) throw new Error('no input');
     return input;

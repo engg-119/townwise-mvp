@@ -21,7 +21,7 @@ INPUT_KEYS = {"schema", "calibrationId", "metric", "today", "dataThrough", "hori
               "calendar", "champion"}
 DAY_KEYS = {"date", "guests", "term", "weekOfTerm", "events", "closed", "privateEvent", "booked"}
 CALENDAR_KEYS = {"id", "group", "kind", "start", "end", "confidence"}  # never a title, URL or source label
-CHAMPION_KEYS = {"runId", "engine", "dataThrough", "days", "weeks"}
+CHAMPION_KEYS = {"runId", "engine", "recordedWeekdayBiasMeanAbs", "dataThrough", "days", "weeks"}
 CHAMPION_DAY_KEYS = {"date", "status", "low", "mid", "high"}
 CHAMPION_WEEK_KEYS = {"from", "to", "openDays", "low", "mid", "high"}
 CALIBRATION_ID = re.compile(r"[0-9a-f]{24}")
@@ -65,6 +65,8 @@ def _champion(champion: dict) -> None:
     _object(champion, CHAMPION_KEYS, "champion")
     _require(isinstance(champion["runId"], str) and champion["runId"] != "", "champion.runId")
     _require(isinstance(champion["engine"], str) and champion["engine"] in ENGINES, "champion.engine")
+    _require(champion["recordedWeekdayBiasMeanAbs"] is None or _count(champion["recordedWeekdayBiasMeanAbs"]),
+             "champion.recordedWeekdayBiasMeanAbs")
     _require(_date(champion["dataThrough"]) is not None, "champion.dataThrough")
     _require(isinstance(champion["days"], list), "champion.days")
     seen = set()
@@ -104,7 +106,8 @@ def _calendar(calendar) -> None:
 def validate_input(inp: dict) -> None:
     """Raises InputError unless `inp` is a LabInput: every date from its first day to dataThrough + 182 once, in order;
     guests a count or null, and null after dataThrough; the calendar fields typed; the town calendar's entries with
-    no title, URL or source; the champion null or a run with its engine."""
+    no title, URL or source; the champion null or a run with its engine and its recorded weekday bias (null without
+    one)."""
     _object(inp, INPUT_KEYS, "input")
     _require(inp["schema"] == INPUT_SCHEMA, "schema")
     _require(isinstance(inp["calibrationId"], str) and CALIBRATION_ID.fullmatch(inp["calibrationId"]) is not None,
