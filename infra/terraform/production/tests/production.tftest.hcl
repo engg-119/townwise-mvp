@@ -1509,3 +1509,47 @@ run "forecasts_worker" {
     error_message = "A day without a pass line from the worker emails the ops address."
   }
 }
+
+run "forecasts_worker_with_chat" {
+  command = plan
+
+  variables {
+    enable_lab             = true
+    enable_chat            = true
+    lab_image              = "crtownwise2d2c15bf.azurecr.io/townwise-lab@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    lab_callback_client_id = "22222222-2222-4222-8222-222222222222"
+  }
+
+  assert {
+    condition = (
+      [for secret in azapi_resource.job_forecasts[0].body.properties.configuration.secrets : secret.name] == ["mongodb-uri", "anthropic-api-key"] &&
+      [for secret in azapi_resource.job_forecasts[0].body.properties.configuration.secrets : secret.keyVaultUrl] == [
+        "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/mongodb-uri",
+        "https://kv-townwise-2d2c15bf.vault.azure.net/secrets/anthropic-api-key",
+      ] &&
+      alltrue([for secret in azapi_resource.job_forecasts[0].body.properties.configuration.secrets : secret.identity == azurerm_user_assigned_identity.job["forecasts"].id])
+    )
+    error_message = "With the chat on, the worker also reads the Anthropic key as a Key Vault reference, with its own identity."
+  }
+
+  assert {
+    condition = (
+      [for env in azapi_resource.job_forecasts[0].body.properties.template.containers[0].env : env if env.name == "ANTHROPIC_API_KEY"] == [{ name = "ANTHROPIC_API_KEY", secretRef = "anthropic-api-key" }] &&
+      length(azapi_resource.job_forecasts[0].body.properties.template.containers[0].env) == 8 &&
+      strcontains(file("../../../api/src/workers/weekly-forecasts.ts"), "ANTHROPIC_API_KEY")
+    )
+    error_message = "With the chat on, the worker's ANTHROPIC_API_KEY (which it reads for weekly suggestions) is the anthropic-api-key reference, with no value in Terraform."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_assignment.job_secret_read["forecasts/anthropic-api-key"].scope == "${azurerm_key_vault.main.id}/secrets/anthropic-api-key" &&
+      azurerm_role_assignment.job_secret_read["forecasts/anthropic-api-key"].role_definition_name == "Key Vault Secrets User" &&
+      length([
+        for assignment in values(azurerm_role_assignment.job_secret_read) : assignment
+        if assignment.principal_id == azurerm_user_assigned_identity.job["forecasts"].principal_id
+      ]) == 2
+    )
+    error_message = "With the chat on, the worker's identity reads exactly two secrets, mongodb-uri and anthropic-api-key, each by its own secret-scoped assignment."
+  }
+}

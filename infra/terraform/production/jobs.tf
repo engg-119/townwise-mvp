@@ -13,20 +13,21 @@
 # | caj-townwise-db-restore  | manual   | mongodb-restore-uri                           | read                 | download |
 # | caj-townwise-db-smoke    | manual   | mongodb-uri                                   | none                 | nothing  |
 # | caj-townwise-lab         | manual   | none (lab.tf, enable_lab)                     | none                 | main     |
-# | caj-townwise-forecasts   | hourly   | mongodb-uri (enable_lab)                      | none                 | main     |
+# | caj-townwise-forecasts   | hourly   | mongodb-uri, anthropic-api-key (enable_chat)  | none                 | main     |
 
 locals {
   mongo_image = "${azurerm_container_registry.main.login_server}/mongo@${var.mongo_image_digest}"
   kv_secrets  = "${azurerm_key_vault.main.vault_uri}secrets/"
 
   # Key Vault secrets per job. Only db-users reads the admin password.
-  # The weekly forecast worker (below) exists only with the lab, which it starts.
+  # The weekly forecast worker (below) exists only with the lab, which it starts; with the chat on it also reads the
+  # Anthropic key, for TownwiseAI's weekly suggestions.
   job_secrets = merge({
     backup   = ["mongodb-backup-uri"]
     db-users = ["db-admin-password", "mongodb-uri", "mongodb-backup-uri", "mongodb-restore-uri"]
     restore  = ["mongodb-restore-uri"]
     smoke    = ["mongodb-uri"]
-  }, var.enable_lab ? { forecasts = ["mongodb-uri"] } : {})
+  }, var.enable_lab ? { forecasts = concat(["mongodb-uri"], var.enable_chat ? ["anthropic-api-key"] : []) } : {})
   # Which containers may obtain a token for the job's identity.
   job_identity_lifecycle = {
     backup    = "Main" # the upload container; mongodump (init) gets none
@@ -308,8 +309,10 @@ resource "azapi_resource" "job_smoke" {
 # the lab job for the locations that are due, under a Mongo lease, so an overlapping execution does nothing.
 #
 # Its identity holds AcrPull, the mongodb-uri reference (the same database user as the API: the pass reads and
-# writes the app's collections) and the lab starter role at the lab job, which is what api/src/lab/runner.ts calls
-# with it. It needs no Valkey (the API's sidecar) and holds no other secret. Starting this job is permission to use
+# writes the app's collections), with enable_chat the anthropic-api-key reference (the pass also makes TownwiseAI's
+# weekly suggestions, OpenSpec change weekly-forecast-suggestions; without the key they are off), and the lab starter
+# role at the lab job, which is what api/src/lab/runner.ts calls with it. It needs no Valkey (the API's sidecar) and
+# holds no other secret. Starting this job is permission to use
 # that identity (above), and it can start lab executions, which the API identity can already do.
 #
 # The image's CMD starts node with --env-file=api/production.env, so the override keeps that flag: the worker reads
@@ -364,7 +367,7 @@ resource "azapi_resource" "job_forecasts" {
           image     = coalesce(var.api_image, "unset")
           command   = ["node", "--env-file=api/production.env", "api/src/workers/weekly-forecasts.ts"]
           resources = { cpu = 0.25, memory = "0.5Gi" }
-          env = [
+          env = concat([
             { name = "MONGODB_URI", secretRef = "mongodb-uri" },
             # The user-assigned identity the worker asks for tokens as (api/src/azure-identity.ts).
             { name = "AZURE_CLIENT_ID", value = azurerm_user_assigned_identity.job["forecasts"].client_id },
@@ -373,7 +376,7 @@ resource "azapi_resource" "job_forecasts" {
             { name = "TOWNWISE_LAB_AUDIENCE", value = coalesce(var.lab_callback_client_id, "unset") },
             { name = "TOWNWISE_LAB_CALLER_ID", value = azurerm_user_assigned_identity.lab[0].principal_id },
             { name = "TOWNWISE_LAB_TENANT_ID", value = data.azurerm_client_config.current.tenant_id },
-          ]
+          ], var.enable_chat ? [{ name = "ANTHROPIC_API_KEY", secretRef = "anthropic-api-key" }] : [])
         }]
       }
     }
