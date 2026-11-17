@@ -41,6 +41,12 @@ afterEach(() => {
   jest.useRealTimers();
 });
 
+// The test boots the whole app cold in a file of one test, which under a full client run (every suite in parallel)
+// can take several seconds before the first route renders.
+jest.setTimeout(20_000);
+/** For a wait that spans the app's first render or the grid's first read. */
+const SLOW = { timeout: 5000 };
+
 const TODAY = '2026-11-11';
 const LAST = addDays(TODAY, 91);
 
@@ -77,16 +83,16 @@ test('a day 91 days after today shows its forecast, and the day after the run sa
       <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location={path} />
     </Head.Provider>,
   );
-  await screen.findByRole('grid', { name: 'February 2027' });
+  await screen.findByRole('grid', { name: 'February 2027' }, SLOW);
   const panel = (): HTMLElement => screen.getByRole('region', { name: 'Selected day' });
-  await waitFor(() => { expect(cell(LAST).getAttribute('aria-label')).toBe('Wed, Feb 10, 2027. Forecast about 175 guests, 150 to 205.'); });
+  await waitFor(() => { expect(cell(LAST).getAttribute('aria-label')).toBe('Wed, Feb 10, 2027. Forecast about 175 guests, 150 to 205.'); }, SLOW);
   expect(within(panel()).getByText(whole('About 175 guests'))).toBeTruthy();
   // One read of the grid, of at most 42 days.
   const reads = fake.paths.filter((each) => each.includes('/forecast?'));
   expect(reads).toHaveLength(1);
 
   fireEvent.click(cell('2027-02-11'));
-  await waitFor(() => { expect(within(panel()).getByRole('heading', { name: 'Thu, Feb 11, 2027' })).toBeTruthy(); });
+  await waitFor(() => { expect(within(panel()).getByRole('heading', { name: 'Thu, Feb 11, 2027' })).toBeTruthy(); }, SLOW);
   expect(within(panel()).getByText('The published forecast doesn’t cover this day.')).toBeTruthy();
   expect(within(panel()).queryByText(/^About \d/)).toBeNull();
 });
