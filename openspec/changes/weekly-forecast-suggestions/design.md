@@ -28,6 +28,17 @@ At most 5 suggestions a pass. Each is checked by the note rules (spec 12) or D31
 
 Alternatives: any member accepts (notes allow that, but a suggestion was not written by a person, so the lead chose admin review); auto-apply (an unreviewed closure on a busy Saturday would empty its forecast at once).
 
+### As built (2026-11-16), where the code differs from the text above
+
+- **The week's pass has its own row.** It is recorded in `tw_suggestion_passes` (unique per location and week, inserted `running` before anything else), not on `tw_forecast_weeks`: a row there means the calibration was considered, so a suggestions row would stop that week's hourly calibration retries (a location held by the live cap or by a calibration of its own has no row on purpose), and the suggestions run with the lab off, when no week row exists.
+- **Due all week.** A location is due from 03:00 on Monday in its town to the end of Sunday, so one the worker missed on Monday (an outage, a deploy, the feature turned on mid-week) is caught up that week, still once.
+- **More history than effects.** History effects leave closed and likely-closed days out (`forecasts/effects.ts`), so they cannot say the location was closed on last year's Thanksgiving. Each holiday and town event therefore also carries `pastDays`, how many of its days in the last 52 weeks were open, closed or had no sales: day counts, as decision 2 allows.
+- **Earlier suggestions are sent and checked.** The request lists the location's earlier suggestions in any status, and a suggestion that decides the same days the same way as a note, a rule's schedule, an earlier suggestion or another kept one is dropped (its words aside), so a dismissed one is not suggested again every week. A suggestion must also start no later than the last day reviewed.
+- **The model port.** The pass calls the chat's `ChatModel` port (`chat/model.ts`, streamed), so tests use the existing scripted fake; the worker builds it from `ANTHROPIC_API_KEY`. A call that fails before any stream event is charged nothing; one that fails mid-stream, what it had reported.
+- **Open as admin.** Accept, dismiss and the switch run in open as admin like every other organization route (D25; `routes.test.ts` requires it), the switch carrying the tab's `orgId`.
+- **The panel.** Suggestions have their own section, "Suggested for the next 3 months", after Questions for you, shown also in the column beside the landing (which lists only questions).
+- **Not in this branch.** The `anthropic-api-key` reference on `caj-townwise-forecasts`: that job is `autonomous-forecasts` task 5.2, not built on this branch's base.
+
 ## Risks / Trade-offs
 
 - [Notes and rules reach Anthropic with nobody pressing anything, by default] → The privacy paragraph is a prerequisite before push, P25 says it, and an org admin can turn it off.
