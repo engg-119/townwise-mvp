@@ -48,6 +48,8 @@ export interface WorkerDeps {
   readonly sleep?: (ms: number, signal: AbortSignal) => Promise<void>;
   /** Stops --loop (main wires SIGINT and SIGTERM to it). */
   readonly signal?: AbortSignal;
+  /** Tests: the clock, shared with a test API's (the real time otherwise); --now still moves only which are due. */
+  readonly now?: () => Date;
 }
 
 function labRunnerFor(env: WorkerEnv, now: () => Date): LabRunner | null {
@@ -86,7 +88,7 @@ export async function runWeeklyForecastsWorker(deps: WorkerDeps): Promise<number
     return 1;
   }
   const logger = createLogger(env, deps.logDestination === undefined ? undefined : { destination: deps.logDestination });
-  const realNow = (): Date => new Date();
+  const realNow = deps.now ?? ((): Date => new Date());
   let offsetMs = 0;
   if (args.now !== undefined) {
     const start = Date.parse(args.now);

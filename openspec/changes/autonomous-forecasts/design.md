@@ -243,6 +243,8 @@ Owner directive: "test it before we push everything". A phase before review:
   - asserts the Last week forecast read returns forecast-only days (the 7 days after the last seeded day) and scored days (when the seed covers them). It needs `uv` and is skipped with a stated reason where `uv` is missing, as the lab's own suite needs it; CI runs it.
 - (b) A manual local demo for the owner on their stack, with Sawtooth's local location, after the owner's go to restart their dev servers. Push and the PR follow only after both and the owner's go.
 
+*As built in 7.1 (2026-11-17):* the test seeds 700 synthetic days (not 300) for a Hanover location, so both engines run; the history ends the day before Last week, so the run covers Last week's seven days. The worker and the in-process API share one fixed clock at Monday 16 November 2026, 03:05 in Hanover (`WorkerDeps.now`, tests only), not the real time with `--now`: `--now` moves only which locations are due while the records keep the real time, which a test API on its own clock would not accept, and on the real date the town calendar days in the history, and so the lab's verdict, would change from day to day (the earlier draft's seed, chosen without the town calendar, was held `coverage_out_of_band` on 2026-11-16 itself, the model winning with ranges that held 15 of 28 weeks). The seed publishes the baseline with room on every check on that Monday and the Mondays either side. The CI `verify` job installs uv (the lab job's pinned `astral-sh/setup-uv`), so CI runs it.
+
 Alternatives: the fake-runner integration test alone (it never exercises the real lab callback, which is where a contract mismatch would show); a demo only (not repeatable).
 
 ## Risks / Trade-offs
