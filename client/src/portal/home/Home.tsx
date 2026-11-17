@@ -133,6 +133,9 @@ function HomeView(props: {
   const next = useMemo(() => nextEvent(today, context), [today, context]);
   const hasDays = days.length > 0;
   const { desktop } = useBreakpoint();
+  // With a published forecast for last week, Show the numbers has six columns (Forecast and In range join), which a
+  // third of the row can't hold from 1024px, so Last week takes a line of its own under This month.
+  const wideLastWeek = lastWeek.forecast !== undefined;
 
   return (
     <View style={styles.page}>
@@ -162,7 +165,7 @@ function HomeView(props: {
       <BlockRow
         items={[
           {
-            key: 'month', span: 8,
+            key: 'month', span: wideLastWeek ? 12 : 8,
             node: (
               <ThisMonth
                 input={input} calendar={calendar} notes={notes} rules={rules} forecast={forecast} history={hasDays} locationId={locationId}
@@ -170,7 +173,7 @@ function HomeView(props: {
               />
             ),
           },
-          { key: 'last', span: 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
+          { key: 'last', span: wideLastWeek ? 12 : 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
         ]}
       />
       <BlockRow

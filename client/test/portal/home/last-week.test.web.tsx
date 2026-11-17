@@ -215,3 +215,28 @@ test('no figure from a draft: with a draft covering last week and nothing publis
   expect(rowOf(table, 'Sun, Nov 22, 2026')).not.toMatch(/Forecast|About/);
   expect(table.textContent.match(/no guest count uploaded yet/g)).toHaveLength(1);
 });
+
+/** The flex basis of the cell a block sits in, in its BlockRow (jsdom computes react-native-web's style rules). */
+function basisOf(block: HTMLElement): string {
+  const cell = block.parentElement;
+  if (cell === null) throw new Error('no cell');
+  return getComputedStyle(cell).flexBasis;
+}
+
+test('from 1024px, with a published forecast Last week takes a line of its own under This month, for its six columns', async () => {
+  // A third of the row (span 4) leaves about 6px of text for a column of flex 1 at 1024px once Forecast and In range
+  // join, so the card takes the full width; history only, it stays a third beside This month.
+  await renderHome(portal(UP_TO_FRIDAY, MIXED));
+  const card = await screen.findByRole('region', { name: 'Last week' });
+  await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.'));
+  const month = screen.getByRole('region', { name: /^This month in / });
+  expect(basisOf(screen.getByRole('region', { name: 'Last week' }))).toBe('100%');
+  expect(basisOf(month)).toBe('100%');
+  // This month, then Last week, in the same row.
+  expect(month.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  cleanup();
+  const history = await renderHome(portal(HISTORY, NO_FORECAST));
+  await within(history).findByText(sentence('Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.'));
+  expect(basisOf(history)).not.toBe('100%');
+  expect(basisOf(screen.getByRole('region', { name: /^This month in / }))).not.toBe('100%');
+});
