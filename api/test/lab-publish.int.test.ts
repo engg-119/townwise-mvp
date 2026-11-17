@@ -47,8 +47,11 @@ function switchForecasts(t: Pick<Team, 'orgId'>, body: unknown, session = staff)
  * An organization with an org admin and one Hanover location holding guests from 2024-10-01 to `to` (2026-05-31), with
  * its forecasts switched on through the console when `forecastsOn`.
  */
-async function team(opts?: { forecastsOn?: boolean; to?: string }): Promise<Team> {
-  const orgId = await createOrg(server, { name: `Publish Kitchen ${randomUUID().slice(0, 6)}` });
+async function team(opts?: { forecastsOn?: boolean; to?: string; unswitched?: true }): Promise<Team> {
+  // Switched off by staff unless `unswitched` (never switched, on by default since D42), so switching on goes through
+  // the console.
+  const name = `Publish Kitchen ${randomUUID().slice(0, 6)}`;
+  const orgId = await createOrg(server, opts?.unswitched === true ? { name } : { name, forecastsOn: false });
   const email = `admin-${randomUUID().slice(0, 8)}@example.test`;
   const admin = await signIn(server, email);
   await addSeat(server, { orgId, userId: admin.userId, email, role: 'org_admin' });
@@ -193,6 +196,17 @@ describe('the gate decides', () => {
     const view = await viewOf(t, calibration.id);
     expect(view).toMatchObject({ gate: { published: true, reason: 'published', words: GATE_WORDS.published } });
     expect(GATE_WORDS.published).toContain('current forecast');
+  });
+
+  it('a passing draft of an organization nobody switched publishes: forecasts are on by default (D42)', async () => {
+    const t = await team({ unswitched: true });
+    expect(await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) })).not.toHaveProperty('forecasts');
+    const { calibration, job } = await started(t);
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+    const view = await viewOf(t, calibration.id);
+    expect(view).toMatchObject({ status: 'succeeded', gate: { published: true, reason: 'published' } });
+    expect(await runDoc(view.runId ?? '')).toMatchObject({ status: 'published' });
+    expect(await actionsOf(t.orgId, 'forecast.published')).toHaveLength(1);
   });
 
   it('a passing draft with forecasts off stays a draft with gate forecasts_off, and nothing is published', async () => {
@@ -470,7 +484,7 @@ describe('the forecasts switch', () => {
       const switched = switchForecasts(t, ON);
       await writes.arrived(1);
       expect(await actionsOf(t.orgId, 'org.forecasts_switched')).toHaveLength(1);
-      expect((await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) }))?.forecasts).toBeUndefined();
+      expect((await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) }))?.forecasts).toMatchObject({ on: false });
       writes.release(1);
       res = await switched;
     } finally {

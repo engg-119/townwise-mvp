@@ -1,12 +1,12 @@
 // The publish gate (G2): pure, so every threshold is one test. Every value but minHistoryDays (decided by the owner, 2026-11-10) is a [CONFIRM] in spec D27.
 // Since D42 (14.6) one set of rules judges every draft, scheduled or started by a person: a first forecast by its
 // engine's own checks, a refit of the current lab run's engine by its absolute checks and the streak's tolerance, an
-// engine switch (which the lab decided on the same weeks) by its absolute checks, and a draft against an imported run on
+// engine switch (which the lab decided on the same weeks) by its absolute checks (reason engine_switched), and a draft against an imported run on
 // held-out weeks as before; then the jump guard, then G1. The new values are [CONFIRM]s in spec D42.
 import { daysBetween, utcDay } from '../dates.ts';
 import { engineOf } from '../forecasts/reader.ts';
 import type { ForecastRow, ForecastRunRecord } from '../stores/forecasts.ts';
-import type { Engine, LabScorecard } from './scorecard.ts';
+import type { Engine, LabScorecard, Scorecard } from './scorecard.ts';
 
 export const GATE = {
   heldOutWeeksMin: 12,
@@ -53,6 +53,7 @@ export const GATE_REASONS = [
   'model_not_run',
   'biased',
   'jump_held',
+  'engine_switched',
 ] as const;
 
 export type GateReason = (typeof GATE_REASONS)[number];
@@ -78,7 +79,7 @@ export interface GateInput {
   jump: { draft: number; current: number } | null;
 }
 
-type Published = 'published' | 'refreshed';
+type Published = 'published' | 'refreshed' | 'engine_switched';
 type Refusal = Exclude<GateReason, Published>;
 
 export type GateDecision =
@@ -175,6 +176,7 @@ export function decideGate(input: GateInput): GateDecision {
   } else {
     // An engine switch: the lab's same-weeks comparison stands, so no second one against a recorded backtest.
     refusal = absolute(scorecard, current.recorded.weekdayBiasMeanAbs);
+    reason = 'engine_switched';
   }
   if (refusal !== null) return no(refusal);
   if (input.championAtStart !== null && input.jump !== null && jumped(input.jump)) return no('jump_held');
@@ -244,12 +246,40 @@ export const GATE_WORDS: Readonly<Record<GateReason, string>> = {
   biased: 'Its backtest weeks ran more than 5 points high or low overall, so it stays a draft.',
   jump_held:
     'Its next 28 days differ from the current forecast by more than 25%, so it stays a draft for Townwise staff to review.',
+  engine_switched:
+    'Townwise switched to its other engine: it was at least half a point better on the same held-out weeks, so Townwise published it.',
 };
 
 /** What a first forecast, with no published model to beat, beat: the weekday average on its own backtest weeks. */
 const FIRST_PUBLISH_WORDS = 'Better than the weekday average on its backtest weeks, so Townwise published it.';
 
-/** The words for a reason; a published first forecast (no comparison with a current forecast) says what it actually beat. */
-export function gateWords(reason: GateReason, firstForecast: boolean): string {
+/** Each engine as an engine switch's words name it (D42, forecast-publish-policy). */
+const ENGINE_WORDS: Readonly<Record<Engine, string>> = {
+  model: 'its demand model',
+  baseline: 'its baseline from your recent weeks and the town calendar',
+};
+
+/** What an engine switch (D42) chose: the engine a scorecard returned, and by how many points of weekly error it beat the other on the same weeks. */
+export interface EngineSwitch { engine: Engine; points: number }
+
+/**
+ * The switch a scorecard records: the returned engine and its margin over the other on the same weeks, in points to one
+ * decimal. Null without both engines' figures (a scorecard from before D42, or the model not run).
+ */
+export function engineSwitchOf(scorecard: Pick<Scorecard, 'engine' | 'engines'>): EngineSwitch | null {
+  const { engine, engines } = scorecard;
+  if (engine === undefined || engines?.model == null) return null;
+  const [chosen, other] = engine === 'model' ? [engines.model, engines.baseline] : [engines.baseline, engines.model];
+  return { engine, points: Math.round((other.weeklyWape - chosen.weeklyWape) * 1000) / 10 };
+}
+
+/**
+ * The words for a reason; a published first forecast (no comparison with a current forecast) says what it actually beat,
+ * and an engine switch which engine Townwise switched to and by how much, when `switched` (engineSwitchOf) says.
+ */
+export function gateWords(reason: GateReason, firstForecast: boolean, switched: EngineSwitch | null = null): string {
+  if (reason === 'engine_switched' && switched !== null) {
+    return `Townwise switched to ${ENGINE_WORDS[switched.engine]}: it was ${String(switched.points)} points better on the same held-out weeks, so Townwise published it.`;
+  }
   return reason === 'published' && firstForecast ? FIRST_PUBLISH_WORDS : GATE_WORDS[reason];
 }

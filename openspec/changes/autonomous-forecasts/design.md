@@ -61,6 +61,16 @@ Alternatives considered: an hourly timer inside every API replica (the earlier d
 
 *Claude's call:* the start is 03:00 Monday town time, so a weekend's uploads made by Sunday night are in. A start blocked by a live calibration (someone started one by hand) is tried again each hour until Monday ends in the town; once a scheduled calibration has started, a failure is not retried that week. The live cap of 3 is a [CONFIRM].
 
+*As built in phase 3b (2026-11-16), where the code differs from the text above:*
+- **The schedule document is its own store.** `api/src/stores/forecast-schedule.ts` is in `TownwiseStores` and takes no `OrgScope`: it holds no organization's data, and `calibration.ts` (the next refresh date) and the staff route read its pause, which must not import `stores/cross-tenant.ts`. Only the lookups that span organizations (`weeklyCandidates`, `liveScheduledCalibrations`, `staleStartingWeeks`, `countedWeekRows`) are cross-tenant. A released lease (`leaseUntil` set to now) can be taken at once.
+- **`--now` moves only who is due.** The worker's development-only `--now` feeds `createForecastSchedule`'s `dueClock`; calibrations, week rows and the lease keep the real clock, since the API's callback window and the 20-minute timeout are real-time and a job started under a moved clock could never call back.
+- **A shared local secret.** The local runner hands its job the secret the API accepts on `/lab`, which `main.ts` made per process, so a job the worker started could never call back. `TOWNWISE_LAB_LOCAL_SECRET` (development only) is now shared by both; unset, the API makes its own as before and the worker refuses `local`.
+- **The worker's context.** `checkStart`, `launch`, `finishCalibration`, `expireStale`, `buildLabInput` and `recordAfter` take narrower contexts (`LabStartContext` has `redis` null for the worker; a person's start without Valkey is refused `rate_limited`), so the worker builds no auth, HTTP or Valkey. It builds the indexes before its pass, since the week rows' unique index is what keeps a week to one start.
+- **Order of a location's checks.** Due and no row; a live calibration of its own (no row); under 230 days (`not_enough_history`); the fingerprint equal to the reference (`unchanged`); the live cap (no row); the weekly cap (`cap_reached`); then the start. Skips that cost nothing are recorded even while the cap holds starts back.
+- **The pass's line** carries `state` (`ran`, `off`, `paused`, `lease_held`, `lease_lost`) besides its counts; a location whose turn throws logs its ids (`townwise.weekly_refresh_location_failed`), counts as failed, and the pass goes on.
+- **An engine switch has its own reason**, `engine_switched`, whose words name the engine and its margin from the scorecard's `engines` (decision 9's switch branch published as `published` in phase 3a).
+- **Measured by hand** (task 3b.7): on 700 synthetic days the loop ran end to end and a baseline run published. Synthetic histories whose weeks vary only by an independent shock were held `coverage_out_of_band` (over 95% of weeks inside) or `baseline_not_beaten`; how often real histories of about two years land over 95% coverage is for phase 7's end-to-end test and the owner's demo to show.
+
 ### 3. Scheduled calibrations are system-paid, bounded and stoppable
 
 `requestedBy` becomes `{ userId: null, role: 'system', via: 'scheduled' }`. `launch` skips the org limiter (`service.ts:178`) and the charge (`service.ts:205`) for this requester and records `chargedMicroUsd: 0`; `checkStart`'s `budget_exhausted` does not apply. Bounds: one week row per location per week; the live cap of 3; a weekly cap of roughly `TOWNWISE_WEEKLY_FORECAST_CAP` (default 200), counted on this week's `starting` and `started` rows (approximate only by the rows a stopped holder leaves `starting`). At about $0.03 of compute a run (`infra/README.md:644`) that is roughly $6 a week at most.
@@ -255,7 +265,7 @@ No data migration. New fields are optional or derived: `dataSha256` absent on ol
 
 ## Open Questions
 
-- `CLAUDE.md` says `api/src/main.ts` is the only file that reads the environment. The worker is a second composition root that resolves the same `config.ts` schema; updating `CLAUDE.md`'s line needs the owner's yes, since that file is theirs.
+- `CLAUDE.md` says `api/src/main.ts` is the only file that reads the environment. The worker is a second composition root that resolves the same `config.ts` schema; updating `CLAUDE.md`'s line needs the owner's yes, since that file is theirs. (Phase 3b built the worker; `CLAUDE.md` is unchanged and still says this.)
 
 - Who sees `stale` first: the model card only, or also a line on Home? This change shows it on the model card and in TownwiseAI only.
 - If decision 14's measurement fails, should the lab job grow (cost) or the backtest shrink (fewer folds)?

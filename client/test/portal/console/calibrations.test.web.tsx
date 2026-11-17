@@ -195,6 +195,12 @@ test('a scheduled calibration reads as Townwise (weekly), and a gate reason this
   expect(screen.queryByText(/org admin/)).toBeNull();
 });
 
+test('an engine switch shows the server’s words, naming the engine and its margin (D42)', async () => {
+  const words = 'Townwise switched to its demand model: it was 0.6 points better on the same held-out weeks, so Townwise published it.';
+  await show({ calibrations: [calibration({ gate: { published: true, reason: 'engine_switched', words } })] });
+  expect(screen.getByText(words)).toBeTruthy();
+});
+
 test('a summary with nothing to compare reads without the current forecast', async () => {
   await show({ calibrations: [calibration({ summary: { weeks: 12, weeklyWapePct: 8.4, championWeeklyWapePct: null, coverage: { inside: 10, weeks: 12 }, weekdayBiasPct: 3.2, championWeekdayBiasPct: null } })] });
   expect(screen.getByText('Weekly error 8.4% on 12 held-out weeks.')).toBeTruthy();

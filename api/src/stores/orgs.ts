@@ -22,8 +22,9 @@ export interface OrgFields {
    */
   lastSuspendedAt?: Date;
   /**
-   * Staff switched forecasts on for the organization with its owner's agreement (G1). Absent until first switched.
-   * `by` is the staff user id, null once that person is deleted.
+   * Staff switched forecasts on (with its owner's agreement) or off for the organization (G1). Absent until first
+   * switched, which reads as on (D42, owner directive 2026-11-16). `by` is the staff user id, null once that person is
+   * deleted.
    */
   forecasts?: { on: boolean; at: Date; by: string | null };
 }
@@ -59,7 +60,7 @@ export interface OrgRecord {
   readonly suspendedAt: Date | null;
   readonly firstJoinedAt: Date | null;
   readonly lastSuspendedAt: Date | null;
-  /** Whether forecasts are switched on, and when it last changed; `{ on: false, at: null }` before the first switch. */
+  /** Whether forecasts are on, and when staff last switched them; `{ on: true, at: null }` before the first switch (D42). */
   readonly forecasts: { readonly on: boolean; readonly at: Date | null };
 }
 
@@ -104,7 +105,8 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     suspendedAt: doc.suspendedAt,
     firstJoinedAt: doc.firstJoinedAt ?? null,
     lastSuspendedAt: doc.lastSuspendedAt ?? null,
-    forecasts: doc.forecasts === undefined ? { on: false, at: null } : { on: doc.forecasts.on, at: doc.forecasts.at },
+    // D42: on by default for every organization, existing and new, until staff switch it off. [CONFIRM]
+    forecasts: doc.forecasts == null ? { on: true, at: null } : { on: doc.forecasts.on, at: doc.forecasts.at },
   };
 }
 

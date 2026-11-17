@@ -1,0 +1,353 @@
+// The weekly refresh's pass (D42, lab/schedule.ts), with the test server's fake clock and a fake runner; the test plays
+// the job where a calibration must finish (helpers/lab.ts). One test per scenario of the weekly-forecast-refresh delta:
+// which locations a Monday starts, the reference rule, the regime carried over, the live and weekly caps, the lease, week
+// rows a dead pass left starting, time zones, the three stops and the pass's log line. Every number is synthetic.
+import { randomUUID } from 'node:crypto';
+
+import { Types } from 'mongoose';
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import type { OrgScope } from '../src/access/policy.ts';
+import { utcDay } from '../src/dates.ts';
+import { labInputSchema, type LabInput } from '../src/lab/input.ts';
+import { createForecastSchedule, SCHEDULE_LIVE_CAP, type PassResult, type ScheduleContext } from '../src/lab/schedule.ts';
+import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
+import { addLocation, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { fakeLabRunner, jobCall, labResultFor, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
+import { logLines, MINUTE, startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
+
+let server: TownwiseTestServer;
+let runner: FakeLabRunner;
+
+beforeAll(async () => {
+  runner = fakeLabRunner();
+  server = await startTownwiseServer({ labRunner: runner });
+});
+afterAll(async () => { await server.close(); });
+
+const COLLECTIONS = [
+  'tw_orgs', 'tw_locations', 'tw_sales_days', 'tw_calibrations', 'tw_forecast_weeks', 'tw_forecast_schedule', 'tw_forecast_runs',
+  'tw_forecasts', 'tw_audit_events', 'tw_notes',
+];
+
+/** The test clock starts at Mon, Jun 1, 2026, 12:00 UTC (08:00 in Hanover); each test starts there again. */
+let start = 0;
+beforeEach(async () => {
+  await server.redis.flushdb();
+  for (const name of COLLECTIONS) await server.connection.collection(name).deleteMany({});
+  runner.onStart = null;
+  server.clock.advance(Date.parse('2026-06-01T12:00:00.000Z') - server.clock.now().getTime());
+  start = runner.jobs.length;
+});
+
+const LAST = '2026-05-31';
+const HOUR = 60 * MINUTE;
+const DAY = 24 * HOUR;
+const PERSON = { userId: 'staff-0000', role: 'superadmin', via: 'console' } as const;
+
+interface Place { scope: OrgScope; orgId: string; locationId: string }
+
+/**
+ * An organization (no `forecasts` field unless `forecasts` says otherwise) with a location in `town` holding guests on
+ * every day of a `span`-day span ending on LAST.
+ */
+async function place(opts: { span?: number; forecasts?: 'off' | 'on'; town?: { townId: string | null; name: string; state: string } } = {}): Promise<Place> {
+  const name = `Weekly Kitchen ${randomUUID().slice(0, 6)}`;
+  const orgId = await createOrg(server, opts.forecasts === undefined ? { name } : { name, forecastsOn: opts.forecasts === 'on' });
+  const locationId = await addLocation(server, { orgId, name: 'Main Room' });
+  if (opts.town !== undefined) {
+    await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(locationId) }, { $set: { town: opts.town } });
+  }
+  await seedHistory(server, { orgId, locationId, from: utcDay(new Date(`${LAST}T00:00:00.000Z`), -(opts.span ?? 300)), to: LAST });
+  return { scope: { orgId } as OrgScope, orgId, locationId };
+}
+
+function schedule(over: { config?: Partial<ScheduleContext['config']>; labRunner?: null; owner?: string } = {}) {
+  const ctx: ScheduleContext = {
+    ...server.ctx,
+    config: { ...server.ctx.config, ...over.config },
+    ...(over.labRunner === null ? { labRunner: null } : {}),
+  };
+  return createForecastSchedule({ ctx, ...(over.owner === undefined ? {} : { owner: over.owner }) });
+}
+
+function pass(over: Parameters<typeof schedule>[0] = {}): Promise<PassResult> {
+  return schedule(over).pass();
+}
+
+function jobs() {
+  return runner.jobs.slice(start);
+}
+
+async function weekRow(p: Place, week = '2026-06-01'): Promise<Record<string, unknown> | null> {
+  return server.connection.collection('tw_forecast_weeks').findOne({ orgId: new Types.ObjectId(p.orgId), locationId: new Types.ObjectId(p.locationId), week });
+}
+
+async function calibration(id: string): Promise<Record<string, unknown> | null> {
+  return server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) });
+}
+
+/** The job of `calibrationId` fetches its input and posts the lab's answer to it (a draft judged by the gate). */
+async function finishJob(calibrationId: string): Promise<LabInput> {
+  const res = await jobCall(server, { calibrationId }, 'input');
+  expect(res.status).toBe(200);
+  const input = labInputSchema.parse(await res.json());
+  expect((await jobCall(server, { calibrationId }, 'result', labResultFor(input))).status).toBe(200);
+  return input;
+}
+
+async function personStart(p: Place, regimeStart: string | null = null) {
+  const location = await server.ctx.stores.locations.find(p.scope, p.locationId);
+  if (location === null) throw new Error('no location');
+  const req: StartRequest = { id: new Types.ObjectId().toHexString(), scope: p.scope, location, requester: PERSON, regimeStart, today: '2026-06-01' };
+  const launched = await launch(server.ctx, req);
+  if (!launched.ok) throw new Error(`the start was refused: ${launched.code}`);
+  return launched.calibration;
+}
+
+describe('which locations a Monday starts', () => {
+  it('a changed location of an organization with no forecasts field starts as the system on Monday after 03:00', async () => {
+    const p = await place();
+    const result = await pass();
+    expect(result).toMatchObject({ state: 'ran', started: 1, failed: 0, skipped: 0, capped: 0 });
+    const [job] = jobs();
+    expect(jobs()).toHaveLength(1);
+    const row = await weekRow(p);
+    expect(row).toMatchObject({ status: 'started', calibrationId: job?.calibrationId });
+    expect(row?.dataSha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(await calibration(job?.calibrationId ?? '')).toMatchObject({
+      requestedBy: SYSTEM_REQUESTER, chargedMicroUsd: 0, regimeStart: null, status: 'running',
+    });
+    const scheduled = (await auditEvents(server)).filter((event) => event.action === 'calibration.scheduled');
+    expect(scheduled).toEqual([expect.objectContaining({
+      actorRole: 'system', target: { type: 'calibration', id: job?.calibrationId },
+      details: { locationId: p.locationId, calibrationId: job?.calibrationId },
+    })]);
+    // The week's row means a later pass that day starts nothing more.
+    expect(await pass()).toMatchObject({ state: 'ran', started: 0 });
+    expect(jobs()).toHaveLength(1);
+  });
+
+  it('starts nothing before 03:00 on Monday in the town, or on another day', async () => {
+    const p = await place();
+    server.clock.advance(-(5 * HOUR + 30 * MINUTE)); // Mon 06:30 UTC, 02:30 in Hanover
+    expect(await pass()).toMatchObject({ state: 'ran', started: 0, skipped: 0, capped: 0 });
+    expect(await weekRow(p)).toBeNull();
+    server.clock.advance(DAY); // Tuesday
+    expect(await pass()).toMatchObject({ started: 0 });
+    expect(jobs()).toHaveLength(0);
+  });
+
+  it('a location in another time zone starts from 03:00 in its own town', async () => {
+    const hanover = await place();
+    const pacific = await place({ town: { townId: null, name: 'Mendocino', state: 'CA' } });
+    server.clock.advance(-(3 * HOUR + 30 * MINUTE)); // 08:30 UTC: 04:30 in Hanover, 01:30 in California
+    expect(await pass()).toMatchObject({ started: 1 });
+    expect(await weekRow(hanover)).toMatchObject({ status: 'started' });
+    expect(await weekRow(pacific)).toBeNull();
+    server.clock.advance(2 * HOUR); // 03:30 in California
+    expect(await pass()).toMatchObject({ started: 1 });
+    expect(await weekRow(pacific)).toMatchObject({ status: 'started' });
+  });
+
+  it('considers organizations with forecasts on or unset, never one switched off or suspended', async () => {
+    const unset = await place();
+    const on = await place({ forecasts: 'on' });
+    const off = await place({ forecasts: 'off' });
+    const suspended = await place();
+    await server.connection.collection('tw_orgs').updateOne({ _id: new Types.ObjectId(suspended.orgId) }, { $set: { status: 'suspended' } });
+    expect(await pass()).toMatchObject({ started: 2 });
+    expect(await weekRow(unset)).toMatchObject({ status: 'started' });
+    expect(await weekRow(on)).toMatchObject({ status: 'started' });
+    expect(await weekRow(off)).toBeNull();
+    expect(await weekRow(suspended)).toBeNull();
+  });
+
+  it('records not_enough_history under a 230-day span and starts from 230', async () => {
+    const short = await place({ span: 229 });
+    const enough = await place({ span: 230 });
+    expect(await pass()).toMatchObject({ started: 1, skipped: 1 });
+    expect(await weekRow(short)).toMatchObject({ status: 'not_enough_history', calibrationId: null });
+    expect(await weekRow(enough)).toMatchObject({ status: 'started' });
+  });
+
+  it('records unchanged when the fingerprint equals the reference calibration’s, and starts again once the data changes', async () => {
+    const p = await place();
+    await pass();
+    const [job] = jobs();
+    await finishJob(job?.calibrationId ?? '');
+    // 300 days is too short for a first model forecast: the gate refused it on its own data, so it is a reference.
+    expect(await calibration(job?.calibrationId ?? '')).toMatchObject({ status: 'succeeded', gate: { published: false, reason: 'not_enough_history' } });
+    server.clock.advance(7 * DAY);
+    expect(await pass()).toMatchObject({ started: 0, skipped: 1 });
+    expect(await weekRow(p, '2026-06-08')).toMatchObject({ status: 'unchanged' });
+    // A week's new days change the fingerprint (and the lab model version would too).
+    await seedHistory(server, { orgId: p.orgId, locationId: p.locationId, from: '2026-06-01', to: '2026-06-07' });
+    server.clock.advance(7 * DAY);
+    expect(await pass()).toMatchObject({ started: 1 });
+    expect(await weekRow(p, '2026-06-15')).toMatchObject({ status: 'started' });
+  });
+
+  it('the reference rule: forecasts switched on after a forecasts_off draft start a fresh calibration on unchanged data', async () => {
+    // 620 days, so the draft passes every check but G1.
+    const p = await place({ span: 620, forecasts: 'off' });
+    const person = await personStart(p);
+    await finishJob(person.id);
+    expect(await calibration(person.id)).toMatchObject({ gate: { published: false, reason: 'forecasts_off' } });
+    expect(await pass()).toMatchObject({ started: 0 });
+    await server.connection.collection('tw_orgs').updateOne(
+      { _id: new Types.ObjectId(p.orgId) }, { $set: { forecasts: { on: true, at: server.clock.now(), by: 'staff-0000' } } },
+    );
+    expect(await pass()).toMatchObject({ started: 1, skipped: 0 });
+    expect(await weekRow(p)).toMatchObject({ status: 'started' });
+    expect((await weekRow(p))?.dataSha256).toBe((await calibration(person.id))?.dataSha256);
+  });
+
+  it('carries over the regimeStart of the calibration that made the newest published run', async () => {
+    const p = await place({ span: 620 });
+    const person = await personStart(p, '2026-01-05');
+    const input = await finishJob(person.id);
+    expect(input.regimeStart).toBe('2026-01-05');
+    expect(await calibration(person.id)).toMatchObject({ gate: { published: true } });
+    await seedHistory(server, { orgId: p.orgId, locationId: p.locationId, from: '2026-06-01', to: '2026-06-07' });
+    server.clock.advance(7 * DAY);
+    expect(await pass()).toMatchObject({ started: 1 });
+    const job = jobs().at(-1);
+    expect(await calibration(job?.calibrationId ?? '')).toMatchObject({ requestedBy: SYSTEM_REQUESTER, regimeStart: '2026-01-05' });
+  });
+
+  it('someone already calibrating: no row, and a later pass that Monday starts it', async () => {
+    const p = await place({ span: 600 });
+    const person = await personStart(p);
+    expect(await pass()).toMatchObject({ started: 0, skipped: 1 });
+    expect(await weekRow(p)).toBeNull();
+    await finishCalibration(server.ctx, p.scope, person, { status: 'failed', failure: 'job_failed' });
+    server.clock.advance(HOUR);
+    expect(await pass()).toMatchObject({ started: 1 });
+  });
+
+  it('a failed scheduled calibration is not retried that week', async () => {
+    const p = await place();
+    await pass();
+    const [job] = jobs();
+    server.clock.advance(21 * MINUTE); // its job never called back: timed out
+    expect(await pass()).toMatchObject({ started: 0 });
+    expect(await calibration(job?.calibrationId ?? '')).toMatchObject({ status: 'failed', failure: 'timeout' });
+    expect(await weekRow(p)).toMatchObject({ status: 'started' });
+    expect(jobs()).toHaveLength(1);
+  });
+
+  it('records start_failed when the job cannot start', async () => {
+    const p = await place();
+    runner.failNext(new Error('no job'));
+    expect(await pass()).toMatchObject({ started: 0, failed: 1 });
+    expect(await weekRow(p)).toMatchObject({ status: 'start_failed' });
+  });
+});
+
+describe('the caps', () => {
+  it('starts at most 3 live at once, writing no row for the rest, and later passes start them as live ones finish', async () => {
+    const places = [];
+    for (let i = 0; i < 5; i += 1) places.push(await place());
+    expect(await pass()).toMatchObject({ started: SCHEDULE_LIVE_CAP, capped: 2 });
+    const rows = await Promise.all(places.map((p) => weekRow(p)));
+    expect(rows.filter((row) => row === null)).toHaveLength(2);
+    expect(await pass()).toMatchObject({ started: 0, capped: 2 });
+    // One finishes: the next pass starts one more.
+    const [first] = jobs();
+    const done = places.find((p, i) => rows[i]?.calibrationId === first?.calibrationId);
+    if (done === undefined) throw new Error('no place for the first job');
+    const record = await server.ctx.stores.calibrations.find(done.scope, first?.calibrationId ?? '');
+    if (record === null) throw new Error('no calibration');
+    await finishCalibration(server.ctx, done.scope, record, { status: 'failed', failure: 'job_failed' });
+    expect(await pass()).toMatchObject({ started: 1, capped: 1 });
+    server.clock.advance(21 * MINUTE); // the rest time out
+    expect(await pass()).toMatchObject({ started: 1, capped: 0 });
+    expect(jobs()).toHaveLength(5);
+  });
+
+  it('records cap_reached past the weekly cap', async () => {
+    const a = await place();
+    const b = await place();
+    expect(await pass({ config: { weeklyForecastCap: 1 } })).toMatchObject({ started: 1, capped: 1 });
+    const statuses = [(await weekRow(a))?.status, (await weekRow(b))?.status].sort();
+    expect(statuses).toEqual(['cap_reached', 'started']);
+  });
+});
+
+describe('the lease', () => {
+  it('a pass that finds the lease held starts nothing', async () => {
+    await place();
+    await server.ctx.stores.forecastSchedule.claim({ owner: 'slow-pass', now: server.clock.now(), leaseMs: 10 * MINUTE });
+    expect(await pass()).toMatchObject({ state: 'lease_held', started: 0 });
+    expect(jobs()).toHaveLength(0);
+  });
+
+  it('a renewal that fails mid-pass stops it at once, and a later pass continues with the rest', async () => {
+    for (let i = 0; i < 4; i += 1) await place();
+    runner.onStart = async () => {
+      // Another pass takes the lease while this one starts its first location.
+      await server.connection.collection<{ _id: string }>('tw_forecast_schedule').updateOne(
+        { _id: 'weekly' }, { $set: { owner: 'other-pass', leaseUntil: new Date(server.clock.now().getTime() + 10 * MINUTE) } },
+      );
+      runner.onStart = null;
+    };
+    expect(await pass()).toMatchObject({ state: 'lease_lost', started: 1 });
+    expect(jobs()).toHaveLength(1);
+    server.clock.advance(21 * MINUTE); // the other pass's lease and the first calibration both run out
+    expect(await pass()).toMatchObject({ state: 'ran', started: 3 });
+    expect(jobs()).toHaveLength(4);
+  });
+
+  it('a starting row a dead pass left is resolved: start_failed with no calibration, started with one', async () => {
+    const lost = await place();
+    const made = await place();
+    const old = new Date(server.clock.now().getTime() - 11 * MINUTE);
+    const insert = (p: Place) => server.connection.collection('tw_forecast_weeks').insertOne({
+      orgId: new Types.ObjectId(p.orgId), locationId: new Types.ObjectId(p.locationId), week: '2026-06-01', status: 'starting',
+      calibrationId: null, dataSha256: null, createdAt: old, updatedAt: old,
+    });
+    await insert(lost);
+    await insert(made);
+    const location = await server.ctx.stores.locations.find(made.scope, made.locationId);
+    if (location === null) throw new Error('no location');
+    const launched = await launch(server.ctx, {
+      id: new Types.ObjectId().toHexString(), scope: made.scope, location, requester: SYSTEM_REQUESTER, regimeStart: null, today: '2026-06-01',
+    });
+    if (!launched.ok) throw new Error('not launched');
+    expect(await pass()).toMatchObject({ started: 0, failed: 1 });
+    expect(await weekRow(lost)).toMatchObject({ status: 'start_failed' });
+    expect(await weekRow(made)).toMatchObject({ status: 'started', calibrationId: launched.calibration.id });
+    expect(jobs()).toHaveLength(1);
+  });
+});
+
+describe('the stops', () => {
+  it('starts nothing with TOWNWISE_WEEKLY_FORECASTS false, the lab runner off, or the schedule paused', async () => {
+    const p = await place();
+    expect(await pass({ config: { weeklyForecasts: false } })).toMatchObject({ state: 'off', started: 0 });
+    expect(await pass({ labRunner: null })).toMatchObject({ state: 'off', started: 0 });
+    await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
+    expect(await pass()).toMatchObject({ state: 'paused', started: 0 });
+    expect(await weekRow(p)).toBeNull();
+    expect(jobs()).toHaveLength(0);
+    await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
+    expect(await pass()).toMatchObject({ state: 'ran', started: 1 });
+  });
+});
+
+describe('the pass’s log line', () => {
+  it('logs townwise.weekly_refresh_pass with counts, its state and time only: no id and no figure', async () => {
+    const a = await place();
+    await place({ span: 100 });
+    const b = await place({ forecasts: 'off' });
+    runner.failNext(new Error('no job'));
+    await pass();
+    const line = logLines(server).filter((each) => each.msg === 'townwise.weekly_refresh_pass').at(-1);
+    expect(line).toMatchObject({ state: 'ran', started: 0, failed: 1, skipped: 1, capped: 0 });
+    const keys = Object.keys(line ?? {}).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)).sort();
+    expect(keys).toEqual(['capped', 'failed', 'ms', 'skipped', 'started', 'state']);
+    const text = JSON.stringify(line);
+    for (const id of [a.orgId, a.locationId, b.orgId]) expect(text).not.toContain(id);
+  });
+});

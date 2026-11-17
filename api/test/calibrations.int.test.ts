@@ -148,6 +148,27 @@ describe('calibrated and stale (14.3, D42)', () => {
     expect(await stateOf(p)).toMatchObject({ state: 'calibrated', dataThrough: LAST, newerDays: 0, nextRefresh: '2026-06-08' });
   });
 
+  it('an organization nobody switched has its next refresh (forecasts on by default); none with the switch false or the schedule paused', async () => {
+    const orgId = await createOrg(server, { name: `Default Kitchen ${randomUUID().slice(0, 6)}` });
+    const locationId = await addLocation(server, { orgId, name: 'Main Room' });
+    await seedHistory(server, { orgId, locationId, from: '2025-08-04', to: LAST });
+    const p: Place = { scope: { orgId } as OrgScope, orgId, locationId };
+    await publishRun(p, '2026-05-24');
+    expect(await stateOf(p)).toMatchObject({ state: 'stale', nextRefresh: '2026-06-08' });
+    const location = await server.ctx.stores.locations.find(p.scope, p.locationId);
+    if (location === null) throw new Error('no location');
+    const coverage = await server.ctx.stores.salesDays.coverage(p.scope, p.locationId);
+    const switchedOff = { ...server.ctx, config: { ...server.ctx.config, weeklyForecasts: false } };
+    expect(await calibrationFor(switchedOff, p.scope, location, coverage)).toMatchObject({ state: 'stale', nextRefresh: null });
+    await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
+    try {
+      expect(await stateOf(p)).toMatchObject({ state: 'stale', nextRefresh: null });
+    } finally {
+      await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
+    }
+    expect(await stateOf(p)).toMatchObject({ nextRefresh: '2026-06-08' });
+  });
+
   it('has no next refresh while the organization’s forecasts are off', async () => {
     const p = await place(300);
     await publishRun(p, '2026-05-24');

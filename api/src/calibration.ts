@@ -35,9 +35,9 @@ export function calibrationOf(coverage: Coverage, published: PublishedFacts | nu
 
 /**
  * The Monday the weekly refresh next considers a location (D42): the first Monday after the town's `today`, or null
- * while it is off. `on` is the lab runner on and the organization active with its forecasts on; phase 3b adds
- * TOWNWISE_WEEKLY_FORECASTS and the staff pause. On a Monday it is the next one, the day's pass (from 03:00) having had
- * its turn.
+ * while it is off. `on` is nextRefreshFor's: the lab runner on, TOWNWISE_WEEKLY_FORECASTS true, the schedule not paused
+ * by staff, and the organization active with its forecasts on. On a Monday it is the next one, the day's pass (from
+ * 03:00) having had its turn.
  */
 export function nextRefreshOf(today: string, on: boolean): string | null {
   if (!on) return null;
@@ -74,9 +74,13 @@ export async function calibrationFor(
   return calibrationOf(coverage, { dataThrough: newest.dataThrough, newerDays }, await nextRefreshFor(ctx, scope, location));
 }
 
-/** nextRefreshOf for the location: the lab runner on and its organization active with forecasts on, in the town's today. */
+/**
+ * nextRefreshOf for the location, in the town's today: on while the lab runner is on, TOWNWISE_WEEKLY_FORECASTS is true,
+ * staff have not paused the schedule, and its organization is active with forecasts on (an absent switch is on, D42).
+ */
 export async function nextRefreshFor(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord): Promise<string | null> {
-  const org = ctx.labRunner === null ? null : await ctx.stores.orgs.findById(scope.orgId);
+  const running = ctx.labRunner !== null && ctx.config.weeklyForecasts && (await ctx.stores.forecastSchedule.paused()) === null;
+  const org = running ? await ctx.stores.orgs.findById(scope.orgId) : null;
   const on = org !== null && org.status === 'active' && org.forecasts.on;
   return nextRefreshOf(localDay(ctx.now(), timeZoneOf(location.town).timeZone), on);
 }

@@ -13,6 +13,8 @@ import { createFileEntryStore, type FileEntryStore } from './file-entries.ts';
 import { fileSweepModel } from './file-sweeps.ts';
 import { createFileStore, type FileStore } from './files.ts';
 import { createFilesUsageStore, type FilesUsageStore } from './files-usage.ts';
+import { createForecastScheduleStore, type ForecastScheduleStore } from './forecast-schedule.ts';
+import { createForecastWeekStore, type ForecastWeekStore } from './forecast-weeks.ts';
 import { createForecastStore, type ForecastStore } from './forecasts.ts';
 import { createGoogleConnectionStore, type GoogleConnectionStore } from './google-connections.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
@@ -70,6 +72,9 @@ export interface TownwiseStores {
   readonly forecasts: ForecastStore;
   /** The forecast lab's calibrations. */
   readonly calibrations: CalibrationStore;
+  /** D42, the weekly refresh: each location's row per week (tenant), and the lease and staff pause (no tenant data). */
+  readonly forecastWeeks: ForecastWeekStore;
+  readonly forecastSchedule: ForecastScheduleStore;
   /** The owner's own calendars and their events (openspec change connect-owner-calendar). */
   readonly ownerCalendars: OwnerCalendarStore;
   /** A person's Google access for calendars, one per organization (openspec change connect-google-calendar). */
@@ -113,6 +118,9 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     forecasts: createForecastStore(connection),
     // The forecast lab.
     calibrations: createCalibrationStore(connection),
+    // D42, the weekly refresh.
+    forecastWeeks: createForecastWeekStore(connection),
+    forecastSchedule: createForecastScheduleStore(connection),
     // The owner's own calendars.
     ownerCalendars: createOwnerCalendarStore(connection),
     // Google access for calendars.

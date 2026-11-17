@@ -19,6 +19,7 @@ import { CellLines, RowActions } from './parts';
 import { problemOf } from './problems';
 import type { OrgLocation, StaffOrg } from './schemas';
 import { useRefreshable } from './useRefreshable';
+import { WeeklyRefresh } from './WeeklyRefresh';
 
 // P21's Forecasts (spec 16.4, 14.4): every forecast run staff imported for the organization, by location, with
 // Publish (drafts only), Withdraw and Delete, each through a console dialog, and the import. A run is a draft until
@@ -178,6 +179,15 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
         {calibrations.state.status === 'ready' ? (
           <>
             <ForecastsSwitch org={org} forecasts={calibrations.state.data.forecasts} onChanged={calibrationsRefreshed} />
+            {calibrations.state.data.schedule === undefined ? null : (
+              <WeeklyRefresh
+                schedule={calibrations.state.data.schedule}
+                weeks={calibrations.state.data.weeks ?? []}
+                locations={locations}
+                calibrations={calibrations.state.data.calibrations}
+                onChanged={calibrationsRefreshed}
+              />
+            )}
             <Calibrations org={org} locations={locations} calibrations={calibrations.state.data.calibrations} onStarted={calibrationsRefreshed} />
           </>
         ) : null}

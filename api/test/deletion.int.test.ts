@@ -42,8 +42,8 @@ const TENANT_COLLECTIONS = [
   'tw_agent_answers',
   // U13B.
   'tw_forecast_runs', 'tw_forecasts',
-  // The forecast lab.
-  'tw_calibrations',
+  // The forecast lab, and (D42) the weekly refresh's week rows.
+  'tw_calibrations', 'tw_forecast_weeks',
   // Business rules (spec 6.24).
   'tw_business_rules',
   // The owner's own calendars and their events, and (connect-google-calendar) the Google connections that read them.
@@ -167,6 +167,11 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',
     answer: 'not_sure', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
   });
+  // D42: a week row of the weekly refresh.
+  await server.connection.collection('tw_forecast_weeks').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', status: 'unchanged',
+    calibrationId: null, dataSha256: null, createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
   await addLiveTurn(server, { orgId, userId: member.session.userId });
   await addChatUsage(server, { orgId, month: '2026-06', costMicroUsd: 1_250_000 });
   await addGrant(server, { actorUserId: staff.userId, sessionId: randomUUID(), targetUserId: member.session.userId, orgId });
@@ -223,11 +228,12 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // The event is written before the effect; the organization row is deleted last, then sales days, ordering's
     // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
-    // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
-    expect(writes.slice(-13)).toEqual([
+    // Stored files (none here) are swept again after the row too: imports first. Then (D42) week rows, and (U13B)
+    // forecast rows, then runs.
+    expect(writes.slice(-14)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
       'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
-      'delete tw_chat_usage', 'delete tw_calibrations', 'delete tw_forecasts', 'delete tw_forecast_runs',
+      'delete tw_chat_usage', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);

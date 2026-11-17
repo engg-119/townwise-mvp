@@ -112,6 +112,10 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'forecast.published', label: 'Forecast published' },
   { value: 'forecast.withdrawn', label: 'Forecast withdrawn' },
   { value: 'forecast.deleted', label: 'Forecast deleted' },
+  // D42, the weekly refresh: a start by Townwise, and the staff pause for every organization.
+  { value: 'calibration.scheduled', label: 'Weekly calibration started' },
+  { value: 'forecast_schedule.paused', label: 'Weekly refresh paused' },
+  { value: 'forecast_schedule.resumed', label: 'Weekly refresh resumed' },
   { value: 'view_as.started', label: 'View-as started' },
   { value: 'view_as.ended', label: 'View-as ended' },
   // D25, open as admin.

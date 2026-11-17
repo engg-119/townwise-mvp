@@ -303,9 +303,13 @@ export function labInputOf(args: {
 /**
  * The input for a live calibration, read under its organization's scope: the location's stored days, notes and
  * scheduled business rules, the town's local date, and the run that was current when it started. Null when the location
- * or its history is gone.
+ * or its history is gone. The weekly refresh (D42) builds one for a calibration not yet started, with no champion, to
+ * compare its fingerprint.
  */
-export async function buildLabInput(ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord): Promise<LabInput | null> {
+export async function buildLabInput(
+  ctx: Pick<TownwiseContext, 'stores' | 'now'>, scope: OrgScope,
+  calibration: Pick<CalibrationRecord, 'id' | 'locationId' | 'regimeStart' | 'championRunId'>,
+): Promise<LabInput | null> {
   const { stores } = ctx;
   const location = await stores.locations.find(scope, calibration.locationId);
   if (location === null) return null;

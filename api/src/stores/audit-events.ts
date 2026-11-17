@@ -92,7 +92,11 @@ export const AUDIT_DETAIL_KEYS = {
   // The forecast lab: ids, codes and counts, never a figure.
   'calibration.requested': ['locationId', 'calibrationId', 'via', 'hasRegime'],
   'calibration.finished': ['locationId', 'calibrationId', 'status', 'gate', 'failure', 'runId', 'heldOutWeeks'],
+  // D42, the weekly refresh: a start by the system (ids only), and the staff pause of every scheduled start.
+  'calibration.scheduled': ['locationId', 'calibrationId'],
   'org.forecasts_switched': ['on'],
+  'forecast_schedule.paused': [],
+  'forecast_schedule.resumed': [],
   'view_as.started': ['targetUserId', 'targetEmail', 'reason', 'expiresAt'],
   'view_as.ended': ['endReason'],
   // D25, open as admin: the grant is the target and the organization the event's orgId; no name or email. `reason`, the
@@ -117,7 +121,9 @@ export type AuditTargetType =
   // Owner calendars.
   | 'owner_calendar'
   // A person's Google access for calendars (connect-google-calendar).
-  | 'google_connection';
+  | 'google_connection'
+  // D42, the weekly refresh's schedule.
+  | 'forecast_schedule';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {

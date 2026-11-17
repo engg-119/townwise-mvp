@@ -35,6 +35,8 @@ describe('indexes', () => {
       'tw_forecast_runs', 'tw_forecasts',
       // The forecast lab.
       'tw_calibrations',
+      // D42, the weekly refresh.
+      'tw_forecast_weeks', 'tw_forecast_schedule',
       'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
       'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
       // Business rules (spec 6.24).
@@ -44,6 +46,10 @@ describe('indexes', () => {
       // Google access for calendars (openspec change connect-google-calendar).
       'tw_google_connections',
     ].sort());
+  });
+
+  it('keeps one weekly refresh row per location per week (D42)', () => {
+    expect(indexesOf(registered(), 'TwForecastWeek')).toContainEqual([{ orgId: 1, locationId: 1, week: 1 }, expect.objectContaining({ unique: true })]);
   });
 
   it('declares only indexes DocumentDB 5.0 builds', () => {

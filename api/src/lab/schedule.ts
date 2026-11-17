@@ -1,0 +1,230 @@
+// The weekly refresh (D42, spec 14.6, design decisions 2 to 4 and 13): one pass of the background worker
+// (workers/weekly-forecasts.ts), never a loop in the API. A pass acts only while it holds the lease on the schedule
+// document (10 minutes, renewed before each location; a failed renewal stops it at once), and does nothing while the lab
+// runner is off, TOWNWISE_WEEKLY_FORECASTS is false or staff paused it. It then
+//   1. resolves week rows a dead pass left `starting` (started, when a system calibration of the location came after the
+//      row, else start_failed),
+//   2. counts the live calibrations it started (a stale one timed out first), for the live cap of 3,
+//   3. considers each location of an active organization whose forecasts are on (an absent switch counting as on),
+//      found by a cross-tenant lookup and scoped by access/policy.ts: from 03:00 on Monday in the town's time zone, a
+//      location with no row for that Monday and no calibration of its own live is fingerprinted (its lab input without
+//      calibrationId, today and champion, with the input version and LAB_MODEL_VERSION) and skipped `unchanged` when the
+//      fingerprint equals its reference calibration's (stores/calibrations.ts reference), `not_enough_history` under the
+//      baseline's 230 days, held without a row past the live cap, `cap_reached` past the weekly cap, and otherwise
+//      started as the system (no charge, not one of the 4 a day) with the regimeStart of the calibration that made its
+//      newest published run.
+// Nothing here names a town, an organization or a location. The pass logs one line of counts and its state; a location
+// whose turn throws logs its ids and the pass goes on. No figure is ever logged.
+import { randomUUID } from 'node:crypto';
+import { performance } from 'node:perf_hooks';
+
+import { Types } from 'mongoose';
+
+import { scopeForWeeklyRefresh, type OrgScope } from '../access/policy.ts';
+import type { TownwiseContext } from '../app.ts';
+import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
+import { daysBetween } from '../dates.ts';
+import { LIVE_STATUSES } from '../stores/calibrations.ts';
+import {
+  countedWeekRows, liveScheduledCalibrations, staleStartingWeeks, weeklyCandidates, type WeeklyCandidate,
+} from '../stores/cross-tenant.ts';
+import { localDay, localMinutes, timeZoneOf, weekdayOf } from '../time-zones.ts';
+import { GATE } from './gate.ts';
+import { buildLabInput, labInputFingerprint } from './input.ts';
+import { checkStart, expireStale, launch, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
+
+/** The lease a pass holds and renews before each location. */
+export const SCHEDULE_LEASE_MS = 10 * 60_000;
+/** Scheduled calibrations live at once across all organizations. [CONFIRM] */
+export const SCHEDULE_LIVE_CAP = 3;
+/** A location's week starts at this hour on Monday, in its town's time zone. [CONFIRM] */
+export const SCHEDULE_START_HOUR = 3;
+/** How far back the staff console looks for each location's latest week row. */
+export const WEEK_ROWS_LOOKBACK_DAYS = 56;
+
+/** What a pass reads: starting a calibration's context, and the connection its cross-tenant lookups use. */
+export type ScheduleContext = LabStartContext & Pick<TownwiseContext, 'connection'>;
+
+/**
+ * How a pass ended: it ran, or it found the refresh off (the lab runner or TOWNWISE_WEEKLY_FORECASTS), paused by staff,
+ * the lease held by another pass, or its own lease taken mid-pass.
+ */
+export type PassState = 'ran' | 'off' | 'paused' | 'lease_held' | 'lease_lost';
+
+export interface PassCounts {
+  /** Calibrations started. */
+  started: number;
+  /** Starts that failed, and week rows left starting by a dead pass that it resolved as start_failed. */
+  failed: number;
+  /** Rows recorded `unchanged` or `not_enough_history`, and due locations someone else is calibrating. */
+  skipped: number;
+  /** Due locations held by the live cap (no row) or recorded `cap_reached`. */
+  capped: number;
+}
+
+export interface PassResult extends PassCounts { state: PassState; ms: number }
+
+export interface ForecastSchedule {
+  /** One pass. Never throws for one location's error (it logs that location's ids and goes on). */
+  pass(): Promise<PassResult>;
+}
+
+/** The Monday a location is due on, when it is due now: a Monday at 03:00 or later in its town; else null. */
+export function dueWeek(now: Date, timeZone: string): string | null {
+  const today = localDay(now, timeZone);
+  if (weekdayOf(today) !== 'Mon' || localMinutes(now, timeZone) < SCHEDULE_START_HOUR * 60) return null;
+  return today;
+}
+
+function isLive(status: string): boolean {
+  return (LIVE_STATUSES as readonly string[]).includes(status);
+}
+
+/**
+ * `dueClock` decides which locations are due (the worker's development-only --now moves it); everything the pass records
+ * (calibrations, week rows, the lease) keeps `ctx.now`, the real clock, so a job it starts can still call back in time.
+ */
+export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: string; dueClock?: () => Date }): ForecastSchedule {
+  const { ctx } = deps;
+  const dueClock = deps.dueClock ?? ctx.now;
+  const { stores } = ctx;
+  const owner = deps.owner ?? randomUUID();
+
+  /** Week rows a dead pass left starting longer than a lease: started with the system calibration made after, else failed. */
+  async function resolveStale(counts: PassCounts): Promise<void> {
+    const now = ctx.now();
+    for (const row of await staleStartingWeeks(ctx.connection, new Date(now.getTime() - SCHEDULE_LEASE_MS))) {
+      const scope = scopeForWeeklyRefresh(row);
+      const made = await stores.calibrations.scheduledSince(scope, row.locationId, row.createdAt);
+      const outcome = made === null ? { status: 'start_failed' as const } : { status: 'started' as const, calibrationId: made.id };
+      if (await stores.forecastWeeks.resolve(scope, row.id, outcome, now) && made === null) counts.failed += 1;
+    }
+  }
+
+  /** The scheduled calibrations still live, each past its 20 minutes timed out first. */
+  async function liveCount(): Promise<number> {
+    let live = 0;
+    for (const found of await liveScheduledCalibrations(ctx.connection)) {
+      const scope = scopeForWeeklyRefresh(found);
+      const record = await stores.calibrations.find(scope, found.id);
+      if (record !== null && isLive((await expireStale(ctx, scope, record)).status)) live += 1;
+    }
+    return live;
+  }
+
+  /** The regimeStart of the calibration that made the location's newest published run (null without one). */
+  async function regimeOf(scope: OrgScope, locationId: string): Promise<string | null> {
+    const [newest] = await stores.forecasts.published(scope, locationId);
+    if (newest?.lab == null) return null;
+    return (await stores.calibrations.find(scope, newest.lab.calibrationId))?.regimeStart ?? null;
+  }
+
+  /** A pass's running tally: its counts, the live scheduled calibrations and each week's counted rows. */
+  interface PassRun { counts: PassCounts; live: number; weekCounts: Map<string, number> }
+
+  async function consider(candidate: WeeklyCandidate, pass: PassRun): Promise<void> {
+    const scope = scopeForWeeklyRefresh(candidate);
+    const location = await stores.locations.find(scope, candidate.locationId);
+    if (location === null) return;
+    const timeZone = timeZoneOf(location.town).timeZone;
+    const week = dueWeek(dueClock(), timeZone);
+    if (week === null || await stores.forecastWeeks.find(scope, location.id, week) !== null) return;
+    const { counts } = pass;
+    // Someone is calibrating it: no row, so a later pass tries again until the town's Monday ends.
+    const own = await stores.calibrations.live(scope, location.id);
+    if (own !== null && isLive((await expireStale(ctx, scope, own)).status)) {
+      counts.skipped += 1;
+      return;
+    }
+    const regimeStart = await regimeOf(scope, location.id);
+    const input = await buildLabInput(ctx, scope, { id: new Types.ObjectId().toHexString(), locationId: location.id, regimeStart, championRunId: null });
+    const now = ctx.now();
+    const record = (status: 'unchanged' | 'not_enough_history' | 'cap_reached', dataSha256: string | null) =>
+      stores.forecastWeeks.insert(scope, { locationId: location.id, week, status, dataSha256, now });
+    const first = input?.days[0]?.date;
+    if (input === null || first === undefined || daysBetween(first, input.dataThrough) < GATE.baselineMinHistoryDays) {
+      if (await record('not_enough_history', null)) counts.skipped += 1;
+      return;
+    }
+    const dataSha256 = labInputFingerprint(input);
+    if ((await stores.calibrations.reference(scope, location.id))?.dataSha256 === dataSha256) {
+      if (await record('unchanged', dataSha256)) counts.skipped += 1;
+      return;
+    }
+    if (pass.live >= SCHEDULE_LIVE_CAP) {
+      counts.capped += 1;
+      return;
+    }
+    const counted = pass.weekCounts.get(week) ?? await countedWeekRows(ctx.connection, week);
+    pass.weekCounts.set(week, counted);
+    if (counted >= ctx.config.weeklyForecastCap) {
+      if (await record('cap_reached', dataSha256)) counts.capped += 1;
+      return;
+    }
+    const req: StartRequest = {
+      id: new Types.ObjectId().toHexString(), scope, location, requester: SYSTEM_REQUESTER, regimeStart, today: localDay(now, timeZone),
+    };
+    const refusal = await checkStart(ctx, req);
+    if (refusal === 'in_progress') {
+      counts.skipped += 1;
+      return;
+    }
+    if (!(await stores.forecastWeeks.insert(scope, { locationId: location.id, week, status: 'starting', dataSha256, now }))) return;
+    const row = await stores.forecastWeeks.find(scope, location.id, week);
+    if (row === null) return;
+    pass.weekCounts.set(week, counted + 1);
+    const launched = refusal === null ? await launch(ctx, req) : { ok: false as const, code: refusal };
+    if (launched.ok) {
+      await stores.forecastWeeks.resolve(scope, row.id, { status: 'started', calibrationId: launched.calibration.id }, ctx.now());
+      await recordAfter(ctx, {
+        ...SYSTEM_ACTOR, at: ctx.now(), orgId: scope.orgId, action: 'calibration.scheduled',
+        target: { type: 'calibration', id: launched.calibration.id },
+        details: { locationId: location.id, calibrationId: launched.calibration.id },
+      });
+      counts.started += 1;
+      pass.live += 1;
+      return;
+    }
+    if (launched.code === 'in_progress') {
+      // Another start won the location between the check and the insert: the week is still open for it.
+      await stores.forecastWeeks.removeStarting(scope, row.id);
+      pass.weekCounts.set(week, counted);
+      counts.skipped += 1;
+      return;
+    }
+    await stores.forecastWeeks.resolve(scope, row.id, { status: 'start_failed' }, ctx.now());
+    counts.failed += 1;
+  }
+
+  return {
+    async pass() {
+      const began = performance.now();
+      const counts: PassCounts = { started: 0, failed: 0, skipped: 0, capped: 0 };
+      const end = (state: PassState): PassResult => {
+        const result = { state, ...counts, ms: Math.round(performance.now() - began) };
+        ctx.logger.info(result, 'townwise.weekly_refresh_pass');
+        return result;
+      };
+      if (ctx.labRunner === null || !ctx.config.weeklyForecasts) return end('off');
+      const claim = await stores.forecastSchedule.claim({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS });
+      if (!claim.claimed) return end('lease_held');
+      try {
+        if (claim.paused !== null) return end('paused');
+        await resolveStale(counts);
+        const pass: PassRun = { counts, live: await liveCount(), weekCounts: new Map() };
+        for (const candidate of await weeklyCandidates(ctx.connection)) {
+          if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) return end('lease_lost');
+          try {
+            await consider(candidate, pass);
+          } catch {
+            counts.failed += 1;
+            ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_refresh_location_failed');
+          }
+        }
+        return end('ran');
+      } finally {
+        await stores.forecastSchedule.release({ owner, now: ctx.now() });
+      }
+    },
+  };
+}

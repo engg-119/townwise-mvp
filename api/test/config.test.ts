@@ -44,6 +44,7 @@ describe('config', () => {
     const budget = {
       TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
     };
     expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
     expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
@@ -55,6 +56,7 @@ describe('config', () => {
     const base = {
       TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
     };
     const twoStep = (nodeEnv: 'development' | 'test' | 'production', value?: string): boolean => resolveTownwiseConfig({
       NODE_ENV: nodeEnv, ...base, TOWNWISE_STAFF_TWO_STEP: loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: value }).TOWNWISE_STAFF_TWO_STEP,
@@ -90,10 +92,31 @@ describe('config', () => {
     const base = {
       NODE_ENV: 'production' as const, TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_WEB_URL: 'http://localhost:8081', FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined,
-      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
+      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
     };
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch('true') }).chatWebSearch).toBe(true);
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch(undefined) }).chatWebSearch).toBe(false);
+  });
+
+  it('the weekly refresh (D42) is on by default with a cap of 200 a week, and refuses anything but true or false', () => {
+    const weekly = (env: Record<string, string | undefined>) => {
+      const parsed = loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: 'staff@townwise.test', ...env });
+      return resolveTownwiseConfig({ NODE_ENV: 'development', ...parsed });
+    };
+    expect(weekly({})).toMatchObject({ weeklyForecasts: true, weeklyForecastCap: 200 });
+    expect(weekly({ TOWNWISE_WEEKLY_FORECASTS: '' })).toMatchObject({ weeklyForecasts: true });
+    expect(weekly({ TOWNWISE_WEEKLY_FORECASTS: 'false', TOWNWISE_WEEKLY_FORECAST_CAP: '12' })).toMatchObject({ weeklyForecasts: false, weeklyForecastCap: 12 });
+    expect(() => weekly({ TOWNWISE_WEEKLY_FORECASTS: 'sometimes' })).toThrow(ConfigError);
+    for (const bad of ['-1', 'many', '2.5', '10001']) expect(() => weekly({ TOWNWISE_WEEKLY_FORECAST_CAP: bad })).toThrow(ConfigError);
+  });
+
+  it('the API starts no weekly refresh (D42): main.ts never imports the schedule or the worker, which runs on its own', () => {
+    const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+    expect(main).not.toMatch(/lab\/schedule\.ts|workers\/weekly|createForecastSchedule|setInterval/);
+    const worker = readFileSync(new URL('../src/workers/weekly-forecasts.ts', import.meta.url), 'utf8');
+    expect(worker).toMatch(/\bcreateForecastSchedule\(/);
+    const scripts = (JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')) as { scripts: Record<string, string> }).scripts;
+    expect(scripts['worker:forecasts']).toBe('node src/workers/weekly-forecasts.ts');
   });
 
   it('reads the file reader’s AI budget in dollars, 5 by default, 0 turning it off, and refuses anything outside 0 to 1,000', () => {
@@ -197,6 +220,7 @@ describe('config', () => {
     expect(() => resolveTownwiseConfig({
       NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
   });
@@ -378,12 +402,22 @@ describe('config', () => {
 
     it('local runs uv in ../modeling/lab by default and calls back on the bare origin given', () => {
       expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080/' }))
-        .toEqual({ kind: 'local', apiUrl: 'http://localhost:8080', projectDir: '../modeling/lab' });
+        .toEqual({ kind: 'local', apiUrl: 'http://localhost:8080', projectDir: '../modeling/lab', secret: null });
       expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', TOWNWISE_LAB_PROJECT_DIR: '/srv/lab' }))
         .toMatchObject({ projectDir: '/srv/lab' });
       // local needs none of azure's sign-in variables, and ignores them.
       expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', ...CALLER }))
-        .toEqual({ kind: 'local', apiUrl: 'http://localhost:8080', projectDir: '../modeling/lab' });
+        .toEqual({ kind: 'local', apiUrl: 'http://localhost:8080', projectDir: '../modeling/lab', secret: null });
+    });
+
+    it('local carries the shared development secret when set (D42: the weekly worker and the API both accept its callback)', () => {
+      const secret = 's'.repeat(43);
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', TOWNWISE_LAB_LOCAL_SECRET: secret }))
+        .toMatchObject({ kind: 'local', secret });
+      expect(lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', TOWNWISE_LAB_LOCAL_SECRET: '' }))
+        .toMatchObject({ secret: null });
+      expect(problemsOf(() => lab({ TOWNWISE_LAB_RUNNER: 'local', TOWNWISE_LAB_API_URL: 'http://localhost:8080', TOWNWISE_LAB_LOCAL_SECRET: 'short-sentinel' })))
+        .toEqual(['TOWNWISE_LAB_LOCAL_SECRET']);
     });
 
     it('production refuses local, as it refuses Azurite', () => {

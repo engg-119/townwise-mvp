@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { GATE_WORDS } from '../src/lab/gate.ts';
 import { calibrationView } from '../src/lab/views.ts';
 import type { CalibrationRecord } from '../src/stores/calibrations.ts';
+import { scorecardWith } from './helpers/lab-scorecard.ts';
 
 function record(fields: Partial<CalibrationRecord> = {}): CalibrationRecord {
   return {
@@ -33,5 +34,20 @@ describe('calibrationView', () => {
     expect(view.gate).toEqual({ published: false, reason: 'a_later_reason', words: null });
     // D42's reasons have their words since phase 3a
     expect(calibrationView(record({ gate: { published: false, reason: 'jump_held' } })).gate?.words).toBe(GATE_WORDS.jump_held);
+  });
+
+  it('words an engine switch with the engine and its margin on the same weeks, from the stored scorecard (D42)', () => {
+    const engines = {
+      model: { weeks: 12, weeklyWape: 0.19, weeklyBias: 0, coverage80: { inside: 10, weeks: 12 } },
+      baseline: { weeks: 12, weeklyWape: 0.196, weeklyBias: 0, coverage80: { inside: 10, weeks: 12 } },
+    };
+    const view = calibrationView(record({
+      gate: { published: true, reason: 'engine_switched' }, scorecardJson: JSON.stringify(scorecardWith({ engine: 'model', engines })),
+    }));
+    expect(view.gate).toEqual({
+      published: true, reason: 'engine_switched',
+      words: 'Townwise switched to its demand model: it was 0.6 points better on the same held-out weeks, so Townwise published it.',
+    });
+    expect(calibrationView(record({ gate: { published: true, reason: 'engine_switched' } })).gate?.words).toBe(GATE_WORDS.engine_switched);
   });
 });

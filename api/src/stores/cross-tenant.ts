@@ -2,13 +2,15 @@
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
 // deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the TownwiseAI reader's
 // claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
-// existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, and Google access's
+// existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, Google access's
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
-// 10 and 11).
+// 10 and 11), and the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
+// countedWeekRows (D42).
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
 // (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
-// callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts) and Google access
-// (calendar/google-access.ts) import this file (test/isolation.test.ts enforces the list).
+// callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
+// (calendar/google-access.ts) and the weekly refresh (lab/schedule.ts) import this file (test/isolation.test.ts enforces
+// the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
@@ -20,6 +22,7 @@ import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
+import { COUNTED_WEEK_STATUSES, forecastWeekModel } from './forecast-weeks.ts';
 import { forecastRunModel } from './forecasts.ts';
 import { googleConnectionModel } from './google-connections.ts';
 import { importModel } from './imports.ts';
@@ -607,4 +610,72 @@ export async function hasGoogleConnectionElsewhere(connection: Connection, userI
 export async function googleConnectionsOfPerson(connection: Connection, userId: string): Promise<PersonGoogleConnection[]> {
   const docs = await googleConnectionModel(connection).find({ userId }, { _id: 1, orgId: 1 }).sort({ connectedAt: 1, _id: 1 }).lean();
   return docs.map((doc) => ({ id: doc._id.toHexString(), orgId: doc.orgId.toHexString() }));
+}
+
+/**
+ * A location the weekly refresh considers (D42). Only access/policy.ts's scopeForWeeklyRefresh turns it into an
+ * OrgScope; the location itself is then read through the tenant store.
+ */
+export interface WeeklyCandidate {
+  readonly orgId: string;
+  readonly locationId: string;
+}
+
+/**
+ * The weekly refresh's candidates, across organizations: every location of an active organization whose forecasts are
+ * on (G1), an organization with no `forecasts` field counting as on (D42, owner directive 2026-11-16). Ids only, oldest
+ * location first. Nothing here names a town, an organization or a location.
+ */
+export async function weeklyCandidates(connection: Connection): Promise<WeeklyCandidate[]> {
+  const orgs = await orgModel(connection).find(
+    { status: 'active', $or: [{ forecasts: trusted({ $exists: false }) }, { forecasts: null }, { 'forecasts.on': true }] },
+    { _id: 1 },
+  ).lean();
+  if (orgs.length === 0) return [];
+  const docs = await locationModel(connection).find({ orgId: trusted({ $in: orgs.map((org) => org._id) }) }, { _id: 1, orgId: 1 })
+    .sort({ createdAt: 1, _id: 1 }).lean();
+  return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString() }));
+}
+
+/** A live calibration the weekly refresh started, in any organization (ids and when it was asked for). */
+export interface LiveScheduledCalibration {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly requestedAt: Date;
+}
+
+/** Every live (queued or running) calibration requested by the system (D42), for the live cap of 3. */
+export async function liveScheduledCalibrations(connection: Connection): Promise<LiveScheduledCalibration[]> {
+  const docs = await calibrationModel(connection).find(
+    { 'requestedBy.role': 'system', status: trusted({ $in: [...LIVE_STATUSES] }) },
+    { _id: 1, orgId: 1, locationId: 1, requestedAt: 1 },
+  ).lean();
+  return docs.map((doc) => ({
+    id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), requestedAt: doc.requestedAt,
+  }));
+}
+
+/** A week row left `starting` (D42): its holder died between the insert and the start, or before resolving it. */
+export interface StaleStartingWeek {
+  readonly id: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly createdAt: Date;
+}
+
+/** Week rows still `starting` that were written before `before` (the lease's length ago), in any organization. */
+export async function staleStartingWeeks(connection: Connection, before: Date): Promise<StaleStartingWeek[]> {
+  const docs = await forecastWeekModel(connection).find(
+    { status: 'starting', createdAt: trusted({ $lt: before }) },
+    { _id: 1, orgId: 1, locationId: 1, createdAt: 1 },
+  ).lean();
+  return docs.map((doc) => ({
+    id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), createdAt: doc.createdAt,
+  }));
+}
+
+/** The weekly cap's count (D42): week rows of `week` that are `starting` or `started`, across organizations. */
+export async function countedWeekRows(connection: Connection, week: string): Promise<number> {
+  return forecastWeekModel(connection).countDocuments({ week, status: trusted({ $in: [...COUNTED_WEEK_STATUSES] }) });
 }

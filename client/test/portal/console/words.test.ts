@@ -31,6 +31,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'order.setup_saved', 'order.item_sales_uploaded', 'order.item_sales_deleted', 'order.count_saved', 'order.decision_saved',
     'order.rule_saved', 'order.rule_turned_off', 'order.card_saved', 'order.card_dismissed', 'order.setup_read',
     'forecast.imported', 'forecast.published', 'forecast.withdrawn', 'forecast.deleted',
+    'calibration.scheduled', 'forecast_schedule.paused', 'forecast_schedule.resumed',
     'view_as.started', 'view_as.ended', 'open_as_admin.started', 'open_as_admin.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
   ]);
 });
@@ -61,6 +62,13 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
 test('D28: renaming and editing an item have the API’s labels (api/src/audit.ts)', () => {
   expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.renamed', label: 'Item renamed' });
   expect(AUDIT_ACTIONS).toContainEqual({ value: 'data.edited', label: 'Item edited' });
+});
+
+test('D42: the weekly refresh’s actions have labels, and their details (ids only) show nothing', () => {
+  const label = (value: string) => AUDIT_ACTIONS.find((action) => action.value === value)?.label;
+  expect([label('calibration.scheduled'), label('forecast_schedule.paused'), label('forecast_schedule.resumed')])
+    .toEqual(['Weekly calibration started', 'Weekly refresh paused', 'Weekly refresh resumed']);
+  expect(auditDetails({ action: 'calibration.scheduled', details: { locationId: 'l1', calibrationId: 'c1' } })).toBe('');
 });
 
 test('D34: reading a file with TownwiseAI has the API’s actions, in plain words (api/src/stores/audit-events.ts)', () => {

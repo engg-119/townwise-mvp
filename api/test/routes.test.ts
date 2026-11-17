@@ -131,6 +131,14 @@ describe('route table', () => {
     ]);
   });
 
+  it('D42: the weekly refresh’s pause is one staff route with a 2kb body and no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('admin.forecast_schedule.'))
+      .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
+    expect(rows).toEqual([
+      { id: 'admin.forecast_schedule.set', method: 'POST', path: '/admin/forecast-schedule', policy: 'staff', bodyLimit: '2kb', limiter: undefined },
+    ]);
+  });
+
   it('/lab holds the only routes outside /auth and /api', () => {
     // main.ts mounts exactly three routers.
     const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');

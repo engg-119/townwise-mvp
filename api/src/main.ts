@@ -136,7 +136,7 @@ const calendarRefresher = TOWNWISE_CALENDAR_KEY === undefined ? undefined : crea
 // The forecast lab (calibrations) is off unless TOWNWISE_LAB_RUNNER is set: in Azure the API's identity starts the
 // Container Apps job, which calls back on /lab signed in as the lab identity (lab/caller.ts checks its Entra token);
 // locally the API runs the job with uv, and the job calls back with this process's own secret, made here and never
-// stored.
+// stored, or TOWNWISE_LAB_LOCAL_SECRET when a developer sets it so the weekly worker's local jobs can call back here too.
 function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
   const lab = labRunnerOf(config);
   if (lab === null) return {};
@@ -146,7 +146,7 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
       labCaller: createEntraLabCaller({ tenantId: lab.caller.tenantId, audience: lab.caller.audience, callerObjectId: lab.caller.objectId, now }),
     };
   }
-  const secret = randomBytes(32).toString('base64url');
+  const secret = lab.secret ?? randomBytes(32).toString('base64url');
   return {
     labRunner: createLocalLabRunner({ projectDir: resolve(lab.projectDir), apiUrl: lab.apiUrl, token: secret, path: PATH ?? '', home: HOME ?? '' }),
     labCaller: createLocalLabCaller(secret),

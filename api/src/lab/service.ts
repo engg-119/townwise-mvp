@@ -88,20 +88,28 @@ function isLive(record: CalibrationRecord): boolean {
   return LIVE_STATUSES.includes(record.status);
 }
 
+/**
+ * What starting a calibration reads (D42): the API's context, or the weekly worker's (workers/weekly-forecasts.ts),
+ * which has no Valkey (it is the API's sidecar). Only a person's start uses `redis`, for the 4 a day.
+ */
+export type LabStartContext = Pick<TownwiseContext, 'config' | 'logger' | 'now' | 'stores' | 'labRunner'> & {
+  readonly redis: TownwiseContext['redis'] | null;
+};
+
 /** The tuning chat's month (UTC), which calibrations are charged to. */
 function monthOf(at: Date): string {
   return at.toISOString().slice(0, 7);
 }
 
 /** Spent once the month's cost reaches the limit, as the tuning chat counts it. */
-async function budgetSpent(ctx: TownwiseContext, scope: OrgScope): Promise<boolean> {
+async function budgetSpent(ctx: LabStartContext, scope: OrgScope): Promise<boolean> {
   const used = await ctx.stores.chatUsage.costMicroUsd(scope, monthOf(ctx.now()));
   return used >= Math.round(ctx.config.chatMonthlyBudgetUsd * 1_000_000);
 }
 
 /** The span the job's input will hold (lab/input.ts guestSpan), in the town's `today`. */
 async function historyOf(
-  ctx: TownwiseContext, scope: OrgScope, locationId: string, today: string,
+  ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, locationId: string, today: string,
 ): Promise<{ first: string; last: string } | null> {
   const coverage = await ctx.stores.salesDays.coverage(scope, locationId);
   if (coverage.firstDate === null || coverage.lastDate === null) return null;
@@ -116,7 +124,7 @@ interface FinishFacts { runId: string | null; gate: string | null; heldOutWeeks:
  * system, after the effect) and logs townwise.calibration_finished, so a retry or a race records it once.
  */
 export async function finishCalibration(
-  ctx: TownwiseContext, scope: OrgScope, record: CalibrationRecord, outcome: CalibrationOutcome,
+  ctx: Pick<TownwiseContext, 'stores' | 'logger' | 'now'>, scope: OrgScope, record: CalibrationRecord, outcome: CalibrationOutcome,
   facts: FinishFacts = { runId: null, gate: null, heldOutWeeks: null },
 ): Promise<boolean> {
   if (!(await ctx.stores.calibrations.finish(scope, record.id, outcome, ctx.now()))) return false;
@@ -140,7 +148,7 @@ export async function finishCalibration(
  * A live calibration requested 20 minutes ago or more has failed (timeout): its job never called back, or never
  * finished. There is no background sweep: the next start or read of it does this. Resolves the record as it is now.
  */
-export async function expireStale(ctx: TownwiseContext, scope: OrgScope, record: CalibrationRecord): Promise<CalibrationRecord> {
+export async function expireStale(ctx: Pick<TownwiseContext, 'stores' | 'logger' | 'now'>, scope: OrgScope, record: CalibrationRecord): Promise<CalibrationRecord> {
   if (!isLive(record) || ctx.now().getTime() < record.requestedAt.getTime() + CALIBRATION_TIMEOUT_MS) return record;
   await finishCalibration(ctx, scope, record, { status: 'failed', failure: 'timeout' });
   return (await ctx.stores.calibrations.find(scope, record.id)) ?? record;
@@ -158,7 +166,7 @@ function systemPaid(req: StartRequest): boolean {
  * it, at least 8 weeks before its last day; the month's TownwiseAI budget is not spent (a person's start only); and no
  * calibration of the location is live (a stale one is timed out first).
  */
-export async function checkStart(ctx: TownwiseContext, req: StartRequest): Promise<StartRefusal | null> {
+export async function checkStart(ctx: LabStartContext, req: StartRequest): Promise<StartRefusal | null> {
   if (ctx.labRunner === null) return 'lab_unavailable';
   const { scope, location } = req;
   const history = await historyOf(ctx, scope, location.id, req.today);
@@ -181,17 +189,19 @@ export async function checkStart(ctx: TownwiseContext, req: StartRequest): Promi
  * charged (chargedMicroUsd stays 0).
  */
 export async function launch(
-  ctx: TownwiseContext, req: StartRequest,
+  ctx: LabStartContext, req: StartRequest,
 ): Promise<{ ok: true; calibration: CalibrationRecord } | { ok: false; code: StartRefusal }> {
   const runner = ctx.labRunner;
   if (runner === null) return { ok: false, code: 'lab_unavailable' };
   const { scope, location } = req;
-  let limiter = limiters.get(ctx.redis);
-  if (limiter === undefined) {
-    limiter = createRateLimiter({ redis: ctx.redis, ...CALIBRATIONS_LIMIT });
-    limiters.set(ctx.redis, limiter);
-  }
   if (!systemPaid(req)) {
+    // No Valkey (the weekly worker) denies a person's start, as a store outage does; it never makes one.
+    if (ctx.redis === null) return { ok: false, code: 'rate_limited' };
+    let limiter = limiters.get(ctx.redis);
+    if (limiter === undefined) {
+      limiter = createRateLimiter({ redis: ctx.redis, ...CALIBRATIONS_LIMIT });
+      limiters.set(ctx.redis, limiter);
+    }
     try {
       if (!(await limiter.consume(`org:${scope.orgId}`)).allowed) return { ok: false, code: 'rate_limited' };
     } catch (err) {

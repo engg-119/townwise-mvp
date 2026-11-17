@@ -176,8 +176,10 @@ describe('starting a calibration', () => {
     const started_ = logLines(server).filter((line) => line.msg === 'townwise.calibration_started');
     expect(started_).toHaveLength(1);
     expect(started_[0]).toMatchObject({ orgId: t.orgId, locationId: t.locationId, calibrationId: calibration.id, via: 'console' });
-    // The list shows it, with the organization's forecasts switch.
-    expect(await list(t)).toEqual({ forecasts: { on: false, at: null }, calibrations: [calibration] });
+    // The list shows it, with the organization's forecasts switch (on by default, D42), the weekly refresh and no week yet.
+    expect(await list(t)).toEqual({
+      forecasts: { on: true, at: null }, schedule: { running: true, paused: null }, weeks: [], calibrations: [calibration],
+    });
   });
 
   it('a second start for the same location is 409 calibration_in_progress; a fifth start in a day is 429', async () => {

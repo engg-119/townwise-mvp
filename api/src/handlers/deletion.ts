@@ -79,6 +79,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.orderCounts.removeForOrg(scope);
     // The forecast lab: calibrations, before the runs.
     await stores.calibrations.removeForOrg(scope);
+    // D42: the weekly refresh's rows.
+    await stores.forecastWeeks.removeForOrg(scope);
     // U13B: forecast runs and their rows.
     await stores.forecasts.removeForOrg(scope);
     const deletedLocations = await stores.locations.removeForOrg(scope);
@@ -104,6 +106,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.orders.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
     await stores.calibrations.removeForOrg(scope);
+    // D42: a weekly pass already past its candidates can still write a week row.
+    await stores.forecastWeeks.removeForOrg(scope);
     // U13B: a staff forecast import already past its organization check can still write a run and rows.
     await stores.forecasts.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };

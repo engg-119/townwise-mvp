@@ -278,6 +278,8 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.imports.removeForLocation(scope, locationId);
   // The forecast lab: calibrations go first, so a running job's callback closes before its run could be written.
   await ctx.stores.calibrations.removeForLocation(scope, locationId);
+  // D42: its weekly refresh rows.
+  await ctx.stores.forecastWeeks.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
   // The owner's calendars and their events.

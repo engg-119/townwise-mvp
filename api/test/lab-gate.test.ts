@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 
 import { comparisonWith, metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
 import {
-  currentChampion, decideGate, GATE, GATE_REASONS, GATE_WORDS, gateWords, jumpSums, streakOf, type CurrentRun, type GateInput,
+  currentChampion, decideGate, engineSwitchOf, GATE, GATE_REASONS, GATE_WORDS, gateWords, jumpSums, streakOf, type CurrentRun, type GateInput,
 } from '../src/lab/gate.ts';
 import { labResultSchema } from '../src/lab/result.ts';
 import type { LabScorecard } from '../src/lab/scorecard.ts';
@@ -277,7 +277,7 @@ describe('decideGate against a current lab run (D42, one set of rules for every 
     const engines = { model: { weeks: 12, weeklyWape: 0.19, weeklyBias: 0, coverage80: { inside: 10, weeks: 12 } },
       baseline: { weeks: 12, weeklyWape: 0.196, weeklyBias: 0, coverage80: { inside: 10, weeks: 12 } } };
     const input = refresh('model', labCurrent('baseline', 0.09), {}, {}, engines);
-    expect(decideGate(input)).toEqual({ publish: true, reason: 'published' });
+    expect(decideGate(input)).toEqual({ publish: true, reason: 'engine_switched' });
     expect(decideGate({ ...input, scorecard: { ...input.scorecard, backtest: { ...input.scorecard.backtest, weekdayMedianWeeklyWape: 0.19 } } }).reason)
       .toBe('baseline_not_beaten');
   });
@@ -291,7 +291,7 @@ describe('decideGate against a current lab run (D42, one set of rules for every 
       .toBe('model_not_run');
     // When the model ran and lost by 0.5 points or more, it is an engine switch
     const lost = { ...notRun, model: { weeks: 14, weeklyWape: 0.12, weeklyBias: 0, coverage80: { inside: 11, weeks: 14 } } };
-    expect(decideGate(refresh('baseline', labCurrent('model', 0.09), YOUNG, {}, lost))).toEqual({ publish: true, reason: 'published' });
+    expect(decideGate(refresh('baseline', labCurrent('model', 0.09), YOUNG, {}, lost))).toEqual({ publish: true, reason: 'engine_switched' });
   });
 
   it('a lab run whose scorecard is gone is judged as an imported one, on held-out weeks', () => {
@@ -400,7 +400,7 @@ describe('GATE_WORDS', () => {
       expect(GATE_WORDS[reason]).toBeTruthy();
       expect(GATE_WORDS[reason]).not.toMatch(/[—']/);
     }
-    expect(GATE_REASONS).toEqual(expect.arrayContaining(['refreshed', 'refresh_worse', 'model_not_run', 'biased', 'jump_held']));
+    expect(GATE_REASONS).toEqual(expect.arrayContaining(['refreshed', 'refresh_worse', 'model_not_run', 'biased', 'jump_held', 'engine_switched']));
   });
 
   it('says what a published draft beat: the weekday average for a first forecast, the current forecast otherwise', () => {
@@ -410,6 +410,26 @@ describe('GATE_WORDS', () => {
     expect(gateWords('not_better', true)).toBe(GATE_WORDS.not_better);
     expect(gateWords('forecasts_off', false)).toBe(GATE_WORDS.forecasts_off);
     expect(gateWords('refreshed', true)).toBe(GATE_WORDS.refreshed);
+  });
+
+  it('an engine switch says which engine Townwise switched to and by how many points on the same weeks', () => {
+    const engines = { model: { weeks: 12, weeklyWape: 0.19, weeklyBias: 0, coverage80: { inside: 10, weeks: 12 } },
+      baseline: { weeks: 12, weeklyWape: 0.196, weeklyBias: 0, coverage80: { inside: 10, weeks: 12 } } };
+    const switched = engineSwitchOf({ engine: 'model', engines });
+    expect(switched).toEqual({ engine: 'model', points: 0.6 });
+    expect(gateWords('engine_switched', false, switched))
+      .toBe('Townwise switched to its demand model: it was 0.6 points better on the same held-out weeks, so Townwise published it.');
+    const toBaseline = engineSwitchOf({ engine: 'baseline', engines: { ...engines, model: { ...engines.model, weeklyWape: 0.2042 } } });
+    expect(gateWords('engine_switched', false, toBaseline)).toBe(
+      'Townwise switched to its baseline from your recent weeks and the town calendar: it was 0.8 points better on the same held-out weeks, so Townwise published it.',
+    );
+    // Without both engines' figures (a scorecard from before D42, or the model not run) the words don't name a margin
+    expect(engineSwitchOf({ engine: 'baseline', engines: { ...engines, model: null } })).toBeNull();
+    expect(engineSwitchOf({})).toBeNull();
+    expect(gateWords('engine_switched', false, null)).toBe(GATE_WORDS.engine_switched);
+    expect(GATE_WORDS.engine_switched).toContain('half a point');
+    // Another reason's words never change with the switch
+    expect(gateWords('refreshed', false, switched)).toBe(GATE_WORDS.refreshed);
   });
 
   it('states the gate’s own values, so a changed value changes its words too', () => {

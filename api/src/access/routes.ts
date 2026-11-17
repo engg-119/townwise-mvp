@@ -11,7 +11,7 @@ import {
 } from '../handlers/admin.ts';
 import { answerQuestion, getAgent } from '../handlers/agent.ts';
 import { getLocationCalendar } from '../handlers/calendar.ts';
-import { listCalibrations, startCalibration, switchForecasts } from '../handlers/calibrations.ts';
+import { listCalibrations, setForecastSchedule, startCalibration, switchForecasts } from '../handlers/calibrations.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { rateReply } from '../handlers/chat-feedback.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
@@ -567,6 +567,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'admin.forecasts.switch', method: 'POST', path: '/admin/orgs/:orgId/forecasts-switch', policy: 'staff', bodyLimit: '2kb',
     handler: switchForecasts,
+  },
+  // D42: staff pause or resume every scheduled start of the weekly refresh, for all organizations.
+  {
+    id: 'admin.forecast_schedule.set', method: 'POST', path: '/admin/forecast-schedule', policy: 'staff', bodyLimit: '2kb',
+    handler: setForecastSchedule,
   },
   { id: 'admin.people.list', method: 'GET', path: '/admin/people', policy: 'staff', bodyLimit: 'none', handler: listPeople },
   {

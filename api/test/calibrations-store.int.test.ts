@@ -281,10 +281,10 @@ describe('lab runs, the forecasts switch and the audit words', () => {
     expect((await forecasts.find(t.scope, id))?.lab).toEqual(lab);
   });
 
-  it('setForecasts switches on and off; an org document without the field reads { on: false, at: null }', async () => {
+  it('setForecasts switches on and off; an org document without the field reads { on: true, at: null } (D42)', async () => {
     const t = await tenant();
     const orgs = createOrgStore(server.connection);
-    expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: false, at: null });
+    expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: true, at: null });
     const on = server.clock.now();
     expect(await orgs.setForecasts(t.scope, { on: true, at: on, by: 'staff-0000' })).toBe(true);
     expect((await orgs.findById(t.orgId))?.forecasts).toEqual({ on: true, at: on });

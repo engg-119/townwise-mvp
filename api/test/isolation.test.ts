@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop and Google access import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access and the weekly refresh import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -24,11 +24,12 @@ describe('isolation (source)', () => {
     // across organizations, as the file reader claims the next import. calendar/refresher.ts claims a due calendar link
     // or Google calendar, and a due Google connection check, in any organization. calendar/google-access.ts checks a
     // person's seat before reading their Google calendar, and whether they hold a Google connection in another
-    // organization before revoking (connect-google-calendar).
+    // organization before revoking (connect-google-calendar). lab/schedule.ts, the weekly refresh (D42), lists its
+    // candidates, its live calibrations and its week rows left starting across organizations, and counts the week's starts.
     expect(importers).toEqual([
       'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
-      'handlers/me.ts', 'lab/callback.ts',
+      'handlers/me.ts', 'lab/callback.ts', 'lab/schedule.ts',
     ]);
   });
 
@@ -89,6 +90,11 @@ describe('isolation (source)', () => {
   it('only files/parse/pdf.ts imports the PDF parser, and only files/parse/docx.ts the XML parser', () => {
     expect(sourceFiles().filter((file) => file.text.includes('from \'unpdf\'')).map((file) => file.path)).toEqual(['files/parse/pdf.ts']);
     expect(sourceFiles().filter((file) => file.text.includes('from \'saxen\'')).map((file) => file.path)).toEqual(['files/parse/docx.ts']);
+  });
+
+  it('only access/policy.ts mints the weekly refresh’s scope, and only lab/schedule.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForWeeklyRefresh(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'lab/schedule.ts']);
   });
 
   it('only access/policy.ts mints the reader’s scope, and only files/worker.ts asks for it', () => {

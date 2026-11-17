@@ -36,6 +36,9 @@ export interface CalibrationRequester {
 
 export interface CalibrationGate { published: boolean; reason: string }
 
+/** Gate reasons that judged something other than the draft's own data, so their calibration is never the weekly refresh's reference (D42). */
+export const NOT_REFERENCE_REASONS: readonly string[] = ['forecasts_off', 'champion_changed'];
+
 interface CalibrationFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
@@ -167,6 +170,14 @@ export interface CalibrationStore {
   setCharge(scope: OrgScope, id: string, chargedMicroUsd: number): Promise<boolean>;
   /** Compare-and-set from a live status; clears the live slot and the result token hash. */
   finish(scope: OrgScope, id: string, outcome: CalibrationOutcome, now: Date): Promise<boolean>;
+  /**
+   * The weekly refresh's reference (D42): the location's newest succeeded calibration whose gate judged the draft on its
+   * own data, that is any reason but `forecasts_off` and `champion_changed` (NOT_REFERENCE_REASONS). A failed one is never
+   * a reference.
+   */
+  reference(scope: OrgScope, locationId: string): Promise<CalibrationRecord | null>;
+  /** The location's newest calibration requested by the system at or after `since` (D42: a week row left starting). */
+  scheduledSince(scope: OrgScope, locationId: string, since: Date): Promise<CalibrationRecord | null>;
   /** Location deletion and deleting its sales data. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion. Resolves the number deleted. */
@@ -284,6 +295,19 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
         },
       );
       return result.modifiedCount === 1;
+    },
+    async reference(scope, locationId) {
+      const doc = await Calibration.findOne({
+        ...org(scope), locationId: new Types.ObjectId(locationId), status: 'succeeded',
+        gate: trusted({ $ne: null }), 'gate.reason': trusted({ $nin: [...NOT_REFERENCE_REASONS] }),
+      }).sort({ requestedAt: -1, _id: -1 }).lean();
+      return doc === null ? null : toCalibration(doc);
+    },
+    async scheduledSince(scope, locationId, since) {
+      const doc = await Calibration.findOne({
+        ...org(scope), locationId: new Types.ObjectId(locationId), 'requestedBy.role': 'system', requestedAt: trusted({ $gte: since }),
+      }).sort({ requestedAt: -1, _id: -1 }).lean();
+      return doc === null ? null : toCalibration(doc);
     },
     async removeForLocation(scope, locationId) {
       return (await Calibration.deleteMany({ ...org(scope), locationId: new Types.ObjectId(locationId) })).deletedCount;
