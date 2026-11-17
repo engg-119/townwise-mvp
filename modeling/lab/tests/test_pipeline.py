@@ -1142,9 +1142,14 @@ def test_an_engine_switch_needs_the_other_to_pass_its_checks():
     assert pipeline.choose_engine("model", 0.090, 0.100, model_ok=False) == "model"
 
 
+def bt_of(inside, weeks, bias=0.0, wape=0.10, median=0.15):
+    """The parts of an engine's backtest (pipeline._backtest) that passes reads."""
+    return {"scores": {"coverage80": {"inside": inside, "weeks": weeks}, "weeklyWape": wape}, "bias": bias,
+            "median_wape": median}
+
+
 def test_passes_mirrors_the_gates_absolute_checks():
-    def bt(inside, weeks, bias=0.0):
-        return {"scores": {"coverage80": {"inside": inside, "weeks": weeks}}, "bias": bias}
+    bt = bt_of
     assert pipeline.passes(bt(16, 20), "model")
     assert not pipeline.passes(bt(7, 20), "model")  # 35%: under 65%
     assert not pipeline.passes(bt(20, 20), "model")  # 100%: over 95%
@@ -1153,6 +1158,46 @@ def test_passes_mirrors_the_gates_absolute_checks():
     assert pipeline.passes(bt(16, 20, bias=-0.05), "baseline")
     assert not pipeline.passes(bt(16, 20, bias=0.06), "baseline")  # biased
     assert pipeline.passes(bt(16, 20, bias=0.06), "model")  # the model's bias is judged by weekday
+
+
+def test_passes_needs_each_engine_to_beat_its_own_weekday_median():
+    # The gate's weekday-median check, on each engine's own benchmark (its training medians on its own cutoffs): the
+    # model half a point under it, the baseline strictly under it
+    assert pipeline.passes(bt_of(16, 20, wape=0.140, median=0.150), "model")
+    assert not pipeline.passes(bt_of(16, 20, wape=0.148, median=0.150), "model")  # 0.2 points under: not enough
+    assert pipeline.passes(bt_of(16, 20, wape=0.129, median=0.130), "baseline")
+    assert not pipeline.passes(bt_of(16, 20, wape=0.130, median=0.130), "baseline")  # a tie fails
+    assert not pipeline.passes(bt_of(16, 20, wape=0.132, median=0.130), "baseline")
+
+
+def test_a_wape_winner_that_fails_only_its_weekday_median_gives_way():
+    # The baseline is 0.8 points better than the model on the same weeks and passes coverage and bias, but its own
+    # weekday-median benchmark (0.130) is lower than the model's (0.150): the gate would hold it baseline_not_beaten
+    # while the model (1 point under its benchmark) would publish, so the lab returns the model
+    model, base = bt_of(16, 20, wape=0.140, median=0.150), bt_of(16, 20, wape=0.132, median=0.130)
+    ok = {"model_ok": pipeline.passes(model, "model"), "baseline_ok": pipeline.passes(base, "baseline")}
+    assert ok == {"model_ok": True, "baseline_ok": False}
+    assert pipeline.choose_engine(None, 0.140, 0.132, **ok) == "model"
+    assert pipeline.choose_engine("model", 0.140, 0.132, **ok) == "model"  # no switch to a draft the gate holds
+
+
+def test_calibrate_judges_each_engine_by_its_own_weekday_median(lab_input):
+    # The fixture's current run is a model run and the baseline wins by more than 0.5 points; with the baseline's own
+    # weekday median moved to its WAPE (a tie, which the gate refuses), the lab keeps the model
+    real = pipeline._backtest
+
+    def baseline_ties_its_median(preds, origins, through, calibration=None):
+        bt = real(preds, origins, through, calibration)
+        if bt is not None and calibration is not None:  # the baseline's backtest (its bands have a calibration)
+            bt["median_wape"] = bt["scores"]["weeklyWape"]
+        return bt
+
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "_backtest", baseline_ties_its_median)
+        out = pipeline.calibrate(lab_input, CODE)
+    card = out["scorecard"]
+    assert card["engines"]["baseline"]["weeklyWape"] <= card["engines"]["model"]["weeklyWape"] - pipeline.ENGINE_MARGIN
+    assert card["engine"] == "model"
 
 
 def test_a_model_that_wins_on_wape_but_fails_coverage_returns_the_baseline(lab_input):
