@@ -18,8 +18,11 @@ const num = z.number();
 const int = z.number().int();
 const columns = z.array(z.string().min(1).max(130)).max(200);
 
-/** The Contracts' LabParams: stored as JSON on the run's lab block, with the code version and the input's hash (G3). */
-export const labParamsSchema = z.strictObject({
+/** How much a run's ranges widen from a lead on (D42: past 28 days, by the longer horizons' backtest bands). */
+const wideningSchema = z.array(z.strictObject({ fromLead: int, ratio: num })).max(4);
+
+/** The model's LabParams. */
+const modelParamsSchema = z.strictObject({
   target: z.literal('guests'),
   baseCols: columns,
   eventCols: columns,
@@ -32,11 +35,33 @@ export const labParamsSchema = z.strictObject({
   holidayEffects: z.strictObject({ hol_big_night: num, hol_halloween: num }),
   widenK: num,
   weeklyLogRange: z.strictObject({ lo: num, hi: num }),
+  widening: wideningSchema.optional(),
   refitEveryMonths: int,
   horizonDays: int,
   minPastWeeks: int,
   floor: num,
 });
+
+/** The baseline engine's LabParams (D42): its rule's constants, the calendar effects it found, its ranges. */
+const baselineParamsSchema = z.strictObject({
+  target: z.literal('guests'),
+  engine: z.literal('baseline'),
+  regimeStart: isoDate.nullable(),
+  levelDays: int,
+  levelMinDays: int,
+  shapeClamp: z.strictObject({ min: num, max: num }),
+  calendarEffects: z.record(z.string().regex(/^[a-z0-9][a-z0-9:_-]{0,119}$/), num),
+  dailyLogRange: z.strictObject({ lo: num, hi: num }),
+  widenK: num,
+  weeklyLogRange: z.strictObject({ lo: num, hi: num }),
+  widening: wideningSchema,
+  horizonDays: int,
+  minPastWeeks: int,
+  floor: num,
+});
+
+/** The Contracts' LabParams: stored as JSON on the run's lab block, with the code version and the input's hash (G3). */
+export const labParamsSchema = z.union([modelParamsSchema, baselineParamsSchema]);
 
 export const labResultSchema = z.discriminatedUnion('ok', [
   z.strictObject({

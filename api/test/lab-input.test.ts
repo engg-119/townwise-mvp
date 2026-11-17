@@ -1,6 +1,7 @@
-// The forecast lab's input (pure): every date from the first day with guests to dataThrough + 182, the term and week of
-// term from Hanover's calendar, the notes as three flags, the town's event groups, and the current published run. The
-// numbers are synthetic. The last test holds the API's input to the lab's own validator through a golden file.
+// The forecast lab's input (pure, townwise.lab-input/2): every date from the first day with guests to dataThrough + 182,
+// the term and week of term from Hanover's calendar, the notes as three flags, the town's event groups, the town calendar's
+// entries without a title or URL, and the current published run with its engine. The numbers are synthetic. The last
+// test holds the API's input to the lab's own validator through a golden file.
 import { readFileSync, writeFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
@@ -65,7 +66,7 @@ describe('labInputOf', () => {
     ];
     const input = inputOf(days);
     expect(input).toMatchObject({
-      schema: 'townwise.lab-input/1', calibrationId: CALIBRATION.id, metric: 'guests', today: TODAY, dataThrough: '2026-05-31',
+      schema: 'townwise.lab-input/2', calibrationId: CALIBRATION.id, metric: 'guests', today: TODAY, dataThrough: '2026-05-31',
       horizonDays: 182, regimeStart: null, champion: null,
     });
     expect(input.days[0]?.date).toBe('2025-01-02');
@@ -313,16 +314,53 @@ describe('labInputOf', () => {
     expect(dayOf(input, '2025-10-11').events).toEqual(['hanover-nh:home-football', 'hanover-nh:homecoming']);
     // A key date with no group (Fall term classes begin) on the last day of orientation.
     expect(dayOf(input, '2026-09-14').events).toEqual(['hanover-nh:orientation', 'one_off']);
-    // Federal holidays are not events: the lab computes them from the dates.
+    // Federal holidays are not events: a day's events never name one (the calendar does, next test).
     for (const holiday of ['2025-07-04', '2025-11-27', '2025-12-25', '2026-01-01']) expect(dayOf(input, holiday).events).toEqual([]);
+    expect(JSON.stringify(input.days)).not.toContain('us:');
     const text = JSON.stringify(input);
-    for (const absent of ['sentinel-note-detail', 'Hanover', 'Winter Carnival', 'Commencement', 'Thanksgiving', 'Fall term', 'us:']) {
+    for (const absent of ['sentinel-note-detail', 'Hanover', 'Winter Carnival', 'Commencement', 'Thanksgiving', 'Fall term', 'https:', 'opm.gov']) {
       expect(text).not.toContain(absent);
     }
   });
 
-  it('includes the current champion run rows and null without one', () => {
-    const run = { id: 'd4'.repeat(12), dataThrough: '2026-03-31' } as ForecastRunRecord;
+  it('carries the town calendar over the input’s days as ids, groups, kinds, dates and confidence, never a title or URL', () => {
+    const input = inputOf(history('2025-01-02', '2026-05-31'));
+    const first = input.days[0]?.date ?? '';
+    const last = input.days.at(-1)?.date ?? '';
+    expect(input.calendar.length).toBeGreaterThan(20);
+    for (const entry of input.calendar) {
+      expect(Object.keys(entry).sort()).toEqual(['confidence', 'end', 'group', 'id', 'kind', 'start']);
+      expect(entry.start <= last && entry.end >= first).toBe(true);
+    }
+    // A federal holiday, a term and a researched event, each by id and group.
+    expect(input.calendar).toContainEqual({
+      id: 'us:thanksgiving:2025', group: 'us:thanksgiving', kind: 'holiday', start: '2025-11-27', end: '2025-11-27', confidence: null,
+    });
+    expect(input.calendar.some((entry) => entry.kind === 'term' && entry.start <= '2025-10-01' && entry.end >= '2025-10-01')).toBe(true);
+    expect(input.calendar.filter((entry) => entry.group === 'hanover-nh:home-football').length).toBeGreaterThan(3);
+    // Sorted by start, then id, as townEvents sorts.
+    const keys = input.calendar.map((entry) => `${entry.start}|${entry.id}`);
+    expect(keys).toEqual([...keys].sort());
+    // A title or URL key would be refused by the schema (and by the lab's validator).
+    const [entry] = input.calendar;
+    if (entry === undefined) return expect.unreachable('a calendar entry');
+    for (const extra of [{ title: 'Thanksgiving Day' }, { url: 'https://example.test' }]) {
+      expect(labInputSchema.safeParse({ ...input, calendar: [{ ...entry, ...extra }] }).success).toBe(false);
+    }
+  });
+
+  it('a town outside the researched twelve gets the federal holidays only in its calendar', () => {
+    const input = labInputOf({
+      calibration: CALIBRATION, location: { town: { townId: null, name: 'Elsewhere', state: 'VT' } },
+      days: history('2025-01-02', '2026-05-31'), notes: [], rules: [], today: TODAY, champion: null,
+    });
+    // 2025's after Jan 2 and 2026's through Nov 29: ten each.
+    expect(input?.calendar).toHaveLength(20);
+    expect(input?.calendar.every((entry) => entry.kind === 'holiday' && entry.id.startsWith('us:'))).toBe(true);
+  });
+
+  it('includes the current champion run rows, its engine from the run’s model family, and null without one', () => {
+    const run = { id: 'd4'.repeat(12), dataThrough: '2026-03-31', model: { family: 'hybrid_linear_xgboost' } } as ForecastRunRecord;
     const row = (overrides: Partial<ForecastRow>): ForecastRow => ({
       runId: run.id, span: 'day', from: '2026-04-01', to: '2026-04-01', status: 'open', low: 1, mid: 2, high: 3, baseline: 2,
       openDays: null, reasons: [{ kind: 'weekday', ref: null, effectPct: 5 }], ...overrides,
@@ -335,7 +373,7 @@ describe('labInputOf', () => {
     ];
     const input = inputOf(history('2025-01-02', '2026-05-31'), [], { run, rows });
     expect(input.champion).toEqual({
-      runId: run.id, dataThrough: '2026-03-31',
+      runId: run.id, engine: 'model', dataThrough: '2026-03-31',
       days: [
         { date: '2026-04-01', status: 'open', low: 1, mid: 2, high: 3 },
         { date: '2026-04-02', status: 'closed', low: null, mid: null, high: null },
@@ -344,6 +382,17 @@ describe('labInputOf', () => {
       weeks: [{ from: '2026-03-30', to: '2026-04-05', openDays: 4, low: 10, mid: 12, high: 14 }],
     });
     expect(inputOf(history('2025-01-02', '2026-05-31')).champion).toBeNull();
+    // A baseline run (D42) is the baseline engine; every other family, an import's included, is the model.
+    const baseline = { ...run, model: { ...run.model, family: 'seasonal_baseline' } } as ForecastRunRecord;
+    expect(inputOf(history('2025-01-02', '2026-05-31'), [], { run: baseline, rows }).champion?.engine).toBe('baseline');
+    const imported = { ...run, model: { ...run.model, family: 'linear_median' } } as ForecastRunRecord;
+    expect(inputOf(history('2025-01-02', '2026-05-31'), [], { run: imported, rows }).champion?.engine).toBe('model');
+  });
+
+  it('labInputSchema refuses version 1, as the lab does', () => {
+    const input = inputOf(history('2025-01-02', '2026-05-31'));
+    expect(labInputSchema.safeParse({ ...input, schema: 'townwise.lab-input/1' }).success).toBe(false);
+    expect(labInputSchema.safeParse({ ...input, calendar: undefined }).success).toBe(false);
   });
 
   it('carries the calibration’s pattern change date', () => {
@@ -401,7 +450,7 @@ describe('the input the API builds, against the lab', () => {
       note({ kind: 'private_event', startDate: '2026-02-14', effect: 'closed' }),
       note({ kind: 'closure', startDate: '2026-07-04', effect: 'closed' }),
     ];
-    const run = { id: 'd4'.repeat(12), dataThrough: '2026-01-31' } as ForecastRunRecord;
+    const run = { id: 'd4'.repeat(12), dataThrough: '2026-01-31', model: { family: 'hybrid_linear_xgboost' } } as ForecastRunRecord;
     const forecastDays = eachDay('2026-02-01', '2026-05-31');
     const rows: ForecastRow[] = forecastDays.map((date) => {
       const mid = 45 + weekday(date) * 6;

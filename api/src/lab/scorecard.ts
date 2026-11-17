@@ -1,5 +1,8 @@
 // The scorecard a calibration returns (the lab result's `scorecard`). Strict: unknown keys and non-finite numbers are
 // refused, and so are a negative error and more weeks inside a range than weeks with one, since the gate trusts them.
+// Since lab-input/2 (D42) the lab also names the engine it returned, both engines' figures on the same weeks, its weekly
+// bias and the longer-horizon reports. Those are optional, so a stored scorecard from before still parses
+// (lab/views.ts, chat/tools/calibration.ts); the gate reads them from autonomous-forecasts phase 3a.
 import { z } from 'zod';
 
 import { isoDate } from '../dates.ts';
@@ -20,14 +23,22 @@ const bias = z.strictObject({
   Sun: nullableNum,
 });
 
+const coverage = z.strictObject({ inside: count, weeks: count })
+  .refine((value) => value.inside <= value.weeks, { message: 'more weeks inside than weeks with a range' });
+
+/** One engine's backtest on the weeks both engines are scored on. */
+const engineFiguresSchema = z.strictObject({ weeks: count, weeklyWape: error, weeklyBias: num, coverage80: coverage });
+
+/** Backtest weeks forecast at least 91 days (or the run's longest lead) before their Monday: reported, never gated. */
+const horizonReportSchema = z.strictObject({ weeks: count, weeklyWape: error, coverage80: coverage }).nullable();
+
 export const metricsSchema = z.strictObject({
   weeklyWape: error,
   dailyWape: error,
   typicalWeek: error,
   weeksOver20: count,
   worstWeek: error,
-  coverage80: z.strictObject({ inside: count, weeks: count })
-    .refine((coverage) => coverage.inside <= coverage.weeks, { message: 'more weeks inside than weeks with a range' }),
+  coverage80: coverage,
   dailyCoverage80: nullableNum,
   weekdayBias: bias,
   weekdayBiasMeanAbs: error,
@@ -35,6 +46,8 @@ export const metricsSchema = z.strictObject({
 
 export const scorecardSchema = z.strictObject({
   horizonDays: z.literal(28),
+  /** The engine whose run this is. */
+  engine: z.enum(['model', 'baseline']).optional(),
   history: z.strictObject({ firstDate: isoDate, lastDate: isoDate, days: count, spanDays: count }),
   backtest: z.strictObject({
     from: isoDate,
@@ -45,6 +58,8 @@ export const scorecardSchema = z.strictObject({
     metrics: metricsSchema,
     metrics7: metricsSchema,
     weekdayMedianWeeklyWape: error,
+    /** The backtest weeks' forecasts minus actuals, over the actuals. */
+    weeklyBias: num.optional(),
     folds: z.array(
       z.strictObject({ trainThrough: isoDate, from: isoDate, to: isoDate, weeks: count, weeklyWape: error, weeksOver20: count }),
     ),
@@ -73,6 +88,10 @@ export const scorecardSchema = z.strictObject({
       ),
     })
     .nullable(),
+  /** Each engine's figures on the same weeks; the model's null when it did not run (a span under 595 days). */
+  engines: z.strictObject({ model: engineFiguresSchema.nullable(), baseline: engineFiguresSchema }).optional(),
+  horizon91: horizonReportSchema.optional(),
+  horizonReach: horizonReportSchema.optional(),
 });
 
 export type Scorecard = z.infer<typeof scorecardSchema>;

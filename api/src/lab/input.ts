@@ -1,9 +1,10 @@
-// The forecast lab's input (schema townwise.lab-input/1): what the job fetches from the callback, built here from one
+// The forecast lab's input (schema townwise.lab-input/2, D42): what the job fetches from the callback, built here from one
 // location's stored days, its notes and scheduled business rules, the town calendar and the current published run. Outputs
-// only the facts the model reads: guests per day, the term and week of term, town event groups, and three flags from the
-// notes and rules. Never a note's detail, a rule's text, a calendar entry's title, a holiday (the lab computes holidays
-// from the dates) or any name. labInputOf is pure; buildLabInput reads the stores under the calibration's scope. Nothing
-// here logs.
+// only the facts the lab reads: guests per day, the term and week of term, town event groups, three flags from the notes
+// and rules, the town calendar's entries (id, group, kind, dates and confidence, which the baseline engine reads its
+// holidays and events from) and the current run's engine. Never a note's detail, a rule's text, a calendar entry's title,
+// URL or source, or any name. labInputOf is pure; buildLabInput reads the stores under the calibration's scope. The lab
+// accepts version 2 only, so the two move together. Nothing here logs.
 import { z } from 'zod';
 
 import type { OrgScope } from '../access/policy.ts';
@@ -13,6 +14,7 @@ import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-day
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
 import { scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
 import { eachDay } from '../forecasts/file.ts';
+import { engineOf } from '../forecasts/reader.ts';
 import { termEntries } from '../people-in-town/term.ts';
 import type { CalibrationRecord } from '../stores/calibrations.ts';
 import type { ForecastRow, ForecastRunRecord } from '../stores/forecasts.ts';
@@ -22,13 +24,15 @@ import type { SalesDay } from '../stores/sales-days.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { townEvents } from '../town-calendar.ts';
 
-export const LAB_INPUT_SCHEMA = 'townwise.lab-input/1';
+export const LAB_INPUT_SCHEMA = 'townwise.lab-input/2';
 /** Days the lab forecasts after the last day with guests (the run's window). */
 export const HORIZON_DAYS = 182;
 /** The event a calendar entry with no group stands for. */
 export const ONE_OFF = 'one_off';
 /** A calendar group, as a run file's reason refs allow it. */
 const GROUP = /^[a-z0-9][a-z0-9:-]{0,119}$/;
+/** A calendar entry's id ('us:thanksgiving:2026', 'hanover-nh:2026-11-17:fall-term-classes-end'), as the lab allows it. */
+const ENTRY_ID = /^[a-z0-9][a-z0-9:-]{0,199}$/;
 /** How far before the first day the calendar is read, so a term already under way has its first day of classes. */
 const TERM_LOOKBACK_DAYS = 180;
 
@@ -45,8 +49,20 @@ const labDaySchema = z.strictObject({
   booked: z.boolean(),
 });
 
+/** A town calendar entry as the lab reads it: never its title, URL or source label. */
+const calendarEntrySchema = z.strictObject({
+  id: z.string().regex(ENTRY_ID),
+  group: z.string().regex(GROUP).nullable(),
+  kind: z.enum(['event', 'holiday', 'term', 'season']),
+  start: isoDate,
+  end: isoDate,
+  confidence: z.enum(['high', 'medium', 'low']).nullable(),
+});
+
 const championSchema = z.strictObject({
   runId: z.string().min(1),
+  /** The engine that made the current run (D42): the lab keeps it unless the other is 0.5 points better. */
+  engine: z.enum(['model', 'baseline']),
   dataThrough: isoDate,
   days: z.array(z.strictObject({
     date: isoDate,
@@ -73,12 +89,14 @@ export const labInputSchema = z.strictObject({
   horizonDays: z.literal(HORIZON_DAYS),
   regimeStart: isoDate.nullable(),
   days: z.array(labDaySchema).min(1),
+  calendar: z.array(calendarEntrySchema),
   champion: championSchema.nullable(),
 }).refine((input) => input.dataThrough <= input.today, { path: ['today'], message: 'dataThrough is after today' });
 
 export type LabInput = z.infer<typeof labInputSchema>;
 export type LabDay = LabInput['days'][number];
 type LabChampion = z.infer<typeof championSchema>;
+type LabCalendarEntry = z.infer<typeof calendarEntrySchema>;
 
 function plusDays(day: string, days: number): string {
   return utcDay(new Date(`${day}T00:00:00.000Z`), days);
@@ -139,6 +157,16 @@ function eventsOf(townId: string | null, from: string, to: string): Map<string, 
   return new Map([...groups].map(([date, set]) => [date, [...set].sort()]));
 }
 
+/**
+ * Every town calendar entry overlapping `from` to `to` (holidays, terms, seasons and events, in townEvents' order), as
+ * ids, groups, kinds, dates and confidence only. An id or group the lab's pattern would refuse is left out.
+ */
+function calendarOf(townId: string | null, from: string, to: string): LabCalendarEntry[] {
+  return townEvents(townId, { from, to })
+    .filter((event) => ENTRY_ID.test(event.id) && (event.group === null || GROUP.test(event.group)))
+    .map((event) => ({ id: event.id, group: event.group, kind: event.kind, start: event.start, end: event.end, confidence: event.confidence }));
+}
+
 function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastRow[] }): LabChampion {
   const days: LabChampion['days'] = [];
   const weeks: LabChampion['weeks'] = [];
@@ -151,7 +179,7 @@ function championOf(champion: { run: ForecastRunRecord; rows: readonly ForecastR
   }
   days.sort((a, b) => (a.date < b.date ? -1 : 1));
   weeks.sort((a, b) => (a.from < b.from ? -1 : 1));
-  return { runId: champion.run.id, dataThrough: champion.run.dataThrough, days, weeks };
+  return { runId: champion.run.id, engine: engineOf(champion.run.model.family), dataThrough: champion.run.dataThrough, days, weeks };
 }
 
 /** A note or a rule's schedule, as the flags read it. */
@@ -249,6 +277,7 @@ export function labInputOf(args: {
     horizonDays: HORIZON_DAYS,
     regimeStart: args.calibration.regimeStart,
     days,
+    calendar: calendarOf(townId, span.first, last),
     champion: args.champion === null ? null : championOf(args.champion),
   };
 }

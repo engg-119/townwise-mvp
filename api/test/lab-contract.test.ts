@@ -32,6 +32,24 @@ describe('lab contract', () => {
     expect(JSON.stringify(result).length).toBeLessThan(128 * 1024);
   });
 
+  it('the golden result names its engine (D42): the baseline, more than 0.5 points better than the model on the same weeks', () => {
+    const input = labInputSchema.parse(golden('input.json'));
+    const result = labResultSchema.parse(golden('result.json'));
+    if (!result.ok) return expect.unreachable('the golden result is a success');
+    const { engine, engines, horizon91, horizonReach } = result.scorecard;
+    expect(input.champion?.engine).toBe('model');
+    expect(engine).toBe('baseline');
+    expect(result.run.model.family).toBe('seasonal_baseline');
+    expect(result.params).toMatchObject({ engine: 'baseline' });
+    if (engines === undefined || engines.model === null) return expect.unreachable('both engines ran');
+    expect(engines.baseline.weeklyWape).toBeLessThanOrEqual(engines.model.weeklyWape - 0.005);
+    expect(engines.baseline.weeks).toBe(engines.model.weeks);
+    expect(horizon91?.weeks).toBeGreaterThanOrEqual(8);
+    // Its today is two days after its last day of sales, so the run reaches 93 days: past 91, with the reach reported.
+    expect(horizonReach?.weeks).toBeGreaterThanOrEqual(8);
+    expect(result.run.days.at(-1)?.date).toBe(new Date(Date.parse(`${input.today}T00:00:00Z`) + 91 * 86_400_000).toISOString().slice(0, 10));
+  });
+
   it('checkLabResult holds a result to its calibration: its id, its input’s last day and its current forecast', () => {
     const input = labInputSchema.parse(golden('input.json'));
     const calibration: Pick<CalibrationRecord, 'id' | 'dataThrough' | 'championRunId'> = {

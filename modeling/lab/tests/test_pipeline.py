@@ -1,5 +1,9 @@
-"""The lab's pipeline on the synthetic fixture: the LabResult contract, the forecast window's rules, the comparison with
-the current published run, and the golden files the API's contract test reads."""
+"""The lab's pipeline on the synthetic fixture: the LabResult contract of each engine, which engine a calibration
+returns, the forecast window's rules and reach, the comparison with the current published run, and the golden files the
+API's contract test reads.
+
+On this fixture the baseline wins (its 20% level jump a year before the cutoff is one the model's quarterly refits
+cannot learn), so a test of the model's own run takes it with calibrate_as(..., "model")."""
 
 import copy
 import json
@@ -11,9 +15,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-from fixture import CHAMPION_THROUGH, REGIME_START, synthetic_champion, synthetic_input
+from fixture import CHAMPION_THROUGH, EFFECT, LEVEL_SHIFT, REGIME_START, synthetic_champion, synthetic_input
 
-from townwise_lab import backtest, compare, features, forecast, metrics, model, pipeline, schema, version
+from townwise_lab import backtest, baseline, compare, features, forecast, metrics, model, pipeline, schema, version
 
 CODE = "0123456789abcdef0123456789abcdef01234567"
 GOLDEN = Path(__file__).resolve().parent / "golden"
@@ -24,7 +28,11 @@ REF = re.compile(r"[a-z0-9][a-z0-9:-]{0,119}")
 METRICS_KEYS = {"weeklyWape", "dailyWape", "typicalWeek", "weeksOver20", "worstWeek", "coverage80", "dailyCoverage80",
                 "weekdayBias", "weekdayBiasMeanAbs"}
 PARAMS_KEYS = {"target", "baseCols", "eventCols", "regimeStart", "xgb", "holidayLambdas", "holidayEffects", "widenK",
-               "weeklyLogRange", "refitEveryMonths", "horizonDays", "minPastWeeks", "floor"}
+               "weeklyLogRange", "widening", "refitEveryMonths", "horizonDays", "minPastWeeks", "floor"}
+BASELINE_PARAMS_KEYS = {"target", "engine", "regimeStart", "levelDays", "levelMinDays", "shapeClamp", "calendarEffects",
+                        "dailyLogRange", "widenK", "weeklyLogRange", "widening", "horizonDays", "minPastWeeks", "floor"}
+SCORECARD_KEYS = ["horizonDays", "engine", "history", "backtest", "comparison", "engines", "horizon91", "horizonReach"]
+ENGINES = ("model", "baseline")
 RUN_KEYS = {"schema", "metric", "model", "trainingSource", "trainedFrom", "dataThrough", "madeAt", "frozen", "interval",
             "backtest", "days", "weeks"}
 
@@ -122,7 +130,8 @@ def run_file_issues(run: dict, today: str) -> list[str]:
             elif reason["ref"] is not None and (reason["kind"] not in ("term", "event", "holiday")
                                                 or not REF.fullmatch(reason["ref"])):
                 add(f"{at}.reasons[{r}].ref")
-            elif reason["effectPct"] is not None:
+            elif reason["effectPct"] is not None and not (is_num(reason["effectPct"])
+                                                          and -100 <= reason["effectPct"] <= 1000):
                 add(f"{at}.reasons[{r}].effectPct")
 
     covered = set()
@@ -199,16 +208,49 @@ def lab_input() -> dict:
     return synthetic_input(0)
 
 
+def calibrate_as(inp: dict, engine: str) -> dict:
+    """calibrate(inp) returning `engine`'s run whichever engine its backtest would choose, so each engine's output is
+    checked on the same fixture. Everything else, the engines' figures included, is calibrate's own."""
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "choose_engine", lambda *args: engine)
+        return pipeline.calibrate(copy.deepcopy(inp), CODE)
+
+
+def later(inp: dict, days: int) -> dict:
+    """`inp` with its today `days` after its data cutoff: sales that lag."""
+    out = copy.deepcopy(inp)
+    out["today"] = (day(inp["dataThrough"]) + timedelta(days=days)).isoformat()
+    return out
+
+
 @pytest.fixture(scope="session")
 def result(lab_input) -> dict:
+    """What calibrate returns for the fixture: the baseline's run (scorecard.engines says why)."""
     return pipeline.calibrate(copy.deepcopy(lab_input), CODE)
+
+
+@pytest.fixture(scope="session")
+def model_result(lab_input) -> dict:
+    return calibrate_as(lab_input, "model")
+
+
+@pytest.fixture(scope="session")
+def results(result, model_result) -> dict[str, dict]:
+    return {"baseline": result, "model": model_result}
+
+
+@pytest.fixture(scope="session")
+def lagging(lab_input) -> dict[str, tuple[dict, dict]]:
+    """Each engine's result, and its input, with sales three weeks behind today."""
+    inp = later(lab_input, 21)
+    return {engine: (inp, calibrate_as(inp, engine)) for engine in ENGINES}
 
 
 @pytest.fixture(scope="session")
 def regime_result(lab_input) -> dict:
     inp = copy.deepcopy(lab_input)
     inp["regimeStart"], inp["champion"] = REGIME_START.strftime("%Y-%m-%d"), None
-    return pipeline.calibrate(inp, CODE)
+    return calibrate_as(inp, "model")
 
 
 def messy_input(lab_input: dict) -> dict:
@@ -245,16 +287,131 @@ def messy_input(lab_input: dict) -> dict:
 @pytest.fixture(scope="session")
 def messy(lab_input) -> tuple[dict, dict]:
     inp = messy_input(lab_input)
-    return inp, pipeline.calibrate(copy.deepcopy(inp), CODE)
+    return inp, calibrate_as(inp, "model")
 
 
-def test_result_matches_contract(result, lab_input):
+@pytest.fixture(scope="session")
+def messy_baseline(messy) -> dict:
+    return calibrate_as(messy[0], "baseline")
+
+
+def check_widening(widening) -> None:
+    assert [w["fromLead"] for w in widening] in ([], [29], [29, 92])
+    ratios = [w["ratio"] for w in widening]
+    assert all(is_num(r) and r >= 1 for r in ratios) and ratios == sorted(ratios)  # never narrower with lead
+
+
+def check_horizon(report) -> None:
+    assert report is None or (set(report) == {"weeks", "weeklyWape", "coverage80"} and is_int(report["weeks"])
+                              and is_num(report["weeklyWape"]) and set(report["coverage80"]) == {"inside", "weeks"})
+
+
+def check_scorecard(card: dict, engine: str) -> None:
+    assert list(card) == SCORECARD_KEYS and card["horizonDays"] == 28 and card["engine"] == engine
+    history = card["history"]
+    assert set(history) == {"firstDate", "lastDate", "days", "spanDays"}
+    assert is_date(history["firstDate"]) and is_date(history["lastDate"])
+    assert is_int(history["days"]) and is_int(history["spanDays"])
+    assert history["spanDays"] == (day(history["lastDate"]) - day(history["firstDate"])).days
+
+    bt = card["backtest"]
+    assert set(bt) == {"from", "to", "origins", "weeks", "weeksWithRange", "metrics", "metrics7",
+                       "weekdayMedianWeeklyWape", "weeklyBias", "folds", "series"}
+    assert is_date(bt["from"]) and is_date(bt["to"]) and all(is_date(o) for o in bt["origins"]) and bt["origins"]
+    assert is_int(bt["weeks"]) and is_int(bt["weeksWithRange"]) and 0 < bt["weeksWithRange"] <= bt["weeks"]
+    check_metrics(bt["metrics"])
+    check_metrics(bt["metrics7"])
+    assert bt["metrics"]["coverage80"]["weeks"] == bt["weeksWithRange"]
+    assert is_num(bt["weekdayMedianWeeklyWape"]) and is_num(bt["weeklyBias"])
+    # Weekly bias: the backtest weeks' forecasts minus actuals, over the actuals
+    assert bt["weeklyBias"] == pytest.approx(sum(r["mid"] - r["actual"] for r in bt["series"])
+                                             / sum(r["actual"] for r in bt["series"]))
+    assert bt["folds"] or card["history"]["spanDays"] < 365  # a half-year fold starts 182 days after the first day
+    for fold in bt["folds"]:
+        assert set(fold) == {"trainThrough", "from", "to", "weeks", "weeklyWape", "weeksOver20"}
+        assert all(is_date(fold[k]) for k in ("trainThrough", "from", "to"))
+        assert is_int(fold["weeks"]) and is_int(fold["weeksOver20"]) and is_num(fold["weeklyWape"])
+    assert len(bt["series"]) == bt["weeks"]
+    for row in bt["series"]:
+        assert set(row) == {"week", "actual", "mid", "low", "high"}
+        assert is_date(row["week"]) and is_int(row["actual"]) and is_num(row["mid"])
+        assert (row["low"] is None) == (row["high"] is None)
+        assert row["low"] is None or (is_num(row["low"]) and is_num(row["high"]) and row["low"] <= row["high"])
+
+    engines = card["engines"]
+    assert list(engines) == ["model", "baseline"]
+    for figures in engines.values():
+        assert figures is None or (set(figures) == {"weeks", "weeklyWape", "weeklyBias", "coverage80"}
+                                   and is_int(figures["weeks"]) and is_num(figures["weeklyWape"])
+                                   and is_num(figures["weeklyBias"]))
+    # The returned engine's figures are its backtest's
+    mine = engines[engine]
+    assert (mine["weeks"], mine["weeklyWape"], mine["weeklyBias"], mine["coverage80"]) == (
+        bt["weeks"], bt["metrics"]["weeklyWape"], bt["weeklyBias"], bt["metrics"]["coverage80"])
+    check_horizon(card["horizon91"])
+    check_horizon(card["horizonReach"])
+
+
+def check_comparison(cmp: dict, lab_input: dict) -> None:
+    assert set(cmp) == {"championRunId", "championDataThrough", "from", "to", "weeks", "champion", "challenger",
+                        "series"}
+    assert cmp["championRunId"] == lab_input["champion"]["runId"]
+    assert cmp["championDataThrough"] == lab_input["champion"]["dataThrough"]
+    assert is_date(cmp["from"]) and is_date(cmp["to"]) and is_int(cmp["weeks"]) and cmp["weeks"] >= 12
+    check_metrics(cmp["champion"])
+    check_metrics(cmp["challenger"])
+    for row in cmp["series"]:
+        assert set(row) == {"week", "actual", "champion", "challenger", "challengerLow", "challengerHigh"}
+        assert is_int(row["actual"]) and is_num(row["champion"]) and is_num(row["challenger"])
+        assert (row["challengerLow"] is None) == (row["challengerHigh"] is None)
+
+
+def check_envelope(result: dict, lab_input: dict) -> None:
     assert list(result) == ["schema", "calibrationId", "ok", "codeVersion", "params", "scorecard", "run"]
     assert result["schema"] == schema.RESULT_SCHEMA == "townwise.lab-result/1"
-    assert schema.INPUT_SCHEMA == "townwise.lab-input/1"
+    assert schema.INPUT_SCHEMA == "townwise.lab-input/2"
     assert result["calibrationId"] == lab_input["calibrationId"]
     assert result["ok"] is True and result["codeVersion"] == CODE
     json.dumps(result, allow_nan=False)
+    run = result["run"]
+    assert set(run) == RUN_KEYS
+    assert run["schema"] == "townwise.forecast-run/1" and run["metric"] == "guests"
+    assert run["trainingSource"] == "townwise_lab" and run["frozen"] is None
+    assert run["interval"] == {"level": 0.8, "widened": True}
+    assert run["trainedFrom"] == result["scorecard"]["history"]["firstDate"]
+    assert run["dataThrough"] == lab_input["dataThrough"] and run["madeAt"] == lab_input["today"]
+    assert set(run["backtest"]) == {"from", "to", "weeks", "weeklyTypicalErrorPct", "weeksOver20Pct", "weeklyRangePct"}
+    check_widening(result["params"]["widening"])
+
+
+def test_baseline_result_matches_contract(result, lab_input):
+    check_envelope(result, lab_input)
+    check_scorecard(result["scorecard"], "baseline")
+    check_comparison(result["scorecard"]["comparison"], lab_input)
+    params = result["params"]
+    assert set(params) == BASELINE_PARAMS_KEYS
+    assert params["target"] == "guests" and params["engine"] == "baseline" and params["regimeStart"] is None
+    assert (params["levelDays"], params["levelMinDays"], params["shapeClamp"]) == (8, 3, {"min": 0.5, "max": 2.0})
+    assert set(params["calendarEffects"]) <= {"test-town:festival", "test-town:home-football", "hol_big_night",
+                                              "hol_halloween"} | {e["group"] for e in lab_input["calendar"]
+                                                                  if e["kind"] == "holiday"}
+    assert params["calendarEffects"]["test-town:home-football"] == pytest.approx(EFFECT["football"], rel=0.15)
+    assert params["dailyLogRange"]["lo"] <= 0 <= params["dailyLogRange"]["hi"]
+    assert is_num(params["widenK"]) and 1 <= params["widenK"] <= 3
+    assert params["weeklyLogRange"]["lo"] <= 0 <= params["weeklyLogRange"]["hi"]
+    assert (params["horizonDays"], params["minPastWeeks"], params["floor"]) == (28, 8, 1)
+    assert result["run"]["model"] == {"family": "seasonal_baseline", "version": version.MODEL_VERSION,
+                                      "notebookCommit": CODE}
+    # The baseline's origins are its weekly cutoffs: Sundays
+    assert all(day(o).weekday() == 6 for o in result["scorecard"]["backtest"]["origins"])
+
+
+def test_result_matches_contract(model_result, lab_input):
+    result = model_result
+    check_envelope(result, lab_input)
+    check_scorecard(result["scorecard"], "model")
+    check_comparison(result["scorecard"]["comparison"], lab_input)
+    assert result["scorecard"]["history"]["spanDays"] >= pipeline.MIN_HISTORY_DAYS
 
     params = result["params"]
     assert set(params) == PARAMS_KEYS
@@ -273,84 +430,105 @@ def test_result_matches_contract(result, lab_input):
     assert params["weeklyLogRange"]["lo"] <= 0 <= params["weeklyLogRange"]["hi"]
     assert (params["refitEveryMonths"], params["horizonDays"], params["minPastWeeks"], params["floor"]) == (3, 28, 8, 1)
 
-    card = result["scorecard"]
-    assert list(card) == ["horizonDays", "history", "backtest", "comparison"] and card["horizonDays"] == 28
-    history = card["history"]
-    assert set(history) == {"firstDate", "lastDate", "days", "spanDays"}
-    assert is_date(history["firstDate"]) and is_date(history["lastDate"])
-    assert is_int(history["days"]) and is_int(history["spanDays"])
-    assert history["spanDays"] == (day(history["lastDate"]) - day(history["firstDate"])).days >= pipeline.MIN_HISTORY_DAYS
-
-    bt = card["backtest"]
-    assert set(bt) == {"from", "to", "origins", "weeks", "weeksWithRange", "metrics", "metrics7",
-                       "weekdayMedianWeeklyWape", "folds", "series"}
-    assert is_date(bt["from"]) and is_date(bt["to"]) and all(is_date(o) for o in bt["origins"]) and bt["origins"]
-    assert is_int(bt["weeks"]) and is_int(bt["weeksWithRange"]) and 0 < bt["weeksWithRange"] <= bt["weeks"]
-    check_metrics(bt["metrics"])
-    check_metrics(bt["metrics7"])
-    assert bt["metrics"]["coverage80"]["weeks"] == bt["weeksWithRange"]
-    assert is_num(bt["weekdayMedianWeeklyWape"])
-    assert bt["folds"]
-    for fold in bt["folds"]:
-        assert set(fold) == {"trainThrough", "from", "to", "weeks", "weeklyWape", "weeksOver20"}
-        assert all(is_date(fold[k]) for k in ("trainThrough", "from", "to"))
-        assert is_int(fold["weeks"]) and is_int(fold["weeksOver20"]) and is_num(fold["weeklyWape"])
-    assert len(bt["series"]) == bt["weeks"]
-    for row in bt["series"]:
-        assert set(row) == {"week", "actual", "mid", "low", "high"}
-        assert is_date(row["week"]) and is_int(row["actual"]) and is_num(row["mid"])
-        assert (row["low"] is None) == (row["high"] is None)
-        assert row["low"] is None or (is_num(row["low"]) and is_num(row["high"]) and row["low"] <= row["high"])
-
-    cmp = card["comparison"]
-    assert set(cmp) == {"championRunId", "championDataThrough", "from", "to", "weeks", "champion", "challenger",
-                        "series"}
-    assert cmp["championRunId"] == lab_input["champion"]["runId"]
-    assert cmp["championDataThrough"] == lab_input["champion"]["dataThrough"]
-    assert is_date(cmp["from"]) and is_date(cmp["to"]) and is_int(cmp["weeks"]) and cmp["weeks"] >= 12
-    check_metrics(cmp["champion"])
-    check_metrics(cmp["challenger"])
-    for row in cmp["series"]:
-        assert set(row) == {"week", "actual", "champion", "challenger", "challengerLow", "challengerHigh"}
-        assert is_int(row["actual"]) and is_num(row["champion"]) and is_num(row["challenger"])
-        assert (row["challengerLow"] is None) == (row["challengerHigh"] is None)
-
-    run = result["run"]
-    assert set(run) == RUN_KEYS
-    assert run["schema"] == "townwise.forecast-run/1" and run["metric"] == "guests"
-    assert run["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION, "notebookCommit": CODE}
+    assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
+                                      "notebookCommit": CODE}
     assert version.MODEL_VERSION == "v6"
-    assert run["trainingSource"] == "townwise_lab" and run["frozen"] is None
-    assert run["interval"] == {"level": 0.8, "widened": True}
-    assert run["trainedFrom"] == history["firstDate"]
-    assert run["dataThrough"] == lab_input["dataThrough"] and run["madeAt"] == lab_input["today"]
-    assert set(run["backtest"]) == {"from", "to", "weeks", "weeklyTypicalErrorPct", "weeksOver20Pct", "weeklyRangePct"}
 
 
-def test_run_file_obeys_api_rules(result, lab_input):
+def ratio_at(widening: list[dict], lead: int) -> float:
+    """The widening params' ratio for a day `lead` days after the data cutoff."""
+    return next((w["ratio"] for w in reversed(widening) if lead >= w["fromLead"]), 1.0)
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+@pytest.mark.parametrize("sales", ["current", "three_weeks_behind"])
+def test_run_file_obeys_api_rules(engine, sales, results, lagging, lab_input):
+    inp, result = (lab_input, results[engine]) if sales == "current" else lagging[engine]
     run = result["run"]
-    assert run_file_issues(run, lab_input["today"]) == []
-    through = day(lab_input["dataThrough"])
+    assert result["scorecard"]["engine"] == engine
+    assert run_file_issues(run, inp["today"]) == []
+    through, today = day(inp["dataThrough"]), day(inp["today"])
+    # From the day after the last day of sales through today + 91 (both under the input's 182 days)
+    last = today + timedelta(days=forecast.REACH_DAYS)
     assert [d["date"] for d in run["days"]] == [(through + timedelta(days=k)).isoformat()
-                                               for k in range(1, forecast.HORIZON_DAYS + 1)]
-    assert forecast.HORIZON_DAYS == 182
+                                               for k in range(1, (last - through).days + 1)]
+    assert (last - through).days == (93 if sales == "current" else 112) <= forecast.HORIZON_DAYS == 182
     assert {d["status"] for d in run["days"]} == {"open", "closed", "booked"}
-    # Every day of the window is in exactly one week
-    assert sum((day(w["to"]) - day(w["from"])).days + 1 for w in run["weeks"]) == len(run["days"])
+    # Weeks: exactly the Monday-to-Sunday weeks wholly inside the run
+    first_monday = through + timedelta(days=1 + (7 - (through + timedelta(days=1)).weekday()) % 7)
+    whole = [first_monday + timedelta(weeks=k) for k in range((last - first_monday).days // 7 + 1)
+             if first_monday + timedelta(weeks=k, days=6) <= last]
+    assert [(w["from"], w["to"]) for w in run["weeks"]] == [(m.isoformat(), (m + timedelta(days=6)).isoformat())
+                                                            for m in whole]
     lo, hi = result["params"]["weeklyLogRange"]["lo"], result["params"]["weeklyLogRange"]["hi"]
+    widening = result["params"]["widening"]
     for w in run["weeks"]:
         mids = [d["mid"] for d in run["days"] if w["from"] <= d["date"] <= w["to"] and d["status"] == "open"]
         assert w["mid"] == pytest.approx(sum(mids), rel=1e-12)
-        assert w["low"] == pytest.approx(w["mid"] * math.exp(lo))
-        assert w["high"] == pytest.approx(w["mid"] * math.exp(hi))
+        r = ratio_at(widening, (day(w["from"]) - through).days)  # each week widened by its first day's lead
+        assert w["low"] == pytest.approx(w["mid"] * math.exp(lo * r))
+        assert w["high"] == pytest.approx(w["mid"] * math.exp(hi * r))
+    # Sales that lag reach further than 91 days after them: the reach is reported and widens the last days
+    card = result["scorecard"]
+    assert card["horizon91"]["weeks"] >= forecast.MIN_HORIZON_WEEKS
+    if sales == "current":
+        assert [w["fromLead"] for w in widening] == [29, 92] and card["horizonReach"]["weeks"] >= 8  # 93 > 91
+    else:
+        assert [w["fromLead"] for w in widening] == [29, 92] and card["horizonReach"]["weeks"] >= 8
 
 
-def test_closed_weekday_and_holiday_rules(result, lab_input):
-    days = {d["date"]: d for d in result["run"]["days"]}
+@pytest.mark.parametrize("engine", ENGINES)
+def test_ranges_never_narrow_with_lead(engine, lagging):
+    inp, result = lagging[engine]
+    through = day(inp["dataThrough"])
+    widening = result["params"]["widening"]
+    ratios = [ratio_at(widening, lead) for lead in range(1, 113)]
+    assert ratios == sorted(ratios) and ratios[0] == 1.0
+    weeks = result["run"]["weeks"]
+    spans = [math.log(w["high"] / w["mid"]) - math.log(w["low"] / w["mid"]) for w in weeks if w["mid"] > 0]
+    assert all(b >= a - 1e-12 for a, b in zip(spans, spans[1:]))  # the weekly log range only grows with lead
+    if engine == "baseline":  # one daily log range for every day, so the days' own ranges only grow with lead
+        open_days = [d for d in result["run"]["days"] if d["status"] == "open"]
+        high = [math.log(d["high"] / d["mid"]) for d in open_days]
+        assert all(b >= a - 1e-12 for a, b in zip(high, high[1:]))
+        assert (day(open_days[-1]["date"]) - through).days > 91
+
+
+def test_the_run_end_rules():
+    through, today = pd.Timestamp("2026-11-15"), pd.Timestamp("2026-11-16")
+    # Current sales: today + 91 (Mon, Nov 16, 2026 to Feb 15, 2027), a longest lead of 92 days, so 98 in whole weeks
+    assert forecast.reach_horizon(today, through) == 98
+    assert forecast.run_end(today, through, 20, 8) == pd.Timestamp("2027-02-15")
+    assert forecast.reach_horizon(through, through) is None  # today the last day of sales: 91 days exactly
+    assert forecast.run_end(through, through, 20, None) == through + pd.Timedelta(days=91)
+    # Sales three weeks behind (data through Sun, Oct 25): Oct 26, 2026 to Feb 15, 2027, a longest lead of 113 days
+    lag = pd.Timestamp("2026-10-25")
+    assert forecast.run_end(today, lag, 20, 8) == pd.Timestamp("2027-02-15")
+    assert forecast.reach_horizon(today, lag) == 119  # 113 days, in whole weeks
+    # Not enough 91-day evidence: 28 days after the last day of sales; not enough at the reach: 91
+    assert forecast.run_end(today, through, 5, None) == through + pd.Timedelta(days=28)
+    assert forecast.run_end(today, lag, 20, 7) == lag + pd.Timedelta(days=91)
+    # Capped at 182 days after the last day of sales
+    old = pd.Timestamp("2026-06-01")
+    assert forecast.run_end(today, old, 20, 8) == old + pd.Timedelta(days=182)
+
+
+def test_a_run_without_enough_91_day_weeks_stops_at_28_days_of_lead(lab_input):
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(forecast, "MIN_HORIZON_WEEKS", 10_000)  # as if a short history had fewer than 8 such weeks
+        out = pipeline.calibrate(copy.deepcopy(lab_input), CODE)
+    through = day(lab_input["dataThrough"])
+    assert out["run"]["days"][-1]["date"] == (through + timedelta(days=28)).isoformat()
+    assert run_file_issues(out["run"], lab_input["today"]) == []
+
+
+@pytest.mark.parametrize("engine", ENGINES)
+def test_closed_weekday_and_holiday_rules(engine, results, lab_input):
+    days = {d["date"]: d for d in results[engine]["run"]["days"]}
     booked = {d["date"] for d in lab_input["days"] if d["booked"]}
     closed_note = {d["date"] for d in lab_input["days"] if d["closed"]}
     mondays = [d for when, d in days.items() if day(when).weekday() == 0 and when not in booked]
-    assert len(mondays) > 20
+    assert len(mondays) > 10
     assert all(d["status"] == "closed" and d["reasons"][0]["kind"] == "closure" for d in mondays)
     holidays_closed = ["2025-11-27", "2025-12-24", "2025-12-25", "2026-01-01"]  # last year's had no sales row
     assert all(days[h]["status"] == "closed" and days[h]["reasons"][0]["kind"] == "closure" for h in holidays_closed)
@@ -402,9 +580,19 @@ def test_open_days_take_the_holiday_multipliers_and_ranges_widened_by_k(lab_inpu
     common = dict(trained_from=hist.date.min(), data_through=through, made_at=lab_input["today"], code_version=CODE,
                   backtest_block=None)
     log_range = {"lo": -0.1, "hi": 0.2}
+    common["end"], common["widening"] = through + pd.Timedelta(days=forecast.HORIZON_DAYS), []
     plain = forecast.run_file(fitted, fit, {"hol_big_night": 0.0, "hol_halloween": 0.0}, 1.0, log_range, **common)
     lifted = forecast.run_file(fitted, fit, {"hol_big_night": 0.3, "hol_halloween": 0.0}, 1.0, log_range, **common)
     wide = forecast.run_file(fitted, fit, {"hol_big_night": 0.0, "hol_halloween": 0.0}, 2.0, log_range, **common)
+    # Past 28 days of lead, ranges widen by the longer horizon's ratio: here 1.5 from day 29 on
+    longer = forecast.run_file(fitted, fit, {"hol_big_night": 0.0, "hol_halloween": 0.0}, 1.0, log_range,
+                               **(common | {"widening": [(29, 1.5)]}))
+    for p, w in zip(plain["days"], longer["days"]):
+        if p["status"] == "open":
+            factor = 1.5 if (day(p["date"]) - through.date()).days > 28 else 1.0
+            assert w["mid"] == p["mid"]
+            assert math.log(w["high"] / w["mid"]) == pytest.approx(factor * math.log(p["high"] / p["mid"]))
+    assert [w["low"] for w in longer["weeks"]] != [w["low"] for w in plain["weeks"]]
     big_nights = set(frame.date[frame.hol_big_night.eq(1) & (frame.date > through)].dt.strftime("%Y-%m-%d"))
     linear, X = fit.base[0.5]
     checked = 0
@@ -435,8 +623,11 @@ def test_bounded_keeps_the_median_positive_and_inside_its_range():
     assert np.isfinite(w_lo).all() and np.isfinite(w_hi).all() and (w_lo <= b_mid).all() and (b_mid <= w_hi).all()
 
 
-def test_booked_days_have_no_numbers_and_reason_booking(result, lab_input):
-    booked = {d["date"] for d in lab_input["days"] if d["booked"] and d["date"] > lab_input["dataThrough"]}
+@pytest.mark.parametrize("engine", ENGINES)
+def test_booked_days_have_no_numbers_and_reason_booking(engine, results, lab_input):
+    result = results[engine]
+    end = result["run"]["days"][-1]["date"]
+    booked = {d["date"] for d in lab_input["days"] if d["booked"] and lab_input["dataThrough"] < d["date"] <= end}
     assert booked
     run_booked = [d for d in result["run"]["days"] if d["status"] == "booked"]
     assert {d["date"] for d in run_booked} == booked
@@ -480,15 +671,33 @@ def test_reasons_name_status_term_holiday_and_event_groups(messy):
     assert seen_one_off and seen_ref
 
 
-def test_messy_history_gives_finite_valid_output(messy):
-    inp, res = messy
+def test_baseline_reasons_carry_its_own_effects(result, lab_input):
+    """The same reasons as the model's (kinds and refs), with effectPct from the baseline's multipliers on open days."""
+    effects = result["params"]["calendarEffects"]
+    by_date = {d["date"]: d for d in lab_input["days"]}
+    seen = set()
+    for d in result["run"]["days"]:
+        for reason in d["reasons"]:
+            if d["status"] != "open" or reason["kind"] not in ("event", "holiday"):
+                assert reason["effectPct"] is None
+            elif reason["kind"] == "event" and reason["ref"] is not None and reason["ref"] in effects:
+                assert reason["effectPct"] == round((effects[reason["ref"]] - 1) * 100, 1)
+                seen.add(reason["ref"])
+        kinds = [r["kind"] for r in d["reasons"]]
+        assert kinds.count("event") == len(by_date[d["date"]]["events"])
+    assert "test-town:home-football" in seen
+
+
+@pytest.mark.parametrize("which", ["model", "baseline"])
+def test_messy_history_gives_finite_valid_output(which, messy, messy_baseline):
+    inp, res = messy[0], (messy[1] if which == "model" else messy_baseline)
     assert res["ok"] is True
     assert finite_everywhere(res)
     json.dumps(res, allow_nan=False)
     assert run_file_issues(res["run"], inp["today"]) == []
     status = {d["date"]: d["status"] for d in res["run"]["days"]}
     assert all(s != "open" for when, s in status.items() if day(when).weekday() == 2)  # Wednesdays now closed
-    assert "ev_one_off" in res["params"]["eventCols"]
+    assert which == "baseline" or "ev_one_off" in res["params"]["eventCols"]
     # Training left out every day with no guests, a closure note or a buyout
     frame = pipeline.frame_of(inp)
     hist = features.training_rows(frame, pd.Timestamp(inp["dataThrough"]))
@@ -519,13 +728,90 @@ def test_min_history_days_always_gives_twelve_weeks_with_a_range():
     assert max(_weeks_with_range(first, 420) for first in firsts) == 0
 
 
-def test_not_enough_history(lab_input):
+def _baseline_weeks_with_range(first: pd.Timestamp, span: int) -> int:
+    """The same for the baseline's weekly cutoffs: its first cutoff (baseline.first_cutoff), its window and bands."""
+    through = first + pd.Timedelta(days=span)
+    cutoff = baseline.first_cutoff(first)
+    if cutoff >= through:
+        return 0
+    start, end = backtest.score_window([cutoff], through, pipeline.HORIZON)
+    starts = pd.date_range(start, end - pd.Timedelta(days=6), freq="7D")
+    return metrics.weekly_band_coverage(pd.Series(np.zeros(len(starts))), starts, starts + pd.Timedelta(days=6),
+                                        pipeline.HORIZON)[1]
+
+
+def test_baseline_min_history_days_always_gives_twelve_weeks_with_a_range():
+    # Scheduled calibrations may start from baseline.MIN_HISTORY_DAYS (the API's GATE.baselineMinHistoryDays): every
+    # first day of a year has 12 baseline backtest weeks with a range at 230 days, and some first day does not at 229.
+    firsts = pd.date_range("2023-01-01", periods=366)
+    assert baseline.MIN_HISTORY_DAYS == 230
+    assert min(_baseline_weeks_with_range(first, baseline.MIN_HISTORY_DAYS) for first in firsts) >= 12
+    assert min(_baseline_weeks_with_range(first, baseline.MIN_HISTORY_DAYS - 1) for first in firsts) < 12
+
+
+def shortened(lab_input: dict, span: int) -> dict:
+    """`lab_input` with its history cut to a `span`-day span ending on its last day of sales."""
     inp = copy.deepcopy(lab_input)
-    start = (day(inp["dataThrough"]) - timedelta(days=pipeline.MIN_HISTORY_DAYS - 1)).isoformat()
+    start = (day(inp["dataThrough"]) - timedelta(days=span)).isoformat()
     inp["days"] = [d for d in inp["days"] if d["date"] >= start]
+    assert inp["days"][0]["guests"]
+    return inp
+
+
+def test_not_enough_history(lab_input):
+    inp = shortened(lab_input, baseline.MIN_HISTORY_DAYS - 1)
     out = pipeline.calibrate(inp, CODE)
     assert out == {"schema": schema.RESULT_SCHEMA, "calibrationId": inp["calibrationId"], "ok": False,
                    "code": "not_enough_history"}
+
+
+@pytest.mark.parametrize("span", [pipeline.MIN_HISTORY_DAYS - 1, 400, baseline.MIN_HISTORY_DAYS])
+def test_the_model_does_not_run_under_595_days(lab_input, span):
+    # The fixture's current run is a model run: with the model not run, the lab returns the baseline's run, which
+    # the gate holds (model_not_run)
+    inp = shortened(lab_input, span)
+    out = pipeline.calibrate(inp, CODE)
+    card = out["scorecard"]
+    assert out["ok"] is True and card["history"]["spanDays"] == span
+    assert card["engine"] == "baseline" and card["engines"]["model"] is None
+    assert out["run"]["model"]["family"] == "seasonal_baseline"
+    assert card["backtest"]["weeksWithRange"] >= 12
+    check_scorecard(card, "baseline")
+    assert run_file_issues(out["run"], inp["today"]) == []
+
+
+def without_level_jump(lab_input: dict) -> dict:
+    """The fixture with its last year's 20% busier level taken out: a history the model's refits can learn."""
+    inp = copy.deepcopy(lab_input)
+    for d in inp["days"]:
+        if d["date"] >= LEVEL_SHIFT.strftime("%Y-%m-%d") and d["guests"]:
+            d["guests"] = round(d["guests"] / EFFECT["level_shift"])
+    return inp
+
+
+def test_the_model_wins_a_first_forecast(lab_input):
+    inp = without_level_jump(lab_input)
+    inp["champion"] = None
+    out = pipeline.calibrate(inp, CODE)
+    engines = out["scorecard"]["engines"]
+    assert engines["model"]["weeklyWape"] <= engines["baseline"]["weeklyWape"] - pipeline.ENGINE_MARGIN
+    assert out["scorecard"]["engine"] == "model" and out["run"]["model"]["family"] == "hybrid_linear_xgboost"
+    assert engines["model"]["weeks"] == engines["baseline"]["weeks"]  # scored on the same weeks
+
+
+def test_the_baseline_is_chosen_when_it_clearly_wins(result, lab_input):
+    # The fixture's current run is a model run, and its level jump makes the baseline more than 0.5 points better on
+    # the same weeks: the lab switches engines
+    engines = result["scorecard"]["engines"]
+    assert lab_input["champion"]["engine"] == "model"
+    assert engines["baseline"]["weeklyWape"] <= engines["model"]["weeklyWape"] - pipeline.ENGINE_MARGIN
+    assert engines["model"]["weeks"] == engines["baseline"]["weeks"] == result["scorecard"]["backtest"]["weeks"]
+    assert result["scorecard"]["engine"] == "baseline"
+    # The two engines' backtests are scored on exactly the same weeks
+    model_card = calibrate_as(lab_input, "model")["scorecard"]
+    assert [r["week"] for r in model_card["backtest"]["series"]] == [
+        r["week"] for r in result["scorecard"]["backtest"]["series"]]
+    assert model_card["engines"] == engines
 
 
 def _gap(inp):
@@ -546,7 +832,7 @@ def _set(path, value):
 
 
 @pytest.mark.parametrize("break_it", [
-    _set(["schema"], "townwise.lab-input/2"),
+    _set(["schema"], "townwise.lab-input/1"),
     _gap,
     _unsorted,
     _set(["metric"], "net_sales"),
@@ -565,9 +851,11 @@ def _set(path, value):
     _set(["champion", "days", 0, "mid"], None),
     _set(["champion", "weeks", 0, "openDays"], 8),
     _set(["champion", "runId"], ""),
+    _set(["champion", "engine"], None),
+    _set(["calendar", 0, "title"], "Test Town Festival"),
 ], ids=["schema", "gap", "unsorted", "metric", "calibration_id", "horizon", "today", "regime_start", "unknown_key",
         "negative_guests", "nan_guests", "guests_after_cutoff", "closed_not_bool", "term", "week_of_term",
-        "event_group", "champion_day", "champion_week", "champion_run_id"])
+        "event_group", "champion_day", "champion_week", "champion_run_id", "champion_engine", "calendar_title"])
 def test_invalid_input_codes(lab_input, break_it):
     inp = copy.deepcopy(lab_input)
     break_it(inp)
@@ -682,10 +970,24 @@ def test_comparison_uses_only_comparable_weeks(lab_input):
     assert [row["week"] for row in again["series"]] == [w["from"] for w in expected if w["from"] != monday]
 
 
-def test_comparison_in_the_result_is_the_one_compare_makes(result, lab_input):
+def test_comparison_in_the_result_is_the_one_compare_makes(model_result, lab_input):
     frame, hist, origins, base_cols, event_cols = _prepared(lab_input)
     out = compare.compare(frame, hist, lab_input["champion"], origins, base_cols, event_cols)
+    assert_close(model_result["scorecard"]["comparison"], out)
+
+
+def test_the_baselines_comparison_uses_its_own_backtest(result, model_result, lab_input):
+    # The returned engine's predictions against the current run, on the same weeks the model's comparison uses
+    frame, hist, origins, base_cols, event_cols = _prepared(lab_input)
+    through = pd.Timestamp(lab_input["dataThrough"])
+    history = baseline.prepare(frame, lab_input["calendar"], through)
+    preds = baseline.ranged(baseline.backtest_predictions(history, through, [7, 28, 91, 98]),
+                            result["params"]["dailyLogRange"])
+    out = compare.compare(frame, hist, lab_input["champion"], origins, base_cols, event_cols, preds=preds)
     assert_close(result["scorecard"]["comparison"], out)
+    mine, theirs = result["scorecard"]["comparison"], model_result["scorecard"]["comparison"]
+    assert [r["week"] for r in mine["series"]] == [r["week"] for r in theirs["series"]]
+    assert mine["champion"] == theirs["champion"] and mine["challenger"] != theirs["challenger"]
 
 
 def test_comparison_none_without_champion(regime_result, lab_input):
@@ -700,7 +1002,8 @@ def test_comparison_none_when_no_week_is_comparable(lab_input):
     assert compare.compare(frame, hist, late, origins, base_cols, event_cols) is None
 
 
-def test_regime_start_adds_weekday_regime(regime_result, result):
+def test_regime_start_adds_weekday_regime(regime_result, model_result):
+    result = model_result
     assert regime_result["params"]["baseCols"][0] == "weekday_regime"
     assert regime_result["params"]["regimeStart"] == REGIME_START.strftime("%Y-%m-%d")
     assert run_file_issues(regime_result["run"], synthetic_input(0)["today"]) == []
@@ -710,18 +1013,21 @@ def test_regime_start_adds_weekday_regime(regime_result, result):
     assert any(abs(a - b) > 1 for a, b in mids)
 
 
-def test_a_regime_start_without_four_training_days_changes_nothing_but_params(result, lab_input):
+def test_a_regime_start_without_four_training_days_changes_nothing_but_params(model_result, lab_input):
     # From two weeks before the cutoff: no weekday has 4 days of the regime to learn its level from, and no backtest
     # refit has any, so every weekday keeps its plain level (features.limit_weekday_regime) everywhere
+    result = model_result
     inp = copy.deepcopy(lab_input)
     inp["regimeStart"] = (day(inp["dataThrough"]) - timedelta(days=13)).isoformat()
-    late = pipeline.calibrate(inp, CODE)
+    late = calibrate_as(inp, "model")
     assert late["params"]["baseCols"][0] == "weekday_regime"
     assert_close(late["run"], result["run"])
     assert_close(late["scorecard"], result["scorecard"])
 
 
-def test_backtest_block_mirrors_scorecard(result):
+@pytest.mark.parametrize("engine", ENGINES)
+def test_backtest_block_mirrors_scorecard(engine, results):
+    result = results[engine]
     run_bt, card_bt = result["run"]["backtest"], result["scorecard"]["backtest"]
     assert (run_bt["from"], run_bt["to"], run_bt["weeks"]) == (card_bt["from"], card_bt["to"], card_bt["weeks"])
     assert run_bt["weeklyTypicalErrorPct"] == round(card_bt["metrics"]["typicalWeek"] * 100, 1)
@@ -731,7 +1037,8 @@ def test_backtest_block_mirrors_scorecard(result):
                                         "above": round((math.exp(hi) - 1) * 100, 1)}
 
 
-def test_backtest_scores_the_horizon_28_weeks(result, lab_input):
+def test_backtest_scores_the_horizon_28_weeks(model_result, lab_input):
+    result = model_result
     frame, hist, origins, base_cols, event_cols = _prepared(lab_input)
     card = result["scorecard"]
     assert card["backtest"]["origins"] == [o.strftime("%Y-%m-%d") for o in origins]
@@ -782,3 +1089,29 @@ def test_golden_result_is_current(lab_input):
     assert golden_result["codeVersion"] == "0" * 40
     assert_close(pipeline.calibrate(golden_input, golden_result["codeVersion"]), golden_result, rel=GOLDEN_REL,
                  abs_=GOLDEN_ABS, edge_slack=1)
+
+
+# Which engine a calibration returns (design decision 8): the current one sticks unless the other is 0.5 points better
+
+def test_with_no_current_run_the_model_needs_half_a_point_over_the_baseline():
+    assert pipeline.choose_engine(None, 0.090, 0.102) == "model"
+    assert pipeline.choose_engine(None, 0.097, 0.102) == "model"  # exactly 0.5 points
+    assert pipeline.choose_engine(None, 0.098, 0.102) == "baseline"
+    assert pipeline.choose_engine(None, None, 0.102) == "baseline"  # the model did not run
+
+
+def test_close_engines_do_not_flip_flop():
+    # The current run is a baseline run; over four weekly calibrations the model is 0.3 lower, 0.2 higher, 0.4 lower
+    # and 0.1 lower than the baseline: every one keeps the baseline, and the same margins keep a current model
+    for model_wape in (0.097, 0.102, 0.096, 0.099):
+        assert pipeline.choose_engine("baseline", model_wape, 0.100) == "baseline"
+        assert pipeline.choose_engine("model", 0.100, model_wape) == "model"
+
+
+def test_a_six_tenths_win_switches_engines():
+    assert pipeline.choose_engine("baseline", 0.094, 0.100) == "model"
+    assert pipeline.choose_engine("model", 0.100, 0.094) == "baseline"
+
+
+def test_a_current_model_that_could_not_run_returns_the_baseline():
+    assert pipeline.choose_engine("model", None, 0.100) == "baseline"  # the gate holds it (model_not_run)

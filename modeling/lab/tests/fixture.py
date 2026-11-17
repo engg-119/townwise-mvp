@@ -4,7 +4,8 @@ synthetic_frame(seed) is the frame the lab builds from a LabInput (date, weekday
 ev_<group> column per town event group, private_event, closed, booked and the holiday flags), plus the notebook's own
 column names for the same facts (is_2026, football_home) and two show flags only the notebook has, so one frame feeds
 both the lab and the notebook's functions in the parity tests. synthetic_input(seed) is the same history as the
-LabInput the API sends, with synthetic_champion as the current published run.
+LabInput the API sends, with synthetic_calendar as its town calendar and synthetic_champion as the current published
+run.
 """
 
 import numpy as np
@@ -125,6 +126,41 @@ def _iso(day: pd.Timestamp) -> str:
     return day.strftime("%Y-%m-%d")
 
 
+HOLIDAY_SLUGS = {"New Year's Day": "new-years-day", "Birthday of Martin Luther King, Jr.": "martin-luther-king-jr-day",
+                 "Washington's Birthday": "washingtons-birthday", "Memorial Day": "memorial-day",
+                 "Juneteenth National Independence Day": "juneteenth", "Independence Day": "independence-day",
+                 "Labor Day": "labor-day", "Columbus Day": "columbus-day", "Veterans Day": "veterans-day",
+                 "Thanksgiving Day": "thanksgiving", "Christmas Day": "christmas"}
+
+
+def synthetic_calendar(frame: pd.DataFrame) -> list[dict]:
+    """The town calendar the API sends for `frame`'s dates (townEvents, api/src/lab/input.ts): the federal holidays
+    (group us:<slug>), each term (group test-town:classes:<season>), each festival and each home football Saturday,
+    with ids, groups, kinds, dates and confidence only. Sorted by start, then id, as townEvents sorts."""
+    first, last = frame.date.min(), frame.date.max()
+    entries = []
+    federal = USFederalHolidayCalendar().holidays(first, last, return_name=True)
+    for when, name in federal.items():
+        slug = HOLIDAY_SLUGS[name]
+        entries.append({"id": f"us:{slug}:{when.year}", "group": f"us:{slug}", "kind": "holiday", "start": _iso(when),
+                        "end": _iso(when), "confidence": None})
+    for year in range(first.year, last.year + 1):
+        for season, ((m1, d1), (m2, d2)) in TERMS.items():
+            start, end = pd.Timestamp(year, m1, d1), pd.Timestamp(year, m2, d2)
+            if start <= last and end >= first:
+                entries.append({"id": f"test-town:{_iso(start)}:{season}-term", "group": f"test-town:classes:{season}",
+                                "kind": "term", "start": _iso(start), "end": _iso(end), "confidence": "high"})
+    for start in pd.to_datetime(FESTIVAL_STARTS):
+        if first <= start <= last:
+            entries.append({"id": f"test-town:{_iso(start)}:festival", "group": FESTIVAL.removeprefix("ev_"),
+                            "kind": "event", "start": _iso(start), "end": _iso(start + pd.Timedelta(days=2)),
+                            "confidence": "medium"})
+    for when in frame.date[frame[FOOTBALL] == 1]:
+        entries.append({"id": f"test-town:{_iso(when)}:home-football", "group": FOOTBALL.removeprefix("ev_"),
+                        "kind": "event", "start": _iso(when), "end": _iso(when), "confidence": "high"})
+    return sorted(entries, key=lambda e: (e["start"], e["id"]))
+
+
 def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THROUGH) -> dict:
     """A published run made at `through` for the 182 days after it (the LabInput's champion): each weekday's median
     guests over the days before it as the forecast, 20% below to 25% above as the daily range and 15% either side as
@@ -145,12 +181,13 @@ def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THR
         weeks.append({"from": _iso(week.date.min()), "to": _iso(week.date.max()),
                       "openDays": int(week.mid.notna().sum()),
                       "low": round(0.85 * total, 2), "mid": total, "high": round(1.15 * total, 2)})
-    return {"runId": CHAMPION_RUN_ID, "dataThrough": _iso(through), "days": days, "weeks": weeks}
+    return {"runId": CHAMPION_RUN_ID, "engine": "model", "dataThrough": _iso(through), "days": days, "weeks": weeks}
 
 
 def synthetic_input(seed: int = 0) -> dict:
     """synthetic_frame(seed) as the LabInput the API sends: every date from the first day with guests to the data
-    cutoff plus 182 days, no regime start, and synthetic_champion as the current published run."""
+    cutoff plus 182 days, no regime start, synthetic_calendar over those days, and synthetic_champion (a model run) as
+    the current published run."""
     f = synthetic_frame(seed)
     has = f.guests.gt(0)
     first, through = f.date[has].min(), f.date[has].max()
@@ -161,6 +198,6 @@ def synthetic_input(seed: int = 0) -> dict:
              "events": sorted(c.removeprefix("ev_") for c in groups if row[c] == 1),
              "closed": bool(row.closed), "privateEvent": bool(row.private_event), "booked": bool(row.booked)}
             for _, row in rows.iterrows()]
-    return {"schema": "townwise.lab-input/1", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
+    return {"schema": "townwise.lab-input/2", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
             "dataThrough": _iso(through), "horizonDays": FUTURE_DAYS, "regimeStart": None, "days": days,
-            "champion": synthetic_champion(f)}
+            "calendar": synthetic_calendar(rows), "champion": synthetic_champion(f)}

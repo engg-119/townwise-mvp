@@ -27,9 +27,11 @@ def compare(frame: pd.DataFrame, hist: pd.DataFrame, champion: dict | None, orig
     days before the Monday. Both are scored over the champion's open days: the champion's weekly forecast is its week
     row's mid, the challenger's the sum of its daily mids. The champion's 80% weekly range is the one it published (as
     the notebook's section 10 scores a frozen forecast); the challenger's is the past-only band from the whole
-    horizon-28 backtest's weekly errors (section 8). `preds` is that backtest when the caller already ran it
-    (forecast.backtest_predictions with the same origins and columns, which predicts only `hist` rows, so its end does
-    not matter); without it, it is run here."""
+    horizon-28 backtest's weekly errors (section 8), on the window the first of `origins` opens. `preds` is the
+    returned engine's backtest (pipeline.calibrate): the model's (forecast.backtest_predictions with the same origins
+    and columns, which predicts only `hist` rows, so its end does not matter) or the baseline's weekly one
+    (baseline.backtest_predictions, ranged), each refit picked as for the scorecard; without it, the model's is run
+    here."""
     if champion is None:
         return None
     end = hist.date.max()
