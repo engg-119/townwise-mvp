@@ -105,6 +105,9 @@ export async function runWeeklyForecastsWorker(deps: WorkerDeps): Promise<number
     }
     offsetMs = start - realNow().getTime();
   }
+  // A start line, before anything that can fail or hang: the ops alert pairs it by pino's hostname (the execution's
+  // replica) with this execution's pass line, so one killed by the job's timeout or crashed without a line is seen.
+  logger.info('townwise.weekly_worker_started');
   // Which locations are due (--now moves it for development); calibrations, week rows and the lease keep the real time,
   // so a job started now is still inside its 20-minute callback window when it calls the API back.
   const dueClock = (): Date => new Date(realNow().getTime() + offsetMs);

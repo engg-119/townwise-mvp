@@ -1178,7 +1178,8 @@ run "lab_disabled" {
       length(azapi_resource.job_forecasts) == 0 && !contains(keys(azurerm_user_assigned_identity.job), "forecasts") &&
       length(azurerm_role_assignment.forecasts_lab_start) == 0 && length(azurerm_role_assignment.deployer_forecasts_job) == 0 &&
       length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed) == 0 &&
-      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing) == 0
+      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing) == 0 &&
+      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed) == 0
     )
     error_message = "With enable_lab false, the weekly forecast worker, its identity, its grants and its alerts do not exist."
   }
@@ -1485,9 +1486,13 @@ run "forecasts_worker" {
       alltrue([for line in ["townwise.weekly_worker_failed", "townwise.weekly_worker_refused"] :
         strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "\"${line}\"") &&
       strcontains(file("../../../api/src/workers/weekly-forecasts.ts"), "'${line}'")]) &&
-      alltrue([for line in ["townwise.weekly_refresh_location_failed", "townwise.weekly_refresh_pass"] :
+      alltrue([for line in [
+        "townwise.weekly_refresh_location_failed", "townwise.weekly_refresh_pass", "townwise.weekly_suggestions_location_failed",
+        "townwise.weekly_suggestions_pass",
+        ] :
         strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "\"${line}\"") &&
       strcontains(file("../../../api/src/lab/schedule.ts"), "'${line}'")]) &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "toint(line.capped) > 0") &&
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].operator == "GreaterThan" &&
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].threshold == 0 &&
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
@@ -1507,6 +1512,25 @@ run "forecasts_worker" {
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
     )
     error_message = "A day without a pass line from the worker emails the ops address."
+  }
+
+  assert {
+    condition = (
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].scopes == tolist([azurerm_log_analytics_workspace.main.id]) &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].evaluation_frequency == "PT1H" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].window_duration == "PT2H" &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].criteria[0].query, "ContainerAppConsoleLogs") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].criteria[0].query, "leftanti") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].criteria[0].query, "line.hostname") &&
+      alltrue([for line in ["townwise.weekly_worker_started", "townwise.weekly_worker_failed", "townwise.weekly_worker_refused"] :
+        strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].criteria[0].query, "\"${line}\"") &&
+      strcontains(file("../../../api/src/workers/weekly-forecasts.ts"), "'${line}'")]) &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].criteria[0].query, "\"townwise.weekly_refresh_pass\"") &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].criteria[0].operator == "GreaterThan" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].criteria[0].threshold == 0 &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_killed[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
+    )
+    error_message = "An execution that logged its start and never its pass (killed by the job's timeout, or crashed) emails the ops address; the lines it pairs are the ones the worker logs."
   }
 }
 

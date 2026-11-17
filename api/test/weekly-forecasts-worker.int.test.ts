@@ -80,6 +80,12 @@ describe('the worker', () => {
     expect(await worker.code).toBe(0);
     expect(runner.jobs.length).toBe(before + 1);
     expect(worker.passes()).toEqual([expect.objectContaining({ state: 'ran', started: 1, failed: 0 })]);
+    // A start line first, which the ops alert pairs by hostname with the pass line: one without it was killed (the job's
+    // 600-second timeout) or crashed. It carries nothing but pino's own fields.
+    const started = worker.lines.findIndex((line) => line.msg === 'townwise.weekly_worker_started');
+    expect(started).toBeGreaterThanOrEqual(0);
+    expect(started).toBeLessThan(worker.lines.findIndex((line) => line.msg === 'townwise.weekly_refresh_pass'));
+    expect(Object.keys(worker.lines[started] ?? {}).sort()).toEqual(['hostname', 'level', 'msg', 'pid', 'time']);
     expect(await server.connection.collection('tw_forecast_weeks').findOne({})).toMatchObject({ week: '2026-11-16', status: 'started' });
     // --now decides only who is due: the calibration's request time and callback window are the real clock's.
     const calibration = await server.connection.collection('tw_calibrations').findOne({ 'requestedBy.role': 'system' });

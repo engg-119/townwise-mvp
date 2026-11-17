@@ -119,11 +119,15 @@ A scheduled calibration SHALL not be charged to the organization's TownwiseAI mo
 - **THEN** it is charged $0.10, counts as one of the organization's 4 that day, and needs 595 days of history
 
 ### Requirement: Each pass is visible
-Each pass SHALL end with one log line `townwise.weekly_refresh_pass { started, failed, skipped, capped, ms }` (counts and time only, never an id or a figure). The console's Forecasts section SHALL show each location's latest week row (week, outcome, the calibration and its gate reason). `infra/README.md` SHALL add a log search alert, like the daily-cap alert, that fires when a pass reports `failed` above 0, when the job's execution fails, or when no pass line appears for 8 days while the switch is on.
+Each pass SHALL end with one log line `townwise.weekly_refresh_pass { started, failed, skipped, capped, ms }` (counts and time only, never an id or a figure). The console's Forecasts section SHALL show each location's latest week row (week, outcome, the calibration and its gate reason). `infra/README.md` SHALL add log search alerts, like the daily-cap alert, that fire when a pass (or its weekly suggestions part) reports `failed` above 0 or a location's turn throws, when the job's execution fails (an execution that logged its start line and no pass or error line from the same replica within 15 minutes: killed by the job's timeout, or crashed), when a pass on a Sunday (UTC) still holds locations back at a cap, or when no pass line appears for a day while the lab is on (a pass logs a line every hour in every state, and log search windows stop at two days).
 
 #### Scenario: A pass's log line
 - **WHEN** a pass starts 4, skips 7 as unchanged and records 1 `start_failed`
 - **THEN** it logs `townwise.weekly_refresh_pass` with `started` 4, `skipped` 7, `failed` 1 and no id
+
+#### Scenario: An execution is killed
+- **WHEN** an execution logs `townwise.weekly_worker_started` and the job's 600-second timeout kills it before its pass line
+- **THEN** `townwise-forecasts-killed` emails the ops address within two hours, though other hours' passes log normally
 
 #### Scenario: Staff check a location
 - **WHEN** staff open an organization's Forecasts section on Monday afternoon

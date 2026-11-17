@@ -174,13 +174,15 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "backup_missing" {
 # townwise.weekly_refresh_pass, even while it is switched off or paused, and its failures log their own lines
 # (api/src/lab/schedule.ts, api/src/workers/weekly-forecasts.ts). Each line is pino JSON in the Log column.
 #
-# A pass that failed a start or a location, or a worker that stopped on an error, checked every hour. $0.50 a month.
+# A pass that failed a start, a location or a weekly suggestions call, a worker that stopped on an error, or a pass
+# on a Sunday (UTC) still holding locations back at a cap, checked every hour. A location the live cap holds back is
+# caught up later in its week (api/src/lab/schedule.ts), so one still held on Sunday may miss the week. $0.50 a month.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_failed" {
   count                = var.enable_lab ? 1 : 0
   name                 = "townwise-forecasts-failed"
   resource_group_name  = local.rg
   location             = local.location
-  description          = "The weekly forecast worker failed a start or a location, or stopped on an error."
+  description          = "The weekly forecast worker failed a start, a location or a suggestions call, stopped on an error, or still held locations back on a Sunday."
   scopes               = [azurerm_log_analytics_workspace.main.id]
   severity             = 2
   evaluation_frequency = "PT1H"
@@ -192,8 +194,12 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_failed" {
       | where Log has "townwise.weekly_"
       | extend line = parse_json(Log)
       | extend msg = tostring(line.msg)
-      | where msg in ("townwise.weekly_worker_failed", "townwise.weekly_worker_refused", "townwise.weekly_refresh_location_failed")
-          or (msg == "townwise.weekly_refresh_pass" and toint(line.failed) > 0)
+      | where msg in (
+            "townwise.weekly_worker_failed", "townwise.weekly_worker_refused", "townwise.weekly_refresh_location_failed",
+            "townwise.weekly_suggestions_location_failed"
+          )
+          or (msg in ("townwise.weekly_refresh_pass", "townwise.weekly_suggestions_pass") and toint(line.failed) > 0)
+          or (msg == "townwise.weekly_refresh_pass" and toint(line.capped) > 0 and dayofweek(TimeGenerated) == 0d)
     KQL
     time_aggregation_method = "Count"
     operator                = "GreaterThan"
@@ -224,6 +230,45 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_missing" {
     time_aggregation_method = "Count"
     operator                = "LessThan"
     threshold               = 1
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}
+
+# An execution that logged its start and never its end: killed by the job's 600-second replica timeout (jobs.tf), or
+# crashed, after its first line. The worker logs townwise.weekly_worker_started first, then its pass line or its error
+# line, from one replica, whose name is pino's hostname, so a start older than 15 minutes (past the timeout) with no
+# end from the same host is one that died. forecasts_missing sees only a whole day of dead executions; this sees one.
+# Each start is in two hourly windows, so one death can email twice. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_killed" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-killed"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "A weekly forecast worker execution started and never logged its pass: killed by the timeout or crashed."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 2
+  evaluation_frequency = "PT1H"
+  window_duration      = "PT2H"
+
+  criteria {
+    query                   = <<-KQL
+      let lines = ContainerAppConsoleLogs
+      | where Log has "townwise.weekly_"
+      | extend line = parse_json(Log)
+      | extend msg = tostring(line.msg), host = tostring(line.hostname);
+      lines
+      | where msg == "townwise.weekly_worker_started" and TimeGenerated < ago(15m)
+      | join kind=leftanti (
+          lines
+          | where msg in ("townwise.weekly_refresh_pass", "townwise.weekly_worker_failed", "townwise.weekly_worker_refused")
+        ) on host
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
   }
 
   action {
