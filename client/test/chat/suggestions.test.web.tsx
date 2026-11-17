@@ -93,6 +93,8 @@ test('members see each suggestion with its why and calendar entries, and whether
   expect(within(note).getByText('Independence Day is Sat, Jul 4, and you were closed on it last year.')).toBeTruthy();
   expect(within(note).getByText('Based on Independence Day (Sat, Jul 4, 2026).')).toBeTruthy();
   expect(within(note).getByText('An admin of your organization can accept or dismiss this.')).toBeTruthy();
+  // A closure's heading already says all it saves: no line repeats "Closed".
+  expect(within(note).queryByText(/^Closed\./)).toBeNull();
   const rule = card(panel, RULE_HEADING);
   expect(within(rule).getByText('Adds 40 guests on Jun 14, 2026, 6 pm to 10 pm')).toBeTruthy();
   expect(within(panel).queryByRole('button', { name: 'Accept' })).toBeNull();
@@ -128,6 +130,28 @@ test('an org admin accepts a note and dismisses a rule; each card then says what
   expect(await within(panel).findByText('Weekly suggestions are off.')).toBeTruthy();
 });
 
+test('after Accept or Dismiss, focus moves to the line that says what it did (the buttons are gone)', async () => {
+  const api = chatApi(true);
+  api.respond['/api/org/locations/l1/agent/suggestions/0000000000000000000000c1/accept'] = () => (
+    { suggestion: { id: '0000000000000000000000c1', status: 'accepted' }, note: null, rule: null }
+  );
+  api.respond['/api/org/locations/l1/agent/suggestions/0000000000000000000000c2/dismiss'] = () => (
+    { suggestion: { id: '0000000000000000000000c2', status: 'dismissed' }, note: null, rule: null }
+  );
+  renderAt(api, meOf(ACCESS.admin));
+  const panel = await side();
+  const accept = within(card(panel, NOTE_HEADING)).getByRole('button', { name: 'Accept' });
+  accept.focus();
+  fireEvent.click(accept);
+  const saved = await within(card(panel, NOTE_HEADING)).findByText('Saved a note: Closure, Sat, Jul 4, 2026.');
+  await waitFor(() => { expect(saved.closest('[role="status"]')?.contains(document.activeElement)).toBe(true); });
+  const dismiss = within(card(panel, RULE_HEADING)).getByRole('button', { name: 'Dismiss' });
+  dismiss.focus();
+  fireEvent.click(dismiss);
+  const dismissed = await within(card(panel, RULE_HEADING)).findByText('Dismissed. TownwiseAI won’t suggest it again.');
+  await waitFor(() => { expect(dismissed.closest('[role="status"]')?.contains(document.activeElement)).toBe(true); });
+});
+
 test('an org admin turns weekly suggestions off and back on', async () => {
   const api = chatApi(true);
   api.respond['/api/org/weekly-suggestions'] = (body) => ({ weeklySuggestions: { on: (body as { on: boolean }).on } });
@@ -152,6 +176,26 @@ test('a suggestion the server no longer has open reads the panel again; another 
   api.respond[acceptPath] = () => refusal(404, 'not_found');
   fireEvent.click(within(card(panel, NOTE_HEADING)).getByRole('button', { name: 'Accept' }));
   await waitFor(() => { expect(api.panelLoads).toBeGreaterThan(loads); });
+});
+
+/** An open note suggestion of kind other, with its effect, guests, hours and detail (synthetic). */
+const OTHER_NOTE = {
+  id: '0000000000000000000000c3', why: 'Winter term starts Fri, Jan 8, and your January weeks rose with it last year.', calendar: [],
+  createdAt: '2026-11-16T06:00:00.000Z', type: 'note',
+  note: {
+    kind: 'other', startDate: '2027-01-08', endDate: '2027-01-10', weekdays: null, effect: 'more_guests', expectedGuests: 220,
+    startTime: '18:00', endTime: '21:00', detail: 'Winter term starts; students back in town',
+  },
+};
+
+test('a note suggestion shows what Accept will save: its effect, guests and hours, and its detail as written', async () => {
+  const api = chatApi(true);
+  api.panel = { ...(api.panel as object), suggestions: [OTHER_NOTE] };
+  renderAt(api, meOf(ACCESS.admin));
+  const panel = await side();
+  const note = card(panel, 'Other on Jan 8 to Jan 10, 2027?');
+  expect(within(note).getByText('More guests than usual. About 220 guests. 6 pm to 9 pm.')).toBeTruthy();
+  expect(within(note).getByText('Winter term starts; students back in town')).toBeTruthy();
 });
 
 test('with none open, the section says so and still shows the switch', async () => {

@@ -79,3 +79,25 @@ test('an org admin accepts a suggestion and turns weekly suggestions off', async
   expect(await screen.findByText('Weekly suggestions are off.')).toBeTruthy();
   expect(api.writes.map((write) => write.path)).toEqual([accept, '/api/org/weekly-suggestions']);
 });
+
+test('a note suggestion shows its effect, guests and hours, and its detail as written', async () => {
+  jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width: 375 });
+  const chat = fakeChatApi();
+  chat.panel = {
+    ...fixture.panel, weeklySuggestions: { ...fixture.panel.weeklySuggestions, available: true, canChange: true },
+    suggestions: [{
+      id: '0000000000000000000000c3', why: 'Winter term starts Fri, Jan 8, and your January weeks rose with it last year.', calendar: [],
+      createdAt: '2026-11-16T06:00:00.000Z', type: 'note',
+      note: {
+        kind: 'other', startDate: '2027-01-08', endDate: '2027-01-10', weekdays: null, effect: 'more_guests', expectedGuests: 220,
+        startTime: '18:00', endTime: '21:00', detail: 'Winter term starts; students back in town',
+      },
+    }],
+  };
+  serveAbout(chat);
+  await renderApp('/locations/l1/agent?panel=questions', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin'), fallback: chat }));
+  const side = screen.getByTestId('agent-side');
+  expect(await within(side).findByRole('heading', { name: 'Other on Jan 8 to Jan 10, 2027?' })).toBeTruthy();
+  expect(within(side).getByText('More guests than usual. About 220 guests. 6 pm to 9 pm.')).toBeTruthy();
+  expect(within(side).getByText('Winter term starts; students back in town')).toBeTruthy();
+});

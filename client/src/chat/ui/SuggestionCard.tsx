@@ -1,8 +1,10 @@
 import { Link } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { openAsAdminOrgId } from '../../portal/api';
 import { usePortal } from '../../portal/PortalProvider';
+import { EFFECT_LABEL, guestsLine, hoursLine } from '../../portal/locations/noteRules';
 import { Button } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
@@ -13,9 +15,10 @@ import { openSuggestions, type AgentPanelState, type Decided } from '../useAgent
 
 // TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions, spec P25): each Monday a pass reads the
 // next 3 months of the town's calendar with the location's notes and rules and suggests notes or business rules. A
-// card asks the question, gives TownwiseAI's one-sentence why and the calendar entries it rests on, and offers Accept
-// and Dismiss to org admins only; members see the card without them. Nothing changes the forecast until an admin
-// accepts. Under the cards, the organization's switch with its words: admins turn it off or on, members see its state.
+// card asks the question, gives TownwiseAI's one-sentence why, what Accept saves (a rule's schedule; a note's effect,
+// guests, hours and detail) and the calendar entries it rests on, and offers Accept and Dismiss to org admins only;
+// members see the card without them. Nothing changes the forecast until an admin accepts. Under the cards, the
+// organization's switch with its words: admins turn it off or on, members see its state.
 
 /** The switch's words (spec P25), with the town's name. */
 export function weeklyWords(town: string): string {
@@ -42,6 +45,18 @@ export function suggestionHeading(suggestion: Suggestion): string {
   return `${KIND_LABEL[note.kind]} on ${days}?`;
 }
 
+/**
+ * What a note suggestion saves beyond its heading, in the notes list's words (P14): "More guests than usual. About 220
+ * guests. 6 pm to 9 pm." A closed effect is left out, since the heading says it. Null when there is nothing more.
+ */
+export function suggestionFacts(suggestion: Suggestion): string | null {
+  if (suggestion.type === 'rule') return null;
+  const { note } = suggestion;
+  const parts = [note.effect === 'closed' ? null : EFFECT_LABEL[note.effect], guestsLine(note.expectedGuests), hoursLine(note)]
+    .filter((part) => part !== null);
+  return parts.length === 0 ? null : `${parts.join('. ')}.`;
+}
+
 /** What Accept does, and who can press it. */
 export function suggestionHelp(suggestion: Suggestion, canChange: boolean): string {
   if (!canChange) return 'An admin of your organization can accept or dismiss this.';
@@ -64,6 +79,8 @@ function basedOn(suggestion: Suggestion): string | null {
   return `Based on ${suggestion.calendar.map((entry) => `${entry.title} (${entry.start === entry.end ? dayText(entry.start) : rangeText(entry.start, entry.end)})`).join(', ')}.`;
 }
 
+type Host = React.ComponentRef<typeof View>;
+
 export function SuggestionCard(props: {
   suggestion: Suggestion;
   panel: AgentPanelState;
@@ -78,19 +95,40 @@ export function SuggestionCard(props: {
   const deciding = panel.deciding === id;
   const off = props.readOnlyId !== null || panel.deciding !== null;
   const based = basedOn(suggestion);
+  const facts = suggestionFacts(suggestion);
+  const detail = suggestion.type === 'note' ? suggestion.note.detail : null;
   const describedBy = [props.readOnlyId, helpId].filter((value): value is string => value !== null).join(' ');
+  const decidedLineRef = useRef<Host>(null);
+  // A decision pressed on this card moves focus to the line that says what it did (the buttons it pressed are gone), as
+  // ProposalCard's save does. Only the card pressed: the same suggestion can also show in the column beside the landing.
+  const pressed = useRef(false);
+  const isDecided = decided !== undefined;
+  useEffect(() => {
+    if (isDecided && pressed.current && Platform.OS === 'web') decidedLineRef.current?.focus();
+    if (isDecided) pressed.current = false;
+  }, [isDecided]);
+  function press(decision: 'accept' | 'dismiss'): void {
+    pressed.current = true;
+    panel.decide(id, decision);
+  }
   return (
     <View style={styles.card}>
       <Heading level={3}>{suggestionHeading(suggestion)}</Heading>
       <Text style={styles.context}>{suggestion.why}</Text>
       {suggestion.type === 'rule' ? <Text style={styles.context}>{suggestion.scheduleSummary}</Text> : null}
+      {facts === null ? null : <Text style={styles.context}>{facts}</Text>}
+      {detail === null ? null : <Text style={styles.context}>{detail}</Text>}
       {based === null ? null : <Text style={styles.help}>{based}</Text>}
-      {decided !== undefined ? <Text role="status" style={styles.done}>{decidedLine(suggestion, decided)}</Text> : (
+      {decided !== undefined ? (
+        <View ref={decidedLineRef} {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})} role="status">
+          <Text style={styles.done}>{decidedLine(suggestion, decided)}</Text>
+        </View>
+      ) : (
         <>
           {props.canChange ? (
             <View role="group" aria-label={suggestionHeading(suggestion)} style={styles.answers}>
-              <Button variant="outline" label="Accept" disabled={off} describedBy={describedBy} onPress={() => { panel.decide(id, 'accept'); }} />
-              <Button variant="outline" label="Dismiss" disabled={off} describedBy={describedBy} onPress={() => { panel.decide(id, 'dismiss'); }} />
+              <Button variant="outline" label="Accept" disabled={off} describedBy={describedBy} onPress={() => { press('accept'); }} />
+              <Button variant="outline" label="Dismiss" disabled={off} describedBy={describedBy} onPress={() => { press('dismiss'); }} />
             </View>
           ) : null}
           <Text nativeID={helpId} style={styles.help}>{deciding ? 'Saving…' : suggestionHelp(suggestion, props.canChange)}</Text>
