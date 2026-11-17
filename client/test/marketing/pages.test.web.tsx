@@ -534,7 +534,7 @@ test('About lists what we are building in the future tense, then what comes next
   expect(items.map((item) => item.textContent)).toEqual([
     'A research agent that will find every event and driver of demand in a town, with the date and the public source behind each one.',
     'Uploading your sales history from your point-of-sale system, to calibrate your forecasts.',
-    'A model calibrated to your business: the town model, tuned with your own history to forecast your daily guests and sales, each day with a range and a reason.',
+    'A model calibrated to your business: the town model, tuned with your own history to forecast your daily guests, each day with a range and a reason.',
     'A tuning agent you talk to: tell it what it can’t see, and it will retrain your model and explain its forecasts.',
     'An app that will put it in front of the people who place the orders.',
     'Next: reorder suggestions, starting with bar inventory.',

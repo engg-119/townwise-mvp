@@ -34,7 +34,7 @@ export default function About(): React.JSX.Element {
           <Ol className="build c-r">
             <Li><P><Strong>A research agent</Strong> that will find every event and driver of demand in a town, with the date and the public source behind each one.</P></Li>
             <Li><P><Strong>Uploading your sales history</Strong> from your point-of-sale system, to calibrate your forecasts.</P></Li>
-            <Li><P><Strong>A model calibrated to your business:</Strong> the town model, tuned with your own history to forecast your daily guests and sales, each day with a range and a reason.</P></Li>
+            <Li><P><Strong>A model calibrated to your business:</Strong> the town model, tuned with your own history to forecast your daily guests, each day with a range and a reason.</P></Li>
             <Li><P><Strong>A tuning agent you talk to:</Strong> tell it what it can’t see, and it will retrain your model and explain its forecasts.</P></Li>
             <Li><P><Strong>An app</Strong> that will put it in front of the people who place the orders.</P></Li>
             <Li className="nx"><P><Strong>Next:</Strong> reorder suggestions, starting with bar inventory.</P></Li>
