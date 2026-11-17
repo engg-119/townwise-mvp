@@ -58,7 +58,7 @@ export const MAX_SUGGESTIONS = 5;
 /** The days a pass reviews: tomorrow to today plus 91 in the town. */
 export const SUGGESTIONS_DAYS = 91;
 export const SUGGESTIONS_MAX_TOKENS = 8_000;
-/** The call's whole time; the worker's job has 10 minutes. */
+/** The call's whole time; a pass takes a location only with this much of its 8 minutes left and a step more (schedule.ts). */
 export const SUGGESTIONS_TIME_MS = 120_000;
 /**
  * At most this many notes covering the 91 days are sent (soonest first), which bounds the request; the reservation is

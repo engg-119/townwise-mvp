@@ -14,10 +14,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { OrgScope } from '../src/access/policy.ts';
 import { utcDay } from '../src/dates.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
-import { createForecastSchedule, SCHEDULE_LIVE_CAP, SCHEDULE_START_TRIES, type PassResult, type ScheduleContext } from '../src/lab/schedule.ts';
+import {
+  createForecastSchedule, SCHEDULE_LIVE_CAP, SCHEDULE_PASS_BUDGET_MS, SCHEDULE_START_TRIES, type PassResult, type ScheduleContext,
+} from '../src/lab/schedule.ts';
 import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
 import { removeLocation } from '../src/handlers/locations.ts';
-import { SUGGESTIONS_RESERVE_MICRO_USD, suggestionsReserveMicroUsd } from '../src/lab/suggestions.ts';
+import { SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_TIME_MS, suggestionsReserveMicroUsd } from '../src/lab/suggestions.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { fakeLabRunner, jobCall, labResultFor, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
@@ -387,6 +389,23 @@ describe('the lease', () => {
   });
 });
 
+describe('the pass’s deadline', () => {
+  it('is inside the job’s 600-second replica timeout, so an execution is never killed mid-location', () => {
+    expect(SCHEDULE_PASS_BUDGET_MS).toBeLessThanOrEqual(480_000);
+  });
+
+  it('starts no calibration once the pass is near its deadline, ending deadline, and the next pass goes on', async () => {
+    for (let i = 0; i < 3; i += 1) await place();
+    // Each start takes 4 minutes (a slow runner): the third would begin with no time left.
+    runner.onStart = () => { server.clock.advance(4 * MINUTE); return Promise.resolve(); };
+    expect(await pass()).toMatchObject({ state: 'deadline', started: 2 });
+    runner.onStart = null;
+    server.clock.advance(HOUR);
+    expect(await pass()).toMatchObject({ state: 'ran', started: 1 });
+    expect(jobs()).toHaveLength(3);
+  });
+});
+
 describe('the stops', () => {
   it('starts nothing with TOWNWISE_WEEKLY_FORECASTS false, the lab runner off, or the schedule paused', async () => {
     const p = await place();
@@ -675,6 +694,23 @@ describe('weekly suggestions', () => {
     server.clock.advance(HOUR);
     expect((await pass({ chat: answering() })).suggestions).toMatchObject({ failed: 0 });
     expect(await spent(held)).toBe(70_000);
+  });
+
+  it('takes no new location once a call could outlast the pass’s deadline, ending deadline, and the next pass makes it', async () => {
+    const places = [];
+    for (let i = 0; i < 4; i += 1) places.push(await place());
+    const model = answering([], [], [], []);
+    // Each call runs its whole time (as one Anthropic hangs on until the call's own timeout).
+    const slow: ScriptedModel = { ...model, stream(params, options) { server.clock.advance(SUGGESTIONS_TIME_MS); return model.stream(params, options); } };
+    const first = await pass({ chat: slow });
+    expect(first.suggestions).toMatchObject({ state: 'deadline', none: 3, failed: 0 });
+    expect(model.calls).toHaveLength(3);
+    const rows = await Promise.all(places.map((p) => passRow(p)));
+    expect(rows.filter((row) => row === null)).toHaveLength(1);
+    expect(rows.filter((row) => row?.status === 'none')).toHaveLength(3);
+    server.clock.advance(HOUR);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ state: 'ran', none: 1, failed: 0 });
+    expect(model.calls).toHaveLength(4);
   });
 
   it('a running row younger than a lease is left alone', async () => {

@@ -354,10 +354,11 @@ resource "azapi_resource" "job_forecasts" {
       workloadProfileName = "Consumption"
       configuration = merge(local.job_configuration["forecasts"], {
         triggerType = "Schedule"
-        # Hourly, at five past (UTC). A town's Monday starts at 03:00 local time, and a blocked start is tried again
-        # each hour until that Monday ends (api/src/lab/schedule.ts).
+        # Hourly, at five past (UTC). A town's week starts at 03:00 on Monday local time, and a blocked or held-back
+        # start is tried again each hour until that week ends (api/src/lab/schedule.ts).
         scheduleTriggerConfig = { cronExpression = "5 * * * *", parallelism = 1, replicaCompletionCount = 1 }
-        # Inside the pass's 10-minute lease; a pass that runs out is picked up by the next hour's.
+        # Inside the pass's 10-minute lease, and above the pass's own 8-minute budget (SCHEDULE_PASS_BUDGET_MS), so a
+        # pass ends on its own before it is killed; what it leaves is picked up by the next hour's.
         replicaTimeout    = 600
         replicaRetryLimit = 0
       })

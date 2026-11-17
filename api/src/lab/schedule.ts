@@ -24,6 +24,8 @@
 // and weekly suggestions alike. Before the suggestions, the pass resolves pass rows a dead pass left `running` longer
 // than a lease (failed, handing back the reservation they held, or removed when they held none, so their week still
 // runs), and records on the schedule document that it ran them, which TownwiseAI's panel reads.
+// A pass has SCHEDULE_PASS_BUDGET_MS (inside the job's replica timeout): it takes another location only while it could
+// finish it in the time left, and otherwise ends that part `deadline`, leaving the rest to the next hour's pass.
 // Nothing here names a town, an organization or a location. The pass logs one line of counts and its state for each
 // part; a location whose turn throws logs its ids and the pass goes on. No figure is ever logged.
 import { randomUUID } from 'node:crypto';
@@ -45,7 +47,7 @@ import { localDay, localMinutes, timeZoneOf } from '../time-zones.ts';
 import { GATE } from './gate.ts';
 import { buildLabInput, labInputFingerprint } from './input.ts';
 import { checkStart, expireStale, launch, regimeStartFits, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
-import { suggestFor, suggestionsWeek } from './suggestions.ts';
+import { suggestFor, SUGGESTIONS_TIME_MS, suggestionsWeek } from './suggestions.ts';
 
 /** The lease a pass holds and renews before each location. */
 export const SCHEDULE_LEASE_MS = 10 * 60_000;
@@ -55,6 +57,16 @@ export const SCHEDULE_LIVE_CAP = 3;
 export const SCHEDULE_START_HOUR = 3;
 /** Starts a location's job may fail (the runner refusing it) on its Monday before its row records start_failed. [CONFIRM] */
 export const SCHEDULE_START_TRIES = 3;
+/**
+ * A pass's whole time, from its start: inside the worker job's 600-second replica timeout (infra jobs.tf) and the lease,
+ * so an execution is never killed mid-location. A pass that reaches it ends `deadline`, and the next hour's goes on.
+ */
+export const SCHEDULE_PASS_BUDGET_MS = 8 * 60_000;
+/**
+ * The time left a pass needs to take one more location besides a suggestions call (its reads, a calibration's start and
+ * the pass's own end); a suggestions location needs SUGGESTIONS_TIME_MS more, the call's whole time.
+ */
+export const SCHEDULE_STEP_MS = 60_000;
 /** How far back the staff console looks for each location's latest week row. */
 export const WEEK_ROWS_LOOKBACK_DAYS = 56;
 /**
@@ -71,9 +83,9 @@ export type ScheduleContext = LabStartContext & Pick<TownwiseContext, 'connectio
 
 /**
  * How a pass ended: it ran, or it found the refresh off (the lab runner or TOWNWISE_WEEKLY_FORECASTS), paused by staff,
- * the lease held by another pass, or its own lease taken mid-pass.
+ * the lease held by another pass, its own lease taken mid-pass, or its time budget too short for another location.
  */
-export type PassState = 'ran' | 'off' | 'paused' | 'lease_held' | 'lease_lost';
+export type PassState = 'ran' | 'off' | 'paused' | 'lease_held' | 'lease_lost' | 'deadline';
 
 export interface PassCounts {
   /** Calibrations started. */
@@ -86,8 +98,11 @@ export interface PassCounts {
   capped: number;
 }
 
-/** How the weekly suggestions part of a pass ended: it ran, was off, paused by staff, or lost the lease mid-way. */
-export type SuggestionsState = 'ran' | 'off' | 'paused' | 'lease_held' | 'lease_lost';
+/**
+ * How the weekly suggestions part of a pass ended: it ran, was off, paused by staff, lost the lease mid-way, or had too
+ * little of the pass's time left for another call (the rest wait for the next pass, as a location missed on Monday does).
+ */
+export type SuggestionsState = 'ran' | 'off' | 'paused' | 'lease_held' | 'lease_lost' | 'deadline';
 
 export interface SuggestionsCounts {
   /** Locations whose call stored at least one suggestion, and the suggestions stored. */
@@ -269,12 +284,15 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     }
   }
 
-  /** The weekly suggestions for each due location; false when the lease was lost. */
-  async function suggestAll(model: ChatModel, counts: SuggestionsCounts): Promise<boolean> {
+  /** The weekly suggestions for each due location, until the lease is lost or a call could outlast the pass's deadline. */
+  async function suggestAll(model: ChatModel, counts: SuggestionsCounts, deadline: number): Promise<SuggestionsState> {
+    const roomForCall = (): boolean => deadline - ctx.now().getTime() >= SUGGESTIONS_TIME_MS + SCHEDULE_STEP_MS;
+    if (!roomForCall()) return 'deadline';
     await stores.forecastSchedule.markSuggestionsRan({ owner, now: ctx.now() });
     await resolveStaleSuggestions(counts);
     for (const candidate of await suggestionCandidates(ctx.connection)) {
-      if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) return false;
+      if (!roomForCall()) return 'deadline';
+      if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) return 'lease_lost';
       try {
         const scope = scopeForWeeklyRefresh(candidate);
         const location = await stores.locations.find(scope, candidate.locationId);
@@ -295,12 +313,13 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
         ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_suggestions_location_failed');
       }
     }
-    return true;
+    return 'ran';
   }
 
   return {
     async pass() {
       const began = performance.now();
+      const deadline = ctx.now().getTime() + SCHEDULE_PASS_BUDGET_MS;
       const counts: PassCounts = { started: 0, failed: 0, skipped: 0, capped: 0 };
       const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0 };
       const model = ctx.config.weeklySuggestions ? ctx.chat ?? null : null;
@@ -324,6 +343,11 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
           await resolveStale(counts);
           const pass: PassRun = { counts, live: await liveCount(), weekCounts: new Map() };
           for (const candidate of await weeklyCandidates(ctx.connection)) {
+            if (deadline - ctx.now().getTime() < SCHEDULE_STEP_MS) {
+              // Out of time: the rest wait for the next hour's pass (their week stays open until Sunday ends).
+              state = 'deadline';
+              break;
+            }
             if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) {
               return end('lease_lost', model === null ? 'off' : 'lease_lost');
             }
@@ -338,7 +362,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
         if (model === null) return end(state, 'off');
         if (claim.paused !== null) return end(state, 'paused');
         suggestionsBegan = performance.now();
-        return end(state, await suggestAll(model, suggestionCounts) ? 'ran' : 'lease_lost');
+        return end(state, await suggestAll(model, suggestionCounts, deadline));
       } finally {
         await stores.forecastSchedule.release({ owner, now: ctx.now() });
       }
