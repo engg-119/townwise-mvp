@@ -16,7 +16,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { endUnusedGoogleAccess, googleAccessDeps, markLocationForCheck } from '../calendar/google-access.ts';
-import { calibrationOf, type Calibration } from '../calibration.ts';
+import { calibrationFor, type Calibration } from '../calibration.ts';
 import { placeIdSchema } from '../place-id.ts';
 import { PlacesUnavailableError, type PlaceDetails } from '../places/google.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
@@ -138,19 +138,22 @@ export async function loadLocation(ctx: TownwiseContext, scope: OrgScope, rawId:
   return location;
 }
 
-/** Reads the organization's coverage, note counts and last uploads once; the returned function builds each summary. */
-export async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => LocationSummary> {
+/**
+ * Reads the organization's coverage, note counts and last uploads once; the returned function builds each summary,
+ * reading the location's newest published run for its calibration state (D42).
+ */
+export async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => Promise<LocationSummary>> {
   const [coverage, notes, uploads, offDays] = await Promise.all([
     ctx.stores.salesDays.coverageByLocation(scope),
     ctx.stores.notes.countByLocation(scope),
     ctx.stores.uploads.lastUploadByLocation(scope),
     ctx.stores.salesDays.offDayCountByLocation(scope),
   ]);
-  return (location) => {
+  return async (location) => {
     const covered = coverage.get(location.id) ?? NO_COVERAGE;
     return {
       id: location.id, name: location.name, town: location.town, placeId: location.placeId, coverage: covered,
-      calibration: calibrationOf(covered), notesCount: notes.get(location.id) ?? 0,
+      calibration: await calibrationFor(ctx, scope, location, covered), notesCount: notes.get(location.id) ?? 0,
       lastUploadAt: uploads.get(location.id)?.toISOString() ?? null, offDayCount: offDays.get(location.id) ?? 0,
     };
   };
@@ -174,7 +177,7 @@ export async function getOwnOrg(ctx: TownwiseContext, _req: Request, res: Respon
   res.status(200).json({
     org: { id: org.id, name: org.name },
     role: member.role,
-    locations: locations.map(summarize),
+    locations: await Promise.all(locations.map(summarize)),
     requestedLocationCount: request?.locationCount ?? null,
     placeSearch: ctx.places !== null,
   });
@@ -271,10 +274,14 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.businessRules.removeForLocation(scope, locationId);
   // U9: answers to TownwiseAI's questions about the location's days.
   await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
+  // Its weekly suggestions and their pass rows.
+  await ctx.stores.agentSuggestions.removeForLocation(scope, locationId);
   // An empty import left open goes too.
   await ctx.stores.imports.removeForLocation(scope, locationId);
   // The forecast lab: calibrations go first, so a running job's callback closes before its run could be written.
   await ctx.stores.calibrations.removeForLocation(scope, locationId);
+  // D42: its weekly refresh rows.
+  await ctx.stores.forecastWeeks.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
   // The owner's calendars and their events.
@@ -306,7 +313,7 @@ export async function createLocation(ctx: TownwiseContext, req: Request, res: Re
     details: locationDetails(location),
   });
   const summarize = await summarizer(ctx, scope);
-  res.status(201).json({ location: summarize(location) });
+  res.status(201).json({ location: await summarize(location) });
 }
 
 /** PATCH /api/org/locations/:locationId (P16): name, town, place, or any of them (checkedUpdate). */
@@ -324,7 +331,7 @@ export async function updateLocation(ctx: TownwiseContext, req: Request, res: Re
     details: locationDetails(updated),
   });
   const summarize = await summarizer(ctx, scope);
-  res.status(200).json({ location: summarize(updated) });
+  res.status(200).json({ location: await summarize(updated) });
 }
 
 /** DELETE /api/org/locations/:locationId (P16): only a location with no sales day and no note. */

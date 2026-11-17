@@ -32,7 +32,7 @@ function setup(extra: Partial<DataItem>) {
 test('a stored file not read yet offers the read, with what it sends, and asks for it', async () => {
   const { api, fake } = setup({ canAiRead: true });
   await renderApp(`/locations/l1/data/${FILE}`, api);
-  expect(await screen.findByText(/The whole file is sent to Anthropic’s Claude to read\./)).toBeTruthy();
+  expect(await screen.findByText(/The whole file is sent to Anthropic’s Claude to read \(a picture without its metadata\)\./)).toBeTruthy();
   expect(screen.getByText('Open this file from a computer at townwise.tech.')).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: 'Let TownwiseAI read this file' }));
   expect(await screen.findByText('TownwiseAI is reading this file. It’s next in line, and this page updates when it’s done.')).toBeTruthy();

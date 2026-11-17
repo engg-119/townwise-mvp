@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { checkLabRunFile } from '../src/forecasts/file.ts';
-import { labInputSchema } from '../src/lab/input.ts';
+import { LAB_MODEL_VERSION, labInputSchema } from '../src/lab/input.ts';
 import { checkLabResult, labResultSchema } from '../src/lab/result.ts';
 import { scorecardSchema } from '../src/lab/scorecard.ts';
 import type { CalibrationRecord } from '../src/stores/calibrations.ts';
@@ -16,6 +16,13 @@ function golden(name: string): unknown {
 }
 
 describe('lab contract', () => {
+  it('LAB_MODEL_VERSION is the lab’s MODEL_VERSION (version.py), so the fingerprint moves with the lab’s model', () => {
+    const source = readFileSync(new URL('../../modeling/lab/townwise_lab/version.py', import.meta.url), 'utf8');
+    const versions = [...source.matchAll(/^MODEL_VERSION = "([^"]+)"$/gm)].map((match) => match[1]);
+    expect(versions).toEqual([LAB_MODEL_VERSION]);
+    expect(LAB_MODEL_VERSION).toBe('v8');
+  });
+
   it('golden input and result parse with labInputSchema, labResultSchema, scorecardSchema and checkLabRunFile', () => {
     const input = labInputSchema.parse(golden('input.json'));
     const result = labResultSchema.parse(golden('result.json'));
@@ -30,6 +37,24 @@ describe('lab contract', () => {
     expect(checkLabResult(golden('result.json'), calibration, input.today)).toMatchObject({ ok: true });
     // Small enough for the callback's body limit with room to spare.
     expect(JSON.stringify(result).length).toBeLessThan(128 * 1024);
+  });
+
+  it('the golden result names its engine (D42): the baseline, more than 0.5 points better than the model on the same weeks', () => {
+    const input = labInputSchema.parse(golden('input.json'));
+    const result = labResultSchema.parse(golden('result.json'));
+    if (!result.ok) return expect.unreachable('the golden result is a success');
+    const { engine, engines, horizon91, horizonReach } = result.scorecard;
+    expect(input.champion?.engine).toBe('model');
+    expect(engine).toBe('baseline');
+    expect(result.run.model.family).toBe('seasonal_baseline');
+    expect(result.params).toMatchObject({ engine: 'baseline' });
+    if (engines.model === null) return expect.unreachable('both engines ran');
+    expect(engines.baseline.weeklyWape).toBeLessThanOrEqual(engines.model.weeklyWape - 0.005);
+    expect(engines.baseline.weeks).toBe(engines.model.weeks);
+    expect(horizon91?.weeks).toBeGreaterThanOrEqual(8);
+    // Its today is two days after its last day of sales, so the run reaches 93 days: past 91, with the reach reported.
+    expect(horizonReach?.weeks).toBeGreaterThanOrEqual(8);
+    expect(result.run.days.at(-1)?.date).toBe(new Date(Date.parse(`${input.today}T00:00:00Z`) + 91 * 86_400_000).toISOString().slice(0, 10));
   });
 
   it('checkLabResult holds a result to its calibration: its id, its input’s last day and its current forecast', () => {

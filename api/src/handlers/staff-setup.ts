@@ -72,7 +72,7 @@ export async function createSetupLocation(ctx: TownwiseContext, req: Request, re
     throw nameTaken();
   }
   const summarize = await summarizer(ctx, scope);
-  res.status(201).json({ location: summarize(location) });
+  res.status(201).json({ location: await summarize(location) });
 }
 
 /** PATCH /api/admin/orgs/:orgId/locations/:locationId, as PATCH /api/org/locations/:locationId: 200 { location }. */
@@ -93,7 +93,7 @@ export async function updateSetupLocation(ctx: TownwiseContext, req: Request, re
   const updated = await ctx.stores.locations.find(scope, location.id);
   if (updated === null) throw notFound();
   const summarize = await summarizer(ctx, scope);
-  res.status(200).json({ location: summarize(updated) });
+  res.status(200).json({ location: await summarize(updated) });
 }
 
 /** DELETE /api/admin/orgs/:orgId/locations/:locationId, as DELETE /api/org/locations/:locationId: 204. */

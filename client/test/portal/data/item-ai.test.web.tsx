@@ -81,7 +81,7 @@ describe('before a read', () => {
     const fake = setup([stored({ canAiRead: true })], REF);
     const box = await section();
     expect(within(box).getByRole('heading', { name: 'TownwiseAI' })).toBeTruthy();
-    expect(within(box).getByText(/The whole file is sent to Anthropic’s Claude to read\./)).toBeTruthy();
+    expect(within(box).getByText(/The whole file is sent to Anthropic’s Claude to read \(a picture without its metadata\)\./)).toBeTruthy();
     expect(within(box).getByText(/dated events as notes, daily totals it can check against the file as new sales days \(it never changes a day you already have\), and a summary TownwiseAI can read later\. When an org admin asks, it may also start updating the forecast\. Everything it adds can be undone\./)).toBeTruthy();
     expect(within(box).getByRole('link', { name: 'How Townwise handles your data' }).getAttribute('href')).toBe('/privacy');
 

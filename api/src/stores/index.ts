@@ -2,6 +2,7 @@ import type { Connection } from 'mongoose';
 
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
 import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
+import { createAgentSuggestionStore, type AgentSuggestionStore } from './agent-suggestions.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
 import { createBusinessRuleStore, type BusinessRuleStore } from './business-rules.ts';
 import { createCalibrationStore, type CalibrationStore } from './calibrations.ts';
@@ -13,6 +14,8 @@ import { createFileEntryStore, type FileEntryStore } from './file-entries.ts';
 import { fileSweepModel } from './file-sweeps.ts';
 import { createFileStore, type FileStore } from './files.ts';
 import { createFilesUsageStore, type FilesUsageStore } from './files-usage.ts';
+import { createForecastScheduleStore, type ForecastScheduleStore } from './forecast-schedule.ts';
+import { createForecastWeekStore, type ForecastWeekStore } from './forecast-weeks.ts';
 import { createForecastStore, type ForecastStore } from './forecasts.ts';
 import { createGoogleConnectionStore, type GoogleConnectionStore } from './google-connections.ts';
 import { createImportStore, type ImportStore } from './imports.ts';
@@ -56,6 +59,8 @@ export interface TownwiseStores {
   readonly chatProposals: ChatProposalStore;
   /** U9, TownwiseAI's questions. */
   readonly agentAnswers: AgentAnswerStore;
+  /** TownwiseAI's weekly suggestions and each location's weekly pass (openspec change weekly-forecast-suggestions). */
+  readonly agentSuggestions: AgentSuggestionStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
   /** The display name for TownwiseAI's greeting (account-level, spec 6.22). */
@@ -70,6 +75,9 @@ export interface TownwiseStores {
   readonly forecasts: ForecastStore;
   /** The forecast lab's calibrations. */
   readonly calibrations: CalibrationStore;
+  /** D42, the weekly refresh: each location's row per week (tenant), and the lease and staff pause (no tenant data). */
+  readonly forecastWeeks: ForecastWeekStore;
+  readonly forecastSchedule: ForecastScheduleStore;
   /** The owner's own calendars and their events (openspec change connect-owner-calendar). */
   readonly ownerCalendars: OwnerCalendarStore;
   /** A person's Google access for calendars, one per organization (openspec change connect-google-calendar). */
@@ -101,6 +109,8 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatProposals: createChatProposalStore(connection),
     // U9, TownwiseAI's questions.
     agentAnswers: createAgentAnswerStore(connection),
+    // TownwiseAI's weekly suggestions.
+    agentSuggestions: createAgentSuggestionStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
     profiles: createProfileStore(connection),
@@ -113,6 +123,9 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     forecasts: createForecastStore(connection),
     // The forecast lab.
     calibrations: createCalibrationStore(connection),
+    // D42, the weekly refresh.
+    forecastWeeks: createForecastWeekStore(connection),
+    forecastSchedule: createForecastScheduleStore(connection),
     // The owner's own calendars.
     ownerCalendars: createOwnerCalendarStore(connection),
     // Google access for calendars.

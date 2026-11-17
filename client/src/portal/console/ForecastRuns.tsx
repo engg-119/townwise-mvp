@@ -19,6 +19,7 @@ import { CellLines, RowActions } from './parts';
 import { problemOf } from './problems';
 import type { OrgLocation, StaffOrg } from './schemas';
 import { useRefreshable } from './useRefreshable';
+import { WeeklyRefresh } from './WeeklyRefresh';
 
 // P21's Forecasts (spec 16.4, 14.4): every forecast run staff imported for the organization, by location, with
 // Publish (drafts only), Withdraw and Delete, each through a console dialog, and the import. A run is a draft until
@@ -102,7 +103,7 @@ function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onA
     <DataTable
       label={`Forecasts for ${location.name}`}
       columns={[
-        { key: 'model', label: 'Model', flex: 0.7 },
+        { key: 'model', label: 'Model', flex: 1.4 },
         { key: 'dates', label: 'Dates', flex: 1.6 },
         { key: 'trained', label: 'Trained to' },
         { key: 'made', label: 'Made' },
@@ -113,7 +114,8 @@ function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onA
       rows={runs.map((run) => ({
         key: run.id,
         cells: {
-          model: run.model.version,
+          // The model card's words (forecast-publish-policy): a baseline run never reads like a model run.
+          model: run.model.label,
           dates: <CellLines main={`${formatDate(run.range.from)} to ${formatDate(run.range.to)}`} note={plural(run.dayCount, 'day', 'days')} />,
           trained: formatDate(run.dataThrough),
           made: formatDate(run.madeAt),
@@ -178,6 +180,15 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
         {calibrations.state.status === 'ready' ? (
           <>
             <ForecastsSwitch org={org} forecasts={calibrations.state.data.forecasts} onChanged={calibrationsRefreshed} />
+            {calibrations.state.data.schedule === undefined ? null : (
+              <WeeklyRefresh
+                schedule={calibrations.state.data.schedule}
+                weeks={calibrations.state.data.weeks ?? []}
+                locations={locations}
+                calibrations={calibrations.state.data.calibrations}
+                onChanged={calibrationsRefreshed}
+              />
+            )}
             <Calibrations org={org} locations={locations} calibrations={calibrations.state.data.calibrations} onStarted={calibrationsRefreshed} />
           </>
         ) : null}

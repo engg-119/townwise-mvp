@@ -3,7 +3,7 @@ import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
 
 import { aboutDraft, orderDraft } from '../../../../../../src/chat/about';
-import { openQuestions, useAgentPanel, type SendToChat } from '../../../../../../src/chat/useAgentPanel';
+import { openToDecide, useAgentPanel, type SendToChat } from '../../../../../../src/chat/useAgentPanel';
 import { useTuningChat } from '../../../../../../src/chat/useTuningChat';
 import { AgentChat, landingShowsQuestions, type AgentChatContext, type AgentChatHandle } from '../../../../../../src/chat/ui/AgentChat';
 import { AgentSidePanel } from '../../../../../../src/chat/ui/AgentSidePanel';
@@ -124,7 +124,8 @@ export default function TownwiseAIScreen(): React.JSX.Element {
     hasForecast: about.state.status === 'ready' && about.state.data.forecast.run !== null,
     coverage: { dayCount: location.coverage.dayCount, lastDate: location.coverage.lastDate },
   };
-  const questions = openQuestions(panel);
+  // The header's button counts what the panel asks the person to decide, as Home's link does.
+  const questions = openToDecide(panel);
   const tellFromPanel: SendToChat = (message, ended) => {
     const view = chatView.current;
     if (view === null) {

@@ -11,18 +11,19 @@ import type { OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { applyRecorded, recordAfter, recordBefore, recordNotApplied, SYSTEM_ACTOR } from '../audit.ts';
 import { daysBetween, utcDay } from '../dates.ts';
-import { runFileSha256, type FileIssue } from '../forecasts/file.ts';
+import { runFileSha256, type FileIssue, type LabRunFile } from '../forecasts/file.ts';
+import { engineOf } from '../forecasts/reader.ts';
 import { rowsOf } from '../handlers/forecast-runs.ts';
 import { LIVE_STATUSES, type CalibrationFailure, type CalibrationOutcome, type CalibrationRecord } from '../stores/calibrations.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { ForecastRunRecord } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
-import { currentChampion, decideGate, GATE } from './gate.ts';
-import { guestSpan } from './input.ts';
+import { currentChampion, decideGate, GATE, jumpSums, streakOf, type CurrentRun } from './gate.ts';
+import { guestSpan, recordedBacktest } from './input.ts';
 import { checkLabResult, type LabSuccess } from './result.ts';
 import { LabStartError } from './runner.ts';
-import type { Scorecard } from './scorecard.ts';
+import type { LabScorecard } from './scorecard.ts';
 
 export { HORIZON_DAYS } from './input.ts';
 
@@ -60,12 +61,20 @@ export const FAILURE_WORDS: Record<CalibrationFailure, string> = {
   invalid_result: 'Its result didn’t pass Townwise’s checks.',
 };
 
+/** Who starts a calibration: a person (D27), or the weekly refresh (D42), which no person started. */
+export type StartRequester =
+  | { readonly userId: string; readonly role: 'org_admin' | 'superadmin'; readonly via: 'chat' | 'console' | 'file' }
+  | { readonly userId: null; readonly role: 'system'; readonly via: 'scheduled' };
+
+/** The weekly refresh's requester: Townwise pays (no charge, not one of the 4 a day) and 230 days may start it (D42). */
+export const SYSTEM_REQUESTER = { userId: null, role: 'system', via: 'scheduled' } as const satisfies StartRequester;
+
 export interface StartRequest {
   /** The new calibration's id, made by the caller so the event it records before the effect can name it. */
   readonly id: string;
   readonly scope: OrgScope;
   readonly location: LocationRecord;
-  readonly requester: { readonly userId: string; readonly role: 'org_admin' | 'superadmin'; readonly via: 'chat' | 'console' | 'file' };
+  readonly requester: StartRequester;
   readonly regimeStart: string | null;
   /** The town's local date. */
   readonly today: string;
@@ -79,20 +88,28 @@ function isLive(record: CalibrationRecord): boolean {
   return LIVE_STATUSES.includes(record.status);
 }
 
+/**
+ * What starting a calibration reads (D42): the API's context, or the weekly worker's (workers/weekly-forecasts.ts),
+ * which has no Valkey (it is the API's sidecar). Only a person's start uses `redis`, for the 4 a day.
+ */
+export type LabStartContext = Pick<TownwiseContext, 'config' | 'logger' | 'now' | 'stores' | 'labRunner'> & {
+  readonly redis: TownwiseContext['redis'] | null;
+};
+
 /** The tuning chat's month (UTC), which calibrations are charged to. */
 function monthOf(at: Date): string {
   return at.toISOString().slice(0, 7);
 }
 
 /** Spent once the month's cost reaches the limit, as the tuning chat counts it. */
-async function budgetSpent(ctx: TownwiseContext, scope: OrgScope): Promise<boolean> {
+async function budgetSpent(ctx: LabStartContext, scope: OrgScope): Promise<boolean> {
   const used = await ctx.stores.chatUsage.costMicroUsd(scope, monthOf(ctx.now()));
   return used >= Math.round(ctx.config.chatMonthlyBudgetUsd * 1_000_000);
 }
 
 /** The span the job's input will hold (lab/input.ts guestSpan), in the town's `today`. */
 async function historyOf(
-  ctx: TownwiseContext, scope: OrgScope, locationId: string, today: string,
+  ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, locationId: string, today: string,
 ): Promise<{ first: string; last: string } | null> {
   const coverage = await ctx.stores.salesDays.coverage(scope, locationId);
   if (coverage.firstDate === null || coverage.lastDate === null) return null;
@@ -104,10 +121,12 @@ interface FinishFacts { runId: string | null; gate: string | null; heldOutWeeks:
 
 /**
  * Finishes a live calibration by compare-and-set. Only the call that finishes it records calibration.finished (by the
- * system, after the effect) and logs townwise.calibration_finished, so a retry or a race records it once.
+ * system, after the effect) and logs townwise.calibration_finished, so a retry or a race records it once. The line
+ * carries the requester's `via`, so the ops alert (infra monitoring.tf, forecasts_failed) can tell a scheduled
+ * calibration that failed after it started (timed out, or the lab answered a failure) from one a person started.
  */
 export async function finishCalibration(
-  ctx: TownwiseContext, scope: OrgScope, record: CalibrationRecord, outcome: CalibrationOutcome,
+  ctx: Pick<TownwiseContext, 'stores' | 'logger' | 'now'>, scope: OrgScope, record: CalibrationRecord, outcome: CalibrationOutcome,
   facts: FinishFacts = { runId: null, gate: null, heldOutWeeks: null },
 ): Promise<boolean> {
   if (!(await ctx.stores.calibrations.finish(scope, record.id, outcome, ctx.now()))) return false;
@@ -121,8 +140,8 @@ export async function finishCalibration(
     },
   });
   ctx.logger.info({
-    orgId: scope.orgId, locationId: record.locationId, calibrationId: record.id, status: outcome.status, failure,
-    gate: facts.gate, heldOutWeeks: facts.heldOutWeeks,
+    orgId: scope.orgId, locationId: record.locationId, calibrationId: record.id, via: record.requestedBy.via, status: outcome.status,
+    failure, gate: facts.gate, heldOutWeeks: facts.heldOutWeeks,
   }, 'townwise.calibration_finished');
   return true;
 }
@@ -131,27 +150,49 @@ export async function finishCalibration(
  * A live calibration requested 20 minutes ago or more has failed (timeout): its job never called back, or never
  * finished. There is no background sweep: the next start or read of it does this. Resolves the record as it is now.
  */
-export async function expireStale(ctx: TownwiseContext, scope: OrgScope, record: CalibrationRecord): Promise<CalibrationRecord> {
+export async function expireStale(ctx: Pick<TownwiseContext, 'stores' | 'logger' | 'now'>, scope: OrgScope, record: CalibrationRecord): Promise<CalibrationRecord> {
   if (!isLive(record) || ctx.now().getTime() < record.requestedAt.getTime() + CALIBRATION_TIMEOUT_MS) return record;
   await finishCalibration(ctx, scope, record, { status: 'failed', failure: 'timeout' });
   return (await ctx.stores.calibrations.find(scope, record.id)) ?? record;
 }
 
+/** Whether Townwise pays for the start (D42): the weekly refresh's, which no person asked for. */
+function systemPaid(req: StartRequest): boolean {
+  return req.requester.role === 'system';
+}
+
+/** A pattern change date falls inside the history, at least 8 weeks before its last day. */
+function regimeFits(regimeStart: string, history: { first: string; last: string }): boolean {
+  return regimeStart >= history.first && daysBetween(regimeStart, history.last) >= REGIME_TAIL_DAYS;
+}
+
+/**
+ * Whether checkStart would take `regimeStart` for the location now: the weekly refresh (D42) carries the date of the
+ * calibration that made the newest published run, which the history can since have moved past (an upload turned off,
+ * D28). False with no history.
+ */
+export async function regimeStartFits(
+  ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, locationId: string, today: string, regimeStart: string,
+): Promise<boolean> {
+  const history = await historyOf(ctx, scope, locationId, today);
+  return history !== null && regimeFits(regimeStart, history);
+}
+
 /**
  * The checks before a start, in order: the lab is on; the history (first to last day with guests) spans at least
- * GATE.minHistoryDays, the span that always gives the gate 12 weeks to judge; a pattern change date falls inside it, at
- * least 8 weeks before its last day; the month's TownwiseAI budget is not spent; and no calibration of the location is
- * live (a stale one is timed out first).
+ * GATE.minHistoryDays, the span that always gives the gate 12 weeks to judge (GATE.baselineMinHistoryDays for the
+ * weekly refresh, D42, whose calibration below 595 days can only make a baseline); a pattern change date falls inside
+ * it, at least 8 weeks before its last day; the month's TownwiseAI budget is not spent (a person's start only); and no
+ * calibration of the location is live (a stale one is timed out first).
  */
-export async function checkStart(ctx: TownwiseContext, req: StartRequest): Promise<StartRefusal | null> {
+export async function checkStart(ctx: LabStartContext, req: StartRequest): Promise<StartRefusal | null> {
   if (ctx.labRunner === null) return 'lab_unavailable';
   const { scope, location } = req;
   const history = await historyOf(ctx, scope, location.id, req.today);
-  if (history === null || daysBetween(history.first, history.last) < GATE.minHistoryDays) return 'not_enough_history';
-  if (req.regimeStart !== null && (req.regimeStart < history.first || daysBetween(req.regimeStart, history.last) < REGIME_TAIL_DAYS)) {
-    return 'invalid_regime_start';
-  }
-  if (await budgetSpent(ctx, scope)) return 'budget_exhausted';
+  const minDays = systemPaid(req) ? GATE.baselineMinHistoryDays : GATE.minHistoryDays;
+  if (history === null || daysBetween(history.first, history.last) < minDays) return 'not_enough_history';
+  if (req.regimeStart !== null && !regimeFits(req.regimeStart, history)) return 'invalid_regime_start';
+  if (!systemPaid(req) && await budgetSpent(ctx, scope)) return 'budget_exhausted';
   const live = await ctx.stores.calibrations.live(scope, location.id);
   if (live !== null && isLive(await expireStale(ctx, scope, live))) return 'in_progress';
   return null;
@@ -161,25 +202,30 @@ export async function checkStart(ctx: TownwiseContext, req: StartRequest): Promi
  * Starts a calibration after checkStart passed: one of the organization's 4 a day, a queued calibration holding the
  * location's live slot with its callback open for 20 minutes, the job (handed the calibration's id and no secret: it
  * signs in as the lab identity), then running, then the charge to the month. A job that can't start fails the
- * calibration start_failed and is not charged.
+ * calibration start_failed and is not charged. The weekly refresh's start (D42) takes none of the 4 a day and is not
+ * charged (chargedMicroUsd stays 0).
  */
 export async function launch(
-  ctx: TownwiseContext, req: StartRequest,
+  ctx: LabStartContext, req: StartRequest,
 ): Promise<{ ok: true; calibration: CalibrationRecord } | { ok: false; code: StartRefusal }> {
   const runner = ctx.labRunner;
   if (runner === null) return { ok: false, code: 'lab_unavailable' };
   const { scope, location } = req;
-  let limiter = limiters.get(ctx.redis);
-  if (limiter === undefined) {
-    limiter = createRateLimiter({ redis: ctx.redis, ...CALIBRATIONS_LIMIT });
-    limiters.set(ctx.redis, limiter);
-  }
-  try {
-    if (!(await limiter.consume(`org:${scope.orgId}`)).allowed) return { ok: false, code: 'rate_limited' };
-  } catch (err) {
-    // Every calibration costs money, so a store outage denies.
-    if (!(err instanceof RateLimiterUnavailableError)) throw err;
-    return { ok: false, code: 'rate_limited' };
+  if (!systemPaid(req)) {
+    // No Valkey (the weekly worker) denies a person's start, as a store outage does; it never makes one.
+    if (ctx.redis === null) return { ok: false, code: 'rate_limited' };
+    let limiter = limiters.get(ctx.redis);
+    if (limiter === undefined) {
+      limiter = createRateLimiter({ redis: ctx.redis, ...CALIBRATIONS_LIMIT });
+      limiters.set(ctx.redis, limiter);
+    }
+    try {
+      if (!(await limiter.consume(`org:${scope.orgId}`)).allowed) return { ok: false, code: 'rate_limited' };
+    } catch (err) {
+      // Every calibration costs money, so a store outage denies.
+      if (!(err instanceof RateLimiterUnavailableError)) throw err;
+      return { ok: false, code: 'rate_limited' };
+    }
   }
   const champion = currentChampion(await ctx.stores.forecasts.published(scope, location.id), req.today);
   const now = ctx.now();
@@ -202,8 +248,10 @@ export async function launch(
     && started.imageDigest !== null) {
     await ctx.stores.calibrations.recordImageDigest(scope, queued.id, started.imageDigest);
   }
-  await ctx.stores.chatUsage.add(scope, monthOf(now), CALIBRATION_CHARGE_MICRO_USD, ctx.now());
-  await ctx.stores.calibrations.setCharge(scope, queued.id, CALIBRATION_CHARGE_MICRO_USD);
+  if (!systemPaid(req)) {
+    await ctx.stores.chatUsage.add(scope, monthOf(now), CALIBRATION_CHARGE_MICRO_USD, ctx.now());
+    await ctx.stores.calibrations.setCharge(scope, queued.id, CALIBRATION_CHARGE_MICRO_USD);
+  }
   ctx.logger.info({ orgId: scope.orgId, locationId: location.id, calibrationId: queued.id, via: req.requester.via }, 'townwise.calibration_started');
   return { ok: true, calibration: (await ctx.stores.calibrations.find(scope, queued.id)) ?? queued };
 }
@@ -238,6 +286,20 @@ async function publishDraft(ctx: TownwiseContext, scope: OrgScope, calibration: 
   ctx.logger.info({ orgId: scope.orgId, runId: run.id, status: 'published' }, 'townwise.forecast_status');
 }
 
+/** The current run as the gate judges a draft against it (D42): its engine, its recorded backtest and its streak's best. */
+async function currentRunOf(
+  ctx: TownwiseContext, scope: OrgScope, published: readonly ForecastRunRecord[], run: ForecastRunRecord, today: string,
+): Promise<CurrentRun> {
+  const recorded = await recordedBacktest(ctx, scope, run);
+  const streak = await Promise.all(streakOf(published, run.id, today).map((each) => recordedBacktest(ctx, scope, each)));
+  const wapes = streak.flatMap((metrics) => (metrics === null ? [] : [metrics.weeklyWape]));
+  return {
+    engine: engineOf(run.model.family),
+    recorded: recorded === null ? null : { weeklyWape: recorded.weeklyWape, weekdayBiasMeanAbs: recorded.weekdayBiasMeanAbs },
+    streakBest: wapes.length === 0 ? null : Math.min(...wapes),
+  };
+}
+
 /**
  * The gate (G2) on the draft this calibration made, once: forecasts on means switched on with the organization active
  * (G1); the current forecast is read again, in the town's today, to compare with the one the calibration was given; and
@@ -248,18 +310,34 @@ async function publishDraft(ctx: TownwiseContext, scope: OrgScope, calibration: 
  * another calibration made (the same file again), is never gated or changed (G3).
  */
 async function gateDraft(
-  ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord, location: LocationRecord, runId: string, scorecard: Scorecard,
+  ctx: TownwiseContext, scope: OrgScope, calibration: CalibrationRecord, location: LocationRecord, runId: string,
+  result: { scorecard: LabScorecard; run: LabRunFile },
 ): Promise<void> {
   const { forecasts, orgs } = ctx.stores;
   const run = await forecasts.find(scope, runId);
   if (run?.status !== 'draft' || run.lab?.calibrationId !== calibration.id) return;
   const org = await orgs.findById(scope.orgId);
   const today = localDay(ctx.now(), timeZoneOf(location.town).timeZone);
+  const published = await forecasts.published(scope, location.id);
+  const championNow = currentChampion(published, today);
+  // The current run the calibration was given, while it is still the current one (else the gate says champion_changed).
+  const given = championNow !== null && championNow.id === calibration.championRunId ? championNow : null;
+  // The jump guard reads both runs over the 28 days from the calibration's today, the draft's madeAt: the current run,
+  // or, when there was none at the start and is none now (it lapsed), the newest published run, so a draft after a lapse
+  // is not published unseen. A first forecast has none to compare with.
+  const lapsed = calibration.championRunId === null && championNow === null ? published.find((each) => each.status === 'published') ?? null : null;
+  const against = given ?? lapsed;
+  const from = result.run.madeAt;
+  const jumpRows = against === null ? [] : await forecasts.rows(scope, location.id, [against.id], {
+    from, to: utcDay(new Date(`${from}T00:00:00.000Z`), GATE.jumpDays - 1),
+  });
   const decision = decideGate({
     forecastsOn: org !== null && org.forecasts.on && org.status === 'active',
     championAtStart: calibration.championRunId,
-    championNow: currentChampion(await forecasts.published(scope, location.id), today)?.id ?? null,
-    scorecard,
+    championNow: championNow?.id ?? null,
+    scorecard: result.scorecard,
+    current: given === null ? null : await currentRunOf(ctx, scope, published, given, today),
+    jump: against === null ? null : jumpSums(result.run.days, jumpRows, from),
   });
   const gate = { published: decision.publish, reason: decision.reason };
   if (await ctx.stores.calibrations.recordGate(scope, calibration.id, gate)) {
@@ -314,7 +392,7 @@ async function storeDraft(
     if (inserted) await forecasts.remove(scope, run.id);
     return NOT_FOUND;
   }
-  await gateDraft(ctx, scope, calibration, location, run.id, result.scorecard);
+  await gateDraft(ctx, scope, calibration, location, run.id, result);
   // The gate as recorded, by this request or a concurrent one.
   const gated = await calibrations.find(scope, calibration.id);
   await finishCalibration(ctx, scope, calibration, { status: 'succeeded' }, {

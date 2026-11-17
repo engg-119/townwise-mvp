@@ -1,5 +1,5 @@
 {
- "schema": "townwise.lab-input/1",
+ "schema": "townwise.lab-input/2",
  "calibrationId": "0123456789abcdef01234567",
  "metric": "guests",
  "today": "2025-10-23",
@@ -8468,8 +8468,404 @@
    "booked": false
   }
  ],
+ "calendar": [
+  {
+   "id": "test-town:2024-01-06:winter-term",
+   "group": "test-town:classes:winter",
+   "kind": "term",
+   "start": "2024-01-06",
+   "end": "2024-03-14",
+   "confidence": "high"
+  },
+  {
+   "id": "us:martin-luther-king-jr-day:2024",
+   "group": "us:martin-luther-king-jr-day",
+   "kind": "holiday",
+   "start": "2024-01-15",
+   "end": "2024-01-15",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2024-02-08:festival",
+   "group": "test-town:festival",
+   "kind": "event",
+   "start": "2024-02-08",
+   "end": "2024-02-10",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:washingtons-birthday:2024",
+   "group": "us:washingtons-birthday",
+   "kind": "holiday",
+   "start": "2024-02-19",
+   "end": "2024-02-19",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2024-03-27:spring-term",
+   "group": "test-town:classes:spring",
+   "kind": "term",
+   "start": "2024-03-27",
+   "end": "2024-06-09",
+   "confidence": "high"
+  },
+  {
+   "id": "us:memorial-day:2024",
+   "group": "us:memorial-day",
+   "kind": "holiday",
+   "start": "2024-05-27",
+   "end": "2024-05-27",
+   "confidence": null
+  },
+  {
+   "id": "us:juneteenth:2024",
+   "group": "us:juneteenth",
+   "kind": "holiday",
+   "start": "2024-06-19",
+   "end": "2024-06-19",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2024-06-22:summer-term",
+   "group": "test-town:classes:summer",
+   "kind": "term",
+   "start": "2024-06-22",
+   "end": "2024-08-25",
+   "confidence": "high"
+  },
+  {
+   "id": "us:independence-day:2024",
+   "group": "us:independence-day",
+   "kind": "holiday",
+   "start": "2024-07-04",
+   "end": "2024-07-04",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2024-07-18:festival",
+   "group": "test-town:festival",
+   "kind": "event",
+   "start": "2024-07-18",
+   "end": "2024-07-20",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:labor-day:2024",
+   "group": "us:labor-day",
+   "kind": "holiday",
+   "start": "2024-09-02",
+   "end": "2024-09-02",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2024-09-10:fall-term",
+   "group": "test-town:classes:fall",
+   "kind": "term",
+   "start": "2024-09-10",
+   "end": "2024-11-24",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2024-09-21:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2024-09-21",
+   "end": "2024-09-21",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2024-10-05:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2024-10-05",
+   "end": "2024-10-05",
+   "confidence": "high"
+  },
+  {
+   "id": "us:columbus-day:2024",
+   "group": "us:columbus-day",
+   "kind": "holiday",
+   "start": "2024-10-14",
+   "end": "2024-10-14",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2024-10-19:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2024-10-19",
+   "end": "2024-10-19",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2024-11-02:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2024-11-02",
+   "end": "2024-11-02",
+   "confidence": "high"
+  },
+  {
+   "id": "us:veterans-day:2024",
+   "group": "us:veterans-day",
+   "kind": "holiday",
+   "start": "2024-11-11",
+   "end": "2024-11-11",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2024-11-16:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2024-11-16",
+   "end": "2024-11-16",
+   "confidence": "high"
+  },
+  {
+   "id": "us:thanksgiving:2024",
+   "group": "us:thanksgiving",
+   "kind": "holiday",
+   "start": "2024-11-28",
+   "end": "2024-11-28",
+   "confidence": null
+  },
+  {
+   "id": "us:christmas:2024",
+   "group": "us:christmas",
+   "kind": "holiday",
+   "start": "2024-12-25",
+   "end": "2024-12-25",
+   "confidence": null
+  },
+  {
+   "id": "us:new-years-day:2025",
+   "group": "us:new-years-day",
+   "kind": "holiday",
+   "start": "2025-01-01",
+   "end": "2025-01-01",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-01-06:winter-term",
+   "group": "test-town:classes:winter",
+   "kind": "term",
+   "start": "2025-01-06",
+   "end": "2025-03-14",
+   "confidence": "high"
+  },
+  {
+   "id": "us:martin-luther-king-jr-day:2025",
+   "group": "us:martin-luther-king-jr-day",
+   "kind": "holiday",
+   "start": "2025-01-20",
+   "end": "2025-01-20",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-02-13:festival",
+   "group": "test-town:festival",
+   "kind": "event",
+   "start": "2025-02-13",
+   "end": "2025-02-15",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:washingtons-birthday:2025",
+   "group": "us:washingtons-birthday",
+   "kind": "holiday",
+   "start": "2025-02-17",
+   "end": "2025-02-17",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-03-27:spring-term",
+   "group": "test-town:classes:spring",
+   "kind": "term",
+   "start": "2025-03-27",
+   "end": "2025-06-09",
+   "confidence": "high"
+  },
+  {
+   "id": "us:memorial-day:2025",
+   "group": "us:memorial-day",
+   "kind": "holiday",
+   "start": "2025-05-26",
+   "end": "2025-05-26",
+   "confidence": null
+  },
+  {
+   "id": "us:juneteenth:2025",
+   "group": "us:juneteenth",
+   "kind": "holiday",
+   "start": "2025-06-19",
+   "end": "2025-06-19",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-06-22:summer-term",
+   "group": "test-town:classes:summer",
+   "kind": "term",
+   "start": "2025-06-22",
+   "end": "2025-08-25",
+   "confidence": "high"
+  },
+  {
+   "id": "us:independence-day:2025",
+   "group": "us:independence-day",
+   "kind": "holiday",
+   "start": "2025-07-04",
+   "end": "2025-07-04",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-07-17:festival",
+   "group": "test-town:festival",
+   "kind": "event",
+   "start": "2025-07-17",
+   "end": "2025-07-19",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:labor-day:2025",
+   "group": "us:labor-day",
+   "kind": "holiday",
+   "start": "2025-09-01",
+   "end": "2025-09-01",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-09-10:fall-term",
+   "group": "test-town:classes:fall",
+   "kind": "term",
+   "start": "2025-09-10",
+   "end": "2025-11-24",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2025-09-20:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2025-09-20",
+   "end": "2025-09-20",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2025-10-04:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2025-10-04",
+   "end": "2025-10-04",
+   "confidence": "high"
+  },
+  {
+   "id": "us:columbus-day:2025",
+   "group": "us:columbus-day",
+   "kind": "holiday",
+   "start": "2025-10-13",
+   "end": "2025-10-13",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-10-18:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2025-10-18",
+   "end": "2025-10-18",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2025-11-01:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2025-11-01",
+   "end": "2025-11-01",
+   "confidence": "high"
+  },
+  {
+   "id": "us:veterans-day:2025",
+   "group": "us:veterans-day",
+   "kind": "holiday",
+   "start": "2025-11-11",
+   "end": "2025-11-11",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2025-11-15:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2025-11-15",
+   "end": "2025-11-15",
+   "confidence": "high"
+  },
+  {
+   "id": "us:thanksgiving:2025",
+   "group": "us:thanksgiving",
+   "kind": "holiday",
+   "start": "2025-11-27",
+   "end": "2025-11-27",
+   "confidence": null
+  },
+  {
+   "id": "us:christmas:2025",
+   "group": "us:christmas",
+   "kind": "holiday",
+   "start": "2025-12-25",
+   "end": "2025-12-25",
+   "confidence": null
+  },
+  {
+   "id": "us:new-years-day:2026",
+   "group": "us:new-years-day",
+   "kind": "holiday",
+   "start": "2026-01-01",
+   "end": "2026-01-01",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2026-01-06:winter-term",
+   "group": "test-town:classes:winter",
+   "kind": "term",
+   "start": "2026-01-06",
+   "end": "2026-03-14",
+   "confidence": "high"
+  },
+  {
+   "id": "us:martin-luther-king-jr-day:2026",
+   "group": "us:martin-luther-king-jr-day",
+   "kind": "holiday",
+   "start": "2026-01-19",
+   "end": "2026-01-19",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2026-02-12:festival",
+   "group": "test-town:festival",
+   "kind": "event",
+   "start": "2026-02-12",
+   "end": "2026-02-14",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:washingtons-birthday:2026",
+   "group": "us:washingtons-birthday",
+   "kind": "holiday",
+   "start": "2026-02-16",
+   "end": "2026-02-16",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2026-03-27:spring-term",
+   "group": "test-town:classes:spring",
+   "kind": "term",
+   "start": "2026-03-27",
+   "end": "2026-06-09",
+   "confidence": "high"
+  }
+ ],
  "champion": {
   "runId": "fedcba9876543210fedcba98",
+  "engine": "model",
+  "recordedWeekdayBiasMeanAbs": null,
   "dataThrough": "2025-06-30",
   "days": [
    {

@@ -17,6 +17,7 @@ import type { CalibrationView } from '../src/lab/views.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { holdCalls } from './helpers/hold.ts';
 import { fakeLabRunner, jobCall, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
+import { metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
 import {
   call, logLines, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -46,8 +47,11 @@ function switchForecasts(t: Pick<Team, 'orgId'>, body: unknown, session = staff)
  * An organization with an org admin and one Hanover location holding guests from 2024-10-01 to `to` (2026-05-31), with
  * its forecasts switched on through the console when `forecastsOn`.
  */
-async function team(opts?: { forecastsOn?: boolean; to?: string }): Promise<Team> {
-  const orgId = await createOrg(server, { name: `Publish Kitchen ${randomUUID().slice(0, 6)}` });
+async function team(opts?: { forecastsOn?: boolean; to?: string; unswitched?: true }): Promise<Team> {
+  // Switched off by staff unless `unswitched` (never switched, on by default since D42), so switching on goes through
+  // the console.
+  const name = `Publish Kitchen ${randomUUID().slice(0, 6)}`;
+  const orgId = await createOrg(server, opts?.unswitched === true ? { name } : { name, forecastsOn: false });
   const email = `admin-${randomUUID().slice(0, 8)}@example.test`;
   const admin = await signIn(server, email);
   await addSeat(server, { orgId, userId: admin.userId, email, role: 'org_admin' });
@@ -194,6 +198,17 @@ describe('the gate decides', () => {
     expect(GATE_WORDS.published).toContain('current forecast');
   });
 
+  it('a passing draft of an organization nobody switched publishes: forecasts are on by default (D42)', async () => {
+    const t = await team({ unswitched: true });
+    expect(await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) })).not.toHaveProperty('forecasts');
+    const { calibration, job } = await started(t);
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+    const view = await viewOf(t, calibration.id);
+    expect(view).toMatchObject({ status: 'succeeded', gate: { published: true, reason: 'published' } });
+    expect(await runDoc(view.runId ?? '')).toMatchObject({ status: 'published' });
+    expect(await actionsOf(t.orgId, 'forecast.published')).toHaveLength(1);
+  });
+
   it('a passing draft with forecasts off stays a draft with gate forecasts_off, and nothing is published', async () => {
     const t = await team();
     const { calibration, job } = await started(t);
@@ -235,6 +250,65 @@ describe('the gate decides', () => {
     expect(await runDoc(view.runId ?? '')).toMatchObject({ status: 'draft' });
     expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId), status: 'published' })).toBe(0);
     expect((await actionsOf(t.orgId, 'forecast.published')).map((event) => (event.target as { id: string }).id)).toEqual([championId]);
+  });
+});
+
+describe('one set of rules for every calibration (D42)', () => {
+  /** A run of `length` days (70 by default, so it is the current one once published) with every middle `mid`. */
+  function run70(mid: number, length = 70): Partial<LabSuccess['run']> {
+    const { days, weeks } = runDays('2026-05-31', length);
+    return {
+      days: days.map((day) => ({ ...day, low: mid * 0.8, mid, high: mid * 1.25, baseline: mid })),
+      weeks: weeks.map((week) => ({ ...week, low: week.openDays * mid * 0.8, mid: week.openDays * mid, high: week.openDays * mid * 1.25 })),
+    };
+  }
+
+  /** A calibration of `t` whose job posts a model draft with backtest weekly WAPE `wape`, no held-out week and middles `mid`. */
+  async function calibrateWith(t: Team, wape: number, mid = 50, length = 70): Promise<CalibrationView> {
+    const { calibration, job } = await started(t);
+    const input = await inputFor(job);
+    const scorecard = scorecardWith({
+      comparison: null, backtest: { metrics: metricsWith({ weeklyWape: wape }) },
+      history: { firstDate: input.days[0]?.date ?? '', lastDate: input.dataThrough, spanDays: 607 },
+    });
+    expect(await post(job, labResultFor(input, { scorecard, run: run70(mid, length) }))).toEqual(SUCCEEDED);
+    return viewOf(t, calibration.id);
+  }
+
+  it('a refit against a one-week-old lab run is judged on the streak’s best recorded backtest, not held-out weeks', async () => {
+    const t = await team({ forecastsOn: true });
+    expect((await calibrateWith(t, 0.17)).gate).toMatchObject({ published: true, reason: 'published' });
+    // 0.6 points above the run's recorded 17.0%: worse, and no held-out week would have answered too_few_weeks
+    expect((await calibrateWith(t, 0.176, 51)).gate).toMatchObject({ published: false, reason: 'refresh_worse', words: GATE_WORDS.refresh_worse });
+    // 0.5 points above: a tie publishes
+    const refreshed = await calibrateWith(t, 0.175, 52);
+    expect(refreshed.gate).toMatchObject({ published: true, reason: 'refreshed', words: GATE_WORDS.refreshed });
+    expect(await runDoc(refreshed.runId ?? '')).toMatchObject({ status: 'published' });
+    // The streak's best is still the first run's 17.0%, so 17.9% is held, though it is within 0.5 points of 17.5%
+    expect((await calibrateWith(t, 0.179, 53)).gate).toMatchObject({ published: false, reason: 'refresh_worse' });
+  });
+
+  it('a passing refit whose next 28 days move more than 25% from the current run’s is held for staff', async () => {
+    const t = await team({ forecastsOn: true });
+    expect((await calibrateWith(t, 0.17)).gate?.reason).toBe('published');
+    const jumped = await calibrateWith(t, 0.17, 65);
+    expect(jumped.gate).toMatchObject({ published: false, reason: 'jump_held', words: GATE_WORDS.jump_held });
+    expect(await runDoc(jumped.runId ?? '')).toMatchObject({ status: 'draft' });
+    // The line the ops alert forecasts_held reads (infra monitoring.tf): ids and the gate's code, never a figure.
+    const held = logLines(server).filter((line) => line.msg === 'townwise.calibration_finished' && line.calibrationId === jumped.id);
+    expect(held).toEqual([expect.objectContaining({ orgId: t.orgId, calibrationId: jumped.id, status: 'succeeded', gate: 'jump_held' })]);
+    expect((await calibrateWith(t, 0.17, 60)).gate).toMatchObject({ published: true, reason: 'refreshed' });
+  });
+
+  it('with the current run lapsed, a draft whose next 28 days move more than 25% from the newest published run is held too', async () => {
+    const t = await team({ forecastsOn: true });
+    // A published run reaching only 20 days ahead, so it is never the current one (that needs 28): the next draft is a
+    // first forecast again, with nothing current to compare with.
+    expect((await calibrateWith(t, 0.17, 50, 20)).gate?.reason).toBe('published');
+    const jumped = await calibrateWith(t, 0.17, 65);
+    expect(jumped.gate).toMatchObject({ published: false, reason: 'jump_held', words: GATE_WORDS.jump_held });
+    expect(await runDoc(jumped.runId ?? '')).toMatchObject({ status: 'draft' });
+    expect((await calibrateWith(t, 0.17, 55)).gate).toMatchObject({ published: true, reason: 'published' });
   });
 });
 
@@ -335,6 +409,8 @@ describe('retries, races and existing runs', () => {
     const second = await started(t);
     const input = await inputFor(second.job);
     expect(input.champion?.runId).toBe(runId);
+    // The lab holds an engine switch to the gate's weekday-bias check against the run's recorded backtest (D42).
+    expect(input.champion?.recordedWeekdayBiasMeanAbs).toBe(firstResult.scorecard.backtest.metrics.weekdayBiasMeanAbs);
     expect(await post(second.job, labResultFor(input, { run: firstResult.run }))).toEqual(SUCCEEDED);
     expect(await runDoc(runId)).toEqual(before);
     expect(await count('tw_forecasts', { runId: new Types.ObjectId(runId) })).toBe(rows);
@@ -375,7 +451,7 @@ describe('a published lab run', () => {
     await seedHistory(server, { orgId: t.orgId, locationId: t.locationId, from: '2026-05-25', to: '2026-05-31', guests: () => 55 });
     const body = await forecastOf(t, '2026-05-25', '2026-06-07');
     expect(body.runs).toEqual([{
-      id: runId, metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v6', label: 'Townwise demand model v6' },
+      id: runId, metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v6', label: 'Townwise demand model v6' }, engine: 'model',
       trainingSource: 'townwise_lab', trainedFrom: '2024-10-01', dataThrough: '2026-05-24', madeAt: '2026-06-01', frozen: false,
       interval: { level: 0.8, widened: true },
       backtest: { from: '2026-01-05', to: '2026-03-29', weeks: 12, weeklyTypicalErrorPct: 9.5, weeksOver20Pct: 1, weeklyRangePct: { below: 10, above: 20 } },
@@ -424,7 +500,7 @@ describe('the forecasts switch', () => {
       const switched = switchForecasts(t, ON);
       await writes.arrived(1);
       expect(await actionsOf(t.orgId, 'org.forecasts_switched')).toHaveLength(1);
-      expect((await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) }))?.forecasts).toBeUndefined();
+      expect((await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(t.orgId) }))?.forecasts).toMatchObject({ on: false });
       writes.release(1);
       res = await switched;
     } finally {

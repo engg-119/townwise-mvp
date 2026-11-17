@@ -50,6 +50,24 @@ test('several locations: one row each, with town, sales history, calibration in 
   expect(router.getPathname()).toBe('/locations/l1');
 });
 
+test('a location with a published forecast says so in its Calibration cell, never “Not calibrated yet”', async () => {
+  const history = { dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-15' };
+  const coverage = { dayCount: 400, guestsDayCount: 400, netSalesDayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-15', missingDays: 0 };
+  const town = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
+  const calibrated = locationOf('l7', 'Fresh Cafe', town, {
+    coverage, calibration: { state: 'calibrated', ...history, dataThrough: '2026-11-15', newerDays: 0, nextRefresh: '2026-11-23' },
+  });
+  const stale = locationOf('l8', 'Behind Cafe', town, {
+    coverage, calibration: { state: 'stale', ...history, dataThrough: '2026-11-08', newerDays: 7, nextRefresh: '2026-11-23' },
+  });
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [calibrated, stale]) });
+  await renderApp('/dashboard', api);
+  const table = await screen.findByLabelText('Locations');
+  expect(within(table).getByText('Forecast published')).toBeTruthy();
+  expect(within(table).getByText('Forecast published, 7 newer days not in it yet')).toBeTruthy();
+  expect(within(table).queryByText('Not calibrated yet')).toBeNull();
+});
+
 test('a location whose every upload is off says so and links to Your data', async () => {
   const off = locationOf('l9', 'Off Cafe', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 10 });
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [off, LOCATIONS[1] ?? off]) });

@@ -8,7 +8,7 @@ import { Messages } from '../ui/feedback';
 import { Panel, Stack } from '../ui/layout';
 import { Body, Eyebrow, Heading } from '../ui/text';
 import type { UploadResponse } from './api';
-import { calibrationLine, COPY, resultLines } from './copy';
+import { calibrationHeading, calibrationLine, COPY, resultLines } from './copy';
 
 // Step 4, the result (spec 11.2 step 4): the saved counts by role, then the calibration state with the data
 // checks (14.1), and the links to the sales data and to notes. Nothing from the file is left on the page.
@@ -22,7 +22,7 @@ export function ResultStep(props: { result: UploadResponse; role: Role; location
       <Panel label="Calibration">
         <Stack gap={theme.space[2]}>
           <Eyebrow>Calibration</Eyebrow>
-          <Heading level={3}>Not calibrated yet</Heading>
+          <Heading level={3}>{calibrationHeading(calibration)}</Heading>
         </Stack>
         <Body>{calibrationLine(calibration)}</Body>
         <DefinitionList

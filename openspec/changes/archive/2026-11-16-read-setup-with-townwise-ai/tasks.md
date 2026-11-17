@@ -46,6 +46,6 @@
 
 ## 8. Review and ship
 
-- [ ] 8.1 Security review: prompt injection, names in logs and audit, cross-tenant 404, the body limit
-- [ ] 8.2 Correctness review: budget accounting and every error path
-- [ ] 8.3 `npm run verify`, a browser check on synthetic files with `/browse`, then a PR to `develop` merged on all-green checks
+- [x] 8.1 Security review: prompt injection, names in logs and audit, cross-tenant 404, the body limit (independent review 2026-11-15: 0 blockers, 4 should-fix, all fixed with tests before PR #86)
+- [x] 8.2 Correctness review: budget accounting and every error path (same review: aborted calls now charged what streamed, the close listener first, a 16 MiB gate before parsing)
+- [x] 8.3 `npm run verify`, a browser check on synthetic files with `/browse`, then a PR to `develop` merged on all-green checks (PR #86, 9/9 green, merged as 849e7ab; browser check 2026-11-16 on release candidate 3894692, owner signed in: file and text reads, Cancel, blank par blocks Save, no names in logs or audit, nothing stored)

@@ -22,10 +22,17 @@ export interface OrgFields {
    */
   lastSuspendedAt?: Date;
   /**
-   * Staff switched forecasts on for the organization with its owner's agreement (G1). Absent until first switched.
-   * `by` is the staff user id, null once that person is deleted.
+   * Staff switched forecasts on (with its owner's agreement) or off for the organization (G1). Absent until first
+   * switched, which reads as on (D42, owner directive 2026-11-16). `by` is the staff user id, null once that person is
+   * deleted.
    */
   forecasts?: { on: boolean; at: Date; by: string | null };
+  /**
+   * An org admin turned TownwiseAI's weekly suggestions off or back on (openspec change weekly-forecast-suggestions).
+   * Absent until first switched, which reads as on (owner directive 2026-11-16). `by` is the admin's user id, null once
+   * that person is deleted.
+   */
+  weeklySuggestions?: { on: boolean; at: Date; by: string | null };
 }
 
 function orgSchema(): Schema<OrgFields> {
@@ -39,6 +46,7 @@ function orgSchema(): Schema<OrgFields> {
     firstJoinedAt: { type: Date },
     lastSuspendedAt: { type: Date },
     forecasts: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
+    weeklySuggestions: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ createdAt: -1 });
   return schema;
@@ -59,8 +67,10 @@ export interface OrgRecord {
   readonly suspendedAt: Date | null;
   readonly firstJoinedAt: Date | null;
   readonly lastSuspendedAt: Date | null;
-  /** Whether forecasts are switched on, and when it last changed; `{ on: false, at: null }` before the first switch. */
+  /** Whether forecasts are on, and when staff last switched them; `{ on: true, at: null }` before the first switch (D42). */
   readonly forecasts: { readonly on: boolean; readonly at: Date | null };
+  /** Whether weekly suggestions are on, and when an org admin last switched them; `{ on: true, at: null }` before that. */
+  readonly weeklySuggestions: { readonly on: boolean; readonly at: Date | null };
 }
 
 export interface OrgStore {
@@ -92,6 +102,8 @@ export interface OrgStore {
   markJoined(scope: OrgScope, at: Date): Promise<void>;
   /** Switches forecasts on or off, recording when and by which staff member. False when the organization is gone. */
   setForecasts(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
+  /** Turns weekly suggestions on or off, recording when and by which org admin. False when the organization is gone. */
+  setWeeklySuggestions(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -104,7 +116,11 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     suspendedAt: doc.suspendedAt,
     firstJoinedAt: doc.firstJoinedAt ?? null,
     lastSuspendedAt: doc.lastSuspendedAt ?? null,
-    forecasts: doc.forecasts === undefined ? { on: false, at: null } : { on: doc.forecasts.on, at: doc.forecasts.at },
+    // D42: on by default for every organization, existing and new, until staff switch it off. [CONFIRM]
+    forecasts: doc.forecasts == null ? { on: true, at: null } : { on: doc.forecasts.on, at: doc.forecasts.at },
+    // Weekly suggestions: on by default (owner directive 2026-11-16) until an org admin turns them off. [CONFIRM]
+    weeklySuggestions: doc.weeklySuggestions == null
+      ? { on: true, at: null } : { on: doc.weeklySuggestions.on, at: doc.weeklySuggestions.at },
   };
 }
 
@@ -181,6 +197,12 @@ export function createOrgStore(connection: Connection): OrgStore {
     },
     async setForecasts(scope, change) {
       const result = await Org.updateOne({ _id: scope.orgId }, { $set: { forecasts: { on: change.on, at: change.at, by: change.by } } });
+      return result.matchedCount === 1;
+    },
+    async setWeeklySuggestions(scope, change) {
+      const result = await Org.updateOne(
+        { _id: scope.orgId }, { $set: { weeklySuggestions: { on: change.on, at: change.at, by: change.by } } },
+      );
       return result.matchedCount === 1;
     },
   };

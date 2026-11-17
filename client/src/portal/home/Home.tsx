@@ -8,7 +8,7 @@ import { dayContext, ruleSchedules } from '../analytics/days';
 import { metricsWithData } from '../analytics/filters';
 import { byDate, decodeHistory } from '../analytics/history';
 import {
-  forecastRange, homeCalendarRange, lastWeekComparison, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
+  forecastRange, homeCalendarRange, lastWeekComparison, lastWeekRange, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
 } from '../analytics/week';
 import { fetchForecast } from '../estimates/api';
 import { useBreakpoint, useLoad } from '../hooks';
@@ -41,11 +41,13 @@ import { ThisWeek } from './ThisWeek';
 // month's events beside Who's in town; this month in past years beside the bar order; and the location's
 // history. Every figure is a sum, an average or a share of the location's own stored days, of a past day, except This
 // month's days from today on, which show the published forecast's own figures (spec 16.3 P11, 14.5,
-// D30), never a guess of Home's: with no published forecast the lead says so and those days show none. It reads three
+// D30), and Last week's published forecast for its seven days (D42), never an unpublished guess of Home's: with no
+// published forecast the lead says so and those days show none. It reads three
 // routes in parallel (sales history, notes, the town calendar), then on their own TownwiseAI's questions (for the
 // lead's count), the location's business rules (a schedule with more or fewer guests says a near-empty day was open,
 // D31 and D32, as on the Calendar and Analytics; none while they load or if the read fails), this month's forecast
-// (GET .../forecast; Home never waits for it or fails with it), the month's people in town (in Who's in town) and the
+// (GET .../forecast; Home never waits for it or fails with it), Last week's forecast (the same route for the seven days
+// before today, D42; likewise on its own), the month's people in town (in Who's in town) and the
 // next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), and writes nothing,
 // so view-as shows it unchanged with its upload links disabled.
 // "Today" is the device's date; This week in {Town} is the seven days from today, today first, and Last week the
@@ -81,7 +83,7 @@ function Tagline(props: { kind: 'progress' | 'planned'; text: string }): React.J
 }
 
 /**
- * The count of TownwiseAI's open questions (GET .../agent, its side panel's read), linked to its page. It reads on its
+ * The count of TownwiseAI's open questions and weekly suggestions (GET .../agent, its side panel's read), linked to its page. It reads on its
  * own, so Home never waits for it or fails with it: while it loads, when the read fails and when there are none, the
  * lead shows nothing here (the page itself says "No questions right now" or the error).
  */
@@ -89,9 +91,11 @@ function QuestionsLink(props: { locationId: string }): React.JSX.Element | null 
   const { api } = usePortal();
   const { locationId } = props;
   const { state } = useLoad(useCallback(() => loadAgentPanel(api, locationId), [api, locationId]));
-  if (state.status !== 'ready' || state.data.questions.length === 0) return null;
+  // Weekly suggestions count as questions (openspec change weekly-forecast-suggestions): each asks the owner to decide.
+  const count = state.status === 'ready' ? state.data.questions.length + state.data.suggestions.length : 0;
+  if (count === 0) return null;
   // ?panel=questions: the page opens with its questions showing.
-  return <LinkButton href={`${locationHref(locationId, 'agent')}?panel=questions`} label={questionsLabel(state.data.questions.length)} />;
+  return <LinkButton href={`${locationHref(locationId, 'agent')}?panel=questions`} label={questionsLabel(count)} />;
 }
 
 function HomeView(props: {
@@ -107,6 +111,10 @@ function HomeView(props: {
   const forecast = forecastRead.status === 'ready' ? forecastRead.data : null;
   // A published run that doesn't cover this month is still published, so the line would be wrong there.
   const notPublished = forecast === null || (!forecast.available && forecast.reason === 'no_published_forecast');
+  // Last week's published forecast, on its own too (D42): while it loads, when it fails, and with none published or
+  // covering none of its days, Last week and its tile are exactly the history comparison.
+  const lastWeekRead = useLoad(useCallback(() => fetchForecast(api, locationId, lastWeekRange(today)), [api, locationId, today])).state;
+  const lastWeekForecast = lastWeekRead.status === 'ready' ? lastWeekRead.data : null;
   const { history, notes, calendar } = data;
   // One read of the board for Bar order and the selected day's Reorder part; it fails on its own, in their places.
   const { state: board } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
@@ -119,12 +127,15 @@ function HomeView(props: {
     [today, days, context, metric, history.coverage.lastDate, history.uploadsOff],
   );
   const week = useMemo(() => thisWeek(input), [input]);
-  const lastWeek = useMemo(() => lastWeekComparison(input), [input]);
+  const lastWeek = useMemo(() => lastWeekComparison(input, lastWeekForecast), [input, lastWeekForecast]);
   const share = useMemo(() => lateWeekShare(input), [input]);
   const facts = useMemo(() => monthFacts(input), [input]);
   const next = useMemo(() => nextEvent(today, context), [today, context]);
   const hasDays = days.length > 0;
   const { desktop } = useBreakpoint();
+  // With a published forecast for last week, Show the numbers has six columns (Forecast and In range join), which a
+  // third of the row can't hold from 1024px, so Last week takes a line of its own under This month.
+  const wideLastWeek = lastWeek.forecast !== undefined;
 
   return (
     <View style={styles.page}>
@@ -154,7 +165,7 @@ function HomeView(props: {
       <BlockRow
         items={[
           {
-            key: 'month', span: 8,
+            key: 'month', span: wideLastWeek ? 12 : 8,
             node: (
               <ThisMonth
                 input={input} calendar={calendar} notes={notes} rules={rules} forecast={forecast} history={hasDays} locationId={locationId}
@@ -162,7 +173,7 @@ function HomeView(props: {
               />
             ),
           },
-          { key: 'last', span: 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
+          { key: 'last', span: wideLastWeek ? 12 : 4, node: needs ? null : <LastWeek comparison={lastWeek} metric={metric} locationId={locationId} readOnlyId={readOnlyId} /> },
         ]}
       />
       <BlockRow

@@ -530,7 +530,17 @@ describe('days from the daily totals', () => {
   it('writes no days from a picture, a file that wrote days itself, an answer short of high confidence, or one that is not sales', async () => {
     const l1 = await newLocation();
     const days = mayDays(2);
-    const png = Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), salesCsv(days)]);
+    // A PNG that parses, since a picture is sent without its metadata and one that doesn't parse is skipped (11A.9),
+    // its pixel bytes the sales CSV: a picture still writes no days.
+    const chunk = (type: string, data: Buffer): Buffer => {
+      const length = Buffer.alloc(4);
+      length.writeUInt32BE(data.length);
+      return Buffer.concat([length, Buffer.from(type, 'latin1'), data, Buffer.alloc(4)]);
+    };
+    const header = Buffer.from([0, 0, 0, 2, 0, 0, 0, 2, 8, 2, 0, 0, 0]);
+    const png = Buffer.concat([
+      Buffer.from('89504e470d0a1a0a', 'hex'), chunk('IHDR', header), chunk('IDAT', salesCsv(days)), chunk('IEND', Buffer.alloc(0)),
+    ]);
     const picture = await seedStored(l1, { kind: 'other', name: 'till.png', raw: png });
     answers = [salesAnswer(days)];
     await readAs(team.admin, l1, picture);

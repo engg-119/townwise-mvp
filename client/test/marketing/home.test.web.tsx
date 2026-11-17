@@ -141,7 +141,7 @@ test('the first screen is the map story’s title with both actions; the lead fo
   const lead = hero.querySelector('.hd2');
   expect([...(lead?.children ?? [])].map((child) => [child.tagName, child.textContent])).toEqual([
     ['P', 'Early access. Built at Dartmouth, testing in Hanover, NH.'],
-    ['P', 'We’re building forecasts of daily guests and sales for restaurants and bars, 7 and 28 days ahead, from your town’s calendar, not the region’s.'],
+    ['P', 'We’re building forecasts of daily guests for restaurants and bars, up to three months ahead, from your town’s calendar, not the region’s.'],
     ['DIV', 'Request early accessSign in'],
     ['P', 'In development. No forecasts are for sale yet.'],
   ]);
@@ -252,13 +252,16 @@ test('what is not built yet is described in the future tense', () => {
   expect(document.body.textContent).not.toMatch(/no upload/i);
 });
 
-test('step 03 and the FAQ say what the portal does today: uploads and notes, no forecasts', () => {
+test('steps 02 and 03 and the FAQ say what the portal does today: uploads, notes and weekly forecasts (D42)', () => {
   renderHome();
   const how = section('Local first. Then your own numbers.');
-  const third = [...how.querySelectorAll<HTMLElement>('.steps > li')][2];
-  if (third === undefined) throw new Error('no step 03');
+  const [, second, third] = [...how.querySelectorAll<HTMLElement>('.steps > li')];
+  if (second === undefined || third === undefined) throw new Error('no step 02 or 03');
+  expect(second.querySelector('.step-body p:nth-of-type(2)')?.textContent)
+    .toBe('Today: candidate models run in our research notebooks, including quantile regression, an event model and gradient-boosted trees, tested with a rolling backtest. In the app, Townwise’s trained demand model and a simpler baseline are both tested on each restaurant’s own past weeks, and its forecast switches between them only when the other does clearly better. The agent that will build and refine models on its own is not built yet.');
   expect(third.querySelector('.step-body p:nth-of-type(2)')?.textContent)
-    .toBe('Today: restaurants with early access upload their daily guests and net sales in the web app, and add notes about closures and other unusual days. Calibration itself is not built yet, so the app shows no forecasts.');
+    .toBe('Today: restaurants with early access upload their daily guests and net sales in the web app, and add notes about closures and other unusual days. Once a location’s history spans 230 days, Townwise refits its daily guest forecast every week from those days, its notes and the town calendar, and publishes it when it passes our accuracy checks. Each forecast says whether Townwise’s trained model or a simpler baseline made it.');
+  expect(document.body.textContent).not.toMatch(/shows no forecasts|Not for forecasts yet/);
   expect(third.querySelector('.chip')).toBeNull();
   const faq = within(section('FAQ'));
   expect(faq.getByText(/^Your daily guest counts/).textContent)
@@ -269,6 +272,7 @@ test('step 03 and the FAQ say what the portal does today: uploads and notes, no 
   expect(faq.getByText(/^No\. Your sales data/).textContent)
     .toContain('only through a read-only view that is recorded and shown to your organization’s admins, or by opening your organization as its admin with your consent, which needs a reason once anyone from it has joined and is recorded and shown to your admins too.');
   expect(faq.getByText(/^Townwise does not charge/).textContent).toBe('Townwise does not charge for early access. Pricing is not set yet.');
+  expect(faq.getByText(/^Yes, in early access/).textContent).toBe('Yes, in early access, though the forecasts are still being tested. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days and see your town’s public profile, if it is one of the twelve on the map. Once a location’s sales history spans 230 days, Townwise forecasts its daily guests, refits the forecast every week, and says whether its trained model or a simpler baseline made it.');
   expect(within(section('Tell us about your town.')).getByText(/^Townwise is in early access/).textContent)
     .toBe('Townwise is in early access. Sign in with Google and fill in a short form about your restaurant and your town. Someone on our team reviews each request by hand.');
 });

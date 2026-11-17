@@ -13,10 +13,10 @@ import { useReveal, type RevealView } from './useReveal.web';
 const SECTION_VIEW: RevealView = { threshold: 0, ratio: 0, rootMargin: '0px 0px -12% 0px', showWhenReduced: false };
 
 const FEATURES: readonly { name: string; text: string; planned: boolean }[] = [
-  { name: '7-day forecast', text: 'Daily guests and sales for the week ahead, for this week’s orders.', planned: false },
-  { name: '28-day forecast', text: 'Daily guests and sales four weeks out, for bigger orders and for planning around the weekends that matter.', planned: false },
+  { name: '7-day forecast', text: 'Daily guests for the week ahead, for this week’s orders.', planned: false },
+  { name: '28-day forecast', text: 'Daily guests four weeks out, for bigger orders and for planning around the weekends that matter.', planned: false },
   { name: 'A range, not just a number', text: 'Every day gets a low and a high. We check our models on how often the real day lands inside the 80% range.', planned: false },
-  { name: 'A reason for every swing', text: 'Each forecast will say what is driving it, for example “Commencement weekend”, “Finals week” or “Term ends Friday”.', planned: true },
+  { name: 'A reason for every swing', text: 'Each forecast says what is driving it, for example “Commencement weekend”, “Finals week” or “Term ends Friday”.', planned: false },
   { name: 'Next twelve months', text: 'A year-ahead view for the season.', planned: true },
   { name: 'Inventory recommendations', text: 'Reorder points and order quantities.', planned: true },
 ];
@@ -49,7 +49,7 @@ function Lead(): React.JSX.Element {
   return (
     <div ref={ref} className={className} onFocus={revealNow}>
       <p className="eyebrow">Early access. Built at Dartmouth, testing in Hanover, NH.</p>
-      <p className="sub">We’re building forecasts of daily guests and sales for restaurants and bars, 7 and 28 days ahead, from your town’s calendar, not the region’s.</p>
+      <p className="sub">We’re building forecasts of daily guests for restaurants and bars, up to three months ahead, from your town’s calendar, not the region’s.</p>
       <div className="cta-row">
         <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
         <a className="btn-o" href={SIGN_IN_HREF}>Sign in</a>
@@ -206,7 +206,8 @@ export default function Home(): React.JSX.Element {
             </div>
             <div className="faq-i">
               <h3 className="h3">Is Townwise ready to use today?</h3>
-              <p>Not for forecasts yet. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days and see your town’s public profile, if it is one of the twelve on the map. The forecasts themselves are being built and tested now.</p>
+              {/* [CONFIRM: wording, awaiting the owner] Forecasts publish by default and refit weekly (autonomous-forecasts, D42). */}
+              <p>Yes, in early access, though the forecasts are still being tested. Townwise is a student project in active development. With early access you can add your locations, upload your sales history, add notes about unusual days and see your town’s public profile, if it is one of the twelve on the map. Once a location’s sales history spans 230 days, Townwise forecasts its daily guests, refits the forecast every week, and says whether its trained model or a simpler baseline made it.</p>
             </div>
           </div>
         </Section>

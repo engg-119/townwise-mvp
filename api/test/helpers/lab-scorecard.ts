@@ -1,5 +1,5 @@
 // Synthetic scorecards for the gate tests; the numbers mean nothing.
-import type { Metrics, Scorecard } from '../../src/lab/scorecard.ts';
+import type { LabScorecard, Metrics, Scorecard } from '../../src/lab/scorecard.ts';
 
 export function metricsWith(overrides: Partial<Metrics> = {}): Metrics {
   return {
@@ -16,11 +16,17 @@ export function metricsWith(overrides: Partial<Metrics> = {}): Metrics {
   };
 }
 
+/**
+ * A lab-input/2 scorecard (D42): a model run by default, its `engines` figures its backtest's (the baseline's a point
+ * worse) unless given, a weekly bias of 0 and no longer-horizon reports.
+ */
 export function scorecardWith(overrides: {
+  engine?: LabScorecard['engine'];
   history?: Partial<Scorecard['history']>;
-  backtest?: Partial<Scorecard['backtest']>;
+  backtest?: Partial<LabScorecard['backtest']>;
   comparison?: Scorecard['comparison'];
-} = {}): Scorecard {
+  engines?: LabScorecard['engines'];
+} = {}): LabScorecard {
   const comparison: Scorecard['comparison'] =
     overrides.comparison !== undefined
       ? overrides.comparison
@@ -34,23 +40,32 @@ export function scorecardWith(overrides: {
           challenger: metricsWith({ weeklyWape: 0.19 }),
           series: [],
         };
+  const engine = overrides.engine ?? 'model';
+  const backtest: LabScorecard['backtest'] = {
+    from: '2026-01-05',
+    to: '2026-03-29',
+    origins: [],
+    weeks: 12,
+    weeksWithRange: 12,
+    metrics: metricsWith({ weeklyWape: 0.19 }),
+    metrics7: metricsWith(),
+    weekdayMedianWeeklyWape: 0.2,
+    weeklyBias: 0,
+    folds: [],
+    series: [],
+    ...overrides.backtest,
+  };
+  const own = { weeks: backtest.weeks, weeklyWape: backtest.metrics.weeklyWape, weeklyBias: backtest.weeklyBias, coverage80: backtest.metrics.coverage80 };
+  const other = { ...own, weeklyWape: own.weeklyWape + 0.01 };
   return {
     horizonDays: 28,
+    engine,
     history: { firstDate: '2024-10-01', lastDate: '2026-06-01', days: 600, spanDays: 608, ...overrides.history },
-    backtest: {
-      from: '2026-01-05',
-      to: '2026-03-29',
-      origins: [],
-      weeks: 12,
-      weeksWithRange: 12,
-      metrics: metricsWith({ weeklyWape: 0.19 }),
-      metrics7: metricsWith(),
-      weekdayMedianWeeklyWape: 0.2,
-      folds: [],
-      series: [],
-      ...overrides.backtest,
-    },
+    backtest,
     comparison,
+    engines: overrides.engines ?? (engine === 'model' ? { model: own, baseline: other } : { model: other, baseline: own }),
+    horizon91: null,
+    horizonReach: null,
   };
 }
 
@@ -68,5 +83,14 @@ export function comparisonWith(
     champion: metricsWith(champion),
     challenger: metricsWith(challenger),
     series: [],
+  };
+}
+
+/** `card` as a stored scorecard from before lab-input/2: no engine, engines, weekly bias or horizon reports. */
+export function storedScorecard(card: LabScorecard = scorecardWith()): Scorecard {
+  const { from, to, origins, weeks, weeksWithRange, metrics, metrics7, weekdayMedianWeeklyWape, folds, series } = card.backtest;
+  return {
+    horizonDays: card.horizonDays, history: card.history, comparison: card.comparison,
+    backtest: { from, to, origins, weeks, weeksWithRange, metrics, metrics7, weekdayMedianWeeklyWape, folds, series },
   };
 }

@@ -38,12 +38,12 @@ afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
 const TENANT_COLLECTIONS = [
   'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_chat_conversations', 'tw_chat_live_turns',
   'tw_chat_usage', 'tw_chat_proposals',
-  // U9, TownwiseAI's questions.
-  'tw_agent_answers',
+  // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
+  'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
   // U13B.
   'tw_forecast_runs', 'tw_forecasts',
-  // The forecast lab.
-  'tw_calibrations',
+  // The forecast lab, and (D42) the weekly refresh's week rows.
+  'tw_calibrations', 'tw_forecast_weeks',
   // Business rules (spec 6.24).
   'tw_business_rules',
   // The owner's own calendars and their events, and (connect-google-calendar) the Google connections that read them.
@@ -167,6 +167,25 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',
     answer: 'not_sure', noteId: new Types.ObjectId(), status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
   });
+  // A weekly suggestion and its week's pass row.
+  await server.connection.collection('tw_agent_suggestions').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', type: 'note',
+    content: {
+      kind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04', weekdays: null, effect: 'closed', expectedGuests: null,
+      detail: null, startTime: null, endTime: null,
+    },
+    text: null, why: 'Sentinel why', calendarIds: [], status: 'open', decidedBy: null, decidedAt: null,
+    createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
+  await server.connection.collection('tw_suggestion_passes').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', status: 'suggested', suggested: 1,
+    createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
+  // D42: a week row of the weekly refresh.
+  await server.connection.collection('tw_forecast_weeks').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', status: 'unchanged',
+    calibrationId: null, dataSha256: null, createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
   await addLiveTurn(server, { orgId, userId: member.session.userId });
   await addChatUsage(server, { orgId, month: '2026-06', costMicroUsd: 1_250_000 });
   await addGrant(server, { actorUserId: staff.userId, sessionId: randomUUID(), targetUserId: member.session.userId, orgId });
@@ -223,11 +242,13 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // The event is written before the effect; the organization row is deleted last, then sales days, ordering's
     // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
-    // Stored files (none here) are swept again after the row too: imports first. Then (U13B) forecast rows, then runs.
-    expect(writes.slice(-13)).toEqual([
+    // Stored files (none here) are swept again after the row too: imports first. Then (D42) week rows, the weekly
+    // suggestions' pass rows and suggestions, and (U13B) forecast rows, then runs.
+    expect(writes.slice(-16)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
       'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
-      'delete tw_chat_usage', 'delete tw_calibrations', 'delete tw_forecasts', 'delete tw_forecast_runs',
+      'delete tw_chat_usage', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_suggestion_passes',
+      'delete tw_agent_suggestions', 'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);
@@ -549,6 +570,25 @@ describe('POST /api/admin/people/delete', () => {
     for (const locationId of [doomed.locationId, olderLocation]) {
       expect(await count('tw_calendar_sources', { locationId: new Types.ObjectId(locationId) })).toBe(0);
       expect(await count('tw_calendar_events', { locationId: new Types.ObjectId(locationId) })).toBe(0);
+    }
+  });
+
+  it('clears a former staff member’s id and address from the weekly refresh’s pause, which stays paused', async () => {
+    // A former staff member (no longer in TOWNWISE_SUPERADMIN_EMAILS) who last paused the weekly refresh.
+    const former = await person('former-staff');
+    const pausedAt = server.clock.now();
+    await server.ctx.stores.forecastSchedule.setPaused({ at: pausedAt, by: former.session.userId, email: former.email }, pausedAt);
+    try {
+      expect((await deletePerson(former.email)).status).toBe(200);
+      const doc = await server.connection.collection('tw_forecast_schedule').findOne({ _id: 'weekly' as never });
+      expect(doc?.paused).toEqual({ at: pausedAt, by: null, email: 'Deleted person' });
+      expect(JSON.stringify(doc)).not.toContain(former.email);
+      expect(JSON.stringify(doc)).not.toContain(former.session.userId);
+      // Staff still see that it is paused, by whom no longer.
+      const res = await call(server, '/api/admin/forecast-schedule', { session: staff, json: { paused: true } });
+      expect(await res.json()).toMatchObject({ schedule: { paused: { at: pausedAt.toISOString(), email: 'Deleted person' } } });
+    } finally {
+      await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
     }
   });
 

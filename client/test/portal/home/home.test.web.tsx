@@ -65,15 +65,21 @@ const QUESTIONS = [
   { id: 'gap_2026-04-02_2026-04-03', kind: 'gap', from: '2026-04-02', to: '2026-04-03', dayCount: 2 },
 ];
 
-/** `rules`: GET .../rules' body; without it the read is refused (404), which Home reads as no rules. */
-function portal(me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: LocationSummary[], forecast: unknown = NO_FORECAST, rules?: unknown): FakePortalApi {
+/**
+ * `rules`: GET .../rules' body; without it the read is refused (404), which Home reads as no rules. `agent`: GET
+ * .../agent's body, two questions by default.
+ */
+function portal(
+  me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: LocationSummary[], forecast: unknown = NO_FORECAST, rules?: unknown,
+  agent: unknown = { questions: QUESTIONS, activity: [] },
+): FakePortalApi {
   const fake = analyticsFake({
     ...(rules === undefined ? {} : { [`${PATH}/rules`]: rules }),
     [FORECAST]: forecast,
     [`${PATH}/sales/history`]: historyBody(days),
     [`${PATH}/notes`]: { notes: [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })] },
     [CALENDAR]: calendarBody({ events: EVENTS }),
-    [`${PATH}/agent`]: { questions: QUESTIONS, activity: [] },
+    [`${PATH}/agent`]: agent,
     [`${PATH}/people-in-town?from=2026-11-01&to=2026-11-30`]: NOVEMBER,
     // Stored files are off, as in production today.
     [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
@@ -105,6 +111,19 @@ function sentence(text: string): (content: string, element: Element | null) => b
 function pageText(): string {
   return document.body.textContent;
 }
+
+test('the count of TownwiseAI’s questions includes its open weekly suggestions', async () => {
+  const suggestion = {
+    id: 's1', why: 'Thanksgiving is Thu, Nov 26.', calendar: [], createdAt: '2026-11-02T08:00:00.000Z', type: 'note',
+    note: {
+      kind: 'closure', startDate: '2026-11-26', endDate: '2026-11-26', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
+      startTime: null, endTime: null,
+    },
+  };
+  const agent = { questions: QUESTIONS.slice(0, 1), activity: [], suggestions: [suggestion], weeklySuggestions: { on: true, available: true, canChange: false } };
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, agent));
+  expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
+});
 
 test('the last week chart prints its key and scale; the history heatmap is one picture with no focusable cell', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
@@ -480,8 +499,9 @@ test('without a published forecast, the lead says Townwise hasn’t published on
   const api = portal(meOf(ACCESS.member));
   await renderAt(api);
   expect(screen.getByText('In progress')).toBeTruthy();
-  // One read of this month's forecast, on its own.
-  expect(api.calls.filter((call) => call.path.startsWith(`${PATH}/forecast`)).map((call) => call.path)).toEqual([FORECAST]);
+  // One read of this month's forecast, on its own, and one of Last week's seven days (D42), on its own too.
+  expect(api.calls.filter((call) => call.path.startsWith(`${PATH}/forecast`)).map((call) => call.path).sort())
+    .toEqual([`${PATH}/forecast?from=2026-10-29&to=2026-11-04`, FORECAST]);
 });
 
 test('a failed forecast read never fails Home', async () => {

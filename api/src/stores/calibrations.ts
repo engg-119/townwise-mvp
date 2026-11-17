@@ -26,14 +26,18 @@ export const CALIBRATION_FAILURES: readonly CalibrationFailure[] = [
 ];
 
 export interface CalibrationRequester {
-  /** The person who asked; null once their records are deleted. */
+  /** The person who asked; null once their records are deleted, and always null for the weekly refresh (D42). */
   userId: string | null;
-  role: 'org_admin' | 'superadmin';
-  /** TownwiseAI's chat, the staff console, or a file someone let TownwiseAI read (spec 11A.9). */
-  via: 'chat' | 'console' | 'file';
+  /** `system` is the weekly refresh, which no person started (D42). */
+  role: 'org_admin' | 'superadmin' | 'system';
+  /** TownwiseAI's chat, the staff console, a file someone let TownwiseAI read (spec 11A.9), or the weekly refresh (D42). */
+  via: 'chat' | 'console' | 'file' | 'scheduled';
 }
 
 export interface CalibrationGate { published: boolean; reason: string }
+
+/** Gate reasons that judged something other than the draft's own data, so their calibration is never the weekly refresh's reference (D42). */
+export const NOT_REFERENCE_REASONS: readonly string[] = ['forecasts_off', 'champion_changed'];
 
 interface CalibrationFields {
   orgId: Types.ObjectId;
@@ -44,6 +48,8 @@ interface CalibrationFields {
   championRunId: string | null;
   dataThrough: string | null;
   inputSha256: string | null;
+  /** The fingerprint the weekly refresh compares (D42, lab/input.ts labInputFingerprint); null on one from before it. */
+  dataSha256: string | null;
   imageDigest: string | null;
   codeVersion: string | null;
   runId: string | null;
@@ -67,8 +73,8 @@ const sub = { _id: false, strict: 'throw' } as const;
 function calibrationSchema(): Schema<CalibrationFields> {
   const requestedBy = new Schema({
     userId: { type: String, default: null },
-    role: { type: String, required: true, enum: ['org_admin', 'superadmin'] },
-    via: { type: String, required: true, enum: ['chat', 'console', 'file'] },
+    role: { type: String, required: true, enum: ['org_admin', 'superadmin', 'system'] },
+    via: { type: String, required: true, enum: ['chat', 'console', 'file', 'scheduled'] },
   }, sub);
   const gate = new Schema({ published: { type: Boolean, required: true }, reason: { type: String, required: true } }, sub);
   const schema = new Schema<CalibrationFields>({
@@ -80,6 +86,7 @@ function calibrationSchema(): Schema<CalibrationFields> {
     championRunId: { type: String, default: null },
     dataThrough: { type: String, default: null },
     inputSha256: { type: String, default: null },
+    dataSha256: { type: String, default: null },
     imageDigest: { type: String, default: null },
     codeVersion: { type: String, default: null },
     runId: { type: String, default: null },
@@ -116,6 +123,8 @@ export interface CalibrationRecord {
   readonly championRunId: string | null;
   readonly dataThrough: string | null;
   readonly inputSha256: string | null;
+  /** The fingerprint the weekly refresh compares (D42), set with the input; null before the fetch or on one from before D42. */
+  readonly dataSha256: string | null;
   readonly imageDigest: string | null;
   readonly codeVersion: string | null;
   readonly runId: string | null;
@@ -148,10 +157,12 @@ export interface CalibrationStore {
   recordImageDigest(scope: OrgScope, id: string, imageDigest: string): Promise<boolean>;
   /**
    * The job's one input fetch, by compare-and-set on running with no input recorded yet: the hash of the input it is
-   * given, the last day it holds, and the sha256 of the result token the API hands only to that fetch, the one the
-   * result is posted with. False for any second fetch.
+   * given, its fingerprint (D42), the last day it holds, and the sha256 of the result token the API hands only to that
+   * fetch, the one the result is posted with. False for any second fetch.
    */
-  recordInput(scope: OrgScope, id: string, input: { inputSha256: string; dataThrough: string; resultTokenSha256: string }): Promise<boolean>;
+  recordInput(
+    scope: OrgScope, id: string, input: { inputSha256: string; dataSha256: string; dataThrough: string; resultTokenSha256: string },
+  ): Promise<boolean>;
   /** Compare-and-set on running with no run recorded yet: a run id, once set, is kept. */
   recordResult(scope: OrgScope, id: string, result: { runId: string; scorecardJson: string; codeVersion: string }): Promise<boolean>;
   /** Compare-and-set on running with no gate yet: the gate is set once. */
@@ -159,6 +170,16 @@ export interface CalibrationStore {
   setCharge(scope: OrgScope, id: string, chargedMicroUsd: number): Promise<boolean>;
   /** Compare-and-set from a live status; clears the live slot and the result token hash. */
   finish(scope: OrgScope, id: string, outcome: CalibrationOutcome, now: Date): Promise<boolean>;
+  /**
+   * The weekly refresh's reference (D42): the location's newest succeeded calibration whose gate judged the draft on its
+   * own data, that is any reason but `forecasts_off` and `champion_changed` (NOT_REFERENCE_REASONS). A failed one is never
+   * a reference.
+   */
+  reference(scope: OrgScope, locationId: string): Promise<CalibrationRecord | null>;
+  /** The location's newest calibration requested by the system at or after `since` (D42: a week row left starting). */
+  scheduledSince(scope: OrgScope, locationId: string, since: Date): Promise<CalibrationRecord | null>;
+  /** How many of the location's calibrations requested by the system at or after `since` failed start_failed (D42). */
+  scheduledStartFailures(scope: OrgScope, locationId: string, since: Date): Promise<number>;
   /** Location deletion and deleting its sales data. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion. Resolves the number deleted. */
@@ -177,6 +198,7 @@ function toCalibration(doc: CalibrationDoc): CalibrationRecord {
     championRunId: doc.championRunId,
     dataThrough: doc.dataThrough,
     inputSha256: doc.inputSha256,
+    dataSha256: doc.dataSha256 ?? null,
     imageDigest: doc.imageDigest,
     codeVersion: doc.codeVersion,
     runId: doc.runId,
@@ -243,7 +265,7 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
     async recordInput(scope, id, input) {
       const result = await Calibration.updateOne(
         { ...ofId(scope, id), status: 'running', inputSha256: null },
-        { $set: { inputSha256: input.inputSha256, dataThrough: input.dataThrough, tokenSha256: input.resultTokenSha256 } },
+        { $set: { inputSha256: input.inputSha256, dataSha256: input.dataSha256, dataThrough: input.dataThrough, tokenSha256: input.resultTokenSha256 } },
       );
       return result.modifiedCount === 1;
     },
@@ -275,6 +297,25 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
         },
       );
       return result.modifiedCount === 1;
+    },
+    async reference(scope, locationId) {
+      const doc = await Calibration.findOne({
+        ...org(scope), locationId: new Types.ObjectId(locationId), status: 'succeeded',
+        gate: trusted({ $ne: null }), 'gate.reason': trusted({ $nin: [...NOT_REFERENCE_REASONS] }),
+      }).sort({ requestedAt: -1, _id: -1 }).lean();
+      return doc === null ? null : toCalibration(doc);
+    },
+    async scheduledSince(scope, locationId, since) {
+      const doc = await Calibration.findOne({
+        ...org(scope), locationId: new Types.ObjectId(locationId), 'requestedBy.role': 'system', requestedAt: trusted({ $gte: since }),
+      }).sort({ requestedAt: -1, _id: -1 }).lean();
+      return doc === null ? null : toCalibration(doc);
+    },
+    async scheduledStartFailures(scope, locationId, since) {
+      return Calibration.countDocuments({
+        ...org(scope), locationId: new Types.ObjectId(locationId), 'requestedBy.role': 'system', failure: 'start_failed',
+        requestedAt: trusted({ $gte: since }),
+      });
     },
     async removeForLocation(scope, locationId) {
       return (await Calibration.deleteMany({ ...org(scope), locationId: new Types.ObjectId(locationId) })).deletedCount;

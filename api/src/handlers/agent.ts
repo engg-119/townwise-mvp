@@ -1,5 +1,6 @@
 // TownwiseAI's side panel (spec 10.12, docs/portal/tuning-chat.md section 8): GET .../agent reads the questions and
-// the activity, both computed at read time from the location's own records; POST .../agent/questions/:questionId
+// the activity, both computed at read time from the location's own records, and the weekly suggestions still open
+// (handlers/weekly-suggestions.ts); POST .../agent/questions/:questionId
 // answers one question. There are no transactions, so an answer is ordered for retries: claim the question
 // (tw_agent_answers, which gives it its note id once), write the note the answer saves (a closure note, or a likely-closed
 // day's open-day note) with that id, then mark the answer done. A retry, a crash between the steps or a second tab end
@@ -29,13 +30,20 @@ import { localDay, timeZoneOf } from '../time-zones.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { addNote, noteContent, noteView, type NoteView } from './notes.ts';
 import { actorOf } from './team.ts';
+import { suggestionsPanel, type SuggestionView, type WeeklySuggestionsView } from './weekly-suggestions.ts';
 
 /** A question id: dates and a weekday number only, never text. */
 const questionIdSchema = z.string().regex(/^(gap|weekday|likely_closed)_[0-9_-]{10,40}$/);
 /** The answer and nothing else: any other key, the person's words included, is refused. */
 const answerBody = z.strictObject({ answer: z.enum(QUESTION_ANSWERS) });
 
-export interface AgentPanel { questions: Question[]; activity: ActivityItem[] }
+/**
+ * The panel: the questions, the activity, and (openspec change weekly-forecast-suggestions) the open weekly suggestions
+ * with the organization's switch.
+ */
+export interface AgentPanel {
+  questions: Question[]; activity: ActivityItem[]; suggestions: SuggestionView[]; weeklySuggestions: WeeklySuggestionsView;
+}
 
 export interface AnswerResult {
   question: { id: string; answer: QuestionAnswer };
@@ -84,8 +92,11 @@ export async function getAgent(ctx: TownwiseContext, req: Request, res: Response
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const { questions, notes, answers } = await currentQuestions(ctx, caller, location);
-  const activity = await activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, notes, answers });
-  const body: AgentPanel = { questions, activity };
+  const [activity, suggested] = await Promise.all([
+    activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, notes, answers }),
+    suggestionsPanel(ctx, caller, location),
+  ]);
+  const body: AgentPanel = { questions, activity, ...suggested };
   res.status(200).json(body);
 }
 

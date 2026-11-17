@@ -1,7 +1,7 @@
 import { ApiError } from '../../../src/api/client';
 import type { ColumnProfile } from '../../../src/portal/upload/columns';
 import {
-  alreadyHaveLine, badNumberLine, turnedOffLine, calibrationLine, canCheck, columnOptions, COPY, formatDollars, formatSize, matchMessages,
+  alreadyHaveLine, badNumberLine, turnedOffLine, calibrationHeading, calibrationLine, canCheck, columnOptions, COPY, formatDollars, formatSize, matchMessages,
   moreDaysLine, noDateLine, otherLocationLine, readingLine, repeatedDatesLine, resultLines, rowList, rowsBecameDays,
   sendErrorOf, sendingLine, sendLabel, stepLine,
 } from '../../../src/portal/upload/copy';
@@ -46,6 +46,19 @@ describe('the result by role (11.2 step 4, D16)', () => {
       'Your sales history is in: 400 days, Jan 1, 2025 to Feb 4, 2026.',
     );
     expect(calibrationLine({ state: 'no_sales_data' })).toMatch(/^Upload your sales history to start\./);
+  });
+
+  test('the calibration heading (14.1): a published forecast never reads “Not calibrated yet”', () => {
+    const history = { dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-15' };
+    expect(calibrationHeading({ state: 'no_sales_data' })).toBe('Not calibrated yet');
+    expect(calibrationHeading({ state: 'not_calibrated', ...history })).toBe('Not calibrated yet');
+    expect(calibrationHeading({ state: 'calibrated', ...history, dataThrough: '2026-11-15', newerDays: 0, nextRefresh: '2026-11-23' })).toBe('Forecast published');
+    expect(calibrationHeading({ state: 'stale', ...history, dataThrough: '2026-11-08', newerDays: 6, nextRefresh: '2026-11-23' })).toBe(
+      'Forecast published, 6 newer days not in it yet',
+    );
+    expect(calibrationHeading({ state: 'stale', ...history, dataThrough: '2026-11-14', newerDays: 1, nextRefresh: null })).toBe(
+      'Forecast published, 1 newer day not in it yet',
+    );
   });
 });
 

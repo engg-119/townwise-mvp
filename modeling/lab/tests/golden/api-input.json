@@ -1,5 +1,5 @@
 {
- "schema": "townwise.lab-input/1",
+ "schema": "townwise.lab-input/2",
  "calibrationId": "abababababababababababab",
  "metric": "guests",
  "today": "2026-06-01",
@@ -8320,8 +8320,540 @@
    "booked": false
   }
  ],
+ "calendar": [
+  {
+   "id": "us:labor-day:2024",
+   "group": "us:labor-day",
+   "kind": "holiday",
+   "start": "2024-09-02",
+   "end": "2024-09-02",
+   "confidence": null
+  },
+  {
+   "id": "us:columbus-day:2024",
+   "group": "us:columbus-day",
+   "kind": "holiday",
+   "start": "2024-10-14",
+   "end": "2024-10-14",
+   "confidence": null
+  },
+  {
+   "id": "us:veterans-day:2024",
+   "group": "us:veterans-day",
+   "kind": "holiday",
+   "start": "2024-11-11",
+   "end": "2024-11-11",
+   "confidence": null
+  },
+  {
+   "id": "us:thanksgiving:2024",
+   "group": "us:thanksgiving",
+   "kind": "holiday",
+   "start": "2024-11-28",
+   "end": "2024-11-28",
+   "confidence": null
+  },
+  {
+   "id": "us:christmas:2024",
+   "group": "us:christmas",
+   "kind": "holiday",
+   "start": "2024-12-25",
+   "end": "2024-12-25",
+   "confidence": null
+  },
+  {
+   "id": "us:new-years-day:2025",
+   "group": "us:new-years-day",
+   "kind": "holiday",
+   "start": "2025-01-01",
+   "end": "2025-01-01",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-01-06:winter-term-classes",
+   "group": "hanover-nh:classes:winter",
+   "kind": "term",
+   "start": "2025-01-06",
+   "end": "2025-03-07",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:martin-luther-king-jr-day:2025",
+   "group": "us:martin-luther-king-jr-day",
+   "kind": "holiday",
+   "start": "2025-01-20",
+   "end": "2025-01-20",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-02-06:winter-carnival",
+   "group": "hanover-nh:winter-carnival",
+   "kind": "event",
+   "start": "2025-02-06",
+   "end": "2025-02-09",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:washingtons-birthday:2025",
+   "group": "us:washingtons-birthday",
+   "kind": "holiday",
+   "start": "2025-02-17",
+   "end": "2025-02-17",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-03-10:winter-term-finals",
+   "group": "hanover-nh:finals:winter",
+   "kind": "term",
+   "start": "2025-03-10",
+   "end": "2025-03-14",
+   "confidence": "medium"
+  },
+  {
+   "id": "hanover-nh:2025-03-31:spring-term-classes",
+   "group": "hanover-nh:classes:spring",
+   "kind": "term",
+   "start": "2025-03-31",
+   "end": "2025-06-04",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2025-05-16:green-key-weekend",
+   "group": "hanover-nh:green-key",
+   "kind": "event",
+   "start": "2025-05-16",
+   "end": "2025-05-17",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:memorial-day:2025",
+   "group": "us:memorial-day",
+   "kind": "holiday",
+   "start": "2025-05-26",
+   "end": "2025-05-26",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-06-06:spring-term-finals",
+   "group": "hanover-nh:finals:spring",
+   "kind": "term",
+   "start": "2025-06-06",
+   "end": "2025-06-10",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2025-06-15:commencement",
+   "group": "hanover-nh:commencement",
+   "kind": "event",
+   "start": "2025-06-15",
+   "end": "2025-06-15",
+   "confidence": "high"
+  },
+  {
+   "id": "us:juneteenth:2025",
+   "group": "us:juneteenth",
+   "kind": "holiday",
+   "start": "2025-06-19",
+   "end": "2025-06-19",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-06-26:summer-term-classes",
+   "group": "hanover-nh:classes:summer",
+   "kind": "term",
+   "start": "2025-06-26",
+   "end": "2025-08-27",
+   "confidence": "high"
+  },
+  {
+   "id": "us:independence-day:2025",
+   "group": "us:independence-day",
+   "kind": "holiday",
+   "start": "2025-07-04",
+   "end": "2025-07-04",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-08-30:summer-term-finals",
+   "group": "hanover-nh:finals:summer",
+   "kind": "term",
+   "start": "2025-08-30",
+   "end": "2025-09-02",
+   "confidence": "high"
+  },
+  {
+   "id": "us:labor-day:2025",
+   "group": "us:labor-day",
+   "kind": "holiday",
+   "start": "2025-09-01",
+   "end": "2025-09-01",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-09-03:new-student-orientation",
+   "group": "hanover-nh:orientation",
+   "kind": "event",
+   "start": "2025-09-03",
+   "end": "2025-09-15",
+   "confidence": "medium"
+  },
+  {
+   "id": "hanover-nh:2025-09-15:fall-term-classes",
+   "group": "hanover-nh:classes:fall",
+   "kind": "term",
+   "start": "2025-09-15",
+   "end": "2025-11-18",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2025-09-20:home-football-vs-new-hampshire",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2025-09-20",
+   "end": "2025-09-20",
+   "confidence": "medium"
+  },
+  {
+   "id": "hanover-nh:2025-09-26:family-weekend",
+   "group": "hanover-nh:family-weekend",
+   "kind": "event",
+   "start": "2025-09-26",
+   "end": "2025-09-28",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2025-10-10:dartmouth-night-and-homecoming",
+   "group": "hanover-nh:homecoming",
+   "kind": "event",
+   "start": "2025-10-10",
+   "end": "2025-10-12",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2025-10-11:home-football-vs-yale",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2025-10-11",
+   "end": "2025-10-11",
+   "confidence": "high"
+  },
+  {
+   "id": "us:columbus-day:2025",
+   "group": "us:columbus-day",
+   "kind": "holiday",
+   "start": "2025-10-13",
+   "end": "2025-10-13",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-10-24:home-football-vs-columbia",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2025-10-24",
+   "end": "2025-10-24",
+   "confidence": "medium"
+  },
+  {
+   "id": "hanover-nh:2025-11-08:home-football-vs-princeton",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2025-11-08",
+   "end": "2025-11-08",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:veterans-day:2025",
+   "group": "us:veterans-day",
+   "kind": "holiday",
+   "start": "2025-11-11",
+   "end": "2025-11-11",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2025-11-15:home-football-vs-cornell",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2025-11-15",
+   "end": "2025-11-15",
+   "confidence": "medium"
+  },
+  {
+   "id": "hanover-nh:2025-11-21:fall-term-finals",
+   "group": "hanover-nh:finals:fall",
+   "kind": "term",
+   "start": "2025-11-21",
+   "end": "2025-11-26",
+   "confidence": "high"
+  },
+  {
+   "id": "us:thanksgiving:2025",
+   "group": "us:thanksgiving",
+   "kind": "holiday",
+   "start": "2025-11-27",
+   "end": "2025-11-27",
+   "confidence": null
+  },
+  {
+   "id": "us:christmas:2025",
+   "group": "us:christmas",
+   "kind": "holiday",
+   "start": "2025-12-25",
+   "end": "2025-12-25",
+   "confidence": null
+  },
+  {
+   "id": "us:new-years-day:2026",
+   "group": "us:new-years-day",
+   "kind": "holiday",
+   "start": "2026-01-01",
+   "end": "2026-01-01",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-01-05:winter-term-classes",
+   "group": "hanover-nh:classes:winter",
+   "kind": "term",
+   "start": "2026-01-05",
+   "end": "2026-03-10",
+   "confidence": "high"
+  },
+  {
+   "id": "us:martin-luther-king-jr-day:2026",
+   "group": "us:martin-luther-king-jr-day",
+   "kind": "holiday",
+   "start": "2026-01-19",
+   "end": "2026-01-19",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-02-05:winter-carnival",
+   "group": "hanover-nh:winter-carnival",
+   "kind": "event",
+   "start": "2026-02-05",
+   "end": "2026-02-08",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:washingtons-birthday:2026",
+   "group": "us:washingtons-birthday",
+   "kind": "holiday",
+   "start": "2026-02-16",
+   "end": "2026-02-16",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-03-13:winter-term-finals",
+   "group": "hanover-nh:finals:winter",
+   "kind": "term",
+   "start": "2026-03-13",
+   "end": "2026-03-17",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-03-30:spring-term-classes",
+   "group": "hanover-nh:classes:spring",
+   "kind": "term",
+   "start": "2026-03-30",
+   "end": "2026-06-03",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-05-15:green-key-weekend",
+   "group": "hanover-nh:green-key",
+   "kind": "event",
+   "start": "2026-05-15",
+   "end": "2026-05-16",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:memorial-day:2026",
+   "group": "us:memorial-day",
+   "kind": "holiday",
+   "start": "2026-05-25",
+   "end": "2026-05-25",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-06-05:spring-term-finals",
+   "group": "hanover-nh:finals:spring",
+   "kind": "term",
+   "start": "2026-06-05",
+   "end": "2026-06-09",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-06-14:commencement",
+   "group": "hanover-nh:commencement",
+   "kind": "event",
+   "start": "2026-06-14",
+   "end": "2026-06-14",
+   "confidence": "high"
+  },
+  {
+   "id": "us:juneteenth:2026",
+   "group": "us:juneteenth",
+   "kind": "holiday",
+   "start": "2026-06-19",
+   "end": "2026-06-19",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-06-25:summer-term-classes",
+   "group": "hanover-nh:classes:summer",
+   "kind": "term",
+   "start": "2026-06-25",
+   "end": "2026-08-26",
+   "confidence": "high"
+  },
+  {
+   "id": "us:independence-day:2026",
+   "group": "us:independence-day",
+   "kind": "holiday",
+   "start": "2026-07-04",
+   "end": "2026-07-04",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-08-29:summer-term-finals",
+   "group": "hanover-nh:finals:summer",
+   "kind": "term",
+   "start": "2026-08-29",
+   "end": "2026-09-01",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-09-02:new-student-orientation",
+   "group": "hanover-nh:orientation",
+   "kind": "event",
+   "start": "2026-09-02",
+   "end": "2026-09-14",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:labor-day:2026",
+   "group": "us:labor-day",
+   "kind": "holiday",
+   "start": "2026-09-07",
+   "end": "2026-09-07",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-09-14:fall-term-classes",
+   "group": "hanover-nh:classes:fall",
+   "kind": "term",
+   "start": "2026-09-14",
+   "end": "2026-11-17",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-09-14:fall-term-classes-begin",
+   "group": null,
+   "kind": "event",
+   "start": "2026-09-14",
+   "end": "2026-09-14",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-09-25:family-weekend",
+   "group": "hanover-nh:family-weekend",
+   "kind": "event",
+   "start": "2026-09-25",
+   "end": "2026-09-27",
+   "confidence": "medium"
+  },
+  {
+   "id": "hanover-nh:2026-09-26:home-football-vs-monmouth",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2026-09-26",
+   "end": "2026-09-26",
+   "confidence": "medium"
+  },
+  {
+   "id": "hanover-nh:2026-10-02:dartmouth-night-and-homecoming",
+   "group": "hanover-nh:homecoming",
+   "kind": "event",
+   "start": "2026-10-02",
+   "end": "2026-10-03",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-10-03:home-football-vs-penn",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2026-10-03",
+   "end": "2026-10-03",
+   "confidence": "high"
+  },
+  {
+   "id": "us:columbus-day:2026",
+   "group": "us:columbus-day",
+   "kind": "holiday",
+   "start": "2026-10-12",
+   "end": "2026-10-12",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-10-17:home-football-vs-merrimack",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2026-10-17",
+   "end": "2026-10-17",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-10-30:home-football-vs-harvard",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2026-10-30",
+   "end": "2026-10-30",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:veterans-day:2026",
+   "group": "us:veterans-day",
+   "kind": "holiday",
+   "start": "2026-11-11",
+   "end": "2026-11-11",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-11-17:fall-term-classes-end",
+   "group": null,
+   "kind": "event",
+   "start": "2026-11-17",
+   "end": "2026-11-17",
+   "confidence": null
+  },
+  {
+   "id": "hanover-nh:2026-11-20:fall-term-finals",
+   "group": "hanover-nh:finals:fall",
+   "kind": "term",
+   "start": "2026-11-20",
+   "end": "2026-11-25",
+   "confidence": "high"
+  },
+  {
+   "id": "hanover-nh:2026-11-21:home-football-vs-brown",
+   "group": "hanover-nh:home-football",
+   "kind": "event",
+   "start": "2026-11-21",
+   "end": "2026-11-21",
+   "confidence": "medium"
+  },
+  {
+   "id": "us:thanksgiving:2026",
+   "group": "us:thanksgiving",
+   "kind": "holiday",
+   "start": "2026-11-26",
+   "end": "2026-11-26",
+   "confidence": null
+  }
+ ],
  "champion": {
   "runId": "d4d4d4d4d4d4d4d4d4d4d4d4",
+  "engine": "model",
+  "recordedWeekdayBiasMeanAbs": 0.04,
   "dataThrough": "2026-01-31",
   "days": [
    {

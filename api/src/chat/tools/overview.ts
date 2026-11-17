@@ -1,7 +1,7 @@
 // get_location_overview: the location, today's date, its sales coverage and its latest monthly totals.
 import { z } from 'zod';
 
-import { calibrationOf } from '../../calibration.ts';
+import { calibrationFor, calibrationWords } from '../../calibration.ts';
 import { townProfileOf } from '../../handlers/towns.ts';
 import { weekdayOf } from '../../time-zones.ts';
 import type { ChatTool } from './registry.ts';
@@ -36,6 +36,7 @@ export const overviewTool: ChatTool<Record<string, never>> = {
       ctx.stores.salesDays.coverage(scope, location.id),
       ctx.stores.salesDays.months(scope, location.id),
     ]);
+    const calibration = await calibrationFor(ctx, scope, location, coverage);
     return {
       content: JSON.stringify({
         location: { name: location.name, town: { name: location.town.name, state: location.town.state } },
@@ -47,7 +48,9 @@ export const overviewTool: ChatTool<Record<string, never>> = {
           firstDate: coverage.firstDate, lastDate: coverage.lastDate, dayCount: coverage.dayCount,
           guestsDayCount: coverage.guestsDayCount, netSalesDayCount: coverage.netSalesDayCount, missingDays: coverage.missingDays,
         },
-        calibration: calibrationOf(coverage).state,
+        calibration: calibration.state,
+        // D42: "Townwise refits on {Mon} with the {n} days since." for a stale forecast, else null.
+        calibrationWords: calibrationWords(calibration),
         townProfile: location.town.townId !== null && townProfileOf(location.town.townId) !== undefined,
         months: months.slice(-OVERVIEW_MONTHS).map((month) => ({
           month: month.month, days: month.dayCount, guests: month.guests, netSalesUsd: dollars(month.netSalesCents),

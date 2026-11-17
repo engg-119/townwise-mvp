@@ -22,8 +22,8 @@ describe('indexes', () => {
     const collections = Object.values(connection.models).map((model) => model.collection.collectionName).sort();
     expect(collections).toEqual([
       'tw_access_requests',
-      // U9, TownwiseAI's questions.
-      'tw_agent_answers',
+      // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
+      'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
       'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
       'tw_file_entries', 'tw_file_sweeps', 'tw_files', 'tw_files_usage', 'tw_imports', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_upload_days',
       'tw_uploads', 'tw_view_as_grants',
@@ -35,6 +35,8 @@ describe('indexes', () => {
       'tw_forecast_runs', 'tw_forecasts',
       // The forecast lab.
       'tw_calibrations',
+      // D42, the weekly refresh.
+      'tw_forecast_weeks', 'tw_forecast_schedule',
       'tw_order_cards', 'tw_order_decisions', 'tw_order_rules',
       'tw_order_setups', 'tw_item_sales', 'tw_order_counts',
       // Business rules (spec 6.24).
@@ -44,6 +46,14 @@ describe('indexes', () => {
       // Google access for calendars (openspec change connect-google-calendar).
       'tw_google_connections',
     ].sort());
+  });
+
+  it('keeps one weekly refresh row per location per week (D42)', () => {
+    expect(indexesOf(registered(), 'TwForecastWeek')).toContainEqual([{ orgId: 1, locationId: 1, week: 1 }, expect.objectContaining({ unique: true })]);
+  });
+
+  it('keeps one weekly suggestions pass per location per week', () => {
+    expect(indexesOf(registered(), 'TwSuggestionPass')).toContainEqual([{ orgId: 1, locationId: 1, week: 1 }, expect.objectContaining({ unique: true })]);
   });
 
   it('declares only indexes DocumentDB 5.0 builds', () => {
