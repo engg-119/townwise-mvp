@@ -24,3 +24,8 @@ reason = "deepmerge 4.3.1 (@expo/config, jest-config) has no fixed release; @exp
 id = "GHSA-mrhx-c7xc-m3w5"
 ignoreUntil = 2026-12-04
 reason = "zod 3.25.76 is nested under expo for @expo/cli (^3.25.76); the fix is zod 4.6.6, a new major, and @expo/cli drops zod 3 in 58.1.18 (2026-10-31), which min-release-age=7 rejects until 2026-11-07. The app and API use zod 4.6.7."
+
+[[IgnoredVulns]]
+id = "GHSA-fc5q-39xc-vjpf"
+ignoreUntil = 2026-12-16
+reason = "picomatch 4.0.7 (vitest, tinyglobby, fdir, vite, jest 30, @expo/cli, @expo/metro-config) and 2.3.2 (micromatch and jest-util under jest 29) are affected; no fixed release exists (4.0.7 is the latest, checked 2026-11-17). Build and test tooling only: not in the API's production dependencies (npm ls --omit=dev) or the web bundle, and every glob it matches comes from the repository's own config, never from a user."
