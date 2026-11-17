@@ -32,6 +32,15 @@ function daysOf(startDate: string, endDate: string | null, weekdays: readonly nu
   return which === null ? dates : `${which.replace(/ only$/, '')}, ${dates}`;
 }
 
+/**
+ * What a note of kind other is, by its effect: "Other on Thu, Dec 31?" asks nothing an admin can answer. Null for
+ * every other kind, which its kind names.
+ */
+function otherWords(note: Extract<Suggestion, { type: 'note' }>['note']): string | null {
+  if (note.kind !== 'other') return null;
+  return note.effect === 'unknown' ? 'Something unusual' : EFFECT_LABEL[note.effect];
+}
+
 /** The card's question. */
 export function suggestionHeading(suggestion: Suggestion): string {
   if (suggestion.type === 'rule') return `Add the rule “${suggestion.text}”?`;
@@ -42,17 +51,18 @@ export function suggestionHeading(suggestion: Suggestion): string {
     return note.expectedGuests === null ? `Booked for a private party on ${days}?` : `Booked for a private party of ${formatCount(note.expectedGuests)} on ${days}?`;
   }
   if (note.kind === 'private_event' && note.expectedGuests !== null) return `A private event of ${formatCount(note.expectedGuests)} guests on ${days}?`;
-  return `${KIND_LABEL[note.kind]} on ${days}?`;
+  return `${otherWords(note) ?? KIND_LABEL[note.kind]} on ${days}?`;
 }
 
 /**
  * What a note suggestion saves beyond its heading, in the notes list's words (P14): "More guests than usual. About 220
- * guests. 6 pm to 9 pm." A closed effect is left out, since the heading says it. Null when there is nothing more.
+ * guests. 6 pm to 9 pm." A closed effect, and an other note's effect, are left out, since the heading says them. Null
+ * when there is nothing more.
  */
 export function suggestionFacts(suggestion: Suggestion): string | null {
   if (suggestion.type === 'rule') return null;
   const { note } = suggestion;
-  const parts = [note.effect === 'closed' ? null : EFFECT_LABEL[note.effect], guestsLine(note.expectedGuests), hoursLine(note)]
+  const parts = [note.effect === 'closed' || note.kind === 'other' ? null : EFFECT_LABEL[note.effect], guestsLine(note.expectedGuests), hoursLine(note)]
     .filter((part) => part !== null);
   return parts.length === 0 ? null : `${parts.join('. ')}.`;
 }
@@ -70,7 +80,7 @@ export function decidedLine(suggestion: Suggestion, decided: Decided): string {
   if (decided.status === 'dismissed') return 'Dismissed. TownwiseAI won’t suggest it again.';
   if (suggestion.type === 'rule') return `Added the business rule “${suggestion.text}”.`;
   const { note } = suggestion;
-  return `Saved a note: ${KIND_LABEL[note.kind]}, ${daysOf(note.startDate, note.endDate, note.weekdays)}.`;
+  return `Saved a note: ${otherWords(note) ?? KIND_LABEL[note.kind]}, ${daysOf(note.startDate, note.endDate, note.weekdays)}.`;
 }
 
 /** "Based on Commencement (Jun 14)". Null when it names none. */

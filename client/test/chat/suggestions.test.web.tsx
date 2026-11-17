@@ -7,7 +7,8 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { resetDrafts } from '../../src/chat/drafts';
-import { weeklyWords } from '../../src/chat/ui/SuggestionCard';
+import { decidedLine, suggestionFacts, suggestionHeading, weeklyWords } from '../../src/chat/ui/SuggestionCard';
+import type { Suggestion } from '../../src/chat/api';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
@@ -188,14 +189,26 @@ const OTHER_NOTE = {
   },
 };
 
-test('a note suggestion shows what Accept will save: its effect, guests and hours, and its detail as written', async () => {
+test('a note suggestion shows what Accept will save: its effect in the heading, its guests and hours, and its detail as written', async () => {
   const api = chatApi(true);
   api.panel = { ...(api.panel as object), suggestions: [OTHER_NOTE] };
   renderAt(api, meOf(ACCESS.admin));
   const panel = await side();
-  const note = card(panel, 'Other on Jan 8 to Jan 10, 2027?');
-  expect(within(note).getByText('More guests than usual. About 220 guests. 6 pm to 9 pm.')).toBeTruthy();
+  const note = card(panel, 'More guests than usual on Jan 8 to Jan 10, 2027?');
+  expect(within(note).getByText('About 220 guests. 6 pm to 9 pm.')).toBeTruthy();
   expect(within(note).getByText('Winter term starts; students back in town')).toBeTruthy();
+});
+
+test('a note of kind other asks its effect, never "Other", in its heading and in what Accept saved', () => {
+  const other = (effect: string): Suggestion => ({ ...OTHER_NOTE, note: { ...OTHER_NOTE.note, effect, startDate: '2026-12-31', endDate: '2026-12-31' } }) as Suggestion;
+  expect(suggestionHeading(other('more_guests'))).toBe('More guests than usual on Thu, Dec 31, 2026?');
+  expect(suggestionHeading(other('fewer_guests'))).toBe('Fewer guests than usual on Thu, Dec 31, 2026?');
+  expect(suggestionHeading(other('unknown'))).toBe('Something unusual on Thu, Dec 31, 2026?');
+  expect(suggestionHeading(other('closed'))).toBe('Closed on Thu, Dec 31, 2026?');
+  expect(decidedLine(other('more_guests'), { status: 'accepted', note: null, rule: null })).toBe('Saved a note: More guests than usual, Thu, Dec 31, 2026.');
+  expect(decidedLine(other('unknown'), { status: 'accepted', note: null, rule: null })).toBe('Saved a note: Something unusual, Thu, Dec 31, 2026.');
+  // The heading says the effect, so the facts don't repeat it.
+  expect(suggestionFacts(other('unknown'))).toBe('About 220 guests. 6 pm to 9 pm.');
 });
 
 test('with none open, the section says so and still shows the switch', async () => {

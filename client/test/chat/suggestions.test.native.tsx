@@ -80,7 +80,7 @@ test('an org admin accepts a suggestion and turns weekly suggestions off', async
   expect(api.writes.map((write) => write.path)).toEqual([accept, '/api/org/weekly-suggestions']);
 });
 
-test('a note suggestion shows its effect, guests and hours, and its detail as written', async () => {
+test('a note suggestion of kind other asks its effect, and shows its guests and hours and its detail as written', async () => {
   jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width: 375 });
   const chat = fakeChatApi();
   chat.panel = {
@@ -97,7 +97,7 @@ test('a note suggestion shows its effect, guests and hours, and its detail as wr
   serveAbout(chat);
   await renderApp('/locations/l1/agent?panel=questions', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin'), fallback: chat }));
   const side = screen.getByTestId('agent-side');
-  expect(await within(side).findByRole('heading', { name: 'Other on Jan 8 to Jan 10, 2027?' })).toBeTruthy();
-  expect(within(side).getByText('More guests than usual. About 220 guests. 6 pm to 9 pm.')).toBeTruthy();
+  expect(await within(side).findByRole('heading', { name: 'More guests than usual on Jan 8 to Jan 10, 2027?' })).toBeTruthy();
+  expect(within(side).getByText('About 220 guests. 6 pm to 9 pm.')).toBeTruthy();
   expect(within(side).getByText('Winter term starts; students back in town')).toBeTruthy();
 });
