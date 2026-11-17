@@ -25,6 +25,8 @@ import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
+import { DELETED_PERSON } from '../people.ts';
+import { forecastScheduleModel } from './forecast-schedule.ts';
 import { COUNTED_WEEK_STATUSES, forecastWeekModel } from './forecast-weeks.ts';
 import { forecastRunModel } from './forecasts.ts';
 import { googleConnectionModel } from './google-connections.ts';
@@ -334,6 +336,8 @@ export async function deletePersonRecords(
   // switch and the decisions stay. Not counted.
   await orgModel(connection).updateMany({ 'weeklySuggestions.by': userId }, { $set: { 'weeklySuggestions.by': null } });
   await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
+  // D42: the staff member who paused the weekly refresh, on its one schedule document; the pause stays. Not counted.
+  await forecastScheduleModel(connection).updateOne({ 'paused.by': userId }, { $set: { 'paused.by': null, 'paused.email': DELETED_PERSON } });
   // Google access for calendars (connect-google-calendar): the handler has already ended any still found, revoking
   // each; this is the backstop for one left by a crash. Not counted, so the audit details are unchanged.
   await googleConnectionModel(connection).deleteMany({ userId });

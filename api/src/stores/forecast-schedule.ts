@@ -1,7 +1,7 @@
 // tw_forecast_schedule (D42, spec 6.25): one document, `{ _id: 'weekly', owner, leaseUntil, paused, suggestionsAt }`.
 // The weekly refresh's lease (10 minutes, taken and renewed by compare-and-set as the file sweep's is, so overlapping
 // worker executions do no harm), the staff pause (`{ at, by, email }` of the staff member, or null), which pauses the
-// whole weekly worker, weekly suggestions included, and when a pass last ran the weekly suggestions (openspec change
+// whole weekly worker, weekly suggestions included (a deleted person's id and address are cleared from it), and when a pass last ran the weekly suggestions (openspec change
 // weekly-forecast-suggestions; null or absent before the first), which TownwiseAI's panel reads to say whether they
 // run. It holds no organization's data, so it is not a tenant store and takes no OrgScope: the weekly worker
 // (lab/schedule.ts), the staff route that pauses it (handlers/calibrations.ts), the next refresh date (calibration.ts)
@@ -14,8 +14,9 @@ const SCHEDULE_ID = 'weekly';
 
 export interface SchedulePause {
   at: Date;
-  /** The staff member's user id. */
-  by: string;
+  /** The staff member's user id; null once that person is deleted (stores/cross-tenant.ts deletePersonRecords). */
+  by: string | null;
+  /** Their address, or DELETED_PERSON once they are deleted. */
   email: string;
 }
 
@@ -30,7 +31,7 @@ interface ForecastScheduleFields {
 function forecastScheduleSchema(): Schema<ForecastScheduleFields> {
   const paused = new Schema<SchedulePause>({
     at: { type: Date, required: true },
-    by: { type: String, required: true },
+    by: { type: String, default: null },
     email: { type: String, required: true },
   }, { _id: false, strict: 'throw' });
   return new Schema<ForecastScheduleFields>({

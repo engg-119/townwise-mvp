@@ -573,6 +573,25 @@ describe('POST /api/admin/people/delete', () => {
     }
   });
 
+  it('clears a former staff member’s id and address from the weekly refresh’s pause, which stays paused', async () => {
+    // A former staff member (no longer in TOWNWISE_SUPERADMIN_EMAILS) who last paused the weekly refresh.
+    const former = await person('former-staff');
+    const pausedAt = server.clock.now();
+    await server.ctx.stores.forecastSchedule.setPaused({ at: pausedAt, by: former.session.userId, email: former.email }, pausedAt);
+    try {
+      expect((await deletePerson(former.email)).status).toBe(200);
+      const doc = await server.connection.collection('tw_forecast_schedule').findOne({ _id: 'weekly' as never });
+      expect(doc?.paused).toEqual({ at: pausedAt, by: null, email: 'Deleted person' });
+      expect(JSON.stringify(doc)).not.toContain(former.email);
+      expect(JSON.stringify(doc)).not.toContain(former.session.userId);
+      // Staff still see that it is paused, by whom no longer.
+      const res = await call(server, '/api/admin/forecast-schedule', { session: staff, json: { paused: true } });
+      expect(await res.json()).toMatchObject({ schedule: { paused: { at: pausedAt.toISOString(), email: 'Deleted person' } } });
+    } finally {
+      await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
+    }
+  });
+
   it('deletes an address that never signed in: its invitations and the events that name it', async () => {
     const orgId = await createOrg(server, { name: 'Inviting Bakery' });
     const email = uniqueEmail('never-signed-in');
