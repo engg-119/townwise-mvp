@@ -6,7 +6,8 @@
 // suggestion's id as the note's or rule's id, then marks the suggestion accepted by compare-and-set. There are no
 // transactions, so a retry, a crash between the steps or a second tab end with one note or rule, and only the request
 // whose compare-and-set lands records `agent.suggestion_accepted`. A dismiss racing an accept that already wrote its
-// note loses to it: the note exists. A suggestion whose first date is today or past in the town is gone (404), as an
+// note loses to it: the note exists, so the dismiss finishes the accept instead (an accept that died between its two
+// steps included). A suggestion whose first date is today or past in the town is gone (404), as an
 // unknown id or another organization's is. Only org admins decide, outside view-as (staff open as admin among them, D25);
 // members read.
 // Logs and audit events carry ids, the type and the switch's state only.
@@ -25,6 +26,7 @@ import type { SuggestionRecord } from '../stores/agent-suggestions.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent } from '../stores/notes.ts';
+import { SUGGESTIONS_SEEN_MS } from '../lab/schedule.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { townEvents } from '../town-calendar.ts';
 import { utcDay } from '../dates.ts';
@@ -53,7 +55,11 @@ export type SuggestionView = {
 export interface WeeklySuggestionsView {
   /** The organization's switch: on unless an org admin turned it off. */
   on: boolean;
-  /** TOWNWISE_WEEKLY_SUGGESTIONS is true and TownwiseAI is on (ANTHROPIC_API_KEY): passes can run. */
+  /**
+   * Passes run here: TOWNWISE_WEEKLY_SUGGESTIONS is true, the weekly worker ran them within the last 3 hours (the
+   * schedule document's `suggestionsAt`, which only a worker with its own ANTHROPIC_API_KEY sets), and staff have not
+   * paused it.
+   */
   available: boolean;
   /** An org admin outside view-as: turns the switch and accepts or dismisses suggestions. */
   canChange: boolean;
@@ -105,16 +111,18 @@ export async function suggestionsPanel(
   ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord,
 ): Promise<{ suggestions: SuggestionView[]; weeklySuggestions: WeeklySuggestionsView }> {
   const today = todayAt(ctx, location);
-  const [org, open] = await Promise.all([
+  const [org, open, worker] = await Promise.all([
     ctx.stores.orgs.findById(caller.scope.orgId),
     ctx.stores.agentSuggestions.listOpen(caller.scope, location.id, today),
+    ctx.stores.forecastSchedule.suggestionsState(),
   ]);
+  const seen = worker.ranAt !== null && ctx.now().getTime() - worker.ranAt.getTime() <= SUGGESTIONS_SEEN_MS;
   const calendar = calendarById(location, today);
   return {
     suggestions: open.map((record) => suggestionView(record, calendar)),
     weeklySuggestions: {
       on: org?.weeklySuggestions.on ?? true,
-      available: ctx.config.weeklySuggestions && ctx.chat !== null,
+      available: ctx.config.weeklySuggestions && seen && !worker.paused,
       canChange: decides(caller),
     },
   };
@@ -147,6 +155,25 @@ export async function switchWeeklySuggestions(ctx: TownwiseContext, req: Request
   }
   ctx.logger.info({ orgId: scope.orgId, on }, 'townwise.weekly_suggestions_switched');
   res.status(200).json({ weeklySuggestions: { on } });
+}
+
+/** Whether the note or rule an accept writes for this suggestion (with its id) exists. */
+async function wasWritten(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, record: SuggestionRecord): Promise<boolean> {
+  return record.type === 'note'
+    ? (await ctx.stores.notes.find(caller.scope, location.id, record.id)) !== null
+    : (await ctx.stores.businessRules.find(caller.scope, location.id, record.id)) !== null;
+}
+
+/** Marks it accepted by compare-and-set; only the request whose compare-and-set lands records `agent.suggestion_accepted`. */
+async function markAccepted(ctx: TownwiseContext, admin: MemberPrincipal, location: LocationRecord, record: SuggestionRecord): Promise<void> {
+  const { scope } = admin;
+  if (await ctx.stores.agentSuggestions.markAccepted(scope, location.id, record.id, { by: admin.userId, now: ctx.now() })) {
+    await recordAfter(ctx, {
+      ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_accepted',
+      target: { type: 'location', id: location.id },
+      details: { locationId: location.id, suggestionId: record.id, type: record.type },
+    });
+  }
 }
 
 /** The note or rule an accepted suggestion wrote, as the caller sees it; null when it was deleted since. */
@@ -191,13 +218,7 @@ export async function acceptSuggestion(ctx: TownwiseContext, req: Request, res: 
     // The note or rule takes the suggestion's id, so a retry or a second tab finds the one already written.
     if (record.type === 'note') await addNote(ctx, admin, location, record.note, { id: record.id });
     else await addRule(ctx, admin, location, record.text, { id: record.id, via: 'townwise_ai', schedule: record.schedule });
-    if (await ctx.stores.agentSuggestions.markAccepted(scope, location.id, record.id, { by: admin.userId, now: ctx.now() })) {
-      await recordAfter(ctx, {
-        ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_accepted',
-        target: { type: 'location', id: location.id },
-        details: { locationId: location.id, suggestionId: record.id, type: record.type },
-      });
-    }
+    await markAccepted(ctx, admin, location, record);
   }
   ctx.logger.info({ orgId: scope.orgId, locationId: location.id, suggestionId: record.id, decision: 'accepted' }, 'townwise.agent_suggestion');
   const body: DecideResult = { suggestion: { id: record.id, status: 'accepted' }, ...await writtenView(ctx, admin, location, record) };
@@ -206,7 +227,9 @@ export async function acceptSuggestion(ctx: TownwiseContext, req: Request, res: 
 
 /**
  * POST /api/org/locations/:locationId/agent/suggestions/:suggestionId/dismiss {} (org admin): 200 DecideResult. One
- * an accept got to first answers as accepted, with what it wrote; an expired one or an unknown id, 404.
+ * an accept got to first answers as accepted, with what it wrote: also one whose note or rule an accept wrote without
+ * reaching its compare-and-set (it died, or a store error answered 500), which this finishes accepting, recording
+ * `agent.suggestion_accepted`. An expired one or an unknown id, 404.
  */
 export async function dismissSuggestion(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
@@ -215,7 +238,8 @@ export async function dismissSuggestion(ctx: TownwiseContext, req: Request, res:
   const { location, record } = await suggestionOf(ctx, admin, req);
   if (record.status === 'open' && !isOpen(ctx, location, record)) throw notFound();
   if (record.status === 'expired') throw notFound();
-  if (await ctx.stores.agentSuggestions.markDismissed(scope, location.id, record.id, { by: admin.userId, now: ctx.now() })) {
+  if (record.status !== 'accepted' && await wasWritten(ctx, admin, location, record)) await markAccepted(ctx, admin, location, record);
+  else if (await ctx.stores.agentSuggestions.markDismissed(scope, location.id, record.id, { by: admin.userId, now: ctx.now() })) {
     await recordAfter(ctx, {
       ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_dismissed',
       target: { type: 'location', id: location.id },

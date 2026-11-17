@@ -25,8 +25,9 @@ Lands after `autonomous-forecasts` phase 3b. Tests first.
 
 ## 4. Owner, review and verification
 
-- [ ] 4.1 Owner: approve the privacy sentence, and decide both `[CONFIRM]` markers.
+- [ ] 4.1 Owner: approve the privacy sentence, and decide the `[CONFIRM]` markers (both in the spec, and the panel's 3-hour window added with the review fixes).
 - [ ] 4.2 Independent UI review of the Questions panel (web and native).
   - Open: needs an agent that did not build the panel (`client/src/chat/ui/SuggestionCard.tsx`).
 - [ ] 4.3 An end-to-end test with the worker and a fake model (one pass makes suggestions for an organization with no field), then `/review`, then `/verify`. Push only after the owner's go.
   - Partly done: the end-to-end test is in `api/test/weekly-forecasts-worker.int.test.ts` (the worker with a scripted model and the lab off makes one call and stores the suggestion for an organization with no field; without a model the suggestions are off). `/review` and `/verify` (the full `npm run verify`) are left for the session that merges, since this branch's run was limited to the suites it touched; nothing is pushed.
+- [x] 4.4 Review fixes (2026-11-17), tests first: a dismiss after an accept that wrote its note finishes the accept; the switch is read again before each location; stale `running` pass rows are resolved and their reservation refunded once; the reservation covers the request's ceiling and the request sends only earlier suggestions overlapping the 91 days; a location deleted mid-call keeps nothing; the staff pause pauses weekly suggestions (console dialog words, spec P21 and D42); `available` follows the worker's `suggestionsAt`. Tests: `weekly-refresh.int.test.ts` (8 new), `weekly-suggestions.int.test.ts` (2 new), `weekly-suggestions.test.ts` (1 new), `client/test/portal/console/forecasts.test.web.tsx`.

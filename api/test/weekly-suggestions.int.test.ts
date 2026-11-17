@@ -11,7 +11,9 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import type { OrgScope } from '../src/access/policy.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import type { DecideResult } from '../src/handlers/weekly-suggestions.ts';
+import { SUGGESTIONS_SEEN_MS } from '../src/lab/schedule.ts';
 import { createAgentSuggestionStore, type NewSuggestion, type SuggestionRecord } from '../src/stores/agent-suggestions.ts';
+import type { NoteContent } from '../src/stores/notes.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -104,6 +106,25 @@ describe('the switch', () => {
     expect((await orgDoc(t.orgId))?.weeklySuggestions).toBeUndefined();
     expect((await panel(t, t.member)).weeklySuggestions).toEqual({ on: true, available: false, canChange: false });
     expect((await panel(t, t.admin)).weeklySuggestions).toEqual({ on: true, available: false, canChange: true });
+  });
+
+  it('is available only while the weekly worker has run them lately and staff have not paused it', async () => {
+    const t = await team();
+    const schedule = server.connection.collection('tw_forecast_schedule');
+    const ranAt = async (at: Date) => {
+      await schedule.updateOne({ _id: 'weekly' as never }, { $set: { suggestionsAt: at }, $setOnInsert: { owner: null, leaseUntil: at, paused: null } }, { upsert: true });
+    };
+    try {
+      await ranAt(new Date(server.clock.now().getTime() - 30 * 60_000));
+      expect((await panel(t, t.member)).weeklySuggestions.available).toBe(true);
+      await ranAt(new Date(server.clock.now().getTime() - SUGGESTIONS_SEEN_MS - 60_000));
+      expect((await panel(t, t.member)).weeklySuggestions.available).toBe(false);
+      await ranAt(server.clock.now());
+      await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
+      expect((await panel(t, t.member)).weeklySuggestions.available).toBe(false);
+    } finally {
+      await schedule.deleteMany({});
+    }
   });
 
   it('an org admin turns it off and back on, each recorded once with its state only', async () => {
@@ -225,6 +246,25 @@ describe('suggestions', () => {
       rule: { id, text: 'Private party after Commencement', addedVia: 'townwise_ai', schedule: { kind: 'private_event', expectedGuests: 40 } },
     });
     expect(await server.connection.collection('tw_business_rules').countDocuments({ _id: new Types.ObjectId(id) })).toBe(1);
+  });
+
+  it('a dismiss after an accept that wrote its note but never marked it finishes the accept instead', async () => {
+    const t = await team();
+    const [suggestion] = await stored(t, [THANKSGIVING_LIKE]);
+    const id = suggestion?.id ?? '';
+    // What an accept leaves when it dies between writing the note and marking the suggestion accepted.
+    await server.ctx.stores.notes.create(t.scope, t.locationId, (THANKSGIVING_LIKE.content as { note: NoteContent }).note, {
+      id, createdBy: t.admin.userId, byStaff: false, now: server.clock.now(),
+    });
+    const res = await decide(t, t.admin, id, 'dismiss');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ suggestion: { id, status: 'accepted' }, note: { id }, rule: null });
+    expect(await server.connection.collection('tw_agent_suggestions').findOne({ _id: new Types.ObjectId(id) })).toMatchObject({ status: 'accepted' });
+    const events = (await auditEvents(server)).filter((event) => String(event.orgId) === t.orgId
+      && ['agent.suggestion_accepted', 'agent.suggestion_dismissed'].includes(String(event.action)));
+    expect(events.map((event) => event.action)).toEqual(['agent.suggestion_accepted']);
+    // An accept after it answers what was written.
+    expect(await (await decide(t, t.admin, id, 'accept')).json()).toMatchObject({ suggestion: { id, status: 'accepted' }, note: { id } });
   });
 
   it('dismissing records it once, writes nothing, and the suggestion is not listed or accepted after', async () => {

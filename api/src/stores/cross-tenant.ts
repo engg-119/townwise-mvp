@@ -5,7 +5,8 @@
 // existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, Google access's
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
-// countedWeekRows (D42), and the weekly suggestions' suggestionCandidates (openspec change weekly-forecast-suggestions).
+// countedWeekRows (D42), and the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
+// weekly-forecast-suggestions).
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
 // (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
@@ -17,7 +18,7 @@ import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
-import { agentSuggestionModel } from './agent-suggestions.ts';
+import { agentSuggestionModel, suggestionPassModel } from './agent-suggestions.ts';
 import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
@@ -697,6 +698,24 @@ export async function staleStartingWeeks(connection: Connection, before: Date): 
   return docs.map((doc) => ({
     id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), createdAt: doc.createdAt,
   }));
+}
+
+/** A weekly suggestions pass row left `running` (its pass died mid-call or before it): ids and its week. */
+export interface StaleSuggestionPass {
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly week: string;
+}
+
+/**
+ * Weekly suggestions pass rows still `running` that were last written before `before` (a lease's length ago), in any
+ * organization (openspec change weekly-forecast-suggestions): what the weekly pass resolves and refunds.
+ */
+export async function staleSuggestionPasses(connection: Connection, before: Date): Promise<StaleSuggestionPass[]> {
+  const docs = await suggestionPassModel(connection).find(
+    { status: 'running', updatedAt: trusted({ $lt: before }) }, { orgId: 1, locationId: 1, week: 1 },
+  ).lean();
+  return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), week: doc.week }));
 }
 
 /** The weekly cap's count (D42): week rows of `week` that are `starting` or `started`, across organizations. */

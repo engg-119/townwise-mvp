@@ -16,7 +16,8 @@ import { utcDay } from '../src/dates.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { createForecastSchedule, SCHEDULE_LIVE_CAP, type PassResult, type ScheduleContext } from '../src/lab/schedule.ts';
 import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
-import { SUGGESTIONS_RESERVE_MICRO_USD } from '../src/lab/suggestions.ts';
+import { removeLocation } from '../src/handlers/locations.ts';
+import { SUGGESTIONS_RESERVE_MICRO_USD, suggestionsReserveMicroUsd } from '../src/lab/suggestions.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { fakeLabRunner, jobCall, labResultFor, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
@@ -524,5 +525,161 @@ describe('weekly suggestions', () => {
     const textOf = JSON.stringify(logLines(server));
     for (const absent of [p.orgId, p.locationId, JULY_4.why]) expect(JSON.stringify(line)).not.toContain(absent);
     expect(textOf).not.toContain(JULY_4.why);
+  });
+
+  /** A model whose first call waits for `during` (run while that call is in flight), answering `items` each time. */
+  function duringFirstCall(during: () => Promise<void>, ...answers: unknown[][]): ScriptedModel {
+    const model = scriptedModel();
+    const gate = (async () => {
+      while (model.calls.length === 0) await new Promise((resolve) => { setTimeout(resolve, 5); });
+      await during();
+    })();
+    answers.forEach((items, index) => {
+      const step = message([text(JSON.stringify({ suggestions: items }))], { usage: { input: 10_000, output: 500 } });
+      model.script(index === 0 ? { kind: 'message', message: step, gate } : { kind: 'message', message: step });
+    });
+    return model;
+  }
+
+  it('an org admin turning them off mid-pass stops the organization’s locations not yet reached', async () => {
+    const p = await place();
+    const second = await addLocation(server, { orgId: p.orgId, name: 'Second Room' });
+    const model = duringFirstCall(async () => {
+      await server.connection.collection('tw_orgs').updateOne(
+        { _id: new Types.ObjectId(p.orgId) }, { $set: { weeklySuggestions: { on: false, at: server.clock.now(), by: 'admin-0000' } } },
+      );
+    }, [JULY_4], [JULY_4]);
+    await pass({ chat: model });
+    expect(model.calls).toHaveLength(1);
+    expect(await passRow({ ...p, locationId: second })).toBeNull();
+  });
+
+  it('the staff pause stops them too, with the lab on or off, and no call is made until it is lifted', async () => {
+    const p = await place();
+    const model = answering([JULY_4]);
+    await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
+    expect(await pass({ chat: model })).toMatchObject({ state: 'paused', suggestions: { state: 'paused', passes: 0 } });
+    expect(await pass({ chat: model, labRunner: null })).toMatchObject({ state: 'off', suggestions: { state: 'paused', passes: 0 } });
+    expect(model.calls).toHaveLength(0);
+    expect(await passRow(p)).toBeNull();
+    await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ state: 'ran', passes: 1 });
+  });
+
+  it('records on the schedule when a pass last ran them, not when they are paused or off', async () => {
+    await place();
+    const ranAt = async () => (await server.connection.collection('tw_forecast_schedule').findOne({ _id: 'weekly' as never }))?.suggestionsAt as Date | undefined;
+    await pass();
+    expect(await ranAt() ?? null).toBeNull();
+    await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
+    await pass({ chat: answering([]) });
+    expect(await ranAt() ?? null).toBeNull();
+    await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
+    await pass({ chat: answering([]) });
+    expect(await ranAt()).toEqual(server.clock.now());
+  });
+
+  it('keeps nothing for a location deleted while its call was in flight', async () => {
+    const p = await place();
+    const model = duringFirstCall(async () => {
+      await removeLocation(server.ctx, p.scope, p.locationId);
+    }, [JULY_4]);
+    await pass({ chat: model });
+    expect(model.calls).toHaveLength(1);
+    expect(await suggestions(p)).toEqual([]);
+    expect(await passRow(p)).toBeNull();
+  });
+
+  it('a pass row a dead pass left running is resolved: one holding a reservation fails and refunds it once; one without is removed, so the week still runs', async () => {
+    const held = await place();
+    const bare = await place();
+    const old = new Date(server.clock.now().getTime() - 11 * MINUTE);
+    const row = (p: Place, reservedMicroUsd: number) => ({
+      orgId: new Types.ObjectId(p.orgId), locationId: new Types.ObjectId(p.locationId), week: '2026-06-01', status: 'running', suggested: 0,
+      reservedMicroUsd, month: '2026-06', createdAt: old, updatedAt: old,
+    });
+    await server.connection.collection('tw_suggestion_passes').insertMany([row(held, SUGGESTIONS_RESERVE_MICRO_USD), row(bare, 0)]);
+    await server.connection.collection('tw_chat_usage').insertOne({
+      orgId: new Types.ObjectId(held.orgId), month: '2026-06', costMicroUsd: SUGGESTIONS_RESERVE_MICRO_USD + 70_000, updatedAt: old,
+    });
+    const model = answering([JULY_4]);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ passes: 1, failed: 1 });
+    expect(await passRow(held)).toMatchObject({ status: 'failed', reservedMicroUsd: 0 });
+    expect(await spent(held)).toBe(70_000);
+    // The week of the one that never reserved runs: its call is the pass's only one.
+    expect(model.calls).toHaveLength(1);
+    expect(await passRow(bare)).toMatchObject({ status: 'suggested' });
+    // Refunded once: a later pass finds nothing left to resolve.
+    server.clock.advance(HOUR);
+    expect((await pass({ chat: answering() })).suggestions).toMatchObject({ failed: 0 });
+    expect(await spent(held)).toBe(70_000);
+  });
+
+  it('a running row younger than a lease is left alone', async () => {
+    const p = await place();
+    const recent = new Date(server.clock.now().getTime() - 2 * MINUTE);
+    await server.connection.collection('tw_suggestion_passes').insertOne({
+      orgId: new Types.ObjectId(p.orgId), locationId: new Types.ObjectId(p.locationId), week: '2026-06-01', status: 'running', suggested: 0,
+      reservedMicroUsd: SUGGESTIONS_RESERVE_MICRO_USD, month: '2026-06', createdAt: recent, updatedAt: recent,
+    });
+    expect((await pass({ chat: answering() })).suggestions).toMatchObject({ failed: 0 });
+    expect(await passRow(p)).toMatchObject({ status: 'running', reservedMicroUsd: SUGGESTIONS_RESERVE_MICRO_USD });
+  });
+
+  describe('a large request', () => {
+    /** 200 notes over the 91 days, each with 280 characters of detail: a request whose ceiling is over $0.30. */
+    async function manyNotes(p: Place): Promise<void> {
+      await server.connection.collection('tw_notes').insertMany(Array.from({ length: 200 }, (_unused, index) => {
+        const date = utcDay(new Date('2026-06-02T00:00:00.000Z'), index % 90);
+        return {
+          orgId: new Types.ObjectId(p.orgId), locationId: new Types.ObjectId(p.locationId), kind: 'other', startDate: date, endDate: date,
+          weekdays: null, effect: 'unknown', expectedGuests: null, detail: `Synthetic note ${String(index)} `.padEnd(280, 'x'),
+          startTime: null, endTime: null, createdBy: 'fixture', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+        };
+      }));
+    }
+
+    it('reserves its ceiling at the most expensive model’s prices, more than $0.30, and corrects it to the cost', async () => {
+      const p = await place();
+      await manyNotes(p);
+      let during = -1;
+      const model = duringFirstCall(async () => { during = await spent(p); }, []);
+      await pass({ chat: model });
+      const call = model.calls[0];
+      if (call === undefined) throw new Error('no call');
+      expect(during).toBe(suggestionsReserveMicroUsd(call.params));
+      expect(during).toBeGreaterThan(SUGGESTIONS_RESERVE_MICRO_USD);
+      expect(await spent(p)).toBe(50_000);
+    });
+
+    it('is skipped (budget) when the month has $0.30 left but less than its ceiling', async () => {
+      const p = await place();
+      await manyNotes(p);
+      await server.connection.collection('tw_chat_usage').insertOne({
+        orgId: new Types.ObjectId(p.orgId), month: '2026-06', costMicroUsd: 20_000_000 - SUGGESTIONS_RESERVE_MICRO_USD, updatedAt: server.clock.now(),
+      });
+      const model = answering([JULY_4]);
+      expect((await pass({ chat: model })).suggestions).toMatchObject({ budget: 1 });
+      expect(model.calls).toHaveLength(0);
+      expect(await spent(p)).toBe(20_000_000 - SUGGESTIONS_RESERVE_MICRO_USD);
+    });
+  });
+
+  it('sends only the earlier suggestions whose dates fall in the 91 days', async () => {
+    const p = await place();
+    const store = server.ctx.stores.agentSuggestions;
+    const closure = (date: string) => ({
+      content: { type: 'note' as const, note: {
+        kind: 'closure' as const, startDate: date, endDate: date, weekdays: null, effect: 'closed' as const, expectedGuests: null,
+        detail: null, startTime: null, endTime: null,
+      } },
+      why: `Synthetic why for ${date}.`, calendarIds: [],
+    });
+    await store.insert(p.scope, { locationId: p.locationId, week: '2026-01-05', suggestions: [closure('2026-01-10'), closure('2026-07-03')], now: server.clock.now() });
+    const model = answering([]);
+    await pass({ chat: model });
+    const sent = JSON.stringify(messagesOf(model.calls[0]));
+    expect(sent).toContain('2026-07-03');
+    expect(sent).not.toContain('2026-01-10');
   });
 });

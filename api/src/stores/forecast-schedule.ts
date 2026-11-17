@@ -1,9 +1,11 @@
-// tw_forecast_schedule (D42, spec 6.25): one document, `{ _id: 'weekly', owner, leaseUntil, paused }`. The weekly
-// refresh's lease (10 minutes, taken and renewed by compare-and-set as the file sweep's is, so overlapping worker
-// executions do no harm) and the staff pause (`{ at, by, email }` of the staff member, or null). It holds no
-// organization's data, so it is not a tenant store and takes no OrgScope: the weekly worker (lab/schedule.ts), the staff
-// route that pauses it (handlers/calibrations.ts) and the next refresh date (calibration.ts) read it here. Nothing here
-// logs.
+// tw_forecast_schedule (D42, spec 6.25): one document, `{ _id: 'weekly', owner, leaseUntil, paused, suggestionsAt }`.
+// The weekly refresh's lease (10 minutes, taken and renewed by compare-and-set as the file sweep's is, so overlapping
+// worker executions do no harm), the staff pause (`{ at, by, email }` of the staff member, or null), which pauses the
+// whole weekly worker, weekly suggestions included, and when a pass last ran the weekly suggestions (openspec change
+// weekly-forecast-suggestions; null or absent before the first), which TownwiseAI's panel reads to say whether they
+// run. It holds no organization's data, so it is not a tenant store and takes no OrgScope: the weekly worker
+// (lab/schedule.ts), the staff route that pauses it (handlers/calibrations.ts), the next refresh date (calibration.ts)
+// and the panel (handlers/weekly-suggestions.ts) read it here. Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, type Connection, type Model } from 'mongoose';
 
@@ -22,6 +24,7 @@ interface ForecastScheduleFields {
   owner: string | null;
   leaseUntil: Date;
   paused: SchedulePause | null;
+  suggestionsAt: Date | null;
 }
 
 function forecastScheduleSchema(): Schema<ForecastScheduleFields> {
@@ -35,6 +38,7 @@ function forecastScheduleSchema(): Schema<ForecastScheduleFields> {
     owner: { type: String, default: null },
     leaseUntil: { type: Date, required: true },
     paused: { type: paused, default: null },
+    suggestionsAt: { type: Date, default: null },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
 }
 
@@ -58,6 +62,10 @@ export interface ForecastScheduleStore {
   paused(): Promise<SchedulePause | null>;
   /** Sets or clears the staff pause. */
   setPaused(paused: SchedulePause | null, now: Date): Promise<void>;
+  /** Records that `owner`'s pass is running the weekly suggestions now (while it holds the lease). */
+  markSuggestionsRan(input: { owner: string; now: Date }): Promise<void>;
+  /** When a pass last ran the weekly suggestions (null before the first), and whether staff paused the worker. */
+  suggestionsState(): Promise<{ ranAt: Date | null; paused: boolean }>;
 }
 
 export function createForecastScheduleStore(connection: Connection): ForecastScheduleStore {
@@ -101,6 +109,13 @@ export function createForecastScheduleStore(connection: Connection): ForecastSch
         { $set: { paused }, $setOnInsert: { owner: null, leaseUntil: now } },
         { upsert: true },
       );
+    },
+    async markSuggestionsRan(input) {
+      await Schedule.updateOne({ _id: SCHEDULE_ID, owner: input.owner }, { $set: { suggestionsAt: input.now } });
+    },
+    async suggestionsState() {
+      const doc = await Schedule.findById(SCHEDULE_ID).lean();
+      return { ranAt: doc?.suggestionsAt ?? null, paused: doc?.paused != null };
     },
   };
 }

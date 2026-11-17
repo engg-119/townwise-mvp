@@ -11,7 +11,8 @@ import { Dialog } from './Dialog';
 import { problemOf } from './problems';
 import type { OrgLocation } from './schemas';
 
-// The weekly refresh in P21's Forecasts (D42): whether it runs, the staff pause (for every organization at once), and
+// The weekly refresh in P21's Forecasts (D42): whether it runs, the staff pause (for every organization at once, and for
+// the whole weekly worker, TownwiseAI's weekly suggestions included), and
 // each location's latest week, with the gate's reason when its calibration finished. Ids and codes only, never a figure.
 
 /** What a week row's outcome says. */
@@ -58,8 +59,8 @@ function PauseDialog(props: { pause: boolean; onDone: () => Promise<void>; onClo
     <Dialog
       title={pause ? 'Pause the weekly refresh for every organization?' : 'Resume the weekly refresh for every organization?'}
       body={pause
-        ? 'No scheduled calibration starts from the next hourly pass until you resume it. Calibrations already running finish. It is recorded in the audit log.'
-        : 'Scheduled calibrations start again from the next hourly pass. It is recorded in the audit log.'}
+        ? 'No scheduled calibration starts and no weekly suggestions are made from the next hourly pass until you resume it. Calibrations already running finish. It is recorded in the audit log.'
+        : 'Scheduled calibrations and weekly suggestions start again from the next hourly pass. It is recorded in the audit log.'}
       confirmLabel={pause ? 'Pause' : 'Resume'}
       pendingLabel={pause ? 'Pausing…' : 'Resuming…'}
       pending={act.pending}

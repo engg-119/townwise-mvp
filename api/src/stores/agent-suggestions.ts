@@ -4,9 +4,11 @@
 // writes the note or rule with the suggestion's id, so a retried accept writes it once. Statuses: `open`, `accepted`,
 // `dismissed`, and `expired` once its first date is today or past in the town (an open one past it is never listed).
 // Every change of status is a compare-and-set (no transactions, D17). A pass row is inserted `running` before the call,
-// unique on { orgId, locationId, week }, so a week makes at most one call per location, whatever passes overlap; it is
-// then set to its outcome. Ids, dates, codes and counts only: no function here logs, and nothing copies a note's text,
-// a rule's words or a why into an audit event.
+// unique on { orgId, locationId, week }, so a week makes at most one call per location, whatever passes overlap; it
+// holds the call's reservation of the TownwiseAI month while it runs, and is then set to its outcome, which hands the
+// reservation back in the same write, so it is settled once: by the pass, or, when the pass died, by the next pass that
+// finds the row still `running` (resolveStalePass). Ids, dates, codes and counts only: no function here logs, and
+// nothing copies a note's text, a rule's words or a why into an audit event.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -67,6 +69,10 @@ interface PassFields {
   status: SuggestionPassStatus;
   /** Suggestions kept and stored. */
   suggested: number;
+  /** What the running call reserved of the organization's TownwiseAI month, in micro-dollars; 0 once settled. */
+  reservedMicroUsd?: number;
+  /** The month (YYYY-MM, UTC) it was reserved in; null or absent before a reservation. */
+  month?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -113,10 +119,14 @@ function passSchema(): Schema<PassFields> {
     week: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
     status: { type: String, required: true, enum: ['running', 'suggested', 'none', 'budget', 'failed'] },
     suggested: { type: Number, required: true, min: 0 },
+    reservedMicroUsd: { type: Number, default: 0, min: 0 },
+    month: { type: String, default: null },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, week: 1 }, { unique: true });
+  // The weekly worker's lookup of rows a dead pass left running (stores/cross-tenant.ts staleSuggestionPasses).
+  schema.index({ status: 1, updatedAt: 1 });
   return schema;
 }
 
@@ -151,6 +161,12 @@ export interface SuggestionPassRecord {
   readonly suggested: number;
 }
 
+/** A reservation a pass row held when it was settled: what to hand back to which month. */
+export interface HeldReservation {
+  readonly month: string;
+  readonly microUsd: number;
+}
+
 export interface NewSuggestion {
   readonly content: SuggestionContent;
   readonly why: string;
@@ -164,10 +180,22 @@ const RECENT_LIMIT = 500;
 export interface AgentSuggestionStore {
   /** Inserts the location's pass row for the week as `running`; false when the week already has one. */
   claimPass(scope: OrgScope, input: { locationId: string; week: string; now: Date }): Promise<boolean>;
-  /** Sets a running pass's outcome (a compare-and-set from `running`). */
+  /** Records on the running pass row the reservation its call made; false when the row is no longer running. */
+  holdReservation(scope: OrgScope, input: { locationId: string; week: string; month: string; microUsd: number; now: Date }): Promise<boolean>;
+  /**
+   * Sets a running pass's outcome (a compare-and-set from `running`) and settles its reservation in the same write.
+   * Resolves the reservation it held (`microUsd` 0 when none), or null when the row was no longer running (a later
+   * pass resolved it and handed the reservation back).
+   */
   finishPass(scope: OrgScope, input: {
     locationId: string; week: string; status: Exclude<SuggestionPassStatus, 'running'>; suggested: number; now: Date;
-  }): Promise<boolean>;
+  }): Promise<HeldReservation | null>;
+  /**
+   * A row still `running` since before `before` (its pass died): one that held a reservation becomes `failed`, which
+   * resolves the reservation to hand back; one that held none (no call was made) is removed, so the week can still run,
+   * and resolves `{ microUsd: 0 }`. Null when it is no longer running and stale (a compare-and-set, so it settles once).
+   */
+  resolveStalePass(scope: OrgScope, input: { locationId: string; week: string; before: Date; now: Date }): Promise<HeldReservation | null>;
   findPass(scope: OrgScope, locationId: string, week: string): Promise<SuggestionPassRecord | null>;
   /** Stores a pass's kept suggestions, each `open`. */
   insert(scope: OrgScope, input: { locationId: string; week: string; suggestions: readonly NewSuggestion[]; now: Date }): Promise<SuggestionRecord[]>;
@@ -188,6 +216,8 @@ export interface AgentSuggestionStore {
   expire(scope: OrgScope, locationId: string, today: string, now: Date): Promise<number>;
   /** Location deletion: its suggestions and pass rows. Resolves the number of suggestions deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
+  /** A pass whose location was deleted while it ran: the week's pass row and the suggestions it stored. */
+  removeForPass(scope: OrgScope, locationId: string, week: string): Promise<void>;
   /** Organization deletion. Resolves the number of suggestions deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
 }
@@ -249,12 +279,29 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
         throw err;
       }
     },
-    async finishPass(scope, input) {
+    async holdReservation(scope, input) {
       const result = await Pass.updateOne(
         { ...of(scope, input.locationId), week: input.week, status: 'running' },
-        { $set: { status: input.status, suggested: input.suggested, updatedAt: input.now } },
+        { $set: { reservedMicroUsd: input.microUsd, month: input.month, updatedAt: input.now } },
       );
       return result.modifiedCount === 1;
+    },
+    async finishPass(scope, input) {
+      const before = await Pass.findOneAndUpdate(
+        { ...of(scope, input.locationId), week: input.week, status: 'running' },
+        { $set: { status: input.status, suggested: input.suggested, reservedMicroUsd: 0, updatedAt: input.now } },
+        { returnDocument: 'before' },
+      ).lean();
+      return before === null ? null : { month: before.month ?? '', microUsd: before.reservedMicroUsd ?? 0 };
+    },
+    async resolveStalePass(scope, input) {
+      const stale = { ...of(scope, input.locationId), week: input.week, status: 'running' as const, updatedAt: trusted({ $lt: input.before }) };
+      const bare = await Pass.deleteOne({ ...stale, reservedMicroUsd: trusted({ $in: [0, null] }) });
+      if (bare.deletedCount === 1) return { month: '', microUsd: 0 };
+      const before = await Pass.findOneAndUpdate(
+        stale, { $set: { status: 'failed', reservedMicroUsd: 0, updatedAt: input.now } }, { returnDocument: 'before' },
+      ).lean();
+      return before === null ? null : { month: before.month ?? '', microUsd: before.reservedMicroUsd ?? 0 };
     },
     async findPass(scope, locationId, week) {
       const doc = await Pass.findOne({ ...of(scope, locationId), week }).lean();
@@ -305,6 +352,10 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
     async removeForLocation(scope, locationId) {
       await Pass.deleteMany(of(scope, locationId));
       return (await Suggestion.deleteMany(of(scope, locationId))).deletedCount;
+    },
+    async removeForPass(scope, locationId, week) {
+      await Suggestion.deleteMany({ ...of(scope, locationId), week });
+      await Pass.deleteMany({ ...of(scope, locationId), week });
     },
     async removeForOrg(scope) {
       const org = { orgId: new Types.ObjectId(scope.orgId) };

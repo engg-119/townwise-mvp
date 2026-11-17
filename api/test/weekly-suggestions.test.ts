@@ -6,8 +6,10 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  keptSuggestions, MAX_SUGGESTIONS, SUGGESTIONS_MAX_TOKENS, suggestionsRequest, suggestionsWeek, type SuggestionChecks, type SuggestionsInput,
+  keptSuggestions, MAX_SUGGESTIONS, SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_RESERVE_MICRO_USD, suggestionsRequest, suggestionsReserveMicroUsd,
+  suggestionsWeek, type SuggestionChecks, type SuggestionsInput,
 } from '../src/lab/suggestions.ts';
+import { ceilingCostMicroUsd } from '../src/chat/pricing.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
 
 const TODAY = '2026-11-16';
@@ -49,6 +51,15 @@ describe('the request', () => {
     rules: [{ text: 'Closed on Mondays in January', schedule: { ...NOTE, startDate: '2027-01-04', endDate: '2027-01-25', weekdays: [1] } }],
     suggested: [{ type: 'note', note: { ...NOTE, startDate: '2026-12-25', endDate: '2026-12-25', detail: null } }],
   };
+
+  it('reserves $0.30, or the request’s ceiling at the most expensive model’s prices when that is more', () => {
+    expect(suggestionsReserveMicroUsd(suggestionsRequest(input))).toBe(SUGGESTIONS_RESERVE_MICRO_USD);
+    const big = suggestionsRequest({ ...input, notes: Array.from({ length: 200 }, () => ({ ...NOTE, detail: 'x'.repeat(280) })) });
+    const chars = JSON.stringify(big.system).length + JSON.stringify(big.messages).length;
+    const ceiling = ceilingCostMicroUsd({ input: Math.ceil(chars / 3), output: SUGGESTIONS_MAX_TOKENS, cacheRead: 0, cacheWrite: 0 });
+    expect(ceiling).toBeGreaterThan(SUGGESTIONS_RESERVE_MICRO_USD);
+    expect(suggestionsReserveMicroUsd(big)).toBe(ceiling);
+  });
 
   it('is one call with no tools, low effort, structured output and 8,000 output tokens', () => {
     const params = suggestionsRequest(input);

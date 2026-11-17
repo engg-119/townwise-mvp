@@ -271,7 +271,7 @@ describe('the weekly refresh (D42)', () => {
     const api = await showWeekly({ schedule: { running: true, paused: null }, weeks: [] });
     await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'Pause weekly refresh' })); });
     const dialog = screen.getByRole('dialog', { name: 'Pause the weekly refresh for every organization?' });
-    expect(within(dialog).getByText('No scheduled calibration starts from the next hourly pass until you resume it. Calibrations already running finish. It is recorded in the audit log.')).toBeTruthy();
+    expect(within(dialog).getByText('No scheduled calibration starts and no weekly suggestions are made from the next hourly pass until you resume it. Calibrations already running finish. It is recorded in the audit log.')).toBeTruthy();
     const paused = { running: true, paused: { at: '2026-11-23T15:00:00.000Z', email: 'staff@example.com' } };
     api.routes[SCHEDULE] = () => ({ schedule: paused });
     api.routes[CALS] = () => ({ forecasts: { on: true, at: null }, calibrations: [], schedule: paused, weeks: [] });
@@ -280,9 +280,9 @@ describe('the weekly refresh (D42)', () => {
     expect(await screen.findByText('Paused by staff@example.com on Nov 23, 2026.')).toBeTruthy();
     await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'Resume weekly refresh' })); });
     api.routes[SCHEDULE] = () => ({ schedule: { running: true, paused: null } });
-    await settle(() => {
-      fireEvent.click(within(screen.getByRole('dialog', { name: 'Resume the weekly refresh for every organization?' })).getByRole('button', { name: 'Resume' }));
-    });
+    const resume = screen.getByRole('dialog', { name: 'Resume the weekly refresh for every organization?' });
+    expect(within(resume).getByText('Scheduled calibrations and weekly suggestions start again from the next hourly pass. It is recorded in the audit log.')).toBeTruthy();
+    await settle(() => { fireEvent.click(within(resume).getByRole('button', { name: 'Resume' })); });
     expect(api.calls.filter((call) => call.method === 'POST').at(-1)).toEqual({ method: 'POST', path: '/api/admin/forecast-schedule', body: { paused: false } });
   });
 

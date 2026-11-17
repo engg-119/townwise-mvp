@@ -97,7 +97,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // With the row gone no new request starts, so this second sweep catches sales days, ordering's records and chat
     // usage that requests already running wrote after the first. It narrows the gap, not closes it: a tuning chat turn
     // started before the suspension can still add chat usage for up to 150 seconds (its time limit), as can a weekly
-    // suggestions call for up to 2 minutes (lab/suggestions.ts), an upload still
+    // suggestions call for up to 2 minutes (lab/suggestions.ts; its suggestions and pass row it removes itself once it
+    // finds the location gone, so none outlive this), an upload still
     // running can write days after this sweep, and its tw_uploads row, if written after the first sweep, is never
     // swept. Those rows carry only the deleted organization's id.
     const lateDays = await stores.salesDays.removeForOrg(scope);

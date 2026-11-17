@@ -17,7 +17,10 @@
 // weekly-forecast-suggestions, lab/suggestions.ts) while TOWNWISE_WEEKLY_SUGGESTIONS is true and the model is set
 // (ANTHROPIC_API_KEY), with or without the lab: for each location of an active organization whose weekly suggestions
 // are on (an absent switch counting as on), found by a cross-tenant lookup, one call a week from 03:00 on Monday in the
-// town (a location missed on Monday is caught up later that week). The staff pause stops only calibrations.
+// town (a location missed on Monday is caught up later that week). The staff pause stops the whole worker, calibrations
+// and weekly suggestions alike. Before the suggestions, the pass resolves pass rows a dead pass left `running` longer
+// than a lease (failed, handing back the reservation they held, or removed when they held none, so their week still
+// runs), and records on the schedule document that it ran them, which TownwiseAI's panel reads.
 // Nothing here names a town, an organization or a location. The pass logs one line of counts and its state for each
 // part; a location whose turn throws logs its ids and the pass goes on. No figure is ever logged.
 import { randomUUID } from 'node:crypto';
@@ -32,7 +35,8 @@ import { daysBetween } from '../dates.ts';
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
 import type { ChatModel } from '../chat/model.ts';
 import {
-  countedWeekRows, liveScheduledCalibrations, staleStartingWeeks, suggestionCandidates, weeklyCandidates, type WeeklyCandidate,
+  countedWeekRows, liveScheduledCalibrations, staleStartingWeeks, staleSuggestionPasses, suggestionCandidates, weeklyCandidates,
+  type WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import { localDay, localMinutes, timeZoneOf, weekdayOf } from '../time-zones.ts';
 import { GATE } from './gate.ts';
@@ -48,6 +52,11 @@ export const SCHEDULE_LIVE_CAP = 3;
 export const SCHEDULE_START_HOUR = 3;
 /** How far back the staff console looks for each location's latest week row. */
 export const WEEK_ROWS_LOOKBACK_DAYS = 56;
+/**
+ * TownwiseAI's panel says weekly suggestions run only when a pass ran them within this long (the worker runs hourly, so
+ * this is three passes missed). [CONFIRM]
+ */
+export const SUGGESTIONS_SEEN_MS = 3 * 60 * 60_000;
 
 /**
  * What a pass reads: starting a calibration's context, the connection its cross-tenant lookups use, and the model the
@@ -72,8 +81,8 @@ export interface PassCounts {
   capped: number;
 }
 
-/** How the weekly suggestions part of a pass ended: it ran, was off, or lost the lease mid-way. */
-export type SuggestionsState = 'ran' | 'off' | 'lease_held' | 'lease_lost';
+/** How the weekly suggestions part of a pass ended: it ran, was off, paused by staff, or lost the lease mid-way. */
+export type SuggestionsState = 'ran' | 'off' | 'paused' | 'lease_held' | 'lease_lost';
 
 export interface SuggestionsCounts {
   /** Locations whose call stored at least one suggestion, and the suggestions stored. */
@@ -82,7 +91,7 @@ export interface SuggestionsCounts {
   /** Calls that stored none; locations skipped because the organization's TownwiseAI month had less than $0.30 left. */
   none: number;
   budget: number;
-  /** Calls that failed, and locations whose turn threw. */
+  /** Calls that failed, locations whose turn threw, and pass rows a dead pass left running with a reservation. */
   failed: number;
 }
 
@@ -222,8 +231,26 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     counts.failed += 1;
   }
 
+  /**
+   * Pass rows a dead pass left running longer than a lease (a live pass finishes its row within the call's 2 minutes):
+   * one that held a reservation fails and hands it back to its month, once; one that held none is removed.
+   */
+  async function resolveStaleSuggestions(counts: SuggestionsCounts): Promise<void> {
+    const now = ctx.now();
+    const before = new Date(now.getTime() - SCHEDULE_LEASE_MS);
+    for (const row of await staleSuggestionPasses(ctx.connection, before)) {
+      const scope = scopeForWeeklyRefresh(row);
+      const held = await stores.agentSuggestions.resolveStalePass(scope, { locationId: row.locationId, week: row.week, before, now });
+      if (held === null || held.microUsd === 0) continue;
+      await stores.chatUsage.add(scope, held.month, -held.microUsd, now);
+      counts.failed += 1;
+    }
+  }
+
   /** The weekly suggestions for each due location; false when the lease was lost. */
   async function suggestAll(model: ChatModel, counts: SuggestionsCounts): Promise<boolean> {
+    await stores.forecastSchedule.markSuggestionsRan({ owner, now: ctx.now() });
+    await resolveStaleSuggestions(counts);
     for (const candidate of await suggestionCandidates(ctx.connection)) {
       if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) return false;
       try {
@@ -287,6 +314,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
           }
         }
         if (model === null) return end(state, 'off');
+        if (claim.paused !== null) return end(state, 'paused');
         suggestionsBegan = performance.now();
         return end(state, await suggestAll(model, suggestionCounts) ? 'ran' : 'lease_lost');
       } finally {

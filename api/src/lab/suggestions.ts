@@ -4,8 +4,8 @@
 // (titles, dates, kinds, public source URLs), with each holiday's and town event's history at this location (the
 // percentage and day count of forecasts/effects.ts, and how many of its past days were open, closed or had no sales),
 // the location's notes and scheduled business rules covering those days (kind, dates, effect, guest count and text, as
-// TownwiseAI's chat already reads them), and what it suggested before. It never sends a sales figure, an email, a
-// person's, organization's or location's name, or an id other than calendar ids.
+// TownwiseAI's chat already reads them), and what it suggested before for those days. It never sends a sales figure, an
+// email, a person's, organization's or location's name, or an id other than calendar ids.
 //
 // The answer is at most 5 suggestions, each a note or a business rule with a schedule (D31), a one-sentence why and the
 // calendar ids it rests on. Each is checked by the note rules (spec 12) or D31's schedule rules, and dropped when it
@@ -13,10 +13,14 @@
 // rule or an earlier suggestion of the location, or repeats a rule's words. Kept ones are stored open
 // (stores/agent-suggestions.ts) and change nothing until an org admin accepts one.
 //
-// Bounds: the pass row (claimed before anything else) keeps a week to one call per location; the call reserves $0.30
-// of the organization's TownwiseAI month (tw_chat_usage, the chat's budget) before it starts and is skipped (`budget`)
-// when less is left, then the reservation is corrected to what the call cost; 8,000 output tokens, low effort and a
-// 2-minute limit. Nothing here logs, and nothing it reads or answers reaches a log or an audit event.
+// Bounds: the organization's switch is read again right before each location (an org admin's off stops the locations
+// not yet reached), and the pass row (claimed before anything else) keeps a week to one call per location. The call
+// reserves $0.30 of the organization's TownwiseAI month (tw_chat_usage, the chat's budget), or the request's ceiling at
+// the most expensive model's prices when that is more, before it starts, and is skipped (`budget`) when less is left;
+// the pass row holds the reservation, and finishing the row hands it back in the same write, corrected to what the call
+// cost, so a pass that dies is settled by a later one (lab/schedule.ts). 8,000 output tokens, low effort and a 2-minute
+// limit. A location deleted while its call ran keeps nothing of it. Nothing here logs, and nothing it reads or answers
+// reaches a log or an audit event.
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type {
   BetaMessage, BetaMessageStreamParams, BetaRawMessageStreamEvent,
@@ -27,7 +31,7 @@ import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { ChatModel } from '../chat/model.ts';
-import { costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from '../chat/pricing.ts';
+import { ceilingCostMicroUsd, costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from '../chat/pricing.ts';
 import { CHAT_MODEL } from '../chat/turn.ts';
 import { closureOf, typicalByDate } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
@@ -42,7 +46,10 @@ import type { NoteContent } from '../stores/notes.ts';
 import { localDay, timeZoneOf, weekdayOf } from '../time-zones.ts';
 import { townEvents, type TownEvent } from '../town-calendar.ts';
 
-/** What one pass reserves of the organization's TownwiseAI month before its call. [CONFIRM] */
+/**
+ * What one pass reserves of the organization's TownwiseAI month before its call, at least; a request whose ceiling
+ * (suggestionsReserveMicroUsd) is more reserves that. [CONFIRM]
+ */
 export const SUGGESTIONS_RESERVE_MICRO_USD = 300_000;
 /** A pass answers at most this many suggestions; the rest are not read. [CONFIRM] */
 export const MAX_SUGGESTIONS = 5;
@@ -51,8 +58,13 @@ export const SUGGESTIONS_DAYS = 91;
 export const SUGGESTIONS_MAX_TOKENS = 8_000;
 /** The call's whole time; the worker's job has 10 minutes. */
 export const SUGGESTIONS_TIME_MS = 120_000;
-/** At most this many notes covering the 91 days are sent (soonest first), so the request stays within the reservation. */
+/**
+ * At most this many notes covering the 91 days are sent (soonest first), which bounds the request; the reservation is
+ * sized to the request's own ceiling (suggestionsReserveMicroUsd), so a long one never takes the month past its budget.
+ */
 export const SUGGESTIONS_MAX_NOTES = 200;
+/** Characters a request token is taken to be at most, to estimate its input tokens, as the file reader does. */
+const CHARS_PER_TOKEN = 3;
 const MAX_WHY_CHARS = 280;
 const MAX_CALENDAR_IDS = 5;
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
@@ -60,10 +72,11 @@ const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 /** What a pass reads: the stores, the clock, the budget's config, and the model (the pass runs only with one). */
 export type SuggestionsContext = Pick<TownwiseContext, 'config' | 'now' | 'stores'> & { readonly chat: ChatModel };
 
-/** How one location's pass ended; `already` when its week had a pass. */
-export type SuggestionsOutcome =
-  | { readonly status: 'suggested'; readonly suggested: number }
-  | { readonly status: 'none' | 'budget' | 'failed' | 'already' };
+/** How a location's pass ended when it was recorded on the week's pass row. */
+type RecordedOutcome = { readonly status: 'suggested'; readonly suggested: number } | { readonly status: 'none' | 'budget' | 'failed' };
+
+/** How one location's pass ended; `already` when its week had a pass, `off` when its organization's are off now. */
+export type SuggestionsOutcome = RecordedOutcome | { readonly status: 'already' | 'off' };
 
 export const SUGGESTIONS_SYSTEM_PROMPT = [
   'You are TownwiseAI, the assistant inside Townwise, which forecasts daily guests for one restaurant location in a small town from its own sales history and the town\'s calendar.',
@@ -129,7 +142,7 @@ export interface SuggestionsInput {
   readonly calendar: readonly CalendarEntry[];
   readonly notes: readonly NoteContent[];
   readonly rules: readonly { readonly text: string; readonly schedule: RuleSchedule }[];
-  /** The location's earlier suggestions, in any status: not to be suggested again. */
+  /** The location's earlier suggestions whose days overlap from to to, in any status: not to be suggested again. */
   readonly suggested: readonly SuggestionContent[];
 }
 
@@ -155,6 +168,17 @@ export function suggestionsRequest(input: SuggestionsInput): BetaMessageStreamPa
         : { type: 'rule', ruleText: content.text, ...content.schedule })),
     }) }],
   };
+}
+
+/**
+ * What a pass reserves for `params`: $0.30, or the most the request can cost when that is more, its input estimated at
+ * 3 characters a token and SUGGESTIONS_MAX_TOKENS of output, at the most expensive model's prices (a refusal fallback
+ * can move the call there).
+ */
+export function suggestionsReserveMicroUsd(params: BetaMessageStreamParams): number {
+  const chars = JSON.stringify(params.system).length + JSON.stringify(params.messages).length;
+  const ceiling = ceilingCostMicroUsd({ input: Math.ceil(chars / CHARS_PER_TOKEN), output: params.max_tokens, cacheRead: 0, cacheWrite: 0 });
+  return Math.max(SUGGESTIONS_RESERVE_MICRO_USD, ceiling);
 }
 
 /** The days a note, a rule's schedule or a suggestion decides, field by field; its words (a note's detail) aside. */
@@ -292,7 +316,8 @@ function monthOf(at: Date): string {
 /**
  * What a pass sends for the location, from its stores: the calendar from tomorrow to today plus 91 with each holiday's
  * and event's history, the notes covering those days (at most 200, soonest first), the scheduled rules covering them,
- * and the earlier suggestions. `checks` is what its answer is held to.
+ * and the earlier suggestions covering them (only one starting in those days can be a repeat, and the rest would only
+ * lengthen the request). `checks` is what its answer is held to, with every earlier suggestion.
  */
 export async function suggestionsInput(
   ctx: Pick<SuggestionsContext, 'stores'>, scope: OrgScope, location: LocationRecord, today: string, suggested: readonly SuggestionContent[],
@@ -351,9 +376,11 @@ export async function suggestionsInput(
     };
   });
   const sent = notes.slice(0, SUGGESTIONS_MAX_NOTES);
-  const inRange = scheduled.filter((rule) => rule.schedule.startDate <= to && (rule.schedule.endDate === null || rule.schedule.endDate >= from));
+  const overlaps = (days: Pick<Days, 'startDate' | 'endDate'>): boolean => days.startDate <= to && (days.endDate === null || days.endDate >= from);
+  const inRange = scheduled.filter((rule) => overlaps(rule.schedule));
+  const earlier = suggested.filter((content) => overlaps(daysOf(content)));
   return {
-    input: { today, from, to, town: { name: location.town.name, state: location.town.state }, calendar, notes: sent, rules: inRange, suggested },
+    input: { today, from, to, town: { name: location.town.name, state: location.town.state }, calendar, notes: sent, rules: inRange, suggested: earlier },
     checks: {
       today, to, notes, rules: rules.map((rule) => ({ text: rule.text, schedule: rule.schedule })), suggested,
       calendarIds: new Set(calendar.map((entry) => entry.id)),
@@ -361,49 +388,65 @@ export async function suggestionsInput(
   };
 }
 
+/** The organization is active with its weekly suggestions on (an org admin may have turned them off since the pass began). */
+async function suggestionsOn(stores: SuggestionsContext['stores'], scope: OrgScope): Promise<boolean> {
+  const org = await stores.orgs.findById(scope.orgId);
+  return org !== null && org.status === 'active' && org.weeklySuggestions.on;
+}
+
 /**
- * One location's pass for `week`: claims the week's pass row (`already` when it has one), expires suggestions whose
- * first date has come, reserves $0.30 of the month (`budget` when less is left), makes the call, stores what passes the
- * checks and records the outcome on the row, then corrects the reservation to what the call cost. A store error after
- * the claim records `failed` and is thrown, for the pass to log the location's ids.
+ * One location's pass for `week`: `off` (nothing recorded) unless the organization is active with its weekly
+ * suggestions on, read now; claims the week's pass row (`already` when it has one); expires suggestions whose first
+ * date has come; builds the request and reserves its amount of the month (`budget` when less is left), holding it on the
+ * row; makes the call; stores what passes the checks; and records the outcome on the row, which hands the reservation
+ * back, corrected to what the call cost. When the location was deleted meanwhile, the week's row and what it stored are
+ * removed. A store error after the claim records `failed` and is thrown, for the pass to log the location's ids.
  */
 export async function suggestFor(
   ctx: SuggestionsContext, scope: OrgScope, location: LocationRecord, week: string,
 ): Promise<SuggestionsOutcome> {
   const { stores, chat: model } = ctx;
+  if (!(await suggestionsOn(stores, scope))) return { status: 'off' };
   const now = ctx.now();
   if (!(await stores.agentSuggestions.claimPass(scope, { locationId: location.id, week, now }))) return { status: 'already' };
-  const finish = async (outcome: SuggestionsOutcome): Promise<SuggestionsOutcome> => {
-    if (outcome.status !== 'already') {
-      await stores.agentSuggestions.finishPass(scope, {
-        locationId: location.id, week, status: outcome.status, suggested: outcome.status === 'suggested' ? outcome.suggested : 0, now: ctx.now(),
-      });
-    }
+  const month = monthOf(now);
+  /** What the call cost, and what this pass reserved of the month that the row does not hold (its hold never landed). */
+  let spent = 0;
+  let unheld = 0;
+  /** Set once the row is finished, so an error after that does not finish (and charge) it twice. */
+  const row = { finished: false };
+  const finish = async (outcome: RecordedOutcome): Promise<SuggestionsOutcome> => {
+    const held = await stores.agentSuggestions.finishPass(scope, {
+      locationId: location.id, week, status: outcome.status, suggested: outcome.status === 'suggested' ? outcome.suggested : 0, now: ctx.now(),
+    });
+    row.finished = true;
+    // Null: a later pass found the row stale and handed its reservation back, so the call's whole cost is charged.
+    const charge = spent - unheld - (held?.microUsd ?? 0);
+    if (charge !== 0) await stores.chatUsage.add(scope, month, charge, ctx.now());
+    if ((await stores.locations.find(scope, location.id)) === null) await stores.agentSuggestions.removeForPass(scope, location.id, week);
     return outcome;
   };
   const today = localDay(now, timeZoneOf(location.town).timeZone);
   try {
     await stores.agentSuggestions.expire(scope, location.id, today, now);
-    const month = monthOf(now);
+    const earlier = (await stores.agentSuggestions.recent(scope, location.id)).map((record): SuggestionContent => (record.type === 'note'
+      ? { type: 'note', note: record.note }
+      : { type: 'rule', text: record.text, schedule: record.schedule }));
+    const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier);
+    const params = suggestionsRequest(input);
+    const reserve = suggestionsReserveMicroUsd(params);
     const budget = Math.round(ctx.config.chatMonthlyBudgetUsd * 1_000_000);
-    if (!(await stores.chatUsage.reserve(scope, month, SUGGESTIONS_RESERVE_MICRO_USD, budget, now))) return await finish({ status: 'budget' });
-    let spent = 0;
-    try {
-      const earlier = (await stores.agentSuggestions.recent(scope, location.id)).map((record): SuggestionContent => (record.type === 'note'
-        ? { type: 'note', note: record.note }
-        : { type: 'rule', text: record.text, schedule: record.schedule }));
-      const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier);
-      const call = await callModel(model, suggestionsRequest(input));
-      spent = call.costMicroUsd;
-      if (call.kind === 'failed') return await finish({ status: 'failed' });
-      const kept = keptSuggestions(call.output, checks);
-      const stored = await stores.agentSuggestions.insert(scope, { locationId: location.id, week, suggestions: kept, now: ctx.now() });
-      return await finish(stored.length > 0 ? { status: 'suggested', suggested: stored.length } : { status: 'none' });
-    } finally {
-      await stores.chatUsage.add(scope, month, spent - SUGGESTIONS_RESERVE_MICRO_USD, ctx.now());
-    }
+    if (!(await stores.chatUsage.reserve(scope, month, reserve, budget, now))) return await finish({ status: 'budget' });
+    unheld = reserve;
+    if (await stores.agentSuggestions.holdReservation(scope, { locationId: location.id, week, month, microUsd: reserve, now: ctx.now() })) unheld = 0;
+    const call = await callModel(model, params);
+    spent = call.costMicroUsd;
+    if (call.kind === 'failed') return await finish({ status: 'failed' });
+    const kept = keptSuggestions(call.output, checks);
+    const stored = await stores.agentSuggestions.insert(scope, { locationId: location.id, week, suggestions: kept, now: ctx.now() });
+    return await finish(stored.length > 0 ? { status: 'suggested', suggested: stored.length } : { status: 'none' });
   } catch (err) {
-    await finish({ status: 'failed' }).catch(() => undefined);
+    if (!row.finished) await finish({ status: 'failed' }).catch(() => undefined);
     throw err;
   }
 }
