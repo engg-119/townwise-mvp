@@ -48,7 +48,7 @@ describe('lab contract', () => {
     expect(engine).toBe('baseline');
     expect(result.run.model.family).toBe('seasonal_baseline');
     expect(result.params).toMatchObject({ engine: 'baseline' });
-    if (engines === undefined || engines.model === null) return expect.unreachable('both engines ran');
+    if (engines.model === null) return expect.unreachable('both engines ran');
     expect(engines.baseline.weeklyWape).toBeLessThanOrEqual(engines.model.weeklyWape - 0.005);
     expect(engines.baseline.weeks).toBe(engines.model.weeks);
     expect(horizon91?.weeks).toBeGreaterThanOrEqual(8);
