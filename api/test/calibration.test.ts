@@ -39,12 +39,20 @@ describe('calibrationOf', () => {
 });
 
 describe('nextRefreshOf', () => {
+  const NOON = 12 * 60;
   it('is the first Monday after the town’s today while the refresh is on, and null while it is off', () => {
-    expect(nextRefreshOf('2026-11-21', true)).toBe('2026-11-23'); // a Saturday
-    expect(nextRefreshOf('2026-11-22', true)).toBe('2026-11-23'); // a Sunday
-    expect(nextRefreshOf('2026-11-23', true)).toBe('2026-11-30'); // a Monday: the next one
-    expect(nextRefreshOf('2026-12-29', true)).toBe('2027-01-04');
-    expect(nextRefreshOf('2026-11-21', false)).toBeNull();
+    expect(nextRefreshOf('2026-11-21', NOON, true)).toBe('2026-11-23'); // a Saturday
+    expect(nextRefreshOf('2026-11-22', NOON, true)).toBe('2026-11-23'); // a Sunday
+    expect(nextRefreshOf('2026-11-23', NOON, true)).toBe('2026-11-30'); // a Monday after 03:00: the next one
+    expect(nextRefreshOf('2026-12-29', NOON, true)).toBe('2027-01-04');
+    expect(nextRefreshOf('2026-11-21', NOON, false)).toBeNull();
+  });
+
+  it('on a Monday before 03:00 in the town it is that day, whose pass has not had its turn', () => {
+    expect(nextRefreshOf('2026-11-23', 90, true)).toBe('2026-11-23'); // 01:30
+    expect(nextRefreshOf('2026-11-23', 179, true)).toBe('2026-11-23'); // 02:59
+    expect(nextRefreshOf('2026-11-23', 180, true)).toBe('2026-11-30'); // 03:00
+    expect(nextRefreshOf('2026-11-23', 90, false)).toBeNull();
   });
 });
 

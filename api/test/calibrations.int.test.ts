@@ -194,6 +194,22 @@ describe('calibrated and stale (14.3, D42)', () => {
     expect(await stateOf(p)).toMatchObject({ state: 'stale', newerDays: 8, nextRefresh: '2026-06-08' });
   });
 
+  it('promises no refit for a location under the weekly refresh’s 230 days, which it would only record not_enough_history', async () => {
+    // A staff import published a run for a 200-day history: the schedule skips it every week.
+    const p = await place(200, true);
+    await publishRun(p, '2026-05-24');
+    const stale = await stateOf(p);
+    expect(stale).toMatchObject({ state: 'stale', newerDays: 7, nextRefresh: null });
+    expect(calibrationWords(stale)).toBe('Forecast made from your sales through Sun, May 24. The 7 days since aren’t in it yet.');
+    // From 230 days it is refit.
+    expect(await stateOf(await withRun(await place(230, true)))).toMatchObject({ state: 'stale', nextRefresh: '2026-06-08' });
+  });
+
+  async function withRun(p: Place): Promise<Place> {
+    await publishRun(p, '2026-05-24');
+    return p;
+  }
+
   it('has no next refresh while the organization’s forecasts are off', async () => {
     const p = await place(300);
     await publishRun(p, '2026-05-24');

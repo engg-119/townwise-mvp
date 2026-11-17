@@ -36,6 +36,7 @@ import { Types } from 'mongoose';
 import { scopeForWeeklyRefresh, type OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
+import { SCHEDULE_START_HOUR } from '../calibration.ts';
 import { daysBetween } from '../dates.ts';
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
 import type { ChatModel } from '../chat/model.ts';
@@ -53,8 +54,9 @@ import { suggestFor, SUGGESTIONS_TIME_MS, suggestionsWeek } from './suggestions.
 export const SCHEDULE_LEASE_MS = 10 * 60_000;
 /** Scheduled calibrations live at once across all organizations. [CONFIRM] */
 export const SCHEDULE_LIVE_CAP = 3;
-/** A location's week starts at this hour on Monday, in its town's time zone. [CONFIRM] */
-export const SCHEDULE_START_HOUR = 3;
+// SCHEDULE_START_HOUR lives with the calibration state, whose next refresh reads it too (calibration.ts cannot import
+// this module, which reaches it back through the chat's tools).
+export { SCHEDULE_START_HOUR };
 /** Starts a location's job may fail (the runner refusing it) on its Monday before its row records start_failed. [CONFIRM] */
 export const SCHEDULE_START_TRIES = 3;
 /**

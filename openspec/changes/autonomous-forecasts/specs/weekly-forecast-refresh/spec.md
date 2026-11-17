@@ -134,7 +134,7 @@ Each pass SHALL end with one log line `townwise.weekly_refresh_pass { started, f
 - **THEN** each location shows this week's outcome, such as "Mon, Nov 23: started, published (refreshed)" or "unchanged"
 
 ### Requirement: Calibrated and stale states
-The derived calibration state (`api/src/calibration.ts`, spec 14.1) SHALL add `calibrated` and `stale` for a location with a published run: `calibrated` when the newest published run's `dataThrough` is on or after the last day with guests, and `stale` when it is before it. Both SHALL carry the run's `dataThrough`, `newerDays` (days with guests after it) and `nextRefresh`, the date of the Monday the weekly refresh will next consider the location, or null while the lab runner is off, `TOWNWISE_WEEKLY_FORECASTS` is false, the schedule is paused, or the organization's forecasts are off, or, for a stale location, when its reference calibration (the weekly refresh's) already read every day with guests, since that refit was refused and the next Monday finds the data unchanged (so the words never promise a refit the schedule will skip). It SHALL be derived on every read and never stored, and the client SHALL accept both states before the API sends them. Where the state shows, `stale` SHALL read "Forecast made from your sales through {Sun, Nov 15}. Townwise refits on {Mon, Nov 23} with the {6} days since." or, with `nextRefresh` null, "Forecast made from your sales through {Sun, Nov 15}. The {6} days since aren't in it yet." `queued`, `calibrating` and `failed` SHALL stay reserved.
+The derived calibration state (`api/src/calibration.ts`, spec 14.1) SHALL add `calibrated` and `stale` for a location with a published run: `calibrated` when the newest published run's `dataThrough` is on or after the last day with guests, and `stale` when it is before it. Both SHALL carry the run's `dataThrough`, `newerDays` (days with guests after it) and `nextRefresh`, the date of the Monday the weekly refresh will next consider the location (that same Monday before 03:00 in the town), or null while the lab runner is off, `TOWNWISE_WEEKLY_FORECASTS` is false, the schedule is paused, the organization's forecasts are off, or the location's guest span is under the weekly refresh's 230 days (the schedule would only record `not_enough_history`), or, for a stale location, when its reference calibration (the weekly refresh's) already read every day with guests, since that refit was refused and the next Monday finds the data unchanged (so the words never promise a refit the schedule will skip). It SHALL be derived on every read and never stored, and the client SHALL accept both states before the API sends them. Where the state shows, `stale` SHALL read "Forecast made from your sales through {Sun, Nov 15}. Townwise refits on {Mon, Nov 23} with the {6} days since." or, with `nextRefresh` null, "Forecast made from your sales through {Sun, Nov 15}. The {6} days since aren't in it yet." `queued`, `calibrating` and `failed` SHALL stay reserved.
 
 #### Scenario: New days after the run
 - **WHEN** the newest published run's `dataThrough` is Nov 15, 2026, the owner uploaded Nov 16 to 21, and the weekly refresh is on
@@ -143,6 +143,14 @@ The derived calibration state (`api/src/calibration.ts`, spec 14.1) SHALL add `c
 #### Scenario: A refit of those days was refused
 - **WHEN** Monday's scheduled refit read Nov 16 to 21 and was refused `refresh_worse`, and no new day has come since
 - **THEN** the state is `stale` with `nextRefresh` null, and reads "The 6 days since aren't in it yet." rather than promising next Monday's refit, which would record `unchanged`
+
+#### Scenario: Early on a Monday
+- **WHEN** it is 01:30 on Mon, Nov 23 in the town and the location is stale
+- **THEN** `nextRefresh` is 2026-11-23, since that day's pass from 03:00 is still to come
+
+#### Scenario: A short history with an imported run
+- **WHEN** staff imported and published a run for a location whose guest span is 200 days
+- **THEN** `nextRefresh` is null, since the weekly refresh records `not_enough_history` under 230 days
 
 #### Scenario: The lab is off
 - **WHEN** the same location's API runs with `TOWNWISE_LAB_RUNNER` off

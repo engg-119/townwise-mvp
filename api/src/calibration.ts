@@ -6,11 +6,16 @@
 // read time (14.5). queued, calibrating and failed stay reserved.
 import type { OrgScope } from './access/policy.ts';
 import type { TownwiseContext } from './app.ts';
-import { utcDay } from './dates.ts';
+import { daysBetween, utcDay } from './dates.ts';
+import { GATE } from './lab/gate.ts';
+import { guestSpan } from './lab/input.ts';
 import { shortDate } from './orders/dates.ts';
 import type { LocationRecord } from './stores/locations.ts';
 import type { Coverage } from './stores/sales-days.ts';
-import { localDay, timeZoneOf } from './time-zones.ts';
+import { localDay, localMinutes, timeZoneOf } from './time-zones.ts';
+
+/** A location's week starts at this hour on Monday, in its town's time zone (lab/schedule.ts). [CONFIRM] */
+export const SCHEDULE_START_HOUR = 3;
 
 interface HistoryFields { dayCount: number; firstDate: string; lastDate: string }
 interface PublishedFields extends HistoryFields { dataThrough: string; newerDays: number; nextRefresh: string | null }
@@ -35,14 +40,16 @@ export function calibrationOf(coverage: Coverage, published: PublishedFacts | nu
 }
 
 /**
- * The Monday the weekly refresh next considers a location (D42): the first Monday after the town's `today`, or null
- * while it is off. `on` is nextRefreshFor's: the lab runner on, TOWNWISE_WEEKLY_FORECASTS true, the schedule not paused
- * by staff, and the organization active with its forecasts on. On a Monday it is the next one, the day's pass (from
- * 03:00) having had its turn.
+ * The Monday the weekly refresh next considers a location (D42): the first Monday after the town's `today` (`minutes`
+ * past its midnight), or null while it is off. `on` is nextRefreshFor's: the lab runner on, TOWNWISE_WEEKLY_FORECASTS
+ * true, the schedule not paused by staff, the organization active with its forecasts on, and a history the schedule
+ * would start. On a Monday from 03:00 it is the next one, the day's pass having had its turn; before 03:00 it is that
+ * same Monday, whose pass is still to come.
  */
-export function nextRefreshOf(today: string, on: boolean): string | null {
+export function nextRefreshOf(today: string, minutes: number, on: boolean): string | null {
   if (!on) return null;
   const weekday = new Date(`${today}T00:00:00.000Z`).getUTCDay();
+  if (weekday === 1 && minutes < SCHEDULE_START_HOUR * 60) return today;
   return utcDay(new Date(`${today}T00:00:00.000Z`), ((8 - weekday) % 7) || 7);
 }
 
@@ -86,11 +93,25 @@ export async function calibrationFor(
 
 /**
  * nextRefreshOf for the location, in the town's today: on while the lab runner is on, TOWNWISE_WEEKLY_FORECASTS is true,
- * staff have not paused the schedule, and its organization is active with forecasts on (an absent switch is on, D42).
+ * staff have not paused the schedule, its organization is active with forecasts on (an absent switch is on, D42), and
+ * its history (first to last day with guests, as the lab's input holds it) spans the weekly refresh's 230 days. Under
+ * them the schedule only records not_enough_history, so a location with a run published another way (a staff import)
+ * is promised no refit.
  */
 export async function nextRefreshFor(ctx: TownwiseContext, scope: OrgScope, location: LocationRecord): Promise<string | null> {
   const running = ctx.labRunner !== null && ctx.config.weeklyForecasts && (await ctx.stores.forecastSchedule.paused()) === null;
   const org = running ? await ctx.stores.orgs.findById(scope.orgId) : null;
-  const on = org !== null && org.status === 'active' && org.forecasts.on;
-  return nextRefreshOf(localDay(ctx.now(), timeZoneOf(location.town).timeZone), on);
+  const { timeZone } = timeZoneOf(location.town);
+  const now = ctx.now();
+  const today = localDay(now, timeZone);
+  const on = org !== null && org.status === 'active' && org.forecasts.on && await refitsHistory(ctx, scope, location.id, today);
+  return nextRefreshOf(today, localMinutes(now, timeZone), on);
+}
+
+/** Whether the location's guest span, as the lab's input holds it in the town's `today`, is one the schedule starts. */
+async function refitsHistory(ctx: TownwiseContext, scope: OrgScope, locationId: string, today: string): Promise<boolean> {
+  const coverage = await ctx.stores.salesDays.coverage(scope, locationId);
+  if (coverage.firstDate === null || coverage.lastDate === null) return false;
+  const span = guestSpan(await ctx.stores.salesDays.days(scope, locationId, { from: coverage.firstDate, to: coverage.lastDate }), today);
+  return span !== null && daysBetween(span.first, span.last) >= GATE.baselineMinHistoryDays;
 }
