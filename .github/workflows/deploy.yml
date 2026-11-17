@@ -279,6 +279,31 @@ jobs:
           done
           echo "::error::lab job did not reach the new image"
           exit 1
+      # The weekly forecast worker (D42) runs the API's image (infra/terraform/production/jobs.tf), so it moves to the
+      # same digest on every release. Like the lab job, it exists only once the owner has applied the lab (step 20).
+      - name: Point the weekly forecast worker at the API image digest and wait for it
+        if: env.LAB_ENABLED == 'true'
+        env:
+          IMAGE: ${{ steps.push.outputs.image }}
+        run: |
+          set -euo pipefail
+          # The lab job's PATCH (above), for the worker's one container; its command and environment are kept.
+          job="/subscriptions/$AZURE_SUBSCRIPTION_ID/resourceGroups/$AZURE_RESOURCE_GROUP/providers/Microsoft.App/jobs/caj-townwise-forecasts?api-version=2025-07-01"
+          body="$(az rest --method get --url "$job" --query properties.template.containers --output json \
+            | jq -c --arg image "$IMAGE" \
+              'if length == 1 and .[0].name == "weekly-forecasts" then {properties: {template: {containers: [.[0] | .image = $image]}, configuration: {}}}
+               else error("the worker job does not have exactly one container, weekly-forecasts") end')"
+          az rest --method patch --url "$job" --body "$body" --output none
+          for _ in $(seq 1 30); do
+            sleep 10
+            read -r state image < <(az containerapp job show --name caj-townwise-forecasts --resource-group "$AZURE_RESOURCE_GROUP" \
+              --query '[properties.provisioningState, properties.template.containers[0].image]' --output tsv | tr '\t' ' ')
+            echo "worker job provisioning $state"
+            if [ "$state" = Failed ] || [ "$state" = Canceled ]; then echo "::error::worker job update failed"; exit 1; fi
+            if [ "$state" = Succeeded ] && [ "$image" = "$IMAGE" ]; then exit 0; fi
+          done
+          echo "::error::worker job did not reach the new image"
+          exit 1
       # The upload client runs from its image pinned by digest (not the Static Web Apps action, which builds
       # FROM a moving tag). docker run passes only the variables named with -e: the container gets the token
       # and the read-only web folder, and no ACTIONS_ID_TOKEN_REQUEST_* variables, Azure CLI session or

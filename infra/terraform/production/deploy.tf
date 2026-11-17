@@ -1,6 +1,6 @@
 # What the deploy identity (bootstrap/github.tf) may do, each grant scoped to one resource:
-# push to the registry, update the one Container App (and the one lab job, when the forecast lab is on), and read
-# the Static Web App deployment token.
+# push to the registry, update the one Container App (and the lab job and the weekly forecast worker job, when the
+# forecast lab is on), and read the Static Web App deployment token.
 # No subscription or resource-group scope, no Key Vault, no listSecrets on the Container App.
 
 resource "azurerm_role_definition" "deployer" {

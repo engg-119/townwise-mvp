@@ -169,3 +169,64 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "backup_missing" {
     action_groups = [azurerm_monitor_action_group.ops.id]
   }
 }
+
+# The weekly forecast worker (jobs.tf, caj-townwise-forecasts), only with the lab. Its pass logs one line an hour,
+# townwise.weekly_refresh_pass, even while it is switched off or paused, and its failures log their own lines
+# (api/src/lab/schedule.ts, api/src/workers/weekly-forecasts.ts). Each line is pino JSON in the Log column.
+#
+# A pass that failed a start or a location, or a worker that stopped on an error, checked every hour. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_failed" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-failed"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "The weekly forecast worker failed a start or a location, or stopped on an error."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 2
+  evaluation_frequency = "PT1H"
+  window_duration      = "PT1H"
+
+  criteria {
+    query                   = <<-KQL
+      ContainerAppConsoleLogs
+      | where Log has "townwise.weekly_"
+      | extend line = parse_json(Log)
+      | extend msg = tostring(line.msg)
+      | where msg in ("townwise.weekly_worker_failed", "townwise.weekly_worker_refused", "townwise.weekly_refresh_location_failed")
+          or (msg == "townwise.weekly_refresh_pass" and toint(line.failed) > 0)
+    KQL
+    time_aggregation_method = "Count"
+    operator                = "GreaterThan"
+    threshold               = 0
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}
+
+# No pass line for a day: the job is not running, or every execution died before its pass finished (a bad
+# environment, the image, the timeout). Log search windows stop at two days, and a pass runs every hour, so a day
+# is the tighter check. It also fires if the daily cap stopped ingestion. $0.50 a month.
+resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_missing" {
+  count                = var.enable_lab ? 1 : 0
+  name                 = "townwise-forecasts-missing"
+  resource_group_name  = local.rg
+  location             = local.location
+  description          = "No weekly forecast worker pass in the last 24 hours."
+  scopes               = [azurerm_log_analytics_workspace.main.id]
+  severity             = 2
+  evaluation_frequency = "PT6H"
+  window_duration      = "P1D"
+
+  criteria {
+    query                   = "ContainerAppConsoleLogs | where Log has \"townwise.weekly_refresh_pass\""
+    time_aggregation_method = "Count"
+    operator                = "LessThan"
+    threshold               = 1
+  }
+
+  action {
+    action_groups = [azurerm_monitor_action_group.ops.id]
+  }
+}

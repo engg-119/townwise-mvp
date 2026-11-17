@@ -347,10 +347,28 @@ override_resource {
 }
 
 override_resource {
+  target          = azurerm_user_assigned_identity.job["forecasts"]
+  override_during = plan
+  values = {
+    id           = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.ManagedIdentity/userAssignedIdentities/id-townwise-job-forecasts"
+    principal_id = "00000000-0000-0000-0000-0000000000a2"
+    client_id    = "00000000-0000-0000-0000-0000000001a2"
+  }
+}
+
+override_resource {
   target          = azapi_resource.job_lab[0]
   override_during = plan
   values = {
     id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab"
+  }
+}
+
+override_resource {
+  target          = azapi_resource.job_forecasts[0]
+  override_during = plan
+  values = {
+    id = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-forecasts"
   }
 }
 
@@ -1156,6 +1174,16 @@ run "lab_disabled" {
   }
 
   assert {
+    condition = (
+      length(azapi_resource.job_forecasts) == 0 && !contains(keys(azurerm_user_assigned_identity.job), "forecasts") &&
+      length(azurerm_role_assignment.forecasts_lab_start) == 0 && length(azurerm_role_assignment.deployer_forecasts_job) == 0 &&
+      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed) == 0 &&
+      length(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing) == 0
+    )
+    error_message = "With enable_lab false, the weekly forecast worker, its identity, its grants and its alerts do not exist."
+  }
+
+  assert {
     condition     = !anytrue([for env in azurerm_container_app.api.template[0].container[0].env : startswith(env.name, "TOWNWISE_LAB_")])
     error_message = "With enable_lab false, the API has no TOWNWISE_LAB_ variable."
   }
@@ -1289,6 +1317,7 @@ run "lab_enabled" {
           [azurerm_role_assignment.backup_blob_create, azurerm_role_assignment.restore_blob_read],
           [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean],
           [azurerm_role_assignment.lab_start[0], azurerm_role_assignment.deployer_lab_job[0]],
+          [azurerm_role_assignment.forecasts_lab_start[0], azurerm_role_assignment.deployer_forecasts_job[0]],
         ) : assignment.principal_id
       ], azurerm_user_assigned_identity.lab[0].principal_id)
     )
@@ -1334,5 +1363,149 @@ run "lab_enabled" {
       one([for env in azurerm_container_app.api.template[0].container[0].env : env.value if env.name == "TOWNWISE_LAB_JOB_ID"]) == output.lab_job_id
     )
     error_message = "TOWNWISE_LAB_JOB_ID names the lab job Terraform declares (its parent, type and name), the same id lab_job_id outputs."
+  }
+}
+
+# The weekly forecast worker (D42; jobs.tf): the API image running one pass an hour, created with the lab.
+run "forecasts_worker" {
+  command = plan
+
+  variables {
+    enable_lab             = true
+    lab_image              = "crtownwise2d2c15bf.azurecr.io/townwise-lab@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+    lab_callback_client_id = "22222222-2222-4222-8222-222222222222"
+  }
+
+  assert {
+    condition = (
+      azapi_resource.job_forecasts[0].name == "caj-townwise-forecasts" &&
+      azapi_resource.job_forecasts[0].type == "Microsoft.App/jobs@2025-07-01" &&
+      azapi_resource.job_forecasts[0].body.properties.environmentId == azurerm_container_app_environment.main.id &&
+      azapi_resource.job_forecasts[0].body.properties.workloadProfileName == "Consumption" &&
+      azapi_resource.job_forecasts[0].body.properties.configuration.triggerType == "Schedule" &&
+      azapi_resource.job_forecasts[0].body.properties.configuration.scheduleTriggerConfig == { cronExpression = "5 * * * *", parallelism = 1, replicaCompletionCount = 1 } &&
+      azapi_resource.job_forecasts[0].body.properties.configuration.replicaTimeout == 600 &&
+      azapi_resource.job_forecasts[0].body.properties.configuration.replicaRetryLimit == 0
+    )
+    error_message = "The worker job runs at five past every hour, one replica on the Consumption profile, 600 seconds, never retried."
+  }
+
+  assert {
+    condition = (
+      length(azapi_resource.job_forecasts[0].body.properties.template.containers) == 1 &&
+      azapi_resource.job_forecasts[0].body.properties.template.containers[0].name == "weekly-forecasts" &&
+      azapi_resource.job_forecasts[0].body.properties.template.containers[0].image == var.api_image &&
+      azapi_resource.job_forecasts[0].body.properties.template.containers[0].command == ["node", "--env-file=api/production.env", "api/src/workers/weekly-forecasts.ts"] &&
+      azapi_resource.job_forecasts[0].body.properties.template.containers[0].resources.cpu == 0.25 &&
+      azapi_resource.job_forecasts[0].body.properties.template.containers[0].resources.memory == "0.5Gi" &&
+      # The override runs from the image's working directory and keeps its --env-file, as the image's CMD does.
+      fileexists("../../../api/src/workers/weekly-forecasts.ts") &&
+      strcontains(file("../../../api/Dockerfile"), "WORKDIR /app") &&
+      strcontains(file("../../../api/Dockerfile"), "CMD [\"node\", \"--env-file=api/production.env\", \"api/src/main.ts\"]")
+    )
+    error_message = "One container, weekly-forecasts, at the API image with 0.25 vCPU and 0.5Gi, running the worker with the image's production.env."
+  }
+
+  assert {
+    condition = (
+      [for secret in azapi_resource.job_forecasts[0].body.properties.configuration.secrets : secret.name] == ["mongodb-uri"] &&
+      [for secret in azapi_resource.job_forecasts[0].body.properties.configuration.secrets : secret.keyVaultUrl] == ["https://kv-townwise-2d2c15bf.vault.azure.net/secrets/mongodb-uri"] &&
+      [for secret in azapi_resource.job_forecasts[0].body.properties.configuration.secrets : secret.identity] == [azurerm_user_assigned_identity.job["forecasts"].id] &&
+      [for setting in azapi_resource.job_forecasts[0].body.properties.configuration.identitySettings : setting.identity] == [azurerm_user_assigned_identity.job["forecasts"].id] &&
+      [for setting in azapi_resource.job_forecasts[0].body.properties.configuration.identitySettings : setting.lifecycle] == ["Main"] &&
+      [for registry in azapi_resource.job_forecasts[0].body.properties.configuration.registries : registry.identity] == [azurerm_user_assigned_identity.job["forecasts"].id] &&
+      tolist(one(azapi_resource.job_forecasts[0].identity).identity_ids) == tolist([azurerm_user_assigned_identity.job["forecasts"].id]) &&
+      azurerm_user_assigned_identity.job["forecasts"].name == "id-townwise-job-forecasts"
+    )
+    error_message = "The worker has its own identity, used for its image pull and its one secret, mongodb-uri, and its container can obtain a token (to start the lab job)."
+  }
+
+  assert {
+    condition = azapi_resource.job_forecasts[0].body.properties.template.containers[0].env == [
+      { name = "MONGODB_URI", secretRef = "mongodb-uri" },
+      { name = "AZURE_CLIENT_ID", value = "00000000-0000-0000-0000-0000000001a2" },
+      { name = "TOWNWISE_LAB_RUNNER", value = "azure" },
+      { name = "TOWNWISE_LAB_JOB_ID", value = "/subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.App/jobs/caj-townwise-lab" },
+      { name = "TOWNWISE_LAB_AUDIENCE", value = "22222222-2222-4222-8222-222222222222" },
+      { name = "TOWNWISE_LAB_CALLER_ID", value = "00000000-0000-0000-0000-0000000000d1" },
+      { name = "TOWNWISE_LAB_TENANT_ID", value = "37acb94f-e2d9-41d9-a697-1bd7a1d60bf1" },
+    ]
+    error_message = "The worker gets the database from Key Vault, its own client id, and the lab runner's variables with the API's values (labRunnerOf requires all four)."
+  }
+
+  assert {
+    condition = (
+      toset([for env in azapi_resource.job_forecasts[0].body.properties.template.containers[0].env : "${env.name}=${env.value}" if startswith(env.name, "TOWNWISE_LAB_") && env.name != "TOWNWISE_LAB_RUNNER"]) ==
+      toset([for env in azurerm_container_app.api.template[0].container[0].env : "${env.name}=${env.value}" if startswith(env.name, "TOWNWISE_LAB_") && env.name != "TOWNWISE_LAB_RUNNER"])
+    )
+    error_message = "The worker's lab variables are the API's, so the two resolve one lab configuration."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_assignment.forecasts_lab_start[0].scope == azapi_resource.job_lab[0].id &&
+      azurerm_role_assignment.forecasts_lab_start[0].role_definition_id == azurerm_role_definition.lab_starter[0].role_definition_resource_id &&
+      azurerm_role_assignment.forecasts_lab_start[0].principal_id == "00000000-0000-0000-0000-0000000000a2" &&
+      azurerm_role_assignment.job_acr_pull["forecasts"].role_definition_name == "AcrPull" &&
+      azurerm_role_assignment.job_acr_pull["forecasts"].scope == azurerm_container_registry.main.id &&
+      azurerm_role_assignment.job_secret_read["forecasts/mongodb-uri"].scope == "${azurerm_key_vault.main.id}/secrets/mongodb-uri" &&
+      azurerm_role_assignment.job_secret_read["forecasts/mongodb-uri"].role_definition_name == "Key Vault Secrets User" &&
+      # Every role assignment in the module: the worker's identity appears in exactly those three.
+      length([
+        for assignment in concat(
+          values(azurerm_role_assignment.api_secret_read), values(azurerm_role_assignment.deployer),
+          values(azurerm_role_assignment.job_secret_read), values(azurerm_role_assignment.job_acr_pull),
+          [azurerm_role_assignment.api_acr_pull, azurerm_role_assignment.api_email, azurerm_role_assignment.deploy_acr_push],
+          [azurerm_role_assignment.backup_blob_create, azurerm_role_assignment.restore_blob_read],
+          [azurerm_role_assignment.api_files_raw, azurerm_role_assignment.api_files_clean],
+          [azurerm_role_assignment.lab_start[0], azurerm_role_assignment.deployer_lab_job[0], azurerm_role_assignment.lab_acr_pull[0]],
+          [azurerm_role_assignment.forecasts_lab_start[0], azurerm_role_assignment.deployer_forecasts_job[0]],
+        ) : assignment if assignment.principal_id == "00000000-0000-0000-0000-0000000000a2"
+      ]) == 3
+    )
+    error_message = "The worker's identity holds AcrPull, the mongodb-uri secret and the lab starter role at the lab job, and nothing else."
+  }
+
+  assert {
+    condition = (
+      azurerm_role_assignment.deployer_forecasts_job[0].scope == azapi_resource.job_forecasts[0].id &&
+      azurerm_role_assignment.deployer_forecasts_job[0].role_definition_id == azurerm_role_definition.deployer.role_definition_resource_id &&
+      azurerm_role_assignment.deployer_forecasts_job[0].principal_id == "00000000-0000-0000-0000-0000000000aa"
+    )
+    error_message = "The deploy identity updates the worker job (its image) with the deployer role, scoped to that one job."
+  }
+
+  assert {
+    condition = (
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].scopes == tolist([azurerm_log_analytics_workspace.main.id]) &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].evaluation_frequency == "PT1H" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].window_duration == "PT1H" &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "ContainerAppConsoleLogs") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "toint(line.failed) > 0") &&
+      alltrue([for line in ["townwise.weekly_worker_failed", "townwise.weekly_worker_refused"] :
+        strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "\"${line}\"") &&
+      strcontains(file("../../../api/src/workers/weekly-forecasts.ts"), "'${line}'")]) &&
+      alltrue([for line in ["townwise.weekly_refresh_location_failed", "townwise.weekly_refresh_pass"] :
+        strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "\"${line}\"") &&
+      strcontains(file("../../../api/src/lab/schedule.ts"), "'${line}'")]) &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].operator == "GreaterThan" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].threshold == 0 &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
+    )
+    error_message = "A pass that failed a start or a location, or a worker that stopped on an error, emails the ops address within the hour; the lines it looks for are the ones the code logs."
+  }
+
+  assert {
+    condition = (
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].scopes == tolist([azurerm_log_analytics_workspace.main.id]) &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].evaluation_frequency == "PT6H" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].window_duration == "P1D" &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].criteria[0].query, "ContainerAppConsoleLogs") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].criteria[0].query, "\"townwise.weekly_refresh_pass\"") &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].criteria[0].operator == "LessThan" &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].criteria[0].threshold == 1 &&
+      azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_missing[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
+    )
+    error_message = "A day without a pass line from the worker emails the ops address."
   }
 }
