@@ -156,7 +156,8 @@ Needs 0.3's headroom. The lab and the API's input change land in one commit.
 
 ## 6. Owner actions (not done by an agent)
 
-- [ ] 6.1 Owner: approve or edit the drafted copy (4b.1 to 4b.3: the privacy page's forecasts paragraph and the public pages' rewritten lines) before anything is pushed.
+- [x] 6.1 Owner: approve or edit the drafted copy (4b.1 to 4b.3: the privacy page's forecasts paragraph and the public pages' rewritten lines) before anything is pushed.
+  - Approved as drafted by the owner, 2026-11-17. The `[CONFIRM: ..., awaiting the owner]` markers on that copy (`client/app/(marketing)/privacy.tsx` and `about.tsx`, `client/src/marketing/Home.web.tsx` and `HowItWorks.web.tsx`) are left in place, since markers are removed only by the team.
 - [ ] 6.2 Owner: confirm Sawtooth's consent (owner decision 2026-11-05) before the lab is enabled in production. Forecasts are on by default, so enabling the lab publishes its forecast without a further switch. Its 658-day span makes it eligible for the model engine.
 - [ ] 6.3 Owner, after merge: enable the lab in production (infra step 20: `terraform apply`, including the targeted apply of 5.5; the lab image; `TOWNWISE_LAB_RUNNER=azure`) and release.
 - [ ] 6.4 Owner: decide each `[CONFIRM]` listed under Owner sign-offs in proposal.md.
