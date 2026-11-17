@@ -678,7 +678,9 @@ describe('the job’s callback', () => {
     }
     const own = logLines(server).filter((line) => String(line.msg).startsWith('townwise.calibration') || String(line.msg).startsWith('townwise.lab'));
     expect(own.map((line) => line.msg)).toEqual(['townwise.calibration_started', 'townwise.calibration_finished']);
-    expect(own[1]).toMatchObject({ orgId: t.orgId, locationId: t.locationId, calibrationId: calibration.id, status: 'succeeded', failure: null, heldOutWeeks: 12 });
+    expect(own[1]).toMatchObject({
+      orgId: t.orgId, locationId: t.locationId, calibrationId: calibration.id, status: 'succeeded', failure: null, heldOutWeeks: 12, via: 'console',
+    });
   });
 });
 

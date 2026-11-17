@@ -1494,11 +1494,16 @@ run "forecasts_worker" {
         strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "\"${line}\"") &&
       strcontains(file("../../../api/src/lab/schedule.ts"), "'${line}'")]) &&
       strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "toint(line.capped) > 0") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "\"townwise.calibration_finished\"") &&
+      strcontains(file("../../../api/src/lab/service.ts"), "'townwise.calibration_finished'") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "tostring(line.via) == \"scheduled\"") &&
+      strcontains(file("../../../api/src/lab/service.ts"), "via: record.requestedBy.via") &&
+      strcontains(azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].query, "tostring(line.status) == \"failed\"") &&
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].operator == "GreaterThan" &&
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].criteria[0].threshold == 0 &&
       azurerm_monitor_scheduled_query_rules_alert_v2.forecasts_failed[0].action[0].action_groups == tolist([azurerm_monitor_action_group.ops.id])
     )
-    error_message = "A pass that failed a start or a location, or a worker that stopped on an error, emails the ops address within the hour; the lines it looks for are the ones the code logs."
+    error_message = "A pass that failed a start or a location, a scheduled calibration that failed after it started, or a worker that stopped on an error, emails the ops address within the hour; the lines it looks for are the ones the code logs."
   }
 
   assert {

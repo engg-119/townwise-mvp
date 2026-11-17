@@ -22,7 +22,7 @@ import { removeLocation } from '../src/handlers/locations.ts';
 import { SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_TIME_MS, suggestionsReserveMicroUsd } from '../src/lab/suggestions.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
-import { fakeLabRunner, jobCall, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
+import { fakeLabRunner, jobCall, labFailure, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { logLines, MINUTE, startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -301,15 +301,34 @@ describe('which locations a Monday starts', () => {
     expect(await pass()).toMatchObject({ started: 1 });
   });
 
-  it('a failed scheduled calibration is not retried that week', async () => {
+  it('a failed scheduled calibration is not retried that week; the pass that timed it out counts it failed', async () => {
     const p = await place();
     await pass();
     const [job] = jobs();
     server.clock.advance(21 * MINUTE); // its job never called back: timed out
-    expect(await pass()).toMatchObject({ started: 0 });
+    expect(await pass()).toMatchObject({ started: 0, failed: 1 });
     expect(await calibration(job?.calibrationId ?? '')).toMatchObject({ status: 'failed', failure: 'timeout' });
+    // The ops alert (forecasts_failed) reads the line: a scheduled calibration that failed after it started
+    const finished = logLines(server).filter((line) => line.msg === 'townwise.calibration_finished' && line.calibrationId === job?.calibrationId);
+    expect(finished).toEqual([expect.objectContaining({ status: 'failed', failure: 'timeout', via: 'scheduled' })]);
     expect(await weekRow(p)).toMatchObject({ status: 'started' });
+    server.clock.advance(HOUR);
+    expect(await pass()).toMatchObject({ started: 0, failed: 0 }); // counted once
     expect(jobs()).toHaveLength(1);
+  });
+
+  it('a scheduled job whose lab answers ok false logs calibration_finished failed, via scheduled, for the ops alert', async () => {
+    await place();
+    await pass();
+    const [job] = jobs();
+    const calibrationId = job?.calibrationId ?? '';
+    expect((await jobCall(server, { calibrationId }, 'input')).status).toBe(200);
+    expect((await jobCall(server, { calibrationId }, 'result', labFailure({ calibrationId }, 'internal'))).status).toBe(200);
+    const finished = logLines(server).filter((line) => line.msg === 'townwise.calibration_finished' && line.calibrationId === calibrationId);
+    expect(finished).toEqual([expect.objectContaining({ status: 'failed', failure: 'job_failed', via: 'scheduled' })]);
+    // Ids and codes only
+    const keys = Object.keys(finished[0] ?? {}).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)).sort();
+    expect(keys).toEqual(['calibrationId', 'failure', 'gate', 'heldOutWeeks', 'locationId', 'orgId', 'status', 'via']);
   });
 
   it('a job that cannot start leaves no row, so a later pass that Monday tries again', async () => {
@@ -351,8 +370,8 @@ describe('the caps', () => {
     if (record === null) throw new Error('no calibration');
     await finishCalibration(server.ctx, done.scope, record, { status: 'failed', failure: 'job_failed' });
     expect(await pass()).toMatchObject({ started: 1, capped: 1 });
-    server.clock.advance(21 * MINUTE); // the rest time out
-    expect(await pass()).toMatchObject({ started: 1, capped: 0 });
+    server.clock.advance(21 * MINUTE); // the 3 live time out, counted failed
+    expect(await pass()).toMatchObject({ started: 1, failed: 3, capped: 0 });
     expect(jobs()).toHaveLength(5);
   });
 

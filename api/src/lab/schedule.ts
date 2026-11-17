@@ -4,7 +4,7 @@
 // runner is off, TOWNWISE_WEEKLY_FORECASTS is false or staff paused it. It then
 //   1. resolves week rows a dead pass left `starting` (started, when a system calibration of the location came after the
 //      row, else start_failed),
-//   2. counts the live calibrations it started (a stale one timed out first), for the live cap of 3,
+//   2. counts the live calibrations it started (a stale one timed out first, and counted failed), for the live cap of 3,
 //   3. considers each location of an active organization whose forecasts are on (an absent switch counting as on),
 //      found by a cross-tenant lookup and scoped by access/policy.ts: from 03:00 on Monday in the town's time zone to
 //      the end of that week (dueWeek: one the live cap held back on Monday is caught up later), a location with no row
@@ -96,7 +96,10 @@ export type PassState = 'ran' | 'off' | 'paused' | 'lease_held' | 'lease_lost' |
 export interface PassCounts {
   /** Calibrations started. */
   started: number;
-  /** Starts that failed, and week rows left starting by a dead pass that it resolved as start_failed. */
+  /**
+   * Starts that failed, week rows left starting by a dead pass that it resolved as start_failed, and scheduled
+   * calibrations it timed out (their job never called back), which are not retried that week.
+   */
   failed: number;
   /** Rows recorded `unchanged` or `not_enough_history`, and due locations someone else is calibrating. */
   skipped: number;
@@ -165,13 +168,16 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     }
   }
 
-  /** The scheduled calibrations still live, each past its 20 minutes timed out first. */
-  async function liveCount(): Promise<number> {
+  /** The scheduled calibrations still live, each past its 20 minutes timed out first and counted failed. */
+  async function liveCount(counts: PassCounts): Promise<number> {
     let live = 0;
     for (const found of await liveScheduledCalibrations(ctx.connection)) {
       const scope = scopeForWeeklyRefresh(found);
       const record = await stores.calibrations.find(scope, found.id);
-      if (record !== null && isLive((await expireStale(ctx, scope, record)).status)) live += 1;
+      if (record === null || !isLive(record.status)) continue;
+      const now = await expireStale(ctx, scope, record);
+      if (isLive(now.status)) live += 1;
+      else if (now.failure === 'timeout') counts.failed += 1;
     }
     return live;
   }
@@ -364,7 +370,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
         else if (claim.paused !== null) state = 'paused';
         else {
           await resolveStale(counts);
-          const pass: PassRun = { counts, live: await liveCount(), weekCounts: new Map() };
+          const pass: PassRun = { counts, live: await liveCount(counts), weekCounts: new Map() };
           for (const candidate of await weeklyCandidates(ctx.connection)) {
             if (deadline - ctx.now().getTime() < SCHEDULE_STEP_MS) {
               // Out of time: the rest wait for the next hour's pass (their week stays open until Sunday ends).

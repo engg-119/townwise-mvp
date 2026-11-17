@@ -176,13 +176,18 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "backup_missing" {
 #
 # A pass that failed a start, a location or a weekly suggestions call, a worker that stopped on an error, or a pass
 # on a Sunday (UTC) still holding locations back at a cap, checked every hour. A location the live cap holds back is
-# caught up later in its week (api/src/lab/schedule.ts), so one still held on Sunday may miss the week. $0.50 a month.
+# caught up later in its week (api/src/lab/schedule.ts), so one still held on Sunday may miss the week. Also a
+# scheduled calibration that failed after it started: its lab job crashed, timed out, or answered a failure or a
+# result the API refused. The API logs townwise.calibration_finished with the requester's via, status and failure code
+# and ids only (api/src/lab/service.ts), from the API when the lab answers and from the worker or the API when it times
+# one out, and that calibration is not retried that week, so a broken lab image would otherwise skip every location's
+# refresh unseen until forecasts lapse. $0.50 a month.
 resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_failed" {
   count                = var.enable_lab ? 1 : 0
   name                 = "townwise-forecasts-failed"
   resource_group_name  = local.rg
   location             = local.location
-  description          = "The weekly forecast worker failed a start, a location or a suggestions call, stopped on an error, or still held locations back on a Sunday."
+  description          = "The weekly forecast worker failed a start, a location or a suggestions call, stopped on an error, or still held locations back on a Sunday; or a scheduled calibration failed after it started."
   scopes               = [azurerm_log_analytics_workspace.main.id]
   severity             = 2
   evaluation_frequency = "PT1H"
@@ -191,7 +196,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_failed" {
   criteria {
     query                   = <<-KQL
       ContainerAppConsoleLogs
-      | where Log has "townwise.weekly_"
+      | where Log has "townwise.weekly_" or Log has "townwise.calibration_finished"
       | extend line = parse_json(Log)
       | extend msg = tostring(line.msg)
       | where msg in (
@@ -200,6 +205,7 @@ resource "azurerm_monitor_scheduled_query_rules_alert_v2" "forecasts_failed" {
           )
           or (msg in ("townwise.weekly_refresh_pass", "townwise.weekly_suggestions_pass") and toint(line.failed) > 0)
           or (msg == "townwise.weekly_refresh_pass" and toint(line.capped) > 0 and dayofweek(TimeGenerated) == 0d)
+          or (msg == "townwise.calibration_finished" and tostring(line.via) == "scheduled" and tostring(line.status) == "failed")
     KQL
     time_aggregation_method = "Count"
     operator                = "GreaterThan"

@@ -121,7 +121,9 @@ interface FinishFacts { runId: string | null; gate: string | null; heldOutWeeks:
 
 /**
  * Finishes a live calibration by compare-and-set. Only the call that finishes it records calibration.finished (by the
- * system, after the effect) and logs townwise.calibration_finished, so a retry or a race records it once.
+ * system, after the effect) and logs townwise.calibration_finished, so a retry or a race records it once. The line
+ * carries the requester's `via`, so the ops alert (infra monitoring.tf, forecasts_failed) can tell a scheduled
+ * calibration that failed after it started (timed out, or the lab answered a failure) from one a person started.
  */
 export async function finishCalibration(
   ctx: Pick<TownwiseContext, 'stores' | 'logger' | 'now'>, scope: OrgScope, record: CalibrationRecord, outcome: CalibrationOutcome,
@@ -138,8 +140,8 @@ export async function finishCalibration(
     },
   });
   ctx.logger.info({
-    orgId: scope.orgId, locationId: record.locationId, calibrationId: record.id, status: outcome.status, failure,
-    gate: facts.gate, heldOutWeeks: facts.heldOutWeeks,
+    orgId: scope.orgId, locationId: record.locationId, calibrationId: record.id, via: record.requestedBy.via, status: outcome.status,
+    failure, gate: facts.gate, heldOutWeeks: facts.heldOutWeeks,
   }, 'townwise.calibration_finished');
   return true;
 }
