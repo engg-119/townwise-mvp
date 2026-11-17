@@ -119,7 +119,7 @@ describe('the worker', () => {
     const stop = new AbortController();
     const waits: number[] = [];
     const worker = run({
-      argv: ['--loop', '--now', '2026-11-17T12:00:00.000Z'],
+      argv: ['--loop', '--now', '2026-11-16T07:00:00.000Z'],
       signal: stop.signal,
       sleep: (ms) => {
         waits.push(ms);
@@ -129,7 +129,7 @@ describe('the worker', () => {
     });
     expect(await worker.code).toBe(0);
     expect(waits).toEqual([WORKER_TICK_MS, WORKER_TICK_MS]);
-    // A Tuesday: two passes, neither due.
+    // Monday at 02:00 in Hanover, before its week starts: two passes, neither due.
     expect(worker.passes()).toEqual([
       expect.objectContaining({ state: 'ran', started: 0 }), expect.objectContaining({ state: 'ran', started: 0 }),
     ]);

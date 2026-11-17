@@ -6,15 +6,16 @@
 //      row, else start_failed),
 //   2. counts the live calibrations it started (a stale one timed out first), for the live cap of 3,
 //   3. considers each location of an active organization whose forecasts are on (an absent switch counting as on),
-//      found by a cross-tenant lookup and scoped by access/policy.ts: from 03:00 on Monday in the town's time zone, a
-//      location with no row for that Monday and no calibration of its own live is fingerprinted (its lab input without
+//      found by a cross-tenant lookup and scoped by access/policy.ts: from 03:00 on Monday in the town's time zone to
+//      the end of that week (dueWeek: one the live cap held back on Monday is caught up later), a location with no row
+//      for that Monday and no calibration of its own live is fingerprinted (its lab input without
 //      calibrationId, today and champion, with the input version and LAB_MODEL_VERSION) and skipped `unchanged` when the
 //      fingerprint equals its reference calibration's (stores/calibrations.ts reference), `not_enough_history` under the
 //      baseline's 230 days, held without a row past the live cap, `cap_reached` past the weekly cap, and otherwise
 //      started as the system (no charge, not one of the 4 a day) with the regimeStart of the calibration that made its
 //      newest published run (dropped, with a log line of ids, when the history no longer holds it, so the start is not
-//      refused every week). A job that cannot start leaves no row, so a later pass that Monday tries again, up to
-//      SCHEDULE_START_TRIES starts; the last records start_failed.
+//      refused every week). A job that cannot start leaves no row, so a later pass that week tries again, up to
+//      SCHEDULE_START_TRIES starts in a day; the last records start_failed.
 // After the calibrations, under the same lease, the pass runs TownwiseAI's weekly suggestions (openspec change
 // weekly-forecast-suggestions, lab/suggestions.ts) while TOWNWISE_WEEKLY_SUGGESTIONS is true and the model is set
 // (ANTHROPIC_API_KEY), with or without the lab: for each location of an active organization whose weekly suggestions
@@ -40,7 +41,7 @@ import {
   countedWeekRows, liveScheduledCalibrations, staleStartingWeeks, staleSuggestionPasses, suggestionCandidates, weeklyCandidates,
   type WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
-import { localDay, localMinutes, timeZoneOf, weekdayOf } from '../time-zones.ts';
+import { localDay, localMinutes, timeZoneOf } from '../time-zones.ts';
 import { GATE } from './gate.ts';
 import { buildLabInput, labInputFingerprint } from './input.ts';
 import { checkStart, expireStale, launch, regimeStartFits, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
@@ -108,11 +109,14 @@ export interface ForecastSchedule {
   pass(): Promise<PassResult>;
 }
 
-/** The Monday a location is due on, when it is due now: a Monday at 03:00 or later in its town; else null. */
+/**
+ * The Monday of the week a location is due for: from 03:00 that Monday in its town to the end of Sunday; null before
+ * 03:00 on a Monday. A location with no row for that Monday is considered on every pass of its week, not only on Monday:
+ * at 3 live at once and one pass an hour, Monday alone starts at most 63, so the locations the live cap held back (the
+ * newest, by the candidates' order) are caught up later that week instead of missing it, as the suggestions are.
+ */
 export function dueWeek(now: Date, timeZone: string): string | null {
-  const today = localDay(now, timeZone);
-  if (weekdayOf(today) !== 'Mon' || localMinutes(now, timeZone) < SCHEDULE_START_HOUR * 60) return null;
-  return today;
+  return suggestionsWeek(localDay(now, timeZone), localMinutes(now, timeZone), SCHEDULE_START_HOUR);
 }
 
 function isLive(status: string): boolean {
@@ -169,7 +173,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     const week = dueWeek(dueClock(), timeZone);
     if (week === null || await stores.forecastWeeks.find(scope, location.id, week) !== null) return;
     const { counts } = pass;
-    // Someone is calibrating it: no row, so a later pass tries again until the town's Monday ends.
+    // Someone is calibrating it: no row, so a later pass tries again until the town's week ends.
     const own = await stores.calibrations.live(scope, location.id);
     if (own !== null && isLive((await expireStale(ctx, scope, own)).status)) {
       counts.skipped += 1;
@@ -237,7 +241,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       return;
     }
     counts.failed += 1;
-    // The runner refused the job (an outage): leave the week open for a later pass that Monday, up to the tries.
+    // The runner refused the job (an outage): leave the week open for a later pass, up to the tries in a day.
     if (launched.code === 'start_failed') {
       const since = new Date(now.getTime() - 24 * 60 * 60_000);
       if (await stores.calibrations.scheduledStartFailures(scope, location.id, since) < SCHEDULE_START_TRIES) {

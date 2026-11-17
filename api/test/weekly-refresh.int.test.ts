@@ -137,14 +137,23 @@ describe('which locations a Monday starts', () => {
     expect(jobs()).toHaveLength(1);
   });
 
-  it('starts nothing before 03:00 on Monday in the town, or on another day', async () => {
+  it('starts nothing before 03:00 on Monday in the town', async () => {
     const p = await place();
     server.clock.advance(-(5 * HOUR + 30 * MINUTE)); // Mon 06:30 UTC, 02:30 in Hanover
     expect(await pass()).toMatchObject({ state: 'ran', started: 0, skipped: 0, capped: 0 });
     expect(await weekRow(p)).toBeNull();
-    server.clock.advance(DAY); // Tuesday
-    expect(await pass()).toMatchObject({ started: 0 });
     expect(jobs()).toHaveLength(0);
+  });
+
+  it('a location with no row yet that week is caught up on a later day of it, under that Monday', async () => {
+    const p = await place();
+    server.clock.advance(DAY + 2 * HOUR); // Tue 14:00 UTC: Monday's passes never reached it
+    expect(await pass()).toMatchObject({ state: 'ran', started: 1 });
+    expect(await weekRow(p)).toMatchObject({ status: 'started' });
+    // Its week has a row now: the rest of the week starts nothing more.
+    server.clock.advance(3 * DAY);
+    expect(await pass()).toMatchObject({ started: 0 });
+    expect(jobs()).toHaveLength(1);
   });
 
   it('a location in another time zone starts from 03:00 in its own town', async () => {
@@ -307,6 +316,19 @@ describe('the caps', () => {
     server.clock.advance(21 * MINUTE); // the rest time out
     expect(await pass()).toMatchObject({ started: 1, capped: 0 });
     expect(jobs()).toHaveLength(5);
+  });
+
+  it('locations the live cap held all Monday start later that week, so a full week reaches the weekly cap', async () => {
+    // At 3 live at once and one pass an hour, Monday alone (03:00 to midnight, 21 passes) starts at most 63; the rest of
+    // the week holds the remaining room up to TOWNWISE_WEEKLY_FORECAST_CAP (default 200).
+    const places = [];
+    for (let i = 0; i < SCHEDULE_LIVE_CAP + 2; i += 1) places.push(await place());
+    expect(await pass()).toMatchObject({ started: SCHEDULE_LIVE_CAP, capped: 2 });
+    server.clock.advance(DAY); // Tuesday: Monday's 3 have timed out, and the 2 held back have no row yet
+    expect(await pass()).toMatchObject({ started: 2, capped: 0 });
+    const rows = await Promise.all(places.map((p) => weekRow(p)));
+    expect(rows.map((row) => row?.status)).toEqual(Array.from({ length: places.length }, () => 'started'));
+    expect(jobs()).toHaveLength(places.length);
   });
 
   it('records cap_reached past the weekly cap', async () => {
