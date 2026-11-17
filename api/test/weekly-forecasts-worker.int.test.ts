@@ -2,12 +2,16 @@
 // through config.ts's schema, connects to Mongo only, runs one pass and exits 0; with the switch false or the lab runner
 // off it starts nothing and exits 0; a bad environment exits 1; --loop runs a pass at start and another after its hour;
 // --now moves the pass's clock and is refused in production. A fake runner stands in for the lab job, and the test
-// server seeds the same database. Every number is synthetic.
+// server seeds the same database. With a model (a scripted fake, never Anthropic) the same pass makes TownwiseAI's weekly
+// suggestions for an organization that never set the switch, lab or no lab (openspec change weekly-forecast-suggestions,
+// task 4.3). Every number is synthetic.
 import { randomUUID } from 'node:crypto';
 
 import { afterAll, beforeAll, beforeEach, describe, expect, inject, it } from 'vitest';
 
+import type { ChatModel } from '../src/chat/model.ts';
 import { runWeeklyForecastsWorker, WORKER_TICK_MS } from '../src/workers/weekly-forecasts.ts';
+import { message, scriptedModel, text } from './helpers/chat-model.ts';
 import { addLocation, createOrg } from './helpers/fixtures.ts';
 import { fakeLabRunner, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
@@ -21,7 +25,10 @@ beforeAll(async () => {
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
-  for (const name of ['tw_orgs', 'tw_locations', 'tw_sales_days', 'tw_calibrations', 'tw_forecast_weeks', 'tw_forecast_schedule']) {
+  for (const name of [
+    'tw_orgs', 'tw_locations', 'tw_sales_days', 'tw_calibrations', 'tw_forecast_weeks', 'tw_forecast_schedule', 'tw_agent_suggestions',
+    'tw_suggestion_passes', 'tw_chat_usage',
+  ]) {
     await server.connection.collection(name).deleteMany({});
   }
 });
@@ -50,14 +57,19 @@ async function place(): Promise<void> {
 /** Runs the worker with the fake runner, or with the runner its environment builds ('env'). */
 function run(opts: {
   argv?: string[]; env?: Record<string, string>; labRunner?: 'env'; sleep?: (ms: number, signal: AbortSignal) => Promise<void>; signal?: AbortSignal;
+  chat?: ChatModel;
 } = {}) {
   const lines: Record<string, unknown>[] = [];
   const destination = { write(message: string) { for (const line of message.split('\n')) if (line.trim() !== '') lines.push(JSON.parse(line) as Record<string, unknown>); } };
   const code = runWeeklyForecastsWorker({
     argv: opts.argv ?? ['--now', MONDAY_0305], env: opts.env ?? env(), ...(opts.labRunner === 'env' ? {} : { labRunner: runner }),
     logDestination: destination, ...(opts.sleep === undefined ? {} : { sleep: opts.sleep }), ...(opts.signal === undefined ? {} : { signal: opts.signal }),
+    ...(opts.chat === undefined ? {} : { chat: opts.chat }),
   });
-  return { code, lines, passes: () => lines.filter((line) => line.msg === 'townwise.weekly_refresh_pass') };
+  return {
+    code, lines, passes: () => lines.filter((line) => line.msg === 'townwise.weekly_refresh_pass'),
+    suggestions: () => lines.filter((line) => line.msg === 'townwise.weekly_suggestions_pass'),
+  };
 }
 
 describe('the worker', () => {
@@ -121,5 +133,29 @@ describe('the worker', () => {
     expect(worker.passes()).toEqual([
       expect.objectContaining({ state: 'ran', started: 0 }), expect.objectContaining({ state: 'ran', started: 0 }),
     ]);
+  });
+
+  it('with a model, one pass also makes weekly suggestions for an organization that never set the switch, even with the lab off', async () => {
+    await place();
+    const model = scriptedModel();
+    const closure = {
+      type: 'note', ruleText: null, kind: 'closure', startDate: '2026-11-26', endDate: '2026-11-26', weekdays: null, effect: 'closed',
+      expectedGuests: null, detail: null, startTime: null, endTime: null, why: 'Thanksgiving is Thu, Nov 26.', calendarIds: ['us:thanksgiving:2026'],
+    };
+    model.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: [closure] }))]) });
+    // The real clock decides the town's today (only who is due moves with --now), so the closure must still be ahead.
+    const today = new Date().toISOString().slice(0, 10);
+    const worker = run({ labRunner: 'env', chat: model });
+    expect(await worker.code).toBe(0);
+    expect(worker.passes()).toEqual([expect.objectContaining({ state: 'off', started: 0 })]);
+    expect(model.calls).toHaveLength(1);
+    expect(await server.connection.collection('tw_suggestion_passes').findOne({})).toMatchObject({ week: '2026-11-16' });
+    const stored = await server.connection.collection('tw_agent_suggestions').countDocuments({ status: 'open' });
+    expect(worker.suggestions()).toEqual([expect.objectContaining({ state: 'ran', failed: 0 })]);
+    expect(stored).toBe(today < '2026-11-26' ? 1 : 0);
+    // Without ANTHROPIC_API_KEY (and no model given) the suggestions are off.
+    const keyless = run({ labRunner: 'env' });
+    expect(await keyless.code).toBe(0);
+    expect(keyless.suggestions()).toEqual([expect.objectContaining({ state: 'off' })]);
   });
 });

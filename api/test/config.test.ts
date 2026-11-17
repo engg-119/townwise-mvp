@@ -44,7 +44,7 @@ describe('config', () => {
     const budget = {
       TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
     };
     expect(() => resolveTownwiseConfig({ NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget })).toThrow(ConfigError);
     expect(resolveTownwiseConfig({ NODE_ENV: 'development', TOWNWISE_SUPERADMIN_EMAILS: [], ...budget }).superadminEmails.size).toBe(0);
@@ -56,7 +56,7 @@ describe('config', () => {
     const base = {
       TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20, TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081',
       FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined, TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
     };
     const twoStep = (nodeEnv: 'development' | 'test' | 'production', value?: string): boolean => resolveTownwiseConfig({
       NODE_ENV: nodeEnv, ...base, TOWNWISE_STAFF_TWO_STEP: loadEnv(configSchema, { TOWNWISE_STAFF_TWO_STEP: value }).TOWNWISE_STAFF_TWO_STEP,
@@ -92,7 +92,7 @@ describe('config', () => {
     const base = {
       NODE_ENV: 'production' as const, TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_WEB_URL: 'http://localhost:8081', FILES_BLOB_ACCOUNT_URL: undefined, FILES_AZURITE_CONNECTION_STRING: undefined,
-      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
+      TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
     };
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch('true') }).chatWebSearch).toBe(true);
     expect(resolveTownwiseConfig({ ...base, TOWNWISE_CHAT_WEB_SEARCH: webSearch(undefined) }).chatWebSearch).toBe(false);
@@ -108,6 +108,17 @@ describe('config', () => {
     expect(weekly({ TOWNWISE_WEEKLY_FORECASTS: 'false', TOWNWISE_WEEKLY_FORECAST_CAP: '12' })).toMatchObject({ weeklyForecasts: false, weeklyForecastCap: 12 });
     expect(() => weekly({ TOWNWISE_WEEKLY_FORECASTS: 'sometimes' })).toThrow(ConfigError);
     for (const bad of ['-1', 'many', '2.5', '10001']) expect(() => weekly({ TOWNWISE_WEEKLY_FORECAST_CAP: bad })).toThrow(ConfigError);
+  });
+
+  it('weekly suggestions are on by default, and refuse anything but true or false', () => {
+    const weekly = (env: Record<string, string | undefined>) => {
+      const parsed = loadEnv(configSchema, { TOWNWISE_SUPERADMIN_EMAILS: 'staff@townwise.test', ...env });
+      return resolveTownwiseConfig({ NODE_ENV: 'development', ...parsed });
+    };
+    expect(weekly({}).weeklySuggestions).toBe(true);
+    expect(weekly({ TOWNWISE_WEEKLY_SUGGESTIONS: '' }).weeklySuggestions).toBe(true);
+    expect(weekly({ TOWNWISE_WEEKLY_SUGGESTIONS: 'false' }).weeklySuggestions).toBe(false);
+    expect(() => weekly({ TOWNWISE_WEEKLY_SUGGESTIONS: 'sometimes' })).toThrow(ConfigError);
   });
 
   it('the API starts no weekly refresh (D42): main.ts never imports the schedule or the worker, which runs on its own', () => {
@@ -220,7 +231,7 @@ describe('config', () => {
     expect(() => resolveTownwiseConfig({
       NODE_ENV: 'production', TOWNWISE_SUPERADMIN_EMAILS: ['staff@townwise.test'], TOWNWISE_CHAT_MONTHLY_BUDGET_USD: 20,
       TOWNWISE_CHAT_WEB_SEARCH: false, TOWNWISE_WEB_URL: 'http://localhost:8081', TOWNWISE_FILES_MONTHLY_BUDGET_USD: 5, ...azurite,
-      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200,
+      TOWNWISE_WEEKLY_FORECASTS: true, TOWNWISE_WEEKLY_FORECAST_CAP: 200, TOWNWISE_WEEKLY_SUGGESTIONS: true,
     })).toThrow(ConfigError);
     expect(() => loadEnv(configSchema, { FILES_BLOB_ACCOUNT_URL: 'not a url' })).toThrow(ConfigError);
   });

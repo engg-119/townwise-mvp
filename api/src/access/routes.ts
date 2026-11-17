@@ -46,6 +46,7 @@ import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetup
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
 import { getTownProfile } from '../handlers/towns.ts';
 import { endViewAs, startViewAs } from '../handlers/view-as.ts';
+import { acceptSuggestion, dismissSuggestion, switchWeeklySuggestions } from '../handlers/weekly-suggestions.ts';
 import { openAsAdminRefusal, policyRefusal, principalOf, recordResolution, viewAsRefusal, type Policy, type Principal } from './policy.ts';
 import { resolveAccess } from './resolve.ts';
 
@@ -57,10 +58,10 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a conversation's rename, a version switch, a reply's rating, the profile
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
    * edit, an order rule's turn-off and open as admin's start (its reason);
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
-   * switch, (D31) a business rule, the order decisions and rules, the item and order change cards, and connecting a
+   * switch, the weekly suggestions switch, (D31) a business rule, the order decisions and rules, the item and order change cards, and connecting a
    * Google calendar;
    * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
    * ids may reach 13 KB, and an order count; '256kb' only on the upload routes (the member one, D23 staff setup's, and
@@ -397,6 +398,20 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.agent.answer', method: 'POST', path: '/org/locations/:locationId/agent/questions/:questionId', policy: 'member',
     bodyLimit: '1kb', openAsAdmin: true, handler: answerQuestion,
+  },
+  // TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions): an org admin accepts or dismisses one,
+  // and turns them off or on for the organization (the switch carries the tab's orgId in open as admin, D25).
+  {
+    id: 'org.agent.suggestion_accept', method: 'POST', path: '/org/locations/:locationId/agent/suggestions/:suggestionId/accept',
+    policy: 'org_admin', bodyLimit: '1kb', openAsAdmin: true, handler: acceptSuggestion,
+  },
+  {
+    id: 'org.agent.suggestion_dismiss', method: 'POST', path: '/org/locations/:locationId/agent/suggestions/:suggestionId/dismiss',
+    policy: 'org_admin', bodyLimit: '1kb', openAsAdmin: true, handler: dismissSuggestion,
+  },
+  {
+    id: 'org.weekly_suggestions.switch', method: 'PATCH', path: '/org/weekly-suggestions', policy: 'org_admin', bodyLimit: '2kb',
+    openAsAdmin: true, handler: switchWeeklySuggestions,
   },
   // U13A, estimates (spec 10.13): people in town and "How Townwise estimates". Reads with no limiter.
   {

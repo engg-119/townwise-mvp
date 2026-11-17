@@ -560,7 +560,8 @@ describe('inline on the landing', () => {
     // From 1024px the column beside the landing leaves the questions out: they're drawn once, here.
     const column = await openPanel(2);
     expect(within(column).queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
-    expect(within(column).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
+    // The weekly suggestions, which the landing doesn't list, come first in the column.
+    expect(within(column).getAllByRole('heading')[0]?.textContent).toBe('Suggested for the next 3 months');
     // Below 1024px the panel is a sheet over the landing and keeps them, with the same answers and counts.
     setWidth(800);
     const side = await screen.findByRole('dialog', { name: 'Questions and activity' });
@@ -626,7 +627,7 @@ describe('?panel=questions (Home’s link)', () => {
     expect(screen.getByRole('button', { name: 'Questions and activity (3)' }).getAttribute('aria-expanded')).toBe('true');
     const landing = await screen.findByTestId('chat-landing-column');
     await within(landing).findByRole('heading', { name: 'Questions for you (3)' });
-    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
+    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('Suggested for the next 3 months');
     await waitFor(() => { expect(window.location.search).toBe(''); });
     expect(window.location.pathname).toBe('/locations/l1/agent');
     // Closed by the person, it stays closed.

@@ -98,6 +98,12 @@ export const configSchema = z.object({
   /** D42: roughly how many scheduled calibrations may start in one week across all organizations. [CONFIRM] */
   TOWNWISE_WEEKLY_FORECAST_CAP: z.coerce.number().int().min(0).max(10_000).default(200),
   /**
+   * TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions): whether the weekly worker makes one
+   * suggestions call per location a week. On unless set false, by the owner's directive (2026-11-16); off without
+   * ANTHROPIC_API_KEY, and needs no lab.
+   */
+  TOWNWISE_WEEKLY_SUGGESTIONS: z.stringbool().default(true),
+  /**
    * Development only: the secret a local lab job calls back with, shared by the API and the weekly worker so a job the
    * worker started can call back to the API (both refuse it in production, as they refuse TOWNWISE_LAB_RUNNER=local).
    * Unset, the API makes its own per process and the worker can't start a local job.
@@ -142,6 +148,8 @@ export interface ResolvedTownwiseConfig {
   readonly weeklyForecasts: boolean;
   /** D42: TOWNWISE_WEEKLY_FORECAST_CAP. */
   readonly weeklyForecastCap: number;
+  /** TOWNWISE_WEEKLY_SUGGESTIONS, the weekly suggestions' deploy-level switch. */
+  readonly weeklySuggestions: boolean;
 }
 
 /** The URL's origin, or null when it has a path, query, fragment or credentials. */
@@ -283,5 +291,6 @@ export function resolveTownwiseConfig(
     webUrl,
     weeklyForecasts: config.TOWNWISE_WEEKLY_FORECASTS,
     weeklyForecastCap: config.TOWNWISE_WEEKLY_FORECAST_CAP,
+    weeklySuggestions: config.TOWNWISE_WEEKLY_SUGGESTIONS,
   };
 }

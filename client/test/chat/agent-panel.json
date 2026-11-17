@@ -11,7 +11,23 @@
       { "at": "2026-06-01T09:00:00.000Z", "kind": "upload_applied", "firstDate": "2026-03-01", "lastDate": "2026-05-31", "dayCount": 78 },
       { "at": "2026-06-01T08:30:00.000Z", "kind": "file_processed", "fileId": "0000000000000000000000f1", "firstDate": "2026-01-05", "lastDate": "2026-01-11", "dayCount": 7 },
       { "at": "2026-06-01T07:00:00.000Z", "kind": "question_answered", "questionId": "gap_2026-01-20_2026-01-21", "answer": "other" }
-    ]
+    ],
+    "suggestions": [
+      {
+        "id": "0000000000000000000000c2", "why": "Commencement is Sun, Jun 14, and you booked a party after it last year.",
+        "calendar": [{ "id": "hanover-nh:2026-06-14:commencement", "title": "Commencement", "start": "2026-06-14", "end": "2026-06-14" }],
+        "createdAt": "2026-06-01T06:00:00.000Z", "type": "rule", "text": "Private party after Commencement",
+        "schedule": { "kind": "private_event", "startDate": "2026-06-14", "weekdays": null, "effect": "more_guests", "expectedGuests": 40, "startTime": "18:00", "endTime": "22:00", "endDate": "2026-06-14" },
+        "scheduleSummary": "Adds 40 guests on Jun 14, 2026, 6 pm to 10 pm"
+      },
+      {
+        "id": "0000000000000000000000c1", "why": "Independence Day is Sat, Jul 4, and you were closed on it last year.",
+        "calendar": [{ "id": "us:independence-day:2026", "title": "Independence Day", "start": "2026-07-04", "end": "2026-07-04" }],
+        "createdAt": "2026-06-01T06:00:00.000Z", "type": "note",
+        "note": { "kind": "closure", "startDate": "2026-07-04", "weekdays": null, "effect": "closed", "expectedGuests": null, "startTime": null, "endTime": null, "endDate": "2026-07-04", "detail": null }
+      }
+    ],
+    "weeklySuggestions": { "on": true, "available": false, "canChange": false }
   },
   "answer": {
     "questionId": "gap_2026-05-12_2026-05-13",

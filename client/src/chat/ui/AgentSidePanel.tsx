@@ -15,9 +15,11 @@ import { readsLine, type ToolContext } from '../tools';
 import { openQuestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
 import { ModelCardSheet } from './ModelCardSheet';
 import { QuestionCard, type QuestionChat } from './QuestionCard';
+import { SuggestionsSection } from './SuggestionCard';
 
-// The side panel (spec P25): Questions for you, What it's been doing, this month's budget, and How TownwiseAI
-// works. Beside an empty conversation's landing, which lists the questions under its chips, the column leaves Questions
+// The side panel (spec P25): Questions for you, Suggested for the next 3 months (TownwiseAI's weekly suggestions,
+// openspec change weekly-forecast-suggestions, shown in the column beside the landing too, which lists only questions),
+// What it's been doing, this month's budget, and How TownwiseAI works. Beside an empty conversation's landing, which lists the questions under its chips, the column leaves Questions
 // for you out (owner request, 2026-11-15), so they aren't drawn twice. Every activity item is a real, dated event the server read from the location's own records; a kind this
 // client doesn't know shows as nothing. The page shows the four as Questions and activity: a column from 1024px, a
 // sheet below. How TownwiseAI works says whether Townwise has a forecast for the location from
@@ -243,6 +245,7 @@ export function AgentSidePanel(props: {
       {props.showQuestions === false ? null : (
         <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
       )}
+      <SuggestionsSection panel={props.panel} town={props.ctx.town} readOnlyId={props.readOnlyId} />
       <ActivitySection panel={props.panel} />
       <BudgetSection budget={props.budget} />
       <HowItWorks ctx={props.ctx} locationId={props.locationId} about={props.about} onRetryAbout={props.onRetryAbout} />

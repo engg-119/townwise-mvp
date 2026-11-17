@@ -27,7 +27,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'file.uploaded', 'file.deleted', 'file.raw_deleted', 'files.raw_deleted_all',
     'file.ai_read_requested', 'file.ai_read', 'file.ai_undone', 'org.originals_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
-    'agent.question_answered',
+    'agent.question_answered', 'agent.suggestion_accepted', 'agent.suggestion_dismissed', 'org.weekly_suggestions_changed',
     'order.setup_saved', 'order.item_sales_uploaded', 'order.item_sales_deleted', 'order.count_saved', 'order.decision_saved',
     'order.rule_saved', 'order.rule_turned_off', 'order.card_saved', 'order.card_dismissed', 'order.setup_read',
     'forecast.imported', 'forecast.published', 'forecast.withdrawn', 'forecast.deleted',
@@ -54,6 +54,9 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'not_sure' }, 'Not sure'],
   ['agent.question_answered', { locationId: 'l1', questionId: 'likely_closed_2026-03-14', answer: 'other' }, 'Answered in the chat'],
   ['agent.question_answered', { locationId: 'l1', questionId: 'gap_2026-12-24_2026-12-26', answer: 'other' }, 'Answered in the chat'],
+  ['agent.suggestion_accepted', { locationId: 'l1', suggestionId: 's1', type: 'note' }, 'Note'],
+  ['agent.suggestion_dismissed', { locationId: 'l1', suggestionId: 's1', type: 'rule' }, 'Business rule'],
+  ['org.weekly_suggestions_changed', { on: false }, 'Off'],
   ['forecast.published', { locationId: 'l1', modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14', dayCount: 14 }, 'Model v9, May 1, 2026 to May 14, 2026, 14 days'],
 ])('details for %s', (action, details, expected) => {
   expect(auditDetails({ action, details })).toBe(expected);

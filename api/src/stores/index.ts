@@ -2,6 +2,7 @@ import type { Connection } from 'mongoose';
 
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
 import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
+import { createAgentSuggestionStore, type AgentSuggestionStore } from './agent-suggestions.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
 import { createBusinessRuleStore, type BusinessRuleStore } from './business-rules.ts';
 import { createCalibrationStore, type CalibrationStore } from './calibrations.ts';
@@ -58,6 +59,8 @@ export interface TownwiseStores {
   readonly chatProposals: ChatProposalStore;
   /** U9, TownwiseAI's questions. */
   readonly agentAnswers: AgentAnswerStore;
+  /** TownwiseAI's weekly suggestions and each location's weekly pass (openspec change weekly-forecast-suggestions). */
+  readonly agentSuggestions: AgentSuggestionStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
   /** The display name for TownwiseAI's greeting (account-level, spec 6.22). */
@@ -106,6 +109,8 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatProposals: createChatProposalStore(connection),
     // U9, TownwiseAI's questions.
     agentAnswers: createAgentAnswerStore(connection),
+    // TownwiseAI's weekly suggestions.
+    agentSuggestions: createAgentSuggestionStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
     profiles: createProfileStore(connection),
