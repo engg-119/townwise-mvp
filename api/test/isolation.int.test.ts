@@ -52,6 +52,8 @@ interface Tenant {
   ruleId: string;
   /** An owner calendar of the location, named and titled after the organization. */
   calendarId: string;
+  /** An open weekly suggestion of the location (weekly-forecast-suggestions), its why named after the organization. */
+  suggestionId: string;
 }
 
 /**
@@ -74,6 +76,8 @@ interface SetupTenant {
   ruleId: string;
   /** An owner calendar, as A's and B's. */
   calendarId: string;
+  /** An open weekly suggestion, as A's and B's. */
+  suggestionId: string;
 }
 
 let a: Tenant;
@@ -110,6 +114,7 @@ async function tenant(name: string): Promise<Tenant> {
   const calendarId = await addOwnerCalendar(server, { orgId, locationId, label: `${name} bookings`, title: `${name} private booking` });
   await withProposal(conversationId, name);
   await addOrderRecords(server, { orgId, locationId, conversationId });
+  const suggestionId = await addSuggestionRow(orgId, locationId, name);
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
@@ -117,7 +122,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
-    ruleId, calendarId,
+    ruleId, calendarId, suggestionId,
   };
 }
 
@@ -139,7 +144,23 @@ async function setupTenant(name: string, staffUserId: string): Promise<SetupTena
   const refFileId = await addReferenceItem(orgId, locationId, staffUserId, name);
   const ruleId = await addRuleRow(orgId, locationId, staffUserId, name);
   const calendarId = await addOwnerCalendar(server, { orgId, locationId });
-  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId };
+  const suggestionId = await addSuggestionRow(orgId, locationId, name);
+  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId, suggestionId };
+}
+
+/** An open weekly suggestion of the location (spec 6.27), a closure on a day after the test clock's today. */
+async function addSuggestionRow(orgId: string, locationId: string, name: string): Promise<string> {
+  const _id = new Types.ObjectId();
+  await server.connection.collection('tw_agent_suggestions').insertOne({
+    _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', type: 'note',
+    content: {
+      kind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04', weekdays: null, effect: 'closed', expectedGuests: null,
+      detail: null, startTime: null, endTime: null,
+    },
+    text: null, why: `${name} private why`, calendarIds: [], status: 'open', decidedBy: null, decidedAt: null,
+    createdAt: server.clock.now(), updatedAt: server.clock.now(),
+  });
+  return _id.toHexString();
 }
 
 /** A business rule of the location (spec 6.24), in the shape the store writes. */
@@ -206,8 +227,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_upload_days',
     // U11, statement moments.
     'tw_welcomes',
-    // U9, TownwiseAI's questions.
-    'tw_agent_answers',
+    // U9, TownwiseAI's questions, and its weekly suggestions.
+    'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
     // Orders: edits, rules, cards, setups, item sales and counts.
     ...ORDER_COLLECTIONS,
     // Business rules (spec 6.24).
@@ -241,7 +262,7 @@ function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
-    ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId,
+    ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId, suggestionId: b.suggestionId,
   };
 }
 
@@ -251,7 +272,7 @@ function bSecrets(): string[] {
     b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
     b.fileId, b.importId, b.uploadId, `${b.name} private item`, b.refFileId, `${b.name} private item.txt`, `${b.name} reference text`,
     b.ruleId, `${b.name} private rule`,
-    b.calendarId, `${b.name} bookings`, `${b.name} private booking`,
+    b.calendarId, `${b.name} bookings`, `${b.name} private booking`, b.suggestionId, `${b.name} private why`,
   ];
 }
 
@@ -343,7 +364,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
   const bOwn: Record<string, string[]> = {
     memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
     fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`], ruleId: [b.ruleId],
-    calendarId: [b.calendarId],
+    calendarId: [b.calendarId], suggestionId: [b.suggestionId],
   };
   const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
   // Every other segment is the caller's own, so the request reaches the route: an empty one would match no route, and
@@ -372,7 +393,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
 
 /** The path ids of an organization's own records, and the ids no organization owns, for `route`. */
 function ownIds(
-  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId'>,
+  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId' | 'suggestionId'>,
   route: TownwiseRoute,
 ): Record<string, string> {
   return {
@@ -384,7 +405,7 @@ function ownIds(
     ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
-    calendarId: org.calendarId,
+    calendarId: org.calendarId, suggestionId: org.suggestionId,
   };
 }
 
@@ -395,6 +416,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
       'org.notes.remove', 'org.sales.history', 'org.calendar.get', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
       'org.chat.proposal', 'org.chat.rename', 'org.chat.active', 'org.chat.feedback',
+      // Weekly suggestions (weekly-forecast-suggestions).
+      'org.agent.suggestion_accept', 'org.agent.suggestion_dismiss',
       'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
       'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
       // U3 stages 5 to 9.
