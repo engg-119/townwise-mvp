@@ -286,10 +286,10 @@ async function recordedBacktest(ctx: TownwiseContext, scope: OrgScope, run: Fore
 
 /** The current run as the gate judges a draft against it (D42): its engine, its recorded backtest and its streak's best. */
 async function currentRunOf(
-  ctx: TownwiseContext, scope: OrgScope, published: readonly ForecastRunRecord[], run: ForecastRunRecord,
+  ctx: TownwiseContext, scope: OrgScope, published: readonly ForecastRunRecord[], run: ForecastRunRecord, today: string,
 ): Promise<CurrentRun> {
   const recorded = await recordedBacktest(ctx, scope, run);
-  const streak = await Promise.all(streakOf(published, run.id).map((each) => recordedBacktest(ctx, scope, each)));
+  const streak = await Promise.all(streakOf(published, run.id, today).map((each) => recordedBacktest(ctx, scope, each)));
   const wapes = streak.flatMap((metrics) => (metrics === null ? [] : [metrics.weeklyWape]));
   return {
     engine: engineOf(run.model.family),
@@ -320,9 +320,13 @@ async function gateDraft(
   const championNow = currentChampion(published, today);
   // The current run the calibration was given, while it is still the current one (else the gate says champion_changed).
   const given = championNow !== null && championNow.id === calibration.championRunId ? championNow : null;
-  // The jump guard reads both runs over the 28 days from the calibration's today, the draft's madeAt.
+  // The jump guard reads both runs over the 28 days from the calibration's today, the draft's madeAt: the current run,
+  // or, when there was none at the start and is none now (it lapsed), the newest published run, so a draft after a lapse
+  // is not published unseen. A first forecast has none to compare with.
+  const lapsed = calibration.championRunId === null && championNow === null ? published.find((each) => each.status === 'published') ?? null : null;
+  const against = given ?? lapsed;
   const from = result.run.madeAt;
-  const jumpRows = given === null ? [] : await forecasts.rows(scope, location.id, [given.id], {
+  const jumpRows = against === null ? [] : await forecasts.rows(scope, location.id, [against.id], {
     from, to: utcDay(new Date(`${from}T00:00:00.000Z`), GATE.jumpDays - 1),
   });
   const decision = decideGate({
@@ -330,8 +334,8 @@ async function gateDraft(
     championAtStart: calibration.championRunId,
     championNow: championNow?.id ?? null,
     scorecard: result.scorecard,
-    current: given === null ? null : await currentRunOf(ctx, scope, published, given),
-    jump: given === null ? null : jumpSums(result.run.days, jumpRows, from),
+    current: given === null ? null : await currentRunOf(ctx, scope, published, given, today),
+    jump: against === null ? null : jumpSums(result.run.days, jumpRows, from),
   });
   const gate = { published: decision.publish, reason: decision.reason };
   if (await ctx.stores.calibrations.recordGate(scope, calibration.id, gate)) {

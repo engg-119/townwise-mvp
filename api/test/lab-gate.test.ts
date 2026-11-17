@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { comparisonWith, metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
+import { utcDay } from '../src/dates.ts';
 import {
   currentChampion, decideGate, engineSwitchOf, GATE, GATE_REASONS, GATE_WORDS, gateWords, jumpSums, streakOf, type CurrentRun, type GateInput,
 } from '../src/lab/gate.ts';
@@ -322,6 +323,11 @@ describe('the jump guard (D42)', () => {
     expect(decideGate(withChampion({ jump: { draft: 9000, current: 4000 } })).reason).toBe('jump_held');
   });
 
+  it('applies to a draft after the current run lapsed too, against the newest published run (no current one)', () => {
+    expect(decideGate(first({ jump: { draft: 9000, current: 4000 } }))).toEqual({ publish: false, reason: 'jump_held' });
+    expect(decideGate(first({ jump: { draft: 4300, current: 4000 } }))).toEqual({ publish: true, reason: 'published' });
+  });
+
   it('no days both forecast open is no jump', () => {
     expect(passing({ draft: 0, current: 0 }).publish).toBe(true);
     expect(passing(null).publish).toBe(true);
@@ -354,20 +360,75 @@ describe('jumpSums', () => {
 });
 
 describe('streakOf', () => {
-  const run = (id: string, family: string, lab: boolean) =>
-    ({ id, model: { family }, lab: lab ? { calibrationId: `cal-${id}` } : null }) as unknown as ForecastRunRecord;
+  const TODAY = '2026-06-01';
+  const run = (id: string, family: string, lab: boolean, to = '2026-08-30') =>
+    ({ id, model: { family }, lab: lab ? { calibrationId: `cal-${id}` } : null, range: { from: '2026-06-01', to } }) as unknown as ForecastRunRecord;
 
   it('is the consecutive published lab runs of the current run’s engine, from it back to one of another engine or imported', () => {
     const published = [
       run('newest', 'hybrid_linear_xgboost', true), run('a', 'hybrid_linear_xgboost', true), run('b', 'hybrid_linear_xgboost', true),
       run('switch', 'seasonal_baseline', true), run('older', 'hybrid_linear_xgboost', true),
     ];
-    expect(streakOf(published, 'a').map((each) => each.id)).toEqual(['a', 'b']);
-    expect(streakOf(published, 'switch').map((each) => each.id)).toEqual(['switch']);
+    expect(streakOf(published, 'a', TODAY).map((each) => each.id)).toEqual(['a', 'b']);
+    expect(streakOf(published, 'switch', TODAY).map((each) => each.id)).toEqual(['switch']);
     const imported = [run('x', 'seasonal_baseline', true), run('import', 'seasonal_baseline', false), run('y', 'seasonal_baseline', true)];
-    expect(streakOf(imported, 'x').map((each) => each.id)).toEqual(['x']);
-    expect(streakOf(imported, 'import')).toEqual([]);
-    expect(streakOf(imported, 'gone')).toEqual([]);
+    expect(streakOf(imported, 'x', TODAY).map((each) => each.id)).toEqual(['x']);
+    expect(streakOf(imported, 'import', TODAY)).toEqual([]);
+    expect(streakOf(imported, 'gone', TODAY)).toEqual([]);
+  });
+
+  it('ends at the first run that no longer reaches 28 days past today, so a lapsed best never holds a refit again', () => {
+    const published = [
+      run('new', 'hybrid_linear_xgboost', true), run('still', 'hybrid_linear_xgboost', true, '2026-06-29'),
+      run('lapsed', 'hybrid_linear_xgboost', true, '2026-06-28'), run('older', 'hybrid_linear_xgboost', true),
+    ];
+    expect(streakOf(published, 'new', TODAY).map((each) => each.id)).toEqual(['new', 'still']);
+  });
+});
+
+describe('the refresh tolerance over many weeks (no ratchet)', () => {
+  /** One draft a week from 2026-01-05 with backtest weekly WAPE `wapeOf(week)`, each published run reaching 91 days. */
+  function weekly(weeks: number, wapeOf: (week: number) => number): string[] {
+    const published: ForecastRunRecord[] = [];
+    const recorded = new Map<string, number>();
+    const reasons: string[] = [];
+    for (let week = 0; week < weeks; week += 1) {
+      const today = utcDay(new Date('2026-01-05T00:00:00.000Z'), 7 * week);
+      const wape = wapeOf(week);
+      const champion = currentChampion(published, today);
+      const streak = champion === null ? [] : streakOf(published, champion.id, today).map((each) => recorded.get(each.id) ?? 1);
+      const decision = decideGate({
+        forecastsOn: true, championAtStart: champion?.id ?? null, championNow: champion?.id ?? null,
+        scorecard: scorecardWith({ comparison: null, backtest: { metrics: metricsWith({ weeklyWape: wape }) } }),
+        current: champion === null ? null : {
+          engine: 'model', recorded: { weeklyWape: recorded.get(champion.id) ?? 1, weekdayBiasMeanAbs: 0.05 }, streakBest: Math.min(...streak),
+        },
+        jump: champion === null ? null : { draft: 4000, current: 4000 },
+      });
+      reasons.push(decision.reason);
+      if (!decision.publish) continue;
+      const id = `week-${String(week)}`;
+      published.unshift({
+        id, status: 'published', dataThrough: utcDay(new Date(`${today}T00:00:00.000Z`), -1), range: { from: today, to: utcDay(new Date(`${today}T00:00:00.000Z`), 90) },
+        lab: { calibrationId: `cal-${id}` }, model: { family: 'hybrid_linear_xgboost' },
+      } as unknown as ForecastRunRecord);
+      recorded.set(id, wape);
+    }
+    return reasons;
+  }
+
+  it('after a lasting step up in error, refits are held only while the last run before it is current; then each one publishes', () => {
+    // 10.0% for 5 weeks, then 11.0% for good: held while week 4's run reaches 28 days ahead (weeks 5 to 12), published
+    // when it lapses (week 13, a first forecast again), and from then judged against the runs still current only.
+    const reasons = weekly(20, (week) => (week < 5 ? 0.1 : 0.11));
+    expect(reasons.slice(0, 5)).toEqual(['published', 'refreshed', 'refreshed', 'refreshed', 'refreshed']);
+    expect(reasons.slice(5, 13)).toEqual(Array<string>(8).fill('refresh_worse'));
+    expect(reasons.slice(13)).toEqual(['published', ...Array<string>(6).fill('refreshed')]);
+  });
+
+  it('still holds a slow drift while the best run it drifted from is current', () => {
+    // 9.1%, then 9.5% and 9.6%: a fourth at 9.7% is held, as the spec's scenario says.
+    expect(weekly(4, (week) => [0.091, 0.095, 0.096, 0.097][week] ?? 1)).toEqual(['published', 'refreshed', 'refreshed', 'refresh_worse']);
   });
 });
 

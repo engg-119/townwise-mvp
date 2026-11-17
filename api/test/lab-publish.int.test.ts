@@ -254,9 +254,9 @@ describe('the gate decides', () => {
 });
 
 describe('one set of rules for every calibration (D42)', () => {
-  /** A 70-day run after the history's last day with every middle `mid`, so the run is the current one once published. */
-  function run70(mid: number): Partial<LabSuccess['run']> {
-    const { days, weeks } = runDays('2026-05-31', 70);
+  /** A run of `length` days (70 by default, so it is the current one once published) with every middle `mid`. */
+  function run70(mid: number, length = 70): Partial<LabSuccess['run']> {
+    const { days, weeks } = runDays('2026-05-31', length);
     return {
       days: days.map((day) => ({ ...day, low: mid * 0.8, mid, high: mid * 1.25, baseline: mid })),
       weeks: weeks.map((week) => ({ ...week, low: week.openDays * mid * 0.8, mid: week.openDays * mid, high: week.openDays * mid * 1.25 })),
@@ -264,14 +264,14 @@ describe('one set of rules for every calibration (D42)', () => {
   }
 
   /** A calibration of `t` whose job posts a model draft with backtest weekly WAPE `wape`, no held-out week and middles `mid`. */
-  async function calibrateWith(t: Team, wape: number, mid = 50): Promise<CalibrationView> {
+  async function calibrateWith(t: Team, wape: number, mid = 50, length = 70): Promise<CalibrationView> {
     const { calibration, job } = await started(t);
     const input = await inputFor(job);
     const scorecard = scorecardWith({
       comparison: null, backtest: { metrics: metricsWith({ weeklyWape: wape }) },
       history: { firstDate: input.days[0]?.date ?? '', lastDate: input.dataThrough, spanDays: 607 },
     });
-    expect(await post(job, labResultFor(input, { scorecard, run: run70(mid) }))).toEqual(SUCCEEDED);
+    expect(await post(job, labResultFor(input, { scorecard, run: run70(mid, length) }))).toEqual(SUCCEEDED);
     return viewOf(t, calibration.id);
   }
 
@@ -295,6 +295,17 @@ describe('one set of rules for every calibration (D42)', () => {
     expect(jumped.gate).toMatchObject({ published: false, reason: 'jump_held', words: GATE_WORDS.jump_held });
     expect(await runDoc(jumped.runId ?? '')).toMatchObject({ status: 'draft' });
     expect((await calibrateWith(t, 0.17, 60)).gate).toMatchObject({ published: true, reason: 'refreshed' });
+  });
+
+  it('with the current run lapsed, a draft whose next 28 days move more than 25% from the newest published run is held too', async () => {
+    const t = await team({ forecastsOn: true });
+    // A published run reaching only 20 days ahead, so it is never the current one (that needs 28): the next draft is a
+    // first forecast again, with nothing current to compare with.
+    expect((await calibrateWith(t, 0.17, 50, 20)).gate?.reason).toBe('published');
+    const jumped = await calibrateWith(t, 0.17, 65);
+    expect(jumped.gate).toMatchObject({ published: false, reason: 'jump_held', words: GATE_WORDS.jump_held });
+    expect(await runDoc(jumped.runId ?? '')).toMatchObject({ status: 'draft' });
+    expect((await calibrateWith(t, 0.17, 55)).gate).toMatchObject({ published: true, reason: 'published' });
   });
 });
 

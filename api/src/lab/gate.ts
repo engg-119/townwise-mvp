@@ -75,7 +75,10 @@ export interface GateInput {
   scorecard: LabScorecard;
   /** The run championAtStart names; null without one. */
   current: CurrentRun | null;
-  /** The jump guard's sums (jumpSums); null without a current run. */
+  /**
+   * The jump guard's sums (jumpSums): against the current run, or, with none (it lapsed), the newest published run; null
+   * with no published run at all.
+   */
   jump: { draft: number; current: number } | null;
 }
 
@@ -179,23 +182,26 @@ export function decideGate(input: GateInput): GateDecision {
     reason = 'engine_switched';
   }
   if (refusal !== null) return no(refusal);
-  if (input.championAtStart !== null && input.jump !== null && jumped(input.jump)) return no('jump_held');
+  // With no current run the sums are against the newest published one, so a draft after a lapse is not published unseen.
+  if (input.jump !== null && jumped(input.jump)) return no('jump_held');
   return forecastsOn ? { publish: true, reason } : no('forecasts_off');
 }
 
 /**
  * The current run's streak (D42): it and the published runs after it in `published` (ForecastStore.published()'s
- * order, newest first) that are lab runs of its engine, up to the first one of another engine or imported. Empty when
- * the current run is not in the list or is imported.
+ * order, newest first) that are lab runs of its engine and still reach 28 days past `today` (as the current run must),
+ * up to the first one of another engine, imported or lapsed. Empty when the current run is not in the list or is
+ * imported. Bounding it to runs still current keeps a best that has lapsed from holding every later refit (a ratchet):
+ * after a lasting rise in backtest error, refits are held only while the run before it is current.
  */
-export function streakOf(published: readonly ForecastRunRecord[], currentId: string): ForecastRunRecord[] {
+export function streakOf(published: readonly ForecastRunRecord[], currentId: string, today: string): ForecastRunRecord[] {
   const start = published.findIndex((run) => run.id === currentId);
   const head = published[start];
   if (head?.lab == null) return [];
   const engine = engineOf(head.model.family);
   const streak: ForecastRunRecord[] = [];
   for (const run of published.slice(start)) {
-    if (run.lab === null || engineOf(run.model.family) !== engine) break;
+    if (run.lab === null || engineOf(run.model.family) !== engine || daysBetween(today, run.range.to) < GATE.currentHorizonDays) break;
     streak.push(run);
   }
   return streak;

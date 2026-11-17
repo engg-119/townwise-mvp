@@ -20,7 +20,7 @@ After G1 (forecasts on and the organization active, else `forecasts_off`), every
 - **THEN** the draft is compared on held-out weeks after that run's `dataThrough`, as today
 
 ### Requirement: The refresh tolerance, against the streak's best
-A same-engine draft SHALL publish when its backtest weekly WAPE is no more than 0.5 points above the best (lowest) recorded backtest weekly WAPE among the runs of the current streak (the consecutive published lab runs of that engine for the location, newest first, back to the first one of another engine or imported), reason `refreshed`; otherwise it SHALL stay a draft, reason `refresh_worse`. A tie SHALL publish: this is the only exception to G2's "ties do not publish". Using the streak's best, not the current run's, SHALL keep the tolerance from compounding week over week. [CONFIRM: a same-engine refit publishes when it passes its absolute checks and is no more than 0.5 points of weekly WAPE worse than the best recorded backtest in the current streak]
+A same-engine draft SHALL publish when its backtest weekly WAPE is no more than 0.5 points above the best (lowest) recorded backtest weekly WAPE among the runs of the current streak (the consecutive published lab runs of that engine for the location that still reach 28 days past today, newest first, back to the first one of another engine, imported or lapsed), reason `refreshed`; otherwise it SHALL stay a draft, reason `refresh_worse`. A tie SHALL publish: this is the only exception to G2's "ties do not publish". Using the streak's best, not the current run's, SHALL keep the tolerance from compounding week over week. [CONFIRM: a same-engine refit publishes when it passes its absolute checks and is no more than 0.5 points of weekly WAPE worse than the best recorded backtest in the current streak]
 
 #### Scenario: New weeks are taken in
 - **WHEN** Monday's scheduled calibration makes a model draft with backtest weekly WAPE 9.4% and the streak's best is 9.1%
@@ -29,6 +29,14 @@ A same-engine draft SHALL publish when its backtest weekly WAPE is no more than 
 #### Scenario: No slow drift
 - **WHEN** the streak's runs recorded 9.1%, 9.5% and 9.6% and a new draft records 9.7%
 - **THEN** it stays a draft with reason `refresh_worse`, since 9.7% is more than 0.5 points above 9.1%
+
+#### Scenario: A lasting rise in error
+- **WHEN** a location's refits recorded 10.0% for 5 weeks and every refit since records 11.0%
+- **THEN** each stays a draft (`refresh_worse`) while the last 10.0% run still reaches 28 days past today; once it lapses the next draft publishes as a first forecast, and the refits after it are judged against the runs still current, so they publish (`refreshed`)
+
+#### Scenario: A jump after a lapse
+- **WHEN** no published run reaches 28 days past today, and a passing draft's middles over the next 28 days sum to 5,200 against the newest published run's 4,000 on the days both forecast open
+- **THEN** the draft stays a draft with reason `jump_held`
 
 ### Requirement: Absolute checks for each engine
 A model draft's absolute checks SHALL be coverage 65% to 95% on at least 12 backtest weeks with an 80% range, weekday bias no more than 2 points worse than the current run's recorded backtest (when there is one), and weekly WAPE at least 0.5 points under the weekday median (`weekdayMedianWeeklyWape`). A baseline draft's SHALL be at least 12 backtest weeks with an 80% range (`too_few_weeks`), coverage 65% to 95% (`coverage_out_of_band`), weekly bias, the sum of forecast minus actual over the sum of actuals across the backtest weeks, within 5 points either way (`biased`), and weekly WAPE lower than the weekday median's (`baseline_not_beaten`; a tie fails). `GATE_WORDS` SHALL word every new reason. [CONFIRM: baseline publishes when the model is not eligible or does not win] [CONFIRM: a baseline's absolute checks are 12 backtest weeks with an 80% range, coverage 65% to 95%, weekly bias within 5 points, and a lower weekly WAPE than the weekday median]
@@ -46,7 +54,7 @@ A model draft's absolute checks SHALL be coverage 65% to 95% on at least 12 back
 - **THEN** the draft stays a draft with gate reason `baseline_not_beaten`
 
 ### Requirement: A large jump waits for staff
-When a draft passes every other check and there is a current published run, the gate SHALL compare the two runs' middles over the 28 days from the calibration's `today`, summed over the days both forecast open. When the draft's sum differs from the current run's by more than 25% either way, the draft SHALL stay a draft with reason `jump_held` for staff to publish or withdraw, and SHALL not publish on its own. [CONFIRM: a draft whose next 28 days' middles differ from the current run's by more than 25% is held for staff]
+When a draft passes every other check and there is a current published run, or, with none current, a published run that has lapsed (the newest one), the gate SHALL compare the two runs' middles over the 28 days from the calibration's `today`, summed over the days both forecast open. When the draft's sum differs from the current run's by more than 25% either way, the draft SHALL stay a draft with reason `jump_held` for staff to publish or withdraw, and SHALL not publish on its own. [CONFIRM: a draft whose next 28 days' middles differ from the current run's by more than 25% is held for staff]
 
 #### Scenario: A jump
 - **WHEN** the current run's middles over the next 28 days sum to 4,000 guests and a passing draft's sum to 5,200
