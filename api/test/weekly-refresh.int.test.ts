@@ -22,7 +22,7 @@ import { removeLocation } from '../src/handlers/locations.ts';
 import { SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_TIME_MS, suggestionsReserveMicroUsd } from '../src/lab/suggestions.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
-import { fakeLabRunner, jobCall, labResultFor, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
+import { fakeLabRunner, jobCall, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { logLines, MINUTE, startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -206,6 +206,42 @@ describe('which locations a Monday starts', () => {
     server.clock.advance(7 * DAY);
     expect(await pass()).toMatchObject({ started: 1 });
     expect(await weekRow(p, '2026-06-15')).toMatchObject({ status: 'started' });
+  });
+
+  it('with no new data for 9 weeks, refits on the Monday before the published run would stop being current', async () => {
+    // 620 days, so the draft passes every check, published with a run through today plus 91 (Aug 31), as the lab makes it.
+    const p = await place({ span: 620 });
+    await pass();
+    const [job] = jobs();
+    const firstId = job?.calibrationId ?? '';
+    const res = await jobCall(server, { calibrationId: firstId }, 'input');
+    const input = labInputSchema.parse(await res.json());
+    expect(input.today).toBe('2026-06-01');
+    const result = labResultFor(input, { run: runDays(input.dataThrough, 92) });
+    expect((await jobCall(server, { calibrationId: firstId }, 'result', result)).status).toBe(200);
+    expect(await calibration(firstId)).toMatchObject({ gate: { published: true } });
+    // Through Jul 27 the run is still current at the next Monday's pass (Aug 31 is 28 days after Aug 3): unchanged.
+    for (const week of ['2026-06-08', '2026-06-15', '2026-06-22', '2026-06-29', '2026-07-06', '2026-07-13', '2026-07-20', '2026-07-27']) {
+      server.clock.advance(7 * DAY);
+      expect(await pass()).toMatchObject({ started: 0, skipped: 1 });
+      expect(await weekRow(p, week)).toMatchObject({ status: 'unchanged' });
+    }
+    // Aug 3: by Aug 10 it would have lapsed, and a refit on the same days reaches today plus 91 again.
+    server.clock.advance(7 * DAY);
+    expect(await pass()).toMatchObject({ started: 1, skipped: 0 });
+    expect(await weekRow(p, '2026-08-03')).toMatchObject({ status: 'started', dataSha256: (await calibration(firstId))?.dataSha256 });
+  });
+
+  it('a published run that ends where its data does, not at its today plus 91, is not refit on unchanged data', async () => {
+    // labResultFor's run covers 14 days after the data: a refit on the same days would end there again.
+    const p = await place({ span: 620 });
+    await pass();
+    const [job] = jobs();
+    await finishJob(job?.calibrationId ?? '');
+    expect(await calibration(job?.calibrationId ?? '')).toMatchObject({ gate: { published: true } });
+    server.clock.advance(7 * DAY);
+    expect(await pass()).toMatchObject({ started: 0, skipped: 1 });
+    expect(await weekRow(p, '2026-06-08')).toMatchObject({ status: 'unchanged' });
   });
 
   it('the reference rule: forecasts switched on after a forecasts_off draft start a fresh calibration on unchanged data', async () => {

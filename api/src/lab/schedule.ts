@@ -10,7 +10,9 @@
 //      the end of that week (dueWeek: one the live cap held back on Monday is caught up later), a location with no row
 //      for that Monday and no calibration of its own live is fingerprinted (its lab input without
 //      calibrationId, today and champion, with the input version and LAB_MODEL_VERSION) and skipped `unchanged` when the
-//      fingerprint equals its reference calibration's (stores/calibrations.ts reference), `not_enough_history` under the
+//      fingerprint equals its reference calibration's (stores/calibrations.ts reference), unless the run that calibration
+//      published ends at its today plus 91 days and would stop being current before the next Monday (refitExtends: a
+//      refit on the same days reaches further, since a run's end moves with today), `not_enough_history` under the
 //      baseline's 230 days, held without a row past the live cap, `cap_reached` past the weekly cap, and otherwise
 //      started as the system (no charge, not one of the 4 a day) with the regimeStart of the calibration that made its
 //      newest published run (dropped, with a log line of ids, when the history no longer holds it, so the start is not
@@ -37,7 +39,7 @@ import { scopeForWeeklyRefresh, type OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
 import { SCHEDULE_START_HOUR } from '../calibration.ts';
-import { daysBetween } from '../dates.ts';
+import { daysBetween, utcDay } from '../dates.ts';
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
 import type { ChatModel } from '../chat/model.ts';
 import {
@@ -45,7 +47,7 @@ import {
   type WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import { localDay, localMinutes, timeZoneOf } from '../time-zones.ts';
-import { GATE } from './gate.ts';
+import { currentChampion, GATE } from './gate.ts';
 import { buildLabInput, labInputFingerprint } from './input.ts';
 import { checkStart, expireStale, launch, regimeStartFits, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
 import { suggestFor, SUGGESTIONS_TIME_MS, suggestionsWeek } from './suggestions.ts';
@@ -69,6 +71,8 @@ export const SCHEDULE_PASS_BUDGET_MS = 8 * 60_000;
  * the pass's own end); a suggestions location needs SUGGESTIONS_TIME_MS more, the call's whole time.
  */
 export const SCHEDULE_STEP_MS = 60_000;
+/** A lab run reaches its calibration's today plus this many days, when its data reaches that far (forecast.REACH_DAYS). */
+export const RUN_REACH_DAYS = 91;
 /** How far back the staff console looks for each location's latest week row. */
 export const WEEK_ROWS_LOOKBACK_DAYS = 56;
 /**
@@ -179,6 +183,22 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     return (await stores.calibrations.find(scope, newest.lab.calibrationId))?.regimeStart ?? null;
   }
 
+  /**
+   * Whether unchanged data should still be refit this `week` (D42: a published forecast reaching 91 days past today): no
+   * published run will be current (28 days ahead) at next Monday's pass, and the run `reference` published ended at its
+   * today plus 91 days, so a refit on the same days ends later. A run that ended where its data or its backtest stops
+   * (forecast.run_end) would end there again, and a draft the gate held is left for staff, so neither is refit.
+   */
+  async function refitExtends(scope: OrgScope, locationId: string, runId: string | null, week: string): Promise<boolean> {
+    if (runId === null) return false;
+    const published = await stores.forecasts.published(scope, locationId);
+    const nextWeek = utcDay(new Date(`${week}T00:00:00.000Z`), 7);
+    if (currentChampion(published, nextWeek) !== null) return false;
+    const run = published.find((each) => each.id === runId);
+    if (run === undefined) return false;
+    return run.range.to === utcDay(new Date(`${run.madeAt}T00:00:00.000Z`), RUN_REACH_DAYS);
+  }
+
   /** A pass's running tally: its counts, the live scheduled calibrations and each week's counted rows. */
   interface PassRun { counts: PassCounts; live: number; weekCounts: Map<string, number> }
 
@@ -212,7 +232,8 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       return;
     }
     const dataSha256 = labInputFingerprint(input);
-    if ((await stores.calibrations.reference(scope, location.id))?.dataSha256 === dataSha256) {
+    const reference = await stores.calibrations.reference(scope, location.id);
+    if (reference?.dataSha256 === dataSha256 && !(await refitExtends(scope, location.id, reference.runId, week))) {
       if (await record('unchanged', dataSha256)) counts.skipped += 1;
       return;
     }
