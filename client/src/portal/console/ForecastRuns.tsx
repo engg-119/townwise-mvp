@@ -103,7 +103,7 @@ function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onA
     <DataTable
       label={`Forecasts for ${location.name}`}
       columns={[
-        { key: 'model', label: 'Model', flex: 0.7 },
+        { key: 'model', label: 'Model', flex: 1.4 },
         { key: 'dates', label: 'Dates', flex: 1.6 },
         { key: 'trained', label: 'Trained to' },
         { key: 'made', label: 'Made' },
@@ -114,7 +114,8 @@ function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onA
       rows={runs.map((run) => ({
         key: run.id,
         cells: {
-          model: run.model.version,
+          // The model card's words (forecast-publish-policy): a baseline run never reads like a model run.
+          model: run.model.label,
           dates: <CellLines main={`${formatDate(run.range.from)} to ${formatDate(run.range.to)}`} note={plural(run.dayCount, 'day', 'days')} />,
           trained: formatDate(run.dataThrough),
           made: formatDate(run.madeAt),

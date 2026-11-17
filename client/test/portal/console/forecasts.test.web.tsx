@@ -79,6 +79,17 @@ async function choose(file: File): Promise<void> {
   await settle(() => { fireEvent.change(input, { target: { files: [file] } }); });
 }
 
+test('the Model column names the engine in the model card’s words, so a baseline run never reads like a model run', async () => {
+  const BASELINE = 'Townwise\'s baseline from your recent weeks and the town calendar';
+  await show([
+    run({ id: 'run1', model: { family: 'seasonal_baseline', version: 'v9', label: BASELINE } }),
+    run({ id: 'run2', status: 'published', publishedAt: '2026-05-03T15:00:00.000Z' }),
+  ]);
+  const table = screen.getByRole('region', { name: 'Forecasts for Hanover' });
+  const rows = within(table).getAllByRole('row').slice(1);
+  expect(rows.map((row) => within(row).getAllByRole('cell')[0]?.textContent)).toEqual([BASELINE, 'Townwise demand model v9']);
+});
+
 test('lists each location’s runs with model, dates, status and the right actions, and says so where there are none', async () => {
   await show([run(), run({ id: 'run2', status: 'published', publishedAt: '2026-05-03T15:00:00.000Z' }), run({ id: 'run3', status: 'withdrawn', withdrawnAt: '2026-05-04T15:00:00.000Z' }), run({ id: 'run4', status: 'importing' })]);
   expect(screen.getByText('A forecast is a draft until you publish it. While forecasts are on, a calibration that passes every check publishes itself. Sample Restaurant Group’s members and TownwiseAI see only published forecasts, never the model. Each import, publish, withdrawal and deletion is listed in Sample Restaurant Group’s Townwise staff activity.')).toBeTruthy();
@@ -91,7 +102,7 @@ test('lists each location’s runs with model, dates, status and the right actio
   const draft = rows[0];
   if (draft === undefined) throw new Error('no rows');
   expect(within(draft).getAllByRole('cell').slice(0, 4).map((cell) => cell.textContent)).toEqual([
-    'v9', 'May 1, 2026 to May 14, 202614 days', 'Apr 30, 2026', 'May 1, 2026',
+    'Townwise demand model v9', 'May 1, 2026 to May 14, 202614 days', 'Apr 30, 2026', 'May 1, 2026',
   ]);
   // Publish only on the draft; Withdraw on draft and published; Delete on every run.
   expect(screen.getAllByRole('button', { name: /^Publish / })).toHaveLength(1);
