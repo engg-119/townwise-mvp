@@ -13,8 +13,13 @@
 //      baseline's 230 days, held without a row past the live cap, `cap_reached` past the weekly cap, and otherwise
 //      started as the system (no charge, not one of the 4 a day) with the regimeStart of the calibration that made its
 //      newest published run.
-// Nothing here names a town, an organization or a location. The pass logs one line of counts and its state; a location
-// whose turn throws logs its ids and the pass goes on. No figure is ever logged.
+// After the calibrations, under the same lease, the pass runs TownwiseAI's weekly suggestions (openspec change
+// weekly-forecast-suggestions, lab/suggestions.ts) while TOWNWISE_WEEKLY_SUGGESTIONS is true and the model is set
+// (ANTHROPIC_API_KEY), with or without the lab: for each location of an active organization whose weekly suggestions
+// are on (an absent switch counting as on), found by a cross-tenant lookup, one call a week from 03:00 on Monday in the
+// town (a location missed on Monday is caught up later that week). The staff pause stops only calibrations.
+// Nothing here names a town, an organization or a location. The pass logs one line of counts and its state for each
+// part; a location whose turn throws logs its ids and the pass goes on. No figure is ever logged.
 import { randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 
@@ -25,13 +30,15 @@ import type { TownwiseContext } from '../app.ts';
 import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
 import { daysBetween } from '../dates.ts';
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
+import type { ChatModel } from '../chat/model.ts';
 import {
-  countedWeekRows, liveScheduledCalibrations, staleStartingWeeks, weeklyCandidates, type WeeklyCandidate,
+  countedWeekRows, liveScheduledCalibrations, staleStartingWeeks, suggestionCandidates, weeklyCandidates, type WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import { localDay, localMinutes, timeZoneOf, weekdayOf } from '../time-zones.ts';
 import { GATE } from './gate.ts';
 import { buildLabInput, labInputFingerprint } from './input.ts';
 import { checkStart, expireStale, launch, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
+import { suggestFor, suggestionsWeek } from './suggestions.ts';
 
 /** The lease a pass holds and renews before each location. */
 export const SCHEDULE_LEASE_MS = 10 * 60_000;
@@ -42,8 +49,11 @@ export const SCHEDULE_START_HOUR = 3;
 /** How far back the staff console looks for each location's latest week row. */
 export const WEEK_ROWS_LOOKBACK_DAYS = 56;
 
-/** What a pass reads: starting a calibration's context, and the connection its cross-tenant lookups use. */
-export type ScheduleContext = LabStartContext & Pick<TownwiseContext, 'connection'>;
+/**
+ * What a pass reads: starting a calibration's context, the connection its cross-tenant lookups use, and the model the
+ * weekly suggestions call (null or absent while TownwiseAI is off).
+ */
+export type ScheduleContext = LabStartContext & Pick<TownwiseContext, 'connection'> & { readonly chat?: ChatModel | null };
 
 /**
  * How a pass ended: it ran, or it found the refresh off (the lab runner or TOWNWISE_WEEKLY_FORECASTS), paused by staff,
@@ -62,7 +72,23 @@ export interface PassCounts {
   capped: number;
 }
 
-export interface PassResult extends PassCounts { state: PassState; ms: number }
+/** How the weekly suggestions part of a pass ended: it ran, was off, or lost the lease mid-way. */
+export type SuggestionsState = 'ran' | 'off' | 'lease_held' | 'lease_lost';
+
+export interface SuggestionsCounts {
+  /** Locations whose call stored at least one suggestion, and the suggestions stored. */
+  passes: number;
+  suggested: number;
+  /** Calls that stored none; locations skipped because the organization's TownwiseAI month had less than $0.30 left. */
+  none: number;
+  budget: number;
+  /** Calls that failed, and locations whose turn threw. */
+  failed: number;
+}
+
+export interface SuggestionsResult extends SuggestionsCounts { state: SuggestionsState; ms: number }
+
+export interface PassResult extends PassCounts { state: PassState; ms: number; suggestions: SuggestionsResult }
 
 export interface ForecastSchedule {
   /** One pass. Never throws for one location's error (it logs that location's ids and goes on). */
@@ -196,32 +222,73 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     counts.failed += 1;
   }
 
+  /** The weekly suggestions for each due location; false when the lease was lost. */
+  async function suggestAll(model: ChatModel, counts: SuggestionsCounts): Promise<boolean> {
+    for (const candidate of await suggestionCandidates(ctx.connection)) {
+      if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) return false;
+      try {
+        const scope = scopeForWeeklyRefresh(candidate);
+        const location = await stores.locations.find(scope, candidate.locationId);
+        if (location === null) continue;
+        const timeZone = timeZoneOf(location.town).timeZone;
+        const at = dueClock();
+        const week = suggestionsWeek(localDay(at, timeZone), localMinutes(at, timeZone), SCHEDULE_START_HOUR);
+        if (week === null || await stores.agentSuggestions.findPass(scope, location.id, week) !== null) continue;
+        const outcome = await suggestFor({ config: ctx.config, now: ctx.now, stores, chat: model }, scope, location, week);
+        if (outcome.status === 'suggested') {
+          counts.passes += 1;
+          counts.suggested += outcome.suggested;
+        } else if (outcome.status === 'none') counts.none += 1;
+        else if (outcome.status === 'budget') counts.budget += 1;
+        else if (outcome.status === 'failed') counts.failed += 1;
+      } catch {
+        counts.failed += 1;
+        ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_suggestions_location_failed');
+      }
+    }
+    return true;
+  }
+
   return {
     async pass() {
       const began = performance.now();
       const counts: PassCounts = { started: 0, failed: 0, skipped: 0, capped: 0 };
-      const end = (state: PassState): PassResult => {
+      const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0 };
+      const model = ctx.config.weeklySuggestions ? ctx.chat ?? null : null;
+      const refreshOn = ctx.labRunner !== null && ctx.config.weeklyForecasts;
+      let suggestionsBegan = performance.now();
+      const end = (state: PassState, suggestionsState: SuggestionsState): PassResult => {
+        const suggestions = { state: suggestionsState, ...suggestionCounts, ms: Math.round(performance.now() - suggestionsBegan) };
         const result = { state, ...counts, ms: Math.round(performance.now() - began) };
         ctx.logger.info(result, 'townwise.weekly_refresh_pass');
-        return result;
+        ctx.logger.info(suggestions, 'townwise.weekly_suggestions_pass');
+        return { ...result, suggestions };
       };
-      if (ctx.labRunner === null || !ctx.config.weeklyForecasts) return end('off');
+      if (!refreshOn && model === null) return end('off', 'off');
       const claim = await stores.forecastSchedule.claim({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS });
-      if (!claim.claimed) return end('lease_held');
+      if (!claim.claimed) return end(refreshOn ? 'lease_held' : 'off', model === null ? 'off' : 'lease_held');
       try {
-        if (claim.paused !== null) return end('paused');
-        await resolveStale(counts);
-        const pass: PassRun = { counts, live: await liveCount(), weekCounts: new Map() };
-        for (const candidate of await weeklyCandidates(ctx.connection)) {
-          if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) return end('lease_lost');
-          try {
-            await consider(candidate, pass);
-          } catch {
-            counts.failed += 1;
-            ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_refresh_location_failed');
+        let state: PassState = 'ran';
+        if (!refreshOn) state = 'off';
+        else if (claim.paused !== null) state = 'paused';
+        else {
+          await resolveStale(counts);
+          const pass: PassRun = { counts, live: await liveCount(), weekCounts: new Map() };
+          for (const candidate of await weeklyCandidates(ctx.connection)) {
+            if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) {
+              return end('lease_lost', model === null ? 'off' : 'lease_lost');
+            }
+            try {
+              await consider(candidate, pass);
+            } catch {
+              counts.failed += 1;
+              ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_refresh_location_failed');
+            }
           }
         }
-        return end('ran');
+        if (model === null) return end(state, 'off');
+        suggestionsBegan = performance.now();
+        return end(state, await suggestAll(model, suggestionCounts) ? 'ran' : 'lease_lost');
       } finally {
         await stores.forecastSchedule.release({ owner, now: ctx.now() });
       }

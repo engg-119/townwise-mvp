@@ -1,7 +1,11 @@
 // The weekly refresh's pass (D42, lab/schedule.ts), with the test server's fake clock and a fake runner; the test plays
 // the job where a calibration must finish (helpers/lab.ts). One test per scenario of the weekly-forecast-refresh delta:
 // which locations a Monday starts, the reference rule, the regime carried over, the live and weekly caps, the lease, week
-// rows a dead pass left starting, time zones, the three stops and the pass's log line. Every number is synthetic.
+// rows a dead pass left starting, time zones, the three stops and the pass's log line. Then TownwiseAI's weekly
+// suggestions in the same pass (openspec change weekly-forecast-suggestions), over a scripted model: one call per
+// location a week by default, none when an org admin turned them off or the switch is false, with or without the lab,
+// the $0.30 reservation and its correction, the budget skip, what the request holds and what it never holds, and the
+// checks on the answer. Every number is synthetic.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -12,7 +16,9 @@ import { utcDay } from '../src/dates.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import { createForecastSchedule, SCHEDULE_LIVE_CAP, type PassResult, type ScheduleContext } from '../src/lab/schedule.ts';
 import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
-import { addLocation, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { SUGGESTIONS_RESERVE_MICRO_USD } from '../src/lab/suggestions.ts';
+import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
+import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { fakeLabRunner, jobCall, labResultFor, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { logLines, MINUTE, startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -27,7 +33,8 @@ afterAll(async () => { await server.close(); });
 
 const COLLECTIONS = [
   'tw_orgs', 'tw_locations', 'tw_sales_days', 'tw_calibrations', 'tw_forecast_weeks', 'tw_forecast_schedule', 'tw_forecast_runs',
-  'tw_forecasts', 'tw_audit_events', 'tw_notes',
+  'tw_forecasts', 'tw_audit_events', 'tw_notes', 'tw_agent_suggestions', 'tw_suggestion_passes', 'tw_chat_usage', 'tw_business_rules',
+  'tw_members',
 ];
 
 /** The test clock starts at Mon, Jun 1, 2026, 12:00 UTC (08:00 in Hanover); each test starts there again. */
@@ -62,11 +69,12 @@ async function place(opts: { span?: number; forecasts?: 'off' | 'on'; town?: { t
   return { scope: { orgId } as OrgScope, orgId, locationId };
 }
 
-function schedule(over: { config?: Partial<ScheduleContext['config']>; labRunner?: null; owner?: string } = {}) {
+function schedule(over: { config?: Partial<ScheduleContext['config']>; labRunner?: null; owner?: string; chat?: ScriptedModel } = {}) {
   const ctx: ScheduleContext = {
     ...server.ctx,
     config: { ...server.ctx.config, ...over.config },
     ...(over.labRunner === null ? { labRunner: null } : {}),
+    ...(over.chat === undefined ? {} : { chat: over.chat }),
   };
   return createForecastSchedule({ ctx, ...(over.owner === undefined ? {} : { owner: over.owner }) });
 }
@@ -349,5 +357,172 @@ describe('the pass’s log line', () => {
     expect(keys).toEqual(['capped', 'failed', 'ms', 'skipped', 'started', 'state']);
     const text = JSON.stringify(line);
     for (const id of [a.orgId, a.locationId, b.orgId]) expect(text).not.toContain(id);
+  });
+});
+
+describe('weekly suggestions', () => {
+  /** A model answering each call with `items` as its structured answer. */
+  function answering(...answers: unknown[][]): ScriptedModel {
+    const model = scriptedModel();
+    for (const items of answers) {
+      model.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: items }))], { usage: { input: 10_000, output: 500 } }) });
+    }
+    return model;
+  }
+
+  const JULY_4 = {
+    type: 'note', ruleText: null, kind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04', weekdays: null, effect: 'closed',
+    expectedGuests: null, detail: null, startTime: null, endTime: null, why: 'Independence Day is Sat, Jul 4.', calendarIds: ['us:independence-day:2026'],
+  };
+
+  async function suggestions(p: Place): Promise<Record<string, unknown>[]> {
+    return server.connection.collection('tw_agent_suggestions').find({ locationId: new Types.ObjectId(p.locationId) }).toArray();
+  }
+
+  async function passRow(p: Place, week = '2026-06-01'): Promise<Record<string, unknown> | null> {
+    return server.connection.collection('tw_suggestion_passes').findOne({ locationId: new Types.ObjectId(p.locationId), week });
+  }
+
+  async function spent(p: Place): Promise<number> {
+    const doc = await server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(p.orgId), month: '2026-06' });
+    return (doc?.costMicroUsd as number | undefined) ?? 0;
+  }
+
+  it('one call per location a week by default, stored as open suggestions and recorded on the week’s pass row', async () => {
+    const p = await place();
+    const model = answering([JULY_4], [JULY_4]);
+    const first = await pass({ chat: model });
+    expect(first.suggestions).toMatchObject({ state: 'ran', passes: 1, suggested: 1, none: 0, budget: 0, failed: 0 });
+    expect(model.calls).toHaveLength(1);
+    expect(await suggestions(p)).toEqual([expect.objectContaining({
+      week: '2026-06-01', type: 'note', status: 'open', why: JULY_4.why, calendarIds: ['us:independence-day:2026'],
+      content: expect.objectContaining({ kind: 'closure', startDate: '2026-07-04' }) as unknown,
+    })]);
+    expect(await passRow(p)).toMatchObject({ status: 'suggested', suggested: 1 });
+    // The rest of the week makes no call: later that day, and on Thursday.
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ passes: 0, none: 0 });
+    server.clock.advance(3 * DAY);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ passes: 0, none: 0 });
+    expect(model.calls).toHaveLength(1);
+    // The next Monday makes the next one, and the same suggestion again is dropped as a repeat.
+    server.clock.advance(4 * DAY);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ passes: 0, none: 1 });
+    expect(model.calls).toHaveLength(2);
+    expect(await suggestions(p)).toHaveLength(1);
+    expect(await passRow(p, '2026-06-08')).toMatchObject({ status: 'none', suggested: 0 });
+  });
+
+  it('a location missed on Monday is caught up later that week; none before 03:00 on Monday in the town', async () => {
+    const p = await place();
+    const model = answering([]);
+    server.clock.advance(-(5 * HOUR + 30 * MINUTE)); // Mon 02:30 in Hanover
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ state: 'ran', none: 0 });
+    expect(model.calls).toHaveLength(0);
+    server.clock.advance(2 * DAY);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ none: 1 });
+    expect(await passRow(p)).toMatchObject({ status: 'none' });
+  });
+
+  it('none when an org admin turned them off, with the switch false, or without a model; with the lab off they still run', async () => {
+    const off = await place();
+    await server.connection.collection('tw_orgs').updateOne(
+      { _id: new Types.ObjectId(off.orgId) }, { $set: { weeklySuggestions: { on: false, at: server.clock.now(), by: 'admin-0000' } } },
+    );
+    const model = answering([JULY_4]);
+    expect((await pass({ chat: model, config: { weeklySuggestions: false } })).suggestions).toMatchObject({ state: 'off' });
+    expect((await pass()).suggestions).toMatchObject({ state: 'off' });
+    expect(model.calls).toHaveLength(0);
+    const on = await place();
+    const labOff = await pass({ chat: model, labRunner: null });
+    expect(labOff).toMatchObject({ state: 'off', started: 0, suggestions: { state: 'ran', passes: 1 } });
+    expect(model.calls).toHaveLength(1);
+    expect(await passRow(off)).toBeNull();
+    expect(await passRow(on)).toMatchObject({ status: 'suggested' });
+  });
+
+  it('reserves $0.30 of the organization’s TownwiseAI month and corrects it to what the call cost', async () => {
+    const p = await place();
+    const model = scriptedModel();
+    let during = -1;
+    // The answer waits until the call is made, then reads the month while the call is in flight.
+    const gate = (async () => {
+      while (model.calls.length === 0) await new Promise((resolve) => { setTimeout(resolve, 5); });
+      during = await spent(p);
+    })();
+    model.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: [] }))], { usage: { input: 10_000, output: 500 } }), gate });
+    await pass({ chat: model });
+    expect(during).toBe(SUGGESTIONS_RESERVE_MICRO_USD);
+    // 10,000 input tokens at $4 a million and 500 output at $20: $0.05.
+    expect(await spent(p)).toBe(50_000);
+  });
+
+  it('is skipped (budget) when the month has less than $0.30 left, making no call', async () => {
+    const p = await place();
+    await server.connection.collection('tw_chat_usage').insertOne({
+      orgId: new Types.ObjectId(p.orgId), month: '2026-06', costMicroUsd: 19_800_000, updatedAt: server.clock.now(),
+    });
+    const model = answering([JULY_4]);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ budget: 1, passes: 0 });
+    expect(model.calls).toHaveLength(0);
+    expect(await passRow(p)).toMatchObject({ status: 'budget' });
+    expect(await spent(p)).toBe(19_800_000);
+  });
+
+  it('a failed call records failed and charges nothing it never reported', async () => {
+    const p = await place();
+    const model = scriptedModel();
+    model.script({ kind: 'error', error: new Error('overloaded') });
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ failed: 1, passes: 0 });
+    expect(await passRow(p)).toMatchObject({ status: 'failed' });
+    expect(await spent(p)).toBe(0);
+  });
+
+  it('sends the calendar, the notes as written and the rules; never an email, the organization’s or location’s name, or a figure', async () => {
+    const name = `Sentinel-Org ${randomUUID().slice(0, 6)}`;
+    const orgId = await createOrg(server, { name });
+    const locationId = await addLocation(server, { orgId, name: 'Sentinel-Room' });
+    await seedHistory(server, { orgId, locationId, from: utcDay(new Date(`${LAST}T00:00:00.000Z`), -400), to: LAST, guests: () => 4321 });
+    await addSeat(server, { orgId, userId: 'user-sentinel', email: 'sentinel-owner@example.test', role: 'org_admin' });
+    await addNote(server, { orgId, locationId, detail: 'Sentinel-Detail: the Smith party', startDate: '2026-06-20' });
+    await server.ctx.stores.businessRules.create({ orgId } as OrgScope, locationId, {
+      text: 'Sentinel-Rule closed Mondays', schedule: null, addedVia: 'page', createdBy: 'user-sentinel', now: server.clock.now(),
+    });
+    const model = answering([]);
+    await pass({ chat: model });
+    expect(model.calls).toHaveLength(1);
+    const call = model.calls[0];
+    expect(call?.params.tools).toBeUndefined();
+    const sent = JSON.stringify(messagesOf(call)) + JSON.stringify(call?.params.system);
+    expect(sent).toContain('Sentinel-Detail: the Smith party');
+    expect(sent).toContain('us:independence-day:2026');
+    expect(sent).toContain('hanover-nh:2026-06-14:commencement');
+    for (const absent of ['sentinel-owner@example.test', name, 'Sentinel-Room', '4321', orgId, locationId, 'user-sentinel', 'netSales', 'averageGuests']) {
+      expect(sent).not.toContain(absent);
+    }
+    // A rule with no schedule covers no day, so it is not sent (only scheduled rules covering the 91 days are).
+    expect(sent).not.toContain('Sentinel-Rule');
+  });
+
+  it('drops what the checks refuse and stores what passes', async () => {
+    const p = await place();
+    const model = answering([
+      { ...JULY_4, endDate: '2026-07-03' },
+      { ...JULY_4, startDate: '2026-06-01', endDate: '2026-06-01' },
+      { ...JULY_4, startDate: '2026-12-25', endDate: '2026-12-25' },
+      JULY_4,
+    ]);
+    expect((await pass({ chat: model })).suggestions).toMatchObject({ passes: 1, suggested: 1 });
+    expect((await suggestions(p)).map((row) => (row.content as { startDate: string }).startDate)).toEqual(['2026-07-04']);
+  });
+
+  it('logs townwise.weekly_suggestions_pass with counts, its state and time only: no id and no words', async () => {
+    const p = await place();
+    await pass({ chat: answering([JULY_4]) });
+    const line = logLines(server).filter((each) => each.msg === 'townwise.weekly_suggestions_pass').at(-1);
+    const keys = Object.keys(line ?? {}).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)).sort();
+    expect(keys).toEqual(['budget', 'failed', 'ms', 'none', 'passes', 'state', 'suggested']);
+    const textOf = JSON.stringify(logLines(server));
+    for (const absent of [p.orgId, p.locationId, JULY_4.why]) expect(JSON.stringify(line)).not.toContain(absent);
+    expect(textOf).not.toContain(JULY_4.why);
   });
 });

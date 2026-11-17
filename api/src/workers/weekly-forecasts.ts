@@ -2,6 +2,8 @@
 // the environment through the same schemas (config.ts, the kit's Mongo and logger), builds only what a pass needs (the
 // stores on one Mongo connection and the lab runner; no Valkey, which is the API's sidecar, and no HTTP server), runs
 // one pass of lab/schedule.ts, closes its connection and exits 0, or 1 on an error. The API starts no loop of its own.
+// With ANTHROPIC_API_KEY set (and TOWNWISE_WEEKLY_SUGGESTIONS true) the pass also makes TownwiseAI's weekly suggestions,
+// with or without the lab (openspec change weekly-forecast-suggestions).
 //
 //   npm run worker:forecasts -w @townwise/api                 one pass (production's scheduled job, hourly)
 //   npm run worker:forecasts -w @townwise/api -- --loop       a pass at start and then every hour, until stopped
@@ -19,6 +21,7 @@ import { ConfigError, configSchema as serverSchema, createLogger, loadEnv } from
 import { z } from 'zod';
 
 import { createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli } from '../azure-identity.ts';
+import { createAnthropicChatModel, type ChatModel } from '../chat/model.ts';
 import { configSchema as townwiseSchema, labRunnerOf, resolveTownwiseConfig } from '../config.ts';
 import { createForecastSchedule } from '../lab/schedule.ts';
 import { createAzureLabRunner, createLocalLabRunner, type LabRunner } from '../lab/runner.ts';
@@ -29,6 +32,8 @@ export const WORKER_TICK_MS = 3_600_000;
 
 const envSchema = z.object({
   ...serverSchema.pick({ NODE_ENV: true, LOG_LEVEL: true }).shape, ...mongoSchema.shape, ...townwiseSchema.shape,
+  /** The weekly suggestions' model, as the API's tuning chat reads it; absent, they are off. */
+  ANTHROPIC_API_KEY: z.preprocess((value) => (value === '' ? undefined : value), z.string().meta({ secret: true }).optional()),
   IDENTITY_ENDPOINT: z.string().optional(),
   IDENTITY_HEADER: z.string().optional(),
   AZURE_CLIENT_ID: z.string().optional(),
@@ -42,6 +47,8 @@ export interface WorkerDeps {
   readonly env: Readonly<Record<string, string | undefined>>;
   /** Tests: the lab runner to use instead of the one the environment builds (null is off). */
   readonly labRunner?: LabRunner | null;
+  /** Tests: the weekly suggestions' model instead of the one ANTHROPIC_API_KEY builds (null is off). */
+  readonly chat?: ChatModel | null;
   /** Tests: where log lines go (stdout otherwise). */
   readonly logDestination?: { write(message: string): void };
   /** Tests: --loop's wait between passes; it resolves early when `signal` aborts. */
@@ -103,12 +110,13 @@ export async function runWeeklyForecastsWorker(deps: WorkerDeps): Promise<number
   try {
     const config = resolveTownwiseConfig(env);
     const labRunner = deps.labRunner === undefined ? labRunnerFor(env, realNow) : deps.labRunner;
+    const chat = deps.chat !== undefined ? deps.chat : env.ANTHROPIC_API_KEY === undefined ? null : createAnthropicChatModel(env.ANTHROPIC_API_KEY);
     mongo = await connectMongo({ config: env, logger });
     const stores = createTownwiseStores(mongo.connection);
     // The week rows' unique index is what keeps a week to one start per location, so it is built before any pass.
     await ensureIndexes(mongo.connection, { logger });
     const schedule = createForecastSchedule({
-      ctx: { config, logger, now: realNow, stores, labRunner, redis: null, connection: mongo.connection }, dueClock,
+      ctx: { config, logger, now: realNow, stores, labRunner, redis: null, connection: mongo.connection, chat }, dueClock,
     });
     const signal = deps.signal ?? new AbortController().signal;
     const sleep = deps.sleep ?? waitFor;
