@@ -11,6 +11,7 @@ import pandas as pd
 
 KS = np.round(np.arange(1.0, 3.01, 0.05), 2)  # widening factors tried, smallest first (section 9e)
 MIN_PAST_WEEKS = 8  # weeks of past errors a weekly band needs (section 8)
+KIND_MIN_WEEKS = 26  # weeks a band of the later kind reads, the nearest earlier ones filling in (same_kind)
 OVER = 0.2  # a week more than 20% off
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
@@ -58,11 +59,35 @@ def quantile_band(past: np.ndarray) -> tuple[float, float]:
     return float(lo), float(hi)
 
 
+def same_kind(past_starts: pd.DatetimeIndex, earlier: np.ndarray, forecast_from: pd.Timestamp, horizon: int,
+              since: pd.Timestamp | None) -> np.ndarray:
+    """Of the past weeks `earlier` selects (a mask over `past_starts`, in time order), the ones a band for a week
+    forecast from `forecast_from` reads. `since` is an engine's change of method (the baseline's first cutoff with last
+    year's shape to read, baseline.shaped_from): a forecast made on or after it is of the later kind, as are the past
+    weeks forecast `horizon` days ahead from on or after it (their Monday at least `horizon` days after `since`). A
+    forecast of the later kind reads the earlier weeks of its kind, and while they are fewer than KIND_MIN_WEEKS (half a
+    year, so a band has seen a season of the town calendar's busy and quiet weeks), the latest earlier weeks of the
+    other kind fill in up to that many. Without `since`, or for a forecast made before it, every week `earlier`
+    selects."""
+    if since is None or forecast_from < since:
+        return earlier
+    later = np.asarray(past_starts >= since + pd.Timedelta(days=horizon))
+    chosen = earlier & later
+    short = KIND_MIN_WEEKS - int(chosen.sum())
+    if short > 0:
+        chosen = chosen.copy()
+        chosen[np.flatnonzero(earlier & ~later)[-short:]] = True
+    return chosen
+
+
 def _bands(past_err: np.ndarray, past_ends: pd.DatetimeIndex, starts: pd.DatetimeIndex, horizon: int,
-           min_past: int, rule: Band = quantile_band) -> list[tuple[float, float] | None]:
+           min_past: int, rule: Band = quantile_band,
+           since: pd.Timestamp | None = None) -> list[tuple[float, float] | None]:
     bands = []
+    past_starts = past_ends - pd.Timedelta(days=6)
     for start in starts:
-        past = past_err[past_ends <= start - pd.Timedelta(days=horizon)]
+        earlier = np.asarray(past_ends <= start - pd.Timedelta(days=horizon))
+        past = past_err[same_kind(past_starts, earlier, start - pd.Timedelta(days=horizon), horizon, since)]
         bands.append(rule(past) if len(past) >= min_past else None)
     return bands
 
@@ -79,13 +104,14 @@ def weekly_band_coverage(log_err: pd.Series, week_starts, week_ends, horizon: in
 
 
 def weekly_bands(log_err: pd.Series, horizon: int, min_past: int = MIN_PAST_WEEKS, *, past: pd.Series | None = None,
-                 rule: Band = quantile_band) -> list[tuple[float, float] | None]:
+                 rule: Band = quantile_band, since: pd.Timestamp | None = None) -> list[tuple[float, float] | None]:
     """For each week of `log_err` (indexed by week start), its past-only band as (lo, hi) log errors, or None. The band
     is drawn by `rule` from the weeks of `past` (weekly log errors indexed by week start; `log_err` itself by default)
-    that ended at least `horizon` days before the week starts."""
+    that ended at least `horizon` days before the week starts, of them the ones same_kind picks with `since`; with
+    fewer than `min_past`, the week has no band."""
     past = log_err if past is None else past
     return _bands(past.to_numpy(dtype=float), pd.DatetimeIndex(past.index) + pd.Timedelta(days=6),
-                  pd.DatetimeIndex(log_err.index), horizon, min_past, rule)
+                  pd.DatetimeIndex(log_err.index), horizon, min_past, rule, since)
 
 
 def widen(mid: pd.Series, lo: pd.Series, hi: pd.Series, k: float) -> tuple[pd.Series, pd.Series]:
@@ -122,17 +148,18 @@ def mean_abs_bias(days: pd.DataFrame, min_days: int = 4) -> float:
 
 
 def metrics(days: pd.DataFrame, weeks: pd.DataFrame, horizon: int, log_err: pd.Series,
-            rule: Band = quantile_band) -> dict:
+            rule: Band = quantile_band, since: pd.Timestamp | None = None) -> dict:
     """The Metrics contract for scored `days` and their `weeks`.
 
     coverage80 counts the weeks of `weeks` inside their past-only band, drawn by `rule` from `log_err` (weekly log
     errors indexed by week start: usually log(actual / pred) of `weeks` itself, or a longer backtest that includes
-    earlier weeks). dailyCoverage80 is the share of days inside lo to hi, None when `days` has no range.
+    earlier weeks), of them the ones same_kind picks for each week with `since`. dailyCoverage80 is the share of days
+    inside lo to hi, None when `days` has no range.
     """
     own = np.log(weeks.actual / weeks.pred)
     starts = pd.DatetimeIndex(log_err.index)
     bands = _bands(log_err.to_numpy(dtype=float), starts + pd.Timedelta(days=6), pd.DatetimeIndex(weeks.index), horizon,
-                   MIN_PAST_WEEKS, rule)
+                   MIN_PAST_WEEKS, rule, since)
     inside = [band[0] <= e <= band[1] for e, band in zip(own, bands) if band is not None]
     has_range = {"lo", "hi"} <= set(days.columns) and len(days) > 0 and days[["lo", "hi"]].notna().all().all()
     return {

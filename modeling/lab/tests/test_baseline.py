@@ -257,6 +257,43 @@ def test_the_weekly_band_takes_finite_sample_ranks_of_the_last_year_of_past_week
     assert baseline.weekly_band(year) == pytest.approx((year[4], year[47]))  # the 5th and 48th of 52
 
 
+def test_a_week_forecast_with_last_years_shape_reads_its_own_kind_topped_up_to_half_a_year():
+    # Thirty weekly errors of 0.5 or -0.5 (weeks forecast 28 days ahead from before shaped_from), then forty of 0.01 or
+    # -0.01 (from on or after it). `since` is the Sunday cutoff the change happens at; the first shaped week's Monday is 29
+    # days after it.
+    starts = pd.date_range("2025-01-06", periods=70, freq="7D")
+    since = starts[30] - pd.Timedelta(days=29)
+    errors = pd.Series([0.5 if i % 2 else -0.5 for i in range(30)] + [0.01 if i % 2 else -0.01 for i in range(40)],
+                       index=starts)
+    lead = pd.Timedelta(days=28)
+    shaped = np.asarray(starts >= since + lead)
+    assert shaped.tolist() == [False] * 30 + [True] * 40
+    assert metrics.KIND_MIN_WEEKS == 26
+    bands = metrics.weekly_bands(errors, 28, rule=baseline.weekly_band, since=since)
+    plain = metrics.weekly_bands(errors, 28, rule=baseline.weekly_band)
+    seen = set()
+    for start, band, before in zip(starts, bands, plain):
+        earlier = np.asarray(starts + pd.Timedelta(days=6) <= start - lead)
+        if start - lead < since:
+            assert band == before  # forecast before the change: every earlier week, as without `since`
+            continue
+        own = int((earlier & shaped).sum())
+        fill = np.flatnonzero(earlier & ~shaped)[-max(26 - own, 0):] if own < 26 else np.array([], dtype=int)
+        read = np.sort(np.concatenate([fill, np.flatnonzero(earlier & shaped)]))
+        assert band == baseline.weekly_band(errors.to_numpy()[read])
+        # Under half a year of its own kind, the latest wide weeks fill in; from then on, only its own small errors
+        if own >= 26:
+            assert band == (-0.01, 0.01)
+        elif own <= 22:  # 4 or more wide weeks, so its 2nd smallest and 25th smallest of 26 are wide ones
+            assert band == (-0.5, 0.5)
+        seen.add("own" if own >= 26 else "filled")
+    assert seen == {"own", "filled"}
+    # The run's own range reads the same way: its own kind once half a year of it exists, filled in before then
+    through = starts[-1] + pd.Timedelta(days=6)
+    assert pipeline._log_range(errors, baseline.weekly_band, 28, since, through) == {"lo": -0.01, "hi": 0.01}
+    assert pipeline._log_range(errors[: 30 + 10], baseline.weekly_band, 28, since, through) == {"lo": -0.5, "hi": 0.5}
+
+
 def golden_baseline(inp: dict | None = None) -> dict:
     """calibrate on the golden input (or `inp`), returning the baseline's run whichever engine would be chosen."""
     from fixture import synthetic_input

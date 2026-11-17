@@ -432,7 +432,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v7"
+    assert version.MODEL_VERSION == "v8"
 
 
 def ratio_at(widening: list[dict], lead: int) -> float:
@@ -983,10 +983,11 @@ def test_the_baselines_comparison_uses_its_own_backtest(result, model_result, la
     history = baseline.prepare(frame, lab_input["calendar"], through)
     preds = baseline.ranged(baseline.backtest_predictions(history, through, [7, 28, 91, 98]),
                             result["params"]["dailyLogRange"])
-    # Its bands are drawn from its whole weekly backtest by baseline.weekly_band, as its scorecard's are
+    # Its bands are drawn from its whole weekly backtest by baseline.weekly_band, from weeks of the same kind (with last
+    # year's shape or without), as its scorecard's are
     past = pipeline._week_errors(preds, [baseline.first_cutoff(history.first_day)], through, 28)
     out = compare.compare(frame, hist, lab_input["champion"], origins, base_cols, event_cols, preds=preds, past=past,
-                          rule=baseline.weekly_band)
+                          rule=baseline.weekly_band, since=baseline.shaped_from(history.first_day))
     assert_close(result["scorecard"]["comparison"], out)
     mine, theirs = result["scorecard"]["comparison"], model_result["scorecard"]["comparison"]
     assert [r["week"] for r in mine["series"]] == [r["week"] for r in theirs["series"]]

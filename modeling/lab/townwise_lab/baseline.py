@@ -17,7 +17,8 @@ with nothing to fit, so its backtest refits every week.
 Weekly 80% ranges (weekly_band) are calibrated on the baseline's own backtest, never on the week being scored: a
 week's band is drawn from the baseline's weekly log errors (log of actual over forecast) at the same lead on the weeks
 of its whole weekly backtest that ended at least that lead before the week starts, the last 52 of them, with
-finite-sample ranks. Earlier weeks calibrate later ones.
+finite-sample ranks. Earlier weeks calibrate later ones. A week forecast with last year's shape (from shaped_from on)
+reads earlier weeks forecast with it, the latest earlier weeks filling in while they are fewer than half a year.
 
 Day statuses (closed, booked) come from forecast.statuses, as the model's do. Notes and business rules act only
 through the input's flags and the forecast read (14.5), never here. Nothing here logs or prints.
@@ -200,6 +201,16 @@ def first_cutoff(first_day: pd.Timestamp) -> pd.Timestamp:
     """The first Sunday at least FIRST_CUTOFF_DAYS after `first_day`."""
     earliest = first_day + pd.Timedelta(days=FIRST_CUTOFF_DAYS)
     return earliest + pd.Timedelta(days=(6 - earliest.day_of_week) % 7)
+
+
+def shaped_from(first_day: pd.Timestamp) -> pd.Timestamp:
+    """The first cutoff whose forecasts have last year's shape to read: a year (SHAPE_LAG_DAYS, a Sunday again) after the
+    first cutoff, when the level at the cutoff less 364 days and the 3 weeks around each date less 364 days are history.
+    Before it the shape is mostly 1 and the baseline's weekly errors are of another size (about twice as wide on
+    seasonal synthetic histories), so a week forecast from on or after it draws its band from earlier weeks forecast
+    from on or after it, with the latest earlier weeks filling in to half a year (metrics.same_kind), as does a run's
+    own range (pipeline._log_range)."""
+    return first_cutoff(first_day) + pd.Timedelta(days=SHAPE_LAG_DAYS)
 
 
 def _weekday_median(history: History, cutoff: pd.Timestamp) -> dict[str, float]:

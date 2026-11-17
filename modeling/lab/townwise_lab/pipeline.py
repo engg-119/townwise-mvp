@@ -95,9 +95,11 @@ def _fold(train_through: pd.Timestamp, start: pd.Timestamp, stop: pd.Timestamp, 
 
 
 # Where an engine's weekly 80% bands are calibrated: None for the model, whose bands come from its own scored weeks with
-# metrics.quantile_band (section 8); for the baseline, the origins whose window scores the whole of its weekly backtest
-# and baseline.weekly_band (design decision 6, "Ranges").
-Calibration = tuple[list[pd.Timestamp], metrics.Band] | None
+# metrics.quantile_band (section 8); for the baseline, the origins whose window scores the whole of its weekly backtest,
+# baseline.weekly_band, and baseline.shaped_from, from which its forecasts have last year's shape to read, so a band for
+# a week forecast with it is drawn from earlier weeks forecast with it, the latest earlier ones filling in to half a year
+# (metrics.same_kind; design decision 6, "Ranges").
+Calibration = tuple[list[pd.Timestamp], metrics.Band, pd.Timestamp | None] | None
 
 
 def _week_errors(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Timestamp, horizon: int) -> pd.Series:
@@ -108,14 +110,15 @@ def _week_errors(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.T
 
 
 def _past(own: pd.Series, preds: pd.DataFrame, through: pd.Timestamp, horizon: int,
-          calibration: Calibration) -> tuple[pd.Series, metrics.Band]:
-    """The weekly errors a band at `horizon` is drawn from, and the rule that draws it: `own` with np.quantile's
-    percentiles for the model, the baseline's whole weekly backtest at that horizon with weekly_band for the baseline.
-    Either way each band reads only weeks that ended at least `horizon` days before the week it is for."""
+          calibration: Calibration) -> tuple[pd.Series, metrics.Band, pd.Timestamp | None]:
+    """The weekly errors a band at `horizon` is drawn from, the rule that draws it and the date its kind of forecast
+    changes (metrics.same_kind): `own` with np.quantile's percentiles and no change for the model, the baseline's whole
+    weekly backtest at that horizon with weekly_band and baseline.shaped_from for the baseline. Either way each band
+    reads only weeks that ended at least `horizon` days before the week it is for."""
     if calibration is None:
-        return own, metrics.quantile_band
-    origins, rule = calibration
-    return _week_errors(preds, origins, through, horizon), rule
+        return own, metrics.quantile_band, None
+    origins, rule, since = calibration
+    return _week_errors(preds, origins, through, horizon), rule, since
 
 
 def _backtest(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Timestamp,
@@ -129,14 +132,14 @@ def _backtest(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Time
         return None
     weeks28 = metrics.weekly_totals(days28)
     log_err = np.log(weeks28.actual / weeks28.pred)
-    past, rule = _past(log_err, preds, through, HORIZON, calibration)
+    past, rule, since = _past(log_err, preds, through, HORIZON, calibration)
     days7 = backtest.pick(preds, SHORT_HORIZON, *window)
     weeks7 = metrics.weekly_totals(days7)
-    past7, _ = _past(np.log(weeks7.actual / weeks7.pred), preds, through, SHORT_HORIZON, calibration)
+    past7, _, _ = _past(np.log(weeks7.actual / weeks7.pred), preds, through, SHORT_HORIZON, calibration)
     return {"window": window, "days28": days28, "weeks28": weeks28, "log_err": log_err, "past": past, "rule": rule,
-            "calibration": calibration,
-            "scores": metrics.metrics(days28, weeks28, HORIZON, past, rule),
-            "scores7": metrics.metrics(days7, weeks7, SHORT_HORIZON, past7, rule),
+            "since": since, "calibration": calibration,
+            "scores": metrics.metrics(days28, weeks28, HORIZON, past, rule, since),
+            "scores7": metrics.metrics(days7, weeks7, SHORT_HORIZON, past7, rule, since),
             "bias": float((weeks28.pred - weeks28.actual).sum() / weeks28.actual.sum())}
 
 
@@ -146,14 +149,19 @@ def _summary(bt: dict) -> dict:
             "coverage80": bt["scores"]["coverage80"]}
 
 
-def _log_range(past: pd.Series, rule: metrics.Band) -> dict[str, float]:
-    """The run's weekly range (log scale) from every past week by `rule`, always holding zero."""
-    lo, hi = rule(past.to_numpy(dtype=float))
+def _log_range(past: pd.Series, rule: metrics.Band, horizon: int, since: pd.Timestamp | None,
+               through: pd.Timestamp) -> dict[str, float]:
+    """The run's weekly range (log scale) by `rule` from the past weeks a band for a forecast from `through` reads
+    (metrics.same_kind with `since`), always holding zero."""
+    every = np.ones(len(past), dtype=bool)
+    chosen = metrics.same_kind(pd.DatetimeIndex(past.index), every, through, horizon, since)
+    lo, hi = rule(past.to_numpy(dtype=float)[chosen])
     return {"lo": float(min(lo, 0.0)), "hi": float(max(hi, 0.0))}
 
 
-def _band_width(past: pd.Series, rule: metrics.Band) -> float:
-    log_range = _log_range(past, rule)
+def _band_width(past: pd.Series, rule: metrics.Band, horizon: int, since: pd.Timestamp | None,
+                through: pd.Timestamp) -> float:
+    log_range = _log_range(past, rule, horizon, since, through)
     return log_range["hi"] - log_range["lo"]
 
 
@@ -166,11 +174,12 @@ def _horizon(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Times
         return None, None
     weeks = metrics.weekly_totals(days)
     log_err = np.log(weeks.actual / weeks.pred)
-    past, rule = _past(log_err, preds, through, horizon, calibration)
-    bands = metrics.weekly_bands(log_err, horizon, past=past, rule=rule)
+    past, rule, since = _past(log_err, preds, through, horizon, calibration)
+    bands = metrics.weekly_bands(log_err, horizon, past=past, rule=rule, since=since)
     inside = [band[0] <= e <= band[1] for e, band in zip(log_err, bands) if band is not None]
     return ({"weeks": len(weeks), "weeklyWape": metrics.weekly_wape(weeks),
-             "coverage80": {"inside": int(sum(inside)), "weeks": len(inside)}}, _band_width(past, rule))
+             "coverage80": {"inside": int(sum(inside)), "weeks": len(inside)}},
+            _band_width(past, rule, horizon, since, through))
 
 
 def calibrate(inp: dict, code_version: str) -> dict:
@@ -221,7 +230,8 @@ def calibrate(inp: dict, code_version: str) -> dict:
     daily_log_range = baseline.daily_log_range(scored)
     base_preds = baseline.ranged(base_preds, daily_log_range)
     base_bt = _backtest(base_preds, window_origins, through,
-                        ([baseline.first_cutoff(history.first_day)], baseline.weekly_band))
+                        ([baseline.first_cutoff(history.first_day)], baseline.weekly_band,
+                         baseline.shaped_from(history.first_day)))
 
     current = None if inp["champion"] is None else inp["champion"]["engine"]
     engine = choose_engine(current, None if model_bt is None else model_bt["scores"]["weeklyWape"],
@@ -233,8 +243,8 @@ def calibrate(inp: dict, code_version: str) -> dict:
     # itself would break the run file's low <= mid <= high, so it always holds zero. Past 28 days of lead they widen by
     # the longer horizons' weekly bands, never narrowing with lead.
     widen_k = metrics.choose_k(days28)
-    log_range = _log_range(bt["past"], bt["rule"])
-    width28 = _band_width(bt["past"], bt["rule"])
+    log_range = _log_range(bt["past"], bt["rule"], HORIZON, bt["since"], through)
+    width28 = _band_width(bt["past"], bt["rule"], HORIZON, bt["since"], through)
     horizon91, width91 = _horizon(preds, window_origins, through, LONG_HORIZON, bt["calibration"])
     horizon_reach, width_reach = (_horizon(preds, window_origins, through, reach, bt["calibration"])
                                   if reach is not None else (None, None))
@@ -250,7 +260,8 @@ def calibrate(inp: dict, code_version: str) -> dict:
                "low": None if band is None else float(week.pred * np.exp(band[0])),
                "high": None if band is None else float(week.pred * np.exp(band[1]))}
               for (start, week), band in zip(weeks28.iterrows(),
-                                             metrics.weekly_bands(log_err, HORIZON, past=bt["past"], rule=bt["rule"]))]
+                                             metrics.weekly_bands(log_err, HORIZON, past=bt["past"], rule=bt["rule"],
+                                                                  since=bt["since"]))]
     scorecard = {
         "horizonDays": HORIZON,
         "engine": engine,
@@ -267,7 +278,8 @@ def calibrate(inp: dict, code_version: str) -> dict:
             "series": series,
         },
         "comparison": compare.compare(frame, hist, inp["champion"], window_origins, base_cols, event_cols,
-                                      preds=preds, past=None if engine == "model" else bt["past"], rule=bt["rule"]),
+                                      preds=preds, past=None if engine == "model" else bt["past"], rule=bt["rule"],
+                                      since=bt["since"]),
         "engines": {"model": None if model_bt is None else _summary(model_bt), "baseline": _summary(base_bt)},
         "horizon91": horizon91,
         "horizonReach": horizon_reach,

@@ -20,7 +20,7 @@ describe('lab contract', () => {
     const source = readFileSync(new URL('../../modeling/lab/townwise_lab/version.py', import.meta.url), 'utf8');
     const versions = [...source.matchAll(/^MODEL_VERSION = "([^"]+)"$/gm)].map((match) => match[1]);
     expect(versions).toEqual([LAB_MODEL_VERSION]);
-    expect(LAB_MODEL_VERSION).toBe('v7');
+    expect(LAB_MODEL_VERSION).toBe('v8');
   });
 
   it('golden input and result parse with labInputSchema, labResultSchema, scorecardSchema and checkLabRunFile', () => {
