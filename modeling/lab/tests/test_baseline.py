@@ -238,3 +238,65 @@ def test_ranged_sets_each_days_range_from_the_daily_log_errors():
     out = baseline.ranged(days, log_range)
     assert (out.lo <= out.mid).all() and (out.mid <= out.hi).all()
     assert out.hi.iloc[0] == pytest.approx(100 * np.exp(log_range["hi"]))
+
+
+# The baseline's weekly 80% ranges (design decision 6, "Ranges"): each week's band is drawn only from the baseline's own
+# weekly errors at the same lead on earlier weeks of its weekly backtest, with finite-sample ranks, so a nominal 80% range
+# holds about 80% of the weeks it never saw.
+
+def test_the_weekly_band_takes_finite_sample_ranks_of_the_last_year_of_past_weeks():
+    nine = np.array([0.4, -0.3, 0.1, 0.0, -0.1, 0.2, -0.2, 0.3, -0.4])
+    assert baseline.weekly_band(nine) == (-0.4, 0.4)  # n = 9: the 1st and 9th of 9 (np.quantile would interpolate)
+    eight = nine[:8]
+    assert baseline.weekly_band(eight) == (-0.3, 0.4)  # n = 8: ranks 0 and 9 clamp to the 1st and 8th of 8
+    nineteen = np.linspace(-0.9, 0.9, 19)
+    assert baseline.weekly_band(nineteen) == pytest.approx((nineteen[1], nineteen[17]))  # the 2nd and 18th of 19
+    # Only the last 52 past weeks count: a wild error from more than a year before changes nothing
+    year = np.linspace(-0.2, 0.2, 52)
+    assert baseline.weekly_band(np.concatenate([[5.0, -5.0], year])) == baseline.weekly_band(year)
+    assert baseline.weekly_band(year) == pytest.approx((year[4], year[47]))  # the 5th and 48th of 52
+
+
+def golden_baseline(inp: dict | None = None) -> dict:
+    """calibrate on the golden input (or `inp`), returning the baseline's run whichever engine would be chosen."""
+    from fixture import synthetic_input
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setattr(pipeline, "choose_engine", lambda *args: "baseline")
+        return pipeline.calibrate(synthetic_input(0) if inp is None else inp, "0" * 40)
+
+
+def test_the_baselines_weekly_ranges_hold_between_65_and_95_percent_of_the_golden_backtest_weeks():
+    card = golden_baseline()["scorecard"]
+    coverage = card["backtest"]["metrics"]["coverage80"]
+    assert coverage["weeks"] >= 12 and coverage["weeks"] == card["backtest"]["weeksWithRange"]
+    assert 0.65 <= coverage["inside"] / coverage["weeks"] <= 0.95
+    assert card["engines"]["baseline"]["coverage80"] == coverage
+    # The series' bands are the ones counted
+    banded = [r for r in card["backtest"]["series"] if r["low"] is not None]
+    assert len(banded) == coverage["weeks"]
+    assert sum(r["low"] <= r["actual"] <= r["high"] for r in banded) == coverage["inside"]
+
+
+def test_a_weeks_band_never_reads_that_weeks_actuals_or_any_later_ones():
+    # Change every guest count from 27 days before a scored week's Monday on (its own days included): that week's band,
+    # drawn from weeks that ended at least 28 days before it, and its forecast, made at least 28 days before it, stay
+    # exactly as they were, while its actual moves.
+    from fixture import synthetic_input
+    before = golden_baseline()["scorecard"]["backtest"]["series"]
+    banded = [r for r in before if r["low"] is not None]
+    week = banded[len(banded) // 2]
+    first_changed = (ts(week["week"]) - pd.Timedelta(days=27)).strftime("%Y-%m-%d")
+    inp = synthetic_input(0)
+    for d in inp["days"]:
+        if d["date"] >= first_changed and d["guests"]:
+            d["guests"] = round(d["guests"] * 1.6)
+    changed = {r["week"]: r for r in golden_baseline(inp)["scorecard"]["backtest"]["series"]}
+    after = changed[week["week"]]
+    assert after["actual"] != week["actual"]
+    assert (after["mid"], after["low"], after["high"]) == pytest.approx((week["mid"], week["low"], week["high"]),
+                                                                        rel=1e-12)
+    # A later week does see the changed weeks, so the test would catch a band that read them
+    later = [r for r in before if r["low"] is not None and r["week"] > week["week"]][-1]
+    moved = changed[later["week"]]
+    assert (moved["low"] / moved["mid"], moved["high"] / moved["mid"]) != pytest.approx(
+        (later["low"] / later["mid"], later["high"] / later["mid"]), rel=1e-9)

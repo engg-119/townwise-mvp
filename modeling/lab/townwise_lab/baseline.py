@@ -14,6 +14,11 @@ with nothing to fit, so its backtest refits every week.
   holiday groups and the lab's own big nights and Halloween (features.holiday_flags); events are the input's event
   groups. An event with no group, or a group short of its minimum, has no effect.
 
+Weekly 80% ranges (weekly_band) are calibrated on the baseline's own backtest, never on the week being scored: a
+week's band is drawn from the baseline's weekly log errors (log of actual over forecast) at the same lead on the weeks
+of its whole weekly backtest that ended at least that lead before the week starts, the last 52 of them, with
+finite-sample ranks. Earlier weeks calibrate later ones.
+
 Day statuses (closed, booked) come from forecast.statuses, as the model's do. Notes and business rules act only
 through the input's flags and the forecast read (14.5), never here. Nothing here logs or prints.
 """
@@ -45,6 +50,9 @@ ONE_OFF = EVENT_PREFIX + "one_off"
 # the first: 28 + 6 + 29 + 167. Pinned by test_baseline_min_history_days_always_gives_twelve_weeks_with_a_range.
 FIRST_CUTOFF_DAYS = 28
 MIN_HISTORY_DAYS = 230
+# A weekly band reads the last year of past weeks: every season once, and none from more than a year before, when the
+# baseline may not yet have had last year's shape (shape is 1 without it) and its errors were of another size.
+BAND_WEEKS = 52
 
 
 class History(NamedTuple):
@@ -235,6 +243,17 @@ def backtest_predictions(history: History, through: pd.Timestamp, horizons: list
                                                (object if column == "weekday" else float))
                              for column in ("refit", "date", "weekday", "actual", "lo", "mid", "hi", "weekday_median")})
     return pd.concat(pieces, ignore_index=True)
+
+
+def weekly_band(past: np.ndarray) -> tuple[float, float]:
+    """The baseline's 80% weekly band from past weekly log errors in time order: of the last BAND_WEEKS, the k-th and
+    k'-th smallest, k = floor(0.1 (n + 1)) and k' = ceil(0.9 (n + 1)), clamped to 1..n. These are split conformal
+    ranks: a new week exchangeable with the n past ones lands between them at least 80% of the time (n of 9 or more),
+    where np.quantile's interpolated percentiles of a few weeks hold far fewer (about 62% of weeks at n = 8)."""
+    recent = np.sort(np.asarray(past, dtype=float)[-BAND_WEEKS:])
+    n = len(recent)
+    lo, hi = max((n + 1) // 10, 1), min(-(-9 * (n + 1) // 10), n)
+    return float(recent[lo - 1]), float(recent[hi - 1])
 
 
 def daily_log_range(days: pd.DataFrame) -> dict[str, float]:

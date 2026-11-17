@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { checkLabRunFile } from '../src/forecasts/file.ts';
-import { labInputSchema } from '../src/lab/input.ts';
+import { LAB_MODEL_VERSION, labInputSchema } from '../src/lab/input.ts';
 import { checkLabResult, labResultSchema } from '../src/lab/result.ts';
 import { scorecardSchema } from '../src/lab/scorecard.ts';
 import type { CalibrationRecord } from '../src/stores/calibrations.ts';
@@ -16,6 +16,13 @@ function golden(name: string): unknown {
 }
 
 describe('lab contract', () => {
+  it('LAB_MODEL_VERSION is the lab’s MODEL_VERSION (version.py), so the fingerprint moves with the lab’s model', () => {
+    const source = readFileSync(new URL('../../modeling/lab/townwise_lab/version.py', import.meta.url), 'utf8');
+    const versions = [...source.matchAll(/^MODEL_VERSION = "([^"]+)"$/gm)].map((match) => match[1]);
+    expect(versions).toEqual([LAB_MODEL_VERSION]);
+    expect(LAB_MODEL_VERSION).toBe('v7');
+  });
+
   it('golden input and result parse with labInputSchema, labResultSchema, scorecardSchema and checkLabRunFile', () => {
     const input = labInputSchema.parse(golden('input.json'));
     const result = labResultSchema.parse(golden('result.json'));

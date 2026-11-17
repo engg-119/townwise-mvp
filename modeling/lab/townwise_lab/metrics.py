@@ -4,6 +4,8 @@
 weekly_totals: indexed by week start (Monday), with actual, pred and days.
 """
 
+from collections.abc import Callable
+
 import numpy as np
 import pandas as pd
 
@@ -47,16 +49,21 @@ def weeks_over_20(weeks: pd.DataFrame) -> int:
     return int((_week_pct(weeks).abs() > OVER).sum())
 
 
+Band = Callable[[np.ndarray], tuple[float, float]]
+
+
+def quantile_band(past: np.ndarray) -> tuple[float, float]:
+    """Section 8's 80% band: the 10th and 90th percentiles of past weekly log errors (np.quantile's interpolation)."""
+    lo, hi = np.quantile(past, [0.1, 0.9])
+    return float(lo), float(hi)
+
+
 def _bands(past_err: np.ndarray, past_ends: pd.DatetimeIndex, starts: pd.DatetimeIndex, horizon: int,
-           min_past: int) -> list[tuple[float, float] | None]:
+           min_past: int, rule: Band = quantile_band) -> list[tuple[float, float] | None]:
     bands = []
     for start in starts:
         past = past_err[past_ends <= start - pd.Timedelta(days=horizon)]
-        if len(past) >= min_past:
-            lo, hi = np.quantile(past, [0.1, 0.9])
-            bands.append((float(lo), float(hi)))
-        else:
-            bands.append(None)
+        bands.append(rule(past) if len(past) >= min_past else None)
     return bands
 
 
@@ -71,11 +78,14 @@ def weekly_band_coverage(log_err: pd.Series, week_starts, week_ends, horizon: in
     return int(sum(inside)), len(inside)
 
 
-def weekly_bands(log_err: pd.Series, horizon: int,
-                 min_past: int = MIN_PAST_WEEKS) -> list[tuple[float, float] | None]:
-    """For each week of `log_err` (indexed by week start), its past-only band as (lo, hi) log errors, or None."""
-    starts = pd.DatetimeIndex(log_err.index)
-    return _bands(log_err.to_numpy(dtype=float), starts + pd.Timedelta(days=6), starts, horizon, min_past)
+def weekly_bands(log_err: pd.Series, horizon: int, min_past: int = MIN_PAST_WEEKS, *, past: pd.Series | None = None,
+                 rule: Band = quantile_band) -> list[tuple[float, float] | None]:
+    """For each week of `log_err` (indexed by week start), its past-only band as (lo, hi) log errors, or None. The band
+    is drawn by `rule` from the weeks of `past` (weekly log errors indexed by week start; `log_err` itself by default)
+    that ended at least `horizon` days before the week starts."""
+    past = log_err if past is None else past
+    return _bands(past.to_numpy(dtype=float), pd.DatetimeIndex(past.index) + pd.Timedelta(days=6),
+                  pd.DatetimeIndex(log_err.index), horizon, min_past, rule)
 
 
 def widen(mid: pd.Series, lo: pd.Series, hi: pd.Series, k: float) -> tuple[pd.Series, pd.Series]:
@@ -111,17 +121,18 @@ def mean_abs_bias(days: pd.DataFrame, min_days: int = 4) -> float:
     return float(np.mean(values)) if values else 0.0
 
 
-def metrics(days: pd.DataFrame, weeks: pd.DataFrame, horizon: int, log_err: pd.Series) -> dict:
+def metrics(days: pd.DataFrame, weeks: pd.DataFrame, horizon: int, log_err: pd.Series,
+            rule: Band = quantile_band) -> dict:
     """The Metrics contract for scored `days` and their `weeks`.
 
-    coverage80 counts the weeks of `weeks` inside their past-only band, drawn from `log_err` (weekly log errors
-    indexed by week start: usually log(actual / pred) of `weeks` itself, or a longer backtest that includes earlier
-    weeks). dailyCoverage80 is the share of days inside lo to hi, None when `days` has no range.
+    coverage80 counts the weeks of `weeks` inside their past-only band, drawn by `rule` from `log_err` (weekly log
+    errors indexed by week start: usually log(actual / pred) of `weeks` itself, or a longer backtest that includes
+    earlier weeks). dailyCoverage80 is the share of days inside lo to hi, None when `days` has no range.
     """
     own = np.log(weeks.actual / weeks.pred)
     starts = pd.DatetimeIndex(log_err.index)
     bands = _bands(log_err.to_numpy(dtype=float), starts + pd.Timedelta(days=6), pd.DatetimeIndex(weeks.index), horizon,
-                   MIN_PAST_WEEKS)
+                   MIN_PAST_WEEKS, rule)
     inside = [band[0] <= e <= band[1] for e, band in zip(own, bands) if band is not None]
     has_range = {"lo", "hi"} <= set(days.columns) and len(days) > 0 and days[["lo", "hi"]].notna().all().all()
     return {
