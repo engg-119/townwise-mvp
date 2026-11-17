@@ -11,7 +11,8 @@ import { daysBetween, isCalendarDate } from '../dates.ts';
 
 export const FORECAST_RUN_SCHEMA = 'townwise.forecast-run/1';
 
-export const MODEL_FAMILIES = ['hybrid_linear_xgboost', 'linear_median', 'weekday_median'] as const;
+/** seasonal_baseline is the lab's baseline engine (D42); reader.ts names its runs by it. */
+export const MODEL_FAMILIES = ['hybrid_linear_xgboost', 'linear_median', 'weekday_median', 'seasonal_baseline'] as const;
 export const DAY_STATUSES = ['open', 'closed', 'booked'] as const;
 export const REASON_KINDS = ['weekday', 'term', 'event', 'holiday', 'level', 'closure', 'booking'] as const;
 /** Kinds whose reason may name a calendar entry (a TownEvent id, or a calendar group such as 'hanover-nh:home-football'). */

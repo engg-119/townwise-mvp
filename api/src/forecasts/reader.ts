@@ -15,7 +15,8 @@
 // it usually brings more or fewer guests (effects.ts), from the same reads: the stored days, read once, reach back over
 // the 52 weeks the effects need when the range reaches today and over the 8 weeks before the first scored day that
 // likely closed reads, and one read of the notes and rules marks the closed days for the effects and the accuracy. The
-// town calendar's term entries are made once for the labels and the effects. It logs nothing and stores nothing.
+// town calendar's term entries are made once for the labels and the effects. A read also scores its own days, each
+// against the run chosen for it, as the window's accuracy (D42). It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
 import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
@@ -30,15 +31,24 @@ import { adjustDay, orderedReasons, scheduledRules, type AdjustedDay, type Model
 import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
 import { noteReasonView, reasonViews, ruleReasonView, townCalendarOf, townTermEntries, type ReasonView } from './reasons.ts';
-import { inRangeOf, liveAccuracy, weekActual, type LiveAccuracy, type ScoredDay } from './score.ts';
+import { inRangeOf, liveAccuracy, scoredDay, weekActual, type LiveAccuracy, type ScoredDay } from './score.ts';
 
-/** A forecast read covers at most this many days, both ends included: six whole weeks, a month's calendar grid. */
-export const MAX_FORECAST_RANGE_DAYS = 42;
+/** A forecast read covers at most this many days, both ends included: today and the next 91 (D42), as people in town. */
+export const MAX_FORECAST_RANGE_DAYS = 92;
+
+/** Which engine made a run (D42): the lab's baseline for family seasonal_baseline, the trained model otherwise. */
+export type ForecastEngine = 'model' | 'baseline';
+
+export function engineOf(family: string): ForecastEngine {
+  return family === 'seasonal_baseline' ? 'baseline' : 'model';
+}
 
 export interface ForecastRunView {
   id: string;
   metric: 'guests';
   model: { family: string; version: string; label: string };
+  /** Derived from the family, never stored. */
+  engine: ForecastEngine;
   trainingSource: ForecastRunRecord['trainingSource'];
   trainedFrom: string;
   dataThrough: string;
@@ -86,6 +96,8 @@ export interface ForecastDayView {
   actual: number | null;
   /** The actual within the model's [low, high]; null when either is missing or the model did not forecast the day open. */
   inRange: boolean | null;
+  /** Counted in the window's accuracy (score.ts scoredDay): open in the model, not closed or likely closed, with guests. */
+  scored: boolean;
 }
 
 export interface ForecastWeekView {
@@ -117,21 +129,30 @@ export interface ForecastWindow {
   runs: ForecastWindowRun[];
   days: ForecastDayView[];
   weeks: ForecastWeekView[];
+  /** Live accuracy over the read's own days, each from the run chosen for it; null under 5 scored days. */
+  accuracy: LiveAccuracy | null;
   notCovered: { from: string; to: string }[];
 }
 
 export interface ForecastReader {
-  /** `range`: inclusive YYYY-MM-DD days, at most 42 (callers check). `today`: the first day with no actual yet. */
+  /** `range`: inclusive YYYY-MM-DD days, at most 92 (callers check). `today`: the first day with no actual yet. */
   window(scope: OrgScope, location: LocationRecord, range: { from: string; to: string }, today: string): Promise<ForecastWindow>;
   /** The newest published run (by dataThrough) and its own live accuracy, for the model card; null when none is published. */
   latest(scope: OrgScope, locationId: string, today: string): Promise<{ run: ForecastRunView; live: LiveAccuracy | null } | null>;
+}
+
+function labelOf(model: ForecastRunRecord['model']): string {
+  return engineOf(model.family) === 'baseline'
+    ? 'Townwise\'s baseline from your recent weeks and the town calendar'
+    : `Townwise demand model ${model.version}`;
 }
 
 export function runView(run: ForecastRunRecord): ForecastRunView {
   return {
     id: run.id,
     metric: run.metric,
-    model: { family: run.model.family, version: run.model.version, label: `Townwise demand model ${run.model.version}` },
+    model: { family: run.model.family, version: run.model.version, label: labelOf(run.model) },
+    engine: engineOf(run.model.family),
     trainingSource: run.trainingSource,
     trainedFrom: run.trainedFrom,
     dataThrough: run.dataThrough,
@@ -238,7 +259,7 @@ export function createForecastReader(deps: {
       });
       const dates = eachDay(range.from, range.to);
       if (runs.length === 0) {
-        return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: spans(dates) };
+        return { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: spans(dates) };
       }
       const entries = townTermEntries(location.town.townId);
       const calendarOn = townCalendarOf(location.town.townId, entries);
@@ -251,6 +272,7 @@ export function createForecastReader(deps: {
       const modelOf = (row: ForecastRow): ModelDay => ({ status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high });
       const adjusted = (date: string, row: ForecastRow): AdjustedDay => adjustDay(date, today, modelOf(row), row.reasons, notesOn(date), rulesOn(date));
       const days: ForecastDayView[] = [];
+      const scoredDays: ScoredDay[] = [];
       for (const date of dates) {
         const pick = chosen.get(date);
         if (pick === undefined) continue;
@@ -262,11 +284,13 @@ export function createForecastReader(deps: {
           (entry) => ('note' in entry ? noteReasonView(entry.note, entry.outcome) : ruleReasonView(entry.rule, entry.outcome)),
         );
         const actual = actuals.get(date) ?? null;
+        const score = scored(date, row);
+        scoredDays.push(score);
         days.push({
           date, weekday: weekdayOf(date), status: day.status, low: day.low, mid: day.mid, high: day.high,
           baseline: day.status === model.status ? row.baseline : null, reasons, model, noteGuests: day.noteGuests, moreNotes, moreRules,
           runId: run.id, madeAt: run.madeAt, madeAfterDay: run.madeAt >= date,
-          actual, inRange: model.status === 'open' ? inRangeOf(actual, row.low, row.high) : null,
+          actual, inRange: model.status === 'open' ? inRangeOf(actual, row.low, row.high) : null, scored: scoredDay(score),
         });
       }
       const weeks: ForecastWeekView[] = weekRows.flatMap((row): ForecastWeekView[] => {
@@ -298,6 +322,7 @@ export function createForecastReader(deps: {
         runs: runs.filter((run) => used.has(run.id)).map((run) => ({ ...runView(run), live: liveOf(run.id) })),
         days,
         weeks,
+        accuracy: liveAccuracy(scoredDays),
         notCovered: spans(dates.filter((date) => !chosen.has(date))),
       };
     },

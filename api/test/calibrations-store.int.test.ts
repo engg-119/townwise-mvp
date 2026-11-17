@@ -75,6 +75,17 @@ describe('calibrations', () => {
     expect(await queue(t)).not.toBeNull();
   });
 
+  it('stores the weekly refresh’s requester: no person, role system, via scheduled (D42)', async () => {
+    const t = await tenant();
+    const now = server.clock.now();
+    const record = await calibrations.insertQueued(t.scope, {
+      id: new Types.ObjectId().toHexString(), locationId: t.locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' },
+      regimeStart: null, championRunId: null, tokenExpiresAt: new Date(now.getTime() + 20 * 60_000), now,
+    });
+    expect(record?.requestedBy).toEqual({ userId: null, role: 'system', via: 'scheduled' });
+    expect((await calibrations.find(t.scope, record?.id ?? ''))?.requestedBy).toEqual({ userId: null, role: 'system', via: 'scheduled' });
+  });
+
   it('insertQueued stores no token: the result token’s hash arrives with the input fetch', async () => {
     const t = await tenant();
     const record = await queued(t);

@@ -375,7 +375,7 @@ describe('a published lab run', () => {
     await seedHistory(server, { orgId: t.orgId, locationId: t.locationId, from: '2026-05-25', to: '2026-05-31', guests: () => 55 });
     const body = await forecastOf(t, '2026-05-25', '2026-06-07');
     expect(body.runs).toEqual([{
-      id: runId, metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v6', label: 'Townwise demand model v6' },
+      id: runId, metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v6', label: 'Townwise demand model v6' }, engine: 'model',
       trainingSource: 'townwise_lab', trainedFrom: '2024-10-01', dataThrough: '2026-05-24', madeAt: '2026-06-01', frozen: false,
       interval: { level: 0.8, widened: true },
       backtest: { from: '2026-01-05', to: '2026-03-29', weeks: 12, weeklyTypicalErrorPct: 9.5, weeksOver20Pct: 1, weeklyRangePct: { below: 10, above: 20 } },

@@ -41,11 +41,17 @@ export function inRangeOf(actual: number | null, low: number | null, high: numbe
   return actual >= low && actual <= high;
 }
 
-/** Live accuracy over the given days (oldest first or not); null under 5 scored days. */
+/** Whether live accuracy counts the day: forecast open with a middle and stored guests, and not closed or likely closed. */
+export function scoredDay(day: ScoredDay): day is ScoredDay & { mid: number; actual: number } {
+  return day.status === 'open' && day.closed !== true && day.mid !== null && day.actual !== null;
+}
+
+/**
+ * Live accuracy over the given days (oldest first or not); null under 5 scored days. Over one run's days it is the
+ * run's live accuracy; over a read's days, each from the run the reader chose for it, the window's (D42).
+ */
 export function liveAccuracy(days: readonly ScoredDay[]): LiveAccuracy | null {
-  const scored = days
-    .filter((day): day is ScoredDay & { mid: number; actual: number } => day.status === 'open' && day.closed !== true && day.mid !== null && day.actual !== null)
-    .sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
+  const scored = days.filter(scoredDay).sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
   const first = scored[0];
   const last = scored.at(-1);
   if (scored.length < MIN_SCORED_DAYS || first === undefined || last === undefined) return null;

@@ -45,7 +45,7 @@ function fc(date: string, low: number | null, high: number | null): ForecastDayV
   const mid = low === null || high === null ? null : (low + high) / 2;
   return {
     date, weekday: weekdayOf(date), status, low, mid, high, baseline: null, reasons: [], runId: 'run-0001', madeAt: run.madeAt,
-    madeAfterDay: false, actual: null, inRange: null, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0, moreRules: 0,
+    madeAfterDay: false, actual: null, inRange: null, scored: false, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0, moreRules: 0,
   };
 }
 
@@ -233,7 +233,7 @@ describe('show_visual’s run', () => {
   const runOf = (label: string, dataThrough: string, madeAt: string) => ({
     id: `run-${label}`, model: { family: 'f', version: label, label: `Townwise demand model ${label}` }, dataThrough, madeAt,
   }) as unknown as ForecastWindowRun;
-  const EMPTY: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [] };
+  const EMPTY: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [] };
 
   function context(
     days: SalesDay[], windowOf: (range: { from: string; to: string }) => ForecastWindow = () => EMPTY,
@@ -287,15 +287,15 @@ describe('show_visual’s run', () => {
     return { visual: result.visual, content: JSON.parse(result.content) };
   }
 
-  it('daily guests read the published forecast in windows of at most 42 days, labeled with the newest run that supplied days', async () => {
+  it('daily guests read the published forecast in windows of at most 92 days, labeled with the newest run that supplied days', async () => {
     const older = runOf('v1', '2026-09-15', '2026-09-16');
     const newer = runOf('v2', '2026-10-25', '2026-10-26');
-    const { tc, dayReads, windowReads } = context([day('2026-10-01', 40), day('2026-11-13', 60)], (range) => (range.from === '2026-10-01'
-      ? { ...EMPTY, available: true, reason: null, runs: [older], days: [fc('2026-10-01', 30, 50)] }
-      : { ...EMPTY, available: true, reason: null, runs: [newer], days: [fc('2026-11-13', 50, 70)] }));
+    const { tc, dayReads, windowReads } = context([day('2026-10-01', 40), day('2026-11-13', 60)], () => (
+      { ...EMPTY, available: true, reason: null, runs: [newer, older], days: [fc('2026-10-01', 30, 50), fc('2026-11-13', 50, 70)] }));
     const { visual, content } = await shown(tc, { kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-11-15', by: null, compare: null });
     expect(dayReads).toEqual([{ from: '2026-10-01', to: '2026-11-15' }]);
-    expect(windowReads).toEqual([{ from: '2026-10-01', to: '2026-11-11' }, { from: '2026-11-12', to: '2026-11-15' }]);
+    // A daily visual's 92 days at most (LIMITS) are one forecast read since D42.
+    expect(windowReads).toEqual([{ from: '2026-10-01', to: '2026-11-15' }]);
     expect(visual).toMatchObject({ kind: 'daily', forecast: { model: 'Townwise demand model v2', madeAt: '2026-10-26' } });
     if (visual?.kind !== 'daily') throw new Error('not daily');
     expect(visual.days).toHaveLength(46);

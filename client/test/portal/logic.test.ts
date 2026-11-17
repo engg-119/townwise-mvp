@@ -6,7 +6,7 @@ import {
   calendarHref, clientNav, consoleNav, HOME, homeFor, isAllowed, isFillRoute, itemHref, locationHref, navLocationId, pageTitle, tabOf,
   type TabKey,
 } from '../../src/portal/routing';
-import { meResponseSchema, orgResponseSchema, type Access } from '../../src/portal/schemas';
+import { calibrationSchema, meResponseSchema, orgResponseSchema, type Access } from '../../src/portal/schemas';
 import {
   dateRange, patternOf, TOWN_GROUPS, townProfile, townResearchLine,
 } from '../../src/portal/towns';
@@ -294,6 +294,17 @@ describe('schemas', () => {
     expect(meResponseSchema.safeParse({ ...meOf(ACCESS.noOrg), access: { state: 'unknown' } }).success).toBe(false);
     expect(orgResponseSchema.safeParse({ ...orgOf('member'), role: 'owner' }).success).toBe(false);
     expect(orgResponseSchema.parse(orgOf('org_admin', undefined, 3)).requestedLocationCount).toBe(3);
+  });
+
+  test('the calibration states calibrated and stale parse before the API sends them (14.3, D42)', () => {
+    const days = { dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-21' };
+    const stale = { state: 'stale', ...days, dataThrough: '2026-11-15', newerDays: 6, nextRefresh: '2026-11-23' };
+    expect(calibrationSchema.parse(stale)).toEqual(stale);
+    expect(calibrationSchema.parse({ ...stale, nextRefresh: null }).state).toBe('stale');
+    const calibrated = { state: 'calibrated', ...days, dataThrough: '2026-11-21', newerDays: 0, nextRefresh: null };
+    expect(calibrationSchema.parse(calibrated)).toEqual(calibrated);
+    expect(calibrationSchema.safeParse({ state: 'stale', ...days }).success).toBe(false);
+    expect(calibrationSchema.safeParse({ state: 'queued' }).success).toBe(false);
   });
 });
 

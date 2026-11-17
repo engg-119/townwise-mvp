@@ -199,7 +199,9 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
   let first: string;
 
   it('says no forecast while none is published, and a draft stays invisible', async () => {
-    const none = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-05-01', to: '2026-05-14' }] };
+    const none = {
+      available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [{ from: '2026-05-01', to: '2026-05-14' }],
+    };
     expect(await forecast()).toEqual(none);
     first = await staffImport(RUN);
     expect(await forecast()).toEqual(none);
@@ -210,7 +212,9 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     await staffChange(first, 'publish');
     const body = await forecast();
     expect(body).toMatchObject({ available: true, reason: null, notCovered: [] });
-    expect(body.runs).toEqual([expect.objectContaining({ id: first, model: { family: 'hybrid_linear_xgboost', version: 'v9', label: 'Townwise demand model v9' } })]);
+    expect(body.runs).toEqual([expect.objectContaining({
+      id: first, engine: 'model', model: { family: 'hybrid_linear_xgboost', version: 'v9', label: 'Townwise demand model v9' },
+    })]);
     expect(body.days).toHaveLength(14);
     expect(body.days[0]).toEqual({
       date: '2026-05-01', weekday: 'Fri', status: 'open', low: 80, mid: 100, high: 120, baseline: null,
@@ -218,7 +222,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         { kind: 'weekday', label: 'Friday', effectPct: null, effect: null, sources: [], note: null, rule: null },
         { kind: 'term', label: 'Spring term classes', effectPct: null, effect: null, sources: expect.any(Array) as unknown, note: null, rule: null },
       ],
-      runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true,
+      runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true, scored: true,
       model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0, moreRules: 0,
     });
     expect(body.days.find((day) => day.date === '2026-05-06')).toMatchObject({ actual: 130, inRange: false, madeAfterDay: false });
@@ -231,6 +235,12 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     ]);
     // Six scored days, one missed: |30| over 630 guests.
     expect(body.runs[0]?.live).toEqual({ days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-05-01', to: '2026-05-07' });
+    // The window's own accuracy (D42): the same six days, the closed May 4 and the days with no guests yet not scored.
+    expect(body.accuracy).toEqual(body.runs[0]?.live);
+    expect(body.days.filter((day) => day.scored).map((day) => day.date)).toEqual(['2026-05-01', '2026-05-02', '2026-05-03', '2026-05-05', '2026-05-06', '2026-05-07']);
+    // Under 5 scored days a window has no accuracy, and its days are still scored.
+    const three = await forecast('?from=2026-05-01&to=2026-05-04');
+    expect([three.accuracy, three.days.map((day) => day.scored)]).toEqual([null, [true, true, true, false]]);
     expect((await about()).forecast.live).toEqual(body.runs[0]?.live);
   });
 
@@ -242,6 +252,9 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     // Each run is scored over its own days: every scored day (May 1 to 7) came from the first run, so the later one
     // has no live accuracy yet and is never credited with the first one's hits and misses.
     expect(body.runs.map((run) => run.live?.days ?? null)).toEqual([null, 6]);
+    expect(body.runs.map((run) => run.engine)).toEqual(['model', 'model']);
+    // The window scores each day against the run the reader chose for it: here the first run's six days.
+    expect(body.accuracy).toEqual({ days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-05-01', to: '2026-05-07' });
     expect(body.days.filter((day) => day.runId === later).map((day) => day.date)).toEqual([
       '2026-05-08', '2026-05-09', '2026-05-10', '2026-05-11', '2026-05-12', '2026-05-13', '2026-05-14',
     ]);
@@ -263,13 +276,26 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect(await forecast('?from=2026-05-20&to=2026-05-25')).toMatchObject({ available: false, reason: 'not_covered', days: [] });
   });
 
-  it('answers 400 for more than 42 days, a start more than 400 days back, or an extra key', async () => {
-    for (const query of ['?from=2026-05-01&to=2026-06-12', '?from=2025-04-26&to=2025-05-01', '?from=2026-05-01&to=2026-05-02&x=1', '']) {
+  it('answers 400 for more than 92 days, a start more than 400 days back, or an extra key', async () => {
+    for (const query of ['?from=2026-05-01&to=2026-08-01', '?from=2025-04-26&to=2025-05-01', '?from=2026-05-01&to=2026-05-02&x=1', '']) {
       const res = await call(server, `/api/org/locations/${forecasted}/forecast${query}`, { session: member });
       expect({ query, status: res.status }).toEqual({ query, status: 400 });
     }
-    // 42 days, a whole six-week calendar grid, is one read.
+    // 92 days, today and the next 91 (D42), is one read, and so is a six-week calendar grid.
+    expect((await call(server, `/api/org/locations/${forecasted}/forecast?from=2026-05-01&to=2026-07-31`, { session: member })).status).toBe(200);
     expect((await call(server, `/api/org/locations/${forecasted}/forecast?from=2026-05-01&to=2026-06-11`, { session: member })).status).toBe(200);
+  });
+
+  it('names a seasonal_baseline run the baseline, in the read and on the model card (D42)', async () => {
+    const room = await addLocation(server, { orgId, name: 'Baseline Room' });
+    const runId = await staffImport({ ...structuredClone(RUN), model: { ...(RUN.model as Record<string, unknown>), family: 'seasonal_baseline' } }, room);
+    await staffChange(runId, 'publish');
+    const res = await call(server, `/api/org/locations/${room}/forecast?from=2026-05-01&to=2026-05-14`, { session: member });
+    const body = await res.json() as ForecastWindow;
+    const label = 'Townwise\'s baseline from your recent weeks and the town calendar';
+    expect(body.runs).toEqual([expect.objectContaining({ id: runId, engine: 'baseline', model: { family: 'seasonal_baseline', version: 'v9', label } })]);
+    const card = await (await call(server, `/api/org/locations/${room}/estimates/about`, { session: member })).json() as EstimatesAbout;
+    expect(card.forecast.run).toMatchObject({ id: runId, engine: 'baseline', model: { label } });
   });
 
   it('is readable under view-as, showing only what the person sees, and logs no figure', async () => {
@@ -539,7 +565,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       const bare = await addLocation(server, { orgId, name: 'Unforecast Room' });
       await save(event({}), bare);
       expect(await read('?from=2026-06-01&to=2026-06-14', bare)).toEqual({
-        available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [{ from: '2026-06-01', to: '2026-06-14' }],
+        available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [{ from: '2026-06-01', to: '2026-06-14' }],
       });
     });
   });

@@ -18,9 +18,10 @@ export const calibrationSchema = z.object({
   status: z.enum(CALIBRATION_STATUSES),
   failure: z.string().nullable(),
   failureWords: z.string().nullable(),
-  /** TownwiseAI's chat, the staff console, or a file someone let TownwiseAI read (D34). */
-  via: z.enum(['chat', 'console', 'file']),
-  requestedByRole: z.enum(['org_admin', 'superadmin']),
+  /** TownwiseAI's chat, the staff console, a file someone let TownwiseAI read (D34), or the weekly refresh (D42). */
+  via: z.enum(['chat', 'console', 'file', 'scheduled']),
+  /** `system` is the weekly refresh, which no person started (D42). */
+  requestedByRole: z.enum(['org_admin', 'superadmin', 'system']),
   regimeStart: z.string().nullable(),
   requestedAt: z.string(),
   startedAt: z.string().nullable(),

@@ -52,7 +52,7 @@ const SALES: ItemSalesDay[] = Array.from({ length: 42 }, (_unused, index) => {
   return { date, items: new Date(`${date}T00:00:00.000Z`).getUTCDay() === 0 ? {} : { [LAGER]: 12 } };
 });
 
-const NO_FORECAST: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], notCovered: [] };
+const NO_FORECAST: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [], accuracy: null, notCovered: [] };
 
 interface Fakes {
   setup?: StoredSetup | null;

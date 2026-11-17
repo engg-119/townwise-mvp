@@ -1,6 +1,6 @@
 // What staff (and, from Task 8, TownwiseAI) read of a calibration: its state, the gate's words and a summary of its
 // scorecard as percentages and counts only (spec D7: no guest figure outside view-as). Pure.
-import type { CalibrationFailure, CalibrationRecord, CalibrationStatus } from '../stores/calibrations.ts';
+import type { CalibrationFailure, CalibrationRecord, CalibrationRequester, CalibrationStatus } from '../stores/calibrations.ts';
 import { GATE_REASONS, gateWords, type GateReason } from './gate.ts';
 import { scorecardSchema, type Metrics } from './scorecard.ts';
 import { FAILURE_WORDS } from './service.ts';
@@ -26,8 +26,8 @@ export interface CalibrationView {
   status: CalibrationStatus;
   failure: CalibrationFailure | null;
   failureWords: string | null;
-  via: 'chat' | 'console' | 'file';
-  requestedByRole: 'org_admin' | 'superadmin';
+  via: CalibrationRequester['via'];
+  requestedByRole: CalibrationRequester['role'];
   regimeStart: string | null;
   requestedAt: string;
   startedAt: string | null;

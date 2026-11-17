@@ -26,11 +26,12 @@ export const CALIBRATION_FAILURES: readonly CalibrationFailure[] = [
 ];
 
 export interface CalibrationRequester {
-  /** The person who asked; null once their records are deleted. */
+  /** The person who asked; null once their records are deleted, and always null for the weekly refresh (D42). */
   userId: string | null;
-  role: 'org_admin' | 'superadmin';
-  /** TownwiseAI's chat, the staff console, or a file someone let TownwiseAI read (spec 11A.9). */
-  via: 'chat' | 'console' | 'file';
+  /** `system` is the weekly refresh, which no person started (D42). */
+  role: 'org_admin' | 'superadmin' | 'system';
+  /** TownwiseAI's chat, the staff console, a file someone let TownwiseAI read (spec 11A.9), or the weekly refresh (D42). */
+  via: 'chat' | 'console' | 'file' | 'scheduled';
 }
 
 export interface CalibrationGate { published: boolean; reason: string }
@@ -67,8 +68,8 @@ const sub = { _id: false, strict: 'throw' } as const;
 function calibrationSchema(): Schema<CalibrationFields> {
   const requestedBy = new Schema({
     userId: { type: String, default: null },
-    role: { type: String, required: true, enum: ['org_admin', 'superadmin'] },
-    via: { type: String, required: true, enum: ['chat', 'console', 'file'] },
+    role: { type: String, required: true, enum: ['org_admin', 'superadmin', 'system'] },
+    via: { type: String, required: true, enum: ['chat', 'console', 'file', 'scheduled'] },
   }, sub);
   const gate = new Schema({ published: { type: Boolean, required: true }, reason: { type: String, required: true } }, sub);
   const schema = new Schema<CalibrationFields>({

@@ -215,4 +215,11 @@ describe('reading a run file', () => {
     expect(bad).toEqual({ ok: false, issues: [{ path: 'days[0].status', code: 'invalid_value' }] });
     expect(issueText({ path: 'x', code: 'something_new' })).toBe('x isn’t valid.');
   });
+
+  test('takes the baseline engine’s family, seasonal_baseline (D42), and still refuses a family the server doesn’t know', () => {
+    expect(readRunFile(JSON.stringify({ ...FILE, model: { ...FILE.model, family: 'seasonal_baseline' } })).ok).toBe(true);
+    expect(readRunFile(JSON.stringify({ ...FILE, model: { ...FILE.model, family: 'something_new' } }))).toEqual({
+      ok: false, issues: [{ path: 'model.family', code: 'invalid_value' }],
+    });
+  });
 });

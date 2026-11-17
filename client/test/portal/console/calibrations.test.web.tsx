@@ -187,6 +187,14 @@ test('a calibration a file TownwiseAI read started says so, for an org admin and
   expect(screen.getByText('Started by Townwise staff from a file TownwiseAI read')).toBeTruthy();
 });
 
+test('a scheduled calibration reads as Townwise (weekly), and a gate reason this client has no list for shows the server’s words (D42)', async () => {
+  const held = { published: false, reason: 'jump_held', words: 'Held for staff: its next 28 days moved more than 25%.' };
+  await show({ calibrations: [calibration({ via: 'scheduled', requestedByRole: 'system', chargedUsd: 0, gate: held, runId: null })] });
+  expect(screen.getByText('Started by Townwise (weekly)')).toBeTruthy();
+  expect(screen.getByText(held.words)).toBeTruthy();
+  expect(screen.queryByText(/org admin/)).toBeNull();
+});
+
 test('a summary with nothing to compare reads without the current forecast', async () => {
   await show({ calibrations: [calibration({ summary: { weeks: 12, weeklyWapePct: 8.4, championWeeklyWapePct: null, coverage: { inside: 10, weeks: 12 }, weekdayBiasPct: 3.2, championWeekdayBiasPct: null } })] });
   expect(screen.getByText('Weekly error 8.4% on 12 held-out weeks.')).toBeTruthy();
