@@ -12,6 +12,7 @@ import { cleanup as cleanupApp, screen as appScreen } from 'expo-router/testing-
 
 import { ApiError } from '../../../src/api/client';
 import { ModelCard } from '../../../src/portal/estimates/ModelCard';
+import type { LocationSummary } from '../../../src/portal/schemas';
 import { ACCESS, fakePortalApi, LOCATIONS, meOf, orgOf } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake, calendarBody, historyBody, run } from '../analytics/fakes';
@@ -91,6 +92,27 @@ test('U13B: a run with too few days passed says it isn’t scored yet, and a run
   expect(screen.queryByText(/widened/)).toBeNull();
 });
 
+const BASELINE = {
+  ...RUN, model: { family: 'seasonal_baseline', version: 'v7', label: 'Townwise\'s baseline from your recent weeks and the town calendar' }, engine: 'baseline',
+  trainingSource: 'townwise_lab', interval: { level: 0.8, widened: false },
+} as const;
+
+test('D42: a baseline run is named as the baseline, built from the sales and not trained, and says what it is', async () => {
+  await show({ ...ABOUT, forecast: { run: BASELINE, live: { days: 6, inRange: 5, typicalErrorPct: 11.6, from: '2026-10-22', to: '2026-11-04' } } });
+  expect(await screen.findByText('Forecast: Townwise\'s baseline from your recent weeks and the town calendar, built from sales history and notes you uploaded to Townwise from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026. It saw no sales after Oct 21, 2026.')).toBeTruthy();
+  expect(screen.getByText('A baseline, not Townwise’s trained demand model: each day is its weekday’s recent level, times last year’s seasonal shape and the town calendar’s effects.')).toBeTruthy();
+  expect(screen.queryByText(/trained on/)).toBeNull();
+  // Its backtest and its accuracy so far, as any run's.
+  expect(screen.getByText(/^In backtests from Jan 5, 2026 to Mar 15, 2026/)).toBeTruthy();
+  expect(screen.getByText('So far: 5 of 6 days inside the range; typical miss 11.6%, from Oct 22, 2026 to Nov 4, 2026.')).toBeTruthy();
+});
+
+test('D42: a run from an API before engines, or a model run, keeps the model’s words', async () => {
+  await show({ ...ABOUT, forecast: { run: { ...RUN, engine: 'model' }, live: null } });
+  expect(await screen.findByText(/^Forecast: Townwise demand model v9, trained on /)).toBeTruthy();
+  expect(screen.queryByText(/^A baseline/)).toBeNull();
+});
+
 test('a failed read shows the error with Try again, which reads again', async () => {
   const api = await show(new ApiError('network', 'offline'));
   const retry = await screen.findByRole('button', { name: 'Try again' });
@@ -126,5 +148,47 @@ describe('the no-forecast line on a location page (D29)', () => {
   test('with several it names the location, as the API does', async () => {
     await onAnalytics();
     expect(await appScreen.findByText('Townwise has no forecast for Test Taproom yet. Home and TownwiseAI use your history and Hanover’s calendar until it does.')).toBeTruthy();
+  });
+});
+
+describe('the calibration state on a location page (D42: calibrated and stale)', () => {
+  const PATH = '/api/org/locations/l1';
+  const SALES = { dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-21' };
+
+  afterEach(async () => {
+    await cleanupApp();
+  });
+
+  async function withState(calibration: LocationSummary['calibration']): Promise<void> {
+    const [first, ...rest] = LOCATIONS;
+    if (first === undefined) throw new Error('no location');
+    const fake = analyticsFake({
+      [`${PATH}/sales/history`]: historyBody(run('2026-10-01', '2026-10-31', () => 100)),
+      [`${PATH}/notes`]: { notes: [] },
+      [`${PATH}/calendar?from=2026-01-01&to=2026-12-31`]: calendarBody(),
+      [`${PATH}/estimates/about`]: { ...ABOUT, forecast: { run: RUN, live: null } },
+    });
+    const locations = [{ ...first, calibration }, ...rest];
+    await renderApp('/locations/l1/analytics', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', locations), fallback: fake }));
+    await appScreen.findByText(/^Forecast: Townwise demand model v9/);
+  }
+
+  test('stale with a next refresh: when Townwise refits and with how many days', async () => {
+    await withState({ state: 'stale', ...SALES, dataThrough: '2026-11-15', newerDays: 6, nextRefresh: '2026-11-23' });
+    expect(appScreen.getByText('Forecast made from your sales through Sun, Nov 15. Townwise refits on Mon, Nov 23 with the 6 days since.')).toBeTruthy();
+  });
+
+  test('stale with the refresh off: the days since aren’t in it yet, one day said singly', async () => {
+    await withState({ state: 'stale', ...SALES, dataThrough: '2026-11-15', newerDays: 6, nextRefresh: null });
+    expect(appScreen.getByText('Forecast made from your sales through Sun, Nov 15. The 6 days since aren’t in it yet.')).toBeTruthy();
+    await cleanupApp();
+    await withState({ state: 'stale', ...SALES, dataThrough: '2026-11-20', newerDays: 1, nextRefresh: null });
+    expect(appScreen.getByText('Forecast made from your sales through Fri, Nov 20. The 1 day since isn’t in it yet.')).toBeTruthy();
+  });
+
+  test('calibrated: the run’s own line says what it saw, and no line about days since', async () => {
+    await withState({ state: 'calibrated', ...SALES, dataThrough: '2026-11-21', newerDays: 0, nextRefresh: '2026-11-23' });
+    expect(appScreen.queryByText(/^Forecast made from your sales/)).toBeNull();
+    expect(appScreen.queryByText(/days? since/)).toBeNull();
   });
 });

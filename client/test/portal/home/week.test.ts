@@ -3,10 +3,11 @@ import { byDate, decodeHistory, type DayRecord } from '../../../src/portal/analy
 import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
   calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, forecastPhrase, forecastRange, homeCalendarRange, lastWeekComparison, lastWeekLine,
-  lastYearDayPhrase,
+  lastWeekForecastCell, lastWeekForecastOnly, lastWeekLines, lastWeekPhrase, lastWeekPhrases, lastWeekRange, lastYearDayPhrase,
   lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
   nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
+import type { ForecastDay, ForecastWindow, LiveAccuracy } from '../../../src/portal/estimates/api';
 import { addDays } from '../../../src/portal/locations/dates';
 import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
 import { forecastDay } from '../calendar/fakes';
@@ -216,6 +217,144 @@ describe('last week', () => {
     expect(lastWeekLine(noLastYear, 'guests')).toBe('No data for the same week last year, so there is nothing to compare yet.');
     const apart = DAYS.filter((each) => !(each.date >= '2026-10-29' && each.date <= '2026-11-01') && !(each.date >= '2025-11-03' && each.date <= '2025-11-05'));
     expect(lastWeekComparison(input(apart)).state).toBe('no_overlap');
+  });
+});
+
+// Last week with the published forecast (D42, home-last-week): today is Mon, Nov 23, 2026, so last week is Mon, Nov 16
+// to Sun, Nov 22. The read's figures, `scored`, `inRange` and `accuracy` are the API's own; Home never recomputes them.
+describe('last week with the published forecast', () => {
+  const MONDAY = '2026-11-23';
+  const WEEK = weekDates('2026-11-16');
+  // A year and more of 100 a day, and last week 110 a day, so last week is 10% up on last year.
+  const HISTORY = run('2025-10-01', '2026-11-22', (date) => (date >= '2026-11-16' ? 110 : 100));
+
+  function at(days: readonly DayRecord[]): HomeInput {
+    return { today: MONDAY, byDate: byDate(days), context: EMPTY_CONTEXT, metric: 'guests', lastDate: days.at(-1)?.date ?? null };
+  }
+
+  /** The read for last week: each day the API's, with its `scored`, and the window's `accuracy`. */
+  function window(days: ForecastDay[], accuracy: LiveAccuracy | null): ForecastWindow {
+    return {
+      available: true, reason: null, runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, engine: 'model', madeAt: '2026-11-09', live: null }],
+      days, accuracy, weeks: [],
+    };
+  }
+
+  const scoredDay = (date: string, inRange: boolean): ForecastDay => forecastDay({ date, low: 90, mid: 105, high: 120, actual: 110, inRange, scored: true });
+
+  test('the read is the seven days before today', () => {
+    expect(lastWeekRange(MONDAY)).toEqual({ from: '2026-11-16', to: '2026-11-22' });
+    expect(lastWeekRange('2026-11-05')).toEqual({ from: '2026-10-29', to: '2026-11-04' });
+  });
+
+  test('the read failing, nothing published, or none of the days covered: exactly today’s comparison', () => {
+    const today = lastWeekComparison(at(HISTORY));
+    expect(today.forecast).toBeUndefined();
+    expect(lastWeekComparison(at(HISTORY), null)).toEqual(today);
+    const nothing: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], accuracy: null, weeks: [] };
+    expect(lastWeekComparison(at(HISTORY), nothing)).toEqual(today);
+    expect(lastWeekComparison(at(HISTORY), { ...nothing, reason: 'not_covered' })).toEqual(today);
+    expect(lastWeekPhrases(lastWeekComparison(at(HISTORY), nothing), 'guests')).toEqual([lastWeekPhrase(today, 'guests')]);
+    // Also before history: the upload step's card never shows a forecast for days whose uploads are turned off.
+    const off = lastWeekComparison({ ...at([]), uploadsOff: true }, window(WEEK.map((date) => forecastDay({ date })), null));
+    expect(off).toEqual({ state: 'uploads_off' });
+  });
+
+  test('a scored week: the error from the read’s accuracy, bold, then the last-year sentence', () => {
+    // Six days scored (WAPE 11.6%, 5 in range); Sunday was a closure, left out of scoring.
+    const days = [...WEEK.slice(0, 6).map((date, index) => scoredDay(date, index !== 2)), forecastDay({ date: '2026-11-22', scored: false, actual: 110, inRange: true })];
+    const comparison = lastWeekComparison(at(HISTORY), window(days, { days: 6, inRange: 5, typicalErrorPct: 11.6, from: '2026-11-16', to: '2026-11-21' }));
+    expect(comparison).toMatchObject({ state: 'compared', comparedDays: 7, total: 770, lastYearTotal: 700 });
+    const [error] = lastWeekPhrases(comparison, 'guests');
+    expect(error).toEqual(['Townwise’s forecast was off by ', { strong: '12%' }, ' over ', { strong: '6 days' }, '. ', { strong: '5 of 6 days' }, ' landed in its range.']);
+    expect(lastWeekLines(comparison, 'guests')).toEqual([
+      'Townwise’s forecast was off by 12% over 6 days. 5 of 6 days landed in its range.',
+      'Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.',
+    ]);
+    // The read's own day, scored or not; no day is a forecast in place of sales.
+    expect(comparison.forecast?.days.map((day) => [day.date, day.forecastOnly, day.forecast?.scored])).toEqual(
+      WEEK.map((date) => [date, false, date !== '2026-11-22']),
+    );
+  });
+
+  test('few scored days: only the in-range count, from the days’ own `scored` and `inRange`', () => {
+    const days = [scoredDay('2026-11-16', true), scoredDay('2026-11-17', false), scoredDay('2026-11-18', true)];
+    const comparison = lastWeekComparison(at(HISTORY), window(days, null));
+    const [first] = lastWeekPhrases(comparison, 'guests');
+    expect(first).toEqual([{ strong: '2 of 3 days' }, ' landed in Townwise’s range.']);
+    expect(lastWeekLines(comparison, 'guests')[0]).toBe('2 of 3 days landed in Townwise’s range.');
+    expect(lastWeekLines(comparison, 'guests').join(' ')).not.toMatch(/off by/);
+    const one = lastWeekComparison(at(HISTORY), window([scoredDay('2026-11-16', false)], null));
+    expect(lastWeekLines(one, 'guests')[0]).toBe('0 of 1 day landed in Townwise’s range.');
+  });
+
+  test('no uploads since last Sunday: the forecast for these days, no total, and the sentence replaces “Your history ends”', () => {
+    const before = HISTORY.filter((day) => day.date <= '2026-11-15');
+    const days = WEEK.map((date) => forecastDay({ date, low: 180, mid: 210, high: 245, scored: false }));
+    const comparison = lastWeekComparison(at(before), window(days, null));
+    expect(comparison.state).toBe('no_recent');
+    expect(comparison.forecast?.days.every((day) => day.forecastOnly)).toBe(true);
+    expect(lastWeekLines(comparison, 'guests')).toEqual(['No guest count uploaded for these days yet; this is Townwise’s forecast.']);
+    expect(lastWeekLines(comparison, 'guests').join(' ')).not.toMatch(/history ends/);
+    // No total over forecast days: the state carries none, and no sentence sums them.
+    expect(comparison).not.toHaveProperty('total');
+    expect(lastWeekLines(comparison, 'guests').join(' ')).not.toMatch(/1,470|\b1470\b/);
+  });
+
+  test('a mix of scored and forecast-only days', () => {
+    const upToFriday = HISTORY.filter((day) => day.date <= '2026-11-20');
+    const days = [
+      ...WEEK.slice(0, 5).map((date, index) => scoredDay(date, index !== 4)),
+      forecastDay({ date: '2026-11-21', low: 180.4, mid: 210.2, high: 244.1, scored: false }),
+      forecastDay({ date: '2026-11-22', low: 150, mid: 170, high: 190, scored: false }),
+    ];
+    const comparison = lastWeekComparison(at(upToFriday), window(days, { days: 5, inRange: 4, typicalErrorPct: 9.8, from: '2026-11-16', to: '2026-11-20' }));
+    // The comparison is over the five stored days only: nothing is added for Saturday and Sunday.
+    expect(comparison).toMatchObject({ state: 'compared', comparedDays: 5, total: 550, lastYearTotal: 500 });
+    expect(lastWeekLines(comparison, 'guests')).toEqual([
+      'Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.',
+      'No guest count uploaded for Sat and Sun yet; this is Townwise’s forecast.',
+      'Last week: 550 guests on the 5 days both weeks have, 10% more than the same days last year (500).',
+    ]);
+    const rows = comparison.forecast?.days ?? [];
+    expect(rows.map((day) => day.forecastOnly)).toEqual([false, false, false, false, false, true, true]);
+    const saturday = rows[5];
+    if (saturday?.forecast == null) throw new Error('no Saturday');
+    expect(lastWeekForecastOnly(saturday.forecast)).toBe('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245');
+    // Scored rows keep their guests, with the forecast beside them.
+    expect(rows[0]).toMatchObject({ value: 110, lastYear: 100 });
+    expect(lastWeekForecastCell(rows[0]?.forecast ?? forecastDay({ date: 'x' }))).toBe('About 105, 90 to 120');
+  });
+
+  test('which days the sentence names: one day by its date, a few by their weekdays', () => {
+    const upToFriday = HISTORY.filter((day) => day.date <= '2026-11-20');
+    const one = lastWeekComparison(at(upToFriday), window([forecastDay({ date: '2026-11-21', scored: false })], null));
+    expect(lastWeekLines(one, 'guests')[0]).toBe('No guest count uploaded for Sat, Nov 21 yet; this is Townwise’s forecast.');
+    const upToWednesday = HISTORY.filter((day) => day.date <= '2026-11-18');
+    const three = lastWeekComparison(at(upToWednesday), window(WEEK.slice(3).map((date) => forecastDay({ date, scored: false })), null));
+    expect(lastWeekLines(three, 'guests')[0]).toBe('No guest count uploaded for Thu, Fri, Sat and Sun yet; this is Townwise’s forecast.');
+  });
+
+  test('a forecast-only day that the run has closed or booked says so, from the run’s own figures', () => {
+    const closed = forecastDay({ date: '2026-11-22', status: 'closed', low: null, mid: null, high: null, model: { status: 'closed', low: null, mid: null, high: null } });
+    expect(lastWeekForecastOnly(closed)).toBe('Forecast, no guest count uploaded yet: closed');
+    expect(lastWeekForecastCell(closed)).toBe('Closed');
+    const booked = forecastDay({ date: '2026-11-22', status: 'booked', low: null, mid: null, high: null, model: { status: 'booked', low: null, mid: null, high: null } });
+    expect(lastWeekForecastOnly(booked)).toBe('Forecast, no guest count uploaded yet: booked');
+    expect(lastWeekForecastCell(booked)).toBe('Booked');
+  });
+
+  test('a note on a past day: the run’s own figure, left out of scoring as a closure', () => {
+    // A closure note covers Wed, Nov 18; the run forecast it open, and the read keeps the run's figures for a past day.
+    const days = WEEK.map((date) => (date === '2026-11-18'
+      ? forecastDay({ date, low: 90, mid: 105, high: 120, actual: 110, inRange: true, scored: false })
+      : scoredDay(date, true)));
+    const comparison = lastWeekComparison(at(HISTORY), window(days, { days: 6, inRange: 6, typicalErrorPct: 4.6, from: '2026-11-16', to: '2026-11-22' }));
+    const wednesday = comparison.forecast?.days[2];
+    expect(wednesday).toMatchObject({ date: '2026-11-18', value: 110, forecastOnly: false });
+    expect(wednesday?.forecast?.scored).toBe(false);
+    expect(lastWeekForecastCell(wednesday?.forecast ?? forecastDay({ date: 'x' }))).toBe('About 105, 90 to 120');
+    expect(lastWeekLines(comparison, 'guests')[0]).toBe('Townwise’s forecast was off by 5% over 6 days. 6 of 6 days landed in its range.');
   });
 });
 

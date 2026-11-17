@@ -480,8 +480,9 @@ test('without a published forecast, the lead says Townwise hasn’t published on
   const api = portal(meOf(ACCESS.member));
   await renderAt(api);
   expect(screen.getByText('In progress')).toBeTruthy();
-  // One read of this month's forecast, on its own.
-  expect(api.calls.filter((call) => call.path.startsWith(`${PATH}/forecast`)).map((call) => call.path)).toEqual([FORECAST]);
+  // One read of this month's forecast, on its own, and one of Last week's seven days (D42), on its own too.
+  expect(api.calls.filter((call) => call.path.startsWith(`${PATH}/forecast`)).map((call) => call.path).sort())
+    .toEqual([`${PATH}/forecast?from=2026-10-29&to=2026-11-04`, FORECAST]);
 });
 
 test('a failed forecast read never fails Home', async () => {

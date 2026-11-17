@@ -1,4 +1,4 @@
-import { guestsFromWords, yoursDid, type ForecastDay } from '../estimates/api';
+import { guestsFromWords, yoursDid, type ForecastDay, type ForecastWindow, type LiveAccuracy } from '../estimates/api';
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
 import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/dates';
@@ -17,7 +17,9 @@ import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPe
 // figure for a day after the last day of data or after today, and nothing here estimates. The one exception is the
 // month grid's cells from today on, which show a published forecast day's own figures when Home passes the month's
 // forecast read (spec 16.3 P11 and 14.5), as the API leaves them after the notes: nothing here adds a
-// note's guests itself.
+// note's guests itself. Last week also carries the published forecast's own days for its seven days, with the read's
+// `scored`, `inRange` and `accuracy` (D42, home-last-week): nothing here scores, sums or adjusts a forecast figure, so
+// every forecast figure Home shows is a published run's, never an unpublished guess.
 // "Last year" is the same weekday 52 weeks (364 days) earlier; "usual" is baseline.ts's, with every day allowed by
 // the filters.
 
@@ -352,7 +354,26 @@ export function vsUsualDay(day: PastDay): string | null {
 
 export interface ComparedDay { date: string; value: number | null; lastYear: number | null }
 
-export type LastWeek =
+/** One of last week's seven days with the published forecast read's day for it, if the read has one. */
+export interface LastWeekDay extends ComparedDay {
+  /** The read's own day, as the API sends it: its figures, `scored` and `inRange`. Null when no published run covers it. */
+  forecast: ForecastDay | null;
+  /** A published forecast and no stored guests: the row reads as the forecast, never as sales. */
+  forecastOnly: boolean;
+}
+
+/** The published forecast's part of Last week (D42): only what the read gives, never a figure of Home's. */
+export interface LastWeekForecast {
+  /** The read's own accuracy over these days; null under 5 scored days. */
+  accuracy: LiveAccuracy | null;
+  /** Days the read scored, and of those the days it says landed in range; for the sentence when `accuracy` is null. */
+  scored: number;
+  inRange: number;
+  /** The seven days, oldest first. */
+  days: LastWeekDay[];
+}
+
+type LastWeekState =
   | { state: 'no_history' }
   /** Every upload holding days is turned off on Your data. */
   | { state: 'uploads_off' }
@@ -369,16 +390,69 @@ export type LastWeek =
   };
 
 /**
- * Last week: the seven days before today, This week's weekdays a week earlier (owner request, 2026-11-15), against the
- * days 364 days earlier.
+ * Today's comparison of stored days, and, when the published forecast read covers any of the seven days, its part. The
+ * totals and the change are over stored days only: nothing is summed over a forecast day.
  */
-export function lastWeekComparison(input: HomeInput): LastWeek {
-  if (input.lastDate === null) return input.uploadsOff === true ? { state: 'uploads_off' } : { state: 'no_history' };
-  const from = addDays(input.today, -7);
-  const to = addDays(input.today, -1);
-  const days = weekDates(from).map((date) => ({
+export type LastWeek = LastWeekState & { forecast?: LastWeekForecast };
+
+/** The days Last week reads the published forecast for: the seven days before today. */
+export function lastWeekRange(today: string): { from: string; to: string } {
+  return { from: addDays(today, -7), to: addDays(today, -1) };
+}
+
+function comparedDays(input: HomeInput): ComparedDay[] {
+  return weekDates(lastWeekRange(input.today).from).map((date) => ({
     date, value: figureOf(date, input), lastYear: figureOf(sameWeekdayYearsAgo(date, 1), input),
   }));
+}
+
+/**
+ * The run's own day as the read gives it for a past day (14.5 rule 1, `model`): open with its middle and 80% range,
+ * closed or booked; null when the run has no figure for it.
+ */
+function runDay(day: ForecastDay): { status: 'closed' | 'booked' } | { status: 'open'; low: number; mid: number; high: number } | null {
+  const { model } = day;
+  if (model.status !== 'open') return { status: model.status };
+  if (model.low === null || model.mid === null || model.high === null) return null;
+  return { status: 'open', low: model.low, mid: model.mid, high: model.high };
+}
+
+/** The forecast part, or null when the read failed, has nothing published, or covers none of the seven days. */
+function lastWeekForecast(input: HomeInput, read: ForecastWindow | null): LastWeekForecast | null {
+  // With every upload turned off the stored days are hidden, not missing: "no guest count uploaded" would be untrue.
+  if (read === null || !read.available || input.uploadsOff === true) return null;
+  const byDay = new Map(read.days.map((day): [string, ForecastDay] => [day.date, day]));
+  const days = comparedDays(input).map((each): LastWeekDay => {
+    const found = byDay.get(each.date);
+    const forecast = found !== undefined && runDay(found) !== null ? found : null;
+    const guests = input.byDate.get(each.date)?.guests ?? null;
+    return { ...each, forecast, forecastOnly: forecast !== null && guests === null && each.value === null };
+  });
+  if (days.every((each) => each.forecast === null)) return null;
+  const scored = days.filter((each) => each.forecast?.scored === true);
+  return {
+    accuracy: read.accuracy ?? null,
+    scored: scored.length,
+    inRange: scored.filter((each) => each.forecast?.inRange === true).length,
+    days,
+  };
+}
+
+/**
+ * Last week: the seven days before today, This week's weekdays a week earlier (owner request, 2026-11-15), against the
+ * days 364 days earlier; with `forecast`, Last week's own read of the published forecast (D42), its part beside them.
+ * While that read loads, if it fails, or with nothing published, Last week is exactly the comparison.
+ */
+export function lastWeekComparison(input: HomeInput, forecast: ForecastWindow | null = null): LastWeek {
+  const comparison = storedComparison(input);
+  const part = lastWeekForecast(input, forecast);
+  return part === null ? comparison : { ...comparison, forecast: part };
+}
+
+function storedComparison(input: HomeInput): LastWeekState {
+  if (input.lastDate === null) return input.uploadsOff === true ? { state: 'uploads_off' } : { state: 'no_history' };
+  const { from, to } = lastWeekRange(input.today);
+  const days = comparedDays(input);
   if (days.every((each) => each.value === null)) {
     return input.lastDate < from ? { state: 'no_recent', from, to, lastDate: input.lastDate } : { state: 'no_days', from, to };
   }
@@ -427,6 +501,88 @@ export function lastWeekPhrase(comparison: LastWeek, metric: Metric): Phrase {
 
 export function lastWeekLine(comparison: LastWeek, metric: Metric): string {
   return plainOf(lastWeekPhrase(comparison, metric));
+}
+
+/** "12%": the read's typical error, whole. */
+function wholePercent(value: number): string {
+  return `${formatCount(Math.round(value))}%`;
+}
+
+/**
+ * "Townwise’s forecast was off by 12% over 6 days. 5 of 6 days landed in its range." from the read's `accuracy`, or,
+ * under 5 scored days, "2 of 3 days landed in Townwise’s range."; the percentage and counts strong. Null with no scored day.
+ */
+function forecastErrorPhrase(part: LastWeekForecast): Phrase | null {
+  const { accuracy } = part;
+  if (accuracy !== null && accuracy.typicalErrorPct !== null) {
+    return [
+      'Townwise’s forecast was off by ', strong(wholePercent(accuracy.typicalErrorPct)), ' over ', strong(plural(accuracy.days, 'day', 'days')), '. ',
+      strong(`${formatCount(accuracy.inRange)} of ${plural(accuracy.days, 'day', 'days')}`), ' landed in its range.',
+    ];
+  }
+  const days = accuracy?.days ?? part.scored;
+  if (days === 0) return null;
+  return [strong(`${formatCount(accuracy?.inRange ?? part.inRange)} of ${plural(days, 'day', 'days')}`), ' landed in Townwise’s range.'];
+}
+
+/** "these days" for all seven, "Sat, Nov 21" for one, "Sat and Sun" or "Thu, Fri and Sat" for a few. */
+function whichDays(dates: readonly string[]): string {
+  if (dates.length === 7) return 'these days';
+  const [only] = dates;
+  if (dates.length === 1 && only !== undefined) return shortDate(only).replace(/, \d{4}$/, '');
+  const names = dates.map((date) => (WEEKDAY_NAMES[weekdayOf(date)] ?? '').slice(0, 3));
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1) ?? ''}`;
+}
+
+function forecastOnlyDates(part: LastWeekForecast): string[] {
+  return part.days.filter((each) => each.forecastOnly).map((each) => each.date);
+}
+
+/** Every one of the seven days is a published forecast with no stored guests. */
+export function everyDayForecastOnly(comparison: LastWeek): boolean {
+  return comparison.forecast?.days.every((each) => each.forecastOnly) === true;
+}
+
+/**
+ * The card's sentences in order: the forecast's error (when a day is scored), "No guest count uploaded for … yet; this
+ * is Townwise’s forecast." (when a day is forecast only), then today's sentence, which the second replaces when every
+ * day is forecast only. Without a forecast part, today's sentence alone.
+ */
+export function lastWeekPhrases(comparison: LastWeek, metric: Metric): Phrase[] {
+  const part = comparison.forecast;
+  if (part === undefined) return [lastWeekPhrase(comparison, metric)];
+  const error = forecastErrorPhrase(part);
+  const only = forecastOnlyDates(part);
+  return [
+    ...(error === null ? [] : [error]),
+    ...(only.length === 0 ? [] : [[`No guest count uploaded for ${whichDays(only)} yet; this is Townwise’s forecast.`]]),
+    ...(everyDayForecastOnly(comparison) ? [] : [lastWeekPhrase(comparison, metric)]),
+  ];
+}
+
+export function lastWeekLines(comparison: LastWeek, metric: Metric): string[] {
+  return lastWeekPhrases(comparison, metric).map(plainOf);
+}
+
+/** "About 150, 120 to 180", "Closed" or "Booked": Show the numbers' Forecast cell, from the run's own day. */
+export function lastWeekForecastCell(day: ForecastDay): string | null {
+  const own = runDay(day);
+  if (own === null) return null;
+  if (own.status !== 'open') return own.status === 'closed' ? 'Closed' : 'Booked';
+  // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
+  return `About ${formatCount(Math.round(own.mid))}, ${formatCount(Math.floor(own.low))} to ${formatCount(Math.ceil(own.high))}`;
+}
+
+/**
+ * "Forecast, no guest count uploaded yet: about 150 guests, 120 to 180" (or "…: closed", "…: booked"): a forecast-only
+ * day's row and label, so it never reads like a sales figure.
+ */
+export function lastWeekForecastOnly(day: ForecastDay): string | null {
+  const own = runDay(day);
+  if (own === null) return null;
+  const what = own.status !== 'open' ? own.status
+    : `about ${plural(Math.round(own.mid), 'guest', 'guests')}, ${formatCount(Math.floor(own.low))} to ${formatCount(Math.ceil(own.high))}`;
+  return `Forecast, no guest count uploaded yet: ${what}`;
 }
 
 // Bar order helper

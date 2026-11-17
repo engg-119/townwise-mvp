@@ -4,10 +4,10 @@ import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
 import { plainOf, strong, type Phrase } from '../analytics/phrase';
 import {
-  EVENT_WORDS, lastYearDayPhrase, nextEventWhen, summaryLabel, vsUsualPhrase, type LastWeek, type NextEvent, type ThisWeek,
+  EVENT_WORDS, everyDayForecastOnly, lastYearDayPhrase, nextEventWhen, summaryLabel, vsUsualPhrase, type LastWeek, type NextEvent, type ThisWeek,
 } from '../analytics/week';
 import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from '../analytics/words';
-import { plural } from '../format';
+import { formatCount, plural } from '../format';
 import { UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
 import { Panel } from '../ui/layout';
@@ -18,8 +18,9 @@ import { BlockRow } from './Block';
 // At a glance (spec P11): the three answers Home leads with on a Monday, each a tile with one big figure or title.
 // This week, last year: the total of the same 7 days last year (This week's days, today first), against that year's
 // usual, and their busiest and quietest days.
-// Last week: its total against the same days last year. Next on the calendar: the next holiday or town event from
-// today. Every figure is history, never a guess; the cards below carry the detail, the chart and the tables.
+// Last week: its total against the same days last year, after the published forecast's error when the Last week card
+// shows one (D42). Next on the calendar: the next holiday or town event from today. Every figure is history or a
+// published run's, never an unpublished guess; the cards below carry the detail, the chart and the tables.
 
 function Tile(props: { eyebrow: string; children: React.ReactNode }): React.JSX.Element {
   return (
@@ -68,8 +69,20 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric }): React.JSX.Elem
   );
 }
 
+/**
+ * The tile's line for the published forecast's error, when the Last week card shows one from the read's `accuracy`
+ * (D42): "Off by 12% against the forecast over 6 days.", the error strong; null otherwise.
+ */
+export function lastWeekErrorGlancePhrase(comparison: LastWeek): Phrase | null {
+  const accuracy = comparison.forecast?.accuracy;
+  const pct = accuracy?.typicalErrorPct;
+  if (accuracy == null || pct == null) return null;
+  return [strong(`Off by ${formatCount(Math.round(pct))}%`), ` against the forecast over ${plural(accuracy.days, 'day', 'days')}.`];
+}
+
 /** The tile's short line for each state of the comparison, the change strong; the Last week card says it in full. */
 export function lastWeekGlancePhrase(comparison: LastWeek, metric: Metric): Phrase {
+  if (everyDayForecastOnly(comparison)) return ['No guest count uploaded yet; Last week shows Townwise’s forecast.'];
   switch (comparison.state) {
     case 'no_history': return ['No sales history yet.'];
     case 'uploads_off': return ['Every sales upload is turned off.'];
@@ -92,9 +105,11 @@ export function lastWeekGlance(comparison: LastWeek, metric: Metric): string {
 function LastWeekTile(props: { comparison: LastWeek; metric: Metric; locationId: string; readOnlyId: string | null }): React.JSX.Element {
   const { comparison, metric } = props;
   const stale = comparison.state === 'no_recent' || comparison.state === 'no_days';
+  const error = lastWeekErrorGlancePhrase(comparison);
   return (
     <Tile eyebrow="Last week">
       {comparison.state === 'compared' ? <Figure value={metricNumber(comparison.total, metric)} unit={unitOf(metric)} /> : null}
+      {error === null ? null : <Small white><PhraseParts phrase={error} /></Small>}
       <Small white><PhraseParts phrase={lastWeekGlancePhrase(comparison, metric)} /></Small>
       {stale ? (
         <Actions><UploadAction locationId={props.locationId} variant="link" readOnlyId={props.readOnlyId} /></Actions>
