@@ -18,7 +18,8 @@ def _scored(days: pd.DataFrame, weeks: pd.DataFrame, side: str) -> tuple[pd.Data
 
 def compare(frame: pd.DataFrame, hist: pd.DataFrame, champion: dict | None, origins: list[pd.Timestamp],
             base_cols: list[str], event_cols: list[str], *, preds: pd.DataFrame | None = None,
-            past: pd.Series | None = None, rule: metrics.Band = metrics.quantile_band) -> dict | None:
+            past: pd.Series | None = None, rule: metrics.Band = metrics.quantile_band,
+            since: pd.Timestamp | None = None) -> dict | None:
     """The champion and the challenger's rolling backtest scored on the same weeks; None without a champion or without a
     comparable week.
 
@@ -32,9 +33,9 @@ def compare(frame: pd.DataFrame, hist: pd.DataFrame, champion: dict | None, orig
     returned engine's backtest (pipeline.calibrate): the model's (forecast.backtest_predictions with the same origins
     and columns, which predicts only `hist` rows, so its end does not matter) or the baseline's weekly one
     (baseline.backtest_predictions, ranged), each refit picked as for the scorecard; without it, the model's is run
-    here. `past` and `rule` are where the challenger's bands are drawn from (pipeline._past): by default its backtest
-    weeks' own errors and np.quantile's percentiles; for the baseline, its whole weekly backtest and
-    baseline.weekly_band."""
+    here. `past`, `rule` and `since` are where the challenger's bands are drawn from (pipeline._past): by default its
+    backtest weeks' own errors and np.quantile's percentiles; for the baseline, its whole weekly backtest,
+    baseline.weekly_band and baseline.shaped_from (metrics.same_kind)."""
     if champion is None:
         return None
     end = hist.date.max()
@@ -44,7 +45,7 @@ def compare(frame: pd.DataFrame, hist: pd.DataFrame, champion: dict | None, orig
     backtest_weeks = metrics.weekly_totals(backtest.pick(preds, HORIZON, *window))
     log_err = np.log(backtest_weeks.actual / backtest_weeks.pred)
     past = log_err if past is None else past
-    band_of = dict(zip(backtest_weeks.index, metrics.weekly_bands(log_err, HORIZON, past=past, rule=rule)))
+    band_of = dict(zip(backtest_weeks.index, metrics.weekly_bands(log_err, HORIZON, past=past, rule=rule, since=since)))
 
     champion_through = pd.Timestamp(champion["dataThrough"])
     picked = backtest.pick(preds, HORIZON, champion_through + pd.Timedelta(days=1), end).set_index("date")
@@ -79,7 +80,7 @@ def compare(frame: pd.DataFrame, hist: pd.DataFrame, champion: dict | None, orig
                                        np.log(weeks.actual / weeks.champion))
     champion_metrics["coverage80"] = {"inside": int(weeks.actual.between(weeks.low, weeks.high).sum()),
                                       "weeks": len(weeks)}
-    challenger_metrics = metrics.metrics(*_scored(days, weeks, "challenger"), HORIZON, past, rule)
+    challenger_metrics = metrics.metrics(*_scored(days, weeks, "challenger"), HORIZON, past, rule, since)
 
     series = []
     for start, week in weeks.iterrows():

@@ -201,3 +201,39 @@ def synthetic_input(seed: int = 0) -> dict:
     return {"schema": "townwise.lab-input/2", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
             "dataThrough": _iso(through), "horizonDays": FUTURE_DAYS, "regimeStart": None, "days": days,
             "calendar": synthetic_calendar(rows), "champion": synthetic_champion(f)}
+
+
+# Two-year histories of other shapes (two_year_input), for the coverage check (test_coverage.py): no events, terms or
+# closures, so what a range has to cover is the season, the week-to-week swings and the daily noise.
+TWO_YEAR_LEVEL = {"Monday": 30, "Tuesday": 38, "Wednesday": 45, "Thursday": 55, "Friday": 85, "Saturday": 95,
+                  "Sunday": 50}
+TWO_YEAR_SHAPES = ("steady", "calm", "drifting", "growing", "closed_mondays")
+
+
+def two_year_input(seed: int, shape: str, days: int = 700, through: str = "2026-11-15") -> dict:
+    """A LabInput of `days` days of guests through `through`, plus 182 days after: each weekday's level times a yearly
+    season (25% either way, peaking in summer) times a weekly swing times daily noise (lognormal, sigma 0.12). The
+    weekly swing by `shape`: "steady" an independent 8% each week, "calm" 4%, "drifting" a random walk of 3% a week,
+    "growing" steady with 15% more guests a year, "closed_mondays" steady with no Monday row. No calendar, no champion."""
+    if shape not in TWO_YEAR_SHAPES:
+        raise ValueError(shape)
+    rng = np.random.default_rng(seed)
+    end = pd.Timestamp(through)
+    first = end - pd.Timedelta(days=days - 1)
+    dates = pd.Series(pd.date_range(first, end + pd.Timedelta(days=FUTURE_DAYS)))
+    week = ((dates - first).dt.days // 7).to_numpy()
+    weeks = int(week.max()) + 1
+    swing = (np.exp(np.cumsum(rng.normal(0.0, 0.03, weeks))) if shape == "drifting"
+             else np.exp(rng.normal(0.0, 0.04 if shape == "calm" else 0.08, weeks)))
+    season = 1 + 0.25 * np.sin(2 * np.pi * (dates.dt.day_of_year.to_numpy() - 100) / 365.25)
+    growth = 1 + (0.15 * np.arange(len(dates)) / 365 if shape == "growing" else 0.0)
+    level = dates.dt.day_name().map(TWO_YEAR_LEVEL).to_numpy(dtype=float)
+    guests = np.round(level * season * growth * swing[week] * rng.lognormal(0.0, 0.12, len(dates)))
+    no_row = (dates > end) | ((dates.dt.day_name() == "Monday") & (shape == "closed_mondays"))
+    out = [{"date": _iso(day), "guests": None if missing else int(count), "term": "interim", "weekOfTerm": -1,
+            "events": [], "closed": False, "privateEvent": False, "booked": False}
+           for day, count, missing in zip(dates, guests, no_row)]
+    first_with = next(i for i, d in enumerate(out) if d["guests"])
+    return {"schema": "townwise.lab-input/2", "calibrationId": CALIBRATION_ID, "metric": "guests",
+            "today": _iso(end + pd.Timedelta(days=1)), "dataThrough": through, "horizonDays": FUTURE_DAYS,
+            "regimeStart": None, "days": out[first_with:], "calendar": [], "champion": None}
