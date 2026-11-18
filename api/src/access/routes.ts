@@ -719,6 +719,8 @@ function authorize(ctx: TownwiseContext, route: TownwiseRoute): RequestHandler {
     }
     principals.set(req, principal);
     recordResolution(req, resolution);
+    // The person's active day (staff-overview): only once every guard and the policy passed, never awaited.
+    ctx.activity.record(principal);
   });
 }
 
