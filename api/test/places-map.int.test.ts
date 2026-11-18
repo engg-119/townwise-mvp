@@ -181,6 +181,20 @@ describe('POST /api/places/map', () => {
     expect(fake.calls).toEqual([]);
   });
 
+  it('labeled: true answers the lettered map (D47), false or absent the plain one, and anything else is 400', async () => {
+    const ids = [NEWER_ID, PLACE_ID, THIRD_ID];
+    expect(await (await map({ placeIds: ids, labeled: true, theme: 'light' })).json()).toEqual({ map: signer.mapOfLabeledPlaces(ids, 'light') });
+    expect(await (await map({ placeIds: ids, labeled: false })).json()).toEqual({ map: signer.mapOfPlaces(ids, 'dark') });
+    const longest = Array.from({ length: MAX_LOCATIONS }, (_, i) => `${String.fromCharCode(65 + i)}${'a'.repeat(511)}`);
+    expect((await map({ placeIds: longest, labeled: true })).status).toBe(200);
+    for (const labeled of ['true', 1, null]) {
+      expect(await errorOf(await map({ placeIds: ids, labeled }))).toEqual({ status: 400, error: 'invalid_request' });
+    }
+    const person = await signIn(mapOff, `no-org-${randomUUID().slice(0, 8)}@example.test`);
+    expect(await (await map({ placeIds: ids, labeled: true }, mapOff, person)).json()).toEqual({ map: null });
+    expect(fake.calls).toEqual([]);
+  });
+
   it('theme light answers the light map and theme dark the dark one, for one id and for several', async () => {
     const ids = [NEWER_ID, PLACE_ID, THIRD_ID];
     for (const theme of ['light', 'dark'] as const) {

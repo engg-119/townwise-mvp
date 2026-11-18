@@ -72,8 +72,7 @@ function portal(me: MeResponse, days = DAYS, uploads = [upload()], events = EVEN
   return fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake });
 }
 
-function renderAt(api: FakePortalApi): void {
-  const path = '/locations/l1/analytics';
+function renderAt(api: FakePortalApi, path = '/locations/l1/analytics'): void {
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
   window.history.replaceState(null, '', path);
   render(
@@ -83,8 +82,8 @@ function renderAt(api: FakePortalApi): void {
   );
 }
 
-async function ready(api: FakePortalApi = portal(meOf(ACCESS.member))): Promise<FakePortalApi> {
-  renderAt(api);
+async function ready(api: FakePortalApi = portal(meOf(ACCESS.member)), path?: string): Promise<FakePortalApi> {
+  renderAt(api, path);
   await screen.findAllByRole('grid');
   return api;
 }
@@ -130,7 +129,29 @@ test('one grid per year, newest first, with one tab stop at the last day with da
   expect(cell('2025-12-25').getAttribute('aria-label')).toBe('Thu, Dec 25, 2025. 0 guests, $0. Closed. Left out by your filters.');
   // Days after today are blank and never focusable.
   expect(document.querySelector('[data-date="2026-11-06"]')).toBeNull();
-  expect(screen.getByText(PANEL_EMPTY)).toBeTruthy();
+  // With no ?day=, the last day with data starts selected, and the address stays clean until a pick.
+  expect(await screen.findByRole('region', { name: 'Wednesday, Nov 4, 2026' })).toBeTruthy();
+  expect(cell('2026-11-04').getAttribute('aria-selected')).toBe('true');
+  expect(window.location.search).toBe('');
+});
+
+test('the selected day is in the address, so a refresh keeps it; a day the grid can’t focus falls back', async () => {
+  await ready();
+  cell('2026-10-10').focus();
+  key('Enter');
+  expect(await screen.findByRole('region', { name: 'Saturday, Oct 10, 2026' })).toBeTruthy();
+  await waitFor(() => { expect(window.location.search).toBe('?day=2026-10-10'); });
+  key('Escape');
+  expect(await screen.findByText(PANEL_EMPTY)).toBeTruthy();
+  await waitFor(() => { expect(window.location.search).toBe(''); });
+  cleanup();
+  await ready(undefined, '/locations/l1/analytics?day=2025-11-27');
+  expect(await screen.findByRole('region', { name: 'Thursday, Nov 27, 2025' })).toBeTruthy();
+  for (const day of ['2026-02-31', '2026-11-20', 'soon']) {
+    cleanup();
+    await ready(undefined, `/locations/l1/analytics?day=${day}`);
+    expect(await screen.findByRole('region', { name: 'Wednesday, Nov 4, 2026' })).toBeTruthy();
+  }
 });
 
 test('the keys move focus: a day, a week, the week’s ends, 52 weeks across years, and never past today', async () => {

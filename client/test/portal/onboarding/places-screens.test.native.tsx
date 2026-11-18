@@ -754,8 +754,11 @@ describe('P16 Change this location’s place', () => {
       return { location: moved };
     };
     await renderApp('/locations/l1/settings', api);
-    expect(await screen.findByRole('heading', { name: 'Change this location’s place' })).toBeTruthy();
+    // D47: the place leads the first section, under Name, and the town shows as text.
+    expect(await screen.findByRole('heading', { name: 'Name and place' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Name and town' })).toBeNull();
     expect(screen.getByText('Not linked to a place on Google Maps.')).toBeTruthy();
+    expect(screen.queryByLabelText('Town')).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Find this location’s place' }));
     await find('Search Google Maps for this location', 'Lou');
     await pick('Lou’s Bakery, Norwich, VT, USA');
@@ -766,9 +769,25 @@ describe('P16 Change this location’s place', () => {
       method: 'PATCH', path: '/api/org/locations/l1', body: { town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' },
     }]);
     expect(await screen.findByText('Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.')).toBeTruthy();
-    // The Name and town form now shows the place's town, so saving it keeps the place.
+    expect(screen.getByText('Norwich, VT')).toBeTruthy();
+    // Enter the town yourself opens the Town fields with the place's town, so saving them as they are keeps the place.
+    await fireEvent.press(screen.getByRole('button', { name: 'Enter the town yourself' }));
     expect(screen.getByLabelText('Town name').props.value).toBe('Norwich');
     expect(screen.getByText('Changing the town here takes the Google Maps place off this location.')).toBeTruthy();
+  });
+
+  test('a linked location shows the map of its place; Save changes keeps the town without opening the fields', async () => {
+    const { api, places } = setup({ placeId: 'ChIJTestPlace0009' });
+    api.answers['/api/org/locations/l1'] = () => ({ location: { ...FIRST, placeId: 'ChIJTestPlace0009' } });
+    await renderApp('/locations/l1/settings', api);
+    expect(await screen.findByLabelText('Map of Main Street Bar')).toBeTruthy();
+    expect(places.mapCalls).toEqual([['ChIJTestPlace0009']]);
+    expect(screen.getByText('Hanover, NH')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Saved.')).toBeTruthy();
+    expect(sentWrites(api)).toEqual([{
+      method: 'PATCH', path: '/api/org/locations/l1', body: { name: 'Main Street Bar', town: { townId: 'hanover-nh' } },
+    }]);
   });
 
   test('with one location the line about moving names the organization (D29)', async () => {

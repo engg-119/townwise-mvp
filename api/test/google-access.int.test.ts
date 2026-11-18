@@ -382,8 +382,9 @@ describe('with Google calendars on', () => {
     await addGoogle(t.locationId, t.member, SHARED_ID);
     server.clock.advance(MINUTE);
     google.calls.length = 0;
-    // removeLocation stops at its first sweep after locations.remove.
-    const spy = failNextDeleteMany('TwUpload');
+    // removeLocation stops at a sweep after locations.remove. Since D44 the org admin's delete removes the sales data,
+    // uploads and notes before the row, so the chats sweep is the first delete that only happens after it.
+    const spy = failNextDeleteMany('TwChatConversation');
     try {
       expect(await send(`/api/org/locations/${t.locationId}`, t.admin.session, { method: 'DELETE' })).toMatchObject({ status: 500, body: { error: 'internal' } });
     } finally {

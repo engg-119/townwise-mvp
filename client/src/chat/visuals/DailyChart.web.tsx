@@ -144,7 +144,7 @@ export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
           </g>
         )}
       </svg>
-      {at === undefined ? null : <ChartTooltip tip={dailyTip(at, metric)} x={(hx / WIDTH) * hover.width} alignRight={hx > WIDTH / 2} />}
+      {at === undefined ? null : <ChartTooltip tip={dailyTip(at, metric)} from={(hx / WIDTH) * hover.width} to={(hx / WIDTH) * hover.width} alignRight={hx > WIDTH / 2} />}
       </div>
       <p style={{ ...mono, margin: 0 }}>{`Scale 0 to ${tick}${metric === 'guests' ? ' guests' : ''}. Scale fitted to this location.`}</p>
     </div>

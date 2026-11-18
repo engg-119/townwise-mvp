@@ -82,6 +82,8 @@ export const orgLocationSchema = z.object({
   id: z.string(),
   name: z.string(),
   town: townSchema,
+  /** D47: whether it is linked to a Google place; optional for an API from before it. */
+  hasPlace: z.boolean().optional(),
   coverage: z.object({ dayCount: z.number(), firstDate: z.string().nullable(), lastDate: z.string().nullable() }),
   notesCount: z.number(),
   lastUploadAt: z.string().nullable(),

@@ -5,8 +5,10 @@ import type { TooltipLines } from './model';
 // notes' guests, the top three reasons in short words, “Saturday: usually more guests”; model.ts tooltipLines). It
 // sits beside the cell a mouse or pen rests on, inside the grid's
 // positioned box, and turns to stay inside it: from the grid's right half it ends at the cell's right edge, and from
-// its lower rows it sits above the cell. It is aria-hidden, since the cell's label and the day panel say the same
-// words, and it takes no pointer. Home's month grid (MonthGrid.web.tsx) uses it too.
+// its lower rows it sits above the cell. Either way it never covers the hovered day (owner request, 2026-11-17); the
+// week view, whose day is a whole column, anchors beside the column instead (`anchorBeside`). It is aria-hidden, since
+// the cell's label and the day panel say the same words, and it takes no pointer. Home's month grid (MonthGrid.web.tsx)
+// uses it too.
 
 const C = theme.color;
 
@@ -35,6 +37,18 @@ export function anchorOf(cell: Element, box: Element): TooltipAnchor {
 }
 
 const GAP = 4;
+
+/**
+ * The anchor beside `column` inside `box`, level with its top: past its right edge, or before its left edge from the
+ * box's right half, so the tooltip never covers the column (the week view's day, head and cards).
+ */
+export function anchorBeside(column: Element, box: Element): TooltipAnchor {
+  const at = column.getBoundingClientRect();
+  const frame = box.getBoundingClientRect();
+  const alignRight = at.left + at.width / 2 > frame.left + frame.width / 2;
+  // DayTooltip moves a tooltip under its anchor down by GAP, so the anchor sits GAP above the column's top.
+  return { x: (alignRight ? at.left - GAP : at.right + GAP) - frame.left, y: at.top - frame.top - GAP, alignRight, above: false };
+}
 
 export function DayTooltip(props: { tip: TooltipLines; anchor: TooltipAnchor }): React.JSX.Element {
   const { tip, anchor } = props;

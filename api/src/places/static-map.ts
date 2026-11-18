@@ -80,6 +80,11 @@ export interface StaticMapSigner {
    * center and zoom to Google, which fits every pin. Throws on an empty list. Pure, as mapOf.
    */
   mapOfPlaces(placeIds: readonly string[], theme: MapTheme): PlaceMap;
+  /**
+   * D47: the same map with a lettered pin per place, A for the first id sent, so a legend beside it can name each one.
+   * One place keeps `mapOf`'s center and zoom. Throws on an empty list or more than 26 ids. Pure, as mapOf.
+   */
+  mapOfLabeledPlaces(placeIds: readonly string[], theme: MapTheme): PlaceMap;
 }
 
 /** URL-safe base64 of 16 to 64 bytes, as Google issues it (28 characters today). Boot refuses anything else. */
@@ -139,6 +144,36 @@ export function staticMapPathOf(placeIds: readonly string[], apiKey: string, the
   return `${STATIC_MAP_PATH}?${new URLSearchParams(pairs).toString()}`;
 }
 
+/** A pin's letter: A for the first place, up to Z, the letters Google draws on a pin. */
+export function pinLabel(index: number): string {
+  if (!Number.isInteger(index) || index < 0 || index > 25) throw new Error('a pin label is A to Z');
+  return String.fromCharCode(65 + index);
+}
+
+/**
+ * D47: the path and query with a lettered pin per place: one `markers` parameter per id, in the order given, each
+ * `color|label|place_id`, since a `markers` parameter has one style. One place is centered at zoom 15 as `staticMapPath`;
+ * several leave the center and zoom to Google. 25 ids at the 512-character maximum stay under Google's 16,384-character
+ * URL cap in either mode (static-map.test.ts measures it).
+ */
+export function labeledMapPathOf(placeIds: readonly string[], apiKey: string, theme: MapTheme): string {
+  if (placeIds.length === 0) throw new Error('labeledMapPathOf needs at least one place id');
+  const [only] = placeIds.length === 1 ? placeIds : [];
+  const pairs: [string, string][] = [
+    ...(only === undefined ? [] : [['center', `place_id:${only}`], ['zoom', '15']] satisfies [string, string][]),
+    ['size', `${String(STATIC_MAP_WIDTH)}x${String(STATIC_MAP_HEIGHT)}`],
+    ['scale', '2'],
+    ['format', 'jpg-baseline'],
+    ['maptype', 'roadmap'],
+    ['language', 'en'],
+    ['region', 'us'],
+    ...placeIds.map((id, i): [string, string] => ['markers', `color:${STATIC_MAP_PIN[theme]}|label:${pinLabel(i)}|place_id:${id}`]),
+    ...STATIC_MAP_STYLES[theme].map((rule): [string, string] => ['style', rule]),
+    ['key', apiKey],
+  ];
+  return `${STATIC_MAP_PATH}?${new URLSearchParams(pairs).toString()}`;
+}
+
 /** The string signed is exactly the string sent: built once, never re-encoded. */
 export function createStaticMapSigner(apiKey: string, signingSecret: string): StaticMapSigner {
   const signed = (path: string): PlaceMap => ({
@@ -149,5 +184,6 @@ export function createStaticMapSigner(apiKey: string, signingSecret: string): St
   return {
     mapOf: (placeId, theme) => signed(staticMapPath(placeId, apiKey, theme)),
     mapOfPlaces: (placeIds, theme) => signed(staticMapPathOf(placeIds, apiKey, theme)),
+    mapOfLabeledPlaces: (placeIds, theme) => signed(labeledMapPathOf(placeIds, apiKey, theme)),
   };
 }

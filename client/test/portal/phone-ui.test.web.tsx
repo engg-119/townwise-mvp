@@ -113,7 +113,7 @@ test('on a phone the sections take one row in a focusable region that scrolls si
   // The row is in the flow, so the bar is never lifted for it.
   expect(style(screen.getByRole('banner')).zIndex).not.toBe('1');
   expect(style(row).borderTopWidth).toBe('1px');
-  expect(within(row).getAllByRole('link').map((link) => link.textContent)).toEqual(['Notes', 'Rules', 'Town', 'Your data']);
+  expect(within(row).getAllByRole('link').map((link) => link.textContent)).toEqual(['Notes', 'Rules', 'Town', 'Your data', 'Location settings']);
   const notes = within(row).getByRole('link', { name: 'Notes' });
   expect(notes.getAttribute('aria-current')).toBe('page');
   expect(style(notes).minHeight).toBe('44px');
@@ -153,7 +153,7 @@ test.each([768, 1279])('at %ipx the sections wrap in a second row under a rule, 
   // More drops its links down inside the nav, as from 1280px.
   fireEvent.click(within(nav).getByRole('button', { name: 'More' }));
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
   ]);
   expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
 });
@@ -201,7 +201,7 @@ test('from 641px More is a dropdown: a square panel box over the page, inside th
   expect(style(box).borderTopWidth).toBe('1px');
   expect(within(box).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href'), link.getAttribute('aria-current')])).toEqual([
     ['Notes', '/locations/l1/notes', null], ['Rules', '/locations/l1/rules', null], ['Town', '/locations/l1/town', null],
-    ['Your data', '/locations/l1/data', 'true'],
+    ['Your data', '/locations/l1/data', 'true'], ['Location settings', '/locations/l1/settings', null],
   ]);
   // Its links follow More in the tab order, and a press on More or in the box keeps it open.
   expect(more.compareDocumentPosition(within(box).getByRole('link', { name: 'Notes' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

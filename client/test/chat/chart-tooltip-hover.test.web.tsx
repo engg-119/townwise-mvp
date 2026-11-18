@@ -1,8 +1,9 @@
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-import { ChartTooltip, useChartHover } from '../../src/portal/analytics/ChartTooltip.web';
+import { ChartTooltip, tipPlace, useChartHover } from '../../src/portal/analytics/ChartTooltip.web';
 
-// The chart tooltip: no re-render while the hovered index and width stay the same, and it stays inside its box.
+// The chart tooltip: no re-render while the hovered index and width stay the same, and it never covers the hovered
+// span (owner request, 2026-11-17): beside it on whichever side fits, else under the chart box.
 
 afterEach(cleanup);
 
@@ -46,24 +47,50 @@ afterEach(() => {
   Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
 });
 
-function tooltip(x: number, alignRight: boolean): HTMLElement {
-  render(<div data-box="1"><ChartTooltip tip={{ title: 'Sat', lines: ['90 guests'] }} x={x} alignRight={alignRight} /></div>);
+function tooltip(from: number, to: number, alignRight: boolean): HTMLElement {
+  render(<div data-box="1"><ChartTooltip tip={{ title: 'Sat', lines: ['90 guests'] }} from={from} to={to} alignRight={alignRight} /></div>);
   return screen.getByTestId('chart-tooltip');
 }
 
-test('on a narrow chart a flipped tooltip is kept inside the left edge', () => {
-  widths(200, 240);
-  expect(tooltip(150, true).style.left).toBe('0px');
-});
-
-test('a tooltip that would pass the right edge is pulled back', () => {
-  widths(200, 240);
-  expect(tooltip(200, false).style.left).toBe('40px');
-});
-
-test('a tooltip that fits sits beside the hovered x as before', () => {
+test('a tooltip that fits sits 8px beside the hovered slot, on the side alignRight prefers', () => {
   widths(100, 600);
-  expect(tooltip(300, true).style.left).toBe('192px');
+  expect(tooltip(280, 320, true).style.left).toBe('172px');
   cleanup();
-  expect(tooltip(300, false).style.left).toBe('308px');
+  const right = tooltip(280, 320, false);
+  expect(right.style.left).toBe('328px');
+  expect(right.style.top).toBe('0px');
+});
+
+test('when the preferred side has no room, the tooltip takes the other side rather than slide over the slot', () => {
+  widths(200, 600);
+  expect(tooltip(150, 190, true).style.left).toBe('198px');
+  cleanup();
+  expect(tooltip(420, 460, false).style.left).toBe('212px');
+});
+
+test('with room on neither side, the tooltip drops under the chart box, kept inside it', () => {
+  widths(200, 240);
+  const tip = tooltip(100, 140, true);
+  expect(tip.style.top).toBe('calc(100% + 8px)');
+  expect(tip.style.left).toBe('20px');
+});
+
+test('wherever the hovered span is, the tooltip never overlaps it', () => {
+  for (const [tip, box, slot] of [[200, 240, 34], [240, 700, 100], [160, 300, 2]] as const) {
+    for (let from = 0; from + slot <= box; from += 1) {
+      for (const alignRight of [true, false]) {
+        const place = tipPlace(from, from + slot, tip, box, alignRight);
+        const clear = place.below || place.left + tip <= from || place.left >= from + slot;
+        expect({ from, alignRight, clear, inside: place.left >= 0 && place.left + tip <= box }).toEqual({ from, alignRight, clear: true, inside: true });
+      }
+    }
+  }
+});
+
+test('unmeasured (jsdom), it sits beside the preferred side as before, flipped by a transform', () => {
+  const left = tooltip(300, 340, true);
+  expect(left.style.left).toBe('292px');
+  expect(left.style.transform).toBe('translateX(-100%)');
+  cleanup();
+  expect(tooltip(300, 340, false).style.left).toBe('348px');
 });

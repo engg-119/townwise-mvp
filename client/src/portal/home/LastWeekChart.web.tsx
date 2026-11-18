@@ -101,7 +101,7 @@ export function LastWeekChart(props: LastWeekChartProps): React.JSX.Element | nu
             );
           })}
         </svg>
-        {hover.index !== null && tip !== undefined ? <ChartTooltip tip={tip} x={((hover.index + 0.5) / count) * hover.width} alignRight={hover.index + 0.5 > count / 2} /> : null}
+        {hover.index !== null && tip !== undefined ? <ChartTooltip tip={tip} from={(hover.index / count) * hover.width} to={((hover.index + 1) / count) * hover.width} alignRight={hover.index + 0.5 > count / 2} /> : null}
       </div>
       <div aria-hidden="true" style={{ ...mono, display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', textAlign: 'center' }}>
         {props.days.map((day) => <span key={day.date}>{(WEEKDAY_NAMES[weekdayOf(day.date)] ?? '').slice(0, 3)}</span>)}

@@ -18,6 +18,7 @@ import { utcDay } from '../dates.ts';
 import { checkForecastRunFile, runFileSha256, type ForecastRunFile } from '../forecasts/file.ts';
 import { runView, type ForecastRunView } from '../forecasts/reader.ts';
 import { storedRef } from '../forecasts/reasons.ts';
+import { runTrainingView } from '../lab/training.ts';
 import { currentEmail } from '../people.ts';
 import type { AuditAction, AuditEventInput } from '../stores/audit-events.ts';
 import type { ForecastRowInput, ForecastRunRecord, RunStatus } from '../stores/forecasts.ts';
@@ -110,6 +111,17 @@ export async function listForecastRuns(ctx: TownwiseContext, req: Request, res: 
   const ids = [...new Set(runs.flatMap((run) => (run.importedBy === null ? [] : [run.importedBy])))];
   const emails = new Map(await Promise.all(ids.map(async (id): Promise<[string, string]> => [id, await currentEmail(ctx, id)])));
   res.status(200).json({ runs: await Promise.all(runs.map((run) => staffView(ctx, run, emails))) });
+}
+
+/**
+ * GET /api/admin/orgs/:orgId/forecast-runs/:runId: 200 { run, training }, how the run was trained (lab/training.ts):
+ * percentages, counts, dates, settings and loss ratios, never a guest figure. A read, so no audit event.
+ */
+export async function getForecastRun(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const { scope } = await scopeOf(ctx, req, principal);
+  const run = await runOf(ctx, scope, req.params.runId);
+  const calibration = run.lab === null ? null : await ctx.stores.calibrations.find(scope, run.lab.calibrationId);
+  res.status(200).json({ run: await staffView(ctx, run), training: runTrainingView(run, calibration) });
 }
 
 /**

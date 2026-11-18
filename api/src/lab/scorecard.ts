@@ -70,6 +70,28 @@ const backtestSchema = z.strictObject({
 /** Each engine's figures on the same weeks; the model's null when it did not run (a span under 595 days). */
 const enginesSchema = z.strictObject({ model: engineFiguresSchema.nullable(), baseline: engineFiguresSchema });
 
+/** Rounds a learning curve may hold: the model's 400 (model.py XGB_PARAMS), with room for a longer fit. */
+const MAX_ROUNDS = 2000;
+const losses = z.array(error).min(1).max(MAX_ROUNDS);
+
+/**
+ * How a model run's trees learned (pipeline.py _learning): their loss after each boosting round on the days before the
+ * latest half-year fold (train) and on that fold's days, which they never saw (valid). The loss is the mean absolute
+ * log residual, a ratio and never a guest figure (D7), so staff may read it in the console.
+ */
+export const learningSchema = z
+  .strictObject({
+    trainThrough: isoDate,
+    from: isoDate,
+    to: isoDate,
+    trainDays: count,
+    validDays: count,
+    metric: z.literal('mae_log'),
+    train: losses,
+    valid: losses,
+  })
+  .refine((value) => value.train.length === value.valid.length, { message: 'train and valid differ in rounds' });
+
 /** A scorecard as stored: one from before lab-input/2 has no engine fields. */
 export const scorecardSchema = z.strictObject({
   horizonDays: z.literal(28),
@@ -101,6 +123,8 @@ export const scorecardSchema = z.strictObject({
   engines: enginesSchema.optional(),
   horizon91: horizonReportSchema.optional(),
   horizonReach: horizonReportSchema.optional(),
+  /** Absent on a baseline run and on any run made before the lab recorded it; null when no fold was long enough. */
+  learning: learningSchema.nullable().optional(),
 });
 
 /** The scorecard a lab result is posted with (lab-input/2): every engine field present, since the gate reads them. */
@@ -114,4 +138,5 @@ export const labScorecardSchema = scorecardSchema.extend({
 
 export type Scorecard = z.infer<typeof scorecardSchema>;
 export type LabScorecard = z.infer<typeof labScorecardSchema>;
+export type Learning = z.infer<typeof learningSchema>;
 export type Metrics = z.infer<typeof metricsSchema>;
