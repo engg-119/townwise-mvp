@@ -323,6 +323,8 @@ export async function getOrg(ctx: TownwiseContext, req: Request, res: Response, 
     members: await Promise.all(members.map((member) => memberView(ctx, member, staff.actor.userId))),
     locations: locations.map((location) => ({
       id: location.id, name: location.name, town: location.town,
+      // D47: whether it is linked to a Google place, never the id (D7: metadata only).
+      hasPlace: location.placeId !== null,
       coverage: coverage.get(location.id) ?? NO_COVERAGE,
       notesCount: notes.get(location.id) ?? 0,
       lastUploadAt: uploads.get(location.id)?.toISOString() ?? null,
