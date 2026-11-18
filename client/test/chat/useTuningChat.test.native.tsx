@@ -4,8 +4,8 @@ import { AppState, type AppStateStatus } from 'react-native';
 import { ApiError } from '../../src/api/client';
 import { versionsOf } from '../../src/chat/tree';
 import {
-  BUDGET_SPENT, canSend, chatReducer, CUT_OFF, FLUSH_MS, initialChatState, INTERRUPTED, messageText, NOT_SAVED, RATING_FAILED, REGENERATE_FAILED,
-  STOP_FAILED, STOPPED, stepsOf, TIMED_OUT, useTuningChat, VERSION_FAILED, type ChatMessage, type ItemCard, type ProposalCard, type TuningChat, type TuningChatState,
+  BUDGET_SPENT, canSend, chatReducer, CUT_OFF, FLUSH_MS, initialChatState, INTERRUPTED, LIST_POLL_MS, messageText, NOT_SAVED, RATING_FAILED,
+  REGENERATE_FAILED, STOP_FAILED, STOPPED, stepsOf, TELL_LEFT, TIMED_OUT, useTuningChat, VERSION_FAILED, type ChatMessage, type ItemCard, type ProposalCard, type TuningChat, type TuningChatState,
 } from '../../src/chat/useTuningChat';
 import { CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 import { daily } from './visuals-fixtures';
@@ -628,11 +628,10 @@ test('opening a conversation replays its parts and what became of each proposal;
 
   await send(chat, 'One more');
   expect(turn(api).body).toEqual({ conversationId: 'c1', content: 'One more', parentId: 'a1' });
-  await act(() => { chat.current.newConversation(); });
   expect(chat.current.state.messages).toHaveLength(4);
-  await act(() => { turn(api).end(); });
+  // While the reply streams too (owner request, 2026-11-18): the page stops following it, and the turn runs on.
   await act(() => { chat.current.newConversation(); });
-  expect(chat.current.state).toMatchObject({ conversationId: null, messages: [] });
+  expect(chat.current.state).toMatchObject({ conversationId: null, messages: [], streaming: false });
 });
 
 test('a propose_note call that got an error replays hidden, as it streamed', async () => {
@@ -1747,5 +1746,110 @@ describe('a turn that outlives its connection', () => {
     await waitFor(() => { expect(ended).toHaveBeenCalledWith(INTERRUPTED); });
     expect(reply(chat)).toMatchObject({ state: 'failed', note: INTERRUPTED });
     expect(chat.current.state).toMatchObject({ streaming: false, error: null, conversationId: null });
+  });
+});
+
+// Owner request, 2026-11-18: "i should be able to press new chat or history when the agent is responding in my current
+// chat". Leaving only stops following the reply; the turn runs on, on the server (D45), and the person's one running
+// turn makes a send elsewhere wait, named, until it ends.
+describe('leaving a conversation while its reply streams', () => {
+  /** A new conversation's first reply, streaming as conversation c2's turn turn-1. */
+  async function streaming(api: FakeChatApi): Promise<{ current: TuningChat }> {
+    const chat = await ready(api);
+    await send(chat, 'Hello');
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Hello', userNodeId: 'u1', replyNodeId: 'a1', parentId: null, turnId: 'turn-1' }, 1);
+      turn(api).emit('text', { delta: 'Half a rep' }, 2);
+    });
+    await waitFor(() => { expect(messageText(reply(chat))).toBe('Half a rep'); });
+    return chat;
+  }
+
+  test('New chat stops following the reply and stops nothing: the stream closes, nothing more is drawn, the conversation stays listed, and opening it follows the turn again', async () => {
+    const api = fakeChatApi();
+    const chat = await streaming(api);
+    // The list can't be read meanwhile, so what it shows is the page's own.
+    api.chatError = refusal(500, 'internal');
+    await act(() => { chat.current.newConversation(); });
+    expect(chat.current.state).toMatchObject({ conversationId: null, streaming: false, turn: null, messages: [], error: null });
+    expect(turn(api).closed).toBe(true);
+    // No stop request: the turn runs on.
+    expect(api.writes).toEqual([]);
+    await waitFor(() => { expect(api.summaryLoads).toBeGreaterThanOrEqual(3); });
+    expect(chat.current.state.conversations.map((item) => item.id)).toEqual(['c2', 'c1']);
+    expect(chat.current.state).toMatchObject({ conversationId: null, streaming: false, messages: [], error: null });
+    expect(canSend({ ...chat.current.state, draft: 'x' })).toBe(true);
+
+    // History: the conversation opens on its live turn, read from its first event.
+    api.chatError = null;
+    api.conversation = { ...LIVE_VIEW, id: 'c2', liveTurn: { ...LIVE_TURN, turnId: 'turn-1' } };
+    await act(() => { chat.current.openConversation('c2'); });
+    await waitFor(() => { expect(api.turns).toHaveLength(2); });
+    expect(turn(api, 1)).toMatchObject({ method: 'GET', path: '/api/org/locations/l1/chat/c2/turns/turn-1?after=0' });
+    expect(chat.current.state).toMatchObject({ conversationId: 'c2', streaming: true });
+  });
+
+  test('History opens another conversation while a reply streams, and the reply left runs on', async () => {
+    const api = fakeChatApi();
+    const chat = await streaming(api);
+    // Opening the conversation whose reply the page follows changes nothing.
+    await act(() => { chat.current.openConversation('c2'); });
+    expect(api.conversationReads).toEqual([]);
+    expect(chat.current.state).toMatchObject({ conversationId: 'c2', streaming: true });
+    expect(turn(api).closed).toBe(false);
+
+    await opened(chat, 'c1');
+    expect(turn(api).closed).toBe(true);
+    expect(api.writes).toEqual([]);
+    expect(chat.current.state).toMatchObject({ conversationId: 'c1', streaming: false, turn: null, error: null });
+    expect(shown(chat).map(([role]) => role)).toEqual(['user', 'assistant']);
+  });
+
+  test('a card whose conversation the person left hears that its answer was not saved', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    const ended = jest.fn();
+    await act(() => { chat.current.tell('Something else', { ended }); });
+    await act(() => { turn(api).emit('conversation', { id: 'c2', title: 'Something else', turnId: 'turn-1' }, 1); });
+    await act(() => { chat.current.newConversation(); });
+    await waitFor(() => { expect(ended).toHaveBeenCalledWith(TELL_LEFT); });
+  });
+
+  test('a send while the person’s turn runs in another chat keeps the text and names that chat until its turn ends; then it sends', async () => {
+    jest.useFakeTimers();
+    try {
+      const api = fakeChatApi();
+      const chat = await ready(api);
+      // A turn the list doesn't show (another location, say): the words of the refusal, as before.
+      api.refusals = [refusal(409, 'chat_turn_in_progress')];
+      await send(chat, 'Hello');
+      await advance(0);
+      expect(chat.current.state).toMatchObject({ runningElsewhere: null, draft: 'Hello', messages: [], streaming: false });
+      expect(chat.current.state.error).toMatch(/already have a reply in progress/);
+
+      api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+      api.refusals = [refusal(409, 'chat_turn_in_progress')];
+      await act(() => { chat.current.send(); });
+      await advance(0);
+      expect(chat.current.state).toMatchObject({ runningElsewhere: 'c1', error: null, draft: 'Hello', messages: [], streaming: false });
+      // The list is read every 3 seconds while the notice stands.
+      const loads = api.summaryLoads;
+      await advance(LIST_POLL_MS);
+      expect(api.summaryLoads).toBe(loads + 1);
+      expect(chat.current.state.runningElsewhere).toBe('c1');
+      api.summary = SUMMARY;
+      await advance(LIST_POLL_MS);
+      expect(chat.current.state).toMatchObject({ runningElsewhere: null, error: null, draft: 'Hello' });
+      // Then nothing more is read.
+      const settled = api.summaryLoads;
+      await advance(LIST_POLL_MS * 3);
+      expect(api.summaryLoads).toBe(settled);
+
+      await act(() => { chat.current.send(); });
+      expect(api.turns).toHaveLength(1);
+      expect(turn(api).body).toEqual({ content: 'Hello' });
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });

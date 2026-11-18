@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { SkeletonButton } from '../../portal/skeleton/kit';
@@ -10,9 +10,10 @@ import { HistoryMenu } from './HistoryMenu';
 
 // The chat's header: History, New chat and Questions and activity at the right, wrapping on narrow phones. It shows
 // no title and draws no rule, so the thread gets the height; History's list marks the open conversation. History
-// and New chat are off while a reply streams, so the open conversation can't change under it; the panel button is
-// never off. History is a disclosure over HistoryMenu: Escape or opening a conversation closes it and focus goes
-// back to the button, as it does after a delete.
+// and New chat work while a reply streams (owner request, 2026-11-18): leaving the conversation only stops following
+// its reply, which runs on (useTuningChat). New chat is off under view-as; the panel button is never off. History is a
+// disclosure over HistoryMenu: Escape or opening a conversation closes it and focus goes back to the button, as it
+// does after a delete.
 
 type Host = React.ComponentRef<typeof View>;
 
@@ -46,6 +47,7 @@ export function PanelButton(props: {
 export function ChatHeader(props: {
   conversations: readonly ConversationSummary[];
   openId: string | null;
+  /** A reply streams: History's Rename and Delete wait for it. */
   streaming: boolean;
   readOnlyId: string | null;
   panelOpen: boolean;
@@ -58,9 +60,7 @@ export function ChatHeader(props: {
   /** Where the panel sheet returns focus to (web). */
   panelButtonRef?: React.RefObject<Host | null>;
 }): React.JSX.Element {
-  const [opened, setOpened] = useState(false);
-  // A reply that starts streaming shuts the list.
-  const open = opened && !props.streaming;
+  const [open, setOpened] = useState(false);
   const button = useRef<Host>(null);
   const menuId = 'chat-history-menu';
 
@@ -68,14 +68,6 @@ export function ChatHeader(props: {
     setOpened(false);
     if (Platform.OS === 'web') button.current?.focus();
   }
-
-  // Like Button's disabled state: aria-disabled on the same element, which keeps its focus (web).
-  useLayoutEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const element = button.current as unknown as { setAttribute: (n: string, v: string) => void; removeAttribute: (n: string) => void } | null;
-    if (props.streaming) element?.setAttribute('aria-disabled', 'true');
-    else element?.removeAttribute('aria-disabled');
-  }, [props.streaming]);
 
   // On web History floats over the thread instead of pushing it down. Native keeps it in the flow: Android does not
   // deliver a touch to a child drawn outside its parent's box.
@@ -90,16 +82,16 @@ export function ChatHeader(props: {
             role="button"
             aria-expanded={open}
             aria-controls={menuId}
-            {...(props.streaming ? {} : { onPress: () => { if (open) close(); else setOpened(true); } })}
-            accessibilityState={{ ...(Platform.OS === 'web' ? {} : { disabled: props.streaming }), expanded: open }}
+            onPress={() => { if (open) close(); else setOpened(true); }}
+            accessibilityState={{ expanded: open }}
             style={styles.link}
           >
-            <Text style={[styles.linkText, props.streaming ? styles.linkOff : null]}>History</Text>
+            <Text style={styles.linkText}>History</Text>
           </Pressable>
           <Button
             variant="link"
             label="New chat"
-            disabled={props.streaming || props.readOnlyId !== null}
+            disabled={props.readOnlyId !== null}
             {...described(props.readOnlyId)}
             onPress={() => {
               setOpened(false);
@@ -169,5 +161,4 @@ const styles = StyleSheet.create({
   controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[4] },
   link: { minHeight: 44, minWidth: 44, justifyContent: 'center' },
   linkText: { ...theme.type.ui, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
-  linkOff: { color: c.text3, textDecorationColor: c.border },
 });

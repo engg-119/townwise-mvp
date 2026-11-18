@@ -10,7 +10,7 @@ import { localToday } from '../../portal/locations/dates';
 import { useOptionalPortal } from '../../portal/PortalProvider';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
-import { ErrorNotice, ReadOnlyLine } from '../../portal/ui/feedback';
+import { ErrorNotice, Messages, ReadOnlyLine } from '../../portal/ui/feedback';
 import { Skeleton, SkeletonBlock, SkeletonButton, SkeletonHeading, SkeletonText } from '../../portal/skeleton/kit';
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
@@ -106,6 +106,11 @@ export const DROP_BLOCKED = {
   filesOff: 'File storage is off right now, so files can’t be attached.',
   budget: 'This month’s TownwiseAI budget is used up, so files can’t be attached.',
 } as const;
+
+/** The notice over the composer while a send waits on the person's turn running in another chat. */
+export function stillReplying(title: string): string {
+  return `TownwiseAI is still replying in “${title}”.`;
+}
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** The docked composer's last rotating example, once there are sales to tell about. */
@@ -299,8 +304,8 @@ export function AgentChat(props: {
 
   /** The person opens conversation `to` (null: a new one): the composer's files stay with the one shown, as its draft does. */
   function opened(run: () => void, to: string | null): void {
-    // Opening and New chat do nothing while a reply streams (useTuningChat), so the files stay too.
-    if (!state.streaming) files.switchTo(state.conversationId, to);
+    // Opening the conversation whose reply streams changes nothing (useTuningChat), so its files stay too.
+    if (!(state.streaming && to === state.conversationId)) files.switchTo(state.conversationId, to);
     docking.current = null;
     docked.current = null;
     switched.current = true;
@@ -450,10 +455,19 @@ export function AgentChat(props: {
     />
   );
   
+  // A send refused because the person's one running turn is in another chat (useTuningChat): standing state, not an
+  // error (D55), with a link that opens that chat. The text stays in the composer for when that turn ends.
+  const elsewhere = state.runningElsewhere === null ? null : state.conversations.find((item) => item.id === state.runningElsewhere) ?? null;
   // What sits right above the composer, wherever it is.
   const notices = (
     <>
       {warning === null ? null : <Text style={styles.warning}>{warning}</Text>}
+      {elsewhere === null ? null : (
+        <View testID="chat-running-elsewhere" style={styles.error}>
+          <Messages live="status" items={[stillReplying(elsewhere.title)]} />
+          <Button variant="link" label="Open that chat" onPress={() => { opened(() => { chat.openConversation(elsewhere.id); }, elsewhere.id); }} />
+        </View>
+      )}
       {files.alerts.map((line) => <ErrorNotice key={line.key} message={line.text} />)}
       {state.error === null ? null : (
         <View style={styles.error}>
@@ -466,7 +480,7 @@ export function AgentChat(props: {
       {readOnlyLine}
     </>
   );
-  const noticed = warning !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
+  const noticed = warning !== null || elsewhere !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
 
   function composerAt(placement: 'landing' | 'dock'): React.JSX.Element {
     if (exhausted) {

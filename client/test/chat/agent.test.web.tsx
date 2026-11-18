@@ -579,6 +579,25 @@ test('deleting the open conversation shows the landing and gives focus to Histor
   await waitFor(() => { expect(document.activeElement).toBe(history); });
 });
 
+test('a send while the person’s reply runs in another chat keeps the text and names that chat in a status line, with a link that opens it', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  const input = await screen.findByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL);
+  api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+  api.refuse = chatRefusal(409, 'chat_turn_in_progress');
+  fireEvent.change(input, { target: { value: 'Hello' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  const line = await screen.findByText('TownwiseAI is still replying in “Earlier chat”.');
+  expect(line.getAttribute('role')).toBe('status');
+  // Standing state, not an error: no alert.
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('Hello');
+  api.refuse = null;
+  fireEvent.click(within(screen.getByTestId('chat-running-elsewhere')).getByRole('button', { name: 'Open that chat' }));
+  await screen.findByText('We close for the holidays.');
+  expect(screen.queryByText('TownwiseAI is still replying in “Earlier chat”.')).toBeNull();
+});
+
 describe('on phones, where the header stays put as the landing and the thread replace each other, so focus goes where it does on wider screens', () => {
   test('opening a conversation gives focus to History, and New chat from the thread keeps it on New chat', async () => {
     setWidth(360);

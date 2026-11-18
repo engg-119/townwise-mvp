@@ -165,20 +165,22 @@ it('Cancel in the delete dialog gives focus back to the row’s Delete', async (
   await waitFor(() => { expect(document.activeElement).toBe(remove); });
 });
 
-it('History and New chat are aria-disabled while a reply streams; the panel button is not', () => {
+it('History and New chat work while a reply streams (owner request, 2026-11-18); Rename and Delete wait for it', () => {
   const p = props({ streaming: true });
   render(<ChatHeader {...p} />);
   const history = screen.getByRole('button', { name: 'History' });
   const fresh = screen.getByRole('button', { name: 'New chat' });
-  const panel = screen.getByRole('button', { name: 'Questions and activity' });
-  expect(history.getAttribute('aria-disabled')).toBe('true');
-  expect(fresh.getAttribute('aria-disabled')).toBe('true');
-  expect(panel.getAttribute('aria-disabled')).toBeNull();
+  expect(history.getAttribute('aria-disabled')).toBeNull();
+  expect(fresh.getAttribute('aria-disabled')).toBeNull();
   fireEvent.click(history);
+  const list = screen.getByRole('region', { name: 'History' });
+  expect(within(list).getByRole('button', { name: 'Rename Another chat' }).getAttribute('aria-disabled')).toBe('true');
+  expect(within(list).getByRole('button', { name: 'Delete Another chat' }).getAttribute('aria-disabled')).toBe('true');
+  fireEvent.click(within(list).getByRole('button', { name: 'Another chat, Nov 3, 2026' }));
+  expect(p.onOpen).toHaveBeenCalledWith('c2');
   fireEvent.click(fresh);
-  expect(screen.queryByRole('region', { name: 'History' })).toBeNull();
-  expect(p.onNew).not.toHaveBeenCalled();
-  fireEvent.click(panel);
+  expect(p.onNew).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Questions and activity' }));
   expect(p.onTogglePanel).toHaveBeenCalledTimes(1);
 });
 
