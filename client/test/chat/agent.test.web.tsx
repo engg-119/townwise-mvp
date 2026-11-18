@@ -516,6 +516,72 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
     expect([style(landing).justifyContent, style(landing).maxWidth, style(landing).flexGrow]).toEqual(['center', '760px', '1']);
     expect(screen.getByRole('button', { name: 'History' })).toBeTruthy();
   });
+
+  // An independent browser review, 2026-11-18: the landing replaced the skeleton 48px higher at 1280px and 64px at
+  // 390px (two lines and one row of chips standing for three lines and two rows), with a square box for the round
+  // composer. The skeleton now sets the landing's own words in the landing's own type, drawn as bars, so each row
+  // wraps as the landing's will at any width, and its composer and chips are the real ones' shapes.
+  /** What sets a box's height and corners, apart from what it holds. */
+  function shape(element: Element): string[] {
+    const own = style(element);
+    return [own.minHeight, own.paddingTop, own.paddingBottom, own.paddingLeft, own.paddingRight, own.borderTopWidth, own.borderTopLeftRadius, own.borderBottomRightRadius, own.flexDirection, own.gap];
+  }
+
+  /** Each row's lines of words, as the size and line height of the text that sets them. */
+  function fonts(row: Element, nested: boolean): string[] {
+    return [row, ...Array.from(row.querySelectorAll('*'))]
+      .filter((node) => node.children.length === 0 && node.textContent !== '')
+      .map((node) => (nested ? node.parentElement ?? node : node))
+      .map((node) => `${style(node).fontSize}/${style(node).lineHeight}`);
+  }
+
+  test.each([1280, 390])('at %ipx the landing replaces the skeleton row for row: the same words in the same type, the composer’s round box, the same chips', async (width) => {
+    setWidth(width);
+    const api = fakeChatApi();
+    let answer: (() => void) | null = null;
+    api.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(api.summary); }; });
+    renderAt('/locations/l1/agent', api);
+    const column = within(await screen.findByTestId('skeleton-agent')).getByTestId('skeleton-agent-landing');
+    // Its words are there only to take the landing's lines: hidden from screen readers, never drawn as text.
+    expect(screen.queryByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBeNull();
+    const heading = within(column).getByText('Ask TownwiseAI about Main Street Bar');
+    expect(style(heading).color).toBe('rgba(0, 0, 0, 0)');
+    expect(style(heading).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    // The words sit in a span inside the row's own text, which sets their type.
+    const rows = Array.from(column.children).map((row) => ({ text: row.textContent, fonts: fonts(row, true), shape: shape(row) }));
+    const composer = within(column).getByTestId('skeleton-agent-composer');
+    const box = first(Array.from(first(Array.from(composer.children)).children));
+    const chips = within(column).getByTestId('skeleton-agent-suggestions');
+
+    await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    const landing = await screen.findByTestId('chat-landing-column');
+    // Row for row: the heading, the line, the composer with its help line, the chips. TownwiseAI's questions, under
+    // them, load with the side panel, on their own.
+    const real = Array.from(landing.children);
+    expect(real.at(-1)).toBe(screen.getByTestId('chat-landing-questions'));
+    const stood = real.slice(0, -1);
+    expect(stood.map((row) => row.textContent)).toEqual(rows.map((row) => row.text));
+    expect(stood.map((row) => fonts(row, false))).toEqual(rows.map((row) => row.fonts));
+    expect(stood.map(shape)).toEqual(rows.map((row) => row.shape));
+    // The composer: the same box (56 high, radius 28) under the same padding, its help line the same.
+    const input = screen.getByLabelText(COMPOSER_LABEL);
+    const realBox = input.closest('[data-testid="chat-landing-column"] > * > * > *');
+    expect(realBox).not.toBeNull();
+    if (realBox === null) return;
+    expect(shape(box)).toEqual(shape(realBox));
+    expect(shape(first(Array.from(composer.children)))).toEqual(shape(realBox.parentElement ?? realBox));
+    expect([style(box).minHeight, style(box).borderTopLeftRadius]).toEqual(['56px', '28px']);
+    // The chips: the same labels in the same pill, in one row on phones and wrapping from 641px.
+    const group = within(landing).getByRole('group', { name: 'Suggestions' });
+    const buttons = within(group).getAllByRole('button');
+    const shapes = within(chips).getAllByTestId('skeleton-chip');
+    expect(shapes.map((chip) => chip.textContent)).toEqual(buttons.map((chip) => chip.textContent));
+    for (const [index, chip] of buttons.entries()) {
+      const chipShape = shapes[index];
+      if (chipShape === undefined) throw new Error('no chip');
+      expect(shape(chipShape)).toEqual(shape(chip));
+    }
+  });
 });
 
 test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {

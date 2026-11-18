@@ -5,13 +5,12 @@ import {
 } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
-import { useBreakpoint } from '../../portal/hooks';
 import { localToday } from '../../portal/locations/dates';
 import { useOptionalPortal } from '../../portal/PortalProvider';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
 import { ErrorNotice, Messages, ReadOnlyLine } from '../../portal/ui/feedback';
-import { Skeleton, SkeletonBlock, SkeletonButton, SkeletonHeading, SkeletonText } from '../../portal/skeleton/kit';
+import { Skeleton, SkeletonButton, SkeletonText, SkeletonWords } from '../../portal/skeleton/kit';
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
@@ -25,13 +24,13 @@ import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type Tun
 import { budgetLines } from './AgentSidePanel';
 import { ChatDrop } from './ChatDrop';
 import { ChatHeader, ChatHeaderSkeleton, PanelButton } from './ChatHeader';
-import { Composer, type ComposerHandle } from './Composer';
+import { Composer, ComposerSkeleton, type ComposerHandle } from './Composer';
 import { useComposerFiles } from './ComposerFiles';
 import { focusLost } from './controls';
 import { NextChips } from './NextChips';
 import { QuestionCard, questionChatOf } from './QuestionCard';
 import { ReplyView } from './ReplyView';
-import { Suggestions } from './Suggestions';
+import { Suggestions, SuggestionsSkeleton } from './Suggestions';
 import { FadeIn } from './ToolGroup';
 import { UserMessage } from './UserMessage';
 import { workedOpenStore } from './workedOpen';
@@ -118,31 +117,60 @@ const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 
 const SATURDAY = 'Tell me about last Saturday';
 
 /**
+ * The landing's words (spec P25), known from the location before the chat loads: the landing and its skeleton both
+ * set them, so the skeleton takes the lines the landing will.
+ */
+function landingWords(ctx: AgentChatContext): { heading: string; line: string; help: string; link: boolean } {
+  return {
+    heading: `Ask TownwiseAI about ${ctx.locationName}`,
+    line: ctx.hasSales
+      ? `It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`
+      : ctx.uploadsOff === true
+        ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
+        : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`,
+    help: `Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`,
+    // Without sales, Open Your data or (on web) Upload sales under the line.
+    link: !ctx.hasSales && (ctx.uploadsOff === true || Platform.OS === 'web'),
+  };
+}
+
+/** The landing's quick-start chips, from the location and today. */
+function landingSuggestions(ctx: AgentChatContext, today: string): ReturnType<typeof suggestionsFor> {
+  return suggestionsFor({ coverage: ctx.coverage, today, townName: ctx.town, hasTownProfile: ctx.hasTownProfile });
+}
+
+/**
  * The page while TownwiseAI loads (spec P25, owner, 2026-11-18: "fix the skeleton loader on townwise ai so there is one
  * because it just says loading townwise ai"): the header's controls, then the landing's heading, line, composer and
- * chips, in the header's and the landing's own rows and column, centered top to bottom as the landing is, so the
- * landing replaces it without moving. "Loading TownwiseAI…" stays its one status line for screen readers. A turn still
- * running opens its conversation as the page loads (useTuningChat), so a refresh mid-reply goes from this to the thread,
- * never through the landing. Nothing here scrolls, so the thread's pin starts fresh when the thread mounts.
+ * chips, in the header's and the landing's own rows and column, centered top to bottom as the landing is. The landing's
+ * own words (`landingWords`, the chips' labels) are set in its own type and drawn as bars, and the composer and chips are
+ * their own shapes, so each row takes the lines the landing's will at any width and the landing replaces it without
+ * moving (an independent browser review saw it move 48px at 1280px and 64px at 390px when the skeleton guessed its
+ * lines). "Loading TownwiseAI…" stays its one status line for screen readers. TownwiseAI's questions under the chips
+ * load with the side panel, on their own. A turn still running opens its conversation as the page loads
+ * (useTuningChat), so a refresh mid-reply goes from this to the thread, never through the landing. Nothing here
+ * scrolls, so the thread's pin starts fresh when the thread mounts.
  */
-function PageSkeleton(): React.JSX.Element {
-  const { phone } = useBreakpoint();
+function PageSkeleton(props: { ctx: AgentChatContext }): React.JSX.Element {
+  const words = landingWords(props.ctx);
+  const line = <Text style={styles.body}><SkeletonWords>{words.line}</SkeletonWords></Text>;
   return (
     <Skeleton name="agent" label="Loading TownwiseAI…" fill>
       <View style={styles.fill}>
         <ChatHeaderSkeleton />
         <View style={[styles.fill, styles.landingScroll]}>
           <View testID="skeleton-agent-landing" style={styles.landing}>
-            <SkeletonHeading width={phone ? 240 : 420} />
-            <SkeletonText type="sub" lines={2} />
-            {/* The composer: its 56px box, then its help line. */}
-            <View testID="skeleton-agent-composer" style={styles.composerSkeleton}>
-              <SkeletonBlock outline height={56} />
-              <SkeletonText width="80%" />
+            <Heading><SkeletonWords>{words.heading}</SkeletonWords></Heading>
+            {props.ctx.hasSales ? line : (
+              <View style={styles.noSales}>
+                {line}
+                {words.link ? <SkeletonButton link width={120} /> : null}
+              </View>
+            )}
+            <View testID="skeleton-agent-composer">
+              <ComposerSkeleton help={words.help} />
             </View>
-            <View testID="skeleton-agent-suggestions" style={[styles.chipsSkeleton, phone ? styles.chipsSkeletonPhone : null]}>
-              {[200, 230, 260].map((width) => <SkeletonButton key={width} width={width} />)}
-            </View>
+            <SuggestionsSkeleton items={landingSuggestions(props.ctx, localToday())} />
           </View>
         </View>
       </View>
@@ -392,7 +420,7 @@ export function AgentChat(props: {
   );
 
   // Every state of the page catches a drop of files, so the browser never opens one in its place.
-  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton />{drop}</View>;
+  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton ctx={ctx} />{drop}</View>;
   if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
   if (state.status === 'failed') {
     return (
@@ -415,7 +443,8 @@ export function AgentChat(props: {
   }
 
   const today = localToday();
-  const suggestions = suggestionsFor({ coverage: ctx.coverage, today, townName: ctx.town, hasTownProfile: ctx.hasTownProfile });
+  const suggestions = landingSuggestions(ctx, today);
+  const words = landingWords(ctx);
   const examples = [...suggestions.flatMap((item) => (item.kind === 'ask' ? [item.text] : [])), ...(ctx.hasSales ? [SATURDAY] : [])];
   const exhausted = state.budget?.exhausted === true;
   const warning = state.budget === null ? null : budgetLines(state.budget).warning;
@@ -517,7 +546,7 @@ export function AgentChat(props: {
         onSend={() => { sendFromComposer(chat.send); }}
         onStop={chat.stop}
         onStopAndSend={() => { sendFromComposer(chat.stopAndSend); }}
-        help={`Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`}
+        help={words.help}
         // On the landing the chips under it already show what to ask; under view-as nothing fills the composer.
         examples={placement === 'dock' && props.readOnlyId === null ? examples : []}
         readOnlyId={props.readOnlyId}
@@ -538,18 +567,10 @@ export function AgentChat(props: {
   const body = landing ? (
     <ScrollView testID="chat-landing" style={styles.fill} contentContainerStyle={styles.landingScroll} keyboardShouldPersistTaps="handled">
       <View testID="chat-landing-column" style={styles.landing}>
-        <Heading>{`Ask TownwiseAI about ${ctx.locationName}`}</Heading>
-        {ctx.hasSales ? (
-          <Text style={styles.body}>
-            {`It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`}
-          </Text>
-        ) : (
+        <Heading>{words.heading}</Heading>
+        {ctx.hasSales ? <Text style={styles.body}>{words.line}</Text> : (
           <View style={styles.noSales}>
-            <Text style={styles.body}>
-              {ctx.uploadsOff === true
-                ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
-                : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`}
-            </Text>
+            <Text style={styles.body}>{words.line}</Text>
             {ctx.uploadsOff === true
               ? <LinkButton href={locationHref(ctx.locationId, 'data')} label="Open Your data" />
               : Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
@@ -734,11 +755,6 @@ const styles = StyleSheet.create({
     paddingBottom: theme.space[2], marginBottom: theme.space[4],
   },
   landingScroll: { flexGrow: 1 },
-  // As Composer's own: its top padding, and the gap over its help line.
-  composerSkeleton: { gap: theme.space[2], paddingTop: theme.space[3] },
-  // As Suggestions' rows: wrapping from 641px, one row on phones (the real one scrolls sideways).
-  chipsSkeleton: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[2], rowGap: theme.space[2] },
-  chipsSkeletonPhone: { flexWrap: 'nowrap', overflow: 'hidden' },
   landing: {
     flexGrow: 1, justifyContent: 'center', width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[4],
     paddingVertical: theme.space[6],

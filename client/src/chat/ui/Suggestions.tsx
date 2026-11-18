@@ -3,7 +3,7 @@ import { ScrollView, StyleSheet, View } from 'react-native';
 import { useBreakpoint } from '../../portal/hooks';
 import { theme } from '../../theme';
 import type { Suggestion } from '../suggestions';
-import { ChatButton } from './controls';
+import { ChatButton, ChipSkeleton } from './controls';
 import { described } from './described';
 
 // The quick-start chips of the landing (spec P25): pills (the chat page's rounding exception, D26) in a group
@@ -42,7 +42,24 @@ export function Suggestions(props: {
   );
 }
 
+/**
+ * The chips for the page's skeleton (AgentChat): the same chips in the same rows, wrapping from 641px and in one row on
+ * phones, clipped where the real row scrolls.
+ */
+export function SuggestionsSkeleton(props: { items: readonly Suggestion[] }): React.JSX.Element | null {
+  const { phone } = useBreakpoint();
+  if (props.items.length === 0) return null;
+  return (
+    <View testID="skeleton-agent-suggestions">
+      <View style={[styles.row, phone ? styles.clip : styles.wrap]}>
+        {props.items.map((item) => <ChipSkeleton key={item.label} label={item.label} />)}
+      </View>
+    </View>
+  );
+}
+
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', columnGap: theme.space[2], rowGap: theme.space[2] },
   wrap: { flexWrap: 'wrap' },
+  clip: { overflow: 'hidden' },
 });

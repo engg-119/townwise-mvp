@@ -592,6 +592,11 @@ test('while the page loads it is a skeleton of the page, with Loading TownwiseAI
   }
   expect(StyleSheet.flatten(screen.getByTestId('skeleton-agent-landing', { includeHiddenElements: true }).props.style))
     .toMatchObject({ flexGrow: 1, justifyContent: 'center', maxWidth: 760 });
+  // The landing's own words, as bars in its own type, so its rows take the lines the landing's will; hidden, never drawn.
+  expect(screen.queryByText(/^Ask TownwiseAI about/)).toBeNull();
+  const words = screen.getByText(/^Ask TownwiseAI about/, { includeHiddenElements: true });
+  expect(StyleSheet.flatten(words.props.style)).toMatchObject({ color: 'transparent', backgroundColor: theme.color.raised });
+  expect(screen.getAllByTestId('skeleton-chip', { includeHiddenElements: true }).length).toBeGreaterThan(0);
   expect(screen.queryByRole('button', { name: 'History' })).toBeNull();
   await act(async () => { answer?.(); await Promise.resolve(); });
   expect(await screen.findByTestId('chat-landing')).toBeTruthy();

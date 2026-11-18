@@ -72,6 +72,15 @@ export function SkeletonText(props: { lines?: number; type?: SkeletonType; width
 }
 
 /**
+ * Words known before the page loads (a heading, a chip's label), as bars: put inside the text that will hold them, in
+ * its own type, they take the lines the words will take at any width, drawn as a `raised` bar along each line and never
+ * as glyphs, so the page replaces them without moving. Hidden from assistive tech with the rest of the shapes.
+ */
+export function SkeletonWords(props: { children: string }): React.JSX.Element {
+  return <Text selectable={false} style={styles.words}>{props.children}</Text>;
+}
+
+/**
  * A section's head (`Section`, `Heading`): the eyebrow 8px above the heading, `tw-h3` (28, 24 on phones), or the
  * page title's size when `big`.
  */
@@ -224,6 +233,7 @@ const styles = StyleSheet.create({
   unseen: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 },
   page: { flex: 1, minHeight: 0 },
   fill: { backgroundColor: c.raised, borderRadius: 0 },
+  words: { color: 'transparent', backgroundColor: c.raised },
   outline: { borderWidth: 1, borderColor: c.line, borderRadius: 0 },
   line: { justifyContent: 'center' },
   head: { gap: theme.space[2] },
