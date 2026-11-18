@@ -645,8 +645,8 @@ export const ROUTE_LIMITS = {
   'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
   // docs/portal/tuning-chat.md section 2: every turn costs money, so a store outage denies.
   chat: { name: 'townwise:chat', limit: 60, windowSeconds: 3600, whenStoreDown: 'deny' },
-  // resumable-chat-turns: reading a turn's events back spends nothing (two small reads a second for at most 200 seconds),
-  // so a store outage allows. 300 an hour leaves room for a page that reconnects every few seconds through an outage.
+  // resumable-chat-turns: reading a turn's events back spends nothing (two reads a second of the record's state, count
+  // and lease, and the record only once it gained events, for at most 200 seconds), so a store outage allows. 300 an hour leaves room for a page that reconnects every few seconds through an outage.
   chat_tail: { name: 'townwise:chat-tail', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
   // Both Places routes share it. A search is 10 to 15 debounced autocompletes and one details call, so this is about
   // 20 searches an hour; every call costs money, so a store outage denies.

@@ -8,8 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
 import { InternalServerError } from '@anthropic-ai/sdk';
-import { Types } from 'mongoose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Types, type Model } from 'mongoose';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import { createTurnSweeper, type SweepStores, type TurnSweeper } from '../src/chat/turn-sweeper.ts';
@@ -490,6 +490,26 @@ describe('reading a turn back', () => {
     // No `after` is 0; a turn that ended at or before `after` sends nothing.
     expect(await tail(other, tailPath(id, turnId))).toEqual(all);
     expect(await tail(other, tailPath(id, turnId, String(all.length)))).toEqual([]);
+  });
+
+  it('while the turn gains nothing, a tail reads only the record’s state, count and lease, not the record', async () => {
+    const held = await holdTurn({ content: 'Anything on Sunday?' }, 'Sunday is quiet.');
+    // This instance's reads of tw_chat_turns: a whole record is read with no projection.
+    const findOne = vi.spyOn(server.connection.models.TwChatTurn as Model<unknown>, 'findOne');
+    const wholeReads = (): number => findOne.mock.calls.filter((args) => args[1] === undefined).length;
+    try {
+      const tailed = tail(server, tailPath(held.conversationId, held.turnId, '1'));
+      // Three polls with nothing new: the record itself was read once, for the tail's first answer.
+      await new Promise((resolve) => { setTimeout(resolve, 1_700); });
+      expect(wholeReads()).toBe(1);
+      expect(findOne.mock.calls.length).toBeGreaterThanOrEqual(3);
+      held.release();
+      const events = await tailed;
+      expect(events.map((each) => each.event)).toEqual(['text', 'done']);
+      expect(await held.body).toEqual([...(await held.body).slice(0, 1), ...events]);
+    } finally {
+      findOne.mockRestore();
+    }
   });
 
   it('a running record whose lease passed ends with error interrupted, numbered next, and nothing is written', async () => {

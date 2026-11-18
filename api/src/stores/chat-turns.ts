@@ -174,9 +174,12 @@ export interface ChatTurnStore {
   stopRequested(scope: OrgScope, turnId: string): Promise<boolean>;
   /**
    * The conversation's turn with only its events numbered above `after`, else null. Read whole (design "As built": no
-   * `$slice` with a skip on DocumentDB), at most about 1 MB.
+   * `$slice` with a skip on DocumentDB), at most about 1 MB, so a tail reads it only when `tailState` shows it gained
+   * events or ended.
    */
   readAfter(scope: OrgScope, conversationId: string, turnId: string, after: number): Promise<ChatTurnRecord | null>;
+  /** What a tail polls: the record's state, how many events it holds and its lease, else null (deleted). */
+  tailState(scope: OrgScope, turnId: string): Promise<{ state: TurnState; eventCount: number; leaseUntil: Date } | null>;
   /** The person's newest running turn at this location (its lease passed or not), with its nodes, else null. */
   runningFor(scope: OrgScope, owner: { locationId: string; userId: string }): Promise<RunningTurnRef & Pick<NewChatTurn, 'userNodeId' | 'replyNodeId'> | null>;
   /** The conversation's newest turn without its events (`events` empty), else null. */
@@ -269,6 +272,10 @@ export function createChatTurnStore(connection: Connection): ChatTurnStore {
     async readAfter(scope, conversationId, turnId, after) {
       const doc = await Turn.findOne({ ...org(scope), conversationId: new Types.ObjectId(conversationId), turnId }).lean();
       return doc === null ? null : toRecord(doc, after);
+    },
+    async tailState(scope, turnId) {
+      const doc = await Turn.findOne({ ...org(scope), turnId }, { state: 1, eventCount: 1, leaseUntil: 1 }).lean();
+      return doc === null ? null : { state: doc.state, eventCount: doc.eventCount, leaseUntil: doc.leaseUntil };
     },
     async runningFor(scope, owner) {
       const doc = await Turn.findOne(

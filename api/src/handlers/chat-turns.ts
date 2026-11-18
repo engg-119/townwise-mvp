@@ -15,7 +15,7 @@ import type { ChatTurnRecord, TurnRecordEvent } from '../stores/chat-turns.ts';
 import { eventFrame, notFound, ownerOf, PING_MS, savedLeafOf, TERMINAL_EVENTS } from './chat.ts';
 import { loadLocation, memberOf } from './locations.ts';
 
-/** How often a tail reads the record again for new events. */
+/** How often a tail reads the record's state, count and lease again for new events. */
 const TAIL_POLL_MS = 500;
 /** A tail ends on its own after this without a terminal event, under the ingress's 240 seconds; the client resumes. */
 const TAIL_MS = 200_000;
@@ -61,7 +61,8 @@ function sleep(ms: number): Promise<void> {
 /**
  * GET /api/org/locations/:locationId/chat/:conversationId/turns/:turnId?after=<n>: the turn's events numbered above
  * `after` (default 0) as text/event-stream, each with its number as the SSE id, then each new one as the record gains
- * it, read every 500 ms, until the terminal event. A running record whose lease has passed ends with `error
+ * it, until the terminal event: every 500 ms it reads the record's state, count and lease, and the record only when it
+ * gained events or ended. A running record whose lease has passed ends with `error
  * { code: "interrupted" }`, numbered as the next event, and nothing is written (the sweep settles it); so does a record
  * deleted while it is read (its conversation, location or person deleted). An interrupted ending of a turn its
  * conversation already saved is sent as `done` (endingOf). Ends after 200 seconds without a terminal
@@ -111,7 +112,11 @@ export async function getTurnEvents(ctx: TownwiseContext, req: Request, res: Res
       if (Date.now() >= endsAt) return;
       await sleep(TAIL_POLL_MS);
       if (gone.signal.aborted) return;
-      record = await ctx.stores.chatTurns.readAfter(scope, conversationId, turnId, cursor);
+      // A small read each poll; the record itself (up to about 1 MB) only once it gained events or ended.
+      const polled = await ctx.stores.chatTurns.tailState(scope, turnId);
+      if (polled === null) record = null;
+      else if (polled.eventCount > cursor || polled.state !== 'running') record = await ctx.stores.chatTurns.readAfter(scope, conversationId, turnId, cursor);
+      else record = { ...record, eventCount: polled.eventCount, leaseUntil: polled.leaseUntil, events: [] };
     }
   } catch (err) {
     // A read that failed mid-stream: the stream ends, and the client resumes from its last number.
