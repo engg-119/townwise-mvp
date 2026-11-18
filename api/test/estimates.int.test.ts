@@ -274,6 +274,41 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect((await about()).forecast).toMatchObject({ run: { id: first }, live: { days: 6, inRange: 5 } });
   });
 
+  it('compares a past day only with a run made by that day (D49): a later run fills a day, never scores it', async () => {
+    async function room(name: string): Promise<{ id: string; read: () => Promise<ForecastWindow> }> {
+      const id = await addLocation(server, { orgId, name });
+      for (const [date, guests] of [['2026-05-01', 100], ['2026-05-02', 100], ['2026-05-03', 100], ['2026-05-05', 100], ['2026-05-06', 130], ['2026-05-07', 100]] as const) {
+        await addSalesDay(server, { orgId, locationId: id, date, guests, netSalesCents: guests * 1000 });
+      }
+      const read = async (): Promise<ForecastWindow> => await (await call(server, `/api/org/locations/${id}/forecast?from=2026-05-01&to=2026-05-14`, { session: member })).json() as ForecastWindow;
+      return { id, read };
+    }
+    // Made May 10 on the same data (through April 30), so it never saw May 1 to 9 but came after them.
+    const late = { ...structuredClone(RUN), madeAt: '2026-05-10', days: structuredClone(RUN.days).map((day) => (day.mid === null ? day : { ...day, low: 90, mid: 110, high: 130 })) };
+    // Alone, the later run fills every day, but no day before May 10 is scored or said to be in its range.
+    const only = await room('Late Room');
+    const lateOnly = await staffImport(late, only.id);
+    await staffChange(lateOnly, 'publish');
+    const alone = await only.read();
+    expect(alone.days.find((day) => day.date === '2026-05-06')).toMatchObject({ runId: lateOnly, mid: 110, actual: 130, inRange: null, scored: false });
+    expect(alone.days.filter((day) => day.scored)).toEqual([]);
+    expect([alone.accuracy, alone.runs[0]?.live]).toEqual([null, null]);
+    expect(alone.weeks.find((week) => week.from === '2026-05-01')).toMatchObject({ runId: lateOnly, actual: 300, inRange: null });
+    // With a run made by each day published first, the later one, though newer, leaves it the days before May 10.
+    const two = await room('Two Runs Room');
+    const early = await staffImport(RUN, two.id);
+    await staffChange(early, 'publish');
+    const lateId = await staffImport(late, two.id);
+    await staffChange(lateId, 'publish');
+    const both = await two.read();
+    expect(both.days.filter((day) => day.runId === early).map((day) => day.date)).toEqual([
+      '2026-05-01', '2026-05-02', '2026-05-03', '2026-05-04', '2026-05-05', '2026-05-06', '2026-05-07', '2026-05-08', '2026-05-09',
+    ]);
+    expect(both.days.find((day) => day.date === '2026-05-06')).toMatchObject({ runId: early, mid: 100, actual: 130, inRange: false, scored: true });
+    expect(both.days.find((day) => day.date === '2026-05-10')).toMatchObject({ runId: lateId, mid: 110 });
+    expect(both.accuracy).toEqual({ days: 6, inRange: 5, typicalErrorPct: 4.8, from: '2026-05-01', to: '2026-05-07' });
+  });
+
   it('a range the forecast doesn’t reach says which days it doesn’t cover', async () => {
     const body = await forecast('?from=2026-05-12&to=2026-05-20');
     expect(body).toMatchObject({ available: true, notCovered: [{ from: '2026-05-15', to: '2026-05-20' }] });
