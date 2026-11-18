@@ -149,11 +149,16 @@ function titleOf(content: string): string {
 export async function getChat(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const [budget, conversations, liveTurn] = await Promise.all([
+  const owner = ownerOf(caller, location.id);
+  const [budget, conversations, running] = await Promise.all([
     budgetOf(ctx, caller.scope),
-    ctx.stores.chatConversations.list(caller.scope, ownerOf(caller, location.id), MAX_LISTED),
+    ctx.stores.chatConversations.list(caller.scope, owner, MAX_LISTED),
     ctx.stores.chatTurns.runningFor(caller.scope, { locationId: location.id, userId: caller.userId }),
   ]);
+  // A turn its conversation already saved is not live, whatever its record says (its end was never written).
+  const conversation = running === null ? null : await ctx.stores.chatConversations.find(caller.scope, owner, running.conversationId);
+  const liveTurn = running === null || (conversation !== null && savedLeafOf(nodesOf(conversation.messages), running) !== null)
+    ? null : { conversationId: running.conversationId, turnId: running.turnId };
   const body: ChatSummary = { enabled: ctx.chat !== null, budget, conversations: conversations.map(listItem), liveTurn };
   res.status(200).json(body);
 }
@@ -176,12 +181,24 @@ async function attachedFiles(
 }
 
 /**
- * resumable-chat-turns: the conversation's newest turn while it is running or interrupted (until the sweep deletes its
- * record, 15 minutes after it ended), else null. A turn that ended any other way is in the saved messages, or saved nothing.
+ * resumable-chat-turns: the leaf a turn left when the conversation holds its nodes (it was saved): its reply's node, else
+ * its person's message's. Null when the conversation holds neither, so the turn saved nothing.
  */
-async function liveTurnOf(ctx: TownwiseContext, scope: OrgScope, conversationId: string): Promise<ChatTurnRecord | null> {
+export function savedLeafOf(nodes: readonly ChatNode[], turn: { userNodeId: string | null; replyNodeId: string }): string | null {
+  if (nodes.some((node) => node.id === turn.replyNodeId)) return turn.replyNodeId;
+  return turn.userNodeId !== null && nodes.some((node) => node.id === turn.userNodeId) ? turn.userNodeId : null;
+}
+
+/**
+ * resumable-chat-turns: the conversation's newest turn while it is running or interrupted (until the sweep deletes its
+ * record, 15 minutes after it ended), else null. A turn that ended any other way is in the saved messages, or saved
+ * nothing; so is one the conversation already saved, though its record says running or interrupted (its end was never
+ * written: shutdown gave up on it, or its lease lapsed after the save).
+ */
+async function liveTurnOf(ctx: TownwiseContext, scope: OrgScope, conversationId: string, nodes: readonly ChatNode[]): Promise<ChatTurnRecord | null> {
   const record = await ctx.stores.chatTurns.latestFor(scope, conversationId);
-  return record !== null && (record.state === 'running' || record.state === 'interrupted') ? record : null;
+  if (record === null || (record.state !== 'running' && record.state !== 'interrupted')) return null;
+  return savedLeafOf(nodes, record) === null ? record : null;
 }
 
 /** While a turn is live: the path to the node its first new node hangs under, so an edit's or a regenerate's branch shows. */
@@ -246,7 +263,7 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
   // `?node=` shows another version without storing it; otherwise the path to a live turn's parent, else the stored
   // active leaf.
   if (node !== undefined && !nodes.some((candidate) => candidate.id === node)) throw notFound();
-  const live = await liveTurnOf(ctx, caller.scope, conversation.id);
+  const live = await liveTurnOf(ctx, caller.scope, conversation.id, nodes);
   const path = node !== undefined
     ? pathTo(nodes, newestLeafUnder(nodes, node))
     : live === null ? pathTo(nodes, conversation.activeLeafId) : livePath(nodes, live);
@@ -270,7 +287,7 @@ export async function showVersion(ctx: TownwiseContext, req: Request, res: Respo
   if (!nodes.some((candidate) => candidate.id === nodeId)) throw notFound();
   const leafId = newestLeafUnder(nodes, nodeId);
   if (!(await ctx.stores.chatConversations.setActiveLeaf(caller.scope, owner, conversationId, leafId))) throw notFound();
-  const live = await liveTurnOf(ctx, caller.scope, conversation.id);
+  const live = await liveTurnOf(ctx, caller.scope, conversation.id, nodes);
   const body: ConversationView = await conversationView(ctx, caller, location, conversation, nodes, pathTo(nodes, leafId), live);
   res.status(200).json(body);
 }

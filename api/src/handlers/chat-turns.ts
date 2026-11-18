@@ -9,9 +9,10 @@ import type { Request, Response } from 'express';
 import { z } from 'zod';
 
 import type { TownwiseContext } from '../app.ts';
-import type { Principal } from '../access/policy.ts';
+import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import { nodesOf } from '../chat/tree.ts';
 import type { ChatTurnRecord, TurnRecordEvent } from '../stores/chat-turns.ts';
-import { eventFrame, notFound, PING_MS, TERMINAL_EVENTS } from './chat.ts';
+import { eventFrame, notFound, ownerOf, PING_MS, savedLeafOf, TERMINAL_EVENTS } from './chat.ts';
 import { loadLocation, memberOf } from './locations.ts';
 
 /** How often a tail reads the record again for new events. */
@@ -36,6 +37,23 @@ function interrupted(seq: number): TurnRecordEvent {
   return { seq, type: 'error', data: { code: 'interrupted' } };
 }
 
+const isInterrupted = (event: TurnRecordEvent): boolean =>
+  event.type === 'error' && (event.data as { code?: unknown } | null)?.code === 'interrupted';
+
+/**
+ * In place of an `interrupted` ending: `done` when the conversation already saved the turn (its record was settled, or
+ * its lease lapsed, after the save and before its own end was written), so a reader never shows a saved turn as
+ * interrupted and reads the conversation again. The stop reason is not kept with the conversation, so it reads
+ * `end_turn`; `leafId` is the leaf the turn left. Else the interrupted ending itself.
+ */
+async function endingOf(
+  ctx: TownwiseContext, caller: MemberPrincipal, locationId: string, record: ChatTurnRecord, ending: TurnRecordEvent,
+): Promise<TurnRecordEvent> {
+  const conversation = await ctx.stores.chatConversations.find(caller.scope, ownerOf(caller, locationId), record.conversationId);
+  const leafId = conversation === null ? null : savedLeafOf(nodesOf(conversation.messages), record);
+  return leafId === null ? ending : { seq: ending.seq, type: 'done', data: { stopReason: 'end_turn', leafId, sources: [] } };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => { setTimeout(resolve, ms).unref(); });
 }
@@ -45,7 +63,8 @@ function sleep(ms: number): Promise<void> {
  * `after` (default 0) as text/event-stream, each with its number as the SSE id, then each new one as the record gains
  * it, read every 500 ms, until the terminal event. A running record whose lease has passed ends with `error
  * { code: "interrupted" }`, numbered as the next event, and nothing is written (the sweep settles it); so does a record
- * deleted while it is read (its conversation, location or person deleted). Ends after 200 seconds without a terminal
+ * deleted while it is read (its conversation, location or person deleted). An interrupted ending of a turn its
+ * conversation already saved is sent as `done` (endingOf). Ends after 200 seconds without a terminal
  * event, and at once for a turn that ended at or before `after`. 404 when the turn is not that conversation's, or the
  * conversation not the caller's.
  */
@@ -80,13 +99,13 @@ export async function getTurnEvents(ctx: TownwiseContext, req: Request, res: Res
         return;
       }
       for (const event of record.events) {
-        res.write(eventFrame(event));
+        res.write(eventFrame(isInterrupted(event) ? await endingOf(ctx, caller, location.id, record, event) : event));
         cursor = event.seq;
         if (TERMINAL_EVENTS.has(event.type)) return;
       }
       if (record.state !== 'running') return;
       if (record.leaseUntil.getTime() <= ctx.now().getTime()) {
-        res.write(eventFrame(interrupted(record.eventCount + 1)));
+        res.write(eventFrame(await endingOf(ctx, caller, location.id, record, interrupted(record.eventCount + 1))));
         return;
       }
       if (Date.now() >= endsAt) return;

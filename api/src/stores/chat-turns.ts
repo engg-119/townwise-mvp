@@ -177,8 +177,8 @@ export interface ChatTurnStore {
    * `$slice` with a skip on DocumentDB), at most about 1 MB.
    */
   readAfter(scope: OrgScope, conversationId: string, turnId: string, after: number): Promise<ChatTurnRecord | null>;
-  /** The person's newest running turn at this location (its lease passed or not), else null. */
-  runningFor(scope: OrgScope, owner: { locationId: string; userId: string }): Promise<RunningTurnRef | null>;
+  /** The person's newest running turn at this location (its lease passed or not), with its nodes, else null. */
+  runningFor(scope: OrgScope, owner: { locationId: string; userId: string }): Promise<RunningTurnRef & Pick<NewChatTurn, 'userNodeId' | 'replyNodeId'> | null>;
   /** The conversation's newest turn without its events (`events` empty), else null. */
   latestFor(scope: OrgScope, conversationId: string): Promise<ChatTurnRecord | null>;
   /** With its conversation. Resolves the number deleted. */
@@ -273,9 +273,10 @@ export function createChatTurnStore(connection: Connection): ChatTurnStore {
     async runningFor(scope, owner) {
       const doc = await Turn.findOne(
         { ...org(scope), locationId: new Types.ObjectId(owner.locationId), userId: owner.userId, state: 'running' },
-        { conversationId: 1, turnId: 1 },
+        { conversationId: 1, turnId: 1, userNodeId: 1, replyNodeId: 1 },
       ).sort({ startedAt: -1, _id: -1 }).lean();
-      return doc === null ? null : { conversationId: doc.conversationId.toHexString(), turnId: doc.turnId };
+      return doc === null
+        ? null : { conversationId: doc.conversationId.toHexString(), turnId: doc.turnId, userNodeId: doc.userNodeId ?? null, replyNodeId: doc.replyNodeId };
     },
     async latestFor(scope, conversationId) {
       const doc = await Turn.findOne({ ...org(scope), conversationId: new Types.ObjectId(conversationId) }, { events: 0 })

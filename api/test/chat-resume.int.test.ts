@@ -422,6 +422,40 @@ describe('reattaching: liveTurn on both GETs', () => {
   });
 });
 
+describe('a saved turn whose record did not end done', () => {
+  it('is not live on either GET, the conversation shows its saved path, and its tail ends with done, not interrupted', async () => {
+    model.script({ kind: 'message', message: message([text('Saturday looks busy.')]) });
+    const events = await turn({ content: 'How busy is Saturday?' });
+    const { id, turnId } = conversationOf(events);
+    const { userNodeId, replyNodeId } = nodesOf(events);
+    const records = server.connection.collection('tw_chat_turns');
+    const saved = { id: 3, event: 'done', data: { stopReason: 'end_turn', leafId: replyNodeId, sources: [] } };
+    try {
+      // Saved by its turn, then settled as interrupted (shutdown gave up on it, or its lease lapsed) before its end was written.
+      await records.updateOne({ turnId }, { $set: { state: 'interrupted', 'events.2': { seq: 3, type: 'error', data: { code: 'interrupted' } } } });
+      for (const on of [server, other]) {
+        const view = await getJson<ConversationView>(on, `${chatPath()}/${id}`);
+        expect(view.liveTurn).toBeNull();
+        expect(view.messages.map((each) => each.nodeId)).toEqual([userNodeId, replyNodeId]);
+        expect(await tail(on, tailPath(id, turnId, '2'))).toEqual([saved]);
+      }
+
+      // Saved, and its end never written: still running, its lease not yet passed, then passed.
+      await records.updateOne({ turnId }, {
+        $set: { state: 'running', endedAt: null, eventCount: 2, leaseUntil: new Date(server.clock.now().getTime() + LEASE_MS) },
+        $pop: { events: 1 },
+      });
+      expect((await getJson<ChatSummary>(server, chatPath())).liveTurn).toBeNull();
+      expect((await getJson<ConversationView>(server, `${chatPath()}/${id}`)).liveTurn).toBeNull();
+      await records.updateOne({ turnId }, { $set: { leaseUntil: new Date(server.clock.now().getTime() - 1000) } });
+      expect((await getJson<ConversationView>(other, `${chatPath()}/${id}`)).liveTurn).toBeNull();
+      expect(await tail(other, tailPath(id, turnId, '2'))).toEqual([saved]);
+    } finally {
+      await records.deleteMany({ turnId });
+    }
+  });
+});
+
 describe('reading a turn back', () => {
   it('the turn runs on one instance and its tail on the other: the same numbered events, to the same end; after=n resumes at n + 1', async () => {
     let release = (): void => undefined;
