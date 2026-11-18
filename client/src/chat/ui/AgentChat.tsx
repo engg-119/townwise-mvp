@@ -275,6 +275,20 @@ export function AgentChat(props: {
   const watching = historyOpen || (landing && visible);
   useEffect(() => { watchList(watching); }, [watchList, watching]);
 
+  // The conversation whose reply streams here is replying, whatever the list last read said.
+  const listed = state.conversations.map((item) => (state.streaming && item.id === state.conversationId && !item.running ? { ...item, running: true } : item));
+  // Previous chats stays while it is open, even once no reply runs, so a row holding focus is never unmounted from under
+  // the person; closed with nothing running, it goes (and focus, if it was on the toggle, goes to the composer).
+  const [previousOpen, setPreviousOpen] = useState(false);
+  const previousShown = listed.some((item) => item.running) || previousOpen;
+  const wasShown = useRef(false);
+  if (!landing && previousOpen) setPreviousOpen(false);
+  useEffect(() => {
+    const gone = wasShown.current && !previousShown;
+    wasShown.current = previousShown;
+    if (gone && landing && Platform.OS === 'web' && focusLost()) composer.current?.focus();
+  }, [previousShown, landing]);
+
   useEffect(() => {
     if (spoken.words !== '' && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(spoken.words);
   }, [spoken.words, spoken.n]);
@@ -512,8 +526,6 @@ export function AgentChat(props: {
     });
   }
 
-  // The conversation whose reply streams here is replying, whatever the list last read said.
-  const listed = state.conversations.map((item) => (state.streaming && item.id === state.conversationId && !item.running ? { ...item, running: true } : item));
   const header = (
     <ChatHeader
       conversations={listed}
@@ -632,8 +644,8 @@ export function AgentChat(props: {
             composer.current?.focus();
           }}
         />
-        {listed.some((item) => item.running) ? (
-          <PreviousChats conversations={listed} onOpen={(id) => { opened(() => { chat.openConversation(id); }, id); }} />
+        {previousShown ? (
+          <PreviousChats conversations={listed} open={previousOpen} onToggle={setPreviousOpen} onOpen={(id) => { opened(() => { chat.openConversation(id); }, id); }} />
         ) : null}
         {phone ? panelRow : null}
         {asked.length === 0 ? null : (

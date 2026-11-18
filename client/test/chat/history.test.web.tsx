@@ -225,6 +225,20 @@ describe('icon buttons (owner, 2026-11-18: “use icons for the new chat and his
     expect(screen.queryByTestId('chat-tooltip')).toBeNull();
   });
 
+  it('a click leaves no tooltip once the pointer goes; keyboard focus (:focus-visible) shows it', () => {
+    render(<ChatHeader {...props()} />);
+    const history = screen.getByRole('button', { name: 'History' });
+    const visible = jest.spyOn(history, 'matches').mockImplementation((selector) => selector !== ':focus-visible');
+    fireEvent.mouseEnter(history);
+    act(() => { history.focus(); });
+    fireEvent.mouseLeave(history);
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+    act(() => { history.blur(); });
+    visible.mockImplementation(() => true);
+    act(() => { history.focus(); });
+    expect(screen.getByTestId('chat-tooltip').textContent).toBe('History');
+  });
+
   it('the open questions show as a badge on the icon, which the name carries; none at 0', () => {
     const view = render(<ChatHeader {...props({ openQuestions: 5 })} />);
     const panel = screen.getByRole('button', { name: 'Questions and activity (5)' });

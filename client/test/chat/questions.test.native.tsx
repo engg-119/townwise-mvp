@@ -24,9 +24,9 @@ import { ACCESS, fakePortalApi, meOf, orgOf } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
 import { serveAbout } from './about-fakes';
 
-// TownwiseAI's questions on native (spec P25; contract section 7): ?panel=questions (Home's link) opens the sheet on
-// phones and the column from 1024px, the questions show inline on the landing, and Something else… sends its message to
-// the chat before answering `other`. Device storage holds at most the conversation the page closed on (an id and a
+// TownwiseAI's questions on native (spec P25; contract section 7): ?panel=questions (Home's link) opens the row under the chips
+// on phones and the column from 641px, the questions show inline on the landing, and Something else… sends its message
+// to the chat before answering `other`. Device storage holds at most the conversation the page closed on (an id and a
 // time, src/chat/lastChat.ts), never the words.
 
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
@@ -78,7 +78,7 @@ test('?panel=questions opens the row under the chips on a phone, Suggested rules
   expect(router.getPathname()).toBe('/locations/l1/agent');
 });
 
-test('?panel=questions opens the column from 1024px', async () => {
+test('?panel=questions opens the column from 641px', async () => {
   at(1280);
   await renderAgent('/locations/l1/agent?panel=questions');
   expect(await screen.findByTestId('agent-side')).toBeTruthy();

@@ -66,7 +66,11 @@ function HeaderButton(props: {
         {...(disabled ? {} : { onPress: props.onPress })}
         onHoverIn={() => { setHover(true); }}
         onHoverOut={() => { setHover(false); }}
-        onFocus={() => { setFocused(true); }}
+        onFocus={() => {
+          // A click focuses the button too; only keyboard focus (:focus-visible) keeps the tip up after the pointer leaves.
+          const element = ref.current as unknown as Element | null;
+          setFocused(element?.matches(':focus-visible') ?? false);
+        }}
         onBlur={() => { setFocused(false); }}
         style={[styles.icon, hover && !disabled ? styles.iconHover : null, disabled ? styles.inert : null]}
       >

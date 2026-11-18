@@ -796,6 +796,24 @@ describe('Previous chats on the new chat page (owner, 2026-11-18: “if a respon
     expect(api.summaryLoads).toBe(loads + 1);
   }, 15_000);
 
+  test('open when the last reply ends, the dropdown stays (focus stays on its row) and goes once it is closed', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, conversations: TWO };
+    renderAt('/locations/l1/agent', api);
+    fireEvent.click(await screen.findByRole('button', { name: 'Previous chats' }));
+    const row = screen.getByRole('button', { name: 'Newer chat, Nov 3, 2026' });
+    act(() => { row.focus(); });
+    expect(document.activeElement).toBe(row);
+    const loads = api.summaryLoads;
+    api.summary = { ...SUMMARY, conversations: TWO.map((item) => ({ ...item, running: false })) };
+    await waitFor(() => { expect(api.summaryLoads).toBeGreaterThan(loads); }, { timeout: 4500 });
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Earlier chat, Replying' })).toBeNull(); });
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Newer chat, Nov 3, 2026' }));
+    expect(document.activeElement).not.toBe(document.body);
+    fireEvent.click(screen.getByRole('button', { name: 'Previous chats' }));
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull(); });
+  }, 15_000);
+
   test('nothing running: no dropdown, and no reading of the list', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);

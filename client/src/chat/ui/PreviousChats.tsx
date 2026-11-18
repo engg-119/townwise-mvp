@@ -1,4 +1,3 @@
-import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
 import { webAria } from '../../portal/ui/aria';
@@ -11,7 +10,7 @@ import { Replying } from './Replying';
 // Previous chats on the new chat page (spec P25 build note, 2026-11-18; owner: "if a response is going then that chat
 // should show up below the questions in the chat box on the new page in a previous chats dropdown"). The page draws it
 // under the suggestion chips only while a reply runs in another chat (the list's `running`), and reads the list every
-// 3 seconds meanwhile, so it goes by itself once none runs. A disclosure, closed at first: open, it lists the recent
+// 3 seconds meanwhile, so it goes by itself once none runs and it is closed (open, it stays, so a row holding focus is never removed from under the person). A disclosure, closed at first: open, it lists the recent
 // chats, the running ones first with Replying (Replying.tsx: a turning ring, a still square under reduced motion),
 // each a button that opens that chat, reattaching its live turn. [CONFIRM: "Previous chats" shows only while a reply
 // runs elsewhere, listing recent chats with the running one first]
@@ -32,8 +31,13 @@ export function previousChats(conversations: readonly ConversationSummary[]): Co
   return [...running, ...rest].slice(0, Math.max(PREVIOUS_MAX, running.length));
 }
 
-export function PreviousChats(props: { conversations: readonly ConversationSummary[]; onOpen: (id: string) => void }): React.JSX.Element {
-  const [open, setOpen] = useState(false);
+export function PreviousChats(props: {
+  conversations: readonly ConversationSummary[];
+  open: boolean;
+  onToggle: (open: boolean) => void;
+  onOpen: (id: string) => void;
+}): React.JSX.Element {
+  const { open } = props;
   return (
     <View testID="chat-previous" style={styles.wrap}>
       <Pressable
@@ -41,7 +45,7 @@ export function PreviousChats(props: { conversations: readonly ConversationSumma
         accessibilityLabel="Previous chats"
         accessibilityState={{ expanded: open }}
         {...webAria({ 'aria-expanded': open, 'aria-controls': LIST_ID })}
-        onPress={() => { setOpen(!open); }}
+        onPress={() => { props.onToggle(!open); }}
         style={(state) => [styles.row, hovered(state) ? styles.hover : null]}
       >
         <Text style={styles.words}>Previous chats</Text>
