@@ -162,6 +162,7 @@ Every cell's screen reader label says the status and every entry, as today, with
     - `noteId` is the planned id when the outcome made that note and it still exists, else null.
     - `title` is null under view-as, as `ai.notes[].title` is.
     - The list is empty once the original is deleted, since the events are cleared then.
+    - A PATCH's or another action's answer leaves it out too (spec 10.14). The item page shows an action's answer while it reads the item again, so it keeps the events already on screen while both are the same item's done read (`ItemPage.tsx` `keepEvents`; code review SF2), and the agenda does not blink out.
 - **Why one page for every calendar** (the orchestrator asked for one option). Yes: linked and Google calendars also get the `c_` page, reachable from Your calendars and from every imported event's chip.
   - The event in the owner's screenshot ("From your calendar: Veterans Day") came from a linked calendar, so a link only to the popover would leave his request unmet for exactly the case he showed.
   - One page for every kind needs no API change, because the list and events routes already exist.

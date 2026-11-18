@@ -93,6 +93,14 @@ function savedLine(saved: string | string[] | undefined): string | null {
   return null;
 }
 
+/** An action's answer with the events already shown, while both are the same item's done read (a PATCH leaves them out). */
+function keepEvents(before: DataItem | null, next: DataItem): DataItem {
+  const events = before?.ai?.events;
+  if (before?.ref !== next.ref || before.ai?.status !== 'done' || events === undefined) return next;
+  if (next.ai?.status !== 'done' || next.ai.events !== undefined) return next;
+  return { ...next, ai: { ...next.ai, events } };
+}
+
 export function ItemPage(): React.JSX.Element {
   const ref = refOf(usePathname());
   // A calendar's page (D49): a client-only ref, which never reads the data item route.
@@ -120,9 +128,10 @@ function ItemOfPath(): React.JSX.Element {
     const href = itemHref(location.id, next);
     router.replace(how === undefined ? href : `${href}?saved=${how}`);
   }, [router, location.id]);
-  // An action's answer, shown while the item is read again.
+  // An action's answer, shown while the item is read again. The answer leaves out a read's events (only the single
+  // item's read carries `ai.events`, D49), so a still-done read keeps the ones on screen until the read lands.
   const showItem = useCallback((next: DataItem) => {
-    setShown(next);
+    setShown((before) => keepEvents(before, next));
     reload();
   }, [reload]);
   const dataHref = locationHref(location.id, 'data');

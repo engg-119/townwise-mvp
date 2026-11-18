@@ -388,6 +388,20 @@ test('a calendar read lists its events by month, each that made a note linked to
   expect(within(panel).queryByRole('link', { name: /^Staff party/ })).toBeNull();
 });
 
+test('an action’s answer, which leaves the events out, keeps the read’s agenda while the item is read again (D49)', async () => {
+  const item = stored({ ai: aiOf({ kind: 'calendar', events: [...READ_EVENTS] }) });
+  const fake = setup([item], REF);
+  await section();
+  const agenda = { name: 'Events TownwiseAI read, December 2026' };
+  expect(within(await section()).getByRole('list', agenda)).toBeTruthy();
+  // As the API's PATCH answers: no ai.events. The read after it waits.
+  fake.answers[`PATCH ${REF}`] = () => ({ item: { ...item, enabled: false, ai: { ...item.ai, events: undefined } } });
+  fake.answers[`GET ${REF}`] = () => new Promise(() => undefined);
+  fireEvent.click(screen.getByRole('button', { name: 'Turn off: june-events.txt' }));
+  await screen.findByText(/^Turned off june-events\.txt\./);
+  expect(within(await section()).getByRole('list', agenda)).toBeTruthy();
+});
+
 test('under view-as a calendar read’s events show their dates and kinds, with no titles (D49)', async () => {
   setup([stored({ ai: aiOf({ kind: 'calendar', events: READ_EVENTS.map((event) => ({ ...event, title: null })) }) })], REF, viewAsMe(ACCESS.admin));
   const panel = await section();
