@@ -16,6 +16,7 @@ import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
 import { watchScrollIntent, type ScrollIntent } from '../scrollIntent';
+import { usePageVisible } from '../visible';
 import { INITIAL_PIN, nextPin, type PinEvent, type PinState } from '../scrollPin';
 import { nextFallback, suggestionsFor } from '../suggestions';
 import { readsLine, toolLine, type ToolContext } from '../tools';
@@ -30,6 +31,7 @@ import { useComposerFiles } from './ComposerFiles';
 import { focusLost } from './controls';
 import { NextChips } from './NextChips';
 import { PanelRow, PanelRowSkeleton } from './PanelRow';
+import { PreviousChats } from './PreviousChats';
 import { QuestionCard, questionChatOf } from './QuestionCard';
 import { ReplyView } from './ReplyView';
 import { Suggestions, SuggestionsSkeleton } from './Suggestions';
@@ -51,6 +53,9 @@ import { workedOpenStore } from './workedOpen';
 // version shows after a switch (and, while a saved conversation loads, its skeleton's “Loading the conversation…”). The log keeps its end in view while pinned (scrollPin.ts), and shows Latest, above
 // the dock, when a reply grows below the view; the dock growing or shrinking moves the end, never the pin. The header
 // sits under the portal's top bar on every screen, above what scrolls.
+//
+// Previous chats (spec P25 build note, 2026-11-18): while a reply runs in another chat, the landing lists the recent
+// chats under its chips (PreviousChats), and the list is read every 3 seconds while the page is in view.
 //
 // Questions and activity (spec P25 build note, 2026-11-18; owner: "we should likely put the questions and activity back
 // to the right side of the screen and it should only appear on the new chat page"): shown only while no conversation is
@@ -261,6 +266,14 @@ export function AgentChat(props: {
   const switched = useRef(false);
   const landing = isLanding(state);
   const spoken = said ?? { words: announcementOf(chat, ctx, before), n: 0 };
+
+  // The list is watched (read every 3 seconds while a conversation replies, useTuningChat) while History is open, and
+  // while the new chat page is in view, for its Previous chats.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const visible = usePageVisible();
+  const { watchList } = chat;
+  const watching = historyOpen || (landing && visible);
+  useEffect(() => { watchList(watching); }, [watchList, watching]);
 
   useEffect(() => {
     if (spoken.words !== '' && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(spoken.words);
@@ -524,7 +537,7 @@ export function AgentChat(props: {
       onRename={chat.rename}
       onTogglePanel={props.onTogglePanel}
       panel={landing && !phone}
-      onListOpen={chat.watchList}
+      onListOpen={setHistoryOpen}
     />
   );
   
@@ -619,6 +632,9 @@ export function AgentChat(props: {
             composer.current?.focus();
           }}
         />
+        {listed.some((item) => item.running) ? (
+          <PreviousChats conversations={listed} onOpen={(id) => { opened(() => { chat.openConversation(id); }, id); }} />
+        ) : null}
         {phone ? panelRow : null}
         {asked.length === 0 ? null : (
           <View testID="chat-landing-questions" style={styles.questions}>

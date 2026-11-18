@@ -739,6 +739,93 @@ test('History marks a conversation TownwiseAI is replying in, and the mark goes 
   expect(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' })).toBeTruthy();
 }, 10_000);
 
+describe('Previous chats on the new chat page (owner, 2026-11-18: “if a response is going then that chat should show up below the questions in the chat box on the new page in a previous chats dropdown”)', () => {
+  const TWO = [
+    { id: 'c2', title: 'Newer chat', updatedAt: '2026-11-03T15:00:00.000Z', turnCount: 1, running: false },
+    { id: 'c1', title: 'Earlier chat', updatedAt: '2026-11-02T15:00:00.000Z', turnCount: 2, running: true },
+  ];
+
+  test('while a reply runs in another chat, a collapsed dropdown under the chips lists recent chats, the running one first with Replying; a row opens it', async () => {
+    reduceMotion(false);
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, conversations: TWO };
+    renderAt('/locations/l1/agent', api);
+    const landing = await screen.findByTestId('chat-landing-column');
+    const toggle = await within(landing).findByRole('button', { name: 'Previous chats' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    // Under the suggested questions, in the composer's column.
+    expect(before(within(landing).getByRole('group', { name: 'Suggestions' }), toggle)).toBe(true);
+    expect(style(toggle).minHeight).toBe('44px');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const list = within(landing).getByTestId('chat-previous-list');
+    expect(list.id).toBe(toggle.getAttribute('aria-controls'));
+    const rows = within(list).getAllByRole('button');
+    expect(rows.map((row) => row.getAttribute('aria-label'))).toEqual(['Earlier chat, Replying', 'Newer chat, Nov 3, 2026']);
+    const running = first(rows);
+    await waitFor(() => { expect(within(running).queryByTestId('chat-replying-spinner')).not.toBeNull(); });
+    fireEvent.click(running);
+    expect(await screen.findByText('We close for the holidays.')).toBeTruthy();
+    expect(api.conversationReads.at(-1)).toBe('/api/org/locations/l1/chat/c1');
+    // Inside a conversation it isn't drawn.
+    expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull();
+  });
+
+  test('under reduced motion the running row’s ring is a still square', async () => {
+    reduceMotion(true);
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, conversations: TWO };
+    renderAt('/locations/l1/agent', api);
+    fireEvent.click(await screen.findByRole('button', { name: 'Previous chats' }));
+    await act(() => new Promise((resolve) => { setTimeout(resolve, 20); }));
+    const running = screen.getByRole('button', { name: 'Earlier chat, Replying' });
+    expect(within(running).getByTestId('chat-replying-still')).toBeTruthy();
+    expect(within(running).queryByTestId('chat-replying-spinner')).toBeNull();
+  });
+
+  test('the list is read every 3 seconds while a chat runs; once it ends the dropdown goes, and nothing more is read', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, conversations: TWO };
+    renderAt('/locations/l1/agent', api);
+    await screen.findByRole('button', { name: 'Previous chats' });
+    const loads = api.summaryLoads;
+    api.summary = { ...SUMMARY, conversations: TWO.map((item) => ({ ...item, running: false })) };
+    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull(); }, { timeout: 4500 });
+    expect(api.summaryLoads).toBe(loads + 1);
+    await act(() => new Promise((resolve) => { setTimeout(resolve, 3500); }));
+    expect(api.summaryLoads).toBe(loads + 1);
+  }, 15_000);
+
+  test('nothing running: no dropdown, and no reading of the list', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await screen.findByTestId('chat-landing-column');
+    const loads = api.summaryLoads;
+    await act(() => new Promise((resolve) => { setTimeout(resolve, 3500); }));
+    expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull();
+    expect(api.summaryLoads).toBe(loads);
+  }, 10_000);
+
+  test('New chat while a reply streams shows that chat in Previous chats, replying', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await send(api, 'How was December?');
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c9', title: 'December', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
+      turn(api).emit('text', { delta: 'Let me look.' });
+    });
+    // The server's list says so too, read again as the page leaves the reply.
+    api.summary = { ...SUMMARY, conversations: [{ id: 'c9', title: 'December', updatedAt: '2026-11-18T15:00:00.000Z', turnCount: 1, running: true }, ...SUMMARY.conversations] };
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    // At once, before any read: the chat left while it replies is marked running.
+    const toggle = screen.getByRole('button', { name: 'Previous chats' });
+    fireEvent.click(toggle);
+    expect(screen.getByRole('button', { name: 'December, Replying' })).toBeTruthy();
+    await act(() => new Promise((resolve) => { setTimeout(resolve, 20); }));
+    expect(screen.getByRole('button', { name: 'December, Replying' })).toBeTruthy();
+  });
+});
+
 test('leaving the page on a conversation and coming back opens it again, keeping only its id and a time in this browser', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);

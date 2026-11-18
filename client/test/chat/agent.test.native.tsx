@@ -552,6 +552,20 @@ describe('the side panel', () => {
   });
 });
 
+test('Previous chats shows under the chips while a reply runs in another chat, and a row opens that chat (owner, 2026-11-18)', async () => {
+  at(390);
+  const chat = fakeChatApi();
+  chat.summary = { ...SUMMARY, conversations: SUMMARY.conversations.map((item) => ({ ...item, running: true })) };
+  await renderAgent(meOf(ACCESS.member), chat);
+  const landing = await screen.findByTestId('chat-landing');
+  const toggle = await within(landing).findByRole('button', { name: 'Previous chats' });
+  expect(toggle.props.accessibilityState).toMatchObject({ expanded: false });
+  await fireEvent.press(toggle);
+  await fireEvent.press(screen.getByRole('button', { name: 'Earlier chat, Replying' }));
+  expect(await screen.findByText('We close for the holidays.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull();
+});
+
 describe('phones', () => {
   test('at 375px nothing scrolls above the chat header, and the panel is a row under the chips that opens in place; the chat keeps its state', async () => {
     at(375);
