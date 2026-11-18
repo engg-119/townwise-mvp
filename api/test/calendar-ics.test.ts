@@ -45,9 +45,9 @@ describe('parseIcs', () => {
     );
     expect(parseIcs(text, EASTERN)).toEqual({
       events: [
-        { uid: 'a1@example.com', title: 'Staff party', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null },
-        { uid: 'a3@example.com', title: 'Deep clean', startDate: '2026-11-30', endDate: '2026-11-30', startTime: null, endTime: null },
-        { uid: 'a2@example.com', title: 'Inventory weekend', startDate: '2026-12-05', endDate: '2026-12-06', startTime: null, endTime: null },
+        { uid: 'a1@example.com', title: 'Staff party', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null, keyed: true },
+        { uid: 'a3@example.com', title: 'Deep clean', startDate: '2026-11-30', endDate: '2026-11-30', startTime: null, endTime: null, keyed: true },
+        { uid: 'a2@example.com', title: 'Inventory weekend', startDate: '2026-12-05', endDate: '2026-12-06', startTime: null, endTime: null, keyed: true },
       ],
       skippedRepeating: 0,
     });
@@ -74,19 +74,19 @@ describe('parseIcs', () => {
       ...vevent('UID:t6', 'SUMMARY:Delivery', 'DTSTART:20261228T090000', 'DTEND:20261228T100000', 'BEGIN:VALARM', 'ACTION:DISPLAY', 'DESCRIPTION:Reminder', 'SUMMARY:Alarm text', 'END:VALARM'),
     );
     expect(eventsOf(text)).toEqual([
-      { uid: 't1', title: 'Rehearsal dinner, upstairs ; back room by the bar \\ patio', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '21:30' },
-      { uid: 't2', title: 'Wine tasting', startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '19:00' },
-      { uid: 't3', title: 'Supplier call', startDate: '2026-12-03', endDate: '2026-12-03', startTime: '18:30', endTime: '20:00' },
-      { uid: 't4', title: 'Late shift', startDate: '2026-12-12', endDate: '2026-12-12', startTime: '22:00', endTime: '02:00' },
-      { uid: 't5', title: 'Holiday party', startDate: '2026-12-18', endDate: '2026-12-18', startTime: null, endTime: null },
-      { uid: 't6', title: 'Delivery', startDate: '2026-12-28', endDate: '2026-12-28', startTime: '09:00', endTime: '10:00' },
-      { uid: 't7', title: 'All-night bake', startDate: '2026-12-29', endDate: '2026-12-29', startTime: '19:00', endTime: '06:00' },
-      { uid: 't8', title: 'Overnight inventory', startDate: '2026-12-30', endDate: '2026-12-31', startTime: null, endTime: null },
-      { uid: 't9', title: 'Two-day fair', startDate: '2026-12-31', endDate: '2027-01-01', startTime: null, endTime: null },
+      { uid: 't1', title: 'Rehearsal dinner, upstairs ; back room by the bar \\ patio', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '21:30', keyed: true },
+      { uid: 't2', title: 'Wine tasting', startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '19:00', keyed: true },
+      { uid: 't3', title: 'Supplier call', startDate: '2026-12-03', endDate: '2026-12-03', startTime: '18:30', endTime: '20:00', keyed: true },
+      { uid: 't4', title: 'Late shift', startDate: '2026-12-12', endDate: '2026-12-12', startTime: '22:00', endTime: '02:00', keyed: true },
+      { uid: 't5', title: 'Holiday party', startDate: '2026-12-18', endDate: '2026-12-18', startTime: null, endTime: null, keyed: true },
+      { uid: 't6', title: 'Delivery', startDate: '2026-12-28', endDate: '2026-12-28', startTime: '09:00', endTime: '10:00', keyed: true },
+      { uid: 't7', title: 'All-night bake', startDate: '2026-12-29', endDate: '2026-12-29', startTime: '19:00', endTime: '06:00', keyed: true },
+      { uid: 't8', title: 'Overnight inventory', startDate: '2026-12-30', endDate: '2026-12-31', startTime: null, endTime: null, keyed: true },
+      { uid: 't9', title: 'Two-day fair', startDate: '2026-12-31', endDate: '2027-01-01', startTime: null, endTime: null, keyed: true },
     ]);
     // LF-only files and a missing title read too.
     const bare = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'DTSTART:20261121T180000', 'DTEND:20261121T200000', 'END:VEVENT', 'END:VCALENDAR'].join('\n');
-    expect(eventsOf(bare)).toEqual([{ uid: 'event-1', title: 'Untitled event', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '20:00' }]);
+    expect(eventsOf(bare)).toEqual([{ uid: 'event-1', title: 'Untitled event', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '20:00', keyed: false }]);
   });
 
   it('counts repeating events instead of importing them', () => {
@@ -98,7 +98,7 @@ describe('parseIcs', () => {
       ...vevent('UID:s1', 'SUMMARY:Owner away', 'DTSTART;VALUE=DATE:20261125', 'DTEND;VALUE=DATE:20261126'),
     );
     expect(parseIcs(text, EASTERN)).toEqual({
-      events: [{ uid: 's1', title: 'Owner away', startDate: '2026-11-25', endDate: '2026-11-25', startTime: null, endTime: null }],
+      events: [{ uid: 's1', title: 'Owner away', startDate: '2026-11-25', endDate: '2026-11-25', startTime: null, endTime: null, keyed: true }],
       skippedRepeating: 2,
     });
   });
@@ -179,6 +179,28 @@ describe('parseIcs', () => {
     expect(new Set(kept.map(([uid]) => uid)).size).toBe(kept.length);
   });
 
+  it('keys only an event whose stated UID appears once and is at most 1,024 characters', () => {
+    const long = 'L'.repeat(1_025);
+    const text = calendar(
+      ...vevent('SUMMARY:No UID', 'DTSTART;VALUE=DATE:20261121'),
+      ...vevent('UID:once@example.com', 'SUMMARY:Once', 'DTSTART;VALUE=DATE:20261122'),
+      ...vevent('UID:twice', 'SUMMARY:First of a repeated UID', 'DTSTART;VALUE=DATE:20261123'),
+      ...vevent('UID:twice', 'SUMMARY:Second of a repeated UID', 'DTSTART;VALUE=DATE:20261124'),
+      ...vevent(`UID:${long}`, 'SUMMARY:Too long', 'DTSTART;VALUE=DATE:20261125'),
+      ...vevent(`UID:${'K'.repeat(1_024)}`, 'SUMMARY:Just fits', 'DTSTART;VALUE=DATE:20261126'),
+    );
+    expect(eventsOf(text).map((event) => [event.title, event.keyed])).toEqual([
+      ['No UID', false], ['Once', true], ['First of a repeated UID', false], ['Second of a repeated UID', false],
+      ['Too long', false], ['Just fits', true],
+    ]);
+    // A stated UID taken first by a made-up key is stored with a suffix, so it is not keyed either.
+    const clash = calendar(
+      ...vevent('SUMMARY:No UID', 'DTSTART;VALUE=DATE:20261121'),
+      ...vevent('UID:event-1', 'SUMMARY:Stated after', 'DTSTART;VALUE=DATE:20261122'),
+    );
+    expect(eventsOf(clash).map((event) => [event.uid, event.keyed])).toEqual([['event-1', false], ['event-1#2', false]]);
+  });
+
   it('finds a free suffix in one pass, even when the file states every suffix first', () => {
     // Under 1 MB: x#9001 to x#18000 stated, then 9,000 events with UID x. Searching from each event's own number walked
     // every stated suffix again for each clash, about 81 million looks, and held the event loop for seconds.
@@ -212,16 +234,16 @@ describe('parseIcs in the town’s time zone', () => {
     );
     const zoned = (timeZone: string): IcsEvent[] => eventsOf(text, { today: TODAY, timeZone });
     const asWritten: IcsEvent[] = [
-      { uid: 'z2', title: 'Tasting menu', startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '19:00' },
-      { uid: 'z3', title: 'Buyout', startDate: '2026-11-26', endDate: '2026-11-26', startTime: '12:00', endTime: '15:00' },
+      { uid: 'z2', title: 'Tasting menu', startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '19:00', keyed: true },
+      { uid: 'z3', title: 'Buyout', startDate: '2026-11-26', endDate: '2026-11-26', startTime: '12:00', endTime: '15:00', keyed: true },
     ];
     // Eastern: 22:00 on Dec 3 to 01:00, the start day's late night.
     expect(zoned('America/New_York')).toEqual([
       ...asWritten,
-      { uid: 'z1', title: 'Catering pickup', startDate: '2026-12-03', endDate: '2026-12-03', startTime: '22:00', endTime: '01:00' },
+      { uid: 'z1', title: 'Catering pickup', startDate: '2026-12-03', endDate: '2026-12-03', startTime: '22:00', endTime: '01:00', keyed: true },
     ]);
     expect(zoned('America/Los_Angeles').at(-1)).toEqual(
-      { uid: 'z1', title: 'Catering pickup', startDate: '2026-12-03', endDate: '2026-12-03', startTime: '19:00', endTime: '22:00' },
+      { uid: 'z1', title: 'Catering pickup', startDate: '2026-12-03', endDate: '2026-12-03', startTime: '19:00', endTime: '22:00', keyed: true },
     );
     expect(zoned('Pacific/Honolulu').at(-1)).toMatchObject({ startDate: '2026-12-03', startTime: '17:00', endTime: '20:00' });
     expect(zoned('UTC').at(-1)).toMatchObject({ startDate: '2026-12-04', endDate: '2026-12-04', startTime: '03:00', endTime: '06:00' });
@@ -231,7 +253,7 @@ describe('parseIcs in the town’s time zone', () => {
   it('follows the town’s daylight saving change', () => {
     // 06:30Z is 01:30 EST and 07:30Z is 03:30 EDT on 2026-03-08, when Eastern clocks skip from 02:00 to 03:00.
     const text = calendar(...vevent('UID:dst', 'SUMMARY:Brunch prep', 'DTSTART:20260308T063000Z', 'DTEND:20260308T073000Z'));
-    expect(eventsOf(text)).toEqual([{ uid: 'dst', title: 'Brunch prep', startDate: '2026-03-08', endDate: '2026-03-08', startTime: '01:30', endTime: '03:30' }]);
+    expect(eventsOf(text)).toEqual([{ uid: 'dst', title: 'Brunch prep', startDate: '2026-03-08', endDate: '2026-03-08', startTime: '01:30', endTime: '03:30', keyed: true }]);
   });
 
   it('skips an event whose start cannot be read, never failing the file', () => {
@@ -276,11 +298,11 @@ describe('what an event keeps', () => {
     ));
     const result = parseIcs(text, EASTERN);
     expect(result).toEqual({
-      events: [{ uid: 'p1@example.com', title: 'Private party', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '22:00' }],
+      events: [{ uid: 'p1@example.com', title: 'Private party', startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '22:00', keyed: true }],
       skippedRepeating: 0,
     });
     const event = 'events' in result ? result.events[0] : undefined;
-    expect(Object.keys(event ?? {}).sort()).toEqual(['endDate', 'endTime', 'startDate', 'startTime', 'title', 'uid']);
+    expect(Object.keys(event ?? {}).sort()).toEqual(['endDate', 'endTime', 'keyed', 'startDate', 'startTime', 'title', 'uid']);
     const serialized = JSON.stringify(result);
     for (const dropped of ['Deposit', 'allergy', 'Example Street', 'Back room', 'pat@example.com', 'Pat', 'sam@example.com', 'Sam', 'bookings.example.com', 'Secret']) {
       expect(serialized).not.toContain(dropped);
@@ -304,7 +326,7 @@ describe('what an event keeps', () => {
 
 describe('keepWindow (shared with Google calendars, openspec change connect-google-calendar)', () => {
   const allDay = (uid: string, startDate: string, endDate = startDate): IcsEvent => ({
-    uid, title: uid, startDate, endDate, startTime: null, endTime: null,
+    uid, title: uid, startDate, endDate, startTime: null, endTime: null, keyed: true,
   });
   /** `count` one-day events from `firstDay` on, `perDay` a day, listed newest first. */
   const days = (prefix: string, firstDay: string, count: number, perDay = 1): IcsEvent[] =>

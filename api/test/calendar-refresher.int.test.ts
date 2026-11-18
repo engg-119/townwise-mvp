@@ -58,8 +58,8 @@ function ics(...events: string[]): string {
 
 /** What a link holds when it is added: two single events. */
 const ADDED: IcsEvent[] = [
-  { uid: 'dinner@example.test', title: 'Rehearsal dinner', startDate: '2026-06-10', endDate: '2026-06-10', startTime: '18:00', endTime: '21:00' },
-  { uid: 'party@example.test', title: 'Office party', startDate: '2026-06-20', endDate: '2026-06-20', startTime: null, endTime: null },
+  { uid: 'dinner@example.test', title: 'Rehearsal dinner', startDate: '2026-06-10', endDate: '2026-06-10', startTime: '18:00', endTime: '21:00', keyed: true },
+  { uid: 'party@example.test', title: 'Office party', startDate: '2026-06-20', endDate: '2026-06-20', startTime: null, endTime: null, keyed: true },
 ];
 /** What the link answers later: three single events and a repeating one. */
 const LATER = ics(

@@ -232,7 +232,7 @@ describe('with the calendar key', () => {
     // An event keeps its UID, title, dates and hours: never its description, location, attendees or organizer.
     const rows = await eventRows(calendar.id);
     expect(rows).toHaveLength(2);
-    for (const row of rows) expect(Object.keys(row).sort()).toEqual(['_id', 'endDate', 'endTime', 'generation', 'locationId', 'orgId', 'sourceId', 'startDate', 'startTime', 'title', 'uid']);
+    for (const row of rows) expect(Object.keys(row).sort()).toEqual(['_id', 'endDate', 'endTime', 'generation', 'keyed', 'locationId', 'orgId', 'sourceId', 'startDate', 'startTime', 'title', 'uid']);
     for (const text of ['Gate code', 'Back room', 'guest@example.test', 'host@example.test']) expect(JSON.stringify(rows)).not.toContain(text);
 
     const read = await send(`${base(t)}/events${JUNE}`, t.member);

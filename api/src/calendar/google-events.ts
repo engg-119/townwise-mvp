@@ -13,8 +13,9 @@
 // The events are mapped with calendar/ics.ts's rules (its exports): the id is the UID (Google gives each instance of a
 // repeating event its own), the title is cut at 200 characters, an all-day end date is exclusive, a timed instant is
 // the town's wall time with the 06:00 rule for hours, canceled events are skipped, and keepWindow keeps those ending on
-// or after the town's today first. Repeating events arrive expanded, so none is reported skipped. A failure answers
-// the calendar status by the Google client's code, with the client's error and the call it came from, for the caller to
+// or after the town's today first. Every event is keyed (openspec change calendar-event-suggestions, design decision
+// 1): Google keeps an event's id, and an instance's, when it is moved. Repeating events arrive expanded, so none is
+// reported skipped. A failure answers the calendar status by the Google client's code, with the client's error and the call it came from, for the caller to
 // log through logGoogleFailure (calendar/google-access.ts). Nothing here logs.
 import { isCalendarDate, utcDay } from '../dates.ts';
 import type { CalendarFailure, ParsedCalendar } from '../stores/owner-calendars.ts';
@@ -83,7 +84,7 @@ export function eventsOfGoogle(items: readonly GoogleEventItem[], town: IcsTown)
     if (item.status === 'cancelled') continue;
     const start = momentOf(item.start, clock);
     if (start === null) continue;
-    events.push({ uid: item.id, title: titleOf(item.summary ?? undefined), ...spanOf(start, momentOf(item.end, clock)) });
+    events.push({ uid: item.id, title: titleOf(item.summary ?? undefined), ...spanOf(start, momentOf(item.end, clock)), keyed: true });
   }
   return keepWindow(events, town.today, { aheadFirst: true });
 }

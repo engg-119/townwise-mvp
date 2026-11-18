@@ -131,7 +131,7 @@ describe('the events request (the google-calendar spec scenario)', () => {
     const result = await readGoogleCalendar(client, { refreshToken: REFRESH, calendarId: CALENDAR, town: HANOVER });
     expect(result).toEqual({
       ok: true, refreshToken: null,
-      parsed: { events: [{ uid: 'evt1', title: 'evt1', startDate: '2026-11-20', endDate: '2026-11-20', startTime: null, endTime: null }], skippedRepeating: 0 },
+      parsed: { events: [{ uid: 'evt1', title: 'evt1', startDate: '2026-11-20', endDate: '2026-11-20', startTime: null, endTime: null, keyed: true }], skippedRepeating: 0 },
     });
     expect(calls.map((call) => call.url.split('?')[0])).toEqual([
       'https://oauth2.googleapis.com/token',
@@ -158,10 +158,15 @@ describe('mapping, by ics.ts’s rules', () => {
       allDay('one', '2026-12-10'),
       { id: 'no-end', status: 'confirmed', summary: 'No end', start: { date: '2026-12-12', dateTime: null }, end: null },
     ], HANOVER)).toEqual([
-      { uid: 'weekend', title: 'weekend', startDate: '2026-12-04', endDate: '2026-12-05', startTime: null, endTime: null },
-      { uid: 'one', title: 'one', startDate: '2026-12-10', endDate: '2026-12-10', startTime: null, endTime: null },
-      { uid: 'no-end', title: 'No end', startDate: '2026-12-12', endDate: '2026-12-12', startTime: null, endTime: null },
+      { uid: 'weekend', title: 'weekend', startDate: '2026-12-04', endDate: '2026-12-05', startTime: null, endTime: null, keyed: true },
+      { uid: 'one', title: 'one', startDate: '2026-12-10', endDate: '2026-12-10', startTime: null, endTime: null, keyed: true },
+      { uid: 'no-end', title: 'No end', startDate: '2026-12-12', endDate: '2026-12-12', startTime: null, endTime: null, keyed: true },
     ]);
+  });
+
+  it('keys every event by Google’s id, which Google keeps for an instance it moves', () => {
+    const events = eventsOfGoogle([allDay('instance_20261205', '2026-12-05'), timed('one-off', '2026-12-06T18:00:00-05:00', '2026-12-06T21:00:00-05:00')], HANOVER);
+    expect(events.map((event) => [event.uid, event.keyed])).toEqual([['instance_20261205', true], ['one-off', true]]);
   });
 
   it('a timed event is the town’s wall time, across a daylight saving change and in another zone', () => {

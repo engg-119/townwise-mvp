@@ -1,14 +1,18 @@
 // Notes, the tuning step (spec 10.5, 12, P14): range, weekday, effect and kind rules; author-or-admin edits;
 // notes reachable only through their own location; the 1,000 cap; detail never in logs or audit events; hours and
-// buyout guests (the calendar change); the store's overlapping read.
+// buyout guests (the calendar change); the store's overlapping read. A note made from an owner-calendar event keeps a
+// link to it (openspec change calendar-event-suggestions, design decision 2): only to a keyed event of this location's
+// calendar, with the stored row's dates, never the request's; the store's linkedTo, moveIf and removeIf.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import type { IcsEvent } from '../src/calendar/ics.ts';
 import { readNoteContent, sameNoteContent, type NoteView } from '../src/handlers/notes.ts';
 import { createNoteStore } from '../src/stores/notes.ts';
+import { createOwnerCalendarStore } from '../src/stores/owner-calendars.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -77,7 +81,7 @@ describe('POST /api/org/locations/:locationId/notes', () => {
     expect(note).toEqual({
       id: note.id, kind: 'private_event', startDate: '2026-08-14', endDate: '2026-08-16', weekdays: [5, 6], effect: 'more_guests',
       expectedGuests: 180, detail, startTime: null, endTime: null, createdByEmail: author.email, createdAt: server.clock.now().toISOString(),
-      updatedAt: server.clock.now().toISOString(), canEdit: true, source: null,
+      updatedAt: server.clock.now().toISOString(), canEdit: true, source: null, fromEvent: null,
     });
     const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
     expect(Object.keys(stored ?? {}).sort()).toEqual([
@@ -324,5 +328,117 @@ describe('NoteStore.overlapping', () => {
     expect(found.every((note) => note.startTime === null && note.endTime === null)).toBe(true);
     expect(await store.overlapping(scope, location, { from: '2027-01-01', to: '2027-01-31' })).toEqual([]);
     expect(await store.overlapping({ orgId: otherOrg } as unknown as OrgScope, other, { from: '2026-11-01', to: '2026-11-30' })).toEqual([]);
+  });
+});
+
+describe('a note made from an owner-calendar event (calendar-event-suggestions)', () => {
+  const PARTY = 'party-0001@bookings.example.test';
+  const scopeOf = (id: string): OrgScope => ({ orgId: id }) as unknown as OrgScope;
+  const ownerEvent = (uid: string, keyed = true): IcsEvent => ({
+    uid, title: 'Sentinel Pemberton party', startDate: '2026-08-14', endDate: '2026-08-14', startTime: '18:00', endTime: '22:00', keyed,
+  });
+  const PARTY_NOTE = {
+    kind: 'private_event', startDate: '2026-08-14', endDate: '2026-08-14', effect: 'closed', expectedGuests: 40, startTime: '18:00',
+    endTime: '22:00', detail: 'Buyout upstairs',
+  };
+
+  async function calendarWith(events: IcsEvent[], where = locationId, org = orgId): Promise<string> {
+    const added = await createOwnerCalendarStore(server.connection).add(scopeOf(org), where, { kind: 'file', label: 'Bookings' },
+      { events, skippedRepeating: 0 }, { createdBy: 'fixture', now: server.clock.now() });
+    if (added === 'calendar_limit') throw new Error('calendar_limit');
+    return added.id;
+  }
+
+  it('links a note to a keyed event of this location, with the stored event’s dates and hours, and an edit keeps the link', async () => {
+    server.logs.length = 0;
+    const calendarId = await calendarWith([ownerEvent(PARTY)]);
+    // The note's own dates may differ; the link holds the event's as stored.
+    const note = await created({ ...PARTY_NOTE, startDate: '2026-08-15', endDate: '2026-08-15', fromEvent: { calendarId, uid: PARTY } });
+    const linkedAt = server.clock.now().toISOString();
+    const link = { calendarId, uid: PARTY, startDate: '2026-08-14', endDate: '2026-08-14', startTime: '18:00', endTime: '22:00', linkedAt };
+    expect(note).toMatchObject({ startDate: '2026-08-15', detail: 'Buyout upstairs', fromEvent: link });
+    const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
+    expect(stored?.fromEvent).toEqual({ ...link, calendarId: new Types.ObjectId(calendarId), linkedAt: new Date(linkedAt) });
+    // No title is stored, and the uid is in no log line or audit event.
+    expect(JSON.stringify(stored)).not.toContain('Sentinel');
+    expect(server.logs.join('\n')).not.toContain(PARTY);
+    expect(JSON.stringify(await auditEvents(server))).not.toContain(PARTY);
+
+    server.clock.advance(1000);
+    const res = await call(server, `${notesPath()}/${note.id}`, { session: author.session, method: 'PATCH', json: { ...PARTY_NOTE, expectedGuests: 45 } });
+    expect(res.status).toBe(200);
+    expect((await res.json() as { note: NoteView }).note).toMatchObject({ expectedGuests: 45, fromEvent: link });
+  });
+
+  it('saves the note unlinked when the event is gone, unkeyed, or another location’s or organization’s', async () => {
+    const calendarId = await calendarWith([ownerEvent(PARTY), ownerEvent('event-2', false)]);
+    const patioCalendar = await calendarWith([ownerEvent(PARTY)], otherLocationId);
+    const otherOrg = await createOrg(server, { name: 'Other Link Tavern' });
+    const otherOrgCalendar = await calendarWith([ownerEvent(PARTY)], await addLocation(server, { orgId: otherOrg, name: 'Elsewhere' }), otherOrg);
+    const cases = [
+      { calendarId, uid: 'gone@bookings.example.test' },
+      { calendarId, uid: 'event-2' },
+      { calendarId: patioCalendar, uid: PARTY },
+      { calendarId: otherOrgCalendar, uid: PARTY },
+      { calendarId: new Types.ObjectId().toHexString(), uid: PARTY },
+    ];
+    for (const fromEvent of cases) {
+      const note = await created({ ...PARTY_NOTE, fromEvent });
+      expect(note.fromEvent).toBeNull();
+      const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
+      expect(stored).not.toHaveProperty('fromEvent');
+    }
+  });
+
+  it('refuses a malformed link: extra keys (the request’s dates), a uid over 1,024 characters, an empty uid, a bad id', async () => {
+    const calendarId = await calendarWith([ownerEvent(PARTY)]);
+    for (const fromEvent of [
+      { calendarId, uid: PARTY, startDate: '2026-08-21' },
+      { calendarId, uid: 'u'.repeat(1_025) },
+      { calendarId, uid: '' },
+      { calendarId: 'not-an-id', uid: PARTY },
+    ]) {
+      expect(await errorOf(await post({ ...PARTY_NOTE, fromEvent }))).toEqual({ status: 400, error: 'invalid_request' });
+    }
+    // A uid of exactly 1,024 characters is read (and, absent here, leaves the note unlinked).
+    expect((await created({ ...PARTY_NOTE, fromEvent: { calendarId, uid: 'u'.repeat(1_024) } })).fromEvent).toBeNull();
+  });
+
+  it('linkedTo answers this location’s notes linked to the calendar; moveIf and removeIf refuse a changed updatedAt', async () => {
+    const store = createNoteStore(server.connection);
+    const scope = scopeOf(orgId);
+    const calendarId = await calendarWith([ownerEvent(PARTY), ownerEvent('lunch@bookings.example.test')]);
+    const other = await calendarWith([ownerEvent(PARTY)]);
+    server.clock.advance(1000);
+    const linked = await created({ ...PARTY_NOTE, fromEvent: { calendarId, uid: PARTY } });
+    const second = await created({ ...PARTY_NOTE, detail: null, fromEvent: { calendarId, uid: 'lunch@bookings.example.test' } });
+    await created({ ...PARTY_NOTE, fromEvent: { calendarId: other, uid: PARTY } });
+    await created(PARTY_NOTE);
+    expect((await store.linkedTo(scope, locationId, calendarId)).map((note) => note.id).sort()).toEqual([linked.id, second.id].sort());
+    expect(await store.linkedTo(scope, otherLocationId, calendarId)).toEqual([]);
+
+    const dates = { startDate: '2026-08-21', endDate: '2026-08-21', startTime: '19:00', endTime: '23:00' };
+    const before = await store.find(scope, locationId, linked.id);
+    if (before === null) throw new Error('no note');
+    const now = new Date(server.clock.now().getTime() + 5000);
+    // A stale updatedAt changes nothing.
+    expect(await store.moveIf(scope, locationId, linked.id, { updatedAt: new Date(before.updatedAt.getTime() - 1), dates, link: dates, now })).toBeNull();
+    expect(await store.find(scope, locationId, linked.id)).toEqual(before);
+    // Another location's path finds nothing.
+    expect(await store.moveIf(scope, otherLocationId, linked.id, { updatedAt: before.updatedAt, dates, link: dates, now })).toBeNull();
+
+    const moved = await store.moveIf(scope, locationId, linked.id, { updatedAt: before.updatedAt, dates, link: dates, now });
+    expect(moved).toEqual({
+      ...before, ...dates, updatedAt: now,
+      fromEvent: { ...before.fromEvent, ...dates },
+    });
+    // Kind, guests, detail and weekdays are as they were.
+    expect(moved).toMatchObject({ kind: 'private_event', effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs', weekdays: null });
+
+    expect(await store.removeIf(scope, locationId, linked.id, before.updatedAt)).toBe(false);
+    expect(await store.removeIf(scope, otherLocationId, linked.id, now)).toBe(false);
+    expect(await store.find(scope, locationId, linked.id)).not.toBeNull();
+    expect(await store.removeIf(scope, locationId, linked.id, now)).toBe(true);
+    expect(await store.find(scope, locationId, linked.id)).toBeNull();
   });
 });

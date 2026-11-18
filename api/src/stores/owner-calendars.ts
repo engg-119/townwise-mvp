@@ -28,6 +28,12 @@
 // as a link is. Removing a connection's calendars (removeForConnection) deletes the events, then those calendars, then
 // their events again, as removeWhere does; a calendar added for the connection meanwhile is not among them, and its
 // add checks the connection again after storing. Ids are checked by the caller.
+//
+// Stable keys (openspec change calendar-event-suggestions, design decisions 1 and 12): each row keeps `keyed`, whether
+// its uid survives a refresh (calendar/ics.ts); a row written before that field reads as not keyed. findEvent and
+// eventsByUid read the current generation for a note's link and its follow-up (calendar/follow-up.ts), and a replace
+// that switched answers how many keyed uids of the generation it replaced it kept, read before it writes (the generation
+// it switches from is current until its switch, so no one deletes those rows meanwhile).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -105,6 +111,8 @@ interface EventFields {
   endDate: string;
   startTime: string | null;
   endTime: string | null;
+  /** Whether `uid` survives a refresh; absent on rows written before it was kept, which read as false. */
+  keyed?: boolean;
 }
 
 function sourceSchema(): Schema<SourceFields> {
@@ -149,6 +157,7 @@ function eventSchema(): Schema<EventFields> {
     endDate: { type: String, required: true },
     startTime: { type: String, default: null },
     endTime: { type: String, default: null },
+    keyed: { type: Boolean },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   // A calendar's generation by date (reads), and every row of an organization or a calendar (deletion) by its prefix.
   schema.index({ orgId: 1, sourceId: 1, generation: 1, startDate: 1 });
@@ -200,6 +209,35 @@ export interface OwnerCalendarEvent {
   readonly endDate: string;
   readonly startTime: string | null;
   readonly endTime: string | null;
+}
+
+/** One event of a calendar's current generation, for server code (a note's link and its follow-up). */
+export interface StoredEvent {
+  readonly uid: string;
+  readonly title: string;
+  readonly startDate: string;
+  /** Inclusive. */
+  readonly endDate: string;
+  readonly startTime: string | null;
+  readonly endTime: string | null;
+  /** Whether `uid` survives a refresh (calendar/ics.ts); only a keyed event is ever linked to a note. */
+  readonly keyed: boolean;
+}
+
+/**
+ * What a replace did. A switched one also answers the generation it switched to and, of the generation it replaced,
+ * how many keyed uids that generation held (`hadKeys`) and how many of them the new events keep (`keptKeys`).
+ */
+export type ReplaceResult =
+  | { readonly switched: false }
+  | { readonly switched: true; readonly generation: number; readonly keptKeys: number; readonly hadKeys: number };
+
+/** The keyed events eventsByUid found, read at one generation. */
+export interface EventsByUid {
+  readonly generation: number;
+  /** How many events that generation holds. */
+  readonly eventCount: number;
+  readonly events: readonly StoredEvent[];
 }
 
 /**
@@ -254,10 +292,10 @@ export interface OwnerCalendarStore {
    */
   add(scope: OrgScope, locationId: string, calendar: NewCalendar, parsed: ParsedCalendar, input: { createdBy: string; now: Date }): Promise<OwnerCalendarRecord | 'calendar_limit'>;
   /**
-   * Replaces the calendar's events by generation (the first 2,000) and records the counts and the success. False when
-   * the calendar is gone, or when another replace switched it first: this one's rows are then deleted.
+   * Replaces the calendar's events by generation (the first 2,000) and records the counts and the success. Not switched
+   * when the calendar is gone, or when another replace switched it first: this one's rows are then deleted.
    */
-  replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<boolean>;
+  replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<ReplaceResult>;
   /**
    * "Refresh now"'s one per 5 minutes, safe against concurrent requests: one compare-and-set sets lastManualRefreshAt to
    * `now` on a link or a Google calendar whose last one is at least 5 minutes old, or that has none. False when another
@@ -273,6 +311,13 @@ export interface OwnerCalendarStore {
   releaseRefresh(scope: OrgScope, locationId: string, calendarId: string, input: { leaseUntil: Date; nextRefreshAt: Date }): Promise<boolean>;
   /** The calendar's events, then the calendar. False when it was not there. */
   remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean>;
+  /** One event of this location's calendar, by its stored uid, in the current generation; else null. */
+  findEvent(scope: OrgScope, locationId: string, calendarId: string, uid: string): Promise<StoredEvent | null>;
+  /**
+   * The keyed events among `uids` of this location's calendar, in its current generation. Null when the calendar is
+   * gone, or when a replace switched it while this read (the rows read may then be part deleted).
+   */
+  eventsByUid(scope: OrgScope, locationId: string, calendarId: string, uids: readonly string[]): Promise<EventsByUid | null>;
   /** The location's events overlapping [from, to] (inclusive dates), each calendar's current generation, by start. */
   eventsBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<OwnerCalendarEvent[]>;
   /** Location deletion. Resolves the number of calendars deleted. */
@@ -304,6 +349,13 @@ function toCalendar(doc: SourceDoc): OwnerCalendarRecord {
     lastManualRefreshAt: doc.lastManualRefreshAt,
     createdBy: doc.createdBy,
     createdAt: doc.createdAt,
+  };
+}
+
+function storedEvent(row: EventFields): StoredEvent {
+  return {
+    uid: row.uid, title: row.title, startDate: row.startDate, endDate: row.endDate, startTime: row.startTime, endTime: row.endTime,
+    keyed: row.keyed === true,
   };
 }
 
@@ -339,18 +391,23 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     return deletedCount;
   }
 
-  async function replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<boolean> {
+  async function replaceEvents(scope: OrgScope, locationId: string, calendarId: string, parsed: ParsedCalendar, now: Date): Promise<ReplaceResult> {
     const key = ofCalendar(scope, locationId, calendarId);
     const reserved = await Source.findOneAndUpdate(key, { $inc: { reservedGeneration: 1 } }, { returnDocument: 'after' }).lean();
-    if (reserved === null) return false;
+    if (reserved === null) return { switched: false };
     const previous = reserved.generation;
     const generation = reserved.reservedGeneration;
     const events = parsed.events.slice(0, MAX_EVENTS);
     const mine = { orgId: key.orgId, sourceId: key._id, generation };
+    // The keyed uids of the generation this replace switches from, read before anything is written or deleted. If this
+    // replace switches, that generation was still current, so its rows were all there.
+    const hadUids = new Set(previous === 0 ? [] : (await Event.find(
+      { orgId: key.orgId, sourceId: key._id, generation: previous, keyed: true }, { uid: 1 },
+    ).lean()).map((row) => row.uid));
     if (events.length > 0) {
       await Event.insertMany(events.map((event) => ({
         ...mine, locationId: key.locationId, uid: event.uid, title: event.title, startDate: event.startDate,
-        endDate: event.endDate, startTime: event.startTime, endTime: event.endTime,
+        endDate: event.endDate, startTime: event.startTime, endTime: event.endTime, keyed: event.keyed,
       })));
     }
     const switched = await Source.updateOne({ ...key, generation: previous }, {
@@ -361,11 +418,12 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     });
     if (switched.modifiedCount !== 1) {
       await Event.deleteMany(mine);
-      return false;
+      return { switched: false };
     }
     // Older only: a later replace may already be writing a newer generation.
     await Event.deleteMany({ orgId: key.orgId, sourceId: key._id, generation: trusted({ $lt: generation }) });
-    return true;
+    const keptKeys = events.filter((event) => event.keyed && hadUids.has(event.uid)).length;
+    return { switched: true, generation, keptKeys, hadKeys: hadUids.size };
   }
 
   async function remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean> {
@@ -440,7 +498,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       const calendarId = added._id.toHexString();
       let replaced = false;
       try {
-        replaced = await replaceEvents(scope, locationId, calendarId, parsed, input.now);
+        replaced = (await replaceEvents(scope, locationId, calendarId, parsed, input.now)).switched;
       } finally {
         if (!replaced) await remove(scope, locationId, calendarId);
       }
@@ -471,6 +529,25 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       return released.matchedCount === 1;
     },
     remove,
+    async findEvent(scope, locationId, calendarId, uid) {
+      const key = ofCalendar(scope, locationId, calendarId);
+      const source = await Source.findOne(key, { generation: 1 }).lean();
+      if (source === null) return null;
+      const row = await Event.findOne({ orgId: key.orgId, sourceId: key._id, generation: source.generation, uid }).lean();
+      return row === null ? null : storedEvent(row);
+    },
+    async eventsByUid(scope, locationId, calendarId, uids) {
+      const key = ofCalendar(scope, locationId, calendarId);
+      const source = await Source.findOne(key, { generation: 1, eventCount: 1 }).lean();
+      if (source === null) return null;
+      const rows = uids.length === 0 ? [] : await Event.find({
+        orgId: key.orgId, sourceId: key._id, generation: source.generation, keyed: true, uid: trusted({ $in: [...uids] }),
+      }).lean();
+      // A replace that switched meanwhile may have deleted part of what was just read.
+      const after = await Source.findOne(key, { generation: 1 }).lean();
+      if (after?.generation !== source.generation) return null;
+      return { generation: source.generation, eventCount: source.eventCount, events: rows.map(storedEvent) };
+    },
     async eventsBetween(scope, locationId, range) {
       const location = ofLocation(scope, locationId);
       const current = () => Source.find(location, { label: 1, generation: 1 }).sort({ createdAt: 1, _id: 1 }).lean();

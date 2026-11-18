@@ -1,10 +1,17 @@
 // tw_notes (spec 6.7, 12): structured notes per location, the tuning step. The forecast reader and the tuning chat read
 // them. A note may carry local hours (`startTime`, `endTime`); a note stored before they existed reads as no hours.
 // `detail` is the owner's own words: no function here logs, and nothing copies it into an audit event.
+// A note made from an owner-calendar event keeps `fromEvent` (openspec change calendar-event-suggestions, design
+// decisions 1, 2 and 5): the calendar's id, the event's stored uid and the event's dates and hours when the link was
+// made or last followed, never its title. `replace` sets content only, so an edit keeps the link; moveIf and removeIf
+// are the follow-up's compare-and-set on `updatedAt`. A uid names a booking: nothing here logs it.
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { AiSource } from './files.ts';
+
+/** A note's link holds a uid of at most this many characters (calendar/ics.ts MAX_KEY_CHARS). */
+export const MAX_LINK_UID_CHARS = 1_024;
 
 export const NOTES_COLLECTION = 'tw_notes';
 
@@ -27,6 +34,27 @@ export interface NoteContent {
   readonly endTime: string | null;
 }
 
+/** A note's dates and hours. */
+export type NoteDates = Pick<NoteContent, 'startDate' | 'endDate' | 'startTime' | 'endTime'>;
+
+/** The owner-calendar event a note was made from, with the event's dates and hours when it was linked or last followed. */
+export interface NoteLink extends NoteDates {
+  readonly calendarId: string;
+  /** The event row's stored uid (stores/owner-calendars.ts). */
+  readonly uid: string;
+  readonly linkedAt: Date;
+}
+
+interface StoredLink {
+  calendarId: Types.ObjectId;
+  uid: string;
+  startDate: string;
+  endDate: string;
+  startTime: string | null;
+  endTime: string | null;
+  linkedAt: Date;
+}
+
 interface NoteFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
@@ -44,6 +72,8 @@ interface NoteFields {
   byStaff?: boolean;
   /** Spec 11A.9: a note TownwiseAI made from an event in a file someone let it read. Absent otherwise. */
   source?: { via: 'ai_file'; fileId: Types.ObjectId };
+  /** A note made from an owner-calendar event. Absent otherwise. */
+  fromEvent?: StoredLink;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -68,6 +98,17 @@ function noteSchema(): Schema<NoteFields> {
         via: { type: String, required: true, enum: ['ai_file'] }, fileId: { type: Schema.Types.ObjectId, required: true },
       }, { _id: false, strict: 'throw' }),
     },
+    fromEvent: {
+      type: new Schema({
+        calendarId: { type: Schema.Types.ObjectId, required: true },
+        uid: { type: String, required: true, maxlength: MAX_LINK_UID_CHARS },
+        startDate: { type: String, required: true },
+        endDate: { type: String, required: true },
+        startTime: { type: String, default: null },
+        endTime: { type: String, default: null },
+        linkedAt: { type: Date, required: true },
+      }, { _id: false, strict: 'throw' }),
+    },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
@@ -88,6 +129,8 @@ export interface NoteRecord extends NoteContent {
   readonly byStaff: boolean;
   /** Made by TownwiseAI from a file someone let it read (spec 11A.9): that file. Null for any other note. */
   readonly source: AiSource | null;
+  /** The owner-calendar event the note was made from; null for any other note. */
+  readonly fromEvent: NoteLink | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
@@ -108,14 +151,25 @@ export interface NoteStore {
   byIds(scope: OrgScope, ids: readonly string[]): Promise<NoteRecord[]>;
   /**
    * `id`, when given, becomes the note's id: a second create with it fails on the primary key. `source` marks a note
-   * TownwiseAI made from a file (spec 11A.9).
+   * TownwiseAI made from a file (spec 11A.9); `fromEvent` links one made from an owner-calendar event.
    */
   create(scope: OrgScope, locationId: string, content: NoteContent, input: {
-    createdBy: string; now: Date; id?: string; byStaff?: boolean; source?: AiSource;
+    createdBy: string; now: Date; id?: string; byStaff?: boolean; source?: AiSource; fromEvent?: NoteLink;
   }): Promise<NoteRecord>;
-  /** A full replace of the content; null when the note is gone. */
+  /** A full replace of the content, keeping any link; null when the note is gone. */
   replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
+  /** This location's notes linked to the calendar, sorted by start date. */
+  linkedTo(scope: OrgScope, locationId: string, calendarId: string): Promise<NoteRecord[]>;
+  /**
+   * A follow-up's move, by compare-and-set: sets only the note's dates and hours, its link's dates and hours and
+   * `updatedAt`, while the note is linked and its `updatedAt` is still `updatedAt`. Null otherwise (changed, or gone).
+   */
+  moveIf(scope: OrgScope, locationId: string, noteId: string, input: {
+    updatedAt: Date; dates: NoteDates; link: NoteDates; now: Date;
+  }): Promise<NoteRecord | null>;
+  /** A follow-up's removal: deletes the note only while its `updatedAt` is still `updatedAt`. False otherwise. */
+  removeIf(scope: OrgScope, locationId: string, noteId: string, updatedAt: Date): Promise<boolean>;
   /** Undoing a TownwiseAI read (spec 11A.9): the location's notes it made from `fileId`, edited or not. Resolves the count. */
   removeFromAiRead(scope: OrgScope, locationId: string, fileId: string): Promise<number>;
   /** Deleting a location (D44): every note of it. Resolves the number deleted. */
@@ -139,6 +193,10 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
     createdBy: doc.createdBy,
     byStaff: doc.byStaff === true,
     source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
+    fromEvent: doc.fromEvent === undefined ? null : {
+      calendarId: doc.fromEvent.calendarId.toHexString(), uid: doc.fromEvent.uid, startDate: doc.fromEvent.startDate,
+      endDate: doc.fromEvent.endDate, startTime: doc.fromEvent.startTime, endTime: doc.fromEvent.endTime, linkedAt: doc.fromEvent.linkedAt,
+    },
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -200,6 +258,7 @@ export function createNoteStore(connection: Connection): NoteStore {
         ...(input.id === undefined ? {} : { _id: new Types.ObjectId(input.id) }),
         orgId: scope.orgId, locationId, ...fieldsOf(content), createdBy: input.createdBy, ...(input.byStaff === true ? { byStaff: true } : {}),
         ...(input.source === undefined ? {} : { source: { via: 'ai_file', fileId: new Types.ObjectId(input.source.fileId) } }),
+        ...(input.fromEvent === undefined ? {} : { fromEvent: { ...input.fromEvent, calendarId: new Types.ObjectId(input.fromEvent.calendarId) } }),
         createdAt: input.now, updatedAt: input.now,
       });
       return toNote(doc.toObject());
@@ -215,6 +274,29 @@ export function createNoteStore(connection: Connection): NoteStore {
     async remove(scope, locationId, noteId) {
       const result = await Note.deleteOne({ _id: noteId, orgId: scope.orgId, locationId });
       return result.deletedCount === 1;
+    },
+    async linkedTo(scope, locationId, calendarId) {
+      const docs = await Note.find({ orgId: scope.orgId, locationId, 'fromEvent.calendarId': new Types.ObjectId(calendarId) })
+        .sort({ startDate: 1, createdAt: 1, _id: 1 }).lean();
+      return docs.map(toNote);
+    },
+    async moveIf(scope, locationId, noteId, input) {
+      const { dates, link } = input;
+      const doc = await Note.findOneAndUpdate(
+        { _id: noteId, orgId: scope.orgId, locationId, updatedAt: input.updatedAt, fromEvent: trusted({ $exists: true }) },
+        {
+          $set: {
+            startDate: dates.startDate, endDate: dates.endDate, startTime: dates.startTime, endTime: dates.endTime,
+            'fromEvent.startDate': link.startDate, 'fromEvent.endDate': link.endDate, 'fromEvent.startTime': link.startTime,
+            'fromEvent.endTime': link.endTime, updatedAt: input.now,
+          },
+        },
+        { returnDocument: 'after' },
+      ).lean();
+      return doc === null ? null : toNote(doc);
+    },
+    async removeIf(scope, locationId, noteId, updatedAt) {
+      return (await Note.deleteOne({ _id: noteId, orgId: scope.orgId, locationId, updatedAt })).deletedCount === 1;
     },
     async removeFromAiRead(scope, locationId, fileId) {
       return (await Note.deleteMany({ orgId: scope.orgId, locationId, 'source.fileId': new Types.ObjectId(fileId) })).deletedCount;

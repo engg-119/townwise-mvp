@@ -43,10 +43,10 @@ async function tenant(): Promise<Tenant> {
   return { orgId, locationId, scope: scopeForNewOrg(STAFF, orgId) };
 }
 
-function event(uid: string, startDate: string, opts: { title?: string; endDate?: string; startTime?: string; endTime?: string } = {}): IcsEvent {
+function event(uid: string, startDate: string, opts: { title?: string; endDate?: string; startTime?: string; endTime?: string; keyed?: boolean } = {}): IcsEvent {
   return {
     uid, title: opts.title ?? `Event ${uid}`, startDate, endDate: opts.endDate ?? startDate, startTime: opts.startTime ?? null,
-    endTime: opts.endTime ?? null,
+    endTime: opts.endTime ?? null, keyed: opts.keyed ?? true,
   };
 }
 
@@ -137,9 +137,9 @@ describe('adding and listing', () => {
     const rows = await rowsOf(file.id);
     expect(rows).toHaveLength(3);
     expect(Object.keys(rows[0] ?? {}).sort()).toEqual([
-      '_id', 'endDate', 'endTime', 'generation', 'locationId', 'orgId', 'sourceId', 'startDate', 'startTime', 'title', 'uid',
+      '_id', 'endDate', 'endTime', 'generation', 'keyed', 'locationId', 'orgId', 'sourceId', 'startDate', 'startTime', 'title', 'uid',
     ]);
-    expect(rows[0]).toMatchObject({ generation: 1, uid: 'a1', title: 'Rehearsal dinner', startDate: '2026-11-05', startTime: '18:00', endTime: '21:00' });
+    expect(rows[0]).toMatchObject({ generation: 1, uid: 'a1', title: 'Rehearsal dinner', startDate: '2026-11-05', startTime: '18:00', endTime: '21:00', keyed: true });
   });
 
   it('reads the events overlapping a range from each calendar, with its name, by start, and none from another location', async () => {
@@ -186,13 +186,13 @@ describe('replace by generation', () => {
     const added = await addFile(t, 'Bookings', [event('a', '2026-11-03', { title: 'Old one' }), event('b', '2026-11-04', { title: 'Old two' })]);
     server.clock.advance(MINUTE);
     const later = server.clock.now();
-    let replaced: boolean | undefined;
+    let replaced: { switched: boolean } | undefined;
     const writes = await writesDuring(server, async () => {
       replaced = await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([
         event('c', '2026-11-05', { title: 'New one' }), event('d', '2026-11-06', { title: 'New two' }), event('e', '2026-11-07', { title: 'New three' }),
       ], 1), later);
     });
-    expect(replaced).toBe(true);
+    expect(replaced?.switched).toBe(true);
     expect(writes).toEqual(['findAndModify tw_calendar_sources', 'insert tw_calendar_events', 'update tw_calendar_sources', 'delete tw_calendar_events']);
     expect(await calendars.find(t.scope, t.locationId, added.id)).toMatchObject({
       eventCount: 3, skippedRepeating: 1, status: 'ok', lastSuccessAt: later, lastAttemptAt: later, consecutiveFailures: 0,
@@ -201,7 +201,7 @@ describe('replace by generation', () => {
     expect(await titlesIn(t)).toEqual(['New one', 'New two', 'New three']);
 
     // A calendar whose events all went is emptied.
-    expect(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([]), later)).toBe(true);
+    expect((await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([]), later)).switched).toBe(true);
     expect(await rowsOf(added.id)).toEqual([]);
     expect(await calendars.find(t.scope, t.locationId, added.id)).toMatchObject({ eventCount: 0 });
   });
@@ -214,7 +214,7 @@ describe('replace by generation', () => {
     expect(await titlesIn(t)).toEqual(['Old one', 'Old two']);
     expect(await calendars.find(t.scope, t.locationId, added.id)).toMatchObject({ eventCount: 2 });
 
-    expect(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('f', '2026-11-08', { title: 'Newest' })]), server.clock.now())).toBe(true);
+    expect((await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('f', '2026-11-08', { title: 'Newest' })]), server.clock.now())).switched).toBe(true);
     expect((await rowsOf(added.id)).map((row) => [row.generation, row.title])).toEqual([[3, 'Newest']]);
     expect(await titlesIn(t)).toEqual(['Newest']);
   });
@@ -278,9 +278,9 @@ describe('replace by generation', () => {
       // Each wrote its rows under a generation of its own before either switched.
       expect((await rowsOf(added.id)).map((row) => row.generation)).toEqual([1, 2, 2, 3]);
       hold.release(1);
-      expect(await first).toBe(true);
+      expect((await first).switched).toBe(true);
       hold.release(2);
-      expect(await second).toBe(false);
+      expect((await second).switched).toBe(false);
     } finally {
       hold.restore();
     }
@@ -302,10 +302,10 @@ describe('replace by generation', () => {
       // Switched from 2 to 3, about to delete what is older.
       await hold.arrived(2);
       hold.release(1);
-      expect(await older).toBe(true);
+      expect((await older).switched).toBe(true);
       expect((await rowsOf(added.id)).map((row) => row.generation)).toEqual([2, 3, 3]);
       hold.release(2);
-      expect(await newer).toBe(true);
+      expect((await newer).switched).toBe(true);
     } finally {
       hold.restore();
     }
@@ -318,7 +318,7 @@ describe('replace by generation', () => {
     const added = await addFile(t, 'Bookings', [event('a', '2026-11-03', { title: 'Old one' })]);
     // The calendar as a read saw it just before the replace switched it: generation 1.
     const stale = await server.connection.collection('tw_calendar_sources').find({ _id: new Types.ObjectId(added.id) }).toArray();
-    expect(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('b', '2026-11-04', { title: 'New one' })]), server.clock.now())).toBe(true);
+    expect((await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('b', '2026-11-04', { title: 'New one' })]), server.clock.now())).switched).toBe(true);
     const model = server.connection.models.TwCalendarSource as unknown as Record<'find', (...args: unknown[]) => unknown>;
     vi.spyOn(model, 'find').mockImplementationOnce(() => ({ sort: () => ({ lean: () => Promise.resolve(stale) }) }));
     expect(await titlesIn(t)).toEqual(['New one']);
@@ -332,7 +332,7 @@ describe('replace by generation', () => {
       const removal = calendars.remove(t.scope, t.locationId, added.id);
       // The events are deleted, the calendar not yet.
       await hold.arrived(1);
-      expect(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('late', '2026-11-05', { title: 'Late fetch' })]), server.clock.now())).toBe(true);
+      expect((await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('late', '2026-11-05', { title: 'Late fetch' })]), server.clock.now())).switched).toBe(true);
       expect(await rowsOf(added.id)).toHaveLength(1);
       hold.release(1);
       expect(await removal).toBe(true);
@@ -341,6 +341,83 @@ describe('replace by generation', () => {
     }
     expect(await rowsOf(added.id)).toEqual([]);
     expect(await calendars.find(t.scope, t.locationId, added.id)).toBeNull();
+  });
+});
+
+describe('stable keys (calendar-event-suggestions, design decisions 1 and 12)', () => {
+  const kept = (result: Awaited<ReturnType<OwnerCalendarStore['replaceEvents']>>) =>
+    (result.switched ? { keptKeys: result.keptKeys, hadKeys: result.hadKeys } : null);
+
+  it('findEvent reads one event of the current generation with whether it is keyed, and eventsByUid the keyed ones asked for', async () => {
+    const t = await tenant();
+    const added = await addFile(t, 'Bookings', [
+      event('party@example.test', '2026-11-05', { title: 'Private party', startTime: '18:00', endTime: '22:00' }),
+      event('event-2', '2026-11-06', { keyed: false }),
+      event('lunch@example.test', '2026-11-07'),
+    ]);
+    expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'party@example.test')).toEqual({
+      uid: 'party@example.test', title: 'Private party', startDate: '2026-11-05', endDate: '2026-11-05', startTime: '18:00', endTime: '22:00', keyed: true,
+    });
+    expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'event-2')).toMatchObject({ uid: 'event-2', keyed: false });
+    expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'missing@example.test')).toBeNull();
+
+    const read = await calendars.eventsByUid(t.scope, t.locationId, added.id, ['party@example.test', 'event-2', 'missing@example.test']);
+    expect(read).toEqual({ generation: 1, eventCount: 3, events: [expect.objectContaining({ uid: 'party@example.test', keyed: true })] });
+    expect(await calendars.eventsByUid(t.scope, t.locationId, added.id, [])).toEqual({ generation: 1, eventCount: 3, events: [] });
+
+    // After a replace, the old generation's events are not found.
+    expect((await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('lunch@example.test', '2026-11-08')]), server.clock.now())).switched).toBe(true);
+    expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'party@example.test')).toBeNull();
+    expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'lunch@example.test')).toMatchObject({ startDate: '2026-11-08' });
+  });
+
+  it('eventsByUid answers null when a replace switched the calendar while it read', async () => {
+    const t = await tenant();
+    const added = await addFile(t, 'Bookings', [event('a@example.test', '2026-11-03')]);
+    const model = server.connection.models.TwCalendarSource as unknown as Record<'findOne', (...args: unknown[]) => unknown>;
+    const findOne = model.findOne.bind(model);
+    let calls = 0;
+    vi.spyOn(model, 'findOne').mockImplementation((...args: unknown[]) => {
+      calls += 1;
+      // The second read, after the events were read, sees a newer generation.
+      return calls === 2 ? { lean: () => Promise.resolve({ generation: 2 }) } : findOne(...args);
+    });
+    expect(await calendars.eventsByUid(t.scope, t.locationId, added.id, ['a@example.test'])).toBeNull();
+  });
+
+  it('replaceEvents counts the keyed uids it kept from the generation it replaced: 3 kept, then 0', async () => {
+    const t = await tenant();
+    const added = await addFile(t, 'Bookings', ['k1', 'k2', 'k3', 'k4'].map((uid) => event(uid, '2026-11-05')));
+    expect(kept(await calendars.replaceEvents(t.scope, t.locationId, added.id,
+      parsed([event('k1', '2026-11-05'), event('k2', '2026-11-06'), event('k3', '2026-11-07'), event('new', '2026-11-08')]), server.clock.now())))
+      .toEqual({ keptKeys: 3, hadKeys: 4 });
+    expect(kept(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('x', '2026-11-05'), event('y', '2026-11-06')]), server.clock.now())))
+      .toEqual({ keptKeys: 0, hadKeys: 4 });
+    // A calendar with no events had no keys.
+    expect(kept(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([]), server.clock.now()))).toEqual({ keptKeys: 0, hadKeys: 2 });
+    expect(kept(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('x', '2026-11-05')]), server.clock.now()))).toEqual({ keptKeys: 0, hadKeys: 0 });
+  });
+
+  it('a feed of UID-less events whose stated UIDs are all rewritten answers keptKeys 0, though its event-{n} keys repeat', async () => {
+    const t = await tenant();
+    const added = await addFile(t, 'Bookings', [
+      event('event-1', '2026-11-03', { keyed: false }), event('event-2', '2026-11-04', { keyed: false }),
+      event('r1-first-fetch', '2026-11-05'), event('r2-first-fetch', '2026-11-06'),
+    ]);
+    expect(kept(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([
+      event('event-1', '2026-11-03', { keyed: false }), event('event-2', '2026-11-04', { keyed: false }),
+      event('r1-second-fetch', '2026-11-05'), event('r2-second-fetch', '2026-11-06'),
+    ]), server.clock.now()))).toEqual({ keptKeys: 0, hadKeys: 2 });
+  });
+
+  it('an old row without keyed reads as not keyed, and counts as no key', async () => {
+    const t = await tenant();
+    const added = await addFile(t, 'Bookings', [event('old@example.test', '2026-11-05')]);
+    await server.connection.collection('tw_calendar_events').updateMany({ sourceId: new Types.ObjectId(added.id) }, { $unset: { keyed: '' } });
+    expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'old@example.test')).toMatchObject({ uid: 'old@example.test', keyed: false });
+    expect(await calendars.eventsByUid(t.scope, t.locationId, added.id, ['old@example.test'])).toMatchObject({ events: [] });
+    expect(kept(await calendars.replaceEvents(t.scope, t.locationId, added.id, parsed([event('old@example.test', '2026-11-05')]), server.clock.now())))
+      .toEqual({ keptKeys: 0, hadKeys: 0 });
   });
 });
 
@@ -408,7 +485,10 @@ describe('removal and isolation', () => {
     for (const [locationId, calendarId] of cases) {
       expect(await calendars.find(a.scope, locationId, calendarId)).toBeNull();
       expect(await calendars.sealedAddress(a.scope, locationId, calendarId)).toBeNull();
-      expect(await calendars.replaceEvents(a.scope, locationId, calendarId, parsed([event('x', '2026-11-05')]), server.clock.now())).toBe(false);
+      expect(await calendars.findEvent(a.scope, locationId, calendarId, 'b')).toBeNull();
+      expect(await calendars.findEvent(a.scope, locationId, calendarId, 'a')).toBeNull();
+      expect(await calendars.eventsByUid(a.scope, locationId, calendarId, ['a', 'b'])).toBeNull();
+      expect((await calendars.replaceEvents(a.scope, locationId, calendarId, parsed([event('x', '2026-11-05')]), server.clock.now())).switched).toBe(false);
       expect(await calendars.remove(a.scope, locationId, calendarId)).toBe(false);
     }
     expect(await calendars.list(a.scope, b.locationId)).toEqual([]);

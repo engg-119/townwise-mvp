@@ -1,6 +1,10 @@
 // Notes, the tuning step (spec 10.5, 12, P14): structured notes per location for what sales can't show. The forecast
 // reader and the tuning chat read them. Authors edit and delete their own; org admins edit and delete any. `detail`,
 // hours and guests are never logged and never copied into an audit event.
+// Make a note links the note to the owner-calendar event it came from (openspec change calendar-event-suggestions,
+// design decision 2): only a keyed event of this location's calendar, read from its current events, with the stored
+// row's dates and hours; an event that is gone, unkeyed or not this location's leaves the note unlinked, still saved.
+// A link's uid travels only in the JSON body and the answer, never in a log line or an audit event.
 import { isDuplicateKeyError, objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -13,17 +17,23 @@ import { daysBetween, EARLIEST_DATE, isoDate, plusYears, utcDay } from '../dates
 import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import type { NoteContent, NoteRecord } from '../stores/notes.ts';
+import { MAX_LINK_UID_CHARS, type NoteContent, type NoteLink, type NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
 
+/** A note's link as answered: the calendar's id, the event's uid and its dates and hours when linked. No title. */
+export interface NoteLinkView {
+  calendarId: string; uid: string; startDate: string; endDate: string; startTime: string | null; endTime: string | null; linkedAt: string;
+}
+
 /**
  * Spec 12. `source` is `{ via: 'ai_file', fileId }` on a note TownwiseAI made from a file someone let it read (spec
- * 11A.9), else null.
+ * 11A.9), else null; `fromEvent` the owner-calendar event a note was made from, else null.
  */
 export interface NoteView extends NoteContent {
   id: string; createdByEmail: string; createdAt: string; updatedAt: string; canEdit: boolean;
   source: { via: 'ai_file'; fileId: string } | null;
+  fromEvent: NoteLinkView | null;
 }
 
 /** Spec 6.7. [CONFIRM: 1,000 notes] */
@@ -46,6 +56,11 @@ const sharedFields = {
 };
 
 const noteBody = z.object({ ...sharedFields, endDate: isoDate, detail: z.string().trim().max(280).nullish() });
+
+/** Make a note's event, beside the note's fields in a create body: strict, its dates never taken from the request. */
+const linkBody = z.object({
+  fromEvent: z.strictObject({ calendarId: objectId, uid: z.string().min(1).max(MAX_LINK_UID_CHARS) }).nullish(),
+});
 
 /** A rule's schedule: strict, with no detail (the rule's text is its words), and no end when `endDate` is null or left out. */
 const scheduleBody = z.strictObject({ ...sharedFields, endDate: isoDate.nullish() });
@@ -155,6 +170,10 @@ export function noteView(note: NoteRecord, createdByEmail: string, caller: Membe
     updatedAt: note.updatedAt.toISOString(),
     canEdit: canEdit(caller, note),
     source: note.source === null ? null : { via: note.source.via, fileId: note.source.fileId },
+    fromEvent: note.fromEvent === null ? null : {
+      calendarId: note.fromEvent.calendarId, uid: note.fromEvent.uid, startDate: note.fromEvent.startDate, endDate: note.fromEvent.endDate,
+      startTime: note.fromEvent.startTime, endTime: note.fromEvent.endTime, linkedAt: note.fromEvent.linkedAt.toISOString(),
+    },
   };
 }
 
@@ -186,14 +205,15 @@ export async function listNotes(ctx: TownwiseContext, req: Request, res: Respons
 /**
  * Adds a note to the location as the caller: the note limit (409 note_limit), the write, and `note.created`. With
  * `id` (a TownwiseAI proposal's save), a note that already holds it, made by an earlier try or a racing request, is
- * returned as it is, and only the request that wrote it records the event.
+ * returned as it is, and only the request that wrote it records the event. `fromEvent` links the note to an
+ * owner-calendar event the caller has already read (linkTo).
  */
 export async function addNote(
-  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, content: NoteContent, opts: { id?: string } = {},
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, content: NoteContent, opts: { id?: string; fromEvent?: NoteLink } = {},
 ): Promise<NoteRecord> {
   const { scope } = caller;
   const { notes } = ctx.stores;
-  const { id } = opts;
+  const { id, fromEvent } = opts;
   const existing = id === undefined ? null : await notes.find(scope, location.id, id);
   if (existing !== null) return existing;
   if (await notes.count(scope, location.id) >= MAX_NOTES) {
@@ -204,6 +224,7 @@ export async function addNote(
   try {
     note = await notes.create(scope, location.id, content, {
       createdBy: caller.userId, now, ...(id === undefined ? {} : { id }), ...(caller.openAsAdmin !== null ? { byStaff: true } : {}),
+      ...(fromEvent === undefined ? {} : { fromEvent }),
     });
   } catch (err) {
     const raced = id !== undefined && isDuplicateKeyError(err) ? await notes.find(scope, location.id, id) : null;
@@ -218,12 +239,29 @@ export async function addNote(
   return note;
 }
 
-/** POST /api/org/locations/:locationId/notes. */
+/**
+ * The link to an owner-calendar event of this location, read from its calendar's current events under the caller's
+ * scope, with the stored row's dates and hours; null when the event is gone, unkeyed, or another location's.
+ */
+export async function linkTo(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, event: { calendarId: string; uid: string }, now: Date,
+): Promise<NoteLink | null> {
+  const found = await ctx.stores.ownerCalendars.findEvent(caller.scope, location.id, event.calendarId, event.uid);
+  if (found?.keyed !== true) return null;
+  return {
+    calendarId: event.calendarId, uid: found.uid, startDate: found.startDate, endDate: found.endDate, startTime: found.startTime,
+    endTime: found.endTime, linkedAt: now,
+  };
+}
+
+/** POST /api/org/locations/:locationId/notes, with Make a note's optional `fromEvent: { calendarId, uid }`. */
 export async function createNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const content = noteContent(req.body, utcDay(ctx.now()));
+  const { fromEvent: asked } = parseInput(linkBody, req.body);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const note = await addNote(ctx, caller, location, content);
+  const fromEvent = asked === undefined || asked === null ? null : await linkTo(ctx, caller, location, asked, ctx.now());
+  const note = await addNote(ctx, caller, location, content, fromEvent === null ? {} : { fromEvent });
   res.status(201).json({ note: noteView(note, note.byStaff ? TOWNWISE_STAFF : caller.email, caller) });
 }
 
