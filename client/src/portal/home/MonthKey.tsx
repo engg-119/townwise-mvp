@@ -16,6 +16,7 @@ export function MonthKey(props: { metric?: 'guests' | 'netSales' }): React.JSX.E
       <View style={styles.item}><View style={styles.swatch}><View style={styles.event} /></View><Text style={styles.text}>Town event or holiday</Text></View>
       <View style={styles.item}><View style={styles.swatch}><View style={styles.note} /></View><Text style={styles.text}>Your note or rule</Text></View>
       <View style={styles.item}><View style={styles.swatch}><View style={styles.imported} /></View><Text style={styles.text}>Your calendar</Text></View>
+      <View style={styles.item}><View style={[styles.swatch, styles.today]} /><Text style={styles.text}>Today</Text></View>
       <View style={styles.item}><View style={[styles.swatch, styles.week]} /><Text style={styles.text}>This week</Text></View>
       <View style={styles.item}><View style={[styles.swatch, styles.selected]} /><Text style={styles.text}>Selected day</Text></View>
     </View>
@@ -28,6 +29,7 @@ const styles = StyleSheet.create({
   key: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6 },
   item: { flexDirection: 'row', alignItems: 'center', columnGap: 6 },
   swatch: { width: 12, height: 12, backgroundColor: c.raised, position: 'relative', borderWidth: 1, borderColor: c.raised },
+  today: { backgroundColor: c.cta, borderColor: c.cta },
   week: { borderColor: c.line },
   selected: { borderColor: c.mint },
   event: { position: 'absolute', top: 0, right: 0, width: MARK, height: MARK, backgroundColor: c.white },

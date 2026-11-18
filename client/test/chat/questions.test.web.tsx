@@ -20,9 +20,11 @@ import { serveAbout } from './about-fakes';
 // TownwiseAI's questions on web (spec P25, 10.12; contract section 7): the evidence each one shows, the fourth answer
 // Something else… (a field of the card's own whose words go to the chat as a message, then answer `other`), the
 // questions inline under the landing's chips, and ?panel=questions (Home's link) opening the panel on load. The panel
-// shows only on the new chat page (spec P25 build note, 2026-11-18), and beside the landing, which lists the
-// questions, it leaves them out (owner request, 2026-11-15), so a card is drawn once, on the landing; a message from
-// one opens a conversation, and its card's outcome shows when the person comes back to a new chat.
+// shows only on the new chat page (spec P25 build note, 2026-11-18). At 640px and below the landing lists the
+// questions and the panel's row leaves them out (owner request, 2026-11-15); from 641px they are in the column beside
+// the landing and the landing leaves them out (owner, 2026-11-18: "the questions below should be moved to the right
+// side"), so a card is drawn once either way; a message from one opens a conversation, and its card's outcome shows
+// when the person comes back to a new chat.
 
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
 
@@ -135,9 +137,9 @@ function card(scope: HTMLElement, heading: string): HTMLElement {
 }
 
 /**
- * The question cards: under the landing's chips (the panel's column leaves them out then), else, while TownwiseAI is
- * off, in the column. Read again at each step: a card's message leaves the landing, and a first turn refused outright
- * brings it back.
+ * The question cards: under the landing's chips at 640px and below (the panel's row leaves them out then), else in the
+ * column (from 641px, and while TownwiseAI is off). Read again at each step: a card's message leaves the landing, and
+ * a first turn refused outright brings it back.
  */
 function cards(): HTMLElement {
   return screen.queryByTestId('chat-landing-questions') ?? screen.getByTestId('agent-side');
@@ -152,7 +154,7 @@ function findInCards(text: string): Promise<HTMLElement> {
 async function toLanding(): Promise<void> {
   if (screen.queryByTestId('chat-landing') !== null) return;
   fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
-  await screen.findByTestId('chat-landing-questions');
+  await waitFor(() => { cards(); });
 }
 
 /** Opens the gap's Something else… in `scope`, types the words and sends them. */
@@ -248,19 +250,20 @@ describe('Something else…', () => {
 
   test('the field takes focus in its card, and pressing Something else… again folds the field and keeps the words', async () => {
     renderAt('/locations/l1/agent', chatApi());
-    const landing = await screen.findByTestId('chat-landing-column');
-    await within(landing).findByRole('heading', { name: 'Questions for you (2)' });
-    const other = (): HTMLElement => within(answers(landing, GAP_HEADING)).getByRole('button', { name: 'Something else…' });
+    // From 641px the cards are in the column beside the landing (owner, 2026-11-18).
+    const side = await openPanel(2);
+    await within(side).findByRole('heading', { name: 'Questions for you' });
+    const other = (): HTMLElement => within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Something else…' });
     fireEvent.click(other());
-    expect(document.activeElement).toBe(within(landing).getByLabelText(FIELD));
+    expect(document.activeElement).toBe(within(side).getByLabelText(FIELD));
     // Folded with Something else…, the field keeps its words; only Cancel drops them.
-    fireEvent.change(within(landing).getByLabelText(FIELD), { target: { value: WORDS } });
+    fireEvent.change(within(side).getByLabelText(FIELD), { target: { value: WORDS } });
     fireEvent.click(other());
-    expect(within(landing).queryByLabelText(FIELD)).toBeNull();
+    expect(within(side).queryByLabelText(FIELD)).toBeNull();
     expect(other().getAttribute('aria-expanded')).toBe('false');
     fireEvent.click(other());
-    expect(within(landing).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
-    expect(document.activeElement).toBe(within(landing).getByLabelText(FIELD));
+    expect(within(side).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
+    expect(document.activeElement).toBe(within(side).getByLabelText(FIELD));
   });
 
   test('sends the question with the person’s words to the chat, then answers other once the turn is saved; the words go nowhere else', async () => {
@@ -269,8 +272,10 @@ describe('Something else…', () => {
       const api = chatApi();
       renderAt('/locations/l1/agent', api);
       const column = await openPanel(2);
-      // Beside the empty conversation's landing, the column leaves the questions to the landing.
-      expect(within(column).queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
+      // From 641px the column beside the empty conversation's landing lists the questions, and the landing leaves them
+      // out (owner, 2026-11-18: "the questions below should be moved to the right side").
+      expect(await within(column).findByRole('heading', { name: 'Questions for you' })).toBeTruthy();
+      expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
       fireEvent.click(within(answers(cards(), GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
       fireEvent.change(within(cards()).getByLabelText(FIELD), { target: { value: `  ${WORDS}\n` } });
       fireEvent.click(within(cards()).getByRole('button', { name: 'Send to TownwiseAI' }));
@@ -333,8 +338,8 @@ describe('Something else…', () => {
       await waitFor(() => { expect(api.turns).toHaveLength(1); });
       await stream(() => { during(api); });
     } else {
-      // Refused before it starts, the turn is taken back and the landing returns by itself.
-      await screen.findByTestId('chat-landing-questions');
+      // Refused before it starts, the turn is taken back and the landing (and the column beside it) returns by itself.
+      await waitFor(() => { cards(); });
     }
     // The words stay in the card, never put in the composer.
     expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('');
@@ -428,17 +433,19 @@ describe('Something else…', () => {
       ? refusal(429, 'rate_limited')
       : { question: { id: GAP_ID, answer: 'not_sure' }, note: null });
     renderAt('/locations/l1/agent?panel=questions', api);
-    const landing = await screen.findByTestId('chat-landing-column');
-    await within(landing).findByRole('heading', { name: 'Questions for you (2)' });
-    fireEvent.click(within(answers(landing, GAP_HEADING)).getByRole('button', { name: 'Not sure' }));
+    // From 641px the cards are in the column beside the landing (owner, 2026-11-18).
+    const side = await screen.findByTestId('agent-side');
+    await within(side).findByRole('heading', { name: 'Questions for you' });
+    fireEvent.click(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Not sure' }));
     const error = 'You’ve made a lot of changes. Try again later.';
-    expect((await within(landing).findByText(error)).getAttribute('role')).toBe('alert');
+    expect((await within(side).findByText(error)).getAttribute('role')).toBe('alert');
     fail = false;
-    fireEvent.click(within(answers(landing, GAP_HEADING)).getByRole('button', { name: 'Not sure' }));
+    fireEvent.click(within(answers(side, GAP_HEADING)).getByRole('button', { name: 'Not sure' }));
     const line = 'Got it. TownwiseAI won’t ask about these days again.';
-    expect((await within(landing).findByText(line)).getAttribute('role')).toBe('status');
-    // Drawn once: the column beside the landing leaves the questions out.
-    expect(within(screen.getByTestId('agent-side')).queryByText(line)).toBeNull();
+    expect((await within(side).findByText(line)).getAttribute('role')).toBe('status');
+    // Drawn once: the landing beside the column leaves the questions out.
+    expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
+    expect(screen.getAllByText(line)).toHaveLength(1);
   });
 
   test('is disabled with its reason under view-as, while a reply streams and once the month’s budget is used up', async () => {
@@ -499,8 +506,11 @@ describe('at 640px and below', () => {
   });
 });
 
-describe('inline on the landing', () => {
-  test('under the composer and the chips, Questions for you (N) shows the cards, once from 1024px, and an answer in one place shows in the other', async () => {
+describe('inline on the landing, at 640px and below (owner, 2026-11-18: “the questions below should be moved to the right side”)', () => {
+  // From 641px the column beside the landing lists them instead (see ?panel=questions and Something else… above).
+  beforeEach(() => { setWidth(390); });
+
+  test('under the composer and the chips, Questions for you (N) shows the cards, once (the row leaves them out), and an answer in one place shows in the other', async () => {
     const api = chatApi();
     renderAt('/locations/l1/agent', api);
     const landing = await screen.findByTestId('chat-landing-column');
@@ -514,10 +524,12 @@ describe('inline on the landing', () => {
     fireEvent.click(within(answers(landing, GAP_HEADING)).getByRole('button', { name: 'Not sure' }));
     expect(await within(landing).findByText('Got it. TownwiseAI won’t ask about these days again.')).toBeTruthy();
     expect(within(landing).getByRole('heading', { level: 2, name: 'Questions for you (1)' })).toBeTruthy();
-    // The column beside the landing leaves the questions out: they're drawn once, here.
-    const column = await openPanel(1);
+    // The row under the chips leaves the questions out: they're drawn once, here.
+    const row = within(landing).getByRole('button', { name: `Questions and activity (${String(1 + OPEN_SUGGESTIONS)})` });
+    fireEvent.click(row);
+    const column = within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side');
     expect(within(column).queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
-    // The suggested rules (D46), which the landing doesn't list, come first in the column; then the weekly suggestions,
+    // The suggested rules (D46), which the landing doesn't list, come first in the row; then the weekly suggestions,
     // after what changed on the location's calendars.
     expect(within(column).getAllByRole('heading')[0]?.textContent).toBe('Suggested rules');
     fireEvent.click(within(answers(landing, LIKELY_HEADING)).getByRole('button', { name: 'Not sure' }));
@@ -575,12 +587,16 @@ describe('inline on the landing', () => {
 });
 
 describe('?panel=questions (Home’s link)', () => {
-  test('opens the panel as a column from 1024px and drops the parameter; beside the landing the questions are under its chips', async () => {
+  test('opens the panel as a column from 1024px and drops the parameter; the questions are in the column, not under the landing’s chips (owner, 2026-11-18: “the questions below should be moved to the right side”)', async () => {
     renderAt('/locations/l1/agent?panel=questions', chatApi());
     const side = await screen.findByTestId('agent-side');
     expect(screen.getByRole('button', { name: 'Questions and activity (9)' }).getAttribute('aria-expanded')).toBe('true');
+    await within(side).findByRole('heading', { name: 'Questions for you' });
+    expect(within(side).getByText('2 open')).toBeTruthy();
+    expect(within(side).getByRole('heading', { level: 3, name: GAP_HEADING })).toBeTruthy();
     const landing = await screen.findByTestId('chat-landing-column');
-    await within(landing).findByRole('heading', { name: 'Questions for you (2)' });
+    expect(within(landing).queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
+    expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
     expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('Suggested rules');
     expect(within(side).getByRole('heading', { name: 'Your calendar changed' })).toBeTruthy();
     await waitFor(() => { expect(window.location.search).toBe(''); });

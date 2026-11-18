@@ -23,8 +23,8 @@ import { SuggestionsSection } from './SuggestionCard';
 // The side panel (spec P25): Suggested rules (D46: suggested closure rules from files and the sales history, shown only
 // while there are some, and in the column beside the landing too), Questions for you, Suggested for the next 3 months (TownwiseAI's weekly suggestions,
 // openspec change weekly-forecast-suggestions, shown in the column beside the landing too, which lists only questions),
-// What it's been doing, this month's budget, and How TownwiseAI works. Beside an empty conversation's landing, which lists the questions under its chips, the column leaves Questions
-// for you out (owner request, 2026-11-15), so they aren't drawn twice. Every activity item is a real, dated event the server read from the location's own records; a kind this
+// What it's been doing, this month's budget, and How TownwiseAI works. At 640px and below an empty conversation's landing lists the questions under its chips, so the row leaves Questions
+// for you out and they aren't drawn twice; from 641px the column holds them (owner, 2026-11-18). Every activity item is a real, dated event the server read from the location's own records; a kind this
 // client doesn't know shows as nothing. The page shows the four as Questions and activity on the new chat page only: a column
 // beside the landing from 641px, a row under its chips that opens in place at 640px and below. How TownwiseAI works says whether Townwise has a forecast for the location from
 // GET .../estimates/about (F10), and opens the model card in a sheet.
@@ -268,7 +268,7 @@ export function AgentSidePanel(props: {
   send: SendToChat;
   about: LoadState<EstimatesAbout>;
   onRetryAbout: () => void;
-  /** False while the chat beside the panel lists the questions itself (its landing), so they aren't drawn twice. */
+  /** False while the chat lists the questions itself (its landing, at 640px and below), so they aren't drawn twice. */
   showQuestions?: boolean;
 }): React.JSX.Element {
   return (

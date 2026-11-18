@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+# Restores production's newest nightly dump into the local MongoDB as townwise_prod, for
+# `npm run dev:prod-copy -w @townwise/api` (owner, 2026-11-18: "so i can build new features and not have to transfer
+# data each time"). With --fresh it first runs the backup job, so the copy is minutes old rather than from 07:17 UTC.
+# Your own townwise database is never touched; townwise_prod is dropped and restored whole each time.
+#
+# Needs: az signed in as a member of townwise-admins (bootstrap team.tf admins_backup_reader), and docker compose's
+# mongo running (docker compose up -d). The backup account admits only the apps subnet, so the script adds this
+# machine's public IP to its firewall for the download alone and removes it as soon as the download ends, or on any
+# exit; reads still need Entra (the account has no shared keys). The dump file is deleted when done.
+# Left out of the copy: sign-in sessions, retired refresh tokens, magic links and two-step secrets.
+# Usage: infra/scripts/db-pull-prod.sh [--fresh]
+set -euo pipefail
+
+rg="rg-townwise-prod"
+job="caj-townwise-backup"
+container="mongodump"
+target="townwise_prod"
+die() { echo "db-pull-prod: $*" >&2; exit 1; }
+
+fresh=false
+case "${1:-}" in
+  "") ;;
+  --fresh) fresh=true ;;
+  *) die "usage: $0 [--fresh]" ;;
+esac
+
+cd "$(dirname "$0")/../.."
+sub="$(az account show --query id --output tsv)" || die "sign in first: az login"
+account="sttwbackup$(printf '%s' "$sub" | tr -d - | cut -c1-8)"
+mongo="$(docker compose ps --quiet mongo)"
+[ -n "$mongo" ] || die "local mongo isn't running: docker compose up -d"
+
+if $fresh; then
+  execution="$(az containerapp job start --name "$job" --resource-group "$rg" --query name --output tsv)"
+  echo "backup job started ($execution); waiting for it to finish"
+  for _ in $(seq 1 80); do
+    status="$(az containerapp job execution show --name "$job" --resource-group "$rg" --job-execution-name "$execution" --query properties.status --output tsv)"
+    case "$status" in
+      Succeeded) break ;;
+      Failed | Stopped | Degraded) die "backup job $execution ended $status" ;;
+    esac
+    sleep 15
+  done
+  [ "$status" = "Succeeded" ] || die "backup job $execution still $status after 20 minutes"
+fi
+
+work="$(mktemp -d)"
+chmod 700 "$work"
+ip=""
+close() {
+  if [ -n "$ip" ]; then
+    az storage account network-rule remove --resource-group "$rg" --account-name "$account" --ip-address "$ip" --output none \
+      || echo "db-pull-prod: REMOVE BY HAND: the $account firewall rule for $ip" >&2
+    ip=""
+  fi
+}
+trap 'close; rm -rf "$work"' EXIT
+
+ip="$(curl -fsS https://api.ipify.org)" || die "couldn't read this machine's public IP"
+echo "allowing $ip on $account for the download"
+az storage account network-rule add --resource-group "$rg" --account-name "$account" --ip-address "$ip" --output none
+
+# The token goes to curl in a file, never on its command line.
+token="$(az account get-access-token --resource https://storage.azure.com --query accessToken --output tsv)"
+printf 'Authorization: Bearer %s\nx-ms-version: 2023-11-03\n' "$token" > "$work/headers"
+unset token
+blobs="https://$account.blob.core.windows.net/$container"
+listing=""
+for _ in $(seq 1 30); do # a new firewall rule can take a minute to apply
+  if listing="$(curl -fsS -H @"$work/headers" "$blobs?restype=container&comp=list")"; then break; fi
+  sleep 5
+done
+[ -n "$listing" ] || die "couldn't list $container (is your account in townwise-admins, with admins_backup_reader applied?)"
+dump="$(printf '%s' "$listing" | grep -oE 'townwise-[0-9]{8}T[0-9]{6}Z\.archive\.gz' | sort -u | tail -n 1)"
+[ -n "$dump" ] || die "no dump in $container yet"
+echo "downloading $dump"
+curl -fsS -H @"$work/headers" -o "$work/dump.archive.gz" "$blobs/$dump"
+close
+
+echo "restoring into $target (local)"
+docker exec "$mongo" mongosh --quiet "$target" --eval 'db.dropDatabase()' > /dev/null
+docker exec -i "$mongo" mongorestore --quiet --archive --gzip --nsFrom 'townwise.*' --nsTo "$target.*" \
+  --nsExclude 'townwise.auth_sessions' --nsExclude 'townwise.auth_refresh_retired' \
+  --nsExclude 'townwise.auth_magic_links' --nsExclude 'townwise.auth_totp' < "$work/dump.archive.gz"
+echo "done: $target holds $dump. Stop your usual API, then: npm run dev:prod-copy -w @townwise/api"

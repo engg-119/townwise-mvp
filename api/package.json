@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "dev": "node --env-file=.env.local --watch src/main.ts",
+    "dev:prod-copy": "node scripts/dev-prod-copy.ts",
     "start": "node src/main.ts",
     "worker:forecasts": "node src/workers/weekly-forecasts.ts",
     "typecheck": "tsc -p .",

@@ -263,6 +263,28 @@ test('This week adds up the forecast for the seven days from today, with its wee
   expect(within(glance()).queryByText('This week, last year')).toBeNull();
 });
 
+test('while the forecast loads, the tile waits rather than show last year’s total and then swap it (767, then ~999)', async () => {
+  const next = weekDates(TODAY).map((date) => forecastDay({ date, low: 90, mid: 110, high: 130 }));
+  let release = (): void => undefined;
+  const held = new Promise<void>((resolve) => { release = resolve; });
+  const fake = analyticsFake({
+    [MONTH]: published(next, null),
+    [LAST_WEEK]: offline(),
+    [`${PATH}/sales/history`]: historyBody(HISTORY),
+    [`${PATH}/notes`]: { notes: [] },
+    [CALENDAR]: calendarBody(),
+  });
+  const json = fake.json.bind(fake);
+  fake.json = (path, schema, opts) => (path === MONTH ? held.then(() => json(path, schema, opts)) : json(path, schema, opts));
+  await renderHome(fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }));
+  expect(await within(glance()).findByTestId('skeleton-week-forecast')).toBeTruthy();
+  expect(within(glance()).getByRole('status').textContent).toBe('Loading this week’s forecast');
+  expect(within(glance()).queryByText('This week, last year')).toBeNull();
+  release();
+  expect(await within(glance()).findByText('~770')).toBeTruthy();
+  expect(within(glance()).queryByTestId('skeleton-week-forecast')).toBeNull();
+});
+
 test('6 of the 7 days with a forecast: their total, the missing day named, no weekly range', async () => {
   const six = weekDates(TODAY).slice(0, 6).map((date) => forecastDay({ date, low: 90, mid: 110, high: 130 }));
   await renderHome(portal(HISTORY, offline(), published(six, null)));

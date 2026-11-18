@@ -30,7 +30,7 @@ export const LAB_INPUT_SCHEMA = 'townwise.lab-input/2';
  * The lab's model version (modeling/lab/townwise_lab/version.py's MODEL_VERSION; lab-contract.test.ts holds the two
  * equal). The weekly refresh's fingerprint includes it (D42), so a bump refits every location once.
  */
-export const LAB_MODEL_VERSION = 'v8';
+export const LAB_MODEL_VERSION = 'v9';
 /** Days the lab forecasts after the last day with guests (the run's window). */
 export const HORIZON_DAYS = 182;
 /** The event a calendar entry with no group stands for. */

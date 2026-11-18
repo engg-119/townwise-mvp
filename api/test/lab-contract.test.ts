@@ -21,7 +21,7 @@ describe('lab contract', () => {
     const source = readFileSync(new URL('../../modeling/lab/townwise_lab/version.py', import.meta.url), 'utf8');
     const versions = [...source.matchAll(/^MODEL_VERSION = "([^"]+)"$/gm)].map((match) => match[1]);
     expect(versions).toEqual([LAB_MODEL_VERSION]);
-    expect(LAB_MODEL_VERSION).toBe('v8');
+    expect(LAB_MODEL_VERSION).toBe('v9');
   });
 
   it('the forecast tier’s days and cap are the lab’s REACH_DAYS and HORIZON_DAYS (forecast.py), D42’s run end', () => {

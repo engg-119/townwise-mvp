@@ -13,6 +13,7 @@ import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from
 import { formatCount, plural } from '../format';
 import { UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
+import { Skeleton, SkeletonFigure, SkeletonText } from '../skeleton';
 import { Panel } from '../ui/layout';
 import { PhraseParts } from '../ui/PhraseParts';
 import { Eyebrow, Small } from '../ui/text';
@@ -66,9 +67,21 @@ function ForecastWeekTile(props: { found: WeekForecast; week: ThisWeek; metric: 
   );
 }
 
-function ThisWeekTile(props: { week: ThisWeek; metric: Metric; forecast: ForecastWindow | null }): React.JSX.Element {
+function ThisWeekTile(props: { week: ThisWeek; metric: Metric; forecast: ForecastWindow | null; forecastLoading: boolean }): React.JSX.Element {
   const found = weekForecast(props.week, props.forecast, props.metric);
   if (found !== null) return <ForecastWeekTile found={found} week={props.week} metric={props.metric} />;
+  // Last year's total only once the forecast read is back without one, so the tile never shows it and then swaps it
+  // for the forecast's (767 guests, then ~999).
+  if (props.forecastLoading && props.metric === 'guests') {
+    return (
+      <Tile eyebrow="This week’s forecast">
+        <Skeleton name="week-forecast" label="Loading this week’s forecast">
+          <SkeletonFigure width={120} />
+          <View style={styles.lines}><SkeletonText lines={4} lastWidth="70%" /></View>
+        </Skeleton>
+      </Tile>
+    );
+  }
   const { summary } = props.week;
   if (summary === null) {
     return (
@@ -170,6 +183,8 @@ export function Glance(props: {
   week: ThisWeek;
   /** This month's published forecast read, or null; the first tile adds up This week's days from it (D43). */
   forecast: ForecastWindow | null;
+  /** The forecast read is still out: the first tile waits for it rather than show last year's total first. */
+  forecastLoading: boolean;
   lastWeek: LastWeek;
   next: NextEvent | null;
   calendar: Calendar;
@@ -185,7 +200,7 @@ export function Glance(props: {
       <BlockRow
         tablet
         items={[
-          { key: 'week', span: 4, node: <ThisWeekTile week={props.week} metric={metric} forecast={props.forecast} /> },
+          { key: 'week', span: 4, node: <ThisWeekTile week={props.week} metric={metric} forecast={props.forecast} forecastLoading={props.forecastLoading} /> },
           { key: 'last', span: 4, node: <LastWeekTile comparison={props.lastWeek} metric={metric} locationId={props.locationId} readOnlyId={props.readOnlyId} /> },
           { key: 'next', span: 4, node: <NextTile next={props.next} calendar={props.calendar} until={props.until} /> },
         ]}

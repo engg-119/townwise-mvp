@@ -432,7 +432,7 @@ def test_result_matches_contract(model_result, lab_input):
 
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
-    assert version.MODEL_VERSION == "v8"
+    assert version.MODEL_VERSION == "v9"
 
 
 def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):

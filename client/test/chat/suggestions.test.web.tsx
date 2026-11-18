@@ -306,8 +306,8 @@ test('“Your calendar changed” comes before the suggestions, with the move an
   renderAt(chatApi(false), meOf(ACCESS.member));
   const panel = await side();
   // The fixture's suggested rules (D46) come first, in their own section.
-  expect(within(panel).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent).slice(0, 3))
-    .toEqual(['Suggested rules', CHANGED, SUGGESTED]);
+  expect(within(panel).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent).slice(0, 4))
+    .toEqual(['Suggested rules', 'Questions for you', CHANGED, SUGGESTED]);
   const changed = section(panel, CHANGED);
   expect(within(changed).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([MOVE_HEADING, REMOVE_HEADING]);
   expect(within(card(changed, MOVE_HEADING)).getByText('The private event on Sat, Jul 18 moved to Sat, Jul 25 on your calendar.')).toBeTruthy();

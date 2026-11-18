@@ -6,6 +6,8 @@
 # ranges calibrated on its own earlier backtest weeks.
 # v8 (autonomous-forecasts 7.1): the baseline's weekly band for a week forecast with last year's shape is drawn from
 # earlier weeks forecast with it, the latest earlier weeks filling in to half a year (design decision 6, "Weekly ranges
-# by kind of forecast"). The API's LAB_MODEL_VERSION
+# by kind of forecast").
+# v9 (2026-11-18): a closed weekday ignores dates under a tenth of their week's median guests (forecast.served), so a
+# private party rung as a check or two on a closed Sunday or Monday no longer reopens the weekday. The API's LAB_MODEL_VERSION
 # (api/src/lab/input.ts) is held equal to this by a contract test, so a bump refits every location once.
-MODEL_VERSION = "v8"
+MODEL_VERSION = "v9"
