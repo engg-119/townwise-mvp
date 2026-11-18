@@ -162,7 +162,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 - [x] 8.4 Home surfaces: `analytics/week.ts` (`monthGrid`'s caption, `forecastPhrase`), `MonthGrid.web.tsx`, `MonthGrid.tsx`, `MonthKey.tsx`, `ThisWeek.tsx`, `ThisMonth.tsx` (the month line, a past day's forecast and comparison to the detail) and `DayDetail.tsx`. Tests: `month-figure-parity.test.ts` (the mark and label on both), `week.test.ts`, `honesty.test.ts`, `home.test.web.tsx`, `home.test.native.tsx`; `calendar/model.test.ts` pins `pastForecastLines`.
 - [x] 8.5 Same words: `estimates/ModelCard.tsx` `liveLine` and `analytics/week.ts` Last week through `insideWords`; TownwiseAI's daily chart names its line "Actual guests" and its hover "180 guests, actual" beside a forecast (`chat/visuals/DailyChart.web.tsx`, `hover.ts`). Tests: their existing suites.
 - [x] 8.6 Docs: the D49 row (the requests in the owner's words, Claude's calls, the two [CONFIRM]s), 14.4 (the read's rule), P11, P28 and 16.3, section 22 and the change log in `docs/portal/spec.md`; `client/src/portal/README.md`. Run `openspec validate calendar-shows-everything --strict`.
-- [ ] 8.7 Run each touched client directory's suites, the API unit project and `estimates.int.test.ts`, typecheck, and eslint on the changed files.
+- [x] 8.7 Run each touched client directory's suites, the API unit project and `estimates.int.test.ts`, typecheck, and eslint on the changed files.
 
 ## 7. Docs, review and ship
 
