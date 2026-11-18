@@ -299,6 +299,9 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   // A location keeps only the place's id and town, so the summary says so, not what a request keeps.
   expect(within(dialog).getByText(GOOGLE_SOURCE)).toBeTruthy();
   expect(within(dialog).queryByText(PLACES_SOURCE)).toBeNull();
+  // D47: Name now holds the place's default (D29), which staff can change before saving.
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Lou’s Bakery, Norwich');
+  expect(within(dialog).getByText('From Google Maps. Change it if you like; it’s saved as this location’s name when you save.')).toBeTruthy();
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Lou’s Bakery' } });
   await click('Save changes', dialog);
   expect(await screen.findByText('Saved.')).toBeTruthy();

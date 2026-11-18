@@ -746,7 +746,7 @@ describe('P16 Change this location’s place', () => {
     return { api, places: installPlaces(api) };
   }
 
-  test('finds the place, says the town moves, and Use this place sends the place with its town, then Saved', async () => {
+  test('finds the place, says the town moves; Use this place fills in its name, and Save changes sends name, town and place (D47)', async () => {
     const { api } = setup();
     const moved = locationOf('l1', 'Main Street Bar', { townId: null, name: 'Norwich', state: 'VT' }, { placeId: 'ChIJTestPlace0002' });
     api.answers['/api/org/locations/l1'] = () => {
@@ -764,9 +764,17 @@ describe('P16 Change this location’s place', () => {
     await pick('Lou’s Bakery, Norwich, VT, USA');
     expect(screen.getByText('Using this place moves Main Street Bar to Norwich, VT.')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    // Nothing is saved yet: the place waits in the form, and Name holds its default (D29), which the person can change.
+    expect(sentWrites(api)).toEqual([]);
+    expect(screen.getByLabelText('Name').props.value).toBe('Lou’s Bakery, Norwich');
+    expect(screen.getByText('From Google Maps. Change it if you like; it’s saved as this location’s name when you save.')).toBeTruthy();
+    expect(screen.getByText('Norwich, VT')).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Name'), 'Lou’s');
+    await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByText('Saved.')).toBeTruthy();
     expect(sentWrites(api)).toEqual([{
-      method: 'PATCH', path: '/api/org/locations/l1', body: { town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' },
+      method: 'PATCH', path: '/api/org/locations/l1',
+      body: { name: 'Lou’s', town: { townId: null, name: 'Norwich', state: 'VT' }, placeId: 'ChIJTestPlace0002' },
     }]);
     expect(await screen.findByText('Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.')).toBeTruthy();
     expect(screen.getByText('Norwich, VT')).toBeTruthy();
@@ -799,6 +807,24 @@ describe('P16 Change this location’s place', () => {
     expect(screen.getByText('Using this place moves Test Group to Norwich, VT.')).toBeTruthy();
   });
 
+  test('a name typed before picking stays; the place’s name is offered, and Don’t use this place puts everything back', async () => {
+    const { api } = setup();
+    await renderApp('/locations/l1/settings', api);
+    await fireEvent.changeText(await screen.findByLabelText('Name'), 'Main St');
+    await fireEvent.press(screen.getByRole('button', { name: 'Find this location’s place' }));
+    await find('Search Google Maps for this location', 'Lou');
+    await pick('Lou’s Bakery, Norwich, VT, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    expect(screen.getByLabelText('Name').props.value).toBe('Main St');
+    await fireEvent.press(screen.getByRole('button', { name: 'Use “Lou’s Bakery, Norwich” as the name' }));
+    expect(screen.getByLabelText('Name').props.value).toBe('Lou’s Bakery, Norwich');
+    await fireEvent.press(screen.getByRole('button', { name: 'Don’t use this place' }));
+    expect(screen.getByLabelText('Name').props.value).toBe('Main Street Bar');
+    expect(screen.getByText('Hanover, NH')).toBeTruthy();
+    expect(screen.getByText('Not linked to a place on Google Maps.')).toBeTruthy();
+    expect(sentWrites(api)).toEqual([]);
+  });
+
   test('503 while saving: nothing changed, and the line says so', async () => {
     const { api } = setup({ placeId: 'ChIJTestPlace0009' });
     api.answers['/api/org/locations/l1'] = () => refusal(503, 'places_unavailable');
@@ -809,7 +835,10 @@ describe('P16 Change this location’s place', () => {
     // Same town: no line about moving.
     expect(screen.queryByText(/^Using this place moves/)).toBeNull();
     await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByText('Google Maps isn’t answering right now. Nothing changed; try again later.')).toBeTruthy();
+    // The place left the form; the location keeps its name.
+    expect(screen.getByLabelText('Name').props.value).toBe('Main Street Bar');
   });
 
   test('under view-as the button is disabled and described by the read-only line; with the search off there is no section', async () => {
@@ -859,7 +888,7 @@ describe('focus follows the steps', () => {
     expect(moves()).toEqual(['Town', SEARCH]);
   });
 
-  test('P16: opening moves to the field; Cancel and Use this place move to the line that says whether it is linked', async () => {
+  test('P16: opening moves to the field; Cancel to the linked line; Use this place to the place in the form; Save back to the linked line', async () => {
     const moves = focusMoves();
     const locations = [{ ...FIRST, placeId: null }, SECOND];
     const api = fakePortalApi({
@@ -879,10 +908,11 @@ describe('focus follows the steps', () => {
     await find('Search Google Maps for this location', 'Lou');
     await pick('Lou’s Bakery, Norwich, VT, USA');
     await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
     await screen.findByText('Saved.');
     expect(moves()).toEqual([
       'Search Google Maps for this location', 'Not linked to a place on Google Maps.',
-      'Search Google Maps for this location', 'Here’s what we found',
+      'Search Google Maps for this location', 'Here’s what we found', 'On Google Maps',
       'Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.',
     ]);
   });

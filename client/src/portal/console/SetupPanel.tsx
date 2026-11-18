@@ -9,6 +9,7 @@ import { PlaceSearch } from '../onboarding/PlaceSearch';
 import { placeChanged, placesUnavailable, townInputOf, type UsablePlace } from '../onboarding/places';
 import { usePlaceSearchAvailability } from '../onboarding/usePlaceSearch';
 import { PLACE_SETTINGS_COPY } from '../locations/LocationSettings';
+import { defaultLocationName } from '../locations/naming';
 import { GOOGLE_SOURCE, PlaceSummary } from '../places/PlaceCard';
 import { usePortal } from '../PortalProvider';
 import { Actions, Button } from '../ui/Button';
@@ -73,6 +74,9 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
   const { api } = usePortal();
   const [mode, setMode] = useState<RenameMode>({ kind: 'form', place: null });
   const [name, setName] = useState(location.name);
+  /** D47: a picked place fills Name with its default (D29) unless staff typed in Name in this dialog. */
+  const [nameTyped, setNameTyped] = useState(false);
+  const [prefilled, setPrefilled] = useState<string | null>(null);
   const [town, setTown] = useState<TownValue>(() => townValueOf(location.town));
   const [messages, setMessages] = useState<RenameMessages>({});
   const [placeLine, setPlaceLine] = useState<string | null>(null);
@@ -127,7 +131,15 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
         note={(place) => (place.town === null || townLabel(place.town) === townLabel(location.town)
           ? null
           : `Using this place moves ${location.name} to ${townLabel(place.town)}.`)}
-        onConfirm={(place) => { setPlaceLine(null); setMode({ kind: 'form', place }); }}
+        onConfirm={(place) => {
+          setPlaceLine(null);
+          if (!nameTyped) {
+            const suggested = defaultLocationName(place, org.name);
+            setName(suggested);
+            setPrefilled(suggested);
+          }
+          setMode({ kind: 'form', place });
+        }}
         manualLabel="Enter the town yourself"
         onManual={() => { setPlaceLine(null); setTownOpen(true); setMode({ kind: 'form', place: null }); }}
         onUnavailable={() => { setDown(true); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); setMode({ kind: 'form', place: null }); }}
@@ -140,9 +152,10 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
         <FormField
           label="Name"
           value={name}
-          onChangeText={setName}
+          onChangeText={(text) => { setName(text); setNameTyped(true); }}
           autoCapitalize="words"
           maxLength={80}
+          {...(prefilled !== null && name === prefilled ? { helper: PLACE_SETTINGS_COPY.prefilled } : {})}
           messages={messages.name === undefined ? [] : [messages.name]}
         />
         {place === null && placeFirst ? (
