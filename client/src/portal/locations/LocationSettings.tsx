@@ -10,6 +10,8 @@ import { PlaceSearch } from '../onboarding/PlaceSearch';
 import { placeChanged, placesUnavailable, setLocationPlace, townLabel, type UsablePlace } from '../onboarding/places';
 import { usePlaceSearchAvailability } from '../onboarding/usePlaceSearch';
 import { SCRIPT_FOCUS, useFocusOnMount } from '../places/focus';
+import { PlaceMap } from '../places/PlaceMap';
+import { usePlacesMap } from '../places/usePlacesMap';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
@@ -30,15 +32,18 @@ import { shownLocationName } from './naming';
 // “Saved.”; deleting opens Locations with “Deleted {name}.”. A 404 on either write means the location was deleted
 // in the meantime: the organization reloads, and the location layout says “This location isn’t available.” with
 // the link to Locations (spec 10.9). Under view-as every write is disabled in place.
-// While the Google Places search is on (GET /api/org `placeSearch`), “Change this location’s place” finds the
-// location on Google Maps; using a place sets it and its town (PATCH with `placeId`), and a town changed by hand
-// takes the place off (api/README.md, Organization and locations). The search takes focus when it opens; when it
-// closes (Use this place, Cancel, or Google failing) focus moves to the line that says whether the location is linked.
+// While the Google Places search is on (GET /api/org `placeSearch`), D47: the first section is “Name and place”, and
+// the location's place on Google Maps leads it, under Name: the map of its place (when it has one and the map is on),
+// the line that says whether it is linked, and “Change this location’s place” (or “Find …”), which finds the location
+// on Google Maps; using a place sets it and its town (PATCH with `placeId`). The town shows as text, and the Town
+// fields open only behind “Enter the town yourself”, since a town changed by hand takes the place off (api/README.md,
+// Organization and locations). With the search off, the section is “Name and town” with the Town fields, as before.
+// The search takes focus when it opens; when it closes (Use this place, Cancel, or Google failing) focus moves to the
+// line that says whether the location is linked.
 // After Name and town, a static Business rules section links to P29 (it reads nothing). Beside Name and town, “Add
 // another location” opens P10.
 
 const READ_ONLY_ID = 'location-settings-ro';
-const PLACE_READ_ONLY_ID = 'location-place-ro';
 
 /** Delete location (D44): one press takes the location and everything in it. */
 export const DELETE_COPY = {
@@ -76,6 +81,8 @@ export const PLACE_SETTINGS_COPY = {
   linked: 'Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.',
   unlinked: 'Not linked to a place on Google Maps.',
   byHand: 'Changing the town here takes the Google Maps place off this location.',
+  townByHand: 'Enter the town yourself',
+  placeLabel: 'Place on Google Maps',
   unavailable: 'Google Maps isn’t answering right now. Nothing changed; try again later.',
   changed: 'Google Maps answered differently this time. Nothing changed; search for the place again.',
 } as const;
@@ -111,6 +118,11 @@ export function LocationSettings(): React.JSX.Element {
   const [savedPlaceId, setSavedPlaceId] = useState<string | null>(null);
   if (savedPlaceId !== null && location.placeId === savedPlaceId) setSavedPlaceId(null);
   const linked = savedPlaceId !== null || (location.placeId !== undefined && location.placeId !== null);
+  const placeId = savedPlaceId ?? location.placeId ?? null;
+  const placeMap = usePlacesMap(api, search === 'on' && placeId !== null ? [placeId] : []);
+  /** D47: with the search on, the Town fields open only on “Enter the town yourself”. */
+  const [townOpen, setTownOpen] = useState(false);
+  const townShown = search !== 'on' || townOpen;
 
   const placeSave = useAction(useCallback(async (place: UsablePlace) => {
     try {
@@ -164,7 +176,8 @@ export function LocationSettings(): React.JSX.Element {
   function submit(): void {
     if (readOnly) return;
     const trimmed = name.trim();
-    const checked = checkTown(town);
+    // D47: with the Town fields closed, the town shown (the location's, after any reload) is the one sent.
+    const checked = checkTown(townShown ? town : townValueOf(location.town));
     const next: Messages = {};
     if (trimmed === '' || trimmed.length > 80) next.name = LOCATION_COPY.name;
     if ('messages' in checked) next.town = checked.messages;
@@ -173,9 +186,47 @@ export function LocationSettings(): React.JSX.Element {
     save.run({ name: trimmed, town: checked.input });
   }
 
+  const placePart = search === 'on' ? (
+    <Stack gap={12}>
+      <Text style={[theme.type.label, styles.label]}>{PLACE_SETTINGS_COPY.placeLabel}</Text>
+      {placeId === null || finding ? null : <PlaceMap map={placeMap} label={`Map of ${shown}`} frame={styles.map} />}
+      <LinkedLine key={closed} text={linked ? PLACE_SETTINGS_COPY.linked : PLACE_SETTINGS_COPY.unlinked} focus={closed > 0} />
+      {placeLine === null ? null : <ErrorNotice message={placeLine} />}
+      {finding && !readOnly ? (
+        <PlaceSearch
+          api={api}
+          autoFocus
+          label="Search Google Maps for this location"
+          helper="Type its name. Google Maps suggests places in the US."
+          confirmLabel="Use this place"
+          pendingLabel="Saving…"
+          pending={placeSave.pending}
+          note={(place) => (place.town === null || sameTownLabel(place.town, location.town)
+            ? null
+            : `Using this place moves ${shown} to ${townLabel(place.town)}.`)}
+          onConfirm={(place) => { placeSave.run(place); }}
+          manualLabel="Cancel"
+          onManual={stopFinding}
+          onUnavailable={() => { stopFinding(); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); }}
+        />
+      ) : (
+        <Actions>
+          <Button
+            variant="outline"
+            label={linked ? 'Change this location’s place' : 'Find this location’s place'}
+            disabled={readOnly}
+            {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
+            onPress={() => { setPlaceLine(null); setFinding(true); }}
+          />
+        </Actions>
+      )}
+      {placeSave.error === null ? null : <ErrorNotice error={placeSave.error} />}
+    </Stack>
+  ) : null;
+
   return (
     <View>
-      <Section first kicker="Location" title="Name and town">
+      <Section first kicker="Location" title={search === 'on' ? 'Name and place' : 'Name and town'}>
         <Columns
           main={(
             <Stack gap={20}>
@@ -190,8 +241,27 @@ export function LocationSettings(): React.JSX.Element {
                 messages={messages.name === undefined ? [] : [messages.name]}
                 {...ro}
               />
-              <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} {...ro} />
-              {linked ? <Small>{PLACE_SETTINGS_COPY.byHand}</Small> : null}
+              {placePart}
+              {townShown ? (
+                <>
+                  <TownFields autoFocus={townOpen} value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} {...ro} />
+                  {linked ? <Small>{PLACE_SETTINGS_COPY.byHand}</Small> : null}
+                </>
+              ) : (
+                <Stack gap={4}>
+                  <Text style={[theme.type.label, styles.label]}>Town</Text>
+                  <Small>{townLabel(location.town)}</Small>
+                  <Actions>
+                    <Button
+                      variant="link"
+                      label={PLACE_SETTINGS_COPY.townByHand}
+                      disabled={readOnly}
+                      {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
+                      onPress={() => { setTownOpen(true); }}
+                    />
+                  </Actions>
+                </Stack>
+              )}
               {save.error === null ? null : <ErrorNotice error={save.error} onRetry={submit} />}
               <Actions>
                 <Button
@@ -231,48 +301,6 @@ export function LocationSettings(): React.JSX.Element {
           )}
         />
       </Section>
-      {search === 'on' ? (
-        <Section kicker="Google Maps" title="Change this location’s place">
-          <Columns
-            main={(
-              <Stack gap={20}>
-                {readOnly ? <ReadOnlyLine text={line} nativeID={PLACE_READ_ONLY_ID} /> : null}
-                <LinkedLine key={closed} text={linked ? PLACE_SETTINGS_COPY.linked : PLACE_SETTINGS_COPY.unlinked} focus={closed > 0} />
-                {placeLine === null ? null : <ErrorNotice message={placeLine} />}
-                {finding && !readOnly ? (
-                  <PlaceSearch
-                    api={api}
-                    autoFocus
-                    label="Search Google Maps for this location"
-                    helper="Type its name. Google Maps suggests places in the US."
-                    confirmLabel="Use this place"
-                    pendingLabel="Saving…"
-                    pending={placeSave.pending}
-                    note={(place) => (place.town === null || sameTownLabel(place.town, location.town)
-                      ? null
-                      : `Using this place moves ${shown} to ${townLabel(place.town)}.`)}
-                    onConfirm={(place) => { placeSave.run(place); }}
-                    manualLabel="Cancel"
-                    onManual={stopFinding}
-                    onUnavailable={() => { stopFinding(); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); }}
-                  />
-                ) : (
-                  <Actions>
-                    <Button
-                      variant="outline"
-                      label={linked ? 'Change this location’s place' : 'Find this location’s place'}
-                      disabled={readOnly}
-                      {...(readOnly ? { describedBy: PLACE_READ_ONLY_ID } : {})}
-                      onPress={() => { setPlaceLine(null); setFinding(true); }}
-                    />
-                  </Actions>
-                )}
-                {placeSave.error === null ? null : <ErrorNotice error={placeSave.error} />}
-              </Stack>
-            )}
-          />
-        </Section>
-      ) : null}
       <Section kicker={DELETE_COPY.kicker} title="Delete location">
         <Columns
           main={(
@@ -322,4 +350,6 @@ function sameTownLabel(a: { name: string; state: string }, b: { name: string; st
 
 const styles = StyleSheet.create({
   linked: { color: theme.color.text2 },
+  label: { color: theme.color.text3 },
+  map: { width: '100%', maxWidth: 640 },
 });
