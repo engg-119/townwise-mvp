@@ -42,7 +42,7 @@ export function SetupProposal(props: {
   draft: SetupDraft;
   /** The setup as saved, which the list of changes is told against, as on the chat's card. */
   saved: OrderSetup | null;
-  /** Puts a merge in the draft, with its marks (SetupEditor's applyRead). */
+  /** Puts a merge in the draft, with its marks, leaving the page's notice as it is (SetupEditor's applyProposal). */
   apply: (result: ProposalImport) => void;
   readOnly: boolean;
   /** How many times the editor replaced its draft with the saved setup ("Load their changes"). */

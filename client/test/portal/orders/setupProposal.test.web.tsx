@@ -151,6 +151,8 @@ test('after Load their changes the suggestions are merged into the reloaded draf
   await waitFor(() => { expect(field('Item 1', 'Servings per unit').value).toBe('30'); });
   expect(screen.getByText('Unsaved changes.')).toBeTruthy();
   expect(screen.getByText(FOUND_ONE)).toBeTruthy();
+  // The merge does not take away what the load just said (a toast, D55).
+  expect(screen.getByText('Loaded the setup as it was last saved.')).toBeTruthy();
   api.answers[`${PATH}/setup`] = () => stored(6, 30);
   await click('Save the setup');
   await waitFor(() => { expect(puts(api)).toHaveLength(2); });

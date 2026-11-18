@@ -140,6 +140,14 @@ function Editor(props: {
     edit(result.draft);
     setMarks((current) => withMarks(current, result.marks));
   };
+  /**
+   * A TownwiseAI card's merge (SetupProposal, D56). It runs by itself, on load and again after "Load their changes", so
+   * unlike a person's edit it leaves the notice alone: what the load just said still shows.
+   */
+  const applyProposal = (result: ProposalImport): void => {
+    setDraft(result.draft);
+    setMarks((current) => withMarks(pruneMarks(current, result.draft), result.marks));
+  };
   const setSupplier = (key: string, next: SupplierDraft): void => {
     edit({ ...draft, suppliers: draft.suppliers.map((supplier) => (supplier.key === key ? next : supplier)) });
   };
@@ -264,7 +272,7 @@ function Editor(props: {
       {status.canReadWithAi && props.read !== undefined
         ? props.read({ draft, apply: applyRead, locked, readOnlyId })
         : null}
-      <SetupProposal draft={draft} saved={saved} apply={applyRead} readOnly={readOnly} loads={loads} saves={saves} />
+      <SetupProposal draft={draft} saved={saved} apply={applyProposal} readOnly={readOnly} loads={loads} saves={saves} />
 
       <Section title="Suppliers">
         {draft.suppliers.length === 0 ? <Small>No suppliers yet. Add each one you order from, with its delivery days.</Small> : null}
