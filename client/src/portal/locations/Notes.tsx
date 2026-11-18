@@ -46,8 +46,10 @@ function NoteCell(props: { note: Note; selected: boolean }): React.JSX.Element {
     <View style={styles.cell}>
       <View style={styles.kind}>
         {selected ? <View style={styles.square} /> : null}
-        <Text style={[styles.who, selected ? styles.whoOn : null]}>{KIND_LABEL[note.kind]}</Text>
+        <Text style={[styles.who, selected ? styles.whoOn : null]}>{note.title ?? KIND_LABEL[note.kind]}</Text>
       </View>
+      {/* A named note (D49): its name, then its kind, then its detail. */}
+      {note.title === null || note.title === undefined ? null : <Text style={styles.note}>{KIND_LABEL[note.kind]}</Text>}
       {note.detail === null ? null : <Text style={styles.note}>{note.detail}</Text>}
     </View>
   );

@@ -337,7 +337,7 @@ test('adding a private event of 70 posts the note, reloads the forecast and the 
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
-      startTime: null, endTime: null,
+      title: null, startTime: null, endTime: null,
     },
   }]);
   await waitFor(() => { expect(cell('2026-11-21').getAttribute('aria-label')).toContain('Includes 70 guests from your notes.'); });
@@ -493,7 +493,8 @@ test('a calendar file is posted and kept, its events show once read again, and M
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
-      startTime: '18:00', endTime: '21:00',
+      // Make a note never copies the event's title (D33, D49): the Event name stays empty.
+      title: null, startTime: '18:00', endTime: '21:00',
     },
   }]);
   // The file's own POST carries its text; no other write carries a title.

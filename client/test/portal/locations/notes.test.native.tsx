@@ -126,7 +126,7 @@ test('the form checks the API’s rules before it sends, then saves the note, se
   await fireEvent.changeText(screen.getByLabelText('Ends (optional)'), '');
   await fireEvent.changeText(screen.getByLabelText('Expected guests (optional)'), '0');
   await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
-  expect(screen.getByText('Add details for an Other note.')).toBeTruthy();
+  expect(screen.getByText('Add an event name or details for an Other note.')).toBeTruthy();
   expect(screen.getByText('Enter a whole number from 1 to 20,000.')).toBeTruthy();
   expect(writes(api)).toEqual([]);
 
@@ -150,7 +150,7 @@ test('the form checks the API’s rules before it sends, then saves the note, se
   expect(writes(api)).toEqual([{
     method: 'POST', path: PATH,
     body: { kind: 'private_event', startDate: day(5), endDate: day(5), weekdays: [5, 6], effect: 'more_guests', expectedGuests: 1200, detail: 'Alumni weekend dinner.',
-      startTime: null, endTime: null,
+      title: null, startTime: null, endTime: null,
     },
   }]);
   expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
@@ -192,7 +192,7 @@ test('an event takes hours and a closure none; a buyout takes its guests; the li
   expect(await screen.findByText('Saved.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: PATH,
-    body: { kind: 'private_event', startDate: day(6), endDate: day(6), weekdays: null, effect: 'closed', expectedGuests: 70, detail: null, startTime: '18:00', endTime: '21:00' },
+    body: { kind: 'private_event', startDate: day(6), endDate: day(6), weekdays: null, effect: 'closed', expectedGuests: 70, detail: null, title: null, startTime: '18:00', endTime: '21:00' },
   }]);
   const coming = screen.getByLabelText('Notes coming up');
   expect(within(coming).getByText('6 pm to 9 pm')).toBeTruthy();
@@ -214,7 +214,7 @@ test('Edit opens the note in the form and replaces it in full', async () => {
   expect(writes(api)).toEqual([{
     method: 'PATCH', path: `${PATH}/n1`,
     body: { kind: 'closure', startDate: day(10), endDate: day(12), weekdays: [1], effect: 'closed', expectedGuests: null, detail: 'Closed for the off-season.',
-      startTime: null, endTime: null,
+      title: null, startTime: null, endTime: null,
     },
   }]);
   expect(screen.getByText('Closed for the off-season.')).toBeTruthy();
@@ -377,4 +377,22 @@ test('at 768px an email is one text of its own and Edit and Delete share one row
   } finally {
     spy.mockRestore();
   }
+});
+
+test('a note’s event name (D49): Notes shows it, then the kind; Edit fills it and saves it', async () => {
+  const titled = noteOf('n5', { kind: 'private_event', startDate: day(15), endDate: day(15), effect: 'more_guests', expectedGuests: 30, title: 'Holiday party' });
+  const { api } = setup(meOf(ACCESS.admin), [titled]);
+  api.answers[`${PATH}/n5`] = (body) => saved('n5', body);
+  await renderApp('/locations/l1/notes', api);
+  const coming = await screen.findByLabelText('Notes coming up');
+  expect(within(coming).getByText('Holiday party')).toBeTruthy();
+  expect(within(coming).getByText('Private event')).toBeTruthy();
+  await fireEvent.press(within(coming).getByRole('button', { name: `Edit Private event note, ${formatDate(day(15))}` }));
+  const name = screen.getByLabelText('Event name (optional)');
+  expect(name.props.value).toBe('Holiday party');
+  expect(name.props.maxLength).toBe(120);
+  await fireEvent.changeText(name, 'Holiday party, upstairs');
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api).map((write) => [write.method, (write.body as { title?: unknown }).title])).toEqual([['PATCH', 'Holiday party, upstairs']]);
 });

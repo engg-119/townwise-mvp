@@ -102,7 +102,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 
 ## 4. Client: note form and note lists
 
-- [ ] 4.1 `client/src/portal/locations/NoteFields.tsx`, `NoteForm.tsx` and `noteRules.ts`:
+- [x] 4.1 `client/src/portal/locations/NoteFields.tsx`, `NoteForm.tsx` and `noteRules.ts`:
   - "Event name" after Kind, with its placeholder, helper and 120 limit;
   - filled on Edit, and left empty on Make a note;
   - an `other` note with only a title passes.

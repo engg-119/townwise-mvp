@@ -248,12 +248,25 @@ test('the note form on web: date inputs, pressed buttons, and the note it sends'
   fireEvent.click(monday);
   expect(monday.getAttribute('aria-pressed')).toBe('true');
   fireEvent.change(screen.getByRole('textbox', { name: 'Details (optional)' }), { target: { value: 'The patio opens.' } });
+  // The event name (D49): after Kind, optional, with its placeholder, helper and limit.
+  const name = screen.getByRole('textbox', { name: 'Event name (optional)' });
+  expect(name.getAttribute('placeholder')).toBe('Holiday party');
+  expect(name.getAttribute('maxlength')).toBe('120');
+  expect(screen.getByText('Name the event, not the guests.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Closure' }).compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(name.compareDocumentPosition(starts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  fireEvent.change(name, { target: { value: 'Patio season' } });
   fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved.')).toBeTruthy();
   expect(writes(api)).toEqual([{
     method: 'POST', path: '/api/org/locations/l1/notes',
-    body: { kind: 'opening', startDate: start, endDate: start, weekdays: [1], effect: 'unknown', expectedGuests: null, detail: 'The patio opens.', startTime: null, endTime: null },
+    body: {
+      kind: 'opening', startDate: start, endDate: start, weekdays: [1], effect: 'unknown', expectedGuests: null, detail: 'The patio opens.', title: 'Patio season',
+      startTime: null, endTime: null,
+    },
   }]);
+  // Notes shows the name, then the kind words, then the detail.
+  expect(screen.getByText('Patio season')).toBeTruthy();
 });
 
 test('Add a closure note opens the form; once the note is saved, the address drops ?new=closure', async () => {
