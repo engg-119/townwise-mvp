@@ -2,9 +2,14 @@
 // (openspec change suggest-closure-rules, D46): one builder for GET .../rules and GET .../agent. It reads the location's
 // open file and sales suggestions and writes nothing (spec 7.3). The rule's words and schedule are Townwise's own; the
 // file is named by its item ref and its name (none under view-as, as Your data hides it), or null once it is deleted.
-import type { MemberPrincipal } from '../access/policy.ts';
+// The sales history's suggestions are computed on read: listed as `sales_weekday_{d}` while no row holds their closure
+// key, and stored only when someone decides one (handlers/rule-suggestions.ts); once a row holds the key it is listed
+// under its own id while open, and hidden otherwise. [CONFIRM: the sales history suggests standing closed weekdays]
+import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
+import { closureKeyOf, closureRuleText } from './closure-suggestions.ts';
+import { questionWindow, salesSuggestionsFor, weekdayEvidence, type SalesSuggestion } from './questions.ts';
 import type { RuleSuggestionSource, SalesEvidence, SuggestionRecord } from '../stores/agent-suggestions.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -38,14 +43,45 @@ export function isLive(record: SuggestionRecord, today: string): boolean {
   return record.status === 'open' && (record.schedule.endDate === null || record.schedule.endDate >= today);
 }
 
-/** The location's open file and sales suggestions, oldest first. */
+/** A sales suggestion's id while it is computed, not stored: `sales_weekday_{d}`, 0 (Sunday) to 6. */
+export const SALES_ID = /^sales_weekday_([0-6])$/;
+
+/**
+ * The sales history's suggestions at the location now (questions.ts weekdayEvidence and salesSuggestionsFor), with no
+ * row checked: the window's days, its turned-off days, the done answers and the location's rules.
+ */
+export async function salesSuggestions(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<SalesSuggestion[]> {
+  const { salesDays, agentAnswers, businessRules } = ctx.stores;
+  const coverage = await salesDays.coverage(scope, locationId);
+  const window = questionWindow(coverage);
+  if (window === null) return [];
+  const [days, turnedOff, answers] = await Promise.all([
+    salesDays.days(scope, locationId, window), salesDays.disabledDates(scope, locationId, window), agentAnswers.list(scope, locationId),
+  ]);
+  const evidence = weekdayEvidence({ coverage, days, notes: [], answered: [], turnedOff });
+  if (evidence.length === 0) return [];
+  return salesSuggestionsFor({
+    evidence, answers: answers.filter((row) => row.status === 'done'), rules: await businessRules.list(scope, locationId), takenKeys: new Set(),
+  });
+}
+
+/** The location's open file and sales suggestions, oldest first, then the sales history's not yet stored. */
 export async function ruleSuggestionViews(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord): Promise<RuleSuggestionView[]> {
   const { scope } = caller;
   const rows = await ctx.stores.agentSuggestions.listOpenRules(scope, location.id, townToday(ctx, location));
   const fileIds = [...new Set(rows.flatMap((row) => (row.fileId === null ? [] : [row.fileId])))];
   const files = new Map((await ctx.stores.files.byIds(scope, fileIds)).map((file) => [file.id, file]));
   const hidden = caller.viewAs !== null;
-  return rows.flatMap((row): RuleSuggestionView[] => {
+  const computed: RuleSuggestionView[] = [];
+  for (const each of await salesSuggestions(ctx, scope, location.id)) {
+    // A row with the key is listed below while open (a file's, or this one stored), and hidden once decided.
+    if (await ctx.stores.agentSuggestions.findByKey(scope, location.id, closureKeyOf(each.schedule)) !== null) continue;
+    computed.push({
+      id: `sales_weekday_${String(each.weekday)}`, source: 'sales', text: closureRuleText(each.schedule), schedule: each.schedule,
+      scheduleSummary: scheduleSummary(each.schedule), file: null, evidence: each.evidence, canDecide: !hidden,
+    });
+  }
+  const stored = rows.flatMap((row): RuleSuggestionView[] => {
     if (row.type !== 'rule' || row.source === 'weekly') return [];
     const file = row.fileId === null ? undefined : files.get(row.fileId);
     return [{
@@ -54,4 +90,5 @@ export async function ruleSuggestionViews(ctx: TownwiseContext, caller: MemberPr
       evidence: row.evidence, canDecide: !hidden,
     }];
   });
+  return [...stored, ...computed];
 }

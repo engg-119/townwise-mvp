@@ -15,12 +15,14 @@
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
+import { Types } from 'mongoose';
 import { z } from 'zod';
 
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
-import { isLive, townToday } from '../agent/rule-suggestion-views.ts';
+import { closureKeyOf, closureRuleText } from '../agent/closure-suggestions.ts';
+import { isLive, SALES_ID, salesSuggestions, townToday } from '../agent/rule-suggestion-views.ts';
 import { utcDay } from '../dates.ts';
 import { authorEmail } from '../people.ts';
 import type { SuggestionRecord } from '../stores/agent-suggestions.ts';
@@ -31,8 +33,8 @@ import { readRuleSchedule } from './notes.ts';
 import { addRule, ruleTextOf, ruleView, sameSchedule, type RuleView } from './rules.ts';
 import { actorOf } from './team.ts';
 
-/** A stored suggestion's id. */
-const suggestionIdSchema = objectId;
+/** A stored suggestion's id, or a sales suggestion's not stored yet (`sales_weekday_{d}`). */
+const suggestionIdSchema = z.union([objectId, z.string().regex(SALES_ID)]);
 /** Confirm sends nothing; Edit sends the rule's words and its schedule (null or left out for none). */
 const acceptBody = z.strictObject({ rule: z.strictObject({ text: z.string().max(2000), schedule: z.unknown().optional() }).optional() });
 const dismissBody = z.strictObject({});
@@ -78,9 +80,49 @@ export async function finishAccepted(
   return true;
 }
 
-/** The file or sales suggestion the path names, of this location; 404 for a weekly one, an unknown id or another location's. */
+/** The Monday that starts `day`'s week. */
+function mondayOf(day: string): string {
+  const weekday = new Date(`${day}T00:00:00.000Z`).getUTCDay();
+  return utcDay(new Date(`${day}T00:00:00.000Z`), -((weekday + 6) % 7));
+}
+
+/**
+ * `sales_weekday_{d}` as a stored row: the row already holding its closure key (a file's, or one an earlier decide
+ * stored), else the sales history's evidence recomputed (404 when it no longer holds, as a stale question is) and
+ * stored open, under a new id; a racing decide that stored it first is found by the key, so two tabs end with one row.
+ */
+async function storedSalesSuggestion(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, weekday: number): Promise<RuleRecord> {
+  const { scope } = caller;
+  const store = ctx.stores.agentSuggestions;
+  const key = closureKeyOf({
+    kind: 'closure', startDate: '', endDate: null, weekdays: [weekday], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+  });
+  const byKey = async (): Promise<RuleRecord> => {
+    const row = await store.findByKey(scope, location.id, key);
+    if (row?.type !== 'rule' || row.source === 'weekly') throw notFound();
+    return row;
+  };
+  if (await store.findByKey(scope, location.id, key) !== null) return byKey();
+  const found = (await salesSuggestions(ctx, scope, location.id)).find((each) => each.weekday === weekday);
+  if (found === undefined) throw notFound();
+  const stored = await store.insertOne(scope, {
+    id: new Types.ObjectId().toHexString(), locationId: location.id, week: mondayOf(townToday(ctx, location)), source: 'sales',
+    text: closureRuleText(found.schedule), schedule: found.schedule, closureKey: key, evidence: found.evidence, now: ctx.now(),
+  });
+  if (stored === null) return byKey();
+  const { record } = stored;
+  if (record.type !== 'rule') throw notFound();
+  return record;
+}
+
+/**
+ * The file or sales suggestion the path names, of this location; 404 for a weekly one, an unknown id or another
+ * location's. A `sales_weekday_{d}` id is stored first (storedSalesSuggestion).
+ */
 async function suggestionOf(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, rawId: unknown): Promise<RuleRecord> {
   const id = parseInput(suggestionIdSchema, rawId);
+  const sales = SALES_ID.exec(id);
+  if (sales !== null) return storedSalesSuggestion(ctx, caller, location, Number(sales[1]));
   const record = await ctx.stores.agentSuggestions.find(caller.scope, location.id, id);
   if (record?.type !== 'rule' || record.source === 'weekly') throw notFound();
   return record;

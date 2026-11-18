@@ -111,7 +111,7 @@ describe('a member’s rules', () => {
       '_id', 'addedVia', 'createdAt', 'createdBy', 'key', 'locationId', 'orgId', 'text', 'updatedAt',
     ]);
     expect(stored).toMatchObject({ key: 'sentinel closed mondays', createdBy: author.session.userId });
-    expect(await listed(location)).toEqual({ rules: [rule], limit: 30 });
+    expect(await listed(location)).toEqual({ rules: [rule], limit: 30, suggested: [] });
 
     server.clock.advance(60_000);
     const res = await edit(location, rule.id, 'Sentinel closed Mondays and Tuesdays');
@@ -120,7 +120,7 @@ describe('a member’s rules', () => {
       ...rule, text: 'Sentinel closed Mondays and Tuesdays', updatedAt: server.clock.now().toISOString(),
     });
     expect((await remove(location, rule.id)).status).toBe(204);
-    expect(await listed(location)).toEqual({ rules: [], limit: 30 });
+    expect(await listed(location)).toEqual({ rules: [], limit: 30, suggested: [] });
     expect(await errorOf(await remove(location, rule.id))).toEqual({ status: 404, error: 'not_found' });
 
     const events = (await auditEvents(server)).filter((e) => (e.target as { id: string }).id === rule.id);

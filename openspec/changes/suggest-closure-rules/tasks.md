@@ -44,16 +44,16 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 
 ## 2. The sales source (its own sign-off: `[CONFIRM: the sales history suggests standing closed weekdays]`)
 
-- [ ] 2.1 `agent/questions.ts`:
+- [x] 2.1 `agent/questions.ts`:
   - export `weekdayEvidence(input)`: the same counted days and 60% of at least 4, plus the last 4 counted days without sales, and `lastSalesDate`;
   - `questionsFor` stops emitting weekday questions and keeps `closedWeekdays` for gaps;
   - `salesSuggestionsFor(...)` gives a schedule starting the day after `lastSalesDate` (or `from`), suppressed by an `open`, `not_sure` or `other` weekday answer, by an existing row with its key, and by `isSuggestable`.
-- [ ] 2.2 The builder of 1.10 adds sales suggestions: `sales_weekday_{d}` while no row has the key, the stored id while that row is open, none otherwise.
-- [ ] 2.3 `handlers/rule-suggestions.ts`: a `sales_weekday_[0-6]` id recomputes its evidence (404 when it no longer holds), then inserts the row (`source: 'sales'`, `closureKey`, `evidence`), or finds it by `closureKey` on a duplicate key, before the decision.
-- [ ] 2.4 `handlers/sales.ts`: deleting a location's sales data deletes its sales rows that are not accepted.
+- [x] 2.2 The builder of 1.10 adds sales suggestions: `sales_weekday_{d}` while no row has the key, the stored id while that row is open, none otherwise.
+- [x] 2.3 `handlers/rule-suggestions.ts`: a `sales_weekday_[0-6]` id recomputes its evidence (404 when it no longer holds), then inserts the row (`source: 'sales'`, `closureKey`, `evidence`), or finds it by `closureKey` on a duplicate key, before the decision.
+- [x] 2.4 `handlers/sales.ts`: deleting a location's sales data deletes its sales rows that are not accepted.
 - [ ] 2.5 Client: the card's sales origin line ("No sales on any Monday since Sep 7", then "{n} of {m} Mondays"). The panel no longer receives weekday questions; the question card still ignores unknown kinds.
 - [ ] 2.6 Docs: spec 10.12 and `tuning-chat.md` section 8 (the weekday question replaced, its evidence, the start rule).
-- [ ] 2.7 Tests:
+- [x] 2.7 Tests:
   - unit, in `api/test/agent-questions.test.ts`:
     - no weekday question;
     - the evidence and the recency bar;
@@ -167,7 +167,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - `listOpen` returns no file or sales row;
   - `alreadySuggested` holds no file or sales row;
   - a weekly rule matching a file row's key is dropped.
-- [ ] 6.6 Tenant isolation and the route table:
+- [x] 6.6 Tenant isolation and the route table:
   - another organization's suggestion id, a `sales_weekday_` id on another organization's location, and another organization's file answer 404 like unknown ones (`api/test/isolation.int.test.ts`);
   - `api/test/isolation.test.ts` import lists stay green;
   - `routes.test.ts` pins all four suggestion routes;

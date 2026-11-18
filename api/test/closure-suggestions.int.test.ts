@@ -580,3 +580,110 @@ describe('undoing a read', () => {
     expect((await rulesPage(locationId)).suggested).toEqual([expect.objectContaining({ source: 'file', file: null })]);
   });
 });
+
+// ---- The sales history ----------------------------------------------------------------------------------------------
+
+describe('the sales history', () => {
+  const DAY_MS = 86_400_000;
+  const plus = (day: string, days: number): string => new Date(Date.parse(`${day}T00:00:00.000Z`) + days * DAY_MS).toISOString().slice(0, 10);
+
+  /** Sales every day from 2026-03-02 (a Monday) to 2026-05-31, but on Mondays from `closedFrom` on. */
+  async function history(locationId: string, closedFrom = '2026-03-16', t = team): Promise<void> {
+    const rows: Record<string, unknown>[] = [];
+    for (let day = '2026-03-02'; day <= '2026-05-31'; day = plus(day, 1)) {
+      if (new Date(`${day}T00:00:00.000Z`).getUTCDay() === 1 && day >= closedFrom) continue;
+      rows.push({
+        orgId: oid(t.orgId), locationId: oid(locationId), date: day, guests: 80, netSalesCents: 200_000, uploadId: new Types.ObjectId(),
+        updatedAt: server.clock.now(),
+      });
+    }
+    await server.connection.collection('tw_sales_days').insertMany(rows);
+  }
+
+  it('lists a closed weekday as sales_weekday_1, starting after its last Monday with sales, with its counts; GET writes nothing; no weekday question', async () => {
+    const locationId = await newLocation();
+    await history(locationId);
+    const before = await count('tw_agent_suggestions', { locationId: oid(locationId) });
+    const { suggested } = await rulesPage(locationId);
+    expect(suggested).toEqual([{
+      id: 'sales_weekday_1', source: 'sales', text: 'Closed on Mondays',
+      schedule: { ...CLOSED, weekdays: [1], startDate: '2026-03-10', endDate: null },
+      scheduleSummary: 'Closed on Mondays from Mar 10, 2026', file: null,
+      evidence: { noSalesCount: 11, weekdayCount: 13, lastSalesDate: '2026-03-09' }, canDecide: true,
+    }]);
+    const agent = await panel(locationId);
+    expect(agent.ruleSuggestions).toEqual(suggested);
+    expect(agent.questions.some((question) => question.kind === 'weekday')).toBe(false);
+    expect(await count('tw_agent_suggestions', { locationId: oid(locationId) })).toBe(before);
+  });
+
+  it('two tabs confirming sales_weekday_1 make one row and one rule, recorded once; the card then lists nothing', async () => {
+    const locationId = await newLocation();
+    await history(locationId);
+    const [a, b] = await Promise.all([decide(team.member, locationId, 'sales_weekday_1', 'accept'), decide(team.colleague, locationId, 'sales_weekday_1', 'accept')]);
+    expect([a.status, b.status]).toEqual([200, 200]);
+    const rows = await server.connection.collection('tw_agent_suggestions').find({ locationId: oid(locationId) }).toArray();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      source: 'sales', status: 'accepted', closureKey: 'closed|w=1|ongoing', evidence: { noSalesCount: 11, weekdayCount: 13, lastSalesDate: '2026-03-09' },
+    });
+    const id = rows[0]?._id.toHexString() ?? '';
+    expect(await a.json()).toMatchObject({ suggestion: { id, status: 'accepted' }, rule: { id, text: 'Closed on Mondays', schedule: { startDate: '2026-03-10' } } });
+    expect(await count('tw_business_rules', { locationId: oid(locationId) })).toBe(1);
+    expect((await eventsOf('agent.suggestion_accepted')).filter((event) => (event.details as { suggestionId: string }).suggestionId === id).map((event) => event.details))
+      .toEqual([{ locationId, suggestionId: id, type: 'rule', source: 'sales', edited: false }]);
+    expect((await rulesPage(locationId)).suggested).toEqual([]);
+  });
+
+  it('a stale sales id answers 404 and writes nothing; an open answer to the weekday question suppresses it', async () => {
+    const locationId = await newLocation();
+    await history(locationId, '2026-05-25');
+    expect(await errorOf(await decide(team.member, locationId, 'sales_weekday_1', 'accept'))).toEqual({ status: 404, error: 'not_found' });
+    expect(await errorOf(await decide(team.member, locationId, 'sales_weekday_2', 'dismiss'))).toEqual({ status: 404, error: 'not_found' });
+    expect(await count('tw_agent_suggestions', { locationId: oid(locationId) })).toBe(0);
+    const answered = await newLocation();
+    await history(answered);
+    await server.connection.collection('tw_agent_answers').insertOne({
+      orgId: oid(team.orgId), locationId: oid(answered), questionId: 'weekday_1_2026-03-02_2026-05-17', answer: 'open', noteId: new Types.ObjectId(),
+      status: 'done', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+    });
+    expect((await rulesPage(answered)).suggested).toEqual([]);
+    expect(await errorOf(await decide(team.member, answered, 'sales_weekday_1', 'accept'))).toEqual({ status: 404, error: 'not_found' });
+  });
+
+  it('a file row and a sales decide with one key make one row: the file suggestion is listed and decided', async () => {
+    const { locationId, fileId } = await readWith({ closedPatterns: [MONDAYS] });
+    await history(locationId);
+    const { suggested } = await rulesPage(locationId);
+    expect(suggested).toEqual([expect.objectContaining({ source: 'file', file: expect.objectContaining({ ref: `f_${fileId}` }) as unknown })]);
+    const res = await decide(team.member, locationId, 'sales_weekday_1', 'dismiss');
+    expect(await res.json()).toEqual({ suggestion: { id: suggested[0]?.id, status: 'dismissed' }, rule: null });
+    expect(await count('tw_agent_suggestions', { locationId: oid(locationId) })).toBe(1);
+    // Dismissed is remembered: the sales history never suggests Mondays again.
+    expect((await rulesPage(locationId)).suggested).toEqual([]);
+  });
+
+  it('deleting the sales data deletes its sales suggestions not accepted, so a new history can suggest again', async () => {
+    const dismissed = await newLocation();
+    await history(dismissed);
+    expect((await decide(team.member, dismissed, 'sales_weekday_1', 'dismiss')).status).toBe(200);
+    const accepted = await newLocation();
+    await history(accepted);
+    expect((await decide(team.member, accepted, 'sales_weekday_1', 'accept')).status).toBe(200);
+    for (const locationId of [dismissed, accepted]) {
+      expect((await call(server, `/api/org/locations/${locationId}/sales`, { method: 'DELETE', session: team.admin })).status).toBe(200);
+    }
+    expect(await count('tw_agent_suggestions', { locationId: oid(dismissed) })).toBe(0);
+    expect(await count('tw_agent_suggestions', { locationId: oid(accepted), status: 'accepted' })).toBe(1);
+    await history(dismissed);
+    expect((await rulesPage(dismissed)).suggested.map((each) => each.id)).toEqual(['sales_weekday_1']);
+  });
+
+  it('sales_weekday_1 on another organization’s location answers 404 as an unknown location does', async () => {
+    const other = await newTeam();
+    const theirs = await newLocation(other);
+    await history(theirs, '2026-03-16', other);
+    expect(await errorOf(await decide(team.member, theirs, 'sales_weekday_1', 'accept'))).toEqual({ status: 404, error: 'not_found' });
+    expect(await count('tw_agent_suggestions', { locationId: oid(theirs) })).toBe(0);
+  });
+});
