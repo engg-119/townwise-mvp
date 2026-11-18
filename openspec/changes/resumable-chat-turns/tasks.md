@@ -42,4 +42,4 @@ Tests first in every group. Run single suites only (`npm test -w @townwise/api -
 ## 6. Review and verification
 
 - [ ] 6.1 `/review` of the whole branch, then `/verify` (`npm run verify`), after checking with the release session that the laptop is free.
-- [ ] 6.2 Owner browser check on the local dev servers: send, refresh mid-reply, see it finish; Stop; switch off Wi-Fi mid-reply and back on. Push only after the owner's go.
+- [ ] 6.2 Independent browser check on local dev servers by an agent that did not build it, in place of an owner check (owner, 2026-11-17: "you don't need my browser check if an independent agent reviews it and is confident in the ui flow"): send, refresh mid-reply, see it finish; Stop; drop the network mid-reply and restore it. Done only when that agent is confident in the flow. Push only after the owner's go.
