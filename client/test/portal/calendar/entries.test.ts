@@ -104,10 +104,12 @@ test('folded is lower case with each run of white space one space, trimmed', () 
 });
 
 test('notNamed leaves out the entries a shown reason already names', () => {
+  const shown = note({ startDate: DAY, title: 'Holiday party' });
   const day = dayEntries(DAY, sources({
-    notes: [note({ startDate: DAY, title: 'Holiday party' })], events: [VETERANS], imported: [imported({ title: 'Staff day' })],
+    notes: [shown, note({ startDate: DAY, title: 'Holiday party' })], events: [VETERANS], imported: [imported({ title: 'Staff day' })],
   }));
-  expect(notNamed(day, ['VETERANS day', 'holiday party']).map((entry) => entry.words)).toEqual(['Staff day']);
+  // A note goes only by its own shown reason (its id); the second note with the same title stays.
+  expect(notNamed(day, ['VETERANS day', 'holiday party'], new Set([shown.id])).map((entry) => entry.words)).toEqual(['Holiday party', 'Staff day']);
 });
 
 test('fitLines shows every line up to the limit, else one fewer and “+N more”', () => {

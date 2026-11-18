@@ -257,6 +257,18 @@ test('a note reason is followed by its note’s title, and the tooltip names tha
   expect(cellOf(calendarMonth('2026-11', titled), '2026-11-21').chips).toEqual(['Holiday party', 'Dartmouth home football', 'Wine delivery']);
 });
 
+test('a note reason’s title never hides a second note with the same title (D49)', () => {
+  const shown = { ...PARTY, id: 'n1', title: 'Holiday party' };
+  const second = note({ startDate: '2026-11-21', title: 'Holiday party', kind: 'other' });
+  const lines = tooltipLines('2026-11-21', input({ notes: [shown, second], imported: [] }))?.lines ?? [];
+  expect(lines).toContain('Your private event, 70 guests, 6 pm to 9 pm: Holiday party');
+  // The second note has no reason of its own, so it shows as an entry.
+  expect(lines.filter((line) => line === 'Holiday party')).toHaveLength(1);
+  // A town entry of the same name from another source still goes.
+  const town = input({ notes: [shown], imported: [], events: [townEvent({ start: '2026-11-21', title: 'Holiday party' })] });
+  expect(tooltipLines('2026-11-21', town)?.lines.filter((line) => line === 'Holiday party')).toEqual([]);
+});
+
 test('a status never hides an entry: a closed day lists its rule and its named event (D49)', () => {
   const closed = forecastDay({ date: '2026-11-24', status: 'closed', low: null, mid: null, high: null, reasons: [] });
   const fields = {

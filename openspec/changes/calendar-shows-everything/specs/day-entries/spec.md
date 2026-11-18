@@ -56,7 +56,7 @@ A cell's screen reader label SHALL say its status and every entry.
 - **THEN** its cell shows corner marks and no entry lines, and the day panel lists all three
 
 ### Requirement: Compact surfaces show a title once
-On the month cell, the tooltip, the week cards, Home's This week and Home's month list, an entry whose title equals an earlier entry's from a different source on the same day, compared in lower case with each run of white space as one space and trimmed, SHALL NOT be shown. The sources are the notes, the rules, the town calendar and each of the location's calendars. Two notes, two rules, or two events of one calendar SHALL never be merged, and kind words made in code (an untitled note) SHALL never be merged. The tooltip SHALL also leave out an entry whose folded words equal a shown reason's label or a shown note reason's title. The day panel and Home's day detail SHALL list each entry with its source.
+On the month cell, the tooltip, the week cards, Home's This week and Home's month list, an entry whose title equals an earlier entry's from a different source on the same day, compared in lower case with each run of white space as one space and trimmed, SHALL NOT be shown. The sources are the notes, the rules, the town calendar and each of the location's calendars. Two notes, two rules, or two events of one calendar SHALL never be merged, and kind words made in code (an untitled note) SHALL never be merged. The tooltip SHALL also leave out a note or rule whose own reason it shows, and any other entry whose folded words equal a shown reason's label or a shown note reason's title; a note or rule SHALL never be left out for its words alone, so a second note with a shown note's title stays. The day panel and Home's day detail SHALL list each entry with its source.
 
 #### Scenario: Veterans Day from two sources
 - **WHEN** Nov 11 has the town calendar's "Veterans Day" and an imported "Veterans day " from the owner's linked calendar
@@ -65,6 +65,10 @@ On the month cell, the tooltip, the week cards, Home's This week and Home's mont
 #### Scenario: Two titled notes
 - **WHEN** a day has two notes both titled "Holiday party"
 - **THEN** the cell shows "Holiday party" twice
+
+#### Scenario: Two titled notes, one of them a shown reason
+- **WHEN** a day has two notes both titled "Holiday party", and only one of them is among the tooltip's shown reasons
+- **THEN** the tooltip names the first after its reason and lists the second as an entry
 
 #### Scenario: Two events of one calendar
 - **WHEN** one imported calendar has "Private party" at 12:00 and "Private party" at 18:00 on one day

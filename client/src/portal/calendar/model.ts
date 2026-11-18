@@ -784,8 +784,7 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
     for (const id of [reason.note?.id, reason.rule?.id]) if (id !== undefined) shownIds.add(id);
     lines.push(title === null ? line : `${line}: ${title}`);
   }
-  const unnamed = notNamed(compactEntries(dayEntries(date, input)), names).filter((entry) =>
-    !(entry.kind === 'note' && shownIds.has(entry.note.id)) && !(entry.kind === 'rule' && shownIds.has(entry.rule.id)));
+  const unnamed = notNamed(compactEntries(dayEntries(date, input)), names, shownIds);
   const entries = fitLines(unnamed.map((entry) => entry.words), TOOLTIP_ENTRIES);
   lines.push(...entries.lines, ...(entries.more === null ? [] : [entries.more]));
   return lines.length === 0 ? null : { date: shortDate(date), lines };

@@ -135,10 +135,18 @@ export function compactEntries<T extends Pick<DayEntry, 'group' | 'title'>>(entr
   });
 }
 
-/** The entries whose words no shown name says (folded): the tooltip leaves out what its reasons already name. */
-export function notNamed<T extends Pick<DayEntry, 'words'>>(entries: readonly T[], names: readonly string[]): T[] {
+/**
+ * The entries the tooltip's reasons do not already name. A note or rule is left out only when its own reason is shown
+ * (by id), so a second note with the same title is never hidden; any other entry when its folded words equal a shown
+ * name (a reason's label or a note reason's title).
+ */
+export function notNamed(entries: readonly DayEntry[], names: readonly string[], shownIds: ReadonlySet<string>): DayEntry[] {
   const shown = new Set(names.map(folded));
-  return entries.filter((entry) => !shown.has(folded(entry.words)));
+  return entries.filter((entry) => {
+    if (entry.kind === 'note') return !shownIds.has(entry.note.id);
+    if (entry.kind === 'rule') return !shownIds.has(entry.rule.id);
+    return !shown.has(folded(entry.words));
+  });
 }
 
 /** A surface's lines at its limit: every line when they fit, else one fewer and “+N more” for the rest. */

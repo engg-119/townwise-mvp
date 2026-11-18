@@ -126,7 +126,7 @@ Every cell's screen reader label says the status and every entry, as today, with
   - Doing it in the API means Why, the tooltip, Home and TownwiseAI's `get_forecast` all agree.
   - The audit notes (its N3) that the owner's duplicate was in a cell, not in Why, and that this step could be dropped. Claude keeps it: a holiday reason and an event reason that resolve to one town entry do occur, and the fix is a few lines in one function with one caller (`forecasts/reader.ts`).
   - The run files are unchanged, and live accuracy does not read reasons.
-- **Reasons against entries.** The tooltip leaves out an entry whose folded words equal a shown reason's label or a note reason's title. The day panel already leaves out town entries that Why names (`dayView` `inWhy`), and keeps doing so.
+- **Reasons against entries.** The tooltip leaves out a note or rule whose own reason it shows (by id), and any other entry (town or imported) whose folded words equal a shown reason's label or a note reason's title. A note or rule is never left out for its words, so a second note sharing a shown note's title still shows (code review SF1). The day panel already leaves out town entries that Why names (`dayView` `inWhy`), and keeps doing so.
 
 ### 5. Source links
 
