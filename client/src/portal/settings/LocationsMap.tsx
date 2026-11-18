@@ -114,7 +114,7 @@ function LocationRow(props: {
   const town = `${location.town.name}, ${location.town.state}`;
   const placeId = location.placeId ?? null;
   // With one location the shown name is the organization's, so the location's own name is said once here.
-  const where = org.locations.length === 1 && location.name.trim() !== shown.trim() ? `${location.name}, ${town}` : town;
+  const where = org.locations.length === 1 && location.name.trim().toLowerCase() !== shown.trim().toLowerCase() ? `${location.name}, ${town}` : town;
   const disabled = readOnly ? { disabled: true, describedBy: SETTINGS_READ_ONLY_ID } : {};
   return (
     <View role="listitem" style={styles.row}>
@@ -144,7 +144,9 @@ function MapsLink(props: { url: string; label: string }): React.JSX.Element {
     : { onPress: () => { void Linking.openURL(props.url).catch(() => undefined); } };
   return (
     <Pressable role="link" accessibilityLabel={props.label} {...open} style={styles.mapsLink}>
-      <Text style={[theme.type.small, styles.mapsText]}>{LOCATIONS_MAP_COPY.openInMaps}</Text>
+      {({ hovered }: { hovered?: boolean }) => (
+        <Text style={[styles.mapsText, hovered === true ? styles.mapsHover : null]}>{LOCATIONS_MAP_COPY.openInMaps}</Text>
+      )}
     </Pressable>
   );
 }
@@ -163,5 +165,7 @@ const styles = StyleSheet.create({
   letter: { color: theme.color.onMint, fontWeight: 600 },
   text: { flex: 1, gap: 2 },
   mapsLink: { minHeight: 44, justifyContent: 'center' },
-  mapsText: { color: theme.color.white, textDecorationLine: 'underline' },
+  // As LinkButton's link variant (ui/Button.tsx), so the row's two links match.
+  mapsText: { ...theme.type.ui, color: theme.color.white, textDecorationLine: 'underline', textDecorationColor: theme.color.line },
+  mapsHover: { color: theme.color.mint, textDecorationColor: theme.color.mint },
 });

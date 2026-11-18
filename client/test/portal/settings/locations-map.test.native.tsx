@@ -12,7 +12,7 @@ import { cleanup, screen, waitFor } from 'expo-router/testing-library';
 import { resetProfiles } from '../../../src/portal/profile/useProfile';
 import type { LocationSummary } from '../../../src/portal/schemas';
 import { countsLine, googleMapsUrl, lettered, LOCATIONS_MAP_COPY, mentionedLine } from '../../../src/portal/settings/LocationsMap';
-import { ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, fakePortalApi, LOCATIONS, locationOf, meOf, orgOf, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { mapOf } from '../onboarding/places-fakes';
 import { withRoutes } from '../team/fixtures';
@@ -116,6 +116,24 @@ describe('P18 Settings: the map of every location (D47)', () => {
     expect(await screen.findByText('A')).toBeTruthy();
     // One location: the organization's name leads, and the location's own name is said once with its town.
     expect(screen.getByText('Main Street Bar, Hanover, NH')).toBeTruthy();
+  });
+
+  test('a member sees the counts and Google Maps but no Location settings', async () => {
+    const { api } = setup({ role: 'member', locations: [{ ...FIRST, placeId: 'ChIJTestPlace0001' }, SECOND] });
+    await renderApp('/settings', api);
+    expect(await screen.findByRole('link', { name: 'Open in Google Maps: Main Street Bar' })).toBeTruthy();
+    expect(screen.queryByRole('link', { name: /^Location settings for/ })).toBeNull();
+    expect(screen.getAllByText(/days? of sales · \d+ notes?$/).length).toBe(2);
+  });
+
+  test('under view-as Location settings is disabled and described by the read-only line', async () => {
+    const { api } = setup({ locations: [{ ...FIRST, placeId: 'ChIJTestPlace0001' }] });
+    api.me = viewAsMe(ACCESS.admin);
+    await renderApp('/settings', api);
+    // A disabled LinkButton renders as a disabled button (ui/Button.tsx), as every write on Settings does under view-as.
+    const link = await screen.findByRole('button', { name: 'Location settings for Test Group' });
+    expect(link.props.accessibilityState).toMatchObject({ disabled: true });
+    expect(screen.queryByRole('link', { name: 'Location settings for Test Group' })).toBeNull();
   });
 
   test('with the Places search off, an unlinked location has no link to find it', async () => {
