@@ -132,7 +132,7 @@ Examples: `closed|w=1|ongoing`, `closed|w=*|2027-01-04..2027-03-31`, `closed|w=*
 - a closure rule of the location already covers it (for a standing one, an ongoing closure rule on the same weekdays or more; otherwise the same key);
 - a rule **with a schedule** has its words in any case.
 
-A rule with the same words and no schedule (a pre-D31 "Closed on Mondays") does not block the suggestion, since it closes nothing (audit N3). Confirming it then answers 409 `rule_exists`, and the card says "A rule with these words is saved without a schedule. Add the schedule to it on Business rules." with a link to that rule's edit.
+A rule with the same words and no schedule (a pre-D31 "Closed on Mondays") does not block the suggestion, since it closes nothing (audit N3). Confirming it then answers 409 `rule_exists`, and the card says "A rule with these words is already saved. Edit that rule, or change these words with Edit." (UI review S3: the earlier wording was false when the saved rule already had a schedule).
 
 **The weekly pass.** It drops a rule suggestion whose key matches a file or sales row, and no longer sends file or sales rows in `alreadySuggested` (decision 10).
 
