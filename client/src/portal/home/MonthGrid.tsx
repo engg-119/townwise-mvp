@@ -3,12 +3,13 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import { monthEntryLines, WIDE_CELL_HEIGHT, type MonthCell } from '../analytics/week';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
-import { statusWord, type TooltipLines } from '../calendar/model';
+import { figureTone, statusWord, type TooltipLines } from '../calendar/model';
 import { useBreakpoint } from '../hooks';
 import { MARK, MonthKey } from './MonthKey';
 
-// This month as a grid (spec P11), Monday first: each day's number, its figure (stored before today, the published
-// forecast's middle figure from today on with a mint "+70" when notes added guests, a buyout's party), "Closed",
+// This month as a grid (spec P11), Monday first: each day's number, its figure (stored before today, solid `white`; a
+// forecast, lighter after a "~" with "forecast" under it, D49 decision 10: the published forecast's middle figure from
+// today on with a mint "+70" when notes added guests, the run's figure for a past day with none stored, a buyout's party), "Closed",
 // "Likely closed" (a past day with near-empty guests, spec D32) or "Booked" (in at most two lines, the type shrinking to
 // fit a narrow cell), the Calendar's caption under a figure ("forecast" on a past day with only the run's figure, D49),
 // up to two entry lines in a cell at least 88px wide (`wide`, 96px tall), else a white corner mark for a holiday or town
@@ -35,6 +36,8 @@ export interface MonthGridProps {
   wide?: boolean;
   /** Under the key: "Open the calendar" (D49). */
   footer?: React.ReactNode;
+  /** Home's metric, which names the key's actual (“Actual sales” in net sales). */
+  metric?: 'guests' | 'netSales';
 }
 
 const WEEKDAY_HEAD = WEEK_ORDER.map((day) => (WEEKDAY_NAMES[day] ?? '').slice(0, 3));
@@ -68,7 +71,7 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
                 )}
                 {cell.figure === null ? null : (
                   <View style={styles.middle}>
-                    <Text style={[styles.figure, { fontSize: figureSize, lineHeight: figureSize + 4 }, cell.figure.kind === 'actual' ? styles.past : null]}>
+                    <Text style={[styles.figure, { fontSize: figureSize, lineHeight: figureSize + 4 }, figureTone(cell.figure) === 'text2' ? styles.forecast : null]}>
                       {cell.figureText}
                     </Text>
                     {cell.noteGuests > 0 ? <Text style={styles.added}>{`+${String(cell.noteGuests)}`}</Text> : null}
@@ -87,7 +90,7 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
           </View>
         ))}
       </View>
-      <MonthKey />
+      <MonthKey {...(props.metric === undefined ? {} : { metric: props.metric })} />
       {props.footer}
     </View>
   );
@@ -124,7 +127,7 @@ const styles = StyleSheet.create({
   status: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text2, textTransform: 'uppercase' },
   middle: { alignItems: 'center' },
   figure: { ...theme.type.monoValue, color: c.white, fontVariant: ['tabular-nums'] },
-  past: { color: c.text2 },
+  forecast: { color: c.text2 },
   added: { ...theme.type.mono, color: c.mint, fontVariant: ['tabular-nums'] },
   event: { position: 'absolute', top: 0, right: 0, width: MARK, height: MARK, backgroundColor: c.white },
   note: { position: 'absolute', bottom: 0, left: 0, width: MARK, height: MARK, backgroundColor: c.text2 },

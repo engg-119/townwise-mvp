@@ -45,7 +45,7 @@ const SATURDAY = '2026-11-21';
 /** The list here answers without `google` (Google calendars off), so the line names no Google connect. */
 const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
-const LABEL = 'Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.';
+const LABEL = 'Sat, Nov 21, 2026. 212 guests, forecast, likely 180 to 240. Dartmouth home football.';
 
 function november(guests = 0): unknown {
   const days = [];
@@ -270,4 +270,25 @@ test('a closed-by-rule day with a named event: its label names both, its panel s
   expect(within(panel()).getByText('Your rule: Closed Tuesdays in winter')).toBeTruthy();
   await fireEvent.press(within(panel()).getByRole('link', { name: 'US holidays. Opens this calendar in Your data' }));
   await waitFor(() => { expect(router.getPathname()).toBe(`/locations/l1/data/c_${id}`); });
+});
+
+test('on native too: the key names an actual and a forecast, and a past day says how its forecast did (D49)', async () => {
+  const past = forecastDay({ date: '2026-11-07', low: 120, mid: 135, high: 150, actual: 138, inRange: true, scored: true, madeAt: '2026-11-02' });
+  const forecast = november() as { days: ReturnType<typeof forecastDay>[] };
+  const fake = calendarFake({
+    events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': forecastOf([past, ...forecast.days]) },
+    days: [{ date: '2026-11-07', guests: 138, netSalesCents: 276_000 }],
+  });
+  const me = meOf(ACCESS.member);
+  await renderApp('/locations/l1/calendar?day=2026-11-07', fakePortalApi({ me, org: orgOf('member'), fallback: fake }));
+  expect(await screen.findByText('Sat, Nov 7, 2026')).toBeTruthy();
+  // The key is hidden from screen readers: each cell's label says it.
+  const key = screen.getByTestId('figure-key', { includeHiddenElements: true });
+  expect(within(key).getByText('Actual guests', { includeHiddenElements: true })).toBeTruthy();
+  expect(within(key).getByText('~82', { includeHiddenElements: true })).toBeTruthy();
+  expect(within(panel()).getByText('Actual guests')).toBeTruthy();
+  expect(await screen.findByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  expect(screen.getByLabelText('Sat, Nov 7, 2026. 138 guests, actual.')).toBeTruthy();
+  expect(within(screen.getByLabelText(LABEL)).getByText('~212')).toBeTruthy();
+  expect(within(panel()).getByText('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.')).toBeTruthy();
 });

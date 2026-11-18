@@ -9,7 +9,7 @@ import {
   eventLine, monthDay, monthFactPhrase, monthFactsHead, monthGrid, monthItems, WIDE_CELL, type HomeInput, type MonthFact,
 } from '../analytics/week';
 import { MONTH_NAMES, type Metric } from '../analytics/words';
-import { dayView, tooltipLines, type CalendarInput } from '../calendar/model';
+import { dayView, monthCheckLine, pastForecastLines, tooltipLines, type CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint, type LoadState } from '../hooks';
@@ -66,6 +66,9 @@ export function ThisMonth(props: {
   const day = useMemo(() => monthDay(shown, input), [shown, input]);
   const view = useMemo(() => dayView(shown, entries), [shown, entries]);
   const forecastDay = shown >= today ? forecastDays.get(shown) ?? null : null;
+  // Before today: how the day's forecast did, or the run's figure with no data (D49, design decision 11).
+  const pastForecast = useMemo(() => pastForecastLines(shown, entries), [shown, entries]);
+  const monthLine = useMemo(() => monthCheckLine(today.slice(0, 7), entries), [today, entries]);
   return (
     <Block label={`This month in ${town.name}`} eyebrow={label} title={`This month in ${town.name}`}>
       <Small>{Platform.OS === 'web' ? 'Point at a day to see what’s on it. Choose one to open it in the Calendar.' : 'Tap a day to open it in the Calendar.'}</Small>
@@ -74,7 +77,13 @@ export function ThisMonth(props: {
           <MonthGrid
             rows={rows}
             wide={wide}
-            footer={<View style={styles.open}><LinkButton href={calendarHref(locationId)} label="Open the calendar" /></View>}
+            metric={metric}
+            footer={(
+              <>
+                {monthLine === null ? null : <Small>{monthLine}</Small>}
+                <View style={styles.open}><LinkButton href={calendarHref(locationId)} label="Open the calendar" /></View>
+              </>
+            )}
             selected={selected}
             onSelect={(date) => { setPreview(null); setSelected(date); }}
             onPreview={setPreview}
@@ -84,7 +93,9 @@ export function ThisMonth(props: {
           />
         </View>
         <View style={styles.detailSide}>
-          <DayDetail day={day} forecast={forecastDay} metric={metric} history={history} locationId={locationId} board={props.board} view={view} />
+          <DayDetail
+            day={day} forecast={forecastDay} pastForecast={pastForecast} metric={metric} history={history} locationId={locationId} board={props.board} view={view}
+          />
         </View>
       </View>
     </Block>

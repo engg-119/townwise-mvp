@@ -10,7 +10,8 @@ jest.mock('expo-splash-screen', () => ({
 }));
 
 import * as SecureStore from 'expo-secure-store';
-import { cleanup, fireEvent, screen } from 'expo-router/testing-library';
+import { StyleSheet } from 'react-native';
+import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
 import type { Calendar } from '../../../src/portal/analytics/api';
 import type { DayRecord } from '../../../src/portal/analytics/history';
@@ -19,6 +20,7 @@ import { REORDER_OVERVIEW } from '../../../src/portal/home/beside';
 import { forecastLine } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
+import { theme } from '../../../src/theme';
 import { ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
@@ -246,7 +248,7 @@ test('with a published forecast, each day from today shows its figure and the le
   const days = [];
   for (let day = 5; day <= 30; day += 1) days.push(forecastDay({ date: `2026-11-${String(day).padStart(2, '0')}` }));
   await renderApp('/locations/l1', portal({ forecast: forecastOf(days) }));
-  expect(await screen.findByLabelText('Wed, Nov 11, 2026. This week. Forecast about 212 guests, 180 to 240. Veterans Day.')).toBeTruthy();
+  expect(await screen.findByLabelText('Wed, Nov 11, 2026. This week. 212 guests, forecast, likely 180 to 240. Veterans Day.')).toBeTruthy();
   expect(screen.queryByText(FORECAST_LINE)).toBeNull();
   expect(screen.queryByText('In progress')).toBeNull();
   // The selected day (today) gives its forecast.
@@ -481,4 +483,22 @@ test('the day detail’s Reorder explanation opens from “How Townwise builds a
   await fireEvent.press(how);
   expect(screen.getByRole('button', { name: 'How Townwise builds an order' }).props.accessibilityState).toMatchObject({ expanded: true });
   expect(screen.getByText(REORDER_OVERVIEW)).toBeTruthy();
+});
+
+test('on native too, This month marks a forecast and an actual apart, keys both, and says how the month’s forecast did (D49)', async () => {
+  const days = [forecastDay({ date: '2026-11-04', low: 90, mid: 100, high: 120, actual: 110, inRange: true, scored: true, madeAt: '2026-11-02' })];
+  for (let day = 5; day <= 30; day += 1) days.push(forecastDay({ date: `2026-11-${String(day).padStart(2, '0')}` }));
+  await renderApp('/locations/l1', portal({ forecast: forecastOf(days) }));
+  const today = await screen.findByLabelText(/^Thu, Nov 5, 2026\. Today\. This week\. 212 guests, forecast/);
+  const past = screen.getByLabelText('Wed, Nov 4, 2026. 110 guests, actual.');
+  expect(screen.getByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  const key = screen.getByTestId('month-key', { includeHiddenElements: true });
+  expect(within(key).getByText('Actual guests', { includeHiddenElements: true })).toBeTruthy();
+  expect(within(key).getByText('~82', { includeHiddenElements: true })).toBeTruthy();
+  // The forecast's figure, after its “~”, is lighter than the actual's, with “forecast” under it.
+  const colorOf = (node: { props: { style?: unknown } }): unknown => (StyleSheet.flatten(node.props.style as never) as { color?: unknown }).color;
+  expect(colorOf(within(today).getByText('~212'))).toBe(theme.color.text2);
+  expect(within(today).getByText('forecast')).toBeTruthy();
+  expect(colorOf(within(past).getByText('110'))).toBe(theme.color.white);
+  expect(within(past).queryByText('forecast')).toBeNull();
 });

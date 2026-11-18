@@ -4,6 +4,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { COPY } from '../../../src/portal/errors';
+import type { ForecastDay } from '../../../src/portal/estimates/api';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
@@ -206,8 +207,8 @@ test('opens at ?day= with that day selected and in the sidebar', async () => {
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   expect(cell('2026-11-21').getAttribute('tabindex')).toBe('0');
   // Each cell's label says everything it shows; a past day shows its stored guests, never a forecast.
-  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.');
-  expect(cell('2026-11-07').getAttribute('aria-label')).toBe('Sat, Nov 7, 2026. 138 guests.');
+  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. 212 guests, forecast, likely 180 to 240. Dartmouth home football.');
+  expect(cell('2026-11-07').getAttribute('aria-label')).toBe('Sat, Nov 7, 2026. 138 guests, actual.');
   expect(cell('2026-11-07').textContent).toContain('138');
   const day = panel();
   expect(within(day).getByRole('heading', { name: 'Sat, Nov 21, 2026' })).toBeTruthy();
@@ -414,7 +415,7 @@ test('turning off Town events hides their chips but not the figures', async () =
   expect(filter.getAttribute('aria-pressed')).toBe('false');
   expect(cell('2026-11-21').textContent).not.toContain('Dartmouth home football');
   expect(cell('2026-11-21').textContent).toContain('212');
-  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240.');
+  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. 212 guests, forecast, likely 180 to 240.');
   // The panel's calendar list follows the filter; the forecast's own reasons stay.
   expect(within(panel()).queryByText('Dartmouth home football. Town event.')).toBeNull();
   expect(within(panel()).getByText('Dartmouth home football')).toBeTruthy();
@@ -704,7 +705,7 @@ test('hovering a day shows the tooltip with its range and top reasons; touch doe
   const tip = screen.getByTestId('calendar-tooltip');
   expect(tip.getAttribute('aria-hidden')).toBe('true');
   expect(tip.textContent).toContain('Sat, Nov 21, 2026');
-  expect(tip.textContent).toContain('About 212 guests (180 to 240)');
+  expect(tip.textContent).toContain('212 guests, forecast (likely 180 to 240)');
   expect(tip.textContent).toContain('Dartmouth home football');
   // Hovering never selects.
   expect(cell('2026-11-11').getAttribute('aria-selected')).toBe('true');
@@ -864,11 +865,11 @@ test('a closed day with a named event shows its status word and both entries; a 
   expect(closed.textContent).toBe('24ClosedHoliday partyClosed Tuesdays in winter');
   expect(closed.getAttribute('aria-label')).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
   const booked = cell('2026-11-11');
-  expect(booked.textContent).toBe('11Booked60Rehearsal dinnerVeterans Day');
+  expect(booked.textContent).toBe('11Booked~60Rehearsal dinnerVeterans Day');
   // The tooltip: the status line, the buyout's reason with its note's name, then the holiday no reason names.
   fireEvent(booked, pointer('pointerover', 'mouse'));
   expect(within(screen.getByTestId('calendar-tooltip')).getAllByText(/./).map((line) => line.textContent)).toEqual(expect.arrayContaining([
-    'Booked: a private buyout, 60 guests', 'Your private buyout, 60 guests: Rehearsal dinner', 'Veterans Day',
+    'Booked: a private buyout, 60 guests, forecast', 'Your private buyout, 60 guests: Rehearsal dinner', 'Veterans Day',
   ]));
 });
 
@@ -879,4 +880,22 @@ test('at phone width a cell shows corner marks and no entry lines, and its label
   const closed = cell('2026-11-24');
   expect(closed.textContent).toBe('24Closed');
   expect(closed.getAttribute('aria-label')).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
+});
+
+test('the key names an actual and a forecast, a past day says how its forecast did, and the month how many landed (D49)', async () => {
+  // Nov 7: 138 stored guests against a run made Nov 2 that said 120 to 150.
+  const past = forecastDay({ date: '2026-11-07', low: 120, mid: 135, high: 150, actual: 138, inRange: true, scored: true, madeAt: '2026-11-02' });
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': forecastOf([past, ...(november() as { days: ForecastDay[] }).days]) } });
+  await renderAt('/locations/l1/calendar?day=2026-11-07', api);
+  const key = screen.getByTestId('figure-key');
+  expect(key.textContent).toBe('94Actual guests~82Forecast');
+  expect(await screen.findByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  expect(cell('2026-11-07').getAttribute('aria-label')).toBe('Sat, Nov 7, 2026. 138 guests, actual.');
+  expect(cell('2026-11-21').querySelector('[data-figure]')?.textContent).toBe('~212');
+  const day = panel();
+  expect(within(day).getByText('Actual guests')).toBeTruthy();
+  expect(within(day).getByText('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.')).toBeTruthy();
+  // The tooltip says it too.
+  fireEvent.pointerOver(cell('2026-11-07'), { pointerType: 'mouse' });
+  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('138 guests, actualForecast was about 135 (likely 120 to 150); 138 guests came: inside the range');
 });

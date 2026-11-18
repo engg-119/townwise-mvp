@@ -3,13 +3,14 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import { AgendaCard } from './AgendaCard';
 import { cardWords, headLine, weekHead, type InertCell, type MonthBounds, type WeekDay, type WeekSlot } from './grid';
-import { statusWord, type TooltipLines } from './model';
+import { figureTone, markedFigure, statusWord, type TooltipLines } from './model';
 
 // The Calendar's week view (P28, spec 16.3, step 2): the 7-day block counted from today that holds the selected day,
 // which reads its own days when it runs past the grid (grid.ts buildWeek, readRangeFor). On native it is an agenda at
 // every width: 7 rows, each a Pressable labeled as its month cell, with its selected state, holding the day's head
-// line (the day, a Today tag under today, the status word, the figure with "+70", and the range, "guests" or "No
-// forecast") over the day's full-width cards (AgendaCard.tsx).
+// line (the day, a Today tag under today, the status word, the figure with "+70", an actual solid and a forecast
+// lighter after a "~", D49 decision 10, and under a forecast "forecast" with its range) over the day's full-width
+// cards (AgendaCard.tsx).
 // Pressing a row selects its day; the selected row is outlined `mint`. An inert day (outside the 25 months) is a
 // disabled row with its head line only; a pending one (its reads in flight) shows its head line only. Web has its own
 // file (CalendarWeek.web.tsx): day columns from 641px and an agenda below, with the keys and the tooltip. Only types
@@ -47,7 +48,7 @@ function Head(props: { day: WeekDay }): React.JSX.Element {
       {day.isToday ? <Text style={styles.tag}>Today</Text> : null}
       {day.pending || status === null ? null : <Text style={styles.status}>{status}</Text>}
       {day.pending || day.figure === null ? null : (
-        <Text style={[styles.figure, day.figure.kind === 'actual' ? styles.past : null]}>{String(day.figure.value)}</Text>
+        <Text style={[styles.figure, figureTone(day.figure) === 'text2' ? styles.forecast : null]}>{markedFigure(String(day.figure.value), day.figure)}</Text>
       )}
       {day.pending || day.noteGuests === 0 ? null : <Text style={styles.added}>{`+${String(day.noteGuests)}`}</Text>}
       {day.pending || last === null ? null : <Text style={styles.line}>{last}</Text>}
@@ -113,7 +114,7 @@ const styles = StyleSheet.create({
   tag: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.white, borderWidth: 1, borderColor: c.line, paddingHorizontal: 4 },
   status: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text2, textTransform: 'uppercase' },
   figure: { ...theme.type.monoValue, fontSize: 22, lineHeight: 26, color: c.white, fontVariant: ['tabular-nums'] },
-  past: { color: c.text2 },
+  forecast: { color: c.text2 },
   added: { ...theme.type.mono, color: c.mint, fontVariant: ['tabular-nums'] },
   line: { ...theme.type.mono, fontSize: 11, lineHeight: 14, color: c.text3 },
 });

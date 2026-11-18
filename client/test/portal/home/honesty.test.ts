@@ -137,17 +137,17 @@ test('a future day’s figure is only ever the published forecast’s mid', () =
   const cells = new Map(monthGrid(TODAY, calendarOf(home, window)).flat().flatMap((cell) => (cell === null ? [] : [[cell.date, cell]])));
   const at = (date: string) => cells.get(date);
   expect([at('2026-11-04')?.figure, at('2026-11-04')?.figureText]).toEqual([{ value: 100, kind: 'actual' }, '100']);
-  expect([at('2026-11-05')?.figure, at('2026-11-05')?.figureText]).toEqual([{ value: 212, kind: 'forecast' }, '212']);
+  expect([at('2026-11-05')?.figure, at('2026-11-05')?.figureText]).toEqual([{ value: 212, kind: 'forecast' }, '~212']);
   // The range rounds low down and high up, as the Calendar, spec 14.4 and TownwiseAI's get_forecast do.
-  expect(at('2026-11-05')?.label).toBe('Thu, Nov 5, 2026. Today. This week. Forecast about 212 guests, 180 to 241.');
+  expect(at('2026-11-05')?.label).toBe('Thu, Nov 5, 2026. Today. This week. 212 guests, forecast, likely 180 to 241.');
   expect(forecastDayLines(forecast.get('2026-11-05') ?? forecastDay({ date: '' }))).toEqual(['About 212 guests, likely 180 to 241.']);
   expect(at('2026-11-06')?.figure).toEqual({ value: 220, kind: 'forecast' });
   expect(at('2026-11-06')?.noteGuests).toBe(70);
   // The label names every entry (D49): the note by its kind words.
-  expect(at('2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. Forecast about 220 guests, 180 to 260. Includes 70 guests from your notes. Private event.');
-  expect([at('2026-11-07')?.figure, at('2026-11-07')?.figureText]).toEqual([{ value: 70, kind: 'booked' }, '70']);
+  expect(at('2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. 220 guests, forecast, likely 180 to 260. Includes 70 guests from your notes. Private event.');
+  expect([at('2026-11-07')?.figure, at('2026-11-07')?.figureText]).toEqual([{ value: 70, kind: 'booked' }, '~70']);
   expect(at('2026-11-07')?.status).toBe('booked');
-  expect(at('2026-11-07')?.label).toBe('Sat, Nov 7, 2026. This week. Booked: a private buyout, 70 guests. Sample game.');
+  expect(at('2026-11-07')?.label).toBe('Sat, Nov 7, 2026. This week. Booked: a private buyout, 70 guests, forecast. Sample game.');
   expect([at('2026-11-08')?.figure, at('2026-11-08')?.status]).toEqual([null, 'closed']);
   expect(at('2026-11-08')?.label).toBe('Sun, Nov 8, 2026. This week. Closed.');
   // No forecast day: no figure, even with a stored row; the Calendar's word says so.

@@ -264,12 +264,14 @@ export function weekHead(date: string): string {
 }
 
 /**
- * The head's last line: the range, or the caption under a past figure (“guests”, or “forecast” on a day with no stored
- * guests), or nothing. A day the forecast read doesn't cover says so in its status word (“No forecast”).
+ * The head's last line under a forecast's figure: “forecast”, with the range when the day has one (“forecast, 180 to
+ * 240”); nothing under an actual (D49, design decision 10). A day the forecast read doesn't cover says so in its status
+ * word (“No forecast”).
  */
 export function headLine(day: Pick<WeekDay, 'range' | 'figure'>): string | null {
-  if (day.range !== null) return day.range;
-  return day.figure?.kind === 'actual' || day.figure?.kind === 'past_forecast' ? captionOf(day) : null;
+  const tag = captionOf(day);
+  if (tag === null) return null;
+  return day.range === null ? tag : `${tag}, ${day.range}`;
 }
 
 /**

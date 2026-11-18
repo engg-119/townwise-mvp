@@ -63,10 +63,10 @@ function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
   );
 }
 
-/** A day's published forecast, its figure bold, or "No forecast". */
+/** A day's published forecast, its figure bold in a forecast's lighter tone (D49, design decision 10), or "No forecast". */
 function ForecastCell(props: { day: ForecastDay | undefined }): React.JSX.Element {
   const phrase = forecastPhrase(props.day);
-  return phrase === null ? <Mono tone="text3">No forecast</Mono> : <Mono tone="white"><PhraseParts phrase={phrase} /></Mono>;
+  return phrase === null ? <Mono tone="text3">No forecast</Mono> : <Mono tone="text2"><PhraseParts phrase={phrase} /></Mono>;
 }
 
 /** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */

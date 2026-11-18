@@ -4,7 +4,7 @@ import { theme } from '../../theme';
 import { monthEntryLines, monthMove, WIDE_CELL_HEIGHT } from '../analytics/week';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import { anchorOf, DayTooltip, type TooltipAnchor } from '../calendar/DayTooltip.web';
-import { statusWord } from '../calendar/model';
+import { figureTone, statusWord } from '../calendar/model';
 import { useBreakpoint } from '../hooks';
 import type { MonthGridProps } from './MonthGrid';
 import { MARK, MonthKey } from './MonthKey';
@@ -201,7 +201,7 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
                     )}
                     {cell.figure === null ? null : (
                       <span aria-hidden="true" style={{ display: 'grid', justifyItems: 'center' }}>
-                        <span style={{ ...mono, fontSize: figureSize, lineHeight: `${String(figureSize + 4)}px`, fontWeight: 500, color: cell.figure.kind === 'actual' ? C.text2 : C.white }}>
+                        <span data-figure={figureTone(cell.figure) === 'white' ? 'actual' : 'forecast'} style={{ ...mono, fontSize: figureSize, lineHeight: `${String(figureSize + 4)}px`, fontWeight: 500, color: C[figureTone(cell.figure)] }}>
                           {cell.figureText}
                         </span>
                         {cell.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}
@@ -230,7 +230,7 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
         </div>
         {tip === null || lines === null ? null : <DayTooltip tip={lines} anchor={tip.anchor} />}
       </div>
-      <MonthKey />
+      <MonthKey {...(props.metric === undefined ? {} : { metric: props.metric })} />
       {props.footer}
     </div>
   );

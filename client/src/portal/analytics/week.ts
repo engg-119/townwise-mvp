@@ -1,5 +1,5 @@
 import { compactEntries, dayEntries, type DayEntry } from '../calendar/entries';
-import { ALL_FILTERS, captionOf, dayCell, type CalendarCell, type CalendarInput, type ImportedEvent } from '../calendar/model';
+import { ALL_FILTERS, captionOf, dayCell, INSIDE_RANGE, markedFigure, type CalendarCell, type CalendarInput, type ImportedEvent } from '../calendar/model';
 import { yoursDid, type ForecastDay, type ForecastWindow, type LiveAccuracy } from '../estimates/api';
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
@@ -531,20 +531,21 @@ function wholePercent(value: number): string {
 }
 
 /**
- * "Townwise’s forecast was off by 12% over 6 days. 5 of 6 days landed in its range." from the read's `accuracy`, or,
- * under 5 scored days, "2 of 3 days landed in Townwise’s range."; the percentage and counts strong. Null with no scored day.
+ * "Townwise’s forecast was off by 12% over 6 days. 5 of 6 days inside the forecast range." from the read's `accuracy`,
+ * or, under 5 scored days, "2 of 3 days inside the forecast range."; the percentage and counts strong. Null with no
+ * scored day.
  */
 function forecastErrorPhrase(part: LastWeekForecast): Phrase | null {
   const { accuracy } = part;
   if (accuracy !== null && accuracy.typicalErrorPct !== null) {
     return [
       'Townwise’s forecast was off by ', strong(wholePercent(accuracy.typicalErrorPct)), ' over ', strong(plural(accuracy.days, 'day', 'days')), '. ',
-      strong(`${formatCount(accuracy.inRange)} of ${plural(accuracy.days, 'day', 'days')}`), ' landed in its range.',
+      strong(`${formatCount(accuracy.inRange)} of ${plural(accuracy.days, 'day', 'days')}`), ` ${INSIDE_RANGE}.`,
     ];
   }
   const days = accuracy?.days ?? part.scored;
   if (days === 0) return null;
-  return [strong(`${formatCount(accuracy?.inRange ?? part.inRange)} of ${plural(days, 'day', 'days')}`), ' landed in Townwise’s range.'];
+  return [strong(`${formatCount(accuracy?.inRange ?? part.inRange)} of ${plural(days, 'day', 'days')}`), ` ${INSIDE_RANGE}.`];
 }
 
 /** "these days" for all seven, "Sat, Nov 21" for one, "Sat and Sun" or "Thu, Fri and Sat" for a few. */
@@ -703,9 +704,12 @@ export function monthFactsHead(today: string): string {
 export interface MonthCell extends Omit<CalendarCell, 'inWeek'> {
   /** In This week in {Town}: the seven days from today. */
   inWeek: boolean;
-  /** The figure as printed: a stored value in Home's metric, every other figure a guest count; null with none. */
+  /**
+   * The figure as printed: a stored value in Home's metric, every other figure a guest count, a forecast's after its
+   * “~” (calendar/model.ts markedFigure, D49 decision 10); null with none.
+   */
   figureText: string | null;
-  /** The word under the figure: "guests" (or "sales" in net sales), "booked", or "forecast" on a past day; null otherwise. */
+  /** The word under the figure: “forecast” under every forecast, “sales” under a stored net-sales figure; null otherwise. */
   caption: string | null;
 }
 
@@ -739,7 +743,7 @@ export function monthGrid(today: string, input: CalendarInput, metric: Metric = 
       return {
         ...cell,
         inWeek,
-        figureText: cell.figure === null ? null : actual ? metricNumber(cell.figure.value, metric) : formatCount(cell.figure.value),
+        figureText: cell.figure === null ? null : actual ? metricNumber(cell.figure.value, metric) : markedFigure(formatCount(cell.figure.value), cell.figure),
         caption: actual && metric === 'netSales' ? 'sales' : captionOf(cell),
         label: inWeek && cell.label.startsWith(head) ? `${head} This week.${cell.label.slice(head.length)}` : cell.label,
       };

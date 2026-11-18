@@ -36,6 +36,8 @@ import { PastCell } from './ThisWeek';
 // note TownwiseAI made while its file's item exists; the business rules covering the day; and each event of the
 // location's calendars with a chip to its calendar's page in Your data. A note reason in Why is followed by its note's
 // name. The Reorder part keeps its one line and its link; its explanation is behind "How Townwise builds an order".
+// D49 (2026-11-18): a past day's Forecast part says how its forecast did, or with no stored data the run's figure as a
+// forecast, in the Calendar's words (calendar/model.ts pastForecastLines).
 
 export const DETAIL_ID = 'home-day-detail';
 const REORDER_ID = 'home-reorder-how';
@@ -88,12 +90,14 @@ function Part(props: { label: string; children: React.ReactNode }): React.JSX.El
 
 export function DayDetail(props: {
   day: MonthDay; forecast: ForecastDay | null; metric: Metric; history: boolean; locationId: string; board: LoadState<OrderBoard>;
+  /** Before today: how its forecast did, or the run's figure with no data (calendar/model.ts pastForecastLines, D49). */
+  pastForecast?: readonly string[];
   /** The day as the Calendar's panel reads it from Home's one CalendarInput: its notes, rules and imported events. */
   view: Pick<CalendarDayView, 'notes' | 'rules' | 'imported'>;
 }): React.JSX.Element {
   const { day, forecast, metric, history, locationId, board, view } = props;
   const [reorderOpen, setReorderOpen] = useState(false);
-  const lines = forecast === null ? [] : forecastDayLines(forecast);
+  const lines = forecast === null ? props.pastForecast ?? [] : forecastDayLines(forecast);
   // Home passes a forecast day only from today on.
   const why = forecast === null ? [] : whyRows(forecast, WHY_LINES);
   // A holiday or town event a run reason in Why names is there with its sources, so On the calendar doesn't repeat it.

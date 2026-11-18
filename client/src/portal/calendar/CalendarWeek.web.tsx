@@ -5,14 +5,14 @@ import { useBreakpoint } from '../hooks';
 import type { CalendarWeekProps } from './CalendarWeek';
 import { anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
 import { CARD_MARK, CELL_GAP, gridHeight, gridMove, headLine, periodCard, weekHead, type InertCell, type WeekCard, type WeekDay, type WeekSlot } from './grid';
-import { statusWord } from './model';
+import { figureTone, markedFigure, statusWord } from './model';
 
 // The Calendar's week view on web (P28, spec 16.3, step 2): DOM, as the month grid is, because each day takes focus.
 // From 641px a role="grid" named by the week label with one row of 7 day columns, each a full-height gridcell, the
 // click target and the roving tab stop, labeled as its month cell (so both views say the same) and described by its
 // card list, which holds the hours, terms and rules the label leaves out. A column's head: the day ("Mon 16", "Tue Dec
-// 1" on a month's 1st, a Today tag under today), the status word, the figure with "+70", and one line (the range,
-// "guests" or "forecast" under a past figure). Then every item on the day as a card (grid.ts buildWeek), not
+// 1" on a month's 1st, a Today tag under today), the status word, the figure with "+70" (an actual solid, a forecast
+// lighter after a "~", D49 decision 10), and under a forecast one line, "forecast" with its range. Then every item on the day as a card (grid.ts buildWeek), not
 // focusable; the panel keeps the actions. The box is at least as tall as the month grid at the same width, so
 // switching views keeps the page height. Keys are grid.ts gridMove's in its 'week' layout, Home and End going to the
 // block's first and last day, and the moved-to column takes focus without scrolling. A mouse or pen over a column head
@@ -98,7 +98,9 @@ function Head(props: { day: WeekDay; agenda: boolean }): React.JSX.Element {
           {status === null ? null : <span style={{ ...small, color: C.text2, textTransform: 'uppercase' }}>{status}</span>}
           {day.figure === null ? null : (
             <span style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-              <span style={{ ...mono, fontSize: 22, lineHeight: '26px', fontWeight: 500, color: day.figure.kind === 'actual' ? C.text2 : C.white }}>{String(day.figure.value)}</span>
+              <span data-figure={figureTone(day.figure) === 'white' ? 'actual' : 'forecast'} style={{ ...mono, fontSize: 22, lineHeight: '26px', fontWeight: 500, color: C[figureTone(day.figure)] }}>
+                {markedFigure(String(day.figure.value), day.figure)}
+              </span>
               {day.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(day.noteGuests)}`}</span> : null}
             </span>
           )}

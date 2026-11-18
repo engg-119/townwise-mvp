@@ -80,7 +80,7 @@ test('U13B: a published run names its model, sales, dates and backtest, with no 
   expect(screen.getByText('Each day and week is a range that about 8 in 10 days should land inside.')).toBeTruthy();
   expect(screen.getByText('Its ranges were widened after they ran narrow in backtests.')).toBeTruthy();
   expect(screen.getByText('In backtests from Jan 5, 2026 to Mar 15, 2026, a typical week was off by 9.5%, and 1 of 10 weeks missed by more than 20%.')).toBeTruthy();
-  expect(screen.getByText('So far: 7 of 9 days inside the range; typical miss 14.3%, from Nov 1, 2026 to Nov 4, 2026.')).toBeTruthy();
+  expect(screen.getByText('So far: 7 of 9 days inside the forecast range; typical miss 14.3%, from Nov 1, 2026 to Nov 4, 2026.')).toBeTruthy();
   expect(screen.queryByText('In progress')).toBeNull();
   expect(screen.queryByText(/no forecast for/)).toBeNull();
 });
@@ -104,7 +104,7 @@ test('D42: a baseline run is named as the baseline, built from the sales and not
   expect(screen.queryByText(/trained on/)).toBeNull();
   // Its backtest and its accuracy so far, as any run's.
   expect(screen.getByText(/^In backtests from Jan 5, 2026 to Mar 15, 2026/)).toBeTruthy();
-  expect(screen.getByText('So far: 5 of 6 days inside the range; typical miss 11.6%, from Oct 22, 2026 to Nov 4, 2026.')).toBeTruthy();
+  expect(screen.getByText('So far: 5 of 6 days inside the forecast range; typical miss 11.6%, from Oct 22, 2026 to Nov 4, 2026.')).toBeTruthy();
 });
 
 test('D42: a run from an API before engines, or a model run, keeps the model’s words', async () => {

@@ -178,6 +178,40 @@ function bookedWords(day: ForecastDay): string {
 
 const NO_FIGURE: FigureOf = { status: null, figure: null, noteGuests: 0, words: null };
 
+// Actual or forecast (D49, design decision 10, owner 2026-11-18): every surface that shows a day's figure marks a
+// forecast and leaves an actual plain, from these, so a future day and a past day with only the run's figure look the
+// same. [CONFIRM: a forecast's figure is lighter with a leading "~" and the word "forecast"; an actual is a plain solid
+// figure] The "~" is text, so the mark never rests on color alone and fits a phone cell where no word does.
+
+export type FigureSource = 'actual' | 'forecast';
+
+/** Stored data is the actual; a published day's figure, a past day's run figure and a buyout's expected party are forecasts. */
+export function figureSource(figure: Pick<CellFigure, 'kind'>): FigureSource {
+  return figure.kind === 'actual' ? 'actual' : 'forecast';
+}
+
+/** A figure as printed: “~82” for a forecast, “94” for an actual. */
+export function markedFigure(text: string, figure: Pick<CellFigure, 'kind'>): string {
+  return figureSource(figure) === 'forecast' ? `~${text}` : text;
+}
+
+/** The figure's theme color: an actual solid `white`, a forecast the lighter `text2`. */
+export function figureTone(figure: Pick<CellFigure, 'kind'>): 'white' | 'text2' {
+  return figureSource(figure) === 'forecast' ? 'text2' : 'white';
+}
+
+/** The word a surface prints beside a forecast's figure where it has room; an actual has none. */
+export const FORECAST_TAG = 'forecast';
+
+/** Each grid's key: its two entries, shown with a sample figure each (“94”, “~82”). */
+export const FIGURE_KEY = { actual: 'Actual guests', forecast: 'Forecast' } as const;
+
+/** What a screen reader hears for a figure, and the tooltip's words: “82 guests, forecast”, “94 guests, actual”. */
+export function figureLabel(value: number, figure: Pick<CellFigure, 'kind'>, metric: Metric = 'guests'): string {
+  if (figureSource(figure) === 'forecast') return `${plural(value, 'guest', 'guests')}, forecast`;
+  return metric === 'guests' ? `${metricText(value, metric)}, actual` : `${metricText(value, metric)} in net sales, actual`;
+}
+
 /**
  * A day's figure: its stored data first, else the forecast made for it, else a word saying there is neither (owner
  * request, 2026-11-17: data wins over a forecast, and every day shows something). Before today that is the stored
@@ -193,25 +227,26 @@ export function figureOf(date: string, input: CalendarInput, metric: Metric = 'g
     const likely = likelyClosedGuests(date, input);
     if (likely !== null) return { status: 'likely_closed', figure: null, noteGuests: 0, words: `${likelyClosedWords(plural(likely, 'guest', 'guests'))}.` };
     const stored = storedValue(date, input, metric);
-    if (stored !== null) return { ...NO_FIGURE, figure: { value: stored, kind: 'actual' }, words: `${metricText(stored, metric)}.` };
+    if (stored !== null) return { ...NO_FIGURE, figure: { value: stored, kind: 'actual' }, words: `${figureLabel(stored, { kind: 'actual' }, metric)}.` };
     if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_data', words: 'No data.' };
     if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: 'No data. Forecast closed.' };
     if (day.status === 'booked') return { ...NO_FIGURE, status: 'booked', words: `No data. ${bookedWords(day)}.` };
     if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_data', words: 'No data.' };
     return {
       ...NO_FIGURE, figure: { value: Math.round(day.mid), kind: 'past_forecast' },
-      words: `No data. Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${rangeWords(day.low, day.high)}.`,
+      words: `No data. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })}, likely ${rangeWords(day.low, day.high)}.`,
     };
   }
   if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_forecast', words: 'No forecast.' };
   if (day.status === 'closed') return { status: 'closed', figure: null, noteGuests: 0, words: 'Closed.' };
   if (day.status === 'booked') {
     const figure: CellFigure | null = day.noteGuests > 0 ? { value: day.noteGuests, kind: 'booked' } : null;
-    return { status: 'booked', figure, noteGuests: 0, words: `${bookedWords(day)}.` };
+    // A buyout's party is an expected count, so it is a forecast (decision 10).
+    return { status: 'booked', figure, noteGuests: 0, words: `${bookedWords(day)}${figure === null ? '' : ', forecast'}.` };
   }
   if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_forecast', words: 'No forecast.' };
   const words = [
-    `Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${rangeWords(day.low, day.high)}.`,
+    `${figureLabel(Math.round(day.mid), { kind: 'forecast' })}, likely ${rangeWords(day.low, day.high)}.`,
     day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : null,
   ].filter((part) => part !== null).join(' ');
   return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
@@ -271,12 +306,9 @@ export function calendarMonth(month: string, input: CalendarInput): (CalendarCel
   return rows;
 }
 
-/** The word under a figure: stored guests read "guests", a buyout's party "booked", a past day's forecast "forecast". */
+/** The word beside a figure: “forecast” for every forecast, past or future, booked or open; none for an actual (decision 10). */
 export function captionOf(cell: Pick<CalendarCell, 'figure'>): string | null {
-  if (cell.figure?.kind === 'actual') return 'guests';
-  if (cell.figure?.kind === 'booked') return 'booked';
-  if (cell.figure?.kind === 'past_forecast') return 'forecast';
-  return null;
+  return cell.figure === null || figureSource(cell.figure) === 'actual' ? null : FORECAST_TAG;
 }
 
 export function statusWord(status: CalendarCell['status']): string | null {
@@ -312,8 +344,11 @@ export type ForecastPart =
    * range and verdict when one covered the day.
    */
   | {
-    kind: 'past'; actual: number | null; likelyClosed: boolean; model: { low: number; high: number } | null; modelClosed: boolean;
-    inRange: boolean | null;
+    kind: 'past'; actual: number | null; likelyClosed: boolean; model: { low: number; mid: number | null; high: number } | null; modelClosed: boolean;
+    /** How the forecast did, from a run made by the day (forecastCheck); null otherwise. */
+    check: ForecastCheck | null;
+    /** The run was made after the day: it fills the day but is never compared with it (decision 11). */
+    late: boolean;
   }
   /** unavailable: the forecast read is loading or failed. */
   | { kind: 'none'; why: 'no_published_forecast' | 'not_covered' | 'unavailable' };
@@ -372,10 +407,10 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
   if (date < input.today) {
     const low = day?.model.low ?? null;
     const high = day?.model.high ?? null;
-    const model = low !== null && high !== null ? { low, high } : null;
+    const model = low !== null && high !== null ? { low, mid: day?.model.mid ?? null, high } : null;
     return {
       kind: 'past', actual: storedGuests(date, input) ?? day?.actual ?? null, likelyClosed: likelyClosedGuests(date, input) !== null, model,
-      modelClosed: day?.model.status === 'closed', inRange: day?.inRange ?? null,
+      modelClosed: day?.model.status === 'closed', check: forecastCheck(day, input.today), late: day !== null && madeAfterDay(day),
     };
   }
   if (input.forecast === null) return { kind: 'none', why: 'unavailable' };
@@ -623,8 +658,8 @@ function sentence(words: string): string {
 }
 
 export interface ForecastWords {
-  /** The day's headline figure: “About **212** guests”, or the actual “**138** guests”. */
-  figure: { before: string; value: string; after: string } | null;
+  /** The day's headline figure: “About **212** guests”, or the actual “**138** guests”; `source` marks it (decision 10). */
+  figure: { before: string; value: string; after: string; source: FigureSource } | null;
   lines: string[];
 }
 
@@ -632,7 +667,7 @@ export interface ForecastWords {
 export function forecastWords(part: ForecastPart, locationName: string): ForecastWords {
   switch (part.kind) {
     case 'open': {
-      const figure = { before: 'About', value: whole(part.mid), after: 'guests' };
+      const figure = { before: 'About', value: whole(part.mid), after: 'guests', source: 'forecast' as const };
       if (part.modelClosed) {
         return { figure, lines: [`Townwise’s model expects you closed. ${sentence(part.from)} open the day with ${plural(part.noteGuests, 'guest', 'guests')}.`] };
       }
@@ -662,12 +697,17 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
         if (part.model !== null) lines.push(`Townwise’s model forecast ${rangeWords(part.model.low, part.model.high)}.`);
         return { figure: null, lines };
       }
-      const figure = part.actual === null ? null : { before: '', value: whole(part.actual), after: part.actual === 1 ? 'guest' : 'guests' };
+      // With no stored guests the run's figure shows as a forecast, as the cell shows it (figureOf).
+      const runMid = part.model?.mid ?? null;
+      const figure = part.actual !== null ? { before: '', value: whole(part.actual), after: part.actual === 1 ? 'guest' : 'guests', source: 'actual' as const }
+        : runMid !== null && !part.modelClosed ? { before: 'About', value: whole(runMid), after: Math.round(runMid) === 1 ? 'guest' : 'guests', source: 'forecast' as const }
+          : null;
       const lines = part.actual === null ? ['No guests stored for this day.'] : [];
       if (part.modelClosed) lines.push('Townwise’s model expected you closed.');
+      else if (part.check !== null) lines.push(`${checkWords(part.check)}.`);
       else if (part.model !== null) {
-        const range = `Townwise’s model forecast ${rangeWords(part.model.low, part.model.high)}`;
-        lines.push(part.inRange === null ? `${range}.` : `${range}, and the day landed ${part.inRange ? 'in that range' : 'outside it'}.`);
+        const range = rangeWords(part.model.low, part.model.high);
+        lines.push(part.late && part.actual !== null ? `A forecast made after this day put it at ${range}, so it isn’t scored.` : `Townwise’s model forecast ${range}.`);
       }
       return { figure, lines };
     }
@@ -711,22 +751,26 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
     const guests = storedGuests(date, input);
     const likely = likelyClosedGuests(date, input);
     if (likely !== null) lines.push(likelyClosedWords(plural(likely, 'guest', 'guests')));
-    else if (guests !== null) lines.push(plural(guests, 'guest', 'guests'));
+    else if (guests !== null) {
+      lines.push(figureLabel(guests, { kind: 'actual' }));
+      const check = forecastCheck(day, input.today);
+      if (check !== null) lines.push(checkWords(check));
+    }
     // No stored guests: the forecast made for the day, as the cell shows it (figureOf).
     else if (day === null) {
       if (input.forecast !== null) lines.push('No data');
     } else if (day.status === 'closed') lines.push('No data. Forecast closed');
     else if (day.status === 'booked') lines.push(`No data. ${bookedWords(day)}`);
     else if (day.mid !== null && day.low !== null && day.high !== null) {
-      lines.push(`No data. Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')} (${rangeWords(day.low, day.high)})`);
+      lines.push(`No data. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })} (likely ${rangeWords(day.low, day.high)})`);
     } else lines.push('No data');
   } else if (day === null) {
     if (input.forecast !== null) lines.push('No forecast');
   } else {
     if (day.status === 'closed') lines.push('Closed');
-    else if (day.status === 'booked') lines.push(bookedWords(day));
+    else if (day.status === 'booked') lines.push(day.noteGuests > 0 ? `${bookedWords(day)}, forecast` : bookedWords(day));
     else if (day.mid !== null && day.low !== null && day.high !== null) {
-      lines.push(`About ${plural(Math.round(day.mid), 'guest', 'guests')} (${rangeWords(day.low, day.high)})`);
+      lines.push(`${figureLabel(Math.round(day.mid), { kind: 'forecast' })} (likely ${rangeWords(day.low, day.high)})`);
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }
@@ -745,6 +789,77 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
   const entries = fitLines(unnamed.map((entry) => entry.words), TOOLTIP_ENTRIES);
   lines.push(...entries.lines, ...(entries.more === null ? [] : [entries.more]));
   return lines.length === 0 ? null : { date: shortDate(date), lines };
+}
+
+// How the forecast did (D49, design decision 11, owner 2026-11-18)
+
+/** A past day's forecast against what happened, from the run's own figures. */
+export interface ForecastCheck { mid: number; low: number; high: number; actual: number; verdict: 'inside' | 'above' | 'below' }
+
+/** The day's run was made after the day (its made-at day is later); a run made on the day, before service, is not. */
+function madeAfterDay(day: Pick<ForecastDay, 'date' | 'madeAt'>): boolean {
+  return day.madeAt !== undefined && day.madeAt > day.date;
+}
+
+/**
+ * How a past day's forecast did, only when the read scored the day (open in the model, not closed or likely closed,
+ * with stored guests, from a run made by the day; api/src/forecasts/score.ts) and says whether it landed in range;
+ * null otherwise. The run's own figures, which are the day's before today.
+ */
+export function forecastCheck(day: ForecastDay | null | undefined, today: string): ForecastCheck | null {
+  if (day === null || day === undefined || day.date >= today || day.scored !== true || day.inRange === null || day.actual === null) return null;
+  if (madeAfterDay(day)) return null;
+  const { low, mid, high } = day.model;
+  if (low === null || mid === null || high === null) return null;
+  const verdict = day.inRange ? 'inside' : day.actual > high ? 'above' : 'below';
+  return { mid, low, high, actual: day.actual, verdict };
+}
+
+/** “Forecast was about 82 (likely 70 to 95); 94 guests came: inside the range”. */
+export function checkWords(check: ForecastCheck): string {
+  return `Forecast was about ${whole(check.mid)} (likely ${rangeWords(check.low, check.high)}); ${plural(check.actual, 'guest', 'guests')} came: ${check.verdict} the range`;
+}
+
+/** The words after a count of days in range, on the month line, the model card and Last week. */
+export const INSIDE_RANGE = 'inside the forecast range';
+
+/** “5 of 6 days inside the forecast range”. */
+export function insideWords(inside: number, days: number): string {
+  return `${formatCount(inside)} of ${plural(days, 'day', 'days')} ${INSIDE_RANGE}`;
+}
+
+/**
+ * The month's line: how many of its passed days with a comparison (forecastCheck) landed inside the forecast range.
+ * “So far this month: …” for today's month, “In October: …” for an earlier one; for a month that has begun with none,
+ * that none can be compared yet. Null for a later month, and while the read loads, failed or has nothing published.
+ */
+export function monthCheckLine(month: string, input: CalendarInput): string | null {
+  const thisMonth = input.today.slice(0, 7);
+  if (input.forecast === null || !input.forecast.available || month > thisMonth) return null;
+  const checks = input.forecast.days.filter((day) => day.date.startsWith(month)).flatMap((day) => {
+    const check = forecastCheck(day, input.today);
+    return check === null ? [] : [check];
+  });
+  const current = month === thisMonth;
+  if (checks.length === 0) {
+    if (current && input.today.endsWith('-01')) return null;
+    return current ? 'No day this month has both its guests and a forecast made before it yet.'
+      : `No day in ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''} has both its guests and a forecast made before it.`;
+  }
+  const words = insideWords(checks.filter((check) => check.verdict === 'inside').length, checks.length);
+  return current ? `So far this month: ${words}.` : `In ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''}: ${words}.`;
+}
+
+/**
+ * A past day's forecast in Home's day detail, in the Calendar's words: how it did (forecastCheck), or with no stored
+ * data the run's figure for it, as a forecast (figureOf); none from today on or with neither.
+ */
+export function pastForecastLines(date: string, input: CalendarInput): string[] {
+  if (date >= input.today) return [];
+  const check = forecastCheck(forecastDayOf(date, input), input.today);
+  if (check !== null) return [`${checkWords(check)}.`];
+  const found = figureOf(date, input);
+  return found.figure?.kind === 'past_forecast' && found.words !== null ? [found.words] : [];
 }
 
 // Months

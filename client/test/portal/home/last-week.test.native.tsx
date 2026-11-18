@@ -79,7 +79,7 @@ async function card(api: FakePortalApi): Promise<ReturnType<typeof within>> {
 
 test('a mix: the sentences and the table, with each forecast-only row saying so, and no bars', async () => {
   const lastWeek = await card(portal(UP_TO_FRIDAY, MIXED));
-  expect(await lastWeek.findByText('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.')).toBeTruthy();
+  expect(await lastWeek.findByText('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days inside the forecast range.')).toBeTruthy();
   expect(lastWeek.getByText('No guest count uploaded for Sat and Sun yet; this is Townwise’s forecast.')).toBeTruthy();
   expect(lastWeek.getByText('Last week: 550 guests on the 5 days both weeks have, 10% more than the same days last year (500).')).toBeTruthy();
   // Native draws no chart (D21): no key, no scale.

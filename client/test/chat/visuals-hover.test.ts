@@ -25,7 +25,7 @@ const none = { low: null, mid: null, high: null, status: null } as const;
 test('dailyTip words a day like the summary and table do', () => {
   // A visual stored before the API sent the forecast's middle.
   expect(dailyTip({ date: '2026-10-09', value: 180, low: 117, mid: null, high: 256, status: null }, 'guests'))
-    .toEqual({ title: 'Fri, Oct 9, 2026', lines: ['180 guests', 'Forecast 117 to 256'] });
+    .toEqual({ title: 'Fri, Oct 9, 2026', lines: ['180 guests, actual', 'Forecast 117 to 256'] });
   expect(dailyTip({ date: '2026-10-09', value: null, ...none }, 'guests').lines).toEqual(['No data']);
   expect(dailyTip({ date: '2026-10-09', value: 1234.5, ...none }, 'netSales').lines).toEqual(['$1,235']);
 });
@@ -34,7 +34,7 @@ test('dailyTip gives a forecast day as the product does, about the middle and li
   expect(dailyTip({ date: '2026-11-16', value: null, low: 117, mid: 180, high: 256, status: null }, 'guests'))
     .toEqual({ title: 'Mon, Nov 16, 2026', lines: ['Forecast about 180, likely 117 to 256'] });
   expect(dailyTip({ date: '2026-11-16', value: 1204, low: 1100, mid: 1500, high: 2100, status: null }, 'guests').lines)
-    .toEqual(['1,204 guests', 'Forecast about 1,500, likely 1,100 to 2,100']);
+    .toEqual(['1,204 guests, actual', 'Forecast about 1,500, likely 1,100 to 2,100']);
   expect(dailyTip({ date: '2026-11-18', value: null, ...none, status: 'closed' }, 'guests').lines).toEqual(['Forecast: closed']);
   expect(dailyTip({ date: '2026-11-21', value: null, ...none, status: 'booked' }, 'guests').lines).toEqual(['Forecast: booked for a private event']);
 });

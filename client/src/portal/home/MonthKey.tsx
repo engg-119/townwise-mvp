@@ -1,15 +1,18 @@
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
+import { FigureKeyItems } from '../calendar/FigureKey';
 
-// The month grid's key (spec P11), shared by web and native: color never stands alone, so each mark sits in its
-// own corner and is named here. Hidden from screen readers: each day's label says its marks in words.
+// The month grid's key (spec P11), shared by web and native: an actual's figure and a forecast's (D49, design
+// decision 10, calendar/FigureKey.tsx), then the marks. Color never stands alone, so each mark sits in its own corner
+// and is named here. Hidden from screen readers: each day's label says its figure's kind and its marks in words.
 
 export const MARK = 4;
 
-export function MonthKey(): React.JSX.Element {
+export function MonthKey(props: { metric?: 'guests' | 'netSales' }): React.JSX.Element {
   return (
-    <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.key}>
+    <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden testID="month-key" style={styles.key}>
+      <FigureKeyItems {...(props.metric === undefined ? {} : { metric: props.metric })} />
       <View style={styles.item}><View style={styles.swatch}><View style={styles.event} /></View><Text style={styles.text}>Town event or holiday</Text></View>
       <View style={styles.item}><View style={styles.swatch}><View style={styles.note} /></View><Text style={styles.text}>Your note or rule</Text></View>
       <View style={styles.item}><View style={styles.swatch}><View style={styles.imported} /></View><Text style={styles.text}>Your calendar</Text></View>

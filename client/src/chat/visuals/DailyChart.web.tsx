@@ -94,7 +94,9 @@ export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
       <div aria-hidden="true" style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
         {segments.length > 0 || dots.length > 0 ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${C.mint}` }} />{SERIES_TITLE[metric]}
+            {/* Beside a forecast the line is named the actual (D49, design decision 10). */}
+            <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${C.mint}` }} />
+            {bands.length > 0 || middles.length > 0 ? (metric === 'guests' ? 'Actual guests' : 'Actual net sales') : SERIES_TITLE[metric]}
           </span>
         ) : null}
         {bands.length > 0 ? (

@@ -278,9 +278,9 @@ describe('last week with the published forecast', () => {
     const comparison = lastWeekComparison(at(HISTORY), window(days, { days: 6, inRange: 5, typicalErrorPct: 11.6, from: '2026-11-16', to: '2026-11-21' }));
     expect(comparison).toMatchObject({ state: 'compared', comparedDays: 7, total: 770, lastYearTotal: 700 });
     const [error] = lastWeekPhrases(comparison, 'guests');
-    expect(error).toEqual(['Townwise’s forecast was off by ', { strong: '12%' }, ' over ', { strong: '6 days' }, '. ', { strong: '5 of 6 days' }, ' landed in its range.']);
+    expect(error).toEqual(['Townwise’s forecast was off by ', { strong: '12%' }, ' over ', { strong: '6 days' }, '. ', { strong: '5 of 6 days' }, ' inside the forecast range.']);
     expect(lastWeekLines(comparison, 'guests')).toEqual([
-      'Townwise’s forecast was off by 12% over 6 days. 5 of 6 days landed in its range.',
+      'Townwise’s forecast was off by 12% over 6 days. 5 of 6 days inside the forecast range.',
       'Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.',
     ]);
     // The read's own day, scored or not; no day is a forecast in place of sales.
@@ -293,11 +293,11 @@ describe('last week with the published forecast', () => {
     const days = [scoredDay('2026-11-16', true), scoredDay('2026-11-17', false), scoredDay('2026-11-18', true)];
     const comparison = lastWeekComparison(at(HISTORY), window(days, null));
     const [first] = lastWeekPhrases(comparison, 'guests');
-    expect(first).toEqual([{ strong: '2 of 3 days' }, ' landed in Townwise’s range.']);
-    expect(lastWeekLines(comparison, 'guests')[0]).toBe('2 of 3 days landed in Townwise’s range.');
+    expect(first).toEqual([{ strong: '2 of 3 days' }, ' inside the forecast range.']);
+    expect(lastWeekLines(comparison, 'guests')[0]).toBe('2 of 3 days inside the forecast range.');
     expect(lastWeekLines(comparison, 'guests').join(' ')).not.toMatch(/off by/);
     const one = lastWeekComparison(at(HISTORY), window([scoredDay('2026-11-16', false)], null));
-    expect(lastWeekLines(one, 'guests')[0]).toBe('0 of 1 day landed in Townwise’s range.');
+    expect(lastWeekLines(one, 'guests')[0]).toBe('0 of 1 day inside the forecast range.');
   });
 
   test('no uploads since last Sunday: the forecast for these days, no total, and the sentence replaces “Your history ends”', () => {
@@ -324,7 +324,7 @@ describe('last week with the published forecast', () => {
     // The comparison is over the five stored days only: nothing is added for Saturday and Sunday.
     expect(comparison).toMatchObject({ state: 'compared', comparedDays: 5, total: 550, lastYearTotal: 500 });
     expect(lastWeekLines(comparison, 'guests')).toEqual([
-      'Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.',
+      'Townwise’s forecast was off by 10% over 5 days. 4 of 5 days inside the forecast range.',
       'No guest count uploaded for Sat and Sun yet; this is Townwise’s forecast.',
       'Last week: 550 guests on the 5 days both weeks have, 10% more than the same days last year (500).',
     ]);
@@ -366,7 +366,7 @@ describe('last week with the published forecast', () => {
     expect(wednesday).toMatchObject({ date: '2026-11-18', value: 110, forecastOnly: false });
     expect(wednesday?.forecast?.scored).toBe(false);
     expect(lastWeekForecastCell(wednesday?.forecast ?? forecastDay({ date: 'x' }))).toBe('About 105, 90 to 120');
-    expect(lastWeekLines(comparison, 'guests')[0]).toBe('Townwise’s forecast was off by 5% over 6 days. 6 of 6 days landed in its range.');
+    expect(lastWeekLines(comparison, 'guests')[0]).toBe('Townwise’s forecast was off by 5% over 6 days. 6 of 6 days inside the forecast range.');
   });
 });
 
@@ -518,7 +518,7 @@ describe('the month card', () => {
     })).flat().find((each) => each?.date === date);
     const cell = cellOn(home, '2026-11-03');
     expect(cell).toMatchObject({ status: 'likely_closed', figure: null, label: 'Tue, Nov 3, 2026. Likely closed (1 guest recorded).' });
-    expect(cellOn(home, '2026-11-02')).toMatchObject({ status: null, figure: { value: 100, kind: 'actual' }, figureText: '100', caption: 'guests' });
+    expect(cellOn(home, '2026-11-02')).toMatchObject({ status: null, figure: { value: 100, kind: 'actual' }, figureText: '100', caption: null });
     const past = monthDay('2026-11-03', home);
     expect(past).toMatchObject({ value: 1, likelyClosed: true });
     expect(thisDayLine(past, 'guests')).toBe('Likely closed (1 guest recorded)');

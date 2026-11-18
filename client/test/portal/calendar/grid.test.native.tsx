@@ -89,3 +89,21 @@ test('a three-entry day shows its three entry lines at 1280', async () => {
   for (const entry of ['Dartmouth home football', 'Private event, 70', 'Wine delivery']) expect(within(day).getByText(entry)).toBeTruthy();
   expect(within(day).queryByText(/more$/)).toBeNull();
 });
+
+test('a forecast’s figure is lighter after a “~” with “forecast”, ahead or past; an actual is solid and plain (D49)', async () => {
+  widthOf(1280);
+  const day = (date: string, mid: number) => ({
+    date, status: 'open' as const, low: mid - 20, mid, high: mid + 20, model: { status: 'open' as const, low: mid - 20, mid, high: mid + 20 }, noteGuests: 0,
+    moreNotes: 0, reasons: [], runId: 'r1', actual: null, inRange: null,
+  });
+  await renderGrid(input({
+    forecast: { available: true, reason: null, runs: [], days: [day('2026-11-21', 282), day('2026-11-03', 90)], weeks: [] },
+    salesDays: [{ date: '2026-11-02', guests: 140, netSalesCents: 280_000 }],
+  }));
+  const colorOf = (text: string): unknown => (StyleSheet.flatten(screen.getByText(text).props.style as never) as { color?: unknown }).color;
+  expect(colorOf('~282')).toBe(colorOf('~90'));
+  expect(colorOf('140')).not.toBe(colorOf('~282'));
+  expect(within(screen.getByLabelText(/^Sat, Nov 21, 2026\. 282 guests, forecast/)).getByText('forecast')).toBeTruthy();
+  expect(within(screen.getByLabelText(/^Tue, Nov 3, 2026\. No data\. 90 guests, forecast/)).getByText('forecast')).toBeTruthy();
+  expect(within(screen.getByLabelText(/^Mon, Nov 2, 2026\. 140 guests, actual/)).queryByText('forecast')).toBeNull();
+});

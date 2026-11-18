@@ -17,7 +17,9 @@ export interface TipWords {
 
 export function dailyTip(day: Extract<Visual, { kind: 'daily' }>['days'][number], metric: Metric): TipWords {
   const forecast = forecastLine(day, metric);
-  const lines = [...(day.value === null ? [] : [metricText(unitsOf(day.value, metric), metric)]), ...(forecast === null ? [] : [forecast])];
+  // Beside a forecast, the value says it is the actual (D49, design decision 10), as the Calendar's tooltip does.
+  const value = day.value === null ? null : forecast === null ? metricText(unitsOf(day.value, metric), metric) : `${metricText(unitsOf(day.value, metric), metric)}, actual`;
+  const lines = [...(value === null ? [] : [value]), ...(forecast === null ? [] : [forecast])];
   return { title: dayText(day.date), lines: lines.length === 0 ? [NO_DATA] : lines };
 }
 

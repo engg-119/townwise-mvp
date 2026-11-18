@@ -226,7 +226,7 @@ test('a business rule’s schedule with fewer guests (D31) says a near-empty day
   const api = portal(meOf(ACCESS.member), NEAR_EMPTY, undefined, NO_FORECAST, { rules: [slowTuesdays], limit: 30 });
   await renderAt(api);
   await waitFor(() => { expect(cellOf('2026-11-03').getAttribute('aria-label')).not.toMatch(/Likely closed/); });
-  expect(cellOf('2026-11-03').textContent).toBe('31guests');
+  expect(cellOf('2026-11-03').textContent).toBe('31');
   expect(api.calls.filter((call) => call.path === `${PATH}/rules`)).toHaveLength(1);
   // The hover tooltip reads the same rules, so it agrees with the cell.
   fireEvent(cellOf('2026-11-03'), pointer('pointerover', 'mouse'));
@@ -273,8 +273,8 @@ test('the month calendar: the arrow keys and a pointer preview the days beside t
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. This week. No forecast. Veterans Day.');
   // A past day says its stored figure; a later one, with no published forecast, has none.
-  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. 110 guests.');
-  expect(cell('2026-11-03').textContent).toBe('3110guests');
+  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. 110 guests, actual.');
+  expect(cell('2026-11-03').textContent).toBe('3110');
   expect(cell('2026-11-11').textContent).toBe('11No forecast');
 
   // The keys move the selection, and focus with it.
@@ -361,15 +361,15 @@ test('with a published forecast, This week starts with each day’s Forecast, it
 
 test('with a published forecast, This month shows each future day’s guests and no tagline', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5212'); });
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5~212forecast'); });
   expect(screen.queryByText(NOT_PUBLISHED)).toBeNull();
   expect(screen.queryByText('In progress')).toBeNull();
   // Saturday: the published figure with the notes' guests under it, and both in its label with the range.
-  expect(cellOf('2026-11-07').textContent).toBe('7282+70');
+  expect(cellOf('2026-11-07').textContent).toBe('7~282+70forecast');
   expect(cellOf('2026-11-07').getAttribute('aria-label'))
-    .toBe('Sat, Nov 7, 2026. This week. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Sample game.');
+    .toBe('Sat, Nov 7, 2026. This week. 282 guests, forecast, likely 250 to 310. Includes 70 guests from your notes. Sample game.');
   // Before today, the stored figure; never a forecast.
-  expect(cellOf('2026-11-04').textContent).toBe('4110guests');
+  expect(cellOf('2026-11-04').textContent).toBe('4110');
   // The day beside the grid gives the forecast and its three reasons with the largest effect, in the Calendar's order
   // (the note's +35 ties Saturday's and goes first), each with which way it usually moves guests.
   fireEvent.pointerOver(cellOf('2026-11-07'));
@@ -384,7 +384,7 @@ test('with a published forecast, This month shows each future day’s guests and
 
 test('the day detail’s Why rows end in their source chips, and On the calendar leaves out what Why names, as the Calendar does', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published(true)), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
+  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7~282+70forecast'); });
   fireEvent.pointerOver(cellOf('2026-11-07'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   const source = within(detail).getByRole('link', { name: 'Dartmouth. Source: home.dartmouth.edu' });
@@ -426,7 +426,7 @@ test('the day detail keeps the three largest effects either way, in the Calendar
   });
   const days = [forecastDay({ date: '2026-11-05' }), thanksgiving];
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf(days)), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-26').textContent).toBe('26212'); });
+  await waitFor(() => { expect(cellOf('2026-11-26').textContent).toBe('26~212forecast'); });
   fireEvent.pointerOver(cellOf('2026-11-26'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   // The 70% fall is kept over the 10% rise, and shown last, after the rises; its ▼ is the ramp's reddest step.
@@ -442,7 +442,7 @@ test('the day detail keeps the three largest effects either way, in the Calendar
 
 test('a note’s row in the day detail is its label alone, with no mark; the run reasons beside it keep theirs', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
+  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7~282+70forecast'); });
   fireEvent.pointerOver(cellOf('2026-11-07'));
   expect(whyRowsOf(screen.getByRole('region', { name: 'Selected day' }))).toEqual([
     ['Your private event, 70 guests, 6 pm to 9 pm', null],
@@ -453,14 +453,14 @@ test('a note’s row in the day detail is its label alone, with no mark; the run
 
 test('hovering a day shows its top reasons; touch does not', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5212'); });
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5~212forecast'); });
   fireEvent(cellOf('2026-11-07'), pointer('pointerover', 'touch'));
   expect(screen.queryByTestId('calendar-tooltip')).toBeNull();
   fireEvent(cellOf('2026-11-07'), pointer('pointerover', 'mouse'));
   const tip = screen.getByTestId('calendar-tooltip');
   expect(tip.getAttribute('aria-hidden')).toBe('true');
   expect(Array.from(tip.children, (line) => line.textContent)).toEqual([
-    'Sat, Nov 7, 2026', 'About 282 guests (250 to 310)', 'Includes 70 guests from your notes',
+    'Sat, Nov 7, 2026', '282 guests, forecast (likely 250 to 310)', 'Includes 70 guests from your notes',
     'Your private event, 70 guests, 6 pm to 9 pm', 'Saturday: usually more guests', 'Sample game: more guests in Townwise’s model',
   ]);
   fireEvent.pointerLeave(screen.getByRole('grid', { name: 'November 2026' }));
@@ -476,15 +476,15 @@ test('a business rule’s reason (D31) shows in the day detail and the tooltip, 
     ],
   })]);
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, ruled), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-06').textContent).toBe('6252+40'); });
+  await waitFor(() => { expect(cellOf('2026-11-06').textContent).toBe('6~252+40forecast'); });
   expect(cellOf('2026-11-06').getAttribute('aria-label'))
-    .toBe('Fri, Nov 6, 2026. This week. Forecast about 252 guests, 220 to 280. Includes 40 guests from your rules. Private event.');
+    .toBe('Fri, Nov 6, 2026. This week. 252 guests, forecast, likely 220 to 280. Includes 40 guests from your rules. Private event.');
   fireEvent(cellOf('2026-11-06'), pointer('pointerover', 'mouse'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   expect(within(detail).getByText('About 252 guests, likely 220 to 280. Includes 40 guests from your rules.')).toBeTruthy();
   expect(within(detail).getByText('Your rule: adds 40 guests on Fridays')).toBeTruthy();
   expect(Array.from(screen.getByTestId('calendar-tooltip').children, (line) => line.textContent)).toEqual([
-    'Fri, Nov 6, 2026', 'About 252 guests (220 to 280)', 'Includes 40 guests from your rules', 'Your rule: adds 40 guests on Fridays', 'Friday', 'Private event',
+    'Fri, Nov 6, 2026', '252 guests, forecast (likely 220 to 280)', 'Includes 40 guests from your rules', 'Your rule: adds 40 guests on Fridays', 'Friday', 'Private event',
   ]);
 });
 
@@ -676,4 +676,24 @@ test('“Open the calendar” sits under the grid’s key, and the Reorder expla
   fireEvent.click(how);
   expect(how.getAttribute('aria-expanded')).toBe('true');
   expect(within(detail).getByText(REORDER_OVERVIEW)).toBeTruthy();
+});
+
+test('This month marks a forecast and an actual apart, keys both, and says how the month’s forecast did (D49, 2026-11-18)', async () => {
+  // Wed, Nov 4: 110 stored guests against a run made Nov 2 that said 90 to 120.
+  const window = published() as { days: Parameters<typeof forecastOf>[0] };
+  const past = forecastDay({ date: '2026-11-04', low: 90, mid: 100, high: 120, actual: 110, inRange: true, scored: true, madeAt: '2026-11-02' });
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf([past, ...window.days])), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5~212forecast'); });
+  const figure = (date: string): HTMLElement | null => cellOf(date).querySelector<HTMLElement>('[data-figure]');
+  expect([figure('2026-11-04')?.getAttribute('data-figure'), figure('2026-11-04')?.textContent]).toEqual(['actual', '110']);
+  expect([figure('2026-11-05')?.getAttribute('data-figure'), figure('2026-11-05')?.textContent]).toEqual(['forecast', '~212']);
+  expect(figure('2026-11-04')?.style.color).not.toBe(figure('2026-11-05')?.style.color);
+  expect(cellOf('2026-11-04').getAttribute('aria-label')).toBe('Wed, Nov 4, 2026. 110 guests, actual.');
+  expect(screen.getByTestId('month-key').textContent).toMatch(/^94Actual guests~82Forecast/);
+  expect(screen.getByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  // The past day's detail and tooltip say how its forecast did, in the Calendar's words.
+  fireEvent(cellOf('2026-11-04'), pointer('pointerover', 'mouse'));
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  expect(within(detail).getByText('Forecast was about 100 (likely 90 to 120); 110 guests came: inside the range.')).toBeTruthy();
+  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('110 guests, actualForecast was about 100 (likely 90 to 120); 110 guests came: inside the range');
 });

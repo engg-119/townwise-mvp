@@ -480,7 +480,8 @@ describe('buildWeek', () => {
     const input = reads({ forecast: windowOf([forecastDay({ date: SATURDAY, low: 180.4, mid: 212, high: 239.2 })]) });
     const saturday = dayIn(week(input), SATURDAY);
     expect(saturday.range).toBe('180 to 240');
-    expect(tooltipLines(SATURDAY, input)?.lines[0]).toBe(`About 212 guests (${saturday.range ?? ''})`);
+    expect(tooltipLines(SATURDAY, input)?.lines[0]).toBe(`212 guests, forecast (likely ${saturday.range ?? ''})`);
+    expect(headLine(saturday)).toBe('forecast, 180 to 240');
     expect(saturday.status).toBeNull();
     // The read answered, but not for Sunday: the status word says so, and the head's last line stays empty.
     const sunday = dayIn(week(input), '2026-11-22');
@@ -494,7 +495,7 @@ describe('buildWeek', () => {
     const past = reads({ salesDays: [{ date: '2026-11-10', guests: 138, netSalesCents: 276_000 }], forecast: windowOf([]) });
     const tuesday = dayIn(week(past, '2026-11-10'), '2026-11-10');
     expect(tuesday).toMatchObject({ range: null, status: null, figure: { value: 138, kind: 'actual' } });
-    expect(headLine(tuesday)).toBe('guests');
+    expect(headLine(tuesday)).toBeNull();
     // A past day with no stored guests shows the forecast made for it, captioned “forecast”.
     const missed = reads({ salesDays: [], forecast: windowOf([forecastDay({ date: '2026-11-10', low: 80, mid: 90.4, high: 110 })]) });
     const unstored = dayIn(week(missed, '2026-11-10'), '2026-11-10');

@@ -5,13 +5,14 @@ import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import { useBreakpoint } from '../hooks';
 import { MARK } from '../home/MonthKey';
 import { CELL_GAP, cellSize, entryLines, slotOf, WEEKDAY_ROW, type DayCell, type GridSlot, type MonthBounds } from './grid';
-import { captionOf, statusWord, type CalendarCell, type TooltipLines } from './model';
+import { captionOf, figureTone, markedFigure, statusWord, type CalendarCell, type TooltipLines } from './model';
 
 // The Calendar's month grid on native (P28, spec 16.3): always 42 days in 6 rows, Monday first, a Pressable per day.
 // Every cell is a fixed height by width (grid.ts cellSize: 104, 64 or 52px), whatever it holds. A cell shows its day
-// number, with "Booked" or, under a past figure, "guests" at its right; then the figure (the published forecast's
-// middle figure from today on, with a mint "+70" when notes added guests; stored guests before today; a buyout's
-// party), or on a closed or likely-closed day the status word in its place; then from 1024px up to three entry lines
+// number, with "Booked" or, beside a forecast's figure, "forecast" at its right; then the figure (D49, design decision
+// 10: an actual, the stored guests before today, solid `white`; a forecast, the published forecast's middle figure from
+// today on with a mint "+70" when notes added guests, the run's figure for a past day with none stored, or a buyout's
+// party, `text2` after a "~"), or on a closed or likely-closed day the status word in its place; then from 1024px up to three entry lines
 // ("+N more" past them), below that corner marks (white for a holiday or town event, `text2` for a note, a mint
 // outline for an event from the owner's calendar). Below 641px every status takes the figure's place and "+70" and the
 // caption leave the cell. The days of the months either side are muted (no fill, a `border` outline, `text3`) and
@@ -77,8 +78,8 @@ function Day(props: { cell: DayCell; selected: boolean; width: number; onSelect:
             <Text style={[styles.status, styles.centered, phone ? styles.statusPhone : null, muted ? styles.muted : null]}>{status.split(' ').join('\n')}</Text>
           ) : cell.figure === null ? null : (
             <>
-              <Text style={[styles.figure, { fontSize: size.figure, lineHeight: size.figure + 4 }, cell.figure.kind === 'actual' ? styles.past : null, muted ? styles.muted : null]}>
-                {String(cell.figure.value)}
+              <Text style={[styles.figure, { fontSize: size.figure, lineHeight: size.figure + 4 }, figureTone(cell.figure) === 'text2' ? styles.forecast : null, muted ? styles.muted : null]}>
+                {markedFigure(String(cell.figure.value), cell.figure)}
               </Text>
               {cell.noteGuests > 0 && !phone ? <Text style={styles.added}>{`+${String(cell.noteGuests)}`}</Text> : null}
             </>
@@ -161,7 +162,7 @@ const styles = StyleSheet.create({
   middle: { flexDirection: 'row', alignItems: 'center', justifyContent: 'center', columnGap: 4 },
   middleWide: { height: 26 },
   figure: { ...theme.type.monoValue, color: c.white, fontVariant: ['tabular-nums'] },
-  past: { color: c.text2 },
+  forecast: { color: c.text2 },
   added: { ...theme.type.mono, color: c.mint, fontVariant: ['tabular-nums'] },
   caption: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text3 },
   entries: { gap: 2, height: 46 },

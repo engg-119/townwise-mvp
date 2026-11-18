@@ -20,6 +20,6 @@ test('the month cell shows the same order, cut to two lines and “+N more”', 
 
 test('the tooltip shows the same order after its status line, cut to two and “+N more”', () => {
   expect(tooltipLines(PARITY_DAY, parityInput())?.lines).toEqual([
-    'About 212 guests (180 to 240)', ...PARITY_ORDER.slice(0, 2), `+${String(PARITY_ORDER.length - 2)} more`,
+    '212 guests, forecast (likely 180 to 240)', ...PARITY_ORDER.slice(0, 2), `+${String(PARITY_ORDER.length - 2)} more`,
   ]);
 });

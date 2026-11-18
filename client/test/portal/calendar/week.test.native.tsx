@@ -83,8 +83,8 @@ test('each row is its head line over the day’s full cards, in the entries’ o
   const saturday = screen.getAllByRole('button')[3];
   if (saturday === undefined) throw new Error('no Saturday');
   expect(within(saturday).getByText('Sat 21')).toBeTruthy();
-  expect(within(saturday).getByText('212')).toBeTruthy();
-  expect(within(saturday).getByText('180 to 240')).toBeTruthy();
+  expect(within(saturday).getByText('~212')).toBeTruthy();
+  expect(within(saturday).getByText('forecast, 180 to 240')).toBeTruthy();
   const texts = within(saturday).getAllByText(/./).map((each) => each.props.children as unknown);
   const order = ['6 pm to 9 pm', 'Private event, 70', 'Dartmouth home football', '9 am to 10 am', 'Wine delivery'].map((text) => texts.indexOf(text));
   expect(order.every((at) => at >= 0)).toBe(true);

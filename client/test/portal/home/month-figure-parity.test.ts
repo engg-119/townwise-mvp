@@ -1,5 +1,7 @@
 import { monthGrid, type MonthCell } from '../../../src/portal/analytics/week';
-import { ALL_FILTERS, calendarMonth, captionOf, type CalendarCell, type CalendarInput } from '../../../src/portal/calendar/model';
+import {
+  ALL_FILTERS, calendarMonth, captionOf, figureSource, figureTone, markedFigure, type CalendarCell, type CalendarInput,
+} from '../../../src/portal/calendar/model';
 import type { ForecastWindow } from '../../../src/portal/estimates/api';
 import { addDays } from '../../../src/portal/locations/dates';
 import { note } from '../analytics/fakes';
@@ -44,6 +46,12 @@ function input(fields: Partial<CalendarInput> = {}): CalendarInput {
 
 const facts = (cell: Pick<CalendarCell, 'figure' | 'status'>) => ({ figure: cell.figure, caption: captionOf(cell), status: cell.status });
 
+/** The figure's mark (D49, design decision 10) and what its label says of it. */
+const mark = (cell: Pick<CalendarCell, 'figure' | 'label'>) => (cell.figure === null ? null : {
+  source: figureSource(cell.figure), tone: figureTone(cell.figure), text: markedFigure(String(cell.figure.value), cell.figure),
+  says: /, (forecast|actual)\b/.exec(cell.label)?.[1] ?? null,
+});
+
 function cellsOf(rows: readonly (readonly (CalendarCell | MonthCell | null)[])[]): Map<string, CalendarCell | MonthCell> {
   return new Map(rows.flat().flatMap((cell) => (cell === null ? [] : [[cell.date, cell]])));
 }
@@ -59,16 +67,33 @@ test('every day of the month has the same figure, caption and status on the Cale
   }
 });
 
+test('every day’s figure carries the same mark, and its label the same “forecast” or “actual”, on both (D49, 2026-11-18)', () => {
+  const calendar = cellsOf(calendarMonth('2026-11', input()));
+  const home = cellsOf(monthGrid(TODAY, input()));
+  for (const [date, cell] of calendar) {
+    const other = home.get(date) as MonthCell;
+    expect({ date, mark: mark(other) }).toEqual({ date, mark: mark(cell) });
+    // Home prints the same marked figure.
+    if (cell.figure !== null) expect({ date, text: other.figureText }).toEqual({ date, text: mark(cell)?.text });
+  }
+  const at = (date: string) => mark(home.get(date) as MonthCell);
+  // A past actual is plain; a past day's run figure, today's forecast and a booked party are marked alike.
+  expect(at('2026-11-02')).toEqual({ source: 'actual', tone: 'white', text: '98', says: 'actual' });
+  expect(at('2026-11-05')).toEqual({ source: 'forecast', tone: 'text2', text: '~140', says: 'forecast' });
+  expect(at(TODAY)).toEqual({ source: 'forecast', tone: 'text2', text: '~212', says: 'forecast' });
+  expect(at('2026-11-28')).toEqual({ source: 'forecast', tone: 'text2', text: '~60', says: 'forecast' });
+});
+
 test('the fixture covers each case the rule has', () => {
   const home = cellsOf(monthGrid(TODAY, input()));
   const at = (date: string) => { const cell = home.get(date); if (cell === undefined) throw new Error(date); return facts(cell); };
-  expect(at('2026-11-02')).toEqual({ figure: { value: 98, kind: 'actual' }, caption: 'guests', status: null });
+  expect(at('2026-11-02')).toEqual({ figure: { value: 98, kind: 'actual' }, caption: null, status: null });
   expect(at('2026-11-03')).toEqual({ figure: null, caption: null, status: 'likely_closed' });
   expect(at('2026-11-05')).toEqual({ figure: { value: 140, kind: 'past_forecast' }, caption: 'forecast', status: null });
   expect(at('2026-11-06')).toEqual({ figure: null, caption: null, status: 'no_data' });
-  expect(at(TODAY)).toEqual({ figure: { value: 212, kind: 'forecast' }, caption: null, status: null });
+  expect(at(TODAY)).toEqual({ figure: { value: 212, kind: 'forecast' }, caption: 'forecast', status: null });
   expect(at('2026-11-24')).toEqual({ figure: null, caption: null, status: 'closed' });
-  expect(at('2026-11-28')).toEqual({ figure: { value: 60, kind: 'booked' }, caption: 'booked', status: 'booked' });
+  expect(at('2026-11-28')).toEqual({ figure: { value: 60, kind: 'booked' }, caption: 'forecast', status: 'booked' });
   expect(at('2026-11-30')).toEqual({ figure: null, caption: null, status: 'no_forecast' });
 });
 
@@ -77,6 +102,6 @@ test('in net sales, a past day shows its stored net sales in dollars, and with n
   const stored = sales.get('2026-11-02') as MonthCell;
   expect(stored).toMatchObject({ figure: { value: 196_000, kind: 'actual' }, figureText: '$1,960', caption: 'sales' });
   const run = sales.get('2026-11-05') as MonthCell;
-  expect(run).toMatchObject({ figure: { value: 140, kind: 'past_forecast' }, figureText: '140', caption: 'forecast' });
-  expect(stored.label).toContain('$1,960.');
+  expect(run).toMatchObject({ figure: { value: 140, kind: 'past_forecast' }, figureText: '~140', caption: 'forecast' });
+  expect(stored.label).toContain('$1,960 in net sales, actual.');
 });

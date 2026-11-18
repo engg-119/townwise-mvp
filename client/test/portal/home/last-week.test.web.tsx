@@ -121,7 +121,7 @@ function openNumbers(card: HTMLElement): HTMLElement {
 test('a mix of scored and forecast-only days: the error, the forecast-only sentence, the last-year sentence, and no total over forecast days', async () => {
   const api = portal(UP_TO_FRIDAY, MIXED);
   const card = await renderHome(api);
-  expect(await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.'))).toBeTruthy();
+  expect(await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days inside the forecast range.'))).toBeTruthy();
   // The percentage and the counts are bold.
   for (const bold of ['10%', '5 days', '4 of 5 days']) expect(within(card).getByText(bold).tagName).not.toBe('DIV');
   expect(within(card).getByText('No guest count uploaded for Sat and Sun yet; this is Townwise’s forecast.')).toBeTruthy();
@@ -178,7 +178,7 @@ test('no uploads since last Sunday: the forecast for these days replaces “Your
 
 test('few scored days: only the in-range count, with no percentage', async () => {
   const card = await renderHome(portal(HISTORY, published([scored('2026-11-16'), scored('2026-11-17', false), scored('2026-11-18')], null)));
-  expect(await within(card).findByText(sentence('2 of 3 days landed in Townwise’s range.'))).toBeTruthy();
+  expect(await within(card).findByText(sentence('2 of 3 days inside the forecast range.'))).toBeTruthy();
   expect(within(card).queryByText(/off by/)).toBeNull();
   expect(within(glance()).queryByText(/against the forecast/)).toBeNull();
 });
@@ -228,7 +228,7 @@ test('from 1024px, with a published forecast Last week takes a line of its own u
   // join, so the card takes the full width; history only, it stays a third beside This month.
   await renderHome(portal(UP_TO_FRIDAY, MIXED));
   const card = await screen.findByRole('region', { name: 'Last week' });
-  await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.'));
+  await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days inside the forecast range.'));
   const month = screen.getByRole('region', { name: /^This month in / });
   expect(basisOf(screen.getByRole('region', { name: 'Last week' }))).toBe('100%');
   expect(basisOf(month)).toBe('100%');
