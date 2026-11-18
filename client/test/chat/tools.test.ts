@@ -1,4 +1,6 @@
-import { basedOnLine, isHiddenTool, isKnownTool, readsLine, toolLine, viewRows, type ToolStep } from '../../src/chat/tools';
+import { targetHref, targetWords } from '../../src/chat/dataLinks';
+import { basedOnLine, basedOnParts, dataTarget, isHiddenTool, isKnownTool, readsLine, toolLine, viewRows, type ToolStep } from '../../src/chat/tools';
+import { ACCESS, meOf, viewAsMe } from '../helpers/portal';
 
 // The client's tool table (spec P25). The names are listed here as api/test/chat-tools.test.ts lists the
 // registry's (FROZEN_NAMES), in its order: the client can't import the API, so a PR that appends a tool updates both
@@ -425,4 +427,82 @@ test('start_calibration’s web_turn (D37) reads as words beside file_turn, neve
   expect(viewRows(null, refused, 'start_calibration')).toEqual([
     { term: 'Started', value: 'No' }, { term: 'Reason', value: 'It can’t start in a conversation that read web pages' },
   ]);
+});
+
+describe('links to the team’s own data (spec P25 build note, 2026-11-18)', () => {
+  const UPLOAD = 'u_0123456789abcdef01234567';
+  const OTHER = 'u_89abcdef0123456789abcdef';
+  const range = { from: '2026-01-01', to: '2026-04-01' };
+  const sales = (uploadRefs?: unknown) => step('get_sales_days', 'done', range, {
+    ...range, dayCount: 91, guestsDayCount: 91, netSalesDayCount: 91, ...(uploadRefs === undefined ? {} : { uploadRefs }),
+  });
+  const day = step('get_day', 'done', { date: '2026-05-30' }, { date: '2026-05-30', hasSales: true, closed: false, noteCount: 0, eventCount: 0, sources: [] });
+  const overview = step('get_location_overview', 'done', null, { firstDate: '2025-05-01', lastDate: '2026-11-17', dayCount: 553, missingDays: 0, monthCount: 19 });
+
+  test('a day read opens that day; a sales read its one upload, or the list when several hold it or the result doesn’t say; the summary the list', () => {
+    expect(dataTarget(day)).toEqual({ kind: 'day', date: '2026-05-30' });
+    expect(dataTarget(sales([UPLOAD]))).toEqual({ kind: 'item', ref: UPLOAD });
+    expect(dataTarget(sales([UPLOAD, OTHER]))).toEqual({ kind: 'data' });
+    expect(dataTarget(sales())).toEqual({ kind: 'data' });
+    expect(dataTarget(overview)).toEqual({ kind: 'data' });
+  });
+
+  test('only from what the server returned: nothing before a read finishes, for an empty read, a malformed date or ref, or any other source', () => {
+    expect(dataTarget({ ...day, state: 'running', result: null })).toBeNull();
+    expect(dataTarget({ ...day, state: 'error' })).toBeNull();
+    // The input's date is not enough: the result has to name the day.
+    expect(dataTarget({ ...day, result: { hasSales: true } })).toBeNull();
+    expect(dataTarget({ ...day, result: { date: 'Sat, May 30' } })).toBeNull();
+    expect(dataTarget(step('get_sales_days', 'done', range, { ...range, dayCount: 0, uploadRefs: [] }))).toBeNull();
+    expect(dataTarget({ ...overview, result: { firstDate: null, lastDate: null, dayCount: 0, missingDays: 0, monthCount: 0 } })).toBeNull();
+    // An owner calendar's ref (c_) or anything malformed is never an item page.
+    expect(dataTarget(sales(['c_0123456789abcdef01234567']))).toEqual({ kind: 'data' });
+    expect(dataTarget(sales(['u_../../settings']))).toEqual({ kind: 'data' });
+    for (const other of [
+      step('get_town_calendar', 'done', range, { eventCount: 2, sources: [{ host: 'dartmouth.edu', url: 'https://dartmouth.edu/x' }] }),
+      step('get_town_profile', 'done', null, { available: true, town: { name: 'Hanover', state: 'NH' }, sources: [] }),
+      step('list_notes', 'done', null, { count: 2 }),
+      step('get_owner_calendar', 'done', range, { available: true, calendars: 1, eventCount: 3 }),
+      step('web_search', 'done', null, { pages: 2, sources: [] }),
+    ]) expect(dataTarget(other)).toBeNull();
+  });
+
+  test('the Based on line keeps its words, each piece with where it opens', () => {
+    const steps = [sales([UPLOAD]), day, step('list_notes', 'done', null, { count: 2 })];
+    expect(basedOnLine(steps, CTX)).toBe('Based on your sales from Jan 1 to Apr 1, 2026, what Townwise has for Sat, May 30, 2026, and your 2 notes.');
+    expect(basedOnParts(steps, CTX)).toEqual([
+      'Based on ', { text: 'your sales from Jan 1 to Apr 1, 2026', target: { kind: 'item', ref: UPLOAD } }, ', ',
+      { text: 'what Townwise has for Sat, May 30, 2026', target: { kind: 'day', date: '2026-05-30' } }, ', and ',
+      { text: 'your 2 notes', target: null }, '.',
+    ]);
+    expect(basedOnParts([overview, day], CTX)).toEqual([
+      'Based on ', { text: 'your sales summary (May 1, 2025 to Nov 17, 2026)', target: { kind: 'data' } }, ' and ',
+      { text: 'what Townwise has for Sat, May 30, 2026', target: { kind: 'day', date: '2026-05-30' } }, '.',
+    ]);
+    expect(basedOnParts([], CTX)).toEqual(['Based on this conversation only.']);
+  });
+
+  test('a target becomes a path only when the person may open it: ids and dates only, never under another access', () => {
+    const member = meOf(ACCESS.member);
+    expect(targetHref({ kind: 'day', date: '2026-05-30' }, 'l1', member)).toBe('/locations/l1/calendar?day=2026-05-30');
+    expect(targetHref({ kind: 'item', ref: UPLOAD }, 'l1', member)).toBe(`/locations/l1/data/${UPLOAD}`);
+    expect(targetHref({ kind: 'data' }, 'l1', member)).toBe('/locations/l1/data');
+    expect(targetHref({ kind: 'data' }, 'l1', meOf(ACCESS.admin))).toBe('/locations/l1/data');
+    // View-as reads these pages, as isAllowed says.
+    expect(targetHref({ kind: 'item', ref: UPLOAD }, 'l1', viewAsMe(ACCESS.member))).toBe(`/locations/l1/data/${UPLOAD}`);
+    for (const access of [ACCESS.pending, ACCESS.removed, ACCESS.staff, ACCESS.noOrg]) {
+      expect(targetHref({ kind: 'day', date: '2026-05-30' }, 'l1', meOf(access))).toBeNull();
+      expect(targetHref({ kind: 'data' }, 'l1', meOf(access))).toBeNull();
+    }
+    // An owner calendar's ref has no page on Your data yet, and nothing without GET /api/me.
+    expect(targetHref({ kind: 'item', ref: 'c_0123456789abcdef01234567' }, 'l1', member)).toBeNull();
+    expect(targetHref({ kind: 'data' }, 'l1', null)).toBeNull();
+    expect(targetHref(null, 'l1', member)).toBeNull();
+  });
+
+  test('a step’s link says where it goes', () => {
+    expect(targetWords({ kind: 'day', date: '2026-05-30' })).toEqual({ text: 'Open in Calendar', label: 'Open Sat, May 30, 2026 in Calendar' });
+    expect(targetWords({ kind: 'item', ref: UPLOAD })).toEqual({ text: 'Open on Your data', label: 'Open the upload with these sales on Your data' });
+    expect(targetWords({ kind: 'data' })).toEqual({ text: 'Open Your data', label: 'Open Your data' });
+  });
 });

@@ -93,6 +93,10 @@ describe('the views on a tool call’s card', () => {
       from: '2026-05-01', to: '2026-05-31',
       days: [{ date: '2026-05-01', guests: 140, netSalesUsd: 5123.45 }, { date: '2026-05-02', guests: 90, netSalesUsd: null }],
     }))).toEqual({ from: '2026-05-01', to: '2026-05-31', dayCount: 2, guestsDayCount: 2, netSalesDayCount: 1 });
+    // The Your data items holding the range, by ref only (spec P25), when the result names them.
+    const refs = ['u_0123456789abcdef01234567', 'u_89abcdef0123456789abcdef'];
+    expect(resultViewOf('get_sales_days', ok({ from: '2026-05-01', to: '2026-05-01', days: [], uploadRefs: refs })))
+      .toEqual({ from: '2026-05-01', to: '2026-05-01', dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, uploadRefs: refs });
   });
 
   it('list_notes: how many notes, never their text', () => {
@@ -216,6 +220,9 @@ describe('get_day', () => {
           return Promise.resolve((opts.days ?? []).filter((day) => day.date >= range.from && day.date <= range.to)
             .map(({ date, guests, netSalesCents }) => ({ date, guests, netSalesCents })));
         },
+        uploadIdsIn: (_scope: OrgScope, _location: string, range: { from: string; to: string }) => Promise.resolve([
+          ...new Set((opts.days ?? []).filter((day) => day.date >= range.from && day.date <= range.to).map((day) => day.uploadId)),
+        ].sort()),
       } as unknown as SalesDayStore,
       notes: { list: () => Promise.resolve(opts.notes ?? []) } as unknown as NoteStore,
       businessRules: { scheduled: () => Promise.resolve(opts.rules ?? []) } as unknown as BusinessRuleStore,
@@ -382,8 +389,9 @@ describe('get_day', () => {
     expect(await sales([])).toEqual([{ date: '2026-11-21', guests: 1, netSalesUsd: 25, likelyClosed: true }]);
   });
 
-  it('get_sales_days reads the 8 weeks before the range too, gives only the range, and marks likely-closed days (spec D32)', async () => {
-    const days = [...saturdays, nearEmpty('2026-11-21'), nearEmpty('2026-11-28')];
+  it('get_sales_days reads the 8 weeks before the range too, gives only the range, marks likely-closed days (spec D32) and names the range’s uploads by ref (P25)', async () => {
+    const OTHER_UPLOAD = '0000000000000000000000c2';
+    const days = [...saturdays, nearEmpty('2026-11-21'), { ...nearEmpty('2026-11-28'), uploadId: OTHER_UPLOAD }];
     const slow = note({ kind: 'other', startDate: '2026-11-28', endDate: '2026-11-28', effect: 'fewer_guests', expectedGuests: null, detail: null });
     const { tc, ranges } = context({ today: AFTER, days, notes: [slow] });
     const tool = toolNamed('get_sales_days');
@@ -398,7 +406,12 @@ describe('get_day', () => {
         { date: '2026-11-21', guests: 1, netSalesUsd: 25, likelyClosed: true },
         { date: '2026-11-28', guests: 1, netSalesUsd: 25 },
       ],
+      // Only the uploads holding the range's days, not the 8 weeks read before it (every saturday is UPLOAD_ID's too).
+      uploadRefs: [`u_${UPLOAD_ID}`, `u_${OTHER_UPLOAD}`],
     });
+    const before = tool.parse({ from: '2026-10-03', to: '2026-10-10' }, TODAY);
+    if (before === null) throw new Error('invalid input');
+    expect(JSON.parse((await tool.run(tc, before)).content)).toMatchObject({ uploadRefs: [`u_${UPLOAD_ID}`] });
     expect(tool.definition.description).toContain('likelyClosed');
     expect(toolNamed('get_day')?.definition.description).toContain('likelyClosed');
   });

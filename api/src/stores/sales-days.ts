@@ -117,6 +117,11 @@ export interface SalesDayStore {
   guestDayCountAfter(scope: OrgScope, locationId: string, after: string): Promise<number>;
   /** D28: per location id, how many days turned-off uploads hold; a location with none is left out. A count only. */
   offDayCountByLocation(scope: OrgScope): Promise<Map<string, number>>;
+  /**
+   * The uploads that hold the days from `from` to `to`, inclusive (each last wrote one), except turned-off ones (D28):
+   * their ids, sorted, so TownwiseAI's sales read can name the Your data items behind it (spec P25). Ids only.
+   */
+  uploadIdsIn(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<string[]>;
   /** D28: the dates from `from` to `to`, inclusive, whose day a turned-off upload holds, oldest first. */
   disabledDates(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<string[]>;
   /**
@@ -263,6 +268,13 @@ export function createSalesDayStore(connection: Connection): SalesDayStore {
     async guestDayCountAfter(scope, locationId, after) {
       const ids = await offIds(scope, locationId);
       return SalesDay.countDocuments({ ...ofLocation(scope, locationId), date: trusted({ $gt: after }), guests: trusted({ $gt: 0 }), ...onlyOnFilter(ids) });
+    },
+    async uploadIdsIn(scope, locationId, range) {
+      const ids = await offIds(scope, locationId);
+      const found = await SalesDay.distinct('uploadId', {
+        ...ofLocation(scope, locationId), date: trusted({ $gte: range.from, $lte: range.to }), ...onlyOnFilter(ids),
+      });
+      return found.map((id) => String(id)).sort();
     },
     async disabledDates(scope, locationId, range) {
       const ids = await offIds(scope, locationId);

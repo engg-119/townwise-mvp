@@ -215,6 +215,21 @@ describe('the switch in the stores', () => {
     expect((await uploads.get(scope, l1, id))?.disabledAt).toBeNull();
   });
 
+  it('uploadIdsIn answers the uploads holding the range’s days, sorted, except turned-off ones and other locations’', async () => {
+    const salesDays = createSalesDayStore(server.connection);
+    const scope = scopeOf(orgId);
+    const a = await send(admin, l1, '2026-05-01', 10);
+    const b = await send(admin, l1, '2026-05-06', 10);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-01', to: '2026-05-31' })).toEqual([a, b].sort());
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-01', to: '2026-05-05' })).toEqual([a]);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-08', to: '2026-05-31' })).toEqual([b]);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-06-01', to: '2026-06-30' })).toEqual([]);
+    await turnOff(a);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-01', to: '2026-05-31' })).toEqual([b]);
+    const elsewhere = await addLocation(server, { orgId, name: 'Back Room' });
+    expect(await salesDays.uploadIdsIn(scope, elsewhere, { from: '2026-05-01', to: '2026-05-31' })).toEqual([]);
+  });
+
   it('disabledDates answers the dates in the range a turned-off upload holds, oldest first; hasAny and hasAnyForOrg still see them', async () => {
     const salesDays = createSalesDayStore(server.connection);
     const scope = scopeOf(orgId);

@@ -6,6 +6,7 @@ import {
 
 import { useReducedMotion } from '../../motion';
 import { localToday } from '../../portal/locations/dates';
+import { useOptionalPortal } from '../../portal/PortalProvider';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../portal/ui/feedback';
@@ -158,6 +159,8 @@ export function AgentChat(props: {
   const saidCount = useRef(0);
   // Which replies' timelines the person opened (workedOpen.ts): the page's, so a reply drawn again keeps its own.
   const [workedOpen] = useState(workedOpenStore);
+  // Who is reading, for a reply's links to the team's own data (ReplyView); none outside the portal.
+  const me = useOptionalPortal()?.me ?? null;
   // A send from the landing, and what sent it: the composer moves under the thread, and focus follows it.
   const docking = useRef<'composer' | 'other' | null>(null);
   // What docked the composer, until another conversation shows: if the first turn is taken back (refused, or the
@@ -572,6 +575,7 @@ export function AgentChat(props: {
                   onRetry={(key) => { send(() => { chat.retry(key); }); }}
                   onAnnounce={announce}
                   workedOpen={workedOpen}
+                  me={me}
                 />
                 {newest && message.state === 'complete' ? (
                   <NextChips

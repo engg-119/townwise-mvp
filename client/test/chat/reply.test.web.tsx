@@ -15,6 +15,7 @@ import { visualTitle } from '../../src/chat/visuals/words';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles.web';
 import { theme } from '../../src/theme';
 import { PROPOSAL, PROPOSAL_ID, SALES_STEP } from '../helpers/chat';
+import { ACCESS, meOf, viewAsMe } from '../helpers/portal';
 import { daily, weekdays } from './visuals-fixtures';
 
 // B6 on web: the person's message bubbles and TownwiseAI's replies (owner decisions 3 to 6): the caret and the live
@@ -696,6 +697,82 @@ it('an unsaved message keeps its row’s place, hidden and with nothing to reach
   // The same row in the same place: one flex row, its items at the end.
   expect(window.getComputedStyle(saved).flexDirection).toBe(window.getComputedStyle(pending).flexDirection);
   expect(window.getComputedStyle(saved).justifyContent).toBe('flex-end');
+});
+
+describe('links to the team’s own data (spec P25 build note, 2026-11-18)', () => {
+  const UPLOAD = 'u_0123456789abcdef01234567';
+  const sales: ToolStep = {
+    id: 's1', name: 'get_sales_days', state: 'done', input: { from: '2026-01-01', to: '2026-04-01' },
+    result: { from: '2026-01-01', to: '2026-04-01', dayCount: 91, guestsDayCount: 91, netSalesDayCount: 91, uploadRefs: [UPLOAD] },
+  };
+  const day: ToolStep = {
+    id: 'd1', name: 'get_day', state: 'done', input: { date: '2026-05-30' },
+    result: { date: '2026-05-30', hasSales: true, closed: false, noteCount: 0, eventCount: 1, sources: [{ host: 'dartmouth.edu', url: 'https://dartmouth.edu/events' }] },
+  };
+  const town: ToolStep = {
+    id: 't1', name: 'get_town_calendar', state: 'done', input: { from: '2026-05-30', to: '2026-05-30' },
+    result: { eventCount: 1, sources: [{ host: 'dartmouth.edu', url: 'https://dartmouth.edu/events' }] },
+  };
+  const reply = (steps: ToolStep[], words = 'Saturday, May 30, 2026 was your best day.') =>
+    msg('m2', 'assistant', [{ type: 'tools', key: 'k', steps }, text('m2t', words)], { nodeId: 'a1', parentId: 'u1' });
+
+  function link(name: string): HTMLElement {
+    return screen.getByRole('link', { name });
+  }
+
+  function press(name: RegExp): void {
+    fireEvent.click(screen.getByRole('button', { name }));
+  }
+
+  it('a step and its Based on piece link to the Calendar’s day and the Your data upload; the town calendar keeps its source chips', () => {
+    render(<ReplyView {...replyProps({ message: reply([sales, day, town]), me: meOf(ACCESS.member) })} />);
+    const basedOn = screen.getByText(/^Based on/);
+    expect(basedOn.textContent).toBe('Based on your sales from Jan 1 to Apr 1, 2026, what Townwise has for Sat, May 30, 2026, and Hanover’s calendar for May 30, 2026.');
+    expect(within(basedOn).getByRole('link', { name: 'your sales from Jan 1 to Apr 1, 2026' }).getAttribute('href')).toBe(`/locations/l1/data/${UPLOAD}`);
+    expect(within(basedOn).getByRole('link', { name: 'what Townwise has for Sat, May 30, 2026' }).getAttribute('href')).toBe('/locations/l1/calendar?day=2026-05-30');
+    expect(within(basedOn).getAllByRole('link')).toHaveLength(2);
+
+    press(/^Worked/);
+    expect(link('Open the upload with these sales on Your data').getAttribute('href')).toBe(`/locations/l1/data/${UPLOAD}`);
+    expect(link('Open Sat, May 30, 2026 in Calendar').getAttribute('href')).toBe('/locations/l1/calendar?day=2026-05-30');
+    expect(link('Open Sat, May 30, 2026 in Calendar').textContent).toBe('Open in Calendar');
+    // The step's words stay the button that opens what it read; the town calendar's step has no data link.
+    expect(screen.getByRole('button', { name: /^Read your sales for Jan 1 to Apr 1, 2026/ })).toBeTruthy();
+    press(/^Read Hanover’s calendar/);
+    expect(screen.getAllByRole('link').filter((element) => element.getAttribute('href')?.startsWith('/'))).toHaveLength(4);
+    expect(screen.getAllByRole('link', { name: /Dartmouth|dartmouth/ }).length).toBeGreaterThan(0);
+  });
+
+  it('several uploads behind a range, or the summary, open Your data’s list', () => {
+    const several = { ...sales, result: { ...sales.result, uploadRefs: [UPLOAD, 'u_89abcdef0123456789abcdef'] } };
+    const overview: ToolStep = {
+      id: 'o1', name: 'get_location_overview', state: 'done', input: null,
+      result: { firstDate: '2025-05-01', lastDate: '2026-11-17', dayCount: 553, missingDays: 0, monthCount: 19 },
+    };
+    render(<ReplyView {...replyProps({ message: reply([several, overview]), me: meOf(ACCESS.member) })} />);
+    const basedOn = screen.getByText(/^Based on/);
+    for (const element of within(basedOn).getAllByRole('link')) expect(element.getAttribute('href')).toBe('/locations/l1/data');
+    press(/^Worked/);
+    expect(screen.getAllByRole('link', { name: 'Open Your data' })).toHaveLength(2);
+  });
+
+  it('plain text when the person may not open the page, and without GET /api/me; never a link from the reply’s text', () => {
+    const view = render(<ReplyView {...replyProps({ message: reply([sales, day]), me: meOf(ACCESS.pending) })} />);
+    const words = 'Based on your sales from Jan 1 to Apr 1, 2026 and what Townwise has for Sat, May 30, 2026.';
+    expect(screen.getByText(words)).toBeTruthy();
+    press(/^Worked/);
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    view.rerender(<ReplyView {...replyProps({ message: reply([sales, day]) })} />);
+    expect(screen.getByText(words)).toBeTruthy();
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    // View-as reads both pages, so the links stay.
+    view.rerender(<ReplyView {...replyProps({ message: reply([sales, day]), me: viewAsMe(ACCESS.member) })} />);
+    expect(screen.getAllByRole('link').length).toBeGreaterThan(0);
+    // A reply that names a day and its sales in words, with no read behind them, links nothing.
+    view.rerender(<ReplyView {...replyProps({ message: reply([], 'Your sales from Jan 1 to Apr 1, 2026 and Sat, May 30, 2026 were strong.'), me: meOf(ACCESS.member) })} />);
+    expect(screen.queryAllByRole('link')).toHaveLength(0);
+    expect(screen.getByText('Based on this conversation only.')).toBeTruthy();
+  });
 });
 
 const VERSIONS: TreeNode[] = [
