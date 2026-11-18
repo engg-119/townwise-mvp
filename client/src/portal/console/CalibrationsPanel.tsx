@@ -5,7 +5,7 @@ import { formatDate } from '../format';
 import { useAction } from '../hooks';
 import { usePortal } from '../PortalProvider';
 import { Button } from '../ui/Button';
-import { Messages } from '../ui/feedback';
+import { Notice } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Stack } from '../ui/layout';
 import { Heading, Small } from '../ui/text';
@@ -135,7 +135,7 @@ export function Calibrations(props: {
   return (
     <Stack gap={12}>
       <Heading level={3}>Calibrations</Heading>
-      {done === null ? null : <Messages live="status" items={[done]} />}
+      {done === null ? null : <Notice text={done} />}
       {locations.map((location) => (
         <RowActions key={location.id}>
           <Small white>{location.name}</Small>

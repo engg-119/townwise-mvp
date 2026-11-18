@@ -108,7 +108,7 @@ export default function JoiningPage(): React.JSX.Element {
   const error = act.error === null ? null : (
     <ErrorNotice error={act.error} {...(last === null ? {} : { onRetry: () => { act.run(last); } })} />
   );
-  const notice = declined === null ? null : <View style={styles.notice}><Notice text={declined} /></View>;
+  const notice = declined === null ? null : <Notice text={declined} style={styles.notice} />;
 
   if (auto && first !== undefined) {
     return (

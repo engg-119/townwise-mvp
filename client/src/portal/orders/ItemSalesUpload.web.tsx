@@ -11,7 +11,7 @@ import { usePortal } from '../PortalProvider';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button } from '../ui/Button';
 import { Checkbox } from '../ui/Checkbox';
-import { LoadingLine, Messages, Notice } from '../ui/feedback';
+import { InlineNotice, LoadingLine, Messages } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import { Select } from '../ui/Select';
 import { Small } from '../ui/text';
@@ -268,7 +268,7 @@ export function ItemSalesUpload(props: SalesSlot): React.JSX.Element {
         <Messages live="alert" items={['This file has no column of dates. The export needs one row per day or per sale, with its date.']} />
       ) : null}
       {step.kind === 'done' ? (
-        <Notice text={doneLine(step)} />
+        <InlineNotice text={doneLine(step)} />
       ) : null}
       {step.kind === 'columns' ? (
         <ColumnStep

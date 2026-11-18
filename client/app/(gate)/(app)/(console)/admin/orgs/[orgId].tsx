@@ -293,7 +293,7 @@ export default function OrganizationPage(): React.JSX.Element {
       return;
     }
     focusMessage();
-    showNotice({ text: setupClosedCopy(read.org.name, false) }, pathname);
+    showNotice({ text: setupClosedCopy(read.org.name, false), stays: true }, pathname);
   }, [refresh, onGone, focusMessage, showNotice, pathname]);
   // Any read that finds setup closed that the page showed open (after a setup write, Suspend, a join meanwhile) says
   // why, from that read, where focus moves: the panel and what it was saying are gone.
@@ -305,7 +305,7 @@ export default function OrganizationPage(): React.JSX.Element {
     if (shown === null || before?.org.id !== shown.org.id) return;
     if (before.org.inSetup !== true || shown.org.inSetup === true) return;
     focusMessage();
-    showNotice({ text: setupClosedCopy(shown.org.name, shown.org.status === 'suspended') }, pathname);
+    showNotice({ text: setupClosedCopy(shown.org.name, shown.org.status === 'suspended'), stays: true }, pathname);
   }, [shown, focusMessage, showNotice, pathname]);
   // Open as admin (D25): the answer is the organization's admin access under the banner, and the portal routes to
   // its dashboard. 409 org_suspended (suspended meanwhile) closes the reason dialog and reads the page again, which

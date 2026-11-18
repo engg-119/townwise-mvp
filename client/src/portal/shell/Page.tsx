@@ -11,7 +11,7 @@ import { Eyebrow, Lead, Title } from '../ui/text';
 
 // The page header and the page body (spec 15.2). Every page that is not a location tab renders <Page>: the
 // eyebrow and the page's one h1 in columns 1 to 8, its actions (at most one primary) or a side column in 9 to
-// 12, then the one-time notice and the content. Gate pages add the lead under the title in columns 1 to 7.
+// 12, then the content. The one-time notice is a toast (D55). Gate pages add the lead under the title in columns 1 to 7.
 
 export interface PageHeaderProps {
   eyebrow?: string;
@@ -52,7 +52,10 @@ export function PageHeader(props: PageHeaderProps): React.JSX.Element {
   );
 }
 
-/** The one-time notice of PortalProvider.showNotice, at the top of the content. */
+/**
+ * The one-time notice of PortalProvider.showNotice: a toast on the first page it may show on, once (the stored notice
+ * is its `result`, so the page mounting again never shows it twice). It draws nothing in the page under the toast host.
+ */
 export function PageNotice(): React.JSX.Element | null {
   const portal = useOptionalPortal();
   const pathname = usePathname();
@@ -65,9 +68,13 @@ export function PageNotice(): React.JSX.Element | null {
   useEffect(() => { if (unmarked) mark?.(pathname); }, [unmarked, mark, pathname]);
   if (!visible) return null;
   return (
-    <View style={styles.notice}>
-      <Notice text={stored.notice.text} {...(stored.notice.link === undefined ? {} : { link: stored.notice.link })} />
-    </View>
+    <Notice
+      text={stored.notice.text}
+      {...(stored.notice.link === undefined ? {} : { link: stored.notice.link })}
+      result={stored.notice}
+      stays={stored.notice.stays === true}
+      style={styles.notice}
+    />
   );
 }
 

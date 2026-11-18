@@ -1,15 +1,17 @@
 import { AccessibilityInfo, Dimensions } from 'react-native';
-import { act, cleanup, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, renderRouter, screen, within } from 'expo-router/testing-library';
 
 afterEach(async () => {
   await cleanup();
   jest.useRealTimers();
   jest.restoreAllMocks();
+  hosted = false;
 });
 
 import { ApiError } from '../../src/api/client';
 import { AuthProvider } from '../../src/auth/AuthProvider';
 import SecurityScreen from '../../app/(gate)/(app)/(account)/settings/security';
+import { ToastHost } from '../../src/portal/ui/toast';
 import { fakeAuth } from '../helpers/fakes';
 
 const EMAIL = ['a', 'example.com'].join('@');
@@ -20,9 +22,13 @@ const URI = `otpauth://totp/Townwise:a?secret=${SECRET}&issuer=Townwise`;
 const ENROLLMENT = { secret: SECRET, otpauthUri: URI, expiresAt: '2026-01-01T00:00:00Z', qrPngDataUrl: 'data:image/png;base64,AAAA' };
 const WINDOW = Dimensions.get('window');
 
+/** True for a test that mounts the toast host around the page, as the portal layout does (spec 15.7, D55). */
+let hosted = false;
+
 function wrap(auth: ReturnType<typeof fakeAuth>): React.ComponentType<{ children: React.ReactNode }> {
+  const host = hosted;
   return function Wrapper({ children }) {
-    return <AuthProvider auth={auth}>{children}</AuthProvider>;
+    return <AuthProvider auth={auth}>{host ? <ToastHost>{children}</ToastHost> : children}</AuthProvider>;
   };
 }
 
@@ -242,6 +248,27 @@ describe('moving to a new authenticator app (D54)', () => {
     for (const code of FRESH) expect(screen.getByText(code)).toBeTruthy();
     await fireEvent.press(screen.getByText('I saved these'));
     expect(await screen.findByRole('button', { name: 'Move to a new authenticator app' })).toBeTruthy();
+  });
+
+  // D55: the line is standing guidance, not an action's result, so under the toast host it is a row in the page for
+  // as long as the reset is pending; the sign-out of other devices is what the confirm did, so it is a toast.
+  test('under the toast host the pending line stays in the page, and “Other devices were signed out.” is a toast', async () => {
+    hosted = true;
+    const pendingLine = 'Your current authenticator app keeps working until you confirm a code from the new one.';
+    await renderOn({ confirmTotpReset: () => Promise.resolve({ recoveryCodes: FRESH }) });
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '123456');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Add Townwise to your new authenticator app' })).toBeTruthy();
+    expect(screen.getByText(pendingLine).props.role).toBe('status');
+    expect(within(screen.getByTestId('toasts')).queryByText(pendingLine)).toBeNull();
+    expect(screen.queryByTestId('toast')).toBeNull();
+    await fireEvent.changeText(screen.getByLabelText('Code'), '654321');
+    await fireEvent.press(screen.getByText('Confirm'));
+    expect(await screen.findByRole('heading', { name: 'Save your recovery codes' })).toBeTruthy();
+    expect(within(screen.getByTestId('toasts')).getByText('Other devices were signed out.')).toBeTruthy();
+    expect(screen.getAllByText('Other devices were signed out.')).toHaveLength(1);
+    expect(screen.queryByText(pendingLine)).toBeNull();
   });
 
   test('a recovery code is proof too, and the page says it is used up', async () => {

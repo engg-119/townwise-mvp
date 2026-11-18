@@ -12,7 +12,7 @@ import { NotesSkeleton } from '../skeleton';
 import { Actions, Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { DataTable } from '../ui/DataTable';
-import { EmptyState, Notice, ReadOnlyLine } from '../ui/feedback';
+import { EmptyState, Notice, ReadOnlyLine, useNoticeState } from '../ui/feedback';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Body } from '../ui/text';
 import { createNote, deleteNote, fetchNotes, updateNote, type Note, type NoteInput } from './api';
@@ -141,7 +141,7 @@ export function Notes(): React.JSX.Element {
     // A query (`?new=`) may have opened it; drop that, so a reload or Back shows the list, not an empty form again.
     if (params.new !== undefined) router.setParams({ new: undefined });
   }, [params.new, router]);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNoticeState();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Note | null>(null);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
@@ -162,10 +162,11 @@ export function Notes(): React.JSX.Element {
     closeForm();
     setDeleting(null);
     setSelectedId(null);
-    setNotice(text);
+    // The note is gone and the save or delete did not happen: that stays in the page, never a toast.
+    setNotice(text, true);
     markStale();
     reload();
-  }, [closeForm, markStale, reload]);
+  }, [closeForm, markStale, reload, setNotice]);
 
   const editing = form?.mode === 'edit' ? form.note : null;
   const save = useCallback(async (input: NoteInput): Promise<Note | null> => {
@@ -185,7 +186,7 @@ export function Notes(): React.JSX.Element {
     closeForm();
     setSelectedId(note.id);
     setNotice('Saved.');
-  }, [change, closeForm, markStale]);
+  }, [change, closeForm, markStale, setNotice]);
 
   const remove = useAction(useCallback(async (note: Note) => {
     try {
@@ -200,7 +201,7 @@ export function Notes(): React.JSX.Element {
     setSelectedId(null);
     if (editing?.id === note.id) setForm(null);
     setNotice('Deleted the note.');
-  }, [api, location.id, change, markStale, editing, gone]));
+  }, [api, location.id, change, markStale, editing, gone, setNotice]));
 
   function open(next: FormState): void {
     setNotice(null);
@@ -239,7 +240,7 @@ export function Notes(): React.JSX.Element {
 
   return (
     <View>
-      {notice === null ? null : <View style={styles.notice}><Notice text={notice} /></View>}
+      {notice === null ? null : <Notice text={notice.text} result={notice} stays={notice.stays} style={styles.notice} />}
       <Columns
         main={(
           <Stack>

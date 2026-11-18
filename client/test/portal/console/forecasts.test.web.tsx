@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 
 import { ApiError } from '../../../src/api/client';
 import { ForecastRuns } from '../../../src/portal/console/ForecastRuns';
+import { ToastHost } from '../../../src/portal/ui/toast';
 import { issueText, learningSummary, learningWords, readRunFile, summaryText, type RunTraining, type StaffRun } from '../../../src/portal/console/forecasts';
 import { refusal, staffMe } from '../../helpers/portal';
 import { portalWrapper } from '../files/harness';
@@ -125,6 +126,24 @@ test('Publish goes through a dialog that says the admins see it, then reads the 
   expect(screen.queryByRole('dialog', { name: 'Publish Townwise demand model v9 for Hanover?' })).toBeNull();
   expect(await screen.findByText('Published.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Publish / })).toBeNull();
+});
+
+// Spec 15.7, D55: under the toast host (the portal layout mounts it) the result is a toast, and the section has no row for it.
+test('under the toast host, Published. is a toast outside the section', async () => {
+  const api = consoleApi();
+  api.routes[LIST] = () => ({ runs: [run()] });
+  api.routes['GET /api/admin/orgs/o1/calibrations'] = () => ({ forecasts: { on: false, at: null }, calibrations: [] });
+  api.routes['POST /api/admin/orgs/o1/forecast-runs/run1/publish'] = () => ({ run: run({ status: 'published', publishedAt: '2026-05-03T15:00:00.000Z' }) });
+  const Wrapper = portalWrapper(api, staffMe());
+  render(<Wrapper><ToastHost><div data-testid="section"><ForecastRuns org={DETAIL.org} locations={DETAIL.locations} /></div></ToastHost></Wrapper>);
+  await screen.findByRole('heading', { name: 'Hanover' });
+  await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'Publish Townwise demand model v9, May 1, 2026' })); });
+  await settle(() => { fireEvent.click(within(screen.getByRole('dialog', { name: 'Publish Townwise demand model v9 for Hanover?' })).getByRole('button', { name: 'Publish' })); });
+  const line = await screen.findByText('Published.');
+  expect(line.closest('[data-testid="toast"]')).not.toBeNull();
+  expect(line.closest('[role="status"]')?.getAttribute('aria-live')).toBe('polite');
+  expect(within(screen.getByTestId('section')).queryByText('Published.')).toBeNull();
+  expect(within(screen.getByTestId('section')).queryByText('01')).toBeNull();
 });
 
 test('a refused change shows in its dialog in plain words', async () => {

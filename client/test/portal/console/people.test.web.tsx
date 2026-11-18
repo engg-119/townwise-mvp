@@ -401,7 +401,7 @@ test('a delete that finds the person gone (404) closes the dialog: their row goe
   expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/people/delete', body: { email: CHEF_EMAIL } }]);
 });
 
-test('a delete reloads the list, which takes the opener away, so focus moves to the notice', async () => {
+test('a delete reloads the list, which takes the opener away, so focus moves to the page’s heading as the toast says so', async () => {
   const api = consoleApi();
   serve(api);
   api.routes['POST /api/admin/people/delete'] = () => ({ deletedRequests: 1, deletedSeats: 0, redactedEvents: 2, kitUserId: null });
@@ -410,10 +410,11 @@ test('a delete reloads the list, which takes the opener away, so focus moves to 
   opener.focus();
   fireEvent.click(opener);
   confirmDelete(CHEF_EMAIL);
-  await screen.findByText(`Deleted ${CHEF_EMAIL}’s Townwise records.`);
+  const notice = await screen.findByText(`Deleted ${CHEF_EMAIL}’s Townwise records.`);
   await screen.findByRole('region', { name: 'Everyone' });
-  expect(document.activeElement).not.toBe(document.body);
-  expect(document.activeElement?.textContent).toMatch(/^\d+Deleted chef@example\.com’s Townwise records\.$/);
+  // The notice is a toast, which never takes focus (spec 15.7, D55).
+  expect(notice.closest('[data-testid="toast"]')).not.toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'People' }));
 });
 
 test('the lookup result reads again after a delete, so a deleted person never shows with live buttons', async () => {

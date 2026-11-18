@@ -23,7 +23,7 @@ import { fetchRules } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
 import { CalendarSkeleton } from '../skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { ErrorNotice, Notice } from '../ui/feedback';
+import { ErrorNotice, InlineNotice } from '../ui/feedback';
 import { Small } from '../ui/text';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Popover, type PopoverAnchor, type PopoverProps } from '../ui/Popover';
@@ -143,7 +143,7 @@ function sameRange(read: DateRange | undefined, range: DateRange): boolean {
 }
 
 /** The panel's notice: words, or the note just saved, whose notice waits for the forecast read again (savedNotice). */
-type PanelNotice = string | { savedId: string } | null;
+type PanelNotice = { text: string; stays?: true } | { savedId: string } | null;
 
 /**
  * The note form's popover. It sits with the day panel inside a MessageFocus of their own, so once it has gone with its
@@ -293,7 +293,8 @@ function CalendarView(): React.JSX.Element {
   const gone = useCallback((text: string) => {
     setForm(null);
     setDeleting(null);
-    setNotice(text);
+    // The note is gone and the write did not happen: that stays in the panel, never a toast.
+    setNotice({ text, stays: true });
     reloadDay();
   }, [reloadDay]);
 
@@ -332,7 +333,7 @@ function CalendarView(): React.JSX.Element {
     }
     setDeleting(null);
     if (editing?.id === note.id) setForm(null);
-    setNotice('Deleted the note.');
+    setNotice({ text: 'Deleted the note.' });
     reloadDay();
   }, [api, location.id, editing, gone, reloadDay]));
 
@@ -373,7 +374,7 @@ function CalendarView(): React.JSX.Element {
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const busy = monthData.busy || notes.busy || forecast.busy || !sameRange(shown.range, range);
   // After a save the forecast reads again; until it answers, the old read can't say what the note did.
-  const noticeText = notice === null || typeof notice === 'string' ? notice
+  const noticeText = notice === null ? null : 'text' in notice ? notice.text
     : forecast.busy || !sameRange(input.covered, range) ? 'Saved.' : savedNotice(selected, input, notice.savedId);
   const unpublished = forecastWindow !== null && !forecastWindow.available && forecastWindow.reason === 'no_published_forecast';
   // The week view's Previous and Next move the day a week, disabled in place once that block is past the 25 months;
@@ -422,6 +423,8 @@ function CalendarView(): React.JSX.Element {
         locationName={locationName}
         rulesHref={locationHref(location.id, 'rules')}
         notice={noticeText}
+        noticeResult={notice}
+        noticeStays={notice !== null && 'stays' in notice}
         readOnlyId={readOnlyId}
         readOnlyText={line}
         onAdd={(pressed) => {
@@ -458,7 +461,7 @@ function CalendarView(): React.JSX.Element {
   return (
     <View style={styles.page}>
       {unpublished ? (
-        <Notice
+        <InlineNotice
           text={`Townwise hasn’t published a forecast for ${locationName} yet. Days show your history, your notes and ${location.town.name}’s calendar. Notes you add now count as soon as a forecast is published.`}
         />
       ) : null}

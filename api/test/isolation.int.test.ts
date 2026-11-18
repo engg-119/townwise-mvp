@@ -13,7 +13,7 @@ import { createItemReader } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
 import {
-  addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat,
+  addChatTurn, addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat,
   addUpload, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
@@ -55,6 +55,8 @@ interface Tenant {
   calendarId: string;
   /** An open weekly suggestion of the location (weekly-forecast-suggestions), its why named after the organization. */
   suggestionId: string;
+  /** resumable-chat-turns: a turn record of the location's conversation, by its conversation's owner. */
+  turnId: string;
 }
 
 /**
@@ -79,6 +81,8 @@ interface SetupTenant {
   calendarId: string;
   /** An open weekly suggestion, as A's and B's. */
   suggestionId: string;
+  /** resumable-chat-turns: a turn record of the location's conversation, by its conversation's owner. */
+  turnId: string;
 }
 
 let a: Tenant;
@@ -115,6 +119,7 @@ async function tenant(name: string): Promise<Tenant> {
   const calendarId = await addOwnerCalendar(server, { orgId, locationId, label: `${name} bookings`, title: `${name} private booking` });
   await withProposal(conversationId, name);
   await addOrderRecords(server, { orgId, locationId, conversationId });
+  const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: member.session.userId });
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
@@ -123,7 +128,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
-    ruleId, calendarId, suggestionId,
+    ruleId, calendarId, suggestionId, turnId,
   };
 }
 
@@ -146,7 +151,8 @@ async function setupTenant(name: string, staffUserId: string): Promise<SetupTena
   const ruleId = await addRuleRow(orgId, locationId, staffUserId, name);
   const calendarId = await addOwnerCalendar(server, { orgId, locationId });
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
-  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId, suggestionId };
+  const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: staffUserId });
+  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId, suggestionId, turnId };
 }
 
 /** An open weekly suggestion of the location (spec 6.27), a closure on a day after the test clock's today. */
@@ -225,6 +231,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
   for (const name of [
     'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_view_as_grants', 'tw_audit_events',
     'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_usage', 'tw_chat_proposals', 'tw_files', 'tw_imports',
+    // resumable-chat-turns: a foreign stop must not set B's stop flag.
+    'tw_chat_turns',
     'tw_upload_days',
     // U11, statement moments.
     'tw_welcomes',
@@ -263,7 +271,7 @@ function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
-    ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId, suggestionId: b.suggestionId,
+    ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId, suggestionId: b.suggestionId, turnId: b.turnId,
   };
 }
 
@@ -273,7 +281,7 @@ function bSecrets(): string[] {
     b.orgId, b.name, b.admin.email, b.member.email, b.locationId, b.locationName, b.noteId, b.conversationId, `${b.name} private chat`,
     b.fileId, b.importId, b.uploadId, `${b.name} private item`, b.refFileId, `${b.name} private item.txt`, `${b.name} reference text`,
     b.ruleId, `${b.name} private rule`,
-    b.calendarId, `${b.name} bookings`, `${b.name} private booking`, b.suggestionId, `${b.name} private why`,
+    b.calendarId, `${b.name} bookings`, `${b.name} private booking`, b.suggestionId, `${b.name} private why`, b.turnId,
   ];
 }
 
@@ -365,7 +373,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
   const bOwn: Record<string, string[]> = {
     memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
     fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`], ruleId: [b.ruleId],
-    calendarId: [b.calendarId], suggestionId: [b.suggestionId],
+    calendarId: [b.calendarId], suggestionId: [b.suggestionId], turnId: [b.turnId],
   };
   const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
   // Every other segment is the caller's own, so the request reaches the route: an empty one would match no route, and
@@ -394,7 +402,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
 
 /** The path ids of an organization's own records, and the ids no organization owns, for `route`. */
 function ownIds(
-  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId' | 'suggestionId'>,
+  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId' | 'suggestionId' | 'turnId'>,
   route: TownwiseRoute,
 ): Record<string, string> {
   return {
@@ -406,7 +414,7 @@ function ownIds(
     ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
-    calendarId: org.calendarId, suggestionId: org.suggestionId,
+    calendarId: org.calendarId, suggestionId: org.suggestionId, turnId: org.turnId,
   };
 }
 
@@ -606,6 +614,29 @@ describe('isolation, case by case', () => {
     expect(await snapshotOf(b)).toBe(before);
     expect(await server.connection.collection('tw_agent_suggestions').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(0);
     expect(await server.connection.collection('tw_agent_suggestions').findOne({ _id: fileRow })).toMatchObject({ status: 'open' });
+  });
+
+  it('a turn record is reached only by its own ids: A’s member reads and stops A’s turn, and B’s turn id with A’s ids is 404, B unchanged', async () => {
+    // resumable-chat-turns. A's turn ended, so the tail answers at once (an empty stream) and the stop reports its state.
+    await server.connection.collection('tw_chat_turns').updateOne({ turnId: a.turnId }, { $set: { state: 'done', endedAt: server.clock.now() } });
+    try {
+      const base = `/api/org/locations/${a.locationId}/chat/${a.conversationId}/turns`;
+      expect((await call(server, `${base}/${a.turnId}?after=1`, { session: a.member.session })).status).toBe(200);
+      expect((await call(server, `${base}/${a.turnId}/stop`, { method: 'POST', session: a.member.session, json: {} })).status).toBe(200);
+      const before = await snapshotOf(b);
+      for (const res of [
+        await call(server, `${base}/${b.turnId}?after=0`, { session: a.member.session }),
+        await call(server, `${base}/${b.turnId}/stop`, { method: 'POST', session: a.member.session, json: {} }),
+      ]) {
+        expect(res.status).toBe(404);
+        const text = await res.text();
+        for (const secret of bSecrets()) expect(text).not.toContain(secret);
+      }
+      expect(await snapshotOf(b)).toBe(before);
+      expect(await server.connection.collection('tw_chat_turns').findOne({ turnId: b.turnId })).toMatchObject({ state: 'running', stopRequested: false });
+    } finally {
+      await server.connection.collection('tw_chat_turns').updateOne({ turnId: a.turnId }, { $set: { state: 'running', endedAt: null } });
+    }
   });
 
   it('a member route takes the organization only from the principal, never from the request', async () => {

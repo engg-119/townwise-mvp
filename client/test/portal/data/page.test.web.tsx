@@ -94,8 +94,9 @@ function at(rows: HTMLElement[], index: number): HTMLElement {
 // On web theme.color is var(--tw-<token>), which jsdom leaves unresolved, so a computed color names its token.
 const RAISED = theme.color.raised;
 
-function noticeHasFocus(notice: HTMLElement): boolean {
-  return document.activeElement !== document.body && document.activeElement?.contains(notice) === true;
+/** The notice is a toast, which never takes focus: the page's h1 has it in its place (spec 15.7, D55). */
+function headingHasFocus(notice: HTMLElement): boolean {
+  return notice.closest('[data-testid="toast"]') !== null && document.activeElement === screen.getByRole('heading', { level: 1 });
 }
 
 test('lists every item as a table row: item, added, kind, size, status and days', async () => {
@@ -337,7 +338,7 @@ test('Paste text saves an item and reloads the list; empty title and over 10,000
   fireEvent.click(screen.getByRole('button', { name: 'Save' }));
   const notice = await screen.findByText('Saved Winter hours.');
   expect(fake.texts).toEqual([{ locationId: 'l1', body: { title: 'Winter hours', text: 'Closed Mondays in January.' } }]);
-  await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+  await waitFor(() => { expect(headingHasFocus(notice)).toBe(true); });
   expect(await screen.findByText('Winter hours.txt')).toBeTruthy();
   expect(screen.queryByRole('heading', { name: 'Paste text' })).toBeNull();
 });
@@ -371,7 +372,7 @@ test('an org admin deletes every sales file’s original at once, and is told fi
   )).toBeTruthy();
   fireEvent.click(within(dialog).getByRole('button', { name: 'Delete all originals for this location' }));
   const notice = await screen.findByText('Deleted 0 originals.');
-  await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+  await waitFor(() => { expect(headingHasFocus(notice)).toBe(true); });
   expect(fake.files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/originals']);
 });
 

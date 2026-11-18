@@ -14,7 +14,7 @@ import { GOOGLE_SOURCE, PlaceSummary } from '../places/PlaceCard';
 import { usePortal } from '../PortalProvider';
 import { Actions, Button } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
-import { ErrorNotice, LoadingLine, Messages } from '../ui/feedback';
+import { ErrorNotice, LoadingLine, Notice, useNoticeState } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Columns, Section, Stack } from '../ui/layout';
 import { useFocusMessage } from '../ui/messageFocus';
@@ -345,18 +345,18 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
   // One check for the panel, as P3 makes it: the add form and each Rename read it.
   const search = usePlaceSearchAvailability(api, { readOnly: false });
   const [acting, setActing] = useState<Acting | null>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useNoticeState();
   /** Bumped once the form has added all it had, so it starts empty for the next location. */
   const [added, setAdded] = useState(0);
 
   /** A write went through: read the organization again, then say how it ended where focus can find it. */
-  const finish = useCallback(async (text: string): Promise<boolean> => {
+  const finish = useCallback(async (text: string, stays = false): Promise<boolean> => {
     if (!await onChanged()) return false;
     focusMessage();
     setActing(null);
-    setDone(text);
+    setDone(text, stays);
     return true;
-  }, [onChanged, focusMessage]);
+  }, [onChanged, focusMessage, setDone]);
 
   const settle = useCallback<Settle>(async (error, location) => {
     if (hasCode(error, 409, 'org_not_in_setup')) {
@@ -367,7 +367,8 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
     // organization's page shows its 404 state.
     if (hasCode(error, 404, 'not_found')) {
       if (location === undefined) await onChanged();
-      else await finish(`${location.name} was deleted meanwhile.`);
+      // The write did not happen: that stays in the section, never a toast.
+      else await finish(`${location.name} was deleted meanwhile.`, true);
       return true;
     }
     return false;
@@ -403,7 +404,7 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
     <Section kicker="Staff setup" title="Set up before anyone joins">
       <Stack gap={20}>
         <Small>{`Nobody has joined ${org.name} yet. You can add its locations and upload their daily totals so its first admin finds a ready page. Use this only with ${org.name}’s consent. Each change is listed in ${org.name}’s Townwise staff activity, and setup closes for good when the first person joins.`}</Small>
-        {done === null ? null : <Messages live="status" takesFocus items={[done]} />}
+        {done === null ? null : <Notice text={done.text} result={done} stays={done.stays} />}
         {locations.length === 0 ? null : <SetupTable locations={locations} onAct={(verb, location) => { setDone(null); setActing({ verb, location }); }} />}
         <Stack gap={12}>
           <Heading level={3}>Add a location</Heading>

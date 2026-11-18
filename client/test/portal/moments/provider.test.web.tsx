@@ -2,6 +2,8 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useEffect } from 'react';
 import { Pressable, Text, View } from 'react-native';
 
+import { Notice } from '../../../src/portal/ui/feedback';
+import { ToastHost } from '../../../src/portal/ui/toast';
 import {
   MomentProvider, requestReceivedStatement, useMoment, welcomeStatement, type MomentApi, type Statement,
 } from '../../../src/portal/moments';
@@ -113,6 +115,23 @@ test('the layer and its words are aria-hidden', () => {
   // The live region is outside the hidden layer, and it leaves the status role to the page's own notices.
   expect(region().getAttribute('role')).toBeNull();
   expect(root?.contains(region())).toBe(false);
+});
+
+// Spec 15.7, D55: a toast never draws over a moment ("You joined {org}." over the welcome).
+test('toasts wait while a moment plays and show once it ends', () => {
+  function Joined(): React.JSX.Element | null {
+    const { playing } = useMoment();
+    // Shown as the moment starts, as the join's notice is.
+    return playing ? <Notice text="You joined Hanover Inn." result={WELCOME} /> : null;
+  }
+  render(<ToastHost><MomentProvider><Page statement={WELCOME} /><Joined /></MomentProvider></ToastHost>);
+  fireEvent.click(screen.getByRole('button', { name: 'Play' }));
+  expect(layer()).not.toBeNull();
+  expect(screen.queryByTestId('toast')).toBeNull();
+  advance(400);
+  key({ key: 'a' });
+  expect(layer()).toBeNull();
+  expect(screen.getByTestId('toast-text').textContent).toBe('You joined Hanover Inn.');
 });
 
 test('a keydown removes the layer at once and Tab still moves focus on the page', () => {

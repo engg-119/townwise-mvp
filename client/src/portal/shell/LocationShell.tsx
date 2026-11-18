@@ -11,7 +11,7 @@ import { isFillRoute, locationHref, locationIdOf, pageTitle, tabOf } from '../ro
 import type { LocationSummary, MeResponse, OrgResponse } from '../schemas';
 import { LinkButton } from '../ui/Button';
 import { Skeleton, SkeletonHeading, SkeletonText } from '../skeleton/kit';
-import { ErrorNotice, Notice } from '../ui/feedback';
+import { ErrorNotice, InlineNotice } from '../ui/feedback';
 import { Content, Wrap } from '../ui/layout';
 import { MessageFocus } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
@@ -98,7 +98,7 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
       <Wrap>
         <Content>
           <View style={styles.missing}>
-            <Notice text="This location isn’t available." />
+            <InlineNotice text="This location isn’t available." />
             <LinkButton variant="link" href="/dashboard" label="Locations" />
           </View>
         </Content>
@@ -126,13 +126,14 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const head = tab === 'home' ? <Greeting>{header}</Greeting> : header(pageTitle(tab, new Date()));
   return (
     <Wrap>
-      {head}
-      <Content>
-        <MessageFocus>
+      {/* Around the header too: its h1 takes focus in place of a notice shown as a toast (ui/messageFocus.tsx). */}
+      <MessageFocus>
+        {head}
+        <Content>
           <PageNotice />
           {page}
-        </MessageFocus>
-      </Content>
+        </Content>
+      </MessageFocus>
     </Wrap>
   );
 }

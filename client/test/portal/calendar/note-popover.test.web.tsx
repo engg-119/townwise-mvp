@@ -136,6 +136,11 @@ function guests(card: HTMLElement): HTMLInputElement {
 }
 
 /** Whether focus is on the panel's notice that says `text`, a line that takes focus from script (tabIndex -1). */
+/** The toasts on screen, top to bottom. */
+function toasts(): string[] {
+  return screen.queryAllByTestId('toast-text').map((line) => line.textContent);
+}
+
 function focusOnNotice(text: string): boolean {
   const line = within(panel()).queryByText(text);
   const active = document.activeElement;
@@ -186,7 +191,7 @@ test('a press outside keeps the popover open with what was typed and focus in it
   expect(writes(api)).toEqual([]);
 });
 
-test('a save closes it with focus on Add an event, and the panel says “Saved.” until the forecast reads again, then what the note did', async () => {
+test('a save closes it with focus on Add an event, and a toast says “Saved.” until the forecast reads again, then what the note did', async () => {
   const { api, fake } = setup();
   await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
   const button = press('Add an event');
@@ -202,9 +207,11 @@ test('a save closes it with focus on Add an event, and the panel says “Saved.�
   fireEvent.click(within(card).getByRole('button', { name: 'Save note' }));
   await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
   expect(document.activeElement).toBe(button);
-  expect(await within(panel()).findByText('Saved.')).toBeTruthy();
+  // The save's notice is a toast (spec 15.7, D55): "Saved." at once, and the same toast then says what the note did.
+  expect(toasts()).toEqual(['Saved.']);
+  expect(within(panel()).queryByText('Saved.')).toBeNull();
   await act(async () => { release(); await Promise.resolve(); });
-  expect(await within(panel()).findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
+  await waitFor(() => { expect(toasts()).toEqual(['Saved. The forecast for Sat, Nov 21 now includes its 70 guests.']); });
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`POST ${NOTES_PATH}`]);
 });
 
@@ -313,7 +320,7 @@ test('a 404 on an edit closes the popover, the panel says so, and focus moves to
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`]);
 });
 
-test('a saved edit gives focus back to its Edit, or to the panel’s “Saved.” when the note no longer covers the day', async () => {
+test('a saved edit gives focus back to its Edit, or to the day panel when the note no longer covers the day', async () => {
   const { api, fake } = setup({ notes: [PARTY], forecasts: { '2026-11': november({ guests: 40, id: 'n1' }) } });
   await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
   api.answers[`${NOTES_PATH}/n1`] = (body) => {
@@ -326,17 +333,19 @@ test('a saved edit gives focus back to its Edit, or to the panel’s “Saved.�
   const edit = press(EDIT);
   fireEvent.change(guests(dialog('Edit note')), { target: { value: '70' } });
   fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
-  expect(await within(panel()).findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
+  await waitFor(() => { expect(toasts()).toEqual(['Saved. The forecast for Sat, Nov 21 now includes its 70 guests.']); });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(within(panel()).getByRole('button', { name: EDIT })).toBe(edit);
   expect(document.activeElement).toBe(edit);
-  // Moved to Nov 22: its Edit goes from this day once the notes read again, so focus moves to the notice instead.
+  // Moved to Nov 22: its Edit goes from this day once the notes read again, so focus moves to the day panel: the
+  // notice is a toast, which never takes focus.
   press(EDIT);
   fireEvent.change(within(dialog('Edit note')).getByLabelText('Starts'), { target: { value: '2026-11-22' } });
   fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
   await waitFor(() => { expect(within(panel()).queryByRole('button', { name: EDIT })).toBeNull(); });
   expect(screen.queryByRole('dialog')).toBeNull();
-  await waitFor(() => { expect(focusOnNotice('Saved.')).toBe(true); });
+  await waitFor(() => { expect(document.activeElement).toBe(panel()); });
+  expect(toasts().at(0)).toBe('Saved.');
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`, `PATCH ${NOTES_PATH}/n1`]);
 });
 
