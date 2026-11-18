@@ -230,6 +230,8 @@ test('Make a note opens a dialog “Make a note” from the event, without its t
   expect(within(card).getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Make a note']);
   expect(within(card).getByLabelText<HTMLInputElement>('Starts at').value).toBe('18:00');
   expect(within(card).getByLabelText<HTMLInputElement>('Details (optional)').value).toBe('');
+  // Nor as its event name (D33, D49): the dialog never copies an imported event's title.
+  expect(within(card).getByLabelText<HTMLInputElement>('Event name (optional)').value).toBe('');
   escape();
   expect(document.activeElement).toBe(make);
 });
