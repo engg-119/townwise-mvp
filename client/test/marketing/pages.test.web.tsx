@@ -358,7 +358,7 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 16, 2026.');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 18, 2026.');
   // D25: open as admin before and after a join, with a reason after (owner call, 2026-11-15); otherwise view-as only.
   expect(text).toContain('Townwise staff helping you, with your consent, can open your organization as its admin, before or after anyone from it joins: they see and change what an admin can, except your team, for at most an hour each time. Once anyone has joined, they must give a reason first. Each time, with its reason, and every change they make is recorded and listed in your organization’s Townwise staff activity.');
   expect(text).toContain('Otherwise, Townwise staff can see the sales figures, your location notes and your calendars with their events only through view-as');
@@ -394,7 +394,7 @@ test('Privacy says what Townwise keeps of a location’s calendars, that it fetc
   if (calendars === undefined) throw new Error('no Your calendars item');
   expect(calendars.textContent).toContain('For each event we keep its title, its dates and its hours, never its description, its place or its guests; an imported file itself is not kept.');
   expect(calendars.textContent).toContain('Townwise fetches a calendar link from our server when you add it and about every 6 hours after that, and keeps the link encrypted');
-  expect(calendars.textContent).toContain('Removing a calendar deletes its events.');
+  expect(calendars.textContent).toContain('Removing a calendar deletes its events, not the notes you made from them.');
   // Staff in view-as read the calendars and their events, titles included (api/README.md, Owner calendars item 7).
   const whoCanSee = within(screen.getByRole('region', { name: 'Your restaurant’s sales data' })).getAllByRole('listitem');
   expect(whoCanSee.some((item) => item.textContent.includes('your calendars with their events only through view-as'))).toBe(true);
@@ -420,7 +420,7 @@ test('Privacy says what Townwise reads from Google for a connected calendar, who
   expect(google.textContent).toContain('From them it reads only each event’s ID, status, title, dates and hours, repeating events included, never an event’s description, place or guests; it uses the status to leave out canceled events, and keeps the title, dates and hours as for your other calendars, with Google’s ID for the event.');
   // Who sees them: the team, TownwiseAI and so Anthropic (the calendars' names too), and staff only through view-as
   // or open as admin, without names or titles (api/README.md, Owner calendars item 9).
-  expect(google.textContent).toContain('Everyone on your organization’s team can see these calendars and their events, and TownwiseAI reads their names and their events’ titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them.');
+  expect(google.textContent).toContain('Everyone on your organization’s team can see these calendars and their events, and TownwiseAI reads their names and their events’ titles when you ask about your bookings, and once a week reads their events’ titles, dates and hours, never their names, for its suggestions (see TownwiseAI’s weekly suggestions), so they reach Anthropic, which doesn’t train on them.');
   expect(google.textContent).toContain('Townwise staff see them only through view-as or with your organization open as its admin, and there only as “Google calendar event” in a calendar named “Google calendar”, without their names or titles, in TownwiseAI too, though under view-as they can read your team’s TownwiseAI conversations, which may mention one; you agree to that when you press Continue to Google.');
   // How access ends (a location's deletion only when it held the last ones), and where the person can remove it.
   expect(google.textContent).toContain('Townwise’s access ends when your last Google calendar goes, whether someone removes it or deletes the location or the organization that holds it, and when you leave your organization or are removed from it: your Google calendars and their events are deleted, and Townwise deletes its access and asks Google to revoke it.');
