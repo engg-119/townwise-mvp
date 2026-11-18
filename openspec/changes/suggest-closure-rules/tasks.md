@@ -173,7 +173,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - `routes.test.ts` pins all four suggestion routes;
   - `api/test/indexes.test.ts` covers the new index;
   - `chain.int.test.ts` seeds a closed-weekday sales history, a file suggestion and an expired range, so "GET is side-effect free (7.3)" runs the new paths.
-- [ ] 6.7 Client tests:
+- [x] 6.7 Client tests:
   - `RuleSuggestionCard`, web and native;
   - `client/test/portal/rules/page.test.web.tsx` and `.test.native.tsx` (the group, Edit, Every year, confirm moving the rule, errors, view-as);
   - `client/test/chat/agent-panel.test.ts` and both `agent-panel.json` fixtures;
