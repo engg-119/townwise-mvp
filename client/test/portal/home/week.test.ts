@@ -350,7 +350,7 @@ describe('last week with the published forecast', () => {
     expect(rows.map((day) => day.forecastOnly)).toEqual([false, false, false, false, false, true, true]);
     const saturday = rows[5];
     if (saturday?.forecast == null) throw new Error('no Saturday');
-    expect(lastWeekForecastOnly(saturday.forecast)).toBe('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245');
+    expect(lastWeekForecastOnly(saturday.forecast)).toBe('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245');
     // Scored rows keep their guests, with the forecast beside them.
     expect(rows[0]).toMatchObject({ value: 110, lastYear: 100 });
     expect(lastWeekForecastCell(rows[0]?.forecast ?? forecastDay({ date: 'x' }))).toBe('About 105, 90 to 120');

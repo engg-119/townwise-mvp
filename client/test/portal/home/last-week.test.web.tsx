@@ -141,8 +141,8 @@ test('a mix of scored and forecast-only days: the error, the forecast-only sente
   const table = openNumbers(card);
   expect(within(table).getByText('Forecast')).toBeTruthy();
   expect(within(table).getByText('In range')).toBeTruthy();
-  expect(rowOf(table, 'Sat, Nov 21, 2026')).toContain('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245');
-  expect(rowOf(table, 'Sun, Nov 22, 2026')).toContain('Forecast, no guest count uploaded yet: about 170 guests, 150 to 190');
+  expect(rowOf(table, 'Sat, Nov 21, 2026')).toContain('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245');
+  expect(rowOf(table, 'Sun, Nov 22, 2026')).toContain('Forecast, no guest count uploaded yet: ~170 guests, 150 to 190');
   // Scored rows keep their guests, with the forecast and whether it landed in range beside them.
   const monday = rowOf(table, 'Mon, Nov 16, 2026');
   expect(monday).toContain('110');
@@ -168,7 +168,7 @@ test('no uploads since last Sunday: the forecast for these days replaces “Your
   expect(card.querySelectorAll('[data-series="forecast"]')).toHaveLength(7);
   const table = openNumbers(card);
   for (const date of ['Mon, Nov 16, 2026', 'Sun, Nov 22, 2026']) {
-    expect(rowOf(table, date)).toContain('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245');
+    expect(rowOf(table, date)).toContain('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245');
   }
   // No weekly total: 7 x 210.
   expect(card.textContent).not.toMatch(/1,470/);
@@ -253,7 +253,7 @@ test('This week adds up the forecast for the seven days from today, with its wee
   expect(await within(glance()).findByText('This week’s forecast')).toBeTruthy();
   const panel = glance();
   // 110 + 120 + ... + 170, each rounded first; 980 less 20% is 784, plus 25% is 1,225.
-  expect(within(panel).getByText('980')).toBeTruthy();
+  expect(within(panel).getByText('~980')).toBeTruthy();
   expect(within(panel).getByText(sentence('Likely 784 to 1,225 guests: 8 in 10 of this forecast’s backtest weeks landed in a range this wide.'))).toBeTruthy();
   expect(within(panel).getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.')).toBeTruthy();
   expect(within(panel).getByText(sentence('Today: ~110 guests, forecast, 90 to 130.'))).toBeTruthy();
@@ -266,7 +266,7 @@ test('This week adds up the forecast for the seven days from today, with its wee
 test('6 of the 7 days with a forecast: their total, the missing day named, no weekly range', async () => {
   const six = weekDates(TODAY).slice(0, 6).map((date) => forecastDay({ date, low: 90, mid: 110, high: 130 }));
   await renderHome(portal(HISTORY, offline(), published(six, null)));
-  expect(await within(glance()).findByText('660')).toBeTruthy();
+  expect(await within(glance()).findByText('~660')).toBeTruthy();
   expect(within(glance()).getByText('Mon, Nov 23 to Sun, Nov 29, 2026: 6 of the 7 days’ forecasts added up. Sun, Nov 29 has no forecast figure.')).toBeTruthy();
   expect(within(glance()).getByText('Each day’s range is in This week.')).toBeTruthy();
   expect(within(glance()).queryByText(/^Likely /)).toBeNull();

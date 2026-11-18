@@ -86,8 +86,8 @@ test('a mix: the sentences and the table, with each forecast-only row saying so,
   expect(lastWeek.queryByText('Forecast')).toBeNull();
   expect(lastWeek.queryByText(/^Scale 0 to/)).toBeNull();
   await fireEvent.press(lastWeek.getByRole('button', { name: /Show the numbers/ }));
-  expect(lastWeek.getByText('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245')).toBeTruthy();
-  expect(lastWeek.getByText('Forecast, no guest count uploaded yet: about 170 guests, 150 to 190')).toBeTruthy();
+  expect(lastWeek.getByText('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245')).toBeTruthy();
+  expect(lastWeek.getByText('Forecast, no guest count uploaded yet: ~170 guests, 150 to 190')).toBeTruthy();
   expect(lastWeek.getAllByText('About 105, 90 to 120')).toHaveLength(5);
   expect(lastWeek.getByText('In range')).toBeTruthy();
   expect(lastWeek.getAllByText('Yes')).toHaveLength(4);
@@ -103,7 +103,7 @@ test('no uploads since last Sunday: the forecast for these days and the upload l
   // Native has no upload (D20): the card says where to upload instead.
   expect(lastWeek.getByText(NATIVE_UPLOAD)).toBeTruthy();
   await fireEvent.press(lastWeek.getByRole('button', { name: /Show the numbers/ }));
-  expect(lastWeek.getAllByText('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245')).toHaveLength(7);
+  expect(lastWeek.getAllByText('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245')).toHaveLength(7);
   expect(lastWeek.queryByText(/1,470/)).toBeNull();
   expect(screen.getByText('No guest counts for these days yet. Upload your sales to see how Townwise’s forecast did.')).toBeTruthy();
 });
@@ -126,7 +126,7 @@ test('This week’s forecast adds up the seven days from today, with today besid
   await renderApp('/locations/l1', portal(HISTORY, offline(), published(next, null)));
   const glance = within(await screen.findByLabelText('At a glance'));
   expect(await glance.findByText('This week’s forecast')).toBeTruthy();
-  expect(glance.getByText('980')).toBeTruthy();
+  expect(glance.getByText('~980')).toBeTruthy();
   expect(glance.getByText(/^Today: ~110 guests, forecast, 90 to 130\.$/)).toBeTruthy();
   expect(glance.getByText(/^Busiest: Sun, Nov 29, 2026 \(~170 guests, forecast\)\.$/)).toBeTruthy();
   expect(glance.getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.')).toBeTruthy();

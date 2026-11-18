@@ -714,14 +714,14 @@ export function lastWeekForecastCell(day: ForecastDay): string | null {
 }
 
 /**
- * "Forecast, no guest count uploaded yet: about 150 guests, 120 to 180" (or "…: closed", "…: booked"): a forecast-only
+ * "Forecast, no guest count uploaded yet: ~150 guests, 120 to 180" (or "…: closed", "…: booked"): a forecast-only
  * day's row and label, so it never reads like a sales figure.
  */
 export function lastWeekForecastOnly(day: ForecastDay): string | null {
   const own = runDay(day);
   if (own === null) return null;
   const what = own.status !== 'open' ? own.status
-    : `about ${plural(Math.round(own.mid), 'guest', 'guests')}, ${formatCount(Math.floor(own.low))} to ${formatCount(Math.ceil(own.high))}`;
+    : `${markedFigure(plural(Math.round(own.mid), 'guest', 'guests'), { kind: 'forecast' })}, ${formatCount(Math.floor(own.low))} to ${formatCount(Math.ceil(own.high))}`;
   return `Forecast, no guest count uploaded yet: ${what}`;
 }
 
