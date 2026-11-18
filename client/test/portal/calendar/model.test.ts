@@ -124,14 +124,49 @@ test('rangeWords rounds a range’s low down and its high up', () => {
   expect(rangeWords(180.4, 239.2)).toBe('180 to 240');
 });
 
-test('a past day shows its stored guests and never a forecast figure', () => {
+test('a past day shows its stored guests over the forecast made for it (owner request, 2026-11-17)', () => {
   const rows = calendarMonth('2026-11', input());
+  // PAST's run forecast 135 for Nov 7; the stored 138 wins.
   expect(cellOf(rows, '2026-11-07')).toMatchObject({ figure: { value: 138, kind: 'actual' }, status: null });
-  // No stored guests: nothing, though net sales were stored.
-  expect(cellOf(rows, '2026-11-08').figure).toBeNull();
-  // A past day the run covered, with no stored day, still shows no forecast figure.
-  const noSales = calendarMonth('2026-11', input({ salesDays: [] }));
-  expect(cellOf(noSales, '2026-11-07').figure).toBeNull();
+  expect(tooltipLines('2026-11-07', input())?.lines[0]).toBe('138 guests');
+});
+
+test('a past day with no stored guests shows the forecast made for it, captioned “forecast”', () => {
+  const noSales = input({ salesDays: [] });
+  const cell = cellOf(calendarMonth('2026-11', noSales), '2026-11-07');
+  expect(cell).toMatchObject({ figure: { value: 135, kind: 'past_forecast' }, status: null });
+  expect(captionOf(cell)).toBe('forecast');
+  expect(cell.label).toBe('Sat, Nov 7, 2026. No data. Forecast about 135 guests, 120 to 150.');
+  expect(tooltipLines('2026-11-07', noSales)?.lines[0]).toBe('No data. Forecast about 135 guests (120 to 150)');
+  // A run that had the day closed or booked says so, as the forecast from today on does.
+  const closed = input({ salesDays: [], forecast: windowOf([forecastDay({ date: '2026-11-02', status: 'closed', low: null, mid: null, high: null })]) });
+  const monday = cellOf(calendarMonth('2026-11', closed), '2026-11-02');
+  expect(monday).toMatchObject({ status: 'closed', figure: null });
+  expect(statusWord(monday.status)).toBe('Closed');
+  expect(monday.label).toBe('Mon, Nov 2, 2026. No data. Forecast closed.');
+  expect(tooltipLines('2026-11-02', closed)?.lines[0]).toBe('No data. Forecast closed');
+  const booked = input({ salesDays: [], forecast: windowOf([forecastDay({ date: '2026-11-06', status: 'booked', low: null, mid: null, high: null })]) });
+  expect(cellOf(calendarMonth('2026-11', booked), '2026-11-06')).toMatchObject({ status: 'booked', figure: null });
+});
+
+test('every day shows something: “No data” before today and “No forecast” from today on, once the forecast read answered', () => {
+  const rows = calendarMonth('2026-11', input());
+  // Net sales but no guests, and no run covering the day.
+  const sunday = cellOf(rows, '2026-11-08');
+  expect(sunday).toMatchObject({ status: 'no_data', figure: null });
+  expect(statusWord(sunday.status)).toBe('No data');
+  expect(sunday.label).toBe('Sun, Nov 8, 2026. No data.');
+  expect(tooltipLines('2026-11-08', input())?.lines).toEqual(['No data']);
+  // From today on, a day the read doesn't cover.
+  const later = cellOf(rows, '2026-11-30');
+  expect(later).toMatchObject({ status: 'no_forecast', figure: null });
+  expect(statusWord(later.status)).toBe('No forecast');
+  expect(tooltipLines('2026-11-30', input())?.lines).toEqual(['No forecast']);
+  // While the forecast read loads or after it failed: no word that may be wrong.
+  const loading = calendarMonth('2026-11', input({ forecast: null }));
+  expect(cellOf(loading, '2026-11-08').status).toBeNull();
+  expect(cellOf(loading, '2026-11-30').status).toBeNull();
+  expect(tooltipLines('2026-11-30', input({ forecast: null }))).toBeNull();
 });
 
 test('a past day under a tenth of its weekday’s typical guests reads “Likely closed”, its count kept in the words (spec D32)', () => {
@@ -157,12 +192,12 @@ test('a past day under a tenth of its weekday’s typical guests reads “Likely
   expect(cellOf(calendarMonth('2026-11', thin), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
 });
 
-test('no published forecast: no figure after today on any day', () => {
-  for (const forecast of [NONE, null]) {
+test('no published forecast: no figure after today on any day, and “No forecast” once the read answered', () => {
+  for (const [forecast, status] of [[NONE, 'no_forecast'], [null, null]] as const) {
     const rows = calendarMonth('2026-11', input({ forecast }));
     const future = rows.flat().filter((cell): cell is CalendarCell => cell !== null && cell.date >= TODAY);
     expect(future.length).toBeGreaterThan(0);
-    expect(future.every((cell) => cell.figure === null && cell.status === null)).toBe(true);
+    expect(future.every((cell) => cell.figure === null && cell.status === status)).toBe(true);
   }
   expect(dayView('2026-11-21', input({ forecast: NONE })).forecast).toEqual({ kind: 'none', why: 'no_published_forecast' });
   expect(dayView('2026-11-30', input()).forecast).toEqual({ kind: 'none', why: 'not_covered' });
@@ -204,7 +239,7 @@ test('the cell label says the figure, range, note guests, events and notes', () 
   expect(cellOf(rows, '2026-11-14').label).toBe('Sat, Nov 14, 2026. Booked: a private buyout, 70 guests.');
   expect(cellOf(rows, '2026-11-26').label).toBe('Thu, Nov 26, 2026. Closed.');
   expect(cellOf(rows, '2026-11-07').label).toBe('Sat, Nov 7, 2026. 138 guests.');
-  expect(cellOf(rows, '2026-11-30').label).toBe('Mon, Nov 30, 2026.');
+  expect(cellOf(rows, '2026-11-30').label).toBe('Mon, Nov 30, 2026. No forecast.');
 });
 
 test('the day panel words a forecast; the 8 in 10 sentence goes with the model’s own range only', () => {
@@ -350,7 +385,7 @@ test('the tooltip holds the range, the notes’ guests and at most three reasons
     ],
   });
   expect(tooltipLines('2026-11-07', input())?.lines).toEqual(['138 guests', 'Saturday']);
-  expect(tooltipLines('2026-11-30', input())).toBeNull();
+  expect(tooltipLines('2026-11-30', input())?.lines).toEqual(['No forecast']);
 });
 
 test('monthBounds allows 12 months back and 12 ahead, inside the API’s 400 days', () => {

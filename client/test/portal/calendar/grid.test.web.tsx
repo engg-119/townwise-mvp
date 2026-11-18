@@ -134,7 +134,29 @@ test('at 1280 the grid is 42 days, each 104px tall, with the days either side ma
   expect(rowsOf('2026-12-03')[0]?.firstElementChild?.getAttribute('style')).toContain(`color: ${C.text3}`);
   expect(cell('2026-11-20').style.backgroundColor).toBe(C.raised);
   // Its label starts with the full date.
-  expect(cell('2026-12-03').getAttribute('aria-label')).toBe('Thu, Dec 3, 2026. Tree lighting.');
+  expect(cell('2026-12-03').getAttribute('aria-label')).toBe('Thu, Dec 3, 2026. No forecast. Tree lighting.');
+});
+
+test('a past day shows its data over its forecast, its forecast with no data, and “No data” with neither (owner request, 2026-11-17)', () => {
+  const reads = input({
+    forecast: forecastOf([
+      forecastDay({ date: '2026-11-02', status: 'closed', low: null, mid: null, high: null }),
+      forecastDay({ date: '2026-11-03', low: 80, mid: 90.4, high: 110 }),
+      forecastDay({ date: '2026-10-31', low: 80, mid: 90, high: 110 }),
+    ]) as ForecastWindow,
+  });
+  renderGrid({ reads });
+  // Oct 31 has stored guests: they win over the run's 90.
+  expect(cell('2026-10-31').textContent).toContain('140');
+  expect(cell('2026-10-31').textContent).not.toContain('90');
+  // Nov 3: no stored guests, so the run's figure, captioned “forecast”.
+  expect(cell('2026-11-03').textContent).toContain('90');
+  expect(cell('2026-11-03').textContent).toContain('forecast');
+  // Nov 2: the run had it closed.
+  expect(cell('2026-11-02').textContent).toContain('Closed');
+  // Nov 4: neither.
+  expect(cell('2026-11-04').textContent).toContain('No');
+  expect(cell('2026-11-04').getAttribute('aria-label')).toBe('Wed, Nov 4, 2026. No data.');
 });
 
 test('clicking a trailing day selects it, and the selected outside day is outlined mint', () => {

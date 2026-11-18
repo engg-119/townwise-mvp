@@ -6,7 +6,7 @@ import { formatDate } from '../format';
 import { addDays, daysBetween, monthRange } from '../locations/dates';
 import { hoursLine } from '../locations/noteRules';
 import {
-  dayCell, dayView, eventsOn, noteChip, rangeWords, stepMonth, type CalendarCell, type CalendarDayView, type CalendarInput, type monthBounds,
+  captionOf, dayCell, dayView, eventsOn, noteChip, rangeWords, stepMonth, type CalendarCell, type CalendarDayView, type CalendarInput, type monthBounds,
 } from './model';
 
 // The Calendar's grid (P28, spec 16.3), pure: the one place that says which dates a month view and a week view show
@@ -195,13 +195,11 @@ export interface WeekCard {
   sub: string;
 }
 
-/** A day of the week view: the month cell's words, its cards, and its head's range, or “No forecast” once the read answered without it. */
+/** A day of the week view: the month cell's words, its cards, and its head's range. */
 export interface WeekDay extends DayCell {
   cards: WeekCard[];
   /** “180 to 240” on an open forecast day, as the tooltip's parenthesis and the panel's “Likely 180 to 240” word it. */
   range: string | null;
-  /** The forecast read answered and doesn't cover the day; false while it loads or after a failure. */
-  noForecast: boolean;
 }
 
 export type WeekSlot = WeekDay | InertCell;
@@ -272,11 +270,13 @@ export function weekHead(date: string): string {
   return `${shortDate(date).slice(0, 3)} ${day === 1 ? formatDate(date).replace(/, \d{4}$/, '') : String(day)}`;
 }
 
-/** The head's last line: the range, “guests” under a past figure, “No forecast” once the read answered without it, or nothing. */
-export function headLine(day: Pick<WeekDay, 'range' | 'figure' | 'noForecast'>): string | null {
+/**
+ * The head's last line: the range, or the caption under a past figure (“guests”, or “forecast” on a day with no stored
+ * guests), or nothing. A day the forecast read doesn't cover says so in its status word (“No forecast”).
+ */
+export function headLine(day: Pick<WeekDay, 'range' | 'figure'>): string | null {
   if (day.range !== null) return day.range;
-  if (day.figure?.kind === 'actual') return 'guests';
-  return day.noForecast ? 'No forecast' : null;
+  return day.figure?.kind === 'actual' || day.figure?.kind === 'past_forecast' ? captionOf(day) : null;
 }
 
 /**
@@ -288,12 +288,11 @@ export function buildWeek(selected: string, today: string, input: CalendarInput,
   return weekDays(weekStartFor(selected, today)).map((date): WeekSlot => {
     const slot = slotFor(date, null, input, bounds);
     if (slot.kind === 'inert') return slot;
-    if (slot.pending) return { ...slot, cards: [], range: null, noForecast: false };
+    if (slot.pending) return { ...slot, cards: [], range: null };
     const view = dayView(date, input);
     const { forecast } = view;
     return {
       ...slot, cards: weekCards(date, input, view), range: forecast.kind === 'open' ? rangeWords(forecast.low, forecast.high) : null,
-      noForecast: forecast.kind === 'none' && forecast.why === 'not_covered',
     };
   });
 }
