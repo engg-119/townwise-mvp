@@ -16,9 +16,12 @@ export function targetHref(target: DataTarget | null, locationId: string, me: Me
   return isAllowed(me, href) ? href : null;
 }
 
-/** A step's link under its words: what it says, and its name, which says where it goes. */
+/** A step's link under its words: what it says, and its name, which says where it goes (a `c_` ref is a calendar, D49). */
 export function targetWords(target: DataTarget): { text: string; label: string } {
   if (target.kind === 'day') return { text: 'Open in Calendar', label: `Open ${dayText(target.date)} in Calendar` };
-  if (target.kind === 'item') return { text: 'Open on Your data', label: 'Open the upload with these sales on Your data' };
+  if (target.kind === 'item') {
+    const label = target.ref.startsWith('c_') ? 'Open this calendar on Your data' : 'Open the upload with these sales on Your data';
+    return { text: 'Open on Your data', label };
+  }
   return { text: 'Open Your data', label: 'Open Your data' };
 }

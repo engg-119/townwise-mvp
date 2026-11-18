@@ -494,8 +494,19 @@ describe('links to the team’s own data (spec P25 build note, 2026-11-18)', () 
       expect(targetHref({ kind: 'day', date: '2026-05-30' }, 'l1', meOf(access))).toBeNull();
       expect(targetHref({ kind: 'data' }, 'l1', meOf(access))).toBeNull();
     }
-    // An owner calendar's ref has no page on Your data yet, and nothing without GET /api/me.
-    expect(targetHref({ kind: 'item', ref: 'c_0123456789abcdef01234567' }, 'l1', member)).toBeNull();
+    // An owner calendar's ref opens its page on Your data (D49) under isAllowed's rule for P27, the same as an upload's:
+    // any member, org admin or not, and view-as; nothing for any other access, a malformed ref, or without GET /api/me.
+    const CALENDAR = 'c_0123456789abcdef01234567';
+    expect(targetHref({ kind: 'item', ref: CALENDAR }, 'l1', member)).toBe(`/locations/l1/data/${CALENDAR}`);
+    expect(targetHref({ kind: 'item', ref: CALENDAR }, 'l1', meOf(ACCESS.admin))).toBe(`/locations/l1/data/${CALENDAR}`);
+    expect(targetHref({ kind: 'item', ref: CALENDAR }, 'l1', viewAsMe(ACCESS.member))).toBe(`/locations/l1/data/${CALENDAR}`);
+    for (const access of [ACCESS.pending, ACCESS.removed, ACCESS.staff, ACCESS.noOrg]) {
+      expect(targetHref({ kind: 'item', ref: CALENDAR }, 'l1', meOf(access))).toBeNull();
+    }
+    for (const ref of ['c_0123', 'c_0123456789ABCDEF01234567', 'c_../../settings', 'x_0123456789abcdef01234567']) {
+      expect(targetHref({ kind: 'item', ref }, 'l1', member)).toBeNull();
+    }
+    expect(targetHref({ kind: 'item', ref: CALENDAR }, 'l1', null)).toBeNull();
     expect(targetHref({ kind: 'data' }, 'l1', null)).toBeNull();
     expect(targetHref(null, 'l1', member)).toBeNull();
   });
@@ -503,6 +514,7 @@ describe('links to the team’s own data (spec P25 build note, 2026-11-18)', () 
   test('a step’s link says where it goes', () => {
     expect(targetWords({ kind: 'day', date: '2026-05-30' })).toEqual({ text: 'Open in Calendar', label: 'Open Sat, May 30, 2026 in Calendar' });
     expect(targetWords({ kind: 'item', ref: UPLOAD })).toEqual({ text: 'Open on Your data', label: 'Open the upload with these sales on Your data' });
+    expect(targetWords({ kind: 'item', ref: 'c_0123456789abcdef01234567' })).toEqual({ text: 'Open on Your data', label: 'Open this calendar on Your data' });
     expect(targetWords({ kind: 'data' })).toEqual({ text: 'Open Your data', label: 'Open Your data' });
   });
 });
