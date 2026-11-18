@@ -80,10 +80,10 @@ export function ProposalCard(props: {
 
   const weekdays = weekdaysText(proposal.weekdays);
   const guests = guestsText(proposal.expectedGuests);
-  const items: { term: string; value: React.ReactNode }[] = [
-    { term: 'Kind', value: KIND_LABEL[proposal.kind] },
-    { term: proposal.startDate === proposal.endDate ? 'Date' : 'Dates', value: <Data>{formatDates(proposal)}</Data> },
-  ];
+  const items: { term: string; value: React.ReactNode }[] = [{ term: 'Kind', value: KIND_LABEL[proposal.kind] }];
+  // The event's name (D49), the person's own words: plain text.
+  if (proposal.title !== null && proposal.title !== undefined) items.push({ term: 'Event name', value: proposal.title });
+  items.push({ term: proposal.startDate === proposal.endDate ? 'Date' : 'Dates', value: <Data>{formatDates(proposal)}</Data> });
   if (weekdays !== null) items.push({ term: 'Weekdays', value: <Data>{weekdays}</Data> });
   items.push({ term: 'Effect', value: EFFECT_LABEL[proposal.effect] });
   if (guests !== null) items.push({ term: 'Expected guests', value: <Data>{guests}</Data> });

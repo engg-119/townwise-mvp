@@ -107,6 +107,7 @@ export function SuggestionCard(props: {
   const based = basedOn(suggestion);
   const facts = suggestionFacts(suggestion);
   const detail = suggestion.type === 'note' ? suggestion.note.detail : null;
+  const title = suggestion.type === 'note' ? suggestion.note.title ?? null : null;
   const describedBy = [props.readOnlyId, helpId].filter((value): value is string => value !== null).join(' ');
   const decidedLineRef = useRef<Host>(null);
   // A decision pressed on this card moves focus to the line that says what it did (the buttons it pressed are gone), as
@@ -126,6 +127,7 @@ export function SuggestionCard(props: {
       <Heading level={3}>{suggestionHeading(suggestion)}</Heading>
       <Text style={styles.context}>{suggestion.why}</Text>
       {suggestion.type === 'rule' ? <Text style={styles.context}>{suggestion.scheduleSummary}</Text> : null}
+      {title === null ? null : <Text style={styles.context}>{`Event name: ${title}`}</Text>}
       {facts === null ? null : <Text style={styles.context}>{facts}</Text>}
       {detail === null ? null : <Text style={styles.context}>{detail}</Text>}
       {based === null ? null : <Text style={styles.help}>{based}</Text>}

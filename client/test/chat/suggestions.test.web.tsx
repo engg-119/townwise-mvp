@@ -199,6 +199,15 @@ test('a note suggestion shows what Accept will save: its effect in the heading, 
   expect(within(note).getByText('Winter term starts; students back in town')).toBeTruthy();
 });
 
+test('a note suggestion with an event name shows it (D49)', async () => {
+  const api = chatApi(true);
+  api.panel = { ...(api.panel as object), suggestions: [{ ...OTHER_NOTE, note: { ...OTHER_NOTE.note, title: 'Winter term welcome' } }] };
+  renderAt(api, meOf(ACCESS.admin));
+  const panel = await side();
+  const note = card(panel, 'More guests than usual on Jan 8 to Jan 10, 2027?');
+  expect(within(note).getByText('Event name: Winter term welcome')).toBeTruthy();
+});
+
 test('a note of kind other asks its effect, never "Other", in its heading and in what Accept saved', () => {
   const other = (effect: string): Suggestion => ({ ...OTHER_NOTE, note: { ...OTHER_NOTE.note, effect, startDate: '2026-12-31', endDate: '2026-12-31' } }) as Suggestion;
   expect(suggestionHeading(other('more_guests'))).toBe('More guests than usual on Thu, Dec 31, 2026?');

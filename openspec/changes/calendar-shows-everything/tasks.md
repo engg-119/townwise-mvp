@@ -107,7 +107,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - filled on Edit, and left empty on Make a note;
   - an `other` note with only a title passes.
   - Tests: `client/test/portal/locations/note-rules.test.ts`, `notes.test.native.tsx` and `pages.test.web.tsx`; `client/test/portal/calendar/note-popover.test.web.tsx` keeps its "without its title" case unchanged.
-- [ ] 4.2 The Notes page (`Notes.tsx`), Analytics' day panel (`analytics/panel.ts`), and TownwiseAI's `ProposalCard.tsx`, `SuggestionCard.tsx` and `chat/format.ts` show the title. `AgentSidePanel.tsx` is not changed. Tests: the existing suites for each, one new case each.
+- [x] 4.2 The Notes page (`Notes.tsx`), Analytics' day panel (`analytics/panel.ts`), and TownwiseAI's `ProposalCard.tsx`, `SuggestionCard.tsx` and `chat/format.ts` show the title. `AgentSidePanel.tsx` is not changed. Tests: the existing suites for each, one new case each.
 
 ## 5. Client: Home
 
