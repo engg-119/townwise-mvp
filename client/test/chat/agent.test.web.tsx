@@ -14,9 +14,7 @@ import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { theme } from '../../src/theme';
 import { appRoutes, seededRoot } from '../helpers/app';
-import {
-  CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn,
-} from '../helpers/chat';
+import { CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn, forgetLastChats } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { itemOf } from '../portal/data/fakes';
@@ -72,6 +70,7 @@ afterEach(() => {
   localStorage.clear();
   // Drafts and the name outlive the page in memory, as they do between visits in one session.
   resetDrafts();
+  forgetLastChats();
   resetProfiles();
   resetVersionFocus();
   Reflect.deleteProperty(window, 'matchMedia');

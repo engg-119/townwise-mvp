@@ -8,7 +8,7 @@ import { DROP_BLOCKED } from '../../src/chat/ui/AgentChat';
 import { ChatDrop, DROP_KEPT, DROP_TITLE, WATCHDOG_MS } from '../../src/chat/ui/ChatDrop.web';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
-import { fakeChatApi, type FakeChatApi } from '../helpers/chat';
+import { fakeChatApi, type FakeChatApi, forgetLastChats } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { filesFake } from '../portal/files/fakes';
@@ -42,6 +42,7 @@ afterEach(() => {
   // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
   localStorage.clear();
   resetDrafts();
+  forgetLastChats();
   jest.useRealTimers();
   Reflect.deleteProperty(window, 'matchMedia');
 });

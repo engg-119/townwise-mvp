@@ -10,7 +10,7 @@ import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
-import { CONVERSATION, fakeChatApi, type FakeChatApi } from '../helpers/chat';
+import { CONVERSATION, fakeChatApi, type FakeChatApi, forgetLastChats } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { serveAbout } from './about-fakes';
@@ -30,7 +30,9 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 
 afterEach(() => {
   cleanup();
+  forgetLastChats();
   resetDrafts();
+  forgetLastChats();
   resetProfiles();
   resetVersionFocus();
 });
@@ -156,6 +158,7 @@ test('a shown propose_order_setup call waits while it streams, then draws the ca
   for (const line of lines) expect(line.compareDocumentPosition(closing) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   expect(closing.compareDocumentPosition(screen.getByRole('link', { name: 'Review in Ordering setup' })) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   cleanup();
+  forgetLastChats();
 
   // On reload the stored call draws the same card.
   const stored = served();
@@ -196,12 +199,14 @@ test('Not now sets it aside', async () => {
   expect(screen.queryByText(HEADLINE)).toBeNull();
   expect(api.writes.filter((write) => write.path === CARD)).toEqual([{ method: 'POST', path: CARD, body: { action: 'dismiss' } }]);
   cleanup();
+  forgetLastChats();
 
   // A card read as set aside says so, and one whose suggestions are saved already offers nothing to do.
   const earlier = served(() => open({ status: 'dismissed' }));
   await (await proposed(earlier)).finish();
   expect(await screen.findByText('Set aside. Nothing was added. Ask TownwiseAI again if you want these suggestions back.')).toBeTruthy();
   cleanup();
+  forgetLastChats();
   const done = served(() => open({ read: { ...READ, suppliers: [], items: [item('Sample Lager')] } }));
   await (await proposed(done)).finish();
   expect(await screen.findByText('These suggestions are in your ordering setup.')).toBeTruthy();
@@ -251,12 +256,14 @@ test('a card whose file was turned off or deleted says it isn’t available', as
   expect(screen.queryByText('This proposal isn’t available.')).toBeNull();
   expect(screen.queryByRole('link', { name: 'Review in Ordering setup' })).toBeNull();
   cleanup();
+  forgetLastChats();
 
   // Any other failure of the card's own read says to reload.
   const down = served(() => new ApiError('network', 'The request failed.'));
   await (await proposed(down)).finish();
   expect(await screen.findByText('Townwise couldn’t load these suggestions. Reload the page to try again.')).toBeTruthy();
   cleanup();
+  forgetLastChats();
 
   // The setup itself failing to load says that, and offers nothing to open.
   const broken = served();
