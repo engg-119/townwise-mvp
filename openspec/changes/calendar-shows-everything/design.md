@@ -69,7 +69,7 @@ Rules are worded by their own text, as the week card and the day panel already w
 | Week cards (web columns from 641px; agenda below and on native) | all | d6's `headLine` in the column head | every compact entry as a card, wrapped (D40); terms and seasons last |
 | Day panel (Calendar, web and native) | all | the forecast part, as today | everything, each entry with its source; no dedupe |
 | Home This week | all | status word beside the day | up to 3 compact entries per day; with 4 or more, the first 2 and "+N more" |
-| Home This month grid | as the Calendar's cell at the same width | status word | corner marks, and the shared tooltip on web, now with Home's imported events |
+| Home This month grid | by the grid column's measured width (decision 9) | the Calendar's figure, status and caption (`dayCell`) | up to 2 compact entry lines when a cell is at least 88px wide, else corner marks; the shared tooltip on web, now with Home's imported events |
 | Home day detail | all | forecast lines, Why 3 | everything with sources, as the Calendar's day panel |
 | Home month list | all | status word per day | every compact entry |
 
@@ -163,16 +163,56 @@ This is Claude's recommendation, and the owner decides (Open Questions).
 - **Files shared with d6:**
   - `client/src/portal/calendar/model.ts`, `grid.ts`, `CalendarWeek.web.tsx`, `DayTooltip.web.tsx`;
   - `client/test/portal/calendar/model.test.ts`, `grid.test.ts`, `grid.test.web.tsx`, and d6's new `day-tooltip.test.web.tsx`;
-  - `docs/portal/spec.md` (16.3 P28).
+  - `docs/portal/spec.md` (16.3 P28);
+  - Home's This month (decision 9) depends on d6's `figureOf`, and exports it (or `dayCell`) from `model.ts`.
 - **Files shared with `suggest-closure-rules` (D46, branch `feat/suggested-closure-rules`, proposal only):**
   - API: `api/src/forecasts/reasons.ts` (D46 adds season words; this change adds label dedupe), `api/src/files/ai-actions.ts`, `api/src/handlers/data.ts`, `api/src/handlers/notes.ts` (D46 adds season checks; this change adds `title`), `api/src/stores/files.ts` (read only here, unless the item view's types move);
   - client: `client/src/portal/locations/NoteFields.tsx` and `noteRules.ts`, `client/src/portal/analytics/days.ts` (D46 adds seasons to `noteCovers`), `client/src/portal/home/Home.tsx`, `client/src/portal/data/item/AiSection.tsx` and `client/src/portal/data/aiCopy.ts`, `client/src/chat/api.ts`, `client/test/portal/data/item-ai.test.web.tsx`, `client/test/portal/home/home.test.web.tsx`;
   - docs: `docs/portal/spec.md` (12, 14.5, 10.14, 11A.9, P11, P25, P27), `api/README.md`, `docs/portal/tuning-chat.md`.
   - Whichever lands second merges the other. Neither needs the other's fields.
 
+### 9. Home's This month (owner, 2026-11-17, 22:18)
+
+The owner's words: "it looks like the calendar in the home page is not showing all of the numbers like in the calendar page and that component in the home page has a lot of empty space fix it". His screenshots, taken as staff opened as admin on Sawtooth on Nov 17, showed two problems:
+- Days 1 to 16 were blank cells, while the Calendar showed figures for them.
+- The grid took about 45% of the card (`ThisMonth.tsx` `gridSide`, `maxWidth: 420`). The day detail beside it was much taller, mostly the Reorder part's paragraph (`home/beside.ts` `REORDER_OVERVIEW`), so a large empty area sat under the grid and its legend before "Open the calendar".
+
+**Figures: one rule (the orchestrator's decision).**
+- Home's grid has its own copy of the figure rule (`analytics/week.ts` `cellFigure` and `monthGrid`). That copy shows a past day only from stored data.
+- d6's `figureOf` in `calendar/model.ts` shows a past day's stored guests, else the run's figure for that day captioned "forecast", else "No data"; from today on, the forecast, else "No forecast". Sawtooth's stored days end before Nov 1, which is why the Calendar (with d6's rule) shows past figures and Home does not.
+- Once d6 lands, `monthGrid` builds each cell from the Calendar's `dayCell` over the same `CalendarInput` that Home already builds for the tooltip (`tipInput`, with Home's imported events from decision 5). `cellFigure` goes, keeping only Home's own "This week" outline (the 7 days from today).
+- Home's metric:
+  - Home shows net sales only for a location with no stored guests (`Home.tsx` `metricsWithData`).
+  - For that case the shared `figureOf` takes an optional metric. With net sales, a past day shows its stored net sales, else the same forecast or "No data" fallbacks; from today on, the guest forecast, as today.
+  - The rule therefore still lives once (Claude's call).
+- A parity test feeds one fixture month to `calendarMonth` and to Home's `monthGrid` and asserts the same figure, caption and status for every day. The fixture covers:
+  - a past day with stored guests;
+  - a past day that was likely closed;
+  - a past day with only the run's figure;
+  - a past day with neither;
+  - today with a forecast;
+  - a future closed day, a future booked day, and a future day with no forecast.
+
+**Space: each of these is Claude's call, refining the orchestrator's four proposals.**
+- (a) **Home cells list entries where they fit.** The grid column measures its width (`onLayout`). When a cell is at least 88px wide, each cell shows up to 2 compact entry lines from the shared helper, or 1 line and "+N more", under its figure, at a fixed cell height of 96px, so the grid has one height per tier. Narrower cells keep corner marks at today's height. The cell's label says everything either way.
+- (b) **The grid column is sticky on wide layouts.** On web, when grid and detail sit side by side, the grid column is `position: sticky`, `top: 16`, aligned to the top, so it stays in view while the taller detail scrolls past. Native and stacked layouts do not stick.
+- (c) **The Reorder paragraph goes behind a disclosure.** `REORDER_OVERVIEW` moves behind "How Townwise builds an order", closed by default, with `aria-expanded` on web and an expanded state on native. The one-line status ("Townwise can't build an order...", or the order's cover sentence) and "Open this day on Orders" stay visible.
+- (d) **"Open the calendar" moves up.** The legend (`MonthKey`) already sits directly under the grid inside `MonthGrid`. "Open the calendar" moves from under the whole card into the grid column, directly under the legend, so the grid side reads as one unit. When stacked, it stays under the legend, above the day detail.
+- **The grid column gets more room.** Side by side, the grid column takes `flexGrow: 3` against the detail's 2, with no 420px cap and a minimum of 360px. The detail keeps a minimum of 280px.
+
+**Layout at each width.** Home's content column width, not the window, decides; the column is narrower than the window at every width:
+| Content column | Layout |
+|---|---|
+| 1100px and wider | side by side, grid about 60%: cells about 90px wide, 2 entry lines, sticky grid, then the legend and Open the calendar under it |
+| 720 to 1099px | side by side, grid at its 360px minimum or more: cells under 88px, corner marks, sticky grid |
+| under 720px, and every phone | stacked: grid full width (entry lines only if cells reach 88px, as on a tablet held wide), the legend, Open the calendar, then the day detail |
+| native (iOS, Android) | stacked as above at every width, with no sticky and no tooltip; entry lines by the same 88px cell rule; the Reorder disclosure works by tap |
+
 ## Risks / Trade-offs
 
 - [Notes first in a cell can push a holiday past "+N more"] → The label, tooltip and panel still list it, and the order is a [CONFIRM] in the D49 row.
+- [A sticky grid taller than the window] → Sticky applies only when the grid column fits the viewport height; otherwise it scrolls with the page (checked from its measured height).
+- [Home's grid now shows past forecasts] → It is the Calendar's rule, captioned "forecast", so a run's figure is never mistaken for a stored one.
 - [Home makes two more reads] → Both are small: at most 5 calendars, and events over at most 92 days. A failure leaves Home showing without imported events and their marks, as the Calendar does.
 - [Dedupe hides which source a compact entry came from] → The day panel and Home's day detail keep every source.
 - [Merging run reasons drops a smaller effect] → Only for two reasons with one label on one day, which read as a bug today. The larger effect is kept.

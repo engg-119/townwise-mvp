@@ -77,6 +77,23 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - Tests: `client/test/portal/home/week.test.ts`.
 - [ ] 5.2 `client/src/portal/home/Home.tsx` reads the calendars and the events over Home's calendar range, and a failure leaves Home showing. `ThisWeek.tsx`, `MonthGrid.web.tsx`, `MonthGrid.tsx`, `ThisMonth.tsx` (the tooltip gets imported events) and `DayDetail.tsx` (rules, imported events and every chip) render them. Tests: `client/test/portal/home/home.test.web.tsx`, `home.test.native.tsx`, `month-grid-status.test.web.tsx` and `month-grid.test.native.tsx`.
 
+- [ ] 5.3 Parity test first, `client/test/portal/home/month-figure-parity.test.ts` (design decision 9): one fixture month through `calendarMonth` and Home's `monthGrid` gives the same figure, caption and status for every day. The fixture covers:
+  - a past day with stored guests;
+  - a past day that was likely closed;
+  - a past day with only the run's figure;
+  - a past day with neither;
+  - today;
+  - a future closed day, a future booked day, and a future day with no forecast.
+  - It also runs once with the net sales metric.
+- [ ] 5.4 `analytics/week.ts`: `monthGrid` builds each cell from `model.ts` `dayCell` (exported) over Home's `CalendarInput`, keeping Home's "This week" outline. Delete `cellFigure` and its `NO_FIGURE`. `figureOf` takes the optional metric. `ThisMonth.tsx` passes the one `CalendarInput` to both the grid and the tooltip. Run `npm test -w @ckeith26/expo-shell -- test/portal/home test/portal/calendar/model`.
+- [ ] 5.5 `ThisMonth.tsx`, `MonthGrid.web.tsx` and `MonthGrid.tsx`:
+  - the grid column measures its width, and cells of 88px or more show up to 2 entry lines at 96px high;
+  - side by side, `flexGrow` 3 to 2, the grid's minimum 360px and the detail's 280px;
+  - on web, a sticky grid column when side by side and when it fits the viewport;
+  - "Open the calendar" moves under the legend.
+  - Tests: `month-grid-status.test.web.tsx` (entry lines at a wide grid, marks at a narrow one) and `month-grid.test.native.tsx` (stacked, no sticky).
+- [ ] 5.6 `DayDetail.tsx` and `beside.ts`: `REORDER_OVERVIEW` goes behind "How Townwise builds an order", closed by default (`aria-expanded` on web, an expanded state on native). The status line and "Open this day on Orders" stay. Tests: `home.test.web.tsx` and `home.test.native.tsx`.
+
 ## 6. Client: calendars in Your data
 
 - [ ] 6.1 Agenda component `client/src/portal/data/item/CalendarAgenda.tsx` (web and native, reusing the week view's agenda card): events grouped by month, each linking to its day.
@@ -110,7 +127,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - the tooltip;
   - the week view;
   - the day panel's chips;
-  - Home's four surfaces;
+  - Home's four surfaces, and specifically Home's "This month in {Town}": past days show the same figures as the Calendar, and there is no empty area under the grid at 1280px and 1440px (side by side, sticky), 900px, 375px or on native, with the Reorder disclosure closed;
   - Your data's Calendars group and a `c_` page;
   - a calendar file's P27;
   - the note form's Event name.
@@ -118,4 +135,5 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 - [ ] 7.4 Push only after the owner's go. He checks these on the local dev servers:
   - a closed day with a named event;
   - Nov 11 with one Veterans Day;
-  - "US holidays" opening its page.
+  - "US holidays" opening its page;
+  - Home's This month on Sawtooth showing Nov 1 to 16 as the Calendar does, with no empty space.

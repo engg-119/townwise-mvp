@@ -72,3 +72,33 @@ The API's `reasonViews` SHALL keep one run reason per folded label on a day: the
 #### Scenario: Two note reasons
 - **WHEN** two buyout notes cover a day
 - **THEN** both note reasons are listed
+
+### Requirement: Home's month grid uses the Calendar's figure rule
+Home's This month grid (P11) SHALL build each cell's figure, caption and status with the Calendar's own functions (`dayCell` and `figureOf` in `calendar/model.ts`) and SHALL keep no copy of the rule. A day before today SHALL show its stored guests, else the run's figure for it captioned "forecast", else "No data"; a day from today on SHALL show the published forecast, else "No forecast". For a location Home shows in net sales, a past day SHALL show its stored net sales before falling back the same way.
+
+#### Scenario: Past days with no stored data
+- **WHEN** today is Nov 17, the location has no stored days in November, and the forecast run covers Nov 1 to 16
+- **THEN** Home's cells for Nov 1 to 16 show the run's figures captioned "forecast", exactly as the Calendar's cells do
+
+#### Scenario: The same figure on both surfaces
+- **WHEN** one fixture month is given to the Calendar's month and to Home's grid
+- **THEN** every day has the same figure, caption and status on both
+
+### Requirement: Home's This month leaves no empty space
+Home's This month SHALL lay out by its content column's width:
+- from 720px, the grid and the day detail sit side by side, the grid's column growing 3 to the detail's 2, with a minimum of 360px against the detail's 280px, and on web the grid column is sticky at the top while it fits the viewport;
+- below 720px and on native, the grid, the legend, "Open the calendar" and then the day detail are stacked, with no sticky.
+
+A Home cell at least 88px wide SHALL show up to 2 compact entry lines from the shared helper (or 1 line and "+N more") at a fixed 96px height, and a narrower cell SHALL show corner marks. "Open the calendar" SHALL sit directly under the legend. The day detail's Reorder explanation SHALL be behind a "How Townwise builds an order" disclosure, closed by default, and its one-line status and "Open this day on Orders" SHALL stay visible.
+
+#### Scenario: A wide desktop
+- **WHEN** Home is shown at 1440px and a day with a long Why is selected
+- **THEN** the grid's cells show entry lines, the legend and "Open the calendar" sit under the grid, the Reorder part shows its status line with "How Townwise builds an order" closed, and the grid stays in view while the page scrolls past the detail
+
+#### Scenario: A phone
+- **WHEN** Home is shown at 375px
+- **THEN** the grid is full width with corner marks, followed by the legend, "Open the calendar" and the day detail
+
+#### Scenario: Opening the explanation
+- **WHEN** a member presses "How Townwise builds an order"
+- **THEN** the paragraph shows and the button reports itself expanded

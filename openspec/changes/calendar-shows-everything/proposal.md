@@ -21,6 +21,13 @@ The causes, read from develop at 85563ceb: notes have no name, only kind words a
   - Each calendar opens P27 at the ref `c_<calendarId>`, a client-only ref. The page shows the calendar's name, kind, host, count and last refresh, then its events as an agenda grouped by month, one month at a time from the existing events route, each event linking to its day on the Calendar.
   - A stored file whose TownwiseAI read found a calendar (`ai.kind: 'calendar'`) shows its events the same way on its own P27. Each event that became a note links to the note's day on the Calendar.
   - **BREAKING (additive):** the data item's `ai` gains `events`.
+- **Home's This month matches the Calendar and loses its empty space** (owner, 2026-11-17, 22:18: "the calendar in the home page is not showing all of the numbers like in the calendar page and that component in the home page has a lot of empty space fix it").
+  - Home's grid builds its cells with the Calendar's `dayCell` and d6's `figureOf`, deleting its own copy (`analytics/week.ts` `cellFigure`). A parity test pins that both give the same figure for the same day.
+  - The space fixes are Claude's calls:
+    - cells list up to 2 entries where they are wide enough;
+    - the grid column is wider and sticky on wide web layouts;
+    - the Reorder paragraph goes behind "How Townwise builds an order";
+    - "Open the calendar" sits under the legend.
 - **TownwiseAI.** `list_notes`, `get_day` and `propose_note` carry the title. The note proposal card and the weekly suggestion card show it. No chat visual gains per-day entries in this change: chat visuals are frozen snapshots of figures, so entries would need a server twin of the helper. Kept as an open question for the owner.
 
 ## Capabilities
@@ -45,7 +52,7 @@ None under `openspec/specs/`. The Calendar's and owner calendars' requirements l
   - No new route, collection or env var.
 - Client:
   - `client/src/portal/calendar/` (new `entries.ts`, `model.ts`, `grid.ts`, `CalendarGrid*.tsx`, `CalendarWeek*.tsx`, `DayTooltip.web.tsx`, `CalendarDay.tsx`, `YourCalendars.tsx`);
-  - `client/src/portal/home/` (Home, ThisWeek, MonthGrid*, DayDetail, ThisMonth) and `analytics/week.ts`, `analytics/days.ts`, `analytics/panel.ts`;
+  - `client/src/portal/home/` (Home, ThisWeek, MonthGrid*, DayDetail, ThisMonth, beside) and `analytics/week.ts`, `analytics/days.ts`, `analytics/panel.ts`;
   - `client/src/portal/locations/` (NoteFields, NoteForm, Notes, noteRules, api);
   - `client/src/portal/data/` (DataPage, ItemPage, item/AiSection, a new calendar agenda);
   - `client/src/portal/routing.ts` if the `c_` ref needs it;
