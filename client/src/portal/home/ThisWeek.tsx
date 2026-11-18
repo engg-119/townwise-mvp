@@ -28,7 +28,7 @@ import { Block } from './Block';
 // with their whole span and sources, not in each day.
 //
 // With a published forecast, the first row is each day's Forecast, as This month's grid gives it (owner request,
-// 2026-11-15): "About 90 guests, 68 to 112", Closed or Booked, or "No forecast" for a day the run doesn't cover; with
+// 2026-11-15): "~90 guests, forecast, likely 68 to 112", Closed or Booked, or "No forecast" for a day the run doesn't cover; with
 // none published there is no Forecast row, so Home still never shows a guess of its own.
 // From 1024px the week is a strip, one column a day, with today's column, the first, raised: the day (and its own figure), then
 // rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed

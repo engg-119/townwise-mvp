@@ -354,9 +354,9 @@ test('with a published forecast, This week starts with each day’s Forecast, it
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
   await waitFor(() => { expect(within(strip).getAllByRole('rowheader')[0]?.textContent).toBe('Forecast'); });
   // Thu, Nov 5 (today) to Wed, Nov 11: 212 a day, and Saturday the 7th with its private event.
-  expect(within(strip).getAllByText(sentence('About 212 guests, 180 to 240'))).toHaveLength(6);
-  expect(within(strip).getByText(sentence('About 282 guests, 250 to 310'))).toBeTruthy();
-  expect(within(strip).getAllByText('About 212 guests')).toHaveLength(6);
+  expect(within(strip).getAllByText(sentence('~212 guests, forecast, likely 180 to 240'))).toHaveLength(6);
+  expect(within(strip).getByText(sentence('~282 guests, forecast, likely 250 to 310'))).toBeTruthy();
+  expect(within(strip).getAllByText('~212 guests')).toHaveLength(6);
 });
 
 test('with a published forecast, This month shows each future day’s guests and no tagline', async () => {

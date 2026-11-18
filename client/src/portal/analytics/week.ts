@@ -1,5 +1,5 @@
 import { compactEntries, dayEntries, type DayEntry } from '../calendar/entries';
-import { ALL_FILTERS, captionOf, dayCell, INSIDE_RANGE, markedFigure, type CalendarCell, type CalendarInput, type ImportedEvent } from '../calendar/model';
+import { ALL_FILTERS, captionOf, dayCell, FORECAST_TAG, INSIDE_RANGE, markedFigure, type CalendarCell, type CalendarInput, type ImportedEvent } from '../calendar/model';
 import { yoursDid, type ForecastDay, type ForecastWindow, type LiveAccuracy } from '../estimates/api';
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
@@ -286,20 +286,23 @@ export function summaryLabel(summary: WeekSummary): string {
 }
 
 /**
- * A day's published forecast in This week (owner request, 2026-11-15), as This month's grid reads it, the figure strong:
- * "About 90 guests, 68 to 112", "Closed", "Booked: a private buyout, 40 guests"; null when the run has no figure for it.
+ * A day's published forecast in This week (owner request, 2026-11-15), as This month's grid reads it, the figure strong
+ * and marked as a forecast (D49, decision 10): "~90 guests, forecast, likely 68 to 112", "Closed", "Booked: a private
+ * buyout, ~40 guests, forecast"; null when the run has no figure for it.
  */
 export function forecastPhrase(day: ForecastDay | undefined): Phrase | null {
   if (day === undefined) return null;
   if (day.status === 'closed') return ['Closed'];
   if (day.status === 'booked') {
     if (!yoursDid(day, 'booked')) return ['Booked for a private event'];
-    return day.noteGuests > 0 ? ['Booked: a private buyout, ', strong(plural(day.noteGuests, 'guest', 'guests'))] : ['Booked: a private buyout'];
+    if (day.noteGuests === 0) return ['Booked: a private buyout'];
+    return ['Booked: a private buyout, ', strong(markedFigure(plural(day.noteGuests, 'guest', 'guests'), { kind: 'booked' })), `, ${FORECAST_TAG}`];
   }
   if (day.low === null || day.mid === null || day.high === null) return null;
   const mid = Math.round(day.mid);
   // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
-  return [strong(`About ${plural(mid, 'guest', 'guests')}`), `, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`];
+  const range = `likely ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`;
+  return [strong(markedFigure(plural(mid, 'guest', 'guests'), { kind: 'forecast' })), `, ${FORECAST_TAG}, ${range}`];
 }
 
 /** "Busiest last year: Sat, Nov 22, 2025 (253 guests).", the figure strong. */

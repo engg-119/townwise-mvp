@@ -65,14 +65,16 @@ describe('weeks', () => {
     expect(forecastPhrase(undefined)).toBeNull();
     const open = forecastPhrase(forecastDay({ date: '2026-11-05', low: 67.6, mid: 90.4, high: 112.2 }));
     if (open === null) throw new Error('no phrase');
-    expect(plainOf(open)).toBe('About 90 guests, 67 to 113');
-    expect(open[0]).toEqual({ strong: 'About 90 guests' });
+    // A forecast's mark (D49, decision 10): the leading "~" and the word "forecast".
+    expect(plainOf(open)).toBe('~90 guests, forecast, likely 67 to 113');
+    expect(open[0]).toEqual({ strong: '~90 guests' });
     expect(forecastPhrase(forecastDay({ date: '2026-11-15', status: 'closed', low: null, mid: null, high: null }))).toEqual(['Closed']);
     const yours = forecastDay({
       date: '2026-11-16', status: 'booked', low: null, mid: null, high: null, noteGuests: 40,
       reasons: [{ kind: 'note', label: 'Your buyout', effectPct: null, sources: [], note: { id: 'n1', guests: 40, outcome: 'booked' } }],
     });
-    expect(forecastPhrase(yours)).toEqual(['Booked: a private buyout, ', { strong: '40 guests' }]);
+    // A buyout's party is an expected count, a forecast too.
+    expect(forecastPhrase(yours)).toEqual(['Booked: a private buyout, ', { strong: '~40 guests' }, ', forecast']);
     expect(forecastPhrase({ ...yours, reasons: [] })).toEqual(['Booked for a private event']);
     expect(forecastPhrase(forecastDay({ date: '2026-11-17', low: null, mid: null, high: null }))).toBeNull();
   });
