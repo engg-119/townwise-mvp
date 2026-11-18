@@ -168,7 +168,7 @@ describe('Needs attention', () => {
     expect(shown.map((line) => [line.text, line.link?.label ?? null, line.link?.href ?? null])).toEqual([
       [`An access request has waited since ${day}.`, 'Open the request', '/admin?request=r%201'],
       ['The weekly refresh isn’t running on this server: the forecast lab or its switch is off.', null, null],
-      [`Staff paused the weekly refresh on ${day}.`, 'Open organizations', '/admin/orgs'],
+      [`Staff paused the weekly refresh for every organization on ${day}. Resume it under Forecasts on any organization’s page.`, 'Open Sample Mountain Tavern', '/admin/orgs/o1'],
       [`Sample Mountain Tavern’s weekly refresh failed at 2 locations, the first on ${day}.`, 'Open Sample Mountain Tavern', '/admin/orgs/o1'],
       [`Sample Mountain Tavern has had no upload since ${day}.`, 'Open Sample Mountain Tavern', '/admin/orgs/o1'],
       ['Sample Campus Pub has never uploaded sales.', 'Open Sample Campus Pub', '/admin/orgs/o2'],
@@ -178,6 +178,17 @@ describe('Needs attention', () => {
       // $4.10 of $20.
       ['Sample Mountain Tavern has used 20% of this month’s TownwiseAI budget.', 'Open Sample Mountain Tavern', '/admin/orgs/o1'],
     ]);
+  });
+
+  test('the staff pause opens the first organization not suspended, where the switch is, or Organizations with none', () => {
+    const paused = item('refresh_paused');
+    const suspendedFirst = attentionLines(overview(28, {
+      attention: [paused], orgs: [overviewOrg('o1', 'Sample Inn', { status: 'suspended' }), overviewOrg('o2', 'Sample Pub')],
+    }));
+    expect(suspendedFirst.map((line) => [line.text, line.link?.href])).toEqual([
+      ['Staff paused the weekly refresh for every organization. Resume it under Forecasts on any organization’s page.', '/admin/orgs/o2'],
+    ]);
+    expect(attentionLines(overview(28, { attention: [paused], orgs: [] })).map((line) => line.link)).toEqual([{ label: 'Open organizations', href: '/admin/orgs' }]);
   });
 
   test('skips a kind this client does not know, and names an organization the rows lack plainly', () => {

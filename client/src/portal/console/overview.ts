@@ -240,12 +240,17 @@ export function attentionLine(item: AttentionItem, orgs: readonly OverviewOrg[])
       };
     case 'refresh_off':
       return { key, text: 'The weekly refresh isn’t running on this server: the forecast lab or its switch is off.', link: null };
-    case 'refresh_paused':
+    case 'refresh_paused': {
+      // The pause is one switch for every organization, under Forecasts on each organization's page (WeeklyRefresh.tsx),
+      // so the link opens one of them, the first not suspended, or Organizations with none.
+      const at = orgs.find((each) => each.status === 'active') ?? orgs[0];
+      const paused = since === null ? 'Staff paused the weekly refresh for every organization.' : `Staff paused the weekly refresh for every organization on ${since}.`;
       return {
         key,
-        text: since === null ? 'Staff paused the weekly refresh.' : `Staff paused the weekly refresh on ${since}.`,
-        link: { label: 'Open organizations', href: '/admin/orgs' },
+        text: `${paused} Resume it under Forecasts on any organization’s page.`,
+        link: at === undefined ? { label: 'Open organizations', href: '/admin/orgs' } : { label: `Open ${at.name}`, href: orgHref(at.id) },
       };
+    }
     case 'refresh_failed': {
       const count = item.count ?? 1;
       const at = since === null ? '' : `, the first on ${since}`;

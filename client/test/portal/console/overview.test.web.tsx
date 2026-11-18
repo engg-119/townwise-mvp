@@ -99,6 +99,8 @@ test('Needs attention: each item in words with its link, and “Nothing needs at
   ]);
   expect(within(list).getByRole('link', { name: 'Open the request' }).getAttribute('href')).toBe('/admin?request=r1');
   expect(within(list).getByRole('link', { name: 'Open Sample Campus Pub' }).getAttribute('href')).toBe('/admin/orgs/o2');
+  // From 641px the link takes at most 40% of the row, so a long organization name in it wraps instead of the words.
+  expect(screen.getAllByTestId('attention-link').map((link) => getComputedStyle(link).maxWidth)).toEqual(['40%', '40%', '40%']);
 
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Window' })).getByRole('link', { name: '7 days' }));
   expect(await screen.findByText('Nothing needs attention.')).toBeTruthy();

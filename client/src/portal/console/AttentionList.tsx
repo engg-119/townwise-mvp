@@ -8,7 +8,8 @@ import type { AttentionLine } from './overview';
 
 // The Overview's Needs attention (P32, design decision 5): what a staff member should act on now, independent of the
 // window, in plain words, each with a link to where it is acted on. Ruled rows as the console's tables are; the link sits
-// at the row's end from 641px and under its words on phones. Nothing is colored to say it is urgent.
+// at the row's end from 641px, in at most 40% of the row so a long organization name in it wraps rather than squeezing
+// the words, and under its words on phones. Nothing is colored to say it is urgent.
 
 export function AttentionList(props: { lines: readonly AttentionLine[] }): React.JSX.Element {
   const { phone } = useBreakpoint();
@@ -18,7 +19,11 @@ export function AttentionList(props: { lines: readonly AttentionLine[] }): React
       {props.lines.map((line) => (
         <View key={line.key} role="listitem" style={[styles.item, phone ? styles.itemPhone : styles.itemWide]}>
           <Small white style={styles.text}>{line.text}</Small>
-          {line.link === null ? null : <LinkButton href={line.link.href} label={line.link.label} />}
+          {line.link === null ? null : (
+            <View testID="attention-link" style={phone ? null : styles.linkWide}>
+              <LinkButton href={line.link.href} label={line.link.label} />
+            </View>
+          )}
         </View>
       ))}
     </View>
@@ -33,4 +38,5 @@ const styles = StyleSheet.create({
   itemWide: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[5] },
   itemPhone: { gap: theme.space[1] },
   text: { flexShrink: 1, flexGrow: 1, paddingVertical: theme.space[2] },
+  linkWide: { flexShrink: 1, maxWidth: '40%', alignItems: 'flex-end' },
 });
