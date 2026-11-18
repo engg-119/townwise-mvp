@@ -204,8 +204,8 @@ test('pasted text goes as the text; while TownwiseAI reads the page says so with
   expect(screen.getByRole('textbox', { name: 'Or paste text' })).toHaveProperty('value', 'Sample IPA, 1 half-barrel, Tuesdays');
 });
 
-test('a saved email, a web page, JSON, Markdown or rich text goes as text', () => {
-  for (const name of ['rep.eml', 'prices.html', 'export.json', 'notes.md', 'guide.rtf']) {
+test('JSON, Markdown, rich text or XML goes as text', () => {
+  for (const name of ['export.json', 'notes.md', 'guide.rtf', 'feed.xml']) {
     expect(readKindOf({ name, size: 10 })).toEqual({ kind: 'text' });
   }
 });
@@ -262,8 +262,10 @@ test('a file over the caps, an old Excel file or two files at once are refused i
     [sized('empty.csv', 0), 'That file is empty.'],
     [sized('IMG_0412.HEIC', 10), 'TownwiseAI can’t read HEIC photos, the kind an iPhone saves. Take a screenshot of the photo, or save it as a JPEG, and choose that.'],
     [sized('scan.tiff', 10), 'TownwiseAI can’t read TIFF pictures. Save it as a PNG or JPEG and choose it again.'],
+    [sized('rep.eml', 10), 'TownwiseAI can’t read saved emails. Paste the email’s text, or choose the file attached to it.'],
+    [sized('prices.html', 10), 'TownwiseAI can’t read saved web pages. Paste the page’s text, or save the page as a PDF and choose that.'],
     [sized('guide.pages', 10), 'TownwiseAI can’t read Pages files. Export it as PDF or Word and choose it again.'],
-    [sized('clip.mov', 10), 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV, text, web page and saved email files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.'],
+    [sized('clip.mov', 10), 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.'],
   ];
   for (const [file, words] of refusals) {
     await pick(file);

@@ -476,7 +476,7 @@ describe('the system prompt, orders', () => {
       '- Before discussing an order, call get_order_board.',
       '- For what is set up or missing for orders (suppliers and their days, items, counts, item sales), call get_order_setup, and point the owner to Ordering setup on the Orders page to add or change it.',
       'Never state a quantity no tool returned.',
-      'To say whether an item will last, compare what is on hand plus the order with the line\'s expectedUse and withCushion',
+      'To say whether an item will last, compare what is on hand plus the order (the quantity of the owner\'s saved edit when the line has one, else the recommended quantity) with the line\'s expectedUse and withCushion',
       'You cannot fill the ordering setup from a file attached to this chat; say so and point them there.',
       'A remembered change applies to every later order of that item until the owner turns it off',
       'Never say an order was placed or sent, or that a change or rule was saved.',

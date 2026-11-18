@@ -13,8 +13,8 @@ type FileKind = Extract<SetupReadSource, { type: 'file' }>['kind'];
 const KINDS: Readonly<Record<string, FileKind>> = {
   pdf: 'pdf', xlsx: 'xlsx', docx: 'docx', csv: 'text', tsv: 'text', txt: 'text', png: 'picture', jpg: 'picture', jpeg: 'picture',
   gif: 'picture', webp: 'picture',
-  // Text under another name: the server reads each as the text it is (a saved email, a web page, an export).
-  md: 'text', json: 'text', html: 'text', htm: 'text', eml: 'text', rtf: 'text', xml: 'text',
+  // Text under another name: the server reads each as the text it is.
+  md: 'text', json: 'text', rtf: 'text', xml: 'text',
 };
 
 /** Kinds TownwiseAI can't read, each with the way to one it can. */
@@ -30,6 +30,11 @@ const OTHER_FORMAT: Readonly<Record<string, string>> = {
   pages: 'TownwiseAI can’t read Pages files. Export it as PDF or Word and choose it again.',
   odt: 'TownwiseAI can’t read OpenDocument files. Save it as Word (.docx) or PDF and choose it again.',
   ods: 'TownwiseAI can’t read OpenDocument files. Save it as Excel (.xlsx) or CSV and choose it again.',
+  // A saved email carries its headers (who sent and received it) and its attachments as code, and a saved page mostly markup.
+  eml: 'TownwiseAI can’t read saved emails. Paste the email’s text, or choose the file attached to it.',
+  msg: 'TownwiseAI can’t read saved emails. Paste the email’s text, or choose the file attached to it.',
+  html: 'TownwiseAI can’t read saved web pages. Paste the page’s text, or save the page as a PDF and choose that.',
+  htm: 'TownwiseAI can’t read saved web pages. Paste the page’s text, or save the page as a PDF and choose that.',
 };
 
 export const READ_ACCEPT = Object.keys(KINDS).map((extension) => `.${extension}`).join(',');
@@ -48,7 +53,7 @@ export const READ_COPY = {
     + 'reads an export in your browser and never sends them.',
   privacy: 'How Townwise handles your data',
   privacyHref: '/privacy',
-  drop: 'Drop a file here, or choose one: a PDF, an Excel (.xlsx) or Word (.docx) file, a CSV or text file, a saved email or web page, or a picture.',
+  drop: 'Drop a file here, or choose one: a PDF, an Excel (.xlsx) or Word (.docx) file, a CSV or text file, or a picture.',
   dropOver: 'Drop the file to choose it.',
   choose: 'Choose a file',
   remove: 'Remove the file',
@@ -79,7 +84,7 @@ export function readKindOf(file: { name: string; size: number }): { kind: FileKi
   if (kind === undefined) {
     const other = OTHER_FORMAT[extension];
     if (other !== undefined) return { problem: other };
-    return { problem: 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV, text, web page and saved email files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.' };
+    return { problem: 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.' };
   }
   if (file.size === 0) return { problem: 'That file is empty.' };
   if (kind === 'picture' && file.size > READ_PICTURE_BYTES) {

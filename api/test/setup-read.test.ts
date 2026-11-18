@@ -266,8 +266,8 @@ describe('the input', () => {
     });
   });
 
-  it('reads a saved email, a web page or JSON posted as text as the text it is', async () => {
-    for (const body of ['Subject: Sentinel order guide\r\n\r\nVorlan IPA, Tuesdays', '<html><body><td>Vorlan IPA</td></body></html>', '{"item":"Vorlan IPA"}']) {
+  it('reads JSON, Markdown or XML posted as text as the text it is', async () => {
+    for (const body of ['{"item":"Vorlan IPA"}', '# Sentinel order guide\n\n- Vorlan IPA, Tuesdays', '<items><item>Vorlan IPA</item></items>']) {
       const sent = await prepared('text', Buffer.from(body));
       if (typeof sent === 'string' || sent.kind !== 'input' || sent.input.type !== 'text') throw new Error('no text');
       expect(sent.input.text).toBe(body);
