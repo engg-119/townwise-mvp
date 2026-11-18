@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
+import { hasCode } from '../../portal/errors';
 import { dismissSetupProposal, fetchOrderSetup, type OrderSetup, type SetupProposal } from '../../portal/orders/api';
 import { problemLine } from '../../portal/orders/proposal';
 import { changeLine, setupCardPreview, setupProposalHref } from '../../portal/orders/setupCard';
@@ -23,6 +24,7 @@ export const SETUP_CARD_COPY = {
   title: 'Ordering setup suggestions',
   review: 'Review in Ordering setup',
   web: 'This reply also read web pages, which Townwise didn’t check. Look over each change before you save.',
+  gone: 'These suggestions aren’t available any more. The file they came from may have been turned off or deleted.',
   setupFailed: 'Townwise couldn’t load your ordering setup, so it can’t show what these suggestions would change. Reload the page to try again.',
 } as const;
 
@@ -41,6 +43,8 @@ export function OrderSetupCard(props: {
   const [failed, setFailed] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  /** The card stopped being served after it loaded (its file was turned off or deleted): nothing is left to act on. */
+  const [gone, setGone] = useState(false);
 
   useEffect(() => {
     let live = true;
@@ -51,6 +55,7 @@ export function OrderSetupCard(props: {
     return () => { live = false; };
   }, [api, locationId]);
 
+  if (gone) return <Small>{SETUP_CARD_COPY.gone}</Small>;
   if (failed) return <ErrorNotice message={SETUP_CARD_COPY.setupFailed} />;
   if (setup === undefined) return <LoadingLine text="Loading your ordering setup…" />;
   const preview = setupCardPreview(props.proposal.read, setup);
@@ -62,6 +67,10 @@ export function OrderSetupCard(props: {
       await dismissSetupProposal(api, locationId, conversationId, proposalId);
       props.onDismissed();
     } catch (caught) {
+      if (hasCode(caught, 404, 'not_found')) {
+        setGone(true);
+        return;
+      }
       setError(caught instanceof ApiError && caught.kind === 'http' && caught.code === 'view_as_read_only'
         ? 'View-as is read-only, so this can’t be set aside.'
         : 'That didn’t go through. Try again.');

@@ -77,6 +77,8 @@ export interface OrderCard {
   id: string;
   conversationId: string | null;
   stored: 'pending' | 'kept' | 'lost';
+  /** A propose_order_setup card (D56), which says so while it loads. */
+  setup?: true;
 }
 
 export type MessagePart =
@@ -671,7 +673,7 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       }
       if (event.name === ORDER_CHANGE_TOOL || event.name === ORDER_RULE_TOOL || event.name === ORDER_SETUP_TOOL) {
         return event.state === 'done' && event.result?.shown === true
-          ? { ...state, messages: withLive(state, (message) => withOrder(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
+          ? { ...state, messages: withLive(state, (message) => withOrder(message, { id: event.id, conversationId: state.conversationId, stored: 'pending', ...(event.name === ORDER_SETUP_TOOL ? { setup: true as const } : {}) }, key)) }
           : state;
       }
       // propose_note, show_visual and suggest_next show as their card, visual and next questions.
@@ -1365,7 +1367,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         }
         if (part.name === ORDER_CHANGE_TOOL || part.name === ORDER_RULE_TOOL || part.name === ORDER_SETUP_TOOL) {
           if (part.state === 'done' && part.result?.shown === true) {
-            message.parts.push({ type: 'order', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
+            message.parts.push({ type: 'order', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept', ...(part.name === ORDER_SETUP_TOOL ? { setup: true as const } : {}) } });
           }
           continue;
         }

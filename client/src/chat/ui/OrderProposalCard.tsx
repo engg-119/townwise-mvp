@@ -75,7 +75,7 @@ export function OrderProposalCard(props: { card: OrderCard; locationId: string; 
   }, [api, readable, target]);
 
   if (card.stored === 'lost') return <Small>This reply wasn’t saved, so there’s nothing to change.</Small>;
-  if (!readable || view === null) return error === null ? <LoadingLine text="Loading the order…" /> : <ErrorNotice message={error} />;
+  if (!readable || view === null) return error === null ? <LoadingLine text={card.setup === true ? 'Loading TownwiseAI’s suggestions…' : 'Loading the order…'} /> : <ErrorNotice message={error} />;
   if (view.status === 'dismissed') return <Small>Not now.</Small>;
   if (view.kind === 'setup') {
     return (

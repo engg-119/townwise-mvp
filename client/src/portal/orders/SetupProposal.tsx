@@ -1,5 +1,5 @@
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
@@ -18,8 +18,9 @@ import type { SetupDraft } from './setupDraft';
 // conversation's id and a tool call's id, checked by pattern before anything is asked. While the card is open its
 // suggestions merge into the unsaved draft once, through the merge a read on this page uses (proposal.ts), and the
 // section says what that did. Nothing saves: the owner sets each new item's par and presses Save. After "Load their
-// changes" replaces the draft the suggestions merge again, into the fresh one. Once a save goes through this stops and
-// drops the query, so a reload never merges over what was saved. A card set aside, or no longer served (its file was
+// changes" replaces the draft the suggestions merge again, into the fresh one. Once a save goes through this stops for
+// that card and drops the query in place, so neither a reload nor the same address again merges over what was saved;
+// another card named in the same page starts clean. A card set aside, or no longer served (its file was
 // turned off or deleted), says so and leaves the draft alone. Under view-as nothing is asked or merged.
 
 export const PROPOSAL_COPY = {
@@ -54,38 +55,53 @@ export function SetupProposal(props: {
   const conversationId = target?.conversationId ?? null;
   const proposalId = target?.proposalId ?? null;
   const { readOnly, loads, saves } = props;
-  const [card, setCard] = useState<Card>({ kind: 'loading' });
-  const [result, setResult] = useState<ProposalImport | null>(null);
+  /** The card the address names, or null. Everything below is kept by it, so another card starts clean. */
+  const named = conversationId === null || proposalId === null ? null : `${conversationId}.${proposalId}`;
+  const [loaded, setLoaded] = useState<{ readonly named: string; readonly card: Card } | null>(null);
+  const [merged, setMerged] = useState<{ readonly named: string; readonly result: ProposalImport } | null>(null);
+  /** The cards a save went through for, in this page: none of them is read or merged again. */
+  const [finished, setFinished] = useState<readonly string[]>([]);
+  /** The saves counted when the address last named this card: one more means a save went through with it open. */
+  const [since, setSince] = useState({ named, saves });
+  if (since.named !== named) setSince({ named, saves });
+  const savedNow = named !== null && since.named === named && saves > since.saves;
+  if (savedNow && !finished.includes(named)) setFinished([...finished, named]);
+  const stopped = named === null || savedNow || finished.includes(named);
+  const card = useMemo<Card>(() => (loaded !== null && loaded.named === named ? loaded.card : { kind: 'loading' }), [loaded, named]);
+  const result = merged !== null && merged.named === named ? merged.result : null;
   /** The editor's draft and apply as of the last render, for the merge. */
   const latest = useRef(props);
   useEffect(() => { latest.current = props; });
-  /** The `loads` the suggestions were last merged at: once per draft the editor loaded. */
-  const mergedAt = useRef<number | null>(null);
+  /** The card and the editor's `loads` the suggestions were last merged at: once per card and per draft it loaded. */
+  const mergedAt = useRef<string | null>(null);
 
   useEffect(() => {
-    if (conversationId === null || proposalId === null || readOnly) return undefined;
+    if (conversationId === null || proposalId === null || named === null || readOnly || stopped) return undefined;
     let live = true;
+    const say = (next: Card): void => { if (live) setLoaded({ named, card: next }); };
     void fetchSetupProposal(api, location.id, conversationId, proposalId).then(
-      (proposal) => { if (live) setCard(proposal.status === 'open' ? { kind: 'open', read: proposal.read } : { kind: 'said', text: PROPOSAL_COPY.dismissed }); },
-      (caught: unknown) => { if (live) setCard({ kind: 'said', text: hasCode(caught, 404, 'not_found') ? PROPOSAL_COPY.unavailable : PROPOSAL_COPY.failed }); },
+      (proposal) => { say(proposal.status === 'open' ? { kind: 'open', read: proposal.read } : { kind: 'said', text: PROPOSAL_COPY.dismissed }); },
+      (caught: unknown) => { say({ kind: 'said', text: hasCode(caught, 404, 'not_found') ? PROPOSAL_COPY.unavailable : PROPOSAL_COPY.failed }); },
     );
     return () => { live = false; };
-  }, [api, location.id, conversationId, proposalId, readOnly]);
+  }, [api, location.id, conversationId, proposalId, named, readOnly, stopped]);
 
   useEffect(() => {
-    if (card.kind !== 'open' || saves > 0 || mergedAt.current === loads) return;
-    mergedAt.current = loads;
-    const merged = importProposal(card.read, latest.current.draft);
-    latest.current.apply(merged);
-    setResult(merged);
-  }, [card, loads, saves]);
+    const at = `${named ?? ''}:${String(loads)}`;
+    if (named === null || card.kind !== 'open' || stopped || mergedAt.current === at) return;
+    mergedAt.current = at;
+    const next = importProposal(card.read, latest.current.draft);
+    latest.current.apply(next);
+    setMerged({ named, result: next });
+  }, [card, named, loads, stopped]);
 
-  const named = target !== null;
+  // A save went through with this card open: it is remembered above, and the query is dropped in place, so neither a
+  // reload nor the same address again merges over what was saved.
   useEffect(() => {
-    if (saves > 0 && named) router.setParams({ proposal: undefined });
-  }, [saves, named, router]);
+    if (savedNow) router.setParams({ proposal: undefined });
+  }, [savedNow, router]);
 
-  if (target === null || saves > 0) return null;
+  if (named === null || stopped) return null;
   return (
     <Section title={PROPOSAL_COPY.heading}>
       {readOnly ? <Small>{PROPOSAL_COPY.readOnly}</Small> : null}

@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { ExpoRoot } from 'expo-router';
+import { ExpoRoot, router } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
@@ -173,6 +173,46 @@ test('after a save it stops and drops the query', async () => {
   await act(() => new Promise((resolve) => { setTimeout(resolve, 20); }));
   expect(field('Item 1', 'Servings per unit').value).toBe('24');
   expect(fake.paths.filter((path) => path === CARD)).toHaveLength(1);
+});
+
+// Code review: after a save, coming back to the address with the query (Back, a reload) must not merge again.
+test('after a save, the same ?proposal= again in the page, or a reload, merges nothing', async () => {
+  const { api, fake } = portal(card(LAGER_CHANGE));
+  api.answers[`${PATH}/setup`] = () => stored(4, 30);
+  renderAt(api);
+  await screen.findByText(FOUND_ONE);
+  await click('Save the setup');
+  expect(await screen.findByText('Saved the ordering setup.')).toBeTruthy();
+  // The query is gone from the address, in place: no history entry holds it.
+  await waitFor(() => { expect(window.location.search).toBe(''); });
+  fireEvent.change(field('Item 1', 'Servings per unit'), { target: { value: '24' } });
+  // The same card named again in this page (Back to an address that still had the query).
+  await act(async () => {
+    router.setParams({ proposal: `${CONVERSATION}.${CALL}` });
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+  });
+  expect(field('Item 1', 'Servings per unit').value).toBe('24');
+  expect(screen.queryByText(FOUND_ONE)).toBeNull();
+  expect(fake.paths.filter((path) => path === CARD)).toHaveLength(1);
+});
+
+// Code review S2: the merge is once per card, not once per page.
+test('a second card named in the same page is merged too, and the first card’s summary goes', async () => {
+  const second = 'toolu_order_setup_0002';
+  const { api, gets } = portal(card(LAGER_CHANGE));
+  gets[`/api/org/locations/l1/chat/${CONVERSATION}/order-proposals/${second}`] = card([item('Sample Stout')]);
+  renderAt(api);
+  await screen.findByText(FOUND_ONE);
+  await act(async () => {
+    router.setParams({ proposal: `${CONVERSATION}.${second}` });
+    await new Promise((resolve) => { setTimeout(resolve, 30); });
+  });
+  expect(await screen.findByText('TownwiseAI found 1 item: 1 new, 0 replaced by name. Nothing is saved yet: check them below, then save the setup.')).toBeTruthy();
+  expect(screen.queryByText(FOUND_ONE)).toBeNull();
+  // Both merges are in the draft: the first card's change and the second card's new item.
+  expect(field('Item 1', 'Servings per unit').value).toBe('30');
+  expect(field('Item 2', 'Item name').value).toBe('Sample Stout');
+  expect(writes(api)).toEqual([]);
 });
 
 test('a set-aside or unavailable card says so and leaves the draft alone', async () => {

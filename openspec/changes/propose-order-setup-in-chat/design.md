@@ -126,3 +126,9 @@ Built: the turn's `sent` and the registry append, the prompt rule, the card in t
 ### Rebased onto `resumable-chat-turns` (2026-11-18)
 
 That change landed on `develop` while phase B was built, and the branch was rebased onto it. The one conflict in code was `api/src/handlers/chat.ts`, where the turn's `files` gained `sent: new Map(attached?.sent)` again inside the detached run. `'propose_order_setup'` joined `DISPLAY_TOOLS` in `api/src/chat/turn.ts`. The three lines in `client/src/chat/useTuningChat.ts` and the tool list in `api/test/chat.int.test.ts` merged cleanly.
+
+### After the reviews (2026-11-18)
+
+- Code review. "Not now" on a card that stopped being served (404) now says the suggestions aren't available any more and drops the actions. On Ordering setup the merge is kept by card, not by page: a second `?proposal=` in the same page merges and replaces the first card's summary, and a card a save went through for is never read or merged again in that page, also when its address comes back. A setup card says "Loading TownwiseAI's suggestions…" while it loads.
+- Security review, M1. `redacted` (`api/src/model-answer.ts`) reads at most four times the characters it keeps (`REDACT_SCAN_FACTOR`), because the email pattern is quadratic on a long run with no "@" and a stored call is checked again on every read of its conversation. A 60,000-character note took 7.5 seconds before and is checked in well under 100 ms now. A text within the bound is redacted exactly as before, for the setup read (D41) and the file reader (D34) too; a longer one loses its tail before the patterns run. The email pattern itself is unchanged: a lookbehind that makes it linear would stop redacting the second of two addresses written back to back.
+

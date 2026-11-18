@@ -198,6 +198,33 @@ test('Not now sets it aside', async () => {
   expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull();
 });
 
+// Code review S1: the file was turned off or deleted after the card loaded.
+test('Not now on a card that is no longer served says so and drops the actions', async () => {
+  const api = served();
+  api.respond[CARD] = () => new ApiError('http', 'The request was refused.', { status: 404, code: 'not_found' });
+  await (await proposed(api)).finish();
+  fireEvent.click(await screen.findByRole('button', { name: 'Not now' }));
+  expect(await screen.findByText('These suggestions aren’t available any more. The file they came from may have been turned off or deleted.')).toBeTruthy();
+  expect(screen.queryByText('That didn’t go through. Try again.')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull();
+  expect(screen.queryByRole('link', { name: 'Review in Ordering setup' })).toBeNull();
+  expect(screen.queryByText(HEADLINE)).toBeNull();
+});
+
+// Code review S4: a setup card has its own words while it loads.
+test('while it loads, a setup card says it is loading TownwiseAI’s suggestions, not an order', async () => {
+  let answer: (value: unknown) => void = () => undefined;
+  const api = served(() => new Promise((resolve) => { answer = resolve; }));
+  await (await proposed(api)).finish();
+  expect(await screen.findByText('Loading TownwiseAI’s suggestions…')).toBeTruthy();
+  expect(screen.queryByText('Loading the order…')).toBeNull();
+  await act(async () => {
+    answer(open());
+    await new Promise((resolve) => { setTimeout(resolve, 20); });
+  });
+  expect(await screen.findByText(HEADLINE)).toBeTruthy();
+});
+
 test('says so when the conversation also read web pages', async () => {
   const api = served(() => open({ readWeb: true }));
   await (await proposed(api)).finish();
