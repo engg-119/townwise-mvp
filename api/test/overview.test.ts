@@ -4,7 +4,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  ACTION_GROUP, ACTION_GROUPS, attentionOf, hasPrevious, overviewWindow, sortOrgRows, summarize, type AttentionFacts,
+  ACTION_GROUP, ACTION_GROUPS, attentionOf, hasPrevious, overviewWindow, RETENTION_EDGE_SLACK_DAYS, sortOrgRows, summarize,
+  type AttentionFacts,
 } from '../src/handlers/overview.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 
@@ -75,6 +76,29 @@ describe('the window', () => {
     expect(hasPrevious(window, '2026-06-03')).toBe(false);
     expect(hasPrevious(window, '2026-06-02')).toBe(true);
     expect(hasPrevious(window, '2026-01-01')).toBe(true);
+  });
+
+  it('treats the 90-day previous window as covered when the earliest row is within 14 days of the oldest day kept', () => {
+    // 180 days kept: the oldest is 2025-12-18, the 90-day previous window's first day. A quiet day at that edge is not
+    // missing recording, so an earliest row up to 14 days later (2026-01-01) still means the record covers it.
+    expect(RETENTION_EDGE_SLACK_DAYS).toBe(14);
+    const window = overviewWindow(NOW, 90);
+    expect(hasPrevious(window, '2025-12-18')).toBe(true);
+    expect(hasPrevious(window, '2025-12-25')).toBe(true);
+    expect(hasPrevious(window, '2026-01-01')).toBe(true);
+    expect(hasPrevious(window, '2026-01-02')).toBe(false);
+    expect(hasPrevious(window, null)).toBe(false);
+    // The slack is measured from the retention edge, not from a window's own first day.
+    expect(hasPrevious(overviewWindow(NOW, 28), '2026-04-22')).toBe(false);
+    expect(hasPrevious(overviewWindow(NOW, 7), '2026-06-03')).toBe(false);
+  });
+
+  it('gives the 90-day window a previous value through summarize when the edge day was quiet', () => {
+    const window = overviewWindow(NOW, 90);
+    const activity = [{ orgId: 'a'.repeat(24), userId: 'u1', day: '2025-12-24' }, { orgId: 'a'.repeat(24), userId: 'u1', day: '2026-06-15' }];
+    expect(summarize(window, activity, []).totals.activePeople).toEqual({ count: 1, previous: 1 });
+    const late = [{ orgId: 'a'.repeat(24), userId: 'u1', day: '2026-01-10' }];
+    expect(summarize(window, late, []).totals.activePeople).toEqual({ count: 0, previous: null });
   });
 });
 

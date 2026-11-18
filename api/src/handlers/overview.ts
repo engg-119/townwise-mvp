@@ -153,9 +153,21 @@ export function overviewWindow(now: Date, days: OverviewDays): OverviewWindow {
   return { days, from: utcDay(now, -(days - 1)), to: utcDay(now), previousFrom: utcDay(now, -(2 * days - 1)), previousTo: utcDay(now, -days) };
 }
 
-/** Whether the activity figures have a previous value: the record reaches back to the previous window's first day. */
+/**
+ * How far after the oldest day kept the earliest stored row may be while recording still counts as having run for the
+ * whole retention: with few people, the edge day (and a few after it) can simply be quiet.
+ */
+export const RETENTION_EDGE_SLACK_DAYS = 14;
+
+/**
+ * Whether the activity figures have a previous value: the record reaches back to the previous window's first day, or its
+ * earliest row is within RETENTION_EDGE_SLACK_DAYS of the oldest day the 180 kept allow, so the gap is quiet days, not
+ * missing recording. That second rule only ever matters to the 90-day window, whose previous window starts on that edge.
+ */
 export function hasPrevious(window: OverviewWindow, recordingSince: string | null): boolean {
-  return recordingSince !== null && recordingSince <= window.previousFrom;
+  if (recordingSince === null) return false;
+  const oldestKept = dayPlus(window.to, -(ACTIVITY_KEEP_DAYS - 1));
+  return recordingSince <= window.previousFrom || recordingSince <= dayPlus(oldestKept, RETENTION_EDGE_SLACK_DAYS);
 }
 
 /** The four totals that each count one action. */
