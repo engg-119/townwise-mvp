@@ -131,7 +131,7 @@ test('the back button closes it, but not while a save runs', async () => {
   expect(writes(api)).toHaveLength(1);
 });
 
-test('Make a note sends the event’s calendar id and uid, never its title, and the saved note says “From your calendar”', async () => {
+test('Make a note sends the event’s calendar id and uid, never its title, and the saved note says “Made from a calendar event”', async () => {
   const days = Array.from({ length: 20 }, (_, at) => forecastDay({ date: `2026-11-${String(11 + at)}` }));
   const fake = calendarFake({
     forecasts: { '2026-11': forecastOf(days) }, calendars: [ownerCalendar({ id: 'c1', label: 'kitchen', eventCount: 1 })],
@@ -146,7 +146,7 @@ test('Make a note sends the event’s calendar id and uid, never its title, and 
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   await fireEvent.press(await within(await screen.findByLabelText('Selected day')).findByRole('button', { name: 'Make a note from Smith rehearsal dinner' }));
   await fireEvent.press(within(screen.getByLabelText('Make a note')).getByRole('button', { name: 'Save note' }));
-  expect(await within(panel()).findByText('From your calendar')).toBeTruthy();
+  expect(await within(panel()).findByText('Made from a calendar event')).toBeTruthy();
   expect(writes(api).map((call) => (call.body as { fromEvent?: unknown }).fromEvent)).toEqual([{ calendarId: 'c1', uid: 'i1' }]);
   expect(JSON.stringify(writes(api))).not.toContain('Smith');
 });

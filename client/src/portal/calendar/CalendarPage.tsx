@@ -73,7 +73,7 @@ import { YourCalendars } from './YourCalendars';
 // as "Your calendar" on web and native; after one is added the list and the range's stored events read again (never
 // the forecast: stored events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
 // events with its dates and hours but never its title, and the saved note is linked to that event by its calendar id and
-// uid (calendar-event-suggestions), so the day panel says "From your calendar" on it; it is disabled under view-as.
+// uid (calendar-event-suggestions), so the day panel says "Made from a calendar event" on it; it is disabled under view-as.
 // "Today" is the device's date.
 
 const READ_ONLY_ID = 'calendar-ro';

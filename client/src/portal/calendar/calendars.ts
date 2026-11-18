@@ -48,7 +48,7 @@ export const CALENDARS_COPY = {
    * an add from this popover sends `titlesNotice`, and a file's or link's titles go into the weekly call only when its
    * add did). [CONFIRM: the add screens' words on the weekly reading of titles]
    */
-  weeklyReading: 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of this calendar’s events, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.',
+  weeklyReading: 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.',
 } as const;
 
 const HELP_IMPORT = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours.';

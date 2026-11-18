@@ -11,14 +11,14 @@ jest.mock('expo-splash-screen', () => ({
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { Dimensions } from 'react-native';
+import { AccessibilityInfo, Dimensions } from 'react-native';
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
 import { resetDrafts } from '../../src/chat/drafts';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
-import { fakeChatApi, type FakeChatApi } from '../helpers/chat';
+import { fakeChatApi, noteOf, refusal, type FakeChatApi } from '../helpers/chat';
 import { ACCESS, fakePortalApi, meOf, orgOf } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
 import { serveAbout } from './about-fakes';
@@ -86,7 +86,11 @@ test('“Your calendar changed” comes first; members see the cards with no cho
 test('a spotted event’s choices are radios with neither checked, and Accept waits for one and, alongside, a count', async () => {
   const api = await renderSheet(meOf(ACCESS.admin), true);
   const accept = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c4/accept';
-  api.respond[accept] = () => ({ suggestion: { id: '0000000000000000000000c4', status: 'accepted' }, note: null, rule: null });
+  api.respond[accept] = () => ({
+    suggestion: { id: '0000000000000000000000c4', status: 'accepted' },
+    note: noteOf({ kind: 'private_event', startDate: '2026-07-11', endDate: '2026-07-11', effect: 'more_guests', expectedGuests: 35, detail: null }, 'n9'),
+    rule: null,
+  });
   await screen.findByRole('heading', { name: EVENT_HEADING });
   const card = cardOf(EVENT_HEADING, /^Choose how this event runs/);
   // The group is a container, not one accessibility element, so each choice stays its own radio.
@@ -95,19 +99,27 @@ test('a spotted event’s choices are radios with neither checked, and Accept wa
   expect(within(card).getByRole('radio', { name: BUYOUT, checked: false })).toBeTruthy();
   expect(within(card).getByRole('radio', { name: ALONGSIDE, checked: false })).toBeTruthy();
   expect(acceptOf(card).props.accessibilityState).toMatchObject({ disabled: true });
-  expect(within(card).getByText('Choose how this event runs to accept it.')).toBeTruthy();
+  expect(within(card).getByText('Choose how this event runs to accept it. Dismiss and TownwiseAI won’t ask about this event again.')).toBeTruthy();
   const guests = within(card).getByLabelText('Guests');
   expect(guests.props.value).toBe('40');
 
   await fireEvent.press(within(card).getByRole('radio', { name: ALONGSIDE }));
-  expect(within(card).getByRole('radio', { name: ALONGSIDE, checked: true })).toBeTruthy();
+  // The choice says what it does to the forecast, and the checked radio's hint says the same.
+  expect(within(card).getByText('These guests add to the whole day’s total.')).toBeTruthy();
+  expect(within(card).getByRole('radio', { name: ALONGSIDE, checked: true }).props.accessibilityHint).toBe('These guests add to the whole day’s total.');
+  await fireEvent.press(within(card).getByRole('radio', { name: BUYOUT }));
+  expect(within(card).getByRole('radio', { name: BUYOUT, checked: true }).props.accessibilityHint).toBe('A buyout closes the whole day to walk-ins in the forecast.');
+  expect(within(card).getByText('A buyout closes the whole day to walk-ins in the forecast.')).toBeTruthy();
+  await fireEvent.press(within(card).getByRole('radio', { name: ALONGSIDE }));
   await fireEvent.changeText(guests, '');
+  // Once, on the field.
+  expect(within(card).getAllByText(/Enter the guests/)).toHaveLength(1);
   expect(within(card).getByText('Enter the guests to accept it alongside regular service.')).toBeTruthy();
   expect(acceptOf(card).props.accessibilityState).toMatchObject({ disabled: true });
   await fireEvent.changeText(guests, '35');
   expect(acceptOf(card).props.accessibilityState).toMatchObject({ disabled: false });
   await fireEvent.press(acceptOf(card));
-  expect(await screen.findByText('Saved a note: Private event, Sat, Jul 11, 2026.')).toBeTruthy();
+  expect(await screen.findByText('Saved a note: Private event, 35 guests, Sat, Jul 11, 2026.')).toBeTruthy();
   expect(api.writes).toEqual([{ method: 'POST', path: accept, body: { effect: 'more_guests', expectedGuests: 35 } }]);
 });
 
@@ -125,4 +137,21 @@ test('an org admin accepts a move with an empty body, and turns reading event ti
     { method: 'POST', path: move, body: {} },
     { method: 'PATCH', path: '/api/org/weekly-suggestions/calendar-titles', body: { on: false } },
   ]);
+});
+
+test('a spotted event that changed: the notice names its days, never its title, and is announced', async () => {
+  const announce = jest.spyOn(AccessibilityInfo, 'announceForAccessibility');
+  const api = await renderSheet(meOf(ACCESS.admin), true);
+  const accept = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c4/accept';
+  api.respond[accept] = () => {
+    api.panel = { ...(api.panel as object), suggestions: fixture.panel.suggestions.filter((each) => (each as { type: string }).type !== 'event') };
+    return refusal(409, 'event_changed');
+  };
+  await screen.findByRole('heading', { name: EVENT_HEADING });
+  const card = cardOf(EVENT_HEADING, /^Choose how this event runs/);
+  await fireEvent.press(within(card).getByRole('radio', { name: BUYOUT }));
+  await fireEvent.press(acceptOf(card));
+  const words = 'The event on Sat, Jul 11, 2026 moved or is no longer on your calendar, so nothing was saved.';
+  expect(await screen.findByText(words)).toBeTruthy();
+  expect(announce).toHaveBeenCalledWith(words);
 });

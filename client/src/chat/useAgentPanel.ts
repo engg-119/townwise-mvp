@@ -7,6 +7,7 @@ import type { Rule } from '../portal/rules/api';
 import {
   answerQuestion, decideSuggestion, loadAgentPanel, setCalendarTitles, setWeeklySuggestions, type AgentPanel, type EventChoice, type QuestionAnswer,
 } from './api';
+import { suggestionDaysText } from './format';
 
 // The side panel's data (spec P25): the questions TownwiseAI has for the person and what it has been
 // doing, both read at once from GET .../agent. An answered question stays on the panel with what the answer did
@@ -27,9 +28,11 @@ import {
 // what the person last set here over what was read.
 //
 // The location's calendars (openspec change calendar-event-suggestions): a spotted event's accept carries the admin's
-// choice. A follow-up whose note was edited since it was made (409 note_changed) stays open: the panel reads again
-// and the card says why nothing changed. A spotted event that moved or went (409 event_changed) is gone: the panel
-// reads again and the section's notice says why its card went. The titles switch keeps what was last set here, as the
+// choice, which is held here with its guest count, by suggestion id, so a re-read of the panel (which draws the cards
+// again) keeps them; they go once the suggestion is decided or no longer listed. A follow-up whose note was edited since
+// it was made (409 note_changed) stays open: the panel reads again and the card says why nothing changed. A spotted
+// event that moved or went (409 event_changed) is gone: the panel reads again and the section's notice says, by its
+// days, never its title, why its card went. The titles switch keeps what was last set here, as the
 // weekly switch does. A removal's accept deletes a note, so it marks the notes stale as a saved note does.
 
 export interface Answered {
@@ -44,6 +47,12 @@ export interface Decided {
   /** The note or rule an accepted suggestion wrote, or null. */
   note: Note | null;
   rule: Rule | null;
+}
+
+/** A spotted event's choice and guest count as the admin left them on its card. */
+export interface EventDraft {
+  effect: EventChoice['effect'] | null;
+  guests: string;
 }
 
 /** Something else… on one question. */
@@ -97,6 +106,9 @@ export interface AgentPanelState {
   suggestionErrors: Readonly<Record<string, string>>;
   /** `choice` on a spotted event's accept only. */
   decide: (suggestionId: string, decision: 'accept' | 'dismiss', choice?: EventChoice) => void;
+  /** Spotted events' choices and counts, by suggestion id: only those still listed and not decided. */
+  eventDrafts: Readonly<Record<string, EventDraft>>;
+  setEventDraft: (suggestionId: string, draft: EventDraft) => void;
   /** Why a card the person decided on went instead (its event changed), until the panel is read again or another decision. */
   suggestionsNotice: string | null;
   /** The organization's weekly suggestions switch as last set here; null when it was not set here since the read. */
@@ -127,7 +139,7 @@ export function decideErrorText(error: unknown): string {
     if (error.code === 'note_limit') return 'This location has 1,000 notes. Delete old ones to add more.';
     if (error.code === 'rule_limit') return 'This location has 30 business rules. Delete one to add this.';
     if (error.code === 'rule_exists') return 'That rule is already saved.';
-    if (error.code === 'note_changed') return 'Someone changed this note since, so nothing was changed. Check the note, or wait for your calendar’s next refresh.';
+    if (error.code === 'note_changed') return 'Someone changed this note since, so nothing was changed. Check the note, or wait for your calendar’s next refresh. Dismiss keeps the note as it is.';
     if (error.code === 'invalid_request') return 'Enter the guests to accept it alongside regular service.';
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t accept or dismiss suggestions.';
     if (error.status === 429) return 'You’ve made a lot of changes. Try again later.';
@@ -182,6 +194,14 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
   const [titlesOn, setTitlesOn] = useState<boolean | null>(null);
   const [switchingTitles, setSwitchingTitles] = useState(false);
   const [titlesError, setTitlesError] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, EventDraft>>({});
+  // A suggestion no longer listed takes its draft with it (kept while the panel reads again).
+  const listed = state.status === 'ready' ? new Set(state.data.suggestions.map((each) => each.id)) : null;
+  const eventDrafts = listed === null ? drafts : Object.fromEntries(Object.entries(drafts).filter(([id]) => listed.has(id)));
+
+  function setEventDraft(suggestionId: string, draft: EventDraft): void {
+    setDrafts((current) => ({ ...(listed === null ? current : Object.fromEntries(Object.entries(current).filter(([id]) => listed.has(id)))), [suggestionId]: draft }));
+  }
 
   const reload = useCallback(() => {
     setAnswered({});
@@ -196,13 +216,15 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
 
   function decide(suggestionId: string, decision: 'accept' | 'dismiss', choice?: EventChoice): void {
     if (deciding !== null || decided[suggestionId] !== undefined) return;
-    const removal = state.status === 'ready' && state.data.suggestions.some((each) => each.id === suggestionId && each.type === 'remove');
+    const suggestion = state.status === 'ready' ? state.data.suggestions.find((each) => each.id === suggestionId) : undefined;
+    const removal = suggestion?.type === 'remove';
     setDeciding(suggestionId);
     setSuggestionsNotice(null);
     setSuggestionErrors((current) => without(current, suggestionId));
     decideSuggestion(api, locationId, suggestionId, decision, choice ?? null).then(
       (result) => {
         setDecided((current) => ({ ...current, [suggestionId]: { status: result.suggestion.status, note: result.note, rule: result.rule } }));
+        setDrafts((current) => without(current, suggestionId));
         if (result.note !== null || (removal && result.suggestion.status === 'accepted')) onNoteAdded?.();
       },
       (error: unknown) => {
@@ -213,7 +235,9 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
         }
         if (code === 'event_changed') {
           reload();
-          setSuggestionsNotice('That event moved or is no longer on your calendar, so nothing was saved.');
+          const days = suggestion === undefined || suggestion.type === 'rule' ? null
+            : suggestionDaysText(suggestion.note.startDate, suggestion.note.endDate, suggestion.note.weekdays);
+          setSuggestionsNotice(`${days === null ? 'That event' : `The event on ${days}`} moved or is no longer on your calendar, so nothing was saved.`);
           return;
         }
         setSuggestionErrors((current) => ({ ...current, [suggestionId]: decideErrorText(error) }));
@@ -315,7 +339,7 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
 
   return {
     state, reload, answered, answering, errors, answer, actedIn, others, telling, tell,
-    decided, deciding, suggestionErrors, decide, suggestionsNotice, weeklyOn, switching, switchError, setWeekly,
+    decided, deciding, suggestionErrors, decide, eventDrafts, setEventDraft, suggestionsNotice, weeklyOn, switching, switchError, setWeekly,
     titlesOn, switchingTitles, titlesError, setTitles,
     openOther: (questionId) => { patchOther(questionId, { open: true }); },
     foldOther: (questionId) => { patchOther(questionId, { open: false }); },

@@ -86,6 +86,16 @@ export function dayText(date: string): string {
   return parts === null ? date : `${parts.weekday}, ${parts.month} ${String(parts.day)}, ${parts.year}`;
 }
 
+/**
+ * The days a weekly suggestion names, as its card shows them: "Thu, Nov 26, 2026", "Dec 24 to Dec 26, 2026", with its
+ * weekdays and an open end.
+ */
+export function suggestionDaysText(startDate: string, endDate: string | null, weekdays: readonly number[] | null): string {
+  const dates = endDate === null ? `from ${dayText(startDate)} on` : startDate === endDate ? dayText(startDate) : rangeText(startDate, endDate);
+  const which = weekdaysText(weekdays);
+  return which === null ? dates : `${which.replace(/ only$/, '')}, ${dates}`;
+}
+
 /** A calendar date with its weekday and no year: "Mon, Oct 19". */
 export function shortDayText(date: string): string {
   const parts = partsOf(date);

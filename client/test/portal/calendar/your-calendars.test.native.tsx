@@ -46,7 +46,7 @@ const NATIVE_LINE_GOOGLE = 'To import a calendar file or connect a Google calend
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const KITCHEN = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', eventCount: 12 });
 /** The words on adding a link (calendar-event-suggestions design decision 11). [CONFIRM: the add screens' words] */
-const WEEKLY_READING = 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of this calendar’s events, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.';
+const WEEKLY_READING = 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.';
 
 function setup(init: Partial<Pick<CalendarFake, 'calendars'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
   const days = Array.from({ length: 20 }, (_, at) => forecastDay({ date: `2026-11-${String(11 + at)}` }));

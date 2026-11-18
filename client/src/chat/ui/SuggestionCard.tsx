@@ -1,17 +1,19 @@
 import { Link } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
-import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useRef } from 'react';
+import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { openAsAdminOrgId } from '../../portal/api';
+import { plural } from '../../portal/format';
 import { usePortal } from '../../portal/PortalProvider';
 import { EFFECT_LABEL, guestsLine, guestsOf, hoursLine } from '../../portal/locations/noteRules';
+import { webAria } from '../../portal/ui/aria';
 import { Button } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine } from '../../portal/ui/feedback';
 import { FormField } from '../../portal/ui/FormField';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { isCalendarChange, type EventChoice, type Suggestion } from '../api';
-import { dayText, formatCount, KIND_LABEL, rangeText, weekdaysText } from '../format';
+import { dayText, formatCount, KIND_LABEL, rangeText, suggestionDaysText as daysOf } from '../format';
 import type { AgentPanelState, Decided } from '../useAgentPanel';
 
 // TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions, spec P25): each Monday a pass reads the
@@ -24,8 +26,10 @@ import type { AgentPanelState, Decided } from '../useAgentPanel';
 // The location's own calendars (openspec change calendar-event-suggestions, design decisions 9, 10 and 15) add three
 // kinds, whose sentence (`words`) the server writes: a private event the weekly pass spotted on a calendar, whose card
 // asks the admin to choose the whole restaurant (a buyout) or alongside regular service, a radio group with neither
-// chosen, and the guest count, prefilled from the event's title when it gave one; Accept stays disabled, saying why,
-// until a choice is made and, alongside regular service, a count is given. And the follow-ups of a note made from an
+// chosen, and the guest count, prefilled from the event's title when it gave one; once chosen, a line under the choices
+// says what it does to the forecast, in the note form's terms. Accept stays disabled until a choice is made (the help
+// line says so) and the count is right (its field says so; alongside regular service one is needed). The choice and
+// count are the panel's (useAgentPanel), so a re-read keeps them. And the follow-ups of a note made from an
 // event that moved or went, which list in their own section, "Your calendar changed", before the suggestions. Beside
 // the weekly switch, the organization's switch for reading the calendars' event titles: admins turn it off or on (staff
 // open as admin only off), members see its state.
@@ -46,13 +50,15 @@ const EVENT_CHOICES: readonly { value: EventChoice['effect']; label: string }[] 
   { value: 'more_guests', label: 'Alongside regular service' },
 ];
 const EVENT_CHOICE_LEGEND = 'How this event runs';
-
-/** The days a suggestion names: "Thu, Nov 26, 2026", "Dec 24 to Dec 26, 2026", with its weekdays and an open end. */
-function daysOf(startDate: string, endDate: string | null, weekdays: readonly number[] | null): string {
-  const dates = endDate === null ? `from ${dayText(startDate)} on` : startDate === endDate ? dayText(startDate) : rangeText(startDate, endDate);
-  const which = weekdaysText(weekdays);
-  return which === null ? dates : `${which.replace(/ only$/, '')}, ${dates}`;
-}
+/**
+ * What each choice does to the forecast, in the note form's terms (NoteFields: a buyout is "closed to walk-ins all day",
+ * and a private event's guests "add to the whole day’s total").
+ */
+const EVENT_CHOICE_EFFECT: Readonly<Record<EventChoice['effect'], string>> = {
+  closed: 'A buyout closes the whole day to walk-ins in the forecast.',
+  more_guests: 'These guests add to the whole day’s total.',
+};
+const EVENT_DISMISS = 'Dismiss and TownwiseAI won’t ask about this event again.';
 
 /**
  * What a note of kind other is, by its effect: "Other on Thu, Dec 31?" asks nothing an admin can answer. Null for
@@ -98,7 +104,7 @@ export function suggestionHelp(suggestion: Suggestion, canChange: boolean): stri
   if (!canChange) return 'An admin of your organization can accept or dismiss this.';
   switch (suggestion.type) {
     case 'rule': return 'Accept adds this business rule, and the forecast uses its schedule from then on. Dismiss and TownwiseAI won’t suggest it again.';
-    case 'event': return 'Accept saves a private-event note for these days, and the forecast uses it from then on. Dismiss and TownwiseAI won’t ask about this event again.';
+    case 'event': return `Accept saves a private-event note for these days, and the forecast uses it from then on. ${EVENT_DISMISS}`;
     case 'move': return 'Accept moves the note to the event’s new dates and hours, and leaves the rest of it as it is. Dismiss keeps the note where it is.';
     case 'remove': return 'Accept deletes the note, and the forecast stops using it. Dismiss keeps the note.';
     case 'note': return 'Accept saves this note, and the forecast uses it from then on. Dismiss and TownwiseAI won’t suggest it again.';
@@ -106,13 +112,12 @@ export function suggestionHelp(suggestion: Suggestion, canChange: boolean): stri
 }
 
 /**
- * Why a spotted event's Accept is disabled, or null once it can be pressed: a choice is needed, and alongside regular
- * service a guest count (the API refuses none, since it would change no forecast); a count, when given, is 1 to 20,000.
+ * A spotted event's Guests field's message, or null: a count, when given, is 1 to 20,000, and alongside regular service
+ * one is needed (the API refuses none, since it would change no forecast). Accept stays disabled while there is one.
  */
-export function eventAcceptBlock(effect: EventChoice['effect'] | null, guests: string): string | null {
-  if (effect === null) return 'Choose how this event runs to accept it.';
+export function eventGuestsMessage(effect: EventChoice['effect'] | null, guests: string): string | null {
   const count = guestsOf(guests);
-  if (count === 'invalid') return 'Enter the guests as a whole number from 1 to 20,000 to accept it.';
+  if (count === 'invalid') return 'Enter a whole number from 1 to 20,000.';
   if (effect === 'more_guests' && count === null) return 'Enter the guests to accept it alongside regular service.';
   return null;
 }
@@ -125,6 +130,13 @@ export function decidedLine(suggestion: Suggestion, decided: Decided): string {
   const days = daysOf(note.startDate, note.endDate, note.weekdays);
   if (suggestion.type === 'move') return `Moved the note to ${days}.`;
   if (suggestion.type === 'remove') return 'Deleted the note.';
+  // A spotted event's from the note the accept saved, as the Calendar words a buyout: "Private buyout, 40 guests".
+  if (suggestion.type === 'event' && decided.note !== null) {
+    const saved = decided.note;
+    const what = saved.effect === 'closed' ? 'Private buyout' : KIND_LABEL.private_event;
+    const guests = saved.expectedGuests === null ? '' : `, ${plural(saved.expectedGuests, 'guest', 'guests')}`;
+    return `Saved a note: ${what}${guests}, ${daysOf(saved.startDate, saved.endDate, saved.weekdays)}.`;
+  }
   return `Saved a note: ${otherWords(note) ?? KIND_LABEL[note.kind]}, ${days}.`;
 }
 
@@ -143,13 +155,16 @@ type Host = React.ComponentRef<typeof View>;
 
 /**
  * A spotted event's two choices: a radio group with neither checked at first (the arrow keys and Space choose on web,
- * with one tab stop, on the checked choice or the first while none is).
+ * with one tab stop, on the checked choice or the first while none is). Once one is checked, the line under the group
+ * says what it does to the forecast: the group is described by it on web, and the checked radio's hint says it on native.
  */
 function EventChoiceGroup(props: {
   value: EventChoice['effect'] | null;
   onChange: (value: EventChoice['effect']) => void;
   disabled: boolean;
   describedBy: string | undefined;
+  /** The id of the line under the group. */
+  effectId: string;
 }): React.JSX.Element {
   const refs = useRef<(Host | null)[]>([]);
   const { disabled } = props;
@@ -174,30 +189,39 @@ function EventChoiceGroup(props: {
     (refs.current[index] as unknown as { focus?: () => void } | null)?.focus?.();
   }
   return (
-    <View role="radiogroup" aria-label={EVENT_CHOICE_LEGEND} {...(Platform.OS === 'web' ? ({ onKeyDown } as object) : {})} style={styles.choices}>
-      <Text style={styles.legend}>{EVENT_CHOICE_LEGEND}</Text>
-      <View style={styles.answers}>
-        {EVENT_CHOICES.map((choice, index) => {
-          const on = choice.value === props.value;
-          const tabStop = on || (props.value === null && index === 0);
-          return (
-            <Pressable
-              key={choice.value}
-              ref={(element) => { refs.current[index] = element; }}
-              role="radio"
-              accessibilityState={{ checked: on, disabled }}
-              {...(Platform.OS === 'web'
-                ? { tabIndex: tabStop && !disabled ? 0 : -1, 'aria-checked': on, 'aria-disabled': disabled || undefined, 'aria-describedby': props.describedBy }
-                : { disabled })}
-              onPress={() => { if (!disabled) props.onChange(choice.value); }}
-              style={[styles.choice, on ? styles.choiceOn : null]}
-            >
-              <Text style={[styles.choiceLabel, on ? styles.choiceLabelOn : null]}>{choice.label}</Text>
-            </Pressable>
-          );
-        })}
+    <>
+      <View
+        role="radiogroup"
+        aria-label={EVENT_CHOICE_LEGEND}
+        {...(Platform.OS === 'web' ? ({ onKeyDown } as object) : {})}
+        {...webAria({ 'aria-describedby': props.value === null ? undefined : props.effectId })}
+        style={styles.choices}
+      >
+        <Text style={styles.legend}>{EVENT_CHOICE_LEGEND}</Text>
+        <View style={styles.answers}>
+          {EVENT_CHOICES.map((choice, index) => {
+            const on = choice.value === props.value;
+            const tabStop = on || (props.value === null && index === 0);
+            return (
+              <Pressable
+                key={choice.value}
+                ref={(element) => { refs.current[index] = element; }}
+                role="radio"
+                accessibilityState={{ checked: on, disabled }}
+                {...(Platform.OS === 'web'
+                  ? { tabIndex: tabStop && !disabled ? 0 : -1, 'aria-checked': on, 'aria-disabled': disabled || undefined, 'aria-describedby': props.describedBy }
+                  : { disabled, ...(on ? { accessibilityHint: EVENT_CHOICE_EFFECT[choice.value] } : {}) })}
+                onPress={() => { if (!disabled) props.onChange(choice.value); }}
+                style={[styles.choice, on ? styles.choiceOn : null]}
+              >
+                <Text style={[styles.choiceLabel, on ? styles.choiceLabelOn : null]}>{choice.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
       </View>
-    </View>
+      {props.value === null ? null : <Text nativeID={props.effectId} style={styles.context}>{EVENT_CHOICE_EFFECT[props.value]}</Text>}
+    </>
   );
 }
 
@@ -218,12 +242,13 @@ export function SuggestionCard(props: {
   const facts = suggestionFacts(suggestion);
   const detail = suggestion.type === 'rule' || suggestion.type === 'event' ? null : suggestion.note.detail;
   const describedBy = [props.readOnlyId, helpId].filter((value): value is string => value !== null).join(' ');
-  // A spotted event's choice and guest count, prefilled from the event's title when it gave a number.
+  // A spotted event's choice and guest count, kept by the panel, the count prefilled from the event's title when it gave
+  // a number.
   const spotted = suggestion.type === 'event';
-  const [effect, setEffect] = useState<EventChoice['effect'] | null>(null);
-  const [guests, setGuests] = useState(() => (suggestion.type === 'event' && suggestion.note.expectedGuests !== null ? String(suggestion.note.expectedGuests) : ''));
-  const block = spotted ? eventAcceptBlock(effect, guests) : null;
-  const guestsInvalid = spotted && guestsOf(guests) === 'invalid';
+  const draft = panel.eventDrafts[id] ?? { effect: null, guests: suggestion.type === 'event' && suggestion.note.expectedGuests !== null ? String(suggestion.note.expectedGuests) : '' };
+  const { effect, guests } = draft;
+  const guestsMessage = spotted ? eventGuestsMessage(effect, guests) : null;
+  const unchosen = spotted && effect === null;
   const decidedLineRef = useRef<Host>(null);
   // A decision pressed on this card moves focus to the line that says what it did (the buttons it pressed are gone), as
   // ProposalCard's save does. Only the card pressed: the same suggestion can also show in the column beside the landing.
@@ -259,30 +284,38 @@ export function SuggestionCard(props: {
         <>
           {props.canChange && spotted ? (
             <>
-              <EventChoiceGroup value={effect} onChange={setEffect} disabled={off} describedBy={props.readOnlyId ?? undefined} />
+              <EventChoiceGroup
+                value={effect}
+                onChange={(next) => { panel.setEventDraft(id, { ...draft, effect: next }); }}
+                disabled={off}
+                describedBy={props.readOnlyId ?? undefined}
+                effectId={`suggestion-${id}-effect`}
+              />
               <View style={styles.guests}>
                 <FormField
                   label="Guests"
                   helper="Needed alongside regular service, optional for a buyout."
                   value={guests}
-                  onChangeText={setGuests}
+                  onChangeText={(text) => { panel.setEventDraft(id, { ...draft, guests: text }); }}
                   keyboardType="number-pad"
                   numeric
                   maxLength={6}
                   readOnly={off}
                   {...(props.readOnlyId === null ? {} : { readOnlyId: props.readOnlyId })}
-                  {...(guestsInvalid ? { messages: ['Enter a whole number from 1 to 20,000.'] } : {})}
+                  {...(guestsMessage === null ? {} : { messages: [guestsMessage] })}
                 />
               </View>
             </>
           ) : null}
           {props.canChange ? (
             <View role="group" aria-label={suggestionHeading(suggestion)} style={styles.answers}>
-              <Button variant="outline" label="Accept" disabled={off || block !== null} describedBy={describedBy} onPress={() => { press('accept'); }} />
+              <Button variant="outline" label="Accept" disabled={off || unchosen || guestsMessage !== null} describedBy={describedBy} onPress={() => { press('accept'); }} />
               <Button variant="outline" label="Dismiss" disabled={off} describedBy={describedBy} onPress={() => { press('dismiss'); }} />
             </View>
           ) : null}
-          <Text nativeID={helpId} style={styles.help}>{deciding ? 'Saving…' : (props.canChange ? block : null) ?? suggestionHelp(suggestion, props.canChange)}</Text>
+          <Text nativeID={helpId} style={styles.help}>
+            {deciding ? 'Saving…' : props.canChange && unchosen ? `Choose how this event runs to accept it. ${EVENT_DISMISS}` : suggestionHelp(suggestion, props.canChange)}
+          </Text>
         </>
       )}
       {error === undefined || decided !== undefined ? null : <ErrorNotice message={error} />}
@@ -358,11 +391,15 @@ function TitlesSwitch(props: { panel: AgentPanelState; readOnlyId: string | null
   );
 }
 
-/** The notice for a card that went when its decision was sent (its event changed): it takes focus on web, as the card's decided line would have. */
+/**
+ * The notice for a card that went when its decision was sent (its event changed): it takes focus on web, as the card's
+ * decided line would have, and iOS is told, as ErrorNotice tells it.
+ */
 function SuggestionsNotice(props: { text: string }): React.JSX.Element {
   const ref = useRef<Host>(null);
   useEffect(() => {
     if (Platform.OS === 'web') ref.current?.focus();
+    if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(props.text);
   }, [props.text]);
   return (
     <View ref={ref} {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})} role="status">

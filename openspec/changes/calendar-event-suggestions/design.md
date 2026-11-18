@@ -100,7 +100,7 @@ Alternatives: off by default (reversed by the owner's rule and approval); per ca
 
 No new kind carries model-written words, and no title is stored on a suggestion or a note.
 
-- **`move` and `remove`** read from the note's kind and dates only: "The private event on Sat, Dec 5 moved to Sat, Dec 12 on your calendar." and "The private event on Sat, Dec 5 is no longer on your calendar." The Calendar's linked-note line is likewise "From your calendar", with no title.
+- **`move` and `remove`** read from the note's kind and dates only: "The private event on Sat, Dec 5 moved to Sat, Dec 12 on your calendar." and "The private event on Sat, Dec 5 is no longer on your calendar." The Calendar's linked-note line is likewise "Made from a calendar event", with no title.
 - **`event`** must name its event, since the admin decides from it: "From your calendar: {title}, Sat, Dec 5, 6 pm to 9 pm", the title read from the live event row at read time (never stored on the suggestion). To staff (view-as or open as admin), a Google calendar's title is `GOOGLE_EVENT_TITLE`, with "ask your client's team what this event is", as on the Calendar; files' and links' titles show as they do there today.
 
 ### 11. A calendar sends titles only when it was added or connected under words that said so

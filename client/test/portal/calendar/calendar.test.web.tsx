@@ -503,11 +503,12 @@ test('a calendar file is posted and kept, its events show once read again, and M
   await waitFor(() => { expect(cell('2026-11-21').textContent).toContain('+70'); });
   // The stored events stay: a note's save reads the notes and the forecast again, not the calendars.
   expect(within(panel()).getByText('From your calendar: Smith rehearsal dinner')).toBeTruthy();
-  // The linked note says where it came from, with no title.
-  expect(within(panel()).getByText('From your calendar')).toBeTruthy();
+  // The linked note says where it came from, with no title, in words of its own: not the stored event's "From your calendar".
+  expect(within(panel()).getByText('Made from a calendar event')).toBeTruthy();
+  expect(within(panel()).queryByText('From your calendar')).toBeNull();
 });
 
-test('a note linked to a calendar event says “From your calendar” with no title; an unlinked one says nothing of it', async () => {
+test('a note linked to a calendar event says “Made from a calendar event” with no title; an unlinked one says nothing of it', async () => {
   const linked = noteOf('n1', {
     kind: 'private_event', effect: 'closed', startDate: '2026-11-21', endDate: '2026-11-21', expectedGuests: 40,
     fromEvent: { calendarId: 'c1', uid: 'i1', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null, linkedAt: '2026-11-11T15:00:00.000Z' },
@@ -516,8 +517,8 @@ test('a note linked to a calendar event says “From your calendar” with no ti
   const { api } = setup(meOf(ACCESS.member), { notes: [linked, plain] });
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   const day = panel();
-  expect(within(day).getAllByText('From your calendar')).toHaveLength(1);
-  expect(within(day).getByText('From your calendar').parentElement?.textContent).toContain('40 guests');
+  expect(within(day).getAllByText('Made from a calendar event')).toHaveLength(1);
+  expect(within(day).getByText('Made from a calendar event').parentElement?.textContent).toContain('40 guests');
 });
 
 test('a file over 1 MB is refused unread, and a file that isn’t a calendar says so', async () => {
