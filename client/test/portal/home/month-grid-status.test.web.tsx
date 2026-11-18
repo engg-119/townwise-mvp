@@ -76,3 +76,16 @@ test('at 375px the status takes its own line under the day, sized to its cell, s
   expect(status.style.fontSize).toBe('');
   expect(within(screen.getByRole('gridcell', { name: 'Day 2026-11-03' })).getByText('Booked').classList.contains('tw-mg-status')).toBe(true);
 });
+
+test('an outlook day (D52) says Outlook over its middle figure, at 1280 and at 375', () => {
+  const outlook: MonthCell = { ...cell('2026-11-20', 'outlook'), figure: { value: 212, kind: 'forecast', text: '212' } };
+  for (const next of [1280, 375]) {
+    setWidth(next);
+    renderRow([outlook, cell('2026-11-21', null), null, null, null, null, null]);
+    const shown = screen.getByRole('gridcell', { name: 'Day 2026-11-20' });
+    expect(shown.textContent).toContain('Outlook');
+    expect(shown.textContent).toContain('212');
+    expect(screen.getByRole('gridcell', { name: 'Day 2026-11-21' }).textContent).not.toContain('Outlook');
+    cleanup();
+  }
+});

@@ -142,7 +142,7 @@ export function forecastDay(fields: Partial<ForecastDay> & Pick<ForecastDay, 'da
   const high = fields.high ?? 240;
   return {
     status: 'open', low, mid, high, model: { status: 'open', low, mid, high }, noteGuests: 0, moreNotes: 0,
-    reasons: [{ kind: 'weekday', label: 'Weekday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null,
+    reasons: [{ kind: 'weekday', label: 'Weekday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null, outlook: false,
     ...fields,
   };
 }

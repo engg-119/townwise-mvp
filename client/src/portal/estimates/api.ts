@@ -186,6 +186,8 @@ const forecastDaySchema = z.object({
   inRange: z.boolean().nullable(),
   /** Counted in the window's `accuracy` (open in the model, not closed, likely closed or booked, with guests); missing from an API before it. */
   scored: z.boolean().optional(),
+  /** After its run's forecast tier (D52): Townwise's outlook, with a wider range and no 8 in 10 claim; false from an API before it. */
+  outlook: z.boolean().default(false),
 });
 export type ForecastDay = z.infer<typeof forecastDaySchema>;
 
@@ -207,6 +209,8 @@ export const forecastWindowSchema = z.object({
   weeks: z.array(z.object({
     from: z.string(), to: z.string(), openDays: z.number(), low: z.number(), mid: z.number(), high: z.number(), runId: z.string(),
     noteGuests: z.number().default(0),
+    /** Any of its days is an outlook day (D52); false from an API before it. */
+    outlook: z.boolean().default(false),
   })),
 });
 export type ForecastWindow = z.infer<typeof forecastWindowSchema>;

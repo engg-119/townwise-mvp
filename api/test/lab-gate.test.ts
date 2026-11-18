@@ -379,7 +379,9 @@ describe('jumpSums', () => {
 describe('streakOf', () => {
   const TODAY = '2026-06-01';
   const run = (id: string, family: string, lab: boolean, to = '2026-08-30') =>
-    ({ id, model: { family }, lab: lab ? { calibrationId: `cal-${id}` } : null, range: { from: '2026-06-01', to } }) as unknown as ForecastRunRecord;
+    ({
+      id, model: { family }, lab: lab ? { calibrationId: `cal-${id}` } : null, madeAt: TODAY, dataThrough: '2026-05-31', range: { from: '2026-06-01', to },
+    }) as unknown as ForecastRunRecord;
 
   it('is the consecutive published lab runs of the current run’s engine, from it back to one of another engine or imported', () => {
     const published = [
@@ -404,8 +406,11 @@ describe('streakOf', () => {
 });
 
 describe('the refresh tolerance over many weeks (no ratchet)', () => {
-  /** One draft a week from 2026-01-05 with backtest weekly WAPE `wapeOf(week)`, each published run reaching 91 days. */
-  function weekly(weeks: number, wapeOf: (week: number) => number): string[] {
+  /**
+   * One draft a week from 2026-01-05 with backtest weekly WAPE `wapeOf(week)`, each published run reaching 91 days (or
+   * `lastDay` days past its today: 364 for a year-long run, D52).
+   */
+  function weekly(weeks: number, wapeOf: (week: number) => number, lastDay = 90): string[] {
     const published: ForecastRunRecord[] = [];
     const recorded = new Map<string, number>();
     const reasons: string[] = [];
@@ -426,7 +431,8 @@ describe('the refresh tolerance over many weeks (no ratchet)', () => {
       if (!decision.publish) continue;
       const id = `week-${String(week)}`;
       published.unshift({
-        id, status: 'published', dataThrough: utcDay(new Date(`${today}T00:00:00.000Z`), -1), range: { from: today, to: utcDay(new Date(`${today}T00:00:00.000Z`), 90) },
+        id, status: 'published', dataThrough: utcDay(new Date(`${today}T00:00:00.000Z`), -1), madeAt: today,
+        range: { from: today, to: utcDay(new Date(`${today}T00:00:00.000Z`), lastDay) },
         lab: { calibrationId: `cal-${id}` }, model: { family: 'hybrid_linear_xgboost' },
       } as unknown as ForecastRunRecord);
       recorded.set(id, wape);
@@ -447,11 +453,21 @@ describe('the refresh tolerance over many weeks (no ratchet)', () => {
     // 9.1%, then 9.5% and 9.6%: a fourth at 9.7% is held, as the spec's scenario says.
     expect(weekly(4, (week) => [0.091, 0.095, 0.096, 0.097][week] ?? 1)).toEqual(['published', 'refreshed', 'refreshed', 'refresh_worse']);
   });
+
+  it('the streak counts year-long runs as 91-day ones (D52: judged by the forecast tier)', () => {
+    // A D42 run ends at its today plus 91 (forecast.run_end), where a year-long run's forecast tier ends.
+    const step = (week: number) => (week < 5 ? 0.1 : 0.11);
+    expect(weekly(20, step, 364)).toEqual(weekly(20, step, 91));
+    const drift = (week: number) => [0.091, 0.095, 0.096, 0.097][week] ?? 1;
+    expect(weekly(4, drift, 364)).toEqual(weekly(4, drift, 91));
+    expect(weekly(4, drift, 364)).toEqual(weekly(4, drift));
+  });
 });
 
 describe('currentChampion', () => {
+  // Made on today, so each run's forecast tier (D52) reaches its last day.
   const run = (id: string, dataThrough: string, to: string, status = 'published') =>
-    ({ id, status, dataThrough, range: { from: dataThrough, to } }) as unknown as ForecastRunRecord;
+    ({ id, status, dataThrough, madeAt: '2026-06-01', range: { from: dataThrough, to } }) as unknown as ForecastRunRecord;
 
   it('skips a run ending before today + 28 and picks the newest dataThrough of the rest; null with none', () => {
     const today = '2026-06-01';
@@ -469,6 +485,24 @@ describe('currentChampion', () => {
     expect(currentChampion([run('draft', '2026-05-01', '2026-07-01', 'draft'), run('kept', '2026-03-01', '2026-07-01')], today)?.id).toBe('kept');
     expect(currentChampion([run('newer-publish', '2026-03-01', '2026-07-01'), run('older-publish', '2026-03-01', '2026-07-01')], today)?.id)
       .toBe('newer-publish');
+  });
+
+  it('a year-long run lapses when its forecast tier has under 28 days left (D52), as a 91-day run made that day would', () => {
+    const today = '2026-06-01';
+    /** A run made `daysAgo` days before today with sales through the day before, reaching a year or 91 days. */
+    const made = (daysAgo: number, reach: number) => {
+      const madeAt = utcDay(new Date(`${today}T00:00:00.000Z`), -daysAgo);
+      const madeDay = new Date(`${madeAt}T00:00:00.000Z`);
+      return {
+        id: `run-${String(daysAgo)}-${String(reach)}`, status: 'published', madeAt, dataThrough: utcDay(madeDay, -1),
+        range: { from: madeAt, to: utcDay(madeDay, reach) }, lab: { calibrationId: 'cal' }, model: { family: 'hybrid_linear_xgboost' },
+      } as unknown as ForecastRunRecord;
+    };
+    expect(currentChampion([made(63, 365)], today)).not.toBeNull();
+    expect(currentChampion([made(64, 365)], today)).toBeNull();
+    expect(currentChampion([made(64, 91)], today)).toBeNull();
+    const yearLong = made(64, 365);
+    expect(streakOf([made(63, 365), yearLong], 'run-63-365', today).map((each) => each.id)).toEqual(['run-63-365']);
   });
 });
 

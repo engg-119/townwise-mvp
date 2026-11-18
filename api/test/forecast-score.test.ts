@@ -65,6 +65,17 @@ describe('live accuracy', () => {
     expect(three.map(scoredDay)).toEqual([true, true, true]);
   });
 
+  it('outlook days are not scored (D52): a stale run’s outlook day keeps its actual but no accuracy counts it', () => {
+    const days = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100), open('2026-05-04', 100), open('2026-05-05', 110)];
+    const outlook: ScoredDay = { ...open('2026-05-06', 300), outlook: true };
+    expect(scoredDay(outlook)).toBe(false);
+    expect(scoredDay({ ...outlook, outlook: false })).toBe(true);
+    expect(liveAccuracy([...days, outlook])).toEqual(liveAccuracy(days));
+    expect(liveAccuracy([outlook, outlook, outlook, outlook, outlook])).toBeNull();
+    // A 91-day run's days carry no outlook, so its accuracy is today's.
+    expect(liveAccuracy(days.map((day) => ({ ...day, outlook: false })))).toEqual(liveAccuracy(days));
+  });
+
   it('counts a day in range at either end of it', () => {
     expect([inRangeOf(80, 80, 120), inRangeOf(120, 80, 120), inRangeOf(79, 80, 120), inRangeOf(null, 80, 120)]).toEqual([true, true, false, null]);
   });

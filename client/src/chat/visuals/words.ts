@@ -41,13 +41,15 @@ function hasBand(day: DailyDay): boolean {
 }
 
 /**
- * A day's forecast in a line: “Forecast about 180, likely 117 to 256”, “Forecast 117 to 256” for a visual stored
- * before the middle was sent, “Forecast: closed” or “Forecast: booked for a private event”; null with none.
+ * A day's forecast in a line: “Forecast about 180, likely 117 to 256” (“Outlook about 180, likely 117 to 256” for an
+ * outlook day, D52), “Forecast 117 to 256” for a visual stored before the middle was sent, “Forecast: closed” or
+ * “Forecast: booked for a private event”; null with none.
  */
 export function forecastLine(day: DailyDay, metric: Metric): string | null {
   if (day.low !== null && day.high !== null) {
     const range = `${valueWord(day.low, metric)} to ${valueWord(day.high, metric)}`;
-    return day.mid === null ? `Forecast ${range}` : `Forecast about ${valueWord(day.mid, metric)}, likely ${range}`;
+    const word = day.outlook === true ? 'Outlook' : 'Forecast';
+    return day.mid === null ? `${word} ${range}` : `${word} about ${valueWord(day.mid, metric)}, likely ${range}`;
   }
   if (day.status === 'closed') return 'Forecast: closed';
   if (day.status === 'booked') return 'Forecast: booked for a private event';
@@ -108,11 +110,16 @@ export function visualSummary(v: Visual): string | null {
           + `Lowest: ${valueSentence(lowest.value, v.metric)} on ${dayText(lowest.date)}.`;
       let forecast: string | null = null;
       if (v.forecast !== null) {
-        const banded = v.days.filter(hasBand).length;
+        // The 8 in 10 sentence counts the forecast's days only: an outlook day's range is wider and has no such claim (D52).
+        const banded = v.days.filter((day) => hasBand(day) && day.outlook !== true).length;
+        const outlook = v.days.some((day) => hasBand(day) && day.outlook === true);
         // The band is the range as the owner's notes leave it (spec 14.5), so the 8 in 10 claim holds only on days no
         // note changed, as the Calendar puts it only beside the model's own range (calendar/model.ts).
         // madeAt is the run's YYYY-MM-DD date, read without a time zone (formatDay would read it as a UTC instant).
-        forecast = `The shaded band is ${v.forecast.model}’s forecast range, made ${formatDate(v.forecast.madeAt)}, for ${formatCount(banded)} days, plus guests from your notes on days that have them. On days without a note, about 8 in 10 land inside it.`;
+        forecast = banded === 0
+          ? `The shaded band is ${v.forecast.model}’s range, made ${formatDate(v.forecast.madeAt)}, plus guests from your notes on days that have them.`
+          : `The shaded band is ${v.forecast.model}’s forecast range, made ${formatDate(v.forecast.madeAt)}, for ${formatCount(banded)} days, plus guests from your notes on days that have them. On days without a note, about 8 in 10 land inside it.`;
+        if (outlook) forecast += ' Days marked outlook have a wider range.';
         if (v.days.some((day) => day.mid !== null)) forecast += ' The dashed line marks the forecast’s middle.';
       }
       const statuses = statusSentence(v.days);
