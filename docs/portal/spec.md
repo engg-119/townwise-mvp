@@ -2272,7 +2272,7 @@ Home replaced the Forecast page here (owner decision, 2026-11-05); its data chec
 **P14. Notes (`/locations/[id]/notes`)**
 
 - Intro: “Notes record what your sales can’t show: a closure, a private event, an opening. Add past ones to explain unusual days, and upcoming ones for the dates ahead. Townwise keeps them with this location. Nothing reads them yet.” [Build note: from the calendar change (D30, 14.5) the intro's last sentence is “From today on, a private event with a guest count, a buyout or a closure changes Townwise’s forecast for its days. TownwiseAI reads every note.” in place of “Nothing reads them yet.”]
-- A line with a StatusTag, Planned: “Talking to your model is planned.”
+- A line with a StatusTag, Planned: “Talking to your model is planned.” [Build note: removed 2026-11-17 at the owner’s request. TownwiseAI (the tuning chat) talks with the owner about the location and reads every note, so nothing here is planned any more.]
 - Primary: “Add a note”, which opens C6 inline above the lists.
 - Two lists, “Coming up” (end date today or later) and “Past”. Each note is a row:
   - the kind (`ui`, `white`);

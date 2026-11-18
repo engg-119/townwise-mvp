@@ -59,7 +59,8 @@ test('loading shows one line under the intro', async () => {
   expect(screen.getByText(
     /^Notes record what your sales can’t show.* From today on, a private event with a guest count, a buyout or a closure changes Townwise’s forecast for its days\. TownwiseAI reads every note\.$/,
   )).toBeTruthy();
-  expect(screen.getByText('Talking to your model is planned.')).toBeTruthy();
+  // TownwiseAI already talks about the notes (it reads every one), so the old Planned line is gone.
+  expect(screen.queryByText('Talking to your model is planned.')).toBeNull();
 });
 
 test('empty: no notes yet, with Add a note', async () => {

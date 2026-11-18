@@ -12,7 +12,7 @@ import { NotesSkeleton } from '../skeleton';
 import { Actions, Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { DataTable } from '../ui/DataTable';
-import { EmptyState, Notice, ReadOnlyLine, StatusTag } from '../ui/feedback';
+import { EmptyState, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Body } from '../ui/text';
 import { createNote, deleteNote, fetchNotes, updateNote, type Note, type NoteInput } from './api';
@@ -248,10 +248,6 @@ export function Notes(): React.JSX.Element {
               days, and upcoming ones for the dates ahead. Townwise keeps them with this location. From today on, a private event with a
               guest count, a buyout or a closure changes Townwise’s forecast for its days. TownwiseAI reads every note.
             </Body>
-            <View style={styles.tagline}>
-              <StatusTag kind="planned" label="Planned" />
-              <Text style={styles.taglineText}>Talking to your model is planned.</Text>
-            </View>
           </Stack>
         )}
       />
@@ -293,8 +289,6 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   notice: { marginBottom: theme.space[8] },
-  tagline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
-  taglineText: { ...theme.type.small, color: c.text2 },
   body: { marginTop: theme.space[8], paddingTop: theme.space[8], borderTopWidth: 1, borderTopColor: c.border, gap: theme.space[8] },
   cell: { gap: 2, paddingVertical: 4, minWidth: 0 },
   kind: { flexDirection: 'row', alignItems: 'center', columnGap: 8 },
