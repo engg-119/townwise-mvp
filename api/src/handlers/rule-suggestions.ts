@@ -197,6 +197,10 @@ export async function dismissRuleSuggestion(ctx: TownwiseContext, req: Request, 
       ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_dismissed', target: { type: 'location', id: location.id },
       details: { locationId: location.id, suggestionId: record.id, type: 'rule', source: record.source },
     });
+    // A confirm that wrote its rule meanwhile wins, as it would have had it marked first: the rule exists, so this
+    // finishes the accept and answers it, rather than "dismissed" over a rule that stands.
+    const raced = await ctx.stores.businessRules.find(scope, location.id, record.id);
+    if (raced !== null) await finishAccepted(ctx, caller, location, record, raced);
   }
   const now = await ctx.stores.agentSuggestions.find(scope, location.id, record.id);
   if (now === null) throw notFound();

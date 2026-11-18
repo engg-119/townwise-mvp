@@ -404,6 +404,25 @@ describe('confirm, edit and dismiss', () => {
       .toEqual([{ locationId, suggestionId: id, type: 'rule', source: 'file', edited: false }]);
   });
 
+  it('a Dismiss whose compare-and-set lands after a racing Confirm wrote its rule answers the end state, accepted (code review N3)', async () => {
+    const { locationId, id } = await oneSuggestion();
+    const marks = holdCalls(server, 'updateOne', 'TwAgentSuggestion');
+    held.push(marks);
+    const dismiss = decide(team.colleague, locationId, id, 'dismiss');
+    await marks.arrived(1);
+    const confirm = decide(team.member, locationId, id, 'accept');
+    await marks.arrived(2);
+    // The dismiss lands first, then finishes the accept the confirm's rule stands for; the confirm's own mark comes last.
+    marks.release(1);
+    marks.release(3);
+    const dismissed = await dismiss;
+    expect(await dismissed.json()).toMatchObject({ suggestion: { id, status: 'accepted' }, rule: { id, text: 'Closed on Mondays' } });
+    marks.open();
+    expect((await confirm).status).toBe(200);
+    expect(await suggestionDoc(id)).toMatchObject({ status: 'accepted' });
+    expect((await eventsOf('agent.suggestion_accepted')).filter((event) => (event.details as { suggestionId: string }).suggestionId === id)).toHaveLength(1);
+  });
+
   it('Dismiss records it once, writes no rule, is remembered, and the same closure is not suggested again', async () => {
     const { locationId, id } = await oneSuggestion();
     const res = await decide(team.member, locationId, id, 'dismiss');
