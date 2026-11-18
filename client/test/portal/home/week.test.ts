@@ -6,6 +6,7 @@ import {
   lastWeekForecastCell, lastWeekForecastOnly, lastWeekLines, lastWeekPhrase, lastWeekPhrases, lastWeekRange, lastYearDayPhrase,
   lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, nextEvent,
   nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, weekEntries, type HomeInput,
+  monthEntryLines, narrowCaption, WIDE_CELL_HEIGHT, WIDE_LINES, WIDE_ROWS, wideCell, type MonthCell,
 } from '../../../src/portal/analytics/week';
 import type { ForecastDay, ForecastWindow, LiveAccuracy } from '../../../src/portal/estimates/api';
 import { addDays } from '../../../src/portal/locations/dates';
@@ -596,4 +597,63 @@ describe('the month card', () => {
     const term = townEvent({ start: '2026-09-14', end: '2026-11-17', title: 'Fall term classes', kind: 'term' });
     expect(nextEvent(TODAY, dayContext([], [term]))).toBeNull();
   });
+});
+
+// UI review B1 (D49): a wide Home cell has a line budget that fits its 96px. As in the Calendar's cell, the status or
+// the caption sits in the top row beside the day and "+40" beside the figure, so the entry lines get what is left.
+describe('a wide Home cell’s rows', () => {
+  function cellOf(fields: Partial<MonthCell>): MonthCell {
+    return {
+      date: '2026-11-25', isToday: false, inWeek: false, status: null, figure: null, figureText: null, caption: null, noteGuests: 0, chips: [], more: 0,
+      marks: { event: false, note: false, imported: false }, label: 'Day', ...fields,
+    };
+  }
+
+  test('the top row, the figure row and the entry lines fit inside the cell, its padding and border', () => {
+    expect(WIDE_ROWS.inner).toBe(WIDE_CELL_HEIGHT - 10);
+    const used = WIDE_ROWS.top + WIDE_ROWS.gap + WIDE_ROWS.figure + WIDE_ROWS.gap + WIDE_LINES * WIDE_ROWS.entry + (WIDE_LINES - 1) * WIDE_ROWS.entryGap;
+    expect(used).toBeLessThanOrEqual(WIDE_ROWS.inner);
+    // One more line would not fit.
+    expect(used + WIDE_ROWS.entryGap + WIDE_ROWS.entry).toBeGreaterThan(WIDE_ROWS.inner);
+    expect(WIDE_LINES).toBe(2);
+  });
+
+  test('a booked buyout on a closed day: Booked beside the day, its party in the figure row, both entries', () => {
+    const parts = wideCell(cellOf({
+      status: 'booked', figure: { value: 70, kind: 'booked' }, figureText: '~70', caption: 'forecast', chips: ['Holiday party', 'Closed Wednesdays in December'],
+    }));
+    expect(parts).toEqual({ topRight: 'Booked', middle: 'figure', lines: ['Holiday party', 'Closed Wednesdays in December'], more: null });
+  });
+
+  test('a busy forecast day: its caption beside the day, one entry and “+N more” when they outrun the budget', () => {
+    const parts = wideCell(cellOf({
+      figure: { value: 334, kind: 'forecast' }, figureText: '~334', caption: 'forecast', noteGuests: 40,
+      chips: ['Alumni reception', 'Home football game', 'Veterans Day'], more: 1,
+    }));
+    expect(parts).toEqual({ topRight: 'forecast', middle: 'figure', lines: ['Alumni reception'], more: '+3 more' });
+  });
+
+  test('a closed or likely-closed day says so in the figure row; a day with neither leaves it empty', () => {
+    expect(wideCell(cellOf({ status: 'closed' }))).toMatchObject({ topRight: null, middle: 'status' });
+    expect(wideCell(cellOf({ status: 'likely_closed' }))).toMatchObject({ topRight: null, middle: 'status' });
+    expect(wideCell(cellOf({ status: 'outlook', figure: { value: 212, kind: 'forecast' }, caption: 'forecast' }))).toMatchObject({ topRight: 'Outlook', middle: 'figure' });
+    expect(wideCell(cellOf({ status: 'booked' }))).toMatchObject({ topRight: 'Booked', middle: null });
+    expect(wideCell(cellOf({ figure: { value: 94, kind: 'actual' }, caption: 'sales' }))).toMatchObject({ topRight: 'sales', middle: 'figure' });
+  });
+
+  test('monthEntryLines keeps to its budget, “+N more” counting as a line', () => {
+    const chips = { chips: ['A', 'B', 'C'], more: 2 };
+    expect(monthEntryLines({ chips: ['A', 'B'], more: 0 }, 2)).toEqual({ lines: ['A', 'B'], more: null });
+    expect(monthEntryLines(chips, 2)).toEqual({ lines: ['A'], more: '+4 more' });
+    expect(monthEntryLines(chips, 1)).toEqual({ lines: [], more: '+5 more' });
+    expect(monthEntryLines({ chips: ['A'], more: 0 }, 1)).toEqual({ lines: ['A'], more: null });
+  });
+});
+
+// UI review S4: on a phone a narrow cell drops "forecast", which is wider than the cell; the "~" marks the forecast.
+test('a narrow cell’s caption: none for a forecast on a phone; “sales” stays', () => {
+  expect(narrowCaption({ caption: 'forecast' }, true)).toBeNull();
+  expect(narrowCaption({ caption: 'forecast' }, false)).toBe('forecast');
+  expect(narrowCaption({ caption: 'sales' }, true)).toBe('sales');
+  expect(narrowCaption({ caption: null }, false)).toBeNull();
 });

@@ -1,5 +1,7 @@
 import { compactEntries, dayEntries, type DayEntry } from '../calendar/entries';
-import { ALL_FILTERS, captionOf, dayCell, FORECAST_TAG, INSIDE_RANGE, markedFigure, type CalendarCell, type CalendarInput, type ImportedEvent } from '../calendar/model';
+import {
+  ALL_FILTERS, captionOf, dayCell, FORECAST_TAG, INSIDE_RANGE, markedFigure, statusTakesFigure, statusWord, type CalendarCell, type CalendarInput, type ImportedEvent,
+} from '../calendar/model';
 import { yoursDid, type ForecastDay, type ForecastWindow, type LiveAccuracy } from '../estimates/api';
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
@@ -826,7 +828,10 @@ export interface MonthCell extends Omit<CalendarCell, 'inWeek'> {
    * “~” (calendar/model.ts markedFigure, D49 decision 10); null with none.
    */
   figureText: string | null;
-  /** The word under the figure: “forecast” under every forecast, “sales” under a stored net-sales figure; null otherwise. */
+  /**
+   * The figure's word, under it in a narrow cell and beside the day in a wide one: “forecast” for every forecast,
+   * “sales” for a stored net-sales figure; null otherwise.
+   */
   caption: string | null;
 }
 
@@ -834,11 +839,46 @@ export interface MonthCell extends Omit<CalendarCell, 'inWeek'> {
 export const WIDE_CELL = 88;
 export const WIDE_CELL_HEIGHT = 96;
 
-/** A wide Home cell's entry lines: up to two, or the first and “+N more” (the Calendar's cell holds the first three). */
-export function monthEntryLines(cell: Pick<MonthCell, 'chips' | 'more'>): { lines: string[]; more: string | null } {
+/**
+ * A wide Home cell's rows in px (UI review B1). As in the Calendar's cell, the top row holds the day with the status
+ * or the caption, and the figure row the figure with its “+40”, or the status in its place, each at a fixed height, so
+ * the entry lines get what is left: the cell less its padding and border (10px), the two rows, and the gaps between.
+ * MonthGrid.web.tsx and MonthGrid.tsx draw with these.
+ */
+export const WIDE_ROWS = { inner: WIDE_CELL_HEIGHT - 10, top: 16, figure: 24, entry: 14, gap: 2, entryGap: 1 } as const;
+
+/** How many entry lines fit under the two rows, “+N more” counting as one: 2. */
+export const WIDE_LINES = Math.floor(
+  (WIDE_ROWS.inner - WIDE_ROWS.top - WIDE_ROWS.figure - 2 * WIDE_ROWS.gap + WIDE_ROWS.entryGap) / (WIDE_ROWS.entry + WIDE_ROWS.entryGap),
+);
+
+/** A cell's entry lines within `budget` lines: every entry when they fit, else the first ones and “+N more” on the last line. */
+export function monthEntryLines(cell: Pick<MonthCell, 'chips' | 'more'>, budget: number): { lines: string[]; more: string | null } {
   const total = cell.chips.length + cell.more;
-  if (total <= 2) return { lines: cell.chips.slice(0, 2), more: null };
-  return { lines: cell.chips.slice(0, 1), more: `+${String(total - 1)} more` };
+  if (total <= budget) return { lines: cell.chips.slice(0, budget), more: null };
+  const shown = Math.max(0, budget - 1);
+  return { lines: cell.chips.slice(0, shown), more: `+${String(total - shown)} more` };
+}
+
+/** What a wide Home cell shows in each row (WIDE_ROWS). */
+export interface WideCell {
+  /** Beside the day: a booked or outlook day's status word, else the figure's caption (“forecast”, “sales”). */
+  topRight: string | null;
+  /** The figure row: the figure and its “+40”, or the status word in its place (“Closed”, “Likely closed”); null for neither. */
+  middle: 'figure' | 'status' | null;
+  lines: string[];
+  more: string | null;
+}
+
+export function wideCell(cell: Pick<MonthCell, 'status' | 'figure' | 'caption' | 'chips' | 'more'>): WideCell {
+  const topRight = cell.status === 'booked' || cell.status === 'outlook' ? statusWord(cell.status) : cell.caption;
+  const middle = statusTakesFigure(cell.status, false) ? 'status' : cell.figure === null ? null : 'figure';
+  return { topRight, middle, ...monthEntryLines(cell, WIDE_LINES) };
+}
+
+/** A narrow cell's caption: none for a forecast on a phone, where “forecast” is wider than the cell and the “~” marks it (UI review S4). */
+export function narrowCaption(cell: Pick<MonthCell, 'caption'>, phone: boolean): string | null {
+  return phone && cell.caption === FORECAST_TAG ? null : cell.caption;
 }
 
 /**

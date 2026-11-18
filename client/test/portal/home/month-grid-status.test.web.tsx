@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 
-import type { MonthCell } from '../../../src/portal/analytics/week';
+import { WIDE_ROWS, type MonthCell } from '../../../src/portal/analytics/week';
 import { MonthGrid } from '../../../src/portal/home/MonthGrid.web';
 
 // Home's month grid prints a cell's status word with the Calendar's statusWord (D49: its cells are the Calendar's), so a
@@ -92,7 +92,7 @@ const TWO = cell('2026-11-12', 'closed', { chips: ['Holiday party', 'Closed Thur
 test('a wide grid lists two entry lines, or one and “+N more”, at 96px; a narrow one shows corner marks', () => {
   renderRow([BUSY, TWO, null, null, null, null, null], true);
   const busy = screen.getByRole('gridcell', { name: 'Day 2026-11-11' });
-  expect(busy.textContent).toBe('11140forecastHoliday party+2 more');
+  expect(busy.textContent).toBe('11forecast140Holiday party+2 more');
   expect(busy.style.height).toBe('96px');
   expect(screen.getByRole('gridcell', { name: 'Day 2026-11-12' }).textContent).toBe('12ClosedHoliday partyClosed Thursdays');
   cleanup();
@@ -102,6 +102,45 @@ test('a wide grid lists two entry lines, or one and “+N more”, at 96px; a na
   // The three corner marks: town, yours, and the mint outline for an imported event.
   expect(narrow.querySelectorAll('span[aria-hidden="true"][style*="position: absolute"]')).toHaveLength(3);
   expect(narrow.style.minHeight).toBe('64px');
+});
+
+// UI review B1: the busiest cells cut off their last line. The top row holds the day and the status or caption, the
+// figure row the figure and its "+40" (or the status in its place), each at a fixed height, so the entry lines get
+// what is left of the 96px; jsdom lays nothing out, so the rows' heights are read from their styles.
+test('a wide cell keeps every part inside its 96px: status and caption by the day, "+40" by the figure', () => {
+  const buyout = cell('2026-11-25', 'booked', {
+    figure: { value: 70, kind: 'booked' }, figureText: '~70', caption: 'forecast', chips: ['Holiday party', 'Closed Wednesdays in December'],
+  });
+  const busy = cell('2026-11-21', null, {
+    figure: { value: 334, kind: 'forecast' }, figureText: '~334', caption: 'forecast', noteGuests: 40,
+    chips: ['Alumni reception', 'Home football game', 'Veterans Day'], more: 1,
+  });
+  const closed = cell('2026-11-26', 'likely_closed', { chips: ['Thanksgiving Day'] });
+  for (const next of [1440, 768]) {
+    setWidth(next);
+    renderRow([buyout, busy, closed, null, null, null, null], true);
+    const rowsOf = (date: string): HTMLElement[] => [...screen.getByRole('gridcell', { name: `Day ${date}` }).children] as HTMLElement[];
+    const [top, figure, entries, ...rest] = rowsOf('2026-11-25');
+    expect(rest).toEqual([]);
+    expect([top?.textContent, figure?.textContent, entries?.textContent]).toEqual(['25Booked', '~70', 'Holiday partyClosed Wednesdays in December']);
+    expect([top?.style.height, figure?.style.height]).toEqual([`${String(WIDE_ROWS.top)}px`, `${String(WIDE_ROWS.figure)}px`]);
+    for (const line of [...(entries?.children ?? [])] as HTMLElement[]) expect(line.style.lineHeight).toBe(`${String(WIDE_ROWS.entry)}px`);
+    expect(rowsOf('2026-11-21').map((row) => row.textContent)).toEqual(['21forecast', '~334+40', 'Alumni reception+3 more']);
+    expect(rowsOf('2026-11-26').map((row) => row.textContent)).toEqual(['26', 'Likely closed', 'Thanksgiving Day']);
+    cleanup();
+  }
+});
+
+// UI review S4: at phone width a narrow cell is about 42px, narrower than "forecast"; the "~" marks the forecast there.
+test('a narrow cell drops “forecast” on a phone, and keeps it wider', () => {
+  const forecast = cell('2026-11-20', null, { figure: { value: 104, kind: 'forecast' }, figureText: '~104', caption: 'forecast' });
+  setWidth(375);
+  renderRow([forecast, null, null, null, null, null, null]);
+  expect(screen.getByRole('gridcell', { name: 'Day 2026-11-20' }).textContent).toBe('20~104');
+  cleanup();
+  setWidth(1280);
+  renderRow([forecast, null, null, null, null, null, null]);
+  expect(screen.getByRole('gridcell', { name: 'Day 2026-11-20' }).textContent).toBe('20~104forecast');
 });
 
 test('a footer sits under the key', () => {

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { theme } from '../../theme';
-import { monthEntryLines, monthMove, WIDE_CELL_HEIGHT } from '../analytics/week';
+import { monthMove, narrowCaption, WIDE_CELL_HEIGHT, WIDE_ROWS, wideCell, type MonthCell } from '../analytics/week';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import { anchorOf, DayTooltip, type TooltipAnchor } from '../calendar/DayTooltip.web';
 import { figureTone, statusWord } from '../calendar/model';
@@ -19,8 +19,11 @@ import { MARK, MonthKey } from './MonthKey';
 // shows its day number and figure (MonthGrid.tsx says which), as wide as its column and at least 64px tall from 641px
 // (52px on phones), growing with what it holds. Its status (“Likely closed”, “Closed”, “Booked”) is its own line under
 // the number, in a type that shrinks with the cell (a size container) so its longest word fits: the grid is about
-// 300px wide at many widths, where a cell holds about 30px of text. Hover, the pointer and the status's size live in
-// one React-rendered stylesheet, as the heatmap's do; the focus ring is the portal's.
+// 300px wide at many widths, where a cell holds about 30px of text. A wide cell (88px and up) is 96px tall and lays
+// out as the Calendar's does, in rows of fixed height (week.ts WIDE_ROWS, UI review B1): the day with the status or
+// caption, the figure with its “+40” or the status in its place, then the entry lines its budget holds. Hover, the
+// pointer and the status's size live in one React-rendered stylesheet, as the heatmap's do; the focus ring is the
+// portal's.
 
 const C = theme.color;
 const HEAD = WEEK_ORDER.map((day) => WEEKDAY_NAMES[day] ?? '');
@@ -43,8 +46,60 @@ const statusStyle = { fontFamily: theme.font.mono, lineHeight: '12px', color: C.
 const row = { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 3 } as const;
 /** A wide cell's entry line: one line, cut with an ellipsis; the cell's label says it whole. */
 const entryLine = {
-  fontFamily: theme.font.sans, fontSize: 11, lineHeight: '14px', color: C.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+  fontFamily: theme.font.sans, fontSize: 11, lineHeight: `${String(WIDE_ROWS.entry)}px`, color: C.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
 } as const;
+
+function DayNumber(props: { cell: MonthCell }): React.JSX.Element {
+  const { cell } = props;
+  return (
+    <span style={{ ...mono, fontSize: 13, color: cell.isToday ? C.white : C.text2, fontWeight: cell.isToday ? 600 : 400 }}>
+      {String(Number(cell.date.slice(8, 10)))}
+    </span>
+  );
+}
+
+function Figure(props: { cell: MonthCell; size: number }): React.JSX.Element | null {
+  const { cell, size } = props;
+  if (cell.figure === null) return null;
+  const tone = figureTone(cell.figure);
+  return (
+    <span data-figure={tone === 'white' ? 'actual' : 'forecast'} style={{ ...mono, fontSize: size, lineHeight: `${String(size + 4)}px`, fontWeight: 500, color: C[tone] }}>
+      {cell.figureText}
+    </span>
+  );
+}
+
+/** A wide cell's rows (week.ts wideCell), each at its fixed height, so nothing passes the cell's bottom. */
+function WideDay(props: { cell: MonthCell; figureSize: number }): React.JSX.Element {
+  const { cell } = props;
+  const parts = wideCell(cell);
+  const status = statusWord(cell.status);
+  return (
+    <>
+      <span aria-hidden="true" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, height: WIDE_ROWS.top, flexShrink: 0, minWidth: 0 }}>
+        <DayNumber cell={cell} />
+        {parts.topRight === null ? null : <span style={{ ...mono, fontSize: 10, lineHeight: '14px', color: C.text2, textTransform: 'uppercase' }}>{parts.topRight}</span>}
+      </span>
+      <span aria-hidden="true" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, height: WIDE_ROWS.figure, flexShrink: 0, minWidth: 0 }}>
+        {parts.middle === 'status' && status !== null ? (
+          // “Likely closed” over two lines, as the Calendar's cell has it: 2 lines of 12px fill the row.
+          <span className="tw-mg-status" style={{ ...statusStyle, textAlign: 'center' }}>
+            {status.split(' ').map((word, at) => <span key={at} style={{ display: 'block' }}>{at > 0 ? ' ' : null}{word}</span>)}
+          </span>
+        ) : parts.middle === 'figure' ? (
+          <>
+            <Figure cell={cell} size={props.figureSize} />
+            {cell.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}
+          </>
+        ) : null}
+      </span>
+      <span aria-hidden="true" style={{ display: 'grid', gap: WIDE_ROWS.entryGap, minWidth: 0 }}>
+        {parts.lines.map((entry, at) => <span key={at} style={entryLine}>{entry}</span>)}
+        {parts.more === null ? null : <span style={{ ...entryLine, color: C.text3 }}>{parts.more}</span>}
+      </span>
+    </>
+  );
+}
 
 function dateOf(target: EventTarget | null): string | null {
   const element = target instanceof Element ? target.closest('[data-date]') : null;
@@ -64,7 +119,8 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
   const { rows, selected, onSelect, onPreview, onOpen, tooltip } = props;
   const { phone } = useBreakpoint();
   const wide = props.wide === true;
-  const figureSize = phone ? 15 : 18;
+  // 13px on a phone: “~104” at 15px is wider than a 42px cell (UI review S4).
+  const figureSize = phone ? 13 : 18;
   const root = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
   const [tip, setTip] = useState<{ date: string; anchor: TooltipAnchor } | null>(null);
@@ -187,34 +243,25 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
                       // in a grid narrower than seven of them.
                       position: 'relative', minWidth: 0, boxSizing: 'border-box', padding: '4px 2px',
                       ...(wide ? { height: WIDE_CELL_HEIGHT, overflow: 'hidden' } : { minHeight: phone ? 52 : 64 }),
-                      display: 'flex', flexDirection: 'column', gap: 2,
+                      display: 'flex', flexDirection: 'column', gap: WIDE_ROWS.gap,
                       background: C.raised, border: `1px solid ${isSelected ? C.mint : cell.inWeek ? C.line : C.raised}`,
                     }}
                   >
-                    <span aria-hidden="true" style={{ display: 'flex' }}>
-                      <span style={{ ...mono, fontSize: 13, color: cell.isToday ? C.white : C.text2, fontWeight: cell.isToday ? 600 : 400 }}>
-                        {String(Number(cell.date.slice(8, 10)))}
-                      </span>
-                    </span>
-                    {cell.status === null ? null : (
-                      <span aria-hidden="true" className="tw-mg-status" style={statusStyle}>{statusWord(cell.status)}</span>
-                    )}
-                    {cell.figure === null ? null : (
-                      <span aria-hidden="true" style={{ display: 'grid', justifyItems: 'center' }}>
-                        <span data-figure={figureTone(cell.figure) === 'white' ? 'actual' : 'forecast'} style={{ ...mono, fontSize: figureSize, lineHeight: `${String(figureSize + 4)}px`, fontWeight: 500, color: C[figureTone(cell.figure)] }}>
-                          {cell.figureText}
-                        </span>
-                        {cell.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}
-                        {cell.caption === null ? null : <span style={{ ...mono, fontSize: 10, lineHeight: '12px', color: C.text3 }}>{cell.caption}</span>}
-                      </span>
-                    )}
-                    {wide ? (
-                      <span aria-hidden="true" style={{ display: 'grid', gap: 1, minWidth: 0 }}>
-                        {monthEntryLines(cell).lines.map((entry, at) => <span key={at} style={entryLine}>{entry}</span>)}
-                        {monthEntryLines(cell).more === null ? null : <span style={{ ...entryLine, color: C.text3 }}>{monthEntryLines(cell).more}</span>}
-                      </span>
-                    ) : (
+                    {wide ? <WideDay cell={cell} figureSize={figureSize} /> : (
                       <>
+                        <span aria-hidden="true" style={{ display: 'flex' }}>
+                          <DayNumber cell={cell} />
+                        </span>
+                        {cell.status === null ? null : (
+                          <span aria-hidden="true" className="tw-mg-status" style={statusStyle}>{statusWord(cell.status)}</span>
+                        )}
+                        {cell.figure === null ? null : (
+                          <span aria-hidden="true" style={{ display: 'grid', justifyItems: 'center' }}>
+                            <Figure cell={cell} size={figureSize} />
+                            {cell.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}
+                            {narrowCaption(cell, phone) === null ? null : <span style={{ ...mono, fontSize: 10, lineHeight: '12px', color: C.text3 }}>{narrowCaption(cell, phone)}</span>}
+                          </span>
+                        )}
                         {cell.marks.event ? <span aria-hidden="true" style={{ ...square, top: 0, right: 0, background: C.white }} /> : null}
                         {cell.marks.note ? <span aria-hidden="true" style={{ ...square, bottom: 0, left: 0, background: C.text2 }} /> : null}
                         {cell.marks.imported ? (
