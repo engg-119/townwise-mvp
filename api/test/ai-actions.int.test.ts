@@ -257,8 +257,8 @@ describe('notes from the events', () => {
     expect(notes.map(({ kind, startDate, endDate, effect, expectedGuests, detail, createdByEmail, source }) => ({
       kind, startDate, endDate, effect, expectedGuests, detail, createdByEmail, source,
     }))).toEqual([
-      { kind: 'private_event', startDate: '2026-06-14', endDate: '2026-06-14', effect: 'more_guests', expectedGuests: 80, detail: 'Wedding dinner: Back room', createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId } },
-      { kind: 'closure', startDate: '2026-07-01', endDate: '2026-07-02', effect: 'closed', expectedGuests: null, detail: 'Closed for the floor', createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId } },
+      { kind: 'private_event', startDate: '2026-06-14', endDate: '2026-06-14', effect: 'more_guests', expectedGuests: 80, detail: 'Wedding dinner: Back room', createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId, ref: `f_${fileId}` } },
+      { kind: 'closure', startDate: '2026-07-01', endDate: '2026-07-02', effect: 'closed', expectedGuests: null, detail: 'Closed for the floor', createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId, ref: `f_${fileId}` } },
     ]);
     const stored = await server.connection.collection('tw_notes').findOne({ _id: oid(notes[0]?.id ?? '') });
     expect(stored).toMatchObject({ createdBy: team.member.userId, source: { via: 'ai_file', fileId: oid(fileId) } });

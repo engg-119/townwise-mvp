@@ -1,21 +1,30 @@
 // Notes, the tuning step (spec 10.5, 12, P14): range, weekday, effect and kind rules; author-or-admin edits;
 // notes reachable only through their own location; the 1,000 cap; detail never in logs or audit events; hours and
-// buyout guests (the calendar change); the store's overlapping read.
+// buyout guests (the calendar change); the store's overlapping read; titles and a TownwiseAI note's source ref (D49).
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { readNoteContent, sameNoteContent, type NoteView } from '../src/handlers/notes.ts';
 import { createNoteStore } from '../src/stores/notes.ts';
 import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
+/** The same database with stored files on. Each start drops the database, so both start before any fixture. */
+let withFiles: TownwiseTestServer;
 
-beforeAll(async () => { server = await startTownwiseServer(); });
-afterAll(async () => { await server.close(); });
+beforeAll(async () => {
+  server = await startTownwiseServer();
+  withFiles = await startTownwiseServer({ files: createMemoryFileBlobs() });
+});
+afterAll(async () => {
+  await server.close();
+  await withFiles.close();
+});
 beforeEach(async () => { await server.redis.flushdb(); });
 
 // The test clock starts at 2026-06-01T12:00Z, so the latest start date is 2028-06-01.
@@ -364,6 +373,61 @@ describe('note titles', () => {
     }
     expect(JSON.stringify(events)).not.toContain('Sentinel');
     expect(server.logs.join('\n')).not.toContain('Sentinel');
+  });
+});
+
+// D49: a note TownwiseAI made links to the Your data item of the file it was read from, while that item exists.
+describe('a TownwiseAI note’s source ref', () => {
+  const scope = (): OrgScope => ({ orgId }) as unknown as OrgScope;
+
+  /** A tw_files row written straight in, as the reader leaves a stored file it finished. */
+  async function seedFile(location: string, over: Record<string, unknown> = {}): Promise<string> {
+    const _id = new Types.ObjectId();
+    await server.connection.collection('tw_files').insertOne({
+      _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(location), importId: null, purpose: 'reference',
+      uploadedBy: author.session.userId, uploaderRole: 'member', uploadedAt: server.clock.now(), name: 'events.txt', kind: 'text',
+      sizeBytes: 5, fingerprint: _id.toHexString().padStart(64, '0'), upload: null, status: 'kept', outcome: 'reference',
+      progress: null, readStartedAt: null, readMs: null, answers: {}, uploadId: null, result: null, report: null, cleanBytes: null,
+      rawDeletedAt: null, attempts: 0, ...over,
+    });
+    return _id.toHexString();
+  }
+
+  async function aiNote(location: string, fileId: string): Promise<string> {
+    const content = readNoteContent({ ...NOTE, detail: 'From a file' }, '2026-06-01');
+    if (content === null) throw new Error('fixture');
+    const note = await createNoteStore(server.connection).create(scope(), location, content, {
+      createdBy: author.session.userId, now: server.clock.now(), source: { via: 'ai_file', fileId },
+    });
+    return note.id;
+  }
+
+  async function sourceOf(on: TownwiseTestServer, location: string, noteId: string): Promise<NoteView['source'] | undefined> {
+    // A session is the server's own: sign in on it.
+    const session = on === server ? author.session : await signIn(on, author.email);
+    const res = await call(on, notesPath(location), { session });
+    return (await res.json() as { notes: NoteView[] }).notes.find((note) => note.id === noteId)?.source;
+  }
+
+  it('is f_ for a stored file, u_ for a file that wrote days, and null once it is gone, being deleted, or files are off', async () => {
+    const location = await addLocation(server, { orgId, name: 'Source Room' });
+    const stored = await seedFile(location);
+    const uploadId = new Types.ObjectId().toHexString();
+    const wroteDays = await seedFile(location, { purpose: 'sales', uploadId: new Types.ObjectId(uploadId) });
+    const deleting = await seedFile(location, { status: 'deleting' });
+    const gone = new Types.ObjectId().toHexString();
+    const [a, b, c, d] = [await aiNote(location, stored), await aiNote(location, wroteDays), await aiNote(location, deleting), await aiNote(location, gone)];
+
+    expect(await sourceOf(withFiles, location, a)).toEqual({ via: 'ai_file', fileId: stored, ref: `f_${stored}` });
+    expect(await sourceOf(withFiles, location, b)).toEqual({ via: 'ai_file', fileId: wroteDays, ref: `u_${uploadId}` });
+    expect(await sourceOf(withFiles, location, c)).toEqual({ via: 'ai_file', fileId: deleting, ref: null });
+    expect(await sourceOf(withFiles, location, d)).toEqual({ via: 'ai_file', fileId: gone, ref: null });
+    for (const id of [a, b]) expect((await sourceOf(server, location, id))?.ref).toBeNull();
+
+    // An edit's answer carries it too; a note the person typed has none.
+    const edited = await call(withFiles, `${notesPath(location)}/${a}`, { method: 'PATCH', session: await signIn(withFiles, author.email), json: NOTE });
+    expect((await edited.json() as { note: NoteView }).note.source).toEqual({ via: 'ai_file', fileId: stored, ref: `f_${stored}` });
+    expect((await created(NOTE, author, location)).source).toBeNull();
   });
 });
 

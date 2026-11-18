@@ -8,7 +8,7 @@ import { z } from 'zod';
 
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
-import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { daysBetween, EARLIEST_DATE, isoDate, plusYears, utcDay } from '../dates.ts';
 import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
@@ -18,12 +18,13 @@ import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
 
 /**
- * Spec 12. `source` is `{ via: 'ai_file', fileId }` on a note TownwiseAI made from a file someone let it read (spec
- * 11A.9), else null.
+ * Spec 12. `source` is `{ via: 'ai_file', fileId, ref }` on a note TownwiseAI made from a file someone let it read (spec
+ * 11A.9), else null. `ref` (D49) is that file's Your data item: `f_<fileId>`, or `u_<uploadId>` for a file that wrote
+ * days of its own; null once the file is gone or being deleted, and while stored files are off.
  */
 export interface NoteView extends NoteContent {
   id: string; createdByEmail: string; createdAt: string; updatedAt: string; canEdit: boolean;
-  source: { via: 'ai_file'; fileId: string } | null;
+  source: { via: 'ai_file'; fileId: string; ref: string | null } | null;
 }
 
 /** Spec 6.7. [CONFIRM: 1,000 notes] */
@@ -162,7 +163,10 @@ function canEdit(caller: MemberPrincipal, note: NoteRecord): boolean {
   return caller.role === 'org_admin' || note.createdBy === caller.userId;
 }
 
-export function noteView(note: NoteRecord, createdByEmail: string, caller: MemberPrincipal): NoteView {
+/** `refs` holds the Your data ref of each source file, by its id (sourceRefs); a note whose file has none answers null. */
+export function noteView(
+  note: NoteRecord, createdByEmail: string, caller: MemberPrincipal, refs: ReadonlyMap<string, string> = new Map(),
+): NoteView {
   return {
     id: note.id,
     kind: note.kind,
@@ -179,7 +183,7 @@ export function noteView(note: NoteRecord, createdByEmail: string, caller: Membe
     createdAt: note.createdAt.toISOString(),
     updatedAt: note.updatedAt.toISOString(),
     canEdit: canEdit(caller, note),
-    source: note.source === null ? null : { via: note.source.via, fileId: note.source.fileId },
+    source: note.source === null ? null : { via: note.source.via, fileId: note.source.fileId, ref: refs.get(note.source.fileId) ?? null },
   };
 }
 
@@ -196,15 +200,30 @@ async function editableNote(ctx: TownwiseContext, caller: MemberPrincipal, locat
   return note;
 }
 
+/**
+ * D49: the Your data ref of each file TownwiseAI made one of `notes` from, by file id, in one read (`f_<id>`, or
+ * `u_<uploadId>` for a file that wrote days, as Your data names them); none while stored files are off, and none for a
+ * file gone or being deleted.
+ */
+async function sourceRefs(ctx: TownwiseContext, scope: OrgScope, notes: readonly NoteRecord[]): Promise<ReadonlyMap<string, string>> {
+  const ids = [...new Set(notes.flatMap((note) => note.source?.fileId ?? []))];
+  if (ctx.files === null || ids.length === 0) return new Map();
+  const files = await ctx.stores.files.byIds(scope, ids);
+  return new Map(files.map((file) => [file.id, file.uploadId === null ? `f_${file.id}` : `u_${file.uploadId}`]));
+}
+
 /** GET /api/org/locations/:locationId/notes, sorted by start date. */
 export async function listNotes(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const notes = await ctx.stores.notes.list(caller.scope, location.id);
   const authors = [...new Set(notes.filter((note) => !note.byStaff).map((note) => note.createdBy))];
-  const emails = new Map(await Promise.all(authors.map(async (userId) => [userId, await authorEmail(ctx, userId, false)] as const)));
+  const [emails, refs] = await Promise.all([
+    Promise.all(authors.map(async (userId) => [userId, await authorEmail(ctx, userId, false)] as const)).then((pairs) => new Map(pairs)),
+    sourceRefs(ctx, caller.scope, notes),
+  ]);
   res.status(200).json({
-    notes: notes.map((note) => noteView(note, note.byStaff ? TOWNWISE_STAFF : emails.get(note.createdBy) ?? DELETED_PERSON, caller)),
+    notes: notes.map((note) => noteView(note, note.byStaff ? TOWNWISE_STAFF : emails.get(note.createdBy) ?? DELETED_PERSON, caller, refs)),
   });
 }
 
@@ -270,7 +289,8 @@ export async function updateNote(ctx: TownwiseContext, req: Request, res: Respon
     target: { type: 'note', id: note.id },
     details: noteDetails(location.id, note),
   });
-  res.status(200).json({ note: noteView(note, await authorEmail(ctx, note.createdBy, note.byStaff), caller) });
+  const [email, refs] = await Promise.all([authorEmail(ctx, note.createdBy, note.byStaff), sourceRefs(ctx, scope, [note])]);
+  res.status(200).json({ note: noteView(note, email, caller, refs) });
 }
 
 /** DELETE /api/org/locations/:locationId/notes/:noteId, by the author or an org admin. */
