@@ -24,6 +24,7 @@ import { createAzureFileBlobs, createAzuriteFileBlobs, storageCredential, type F
 import { createAiReadActions } from './files/ai-actions.ts';
 import { createAiReader } from './files/ai-reader.ts';
 import { createAnthropicExtractModel, createAnthropicFileReaderModel, createAnthropicSetupReaderModel } from './files/extract/model.ts';
+import { backfillNoteTitles } from './files/note-titles.ts';
 import { createFileSweeper } from './files/sweeper.ts';
 import { createFileWorker } from './files/worker.ts';
 import { createEntraLabCaller, createLocalLabCaller, type LabCaller } from './lab/caller.ts';
@@ -173,6 +174,8 @@ const deps = { ...baseDeps, aiReader };
 const api = createTownwiseApi(deps);
 const labRouter = createTownwiseLab(deps);
 await ensureIndexes(mongo.connection, { logger });   // after every store has registered its models
+// D49: names, once, the notes TownwiseAI made from a file before notes had titles (a no-op once each is named).
+await backfillNoteTitles({ connection: mongo.connection, stores: createTownwiseStores(mongo.connection), logger });
 fileWorker?.start();
 aiReader?.start();
 fileSweeper?.start();

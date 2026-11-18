@@ -48,7 +48,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - `detail` the event's own (null when empty or equal to the title);
   - `duplicates()` checks the folded title before its `detail === null` return.
   - Tests: `api/test/ai-actions.int.test.ts` (the buyout, a title with a newline, "already named" with no detail).
-- [ ] 1.6 The title backfill. Tests first, `api/test/note-title-backfill.int.test.ts` (new):
+- [x] 1.6 The title backfill. Tests first, `api/test/note-title-backfill.int.test.ts` (new):
   - an older note is named exactly from its read;
   - its detail is unchanged;
   - a deleted original gives null;

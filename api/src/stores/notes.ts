@@ -123,6 +123,11 @@ export interface NoteStore {
   create(scope: OrgScope, locationId: string, content: NoteContent, input: {
     createdBy: string; now: Date; id?: string; byStaff?: boolean; source?: AiSource;
   }): Promise<NoteRecord>;
+  /**
+   * The title backfill (D49): sets the note's title only while it has no `title` key (a compare-and-set), so a second
+   * run or another replica writes nothing. Resolves whether this call wrote it.
+   */
+  setTitleOnce(scope: OrgScope, noteId: string, title: string | null): Promise<boolean>;
   /** A full replace of the content; null when the note is gone. */
   replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
@@ -223,6 +228,10 @@ export function createNoteStore(connection: Connection): NoteStore {
         { returnDocument: 'after' },
       ).lean();
       return doc === null ? null : toNote(doc);
+    },
+    async setTitleOnce(scope, noteId, title) {
+      const result = await Note.updateOne({ _id: noteId, orgId: scope.orgId, title: trusted({ $exists: false }) }, { $set: { title } });
+      return result.modifiedCount === 1;
     },
     async remove(scope, locationId, noteId) {
       const result = await Note.deleteOne({ _id: noteId, orgId: scope.orgId, locationId });

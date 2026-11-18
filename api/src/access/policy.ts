@@ -7,7 +7,7 @@ import type { Request } from 'express';
 import type { ListedBlob } from '../files/blobs.ts';
 import type {
   ClaimedAiRead, ClaimedCalendar, ClaimedGoogleConnection, ClaimedImport, JoinedSeat, LabCallbackClaim, LiveScheduledCalibration,
-  StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, WeeklyCandidate,
+  StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, UntitledAiNote, WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
@@ -75,6 +75,11 @@ export function scopeForGoogleCheck(claim: ClaimedGoogleConnection): OrgScope {
  * weekly suggestions pass row a dead pass left running, each found by a cross-tenant lookup.
  */
 export function scopeForWeeklyRefresh(found: WeeklyCandidate | LiveScheduledCalibration | StaleStartingWeek | StaleSuggestionPass): OrgScope {
+  return mint(found.orgId);
+}
+
+/** The boot-time title backfill only (files/note-titles.ts, D49), for the organization of a note its lookup found. */
+export function scopeForNoteTitleBackfill(found: UntitledAiNote): OrgScope {
   return mint(found.orgId);
 }
 
