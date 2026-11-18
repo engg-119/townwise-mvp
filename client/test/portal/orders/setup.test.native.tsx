@@ -93,3 +93,30 @@ test('with reading by TownwiseAI on, native draws the section and still says to 
   expect(screen.getByLabelText('Or paste text')).toBeTruthy();
   expect(writes(api)).toEqual([]);
 });
+
+// D56: Ordering setup opened from a TownwiseAI card, whose file was attached on the web.
+test('fills the draft from a card on native too', async () => {
+  const conversation = 'c'.repeat(24);
+  const card = `/api/org/locations/l1/chat/${conversation}/order-proposals/toolu_order_setup_0001`;
+  const stout = {
+    name: 'Sample Stout', supplier: null, category: 'draft', unit: 'kegs', servingsPerUnit: 124, servingsEstimated: true, dealSize: null,
+    posNames: [], note: '', inFile: null,
+  };
+  const api = fakePortalApi({
+    me: meOf(ACCESS.member),
+    fallback: analyticsFake({
+      [`${PATH}/setup`]: ANSWER,
+      [card]: {
+        proposal: {
+          kind: 'setup', status: 'open', readWeb: false,
+          read: { kind: 'order_guide', confidence: 'high', suppliers: [], items: [stout], itemsCut: false, partial: false },
+        },
+      },
+    }),
+  });
+  await renderApp(`/locations/l1/orders/setup?proposal=${conversation}.toolu_order_setup_0001`, api);
+  expect(await screen.findByText('TownwiseAI found 1 item: 1 new, 0 replaced by name. Nothing is saved yet: check them below, then save the setup.')).toBeTruthy();
+  expect(screen.getByDisplayValue('Sample Stout')).toBeTruthy();
+  expect(screen.getByText('Unsaved changes.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+});

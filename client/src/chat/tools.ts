@@ -442,6 +442,11 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     object: () => 'a rule to remember',
     hidden: true,
   },
+  // D56: shown as its card (ui/OrderSetupCard.tsx).
+  propose_order_setup: {
+    object: () => 'ordering setup suggestions',
+    hidden: true,
+  },
   // D37: Anthropic's web search (api/src/chat/web-search.ts searchCard), not in the registry: the API runs it, and only
   // while it is turned on, so it adds nothing to what TownwiseAI reads. The card never shows the query (its input is
   // always null), names a failure in general words, never its code, and says when the reply ended before its result.

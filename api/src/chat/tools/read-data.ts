@@ -100,6 +100,7 @@ async function readAttached(tc: ToolContext, ref: string, fileId: string): Promi
   if (read.status === 'picture') {
     tc.turn.pictureBytes += check.bytes;
     tc.turn.readUntrusted = true;
+    tc.files.sent.set(ref, { picture: true });
     return { content: JSON.stringify({ ref, picture: true }), picture: { mediaType: read.mediaType, base64: read.base64 } };
   }
   // A picture that turned out not to be sendable holds nothing.
@@ -107,6 +108,7 @@ async function readAttached(tc: ToolContext, ref: string, fileId: string): Promi
   if (read.status !== 'text') return refused(read.status === 'not_readable' ? 'damaged' : read.status);
   if (read.text.trim() === '') return refused(read.kind === 'pdf' ? 'no_text' : 'empty');
   tc.turn.readUntrusted = true;
+  tc.files.sent.set(ref, { text: read.text, truncated: read.truncated });
   return { content: JSON.stringify({ ref, text: read.text, truncated: read.truncated }) };
 }
 
@@ -162,6 +164,7 @@ export const readDataTool: ChatTool<ReadDataInput> = {
       : await tc.ctx.items.readText(tc.scope, tc.location.id, parsed.id);
     if (read.status === 'ok') {
       tc.turn.readUntrusted = true;
+      tc.files.sent.set(ref, { text: read.text, truncated: read.truncated });
       return { content: JSON.stringify({ ref, text: read.text, truncated: read.truncated }) };
     }
     // Not a text item: a picture, PDF, Word or Excel file attached on this path (never a sales upload's `u_` ref) is read

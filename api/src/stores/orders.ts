@@ -38,7 +38,8 @@ export interface RuleRecord {
   readonly createdAt: Date;
 }
 
-export type OrderCardKind = 'change' | 'rule';
+/** `setup` (D56): TownwiseAI's ordering setup suggestions. Its card is only ever open or set aside, never saved. */
+export type OrderCardKind = 'change' | 'rule' | 'setup';
 /** `saving`: a change card's save claimed it and its edit may not be stored yet; the card still reads as open. */
 export type OrderCardStatus = 'saving' | 'saved' | 'dismissed';
 
@@ -129,7 +130,7 @@ function cardSchema(): Schema<CardFields> {
     locationId: { type: Schema.Types.ObjectId, required: true },
     conversationId: { type: Schema.Types.ObjectId, required: true },
     proposalId: { type: String, required: true },
-    kind: { type: String, required: true, enum: ['change', 'rule'] },
+    kind: { type: String, required: true, enum: ['change', 'rule', 'setup'] },
     status: { type: String, required: true, enum: ['saving', 'saved', 'dismissed'] },
     decisionId: { type: Schema.Types.ObjectId, required: true },
     createdAt: { type: Date, required: true },

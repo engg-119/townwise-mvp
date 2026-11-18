@@ -568,7 +568,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
           // read_data_item sets readUntrusted too, once it hands back an item's text or a picture; runTurn sets both for
           // web pages.
           turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, pictureBytes: attached?.pictureBytes ?? 0 },
-          files: { attached: attachedRefs, by: filesBy, bytes: turnBytes },
+          files: { attached: attachedRefs, by: filesBy, bytes: turnBytes, sent: new Map(attached?.sent) },
         },
         history: modelHistory,
         userMessage,
