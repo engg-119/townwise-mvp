@@ -9,12 +9,23 @@
 // reservation back in the same write, so it is settled once: by the pass, or, when the pass died, by the next pass that
 // finds the row still `running` (resolveStalePass). Ids, dates, codes and counts only: no function here logs, and
 // nothing copies a note's text, a rule's words or a why into an audit event.
+//
+// Three kinds came with owner-calendar events (openspec change calendar-event-suggestions, design decisions 3 and 4):
+// `event`, a private event the weekly pass spotted on an owner calendar (its calendar id, the event's stored uid and its
+// dates and hours in `event`, never its title), and the deterministic follow-ups `move` and `remove` of a note linked to
+// an event that moved or went (`follow`). Their `content` is the note as it would be after accepting (for `remove`, the
+// note as it is; for `event`, a private event of effect `unknown`), so expiry and listing read `content.startDate` as
+// for the others, and their `why` is null: their words are written at read time. A follow-up holds `openFollowFor`
+// (its note's id) only while open, under a unique partial index, so a note has at most one open follow-up; every change
+// of status clears it. upsertFollow inserts one, or updates the open one in place by compare-and-set, and never makes
+// again a change an org admin dismissed (same note, kind and target). A uid names a booking: nothing here logs it.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { utcDay } from '../dates.ts';
 import type { RuleSchedule } from './business-rules.ts';
-import type { NoteContent } from './notes.ts';
+import type { NoteContent, NoteDates } from './notes.ts';
 
 export const AGENT_SUGGESTIONS_COLLECTION = 'tw_agent_suggestions';
 export const SUGGESTION_PASSES_COLLECTION = 'tw_suggestion_passes';
@@ -23,10 +34,45 @@ export type SuggestionStatus = 'open' | 'accepted' | 'dismissed' | 'expired';
 /** How a location's weekly pass ended: still running (or died running), suggested some, none, budget spent, failed. */
 export type SuggestionPassStatus = 'running' | 'suggested' | 'none' | 'budget' | 'failed';
 
-/** What a suggestion proposes: a note, or a business rule with its words and schedule (D31). */
-export type SuggestionContent =
+/** An owner-calendar event an `event` suggestion spotted: its calendar's id, its stored uid, its dates and hours. */
+export interface SuggestedEvent extends NoteDates {
+  readonly calendarId: string;
+  readonly uid: string;
+}
+
+/** A follow-up of a note linked to an owner-calendar event (calendar/follow-up.ts). */
+export interface FollowUp {
+  readonly noteId: string;
+  readonly calendarId: string;
+  readonly change: 'moved' | 'gone';
+  /** The note's dates and hours, which were its link's, when the follow-up was made. */
+  readonly from: NoteDates;
+  /** The event's new dates and hours for a move; null when it is gone. */
+  readonly to: NoteDates | null;
+  /** The note's updatedAt when the follow-up was made or last updated: what an accept compares and sets on. */
+  readonly noteUpdatedAt: Date;
+}
+
+/** What the weekly pass suggests today: a note, or a business rule with its words and schedule (D31). */
+export type NoteOrRuleContent =
   | { readonly type: 'note'; readonly note: NoteContent }
   | { readonly type: 'rule'; readonly text: string; readonly schedule: RuleSchedule };
+
+/** A follow-up's content: the note as accepting would leave it (as it is, for a removal). */
+export type FollowContent =
+  | { readonly type: 'move'; readonly note: NoteContent; readonly follow: FollowUp }
+  | { readonly type: 'remove'; readonly note: NoteContent; readonly follow: FollowUp };
+
+/** What a suggestion proposes: a note, a rule, a spotted owner-calendar event (as a note), or a follow-up. */
+export type SuggestionContent =
+  | NoteOrRuleContent
+  | { readonly type: 'event'; readonly note: NoteContent; readonly event: SuggestedEvent }
+  | FollowContent;
+
+export type SuggestionType = SuggestionContent['type'];
+
+/** What upsertFollow did: inserted one, updated the open one, found it already so, or found the change dismissed. */
+export type FollowOutcome = 'made' | 'updated' | 'same' | 'dismissed';
 
 interface ContentFields {
   kind: NoteContent['kind'];
@@ -40,18 +86,45 @@ interface ContentFields {
   endTime: string | null;
 }
 
+interface DateFields {
+  startDate: string;
+  endDate: string;
+  startTime: string | null;
+  endTime: string | null;
+}
+
+interface EventFields extends DateFields {
+  calendarId: Types.ObjectId;
+  uid: string;
+}
+
+interface FollowFields {
+  noteId: Types.ObjectId;
+  calendarId: Types.ObjectId;
+  change: 'moved' | 'gone';
+  from: DateFields;
+  to: DateFields | null;
+  noteUpdatedAt: Date;
+}
+
 interface SuggestionFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
-  /** The pass's week: the Monday, YYYY-MM-DD, in the town. */
+  /** The pass's week, or a follow-up's: the Monday, YYYY-MM-DD, in the town. */
   week: string;
-  type: 'note' | 'rule';
+  type: SuggestionType;
   /** A note's fields, or a rule's schedule (`detail` null, `endDate` null for no end). */
   content: ContentFields;
   /** A rule's words; null on a note. */
   text: string | null;
-  /** TownwiseAI's one sentence on why. */
-  why: string;
+  /** TownwiseAI's one sentence on why; null on `event`, `move` and `remove`, whose words are written at read time. */
+  why: string | null;
+  /** On `event`: the owner-calendar event spotted. */
+  event?: EventFields;
+  /** On `move` and `remove`: the change to the linked note. */
+  follow?: FollowFields;
+  /** On an open `move` or `remove`: its note's id, unique among open follow-ups; cleared on every change of status. */
+  openFollowFor?: Types.ObjectId;
   /** The town calendar entries it rests on. */
   calendarIds: string[];
   status: SuggestionStatus;
@@ -91,15 +164,45 @@ function contentSchema(): Schema<ContentFields> {
   }, { _id: false, strict: 'throw', versionKey: false });
 }
 
+function dateSchema(): Schema<DateFields> {
+  return new Schema<DateFields>({
+    startDate: { type: String, required: true },
+    endDate: { type: String, required: true },
+    startTime: { type: String, default: null },
+    endTime: { type: String, default: null },
+  }, { _id: false, strict: 'throw', versionKey: false });
+}
+
 function suggestionSchema(): Schema<SuggestionFields> {
   const schema = new Schema<SuggestionFields>({
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     week: { type: String, required: true, match: /^\d{4}-\d{2}-\d{2}$/ },
-    type: { type: String, required: true, enum: ['note', 'rule'] },
+    type: { type: String, required: true, enum: ['note', 'rule', 'event', 'move', 'remove'] },
     content: { type: contentSchema(), required: true },
     text: { type: String, default: null },
-    why: { type: String, required: true, maxlength: 400 },
+    why: { type: String, default: null, maxlength: 400 },
+    event: {
+      type: new Schema<EventFields>({
+        calendarId: { type: Schema.Types.ObjectId, required: true },
+        uid: { type: String, required: true, maxlength: 1_024 },
+        startDate: { type: String, required: true },
+        endDate: { type: String, required: true },
+        startTime: { type: String, default: null },
+        endTime: { type: String, default: null },
+      }, { _id: false, strict: 'throw', versionKey: false }),
+    },
+    follow: {
+      type: new Schema<FollowFields>({
+        noteId: { type: Schema.Types.ObjectId, required: true },
+        calendarId: { type: Schema.Types.ObjectId, required: true },
+        change: { type: String, required: true, enum: ['moved', 'gone'] },
+        from: { type: dateSchema(), required: true },
+        to: { type: dateSchema(), default: null },
+        noteUpdatedAt: { type: Date, required: true },
+      }, { _id: false, strict: 'throw', versionKey: false }),
+    },
+    openFollowFor: { type: Schema.Types.ObjectId },
     calendarIds: { type: [String], default: [] },
     status: { type: String, required: true, enum: ['open', 'accepted', 'dismissed', 'expired'] },
     decidedBy: { type: String, default: null },
@@ -109,6 +212,8 @@ function suggestionSchema(): Schema<SuggestionFields> {
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   // The panel's list, the pass's duplicate check and expiry: by location, then status and first date.
   schema.index({ orgId: 1, locationId: 1, status: 1, 'content.startDate': 1 });
+  // At most one open follow-up per note (design decision 3), as tw_calibrations.liveLocation holds one live calibration.
+  schema.index({ openFollowFor: 1 }, { unique: true, partialFilterExpression: { openFollowFor: { $type: 'objectId' } } });
   return schema;
 }
 
@@ -148,7 +253,8 @@ export type SuggestionRecord = SuggestionContent & {
   readonly week: string;
   /** The first date it names (the note's or schedule's start); it expires once that is today or past in the town. */
   readonly firstDate: string;
-  readonly why: string;
+  /** Null on `event`, `move` and `remove`. */
+  readonly why: string | null;
   readonly calendarIds: readonly string[];
   readonly status: SuggestionStatus;
   readonly createdAt: Date;
@@ -169,7 +275,8 @@ export interface HeldReservation {
 
 export interface NewSuggestion {
   readonly content: SuggestionContent;
-  readonly why: string;
+  /** Set on `note` and `rule`; null on the other kinds. */
+  readonly why: string | null;
   readonly calendarIds: readonly string[];
 }
 
@@ -219,6 +326,18 @@ export interface AgentSuggestionStore {
   markDismissed(scope: OrgScope, locationId: string, id: string, input: { by: string; now: Date }): Promise<boolean>;
   /** Open suggestions whose first date is `today` or past, to expired. Resolves the number changed. */
   expire(scope: OrgScope, locationId: string, today: string, now: Date): Promise<number>;
+  /** One open suggestion to expired (what it rests on is gone); false otherwise. */
+  markExpired(scope: OrgScope, locationId: string, id: string, now: Date): Promise<boolean>;
+  /**
+   * A follow-up for its note: 'dismissed' (and the note's open follow-up, if any, expired) when an org admin dismissed
+   * this change before; else inserts one, `open`, with `week` the town's Monday of `today` ('made'), or updates the
+   * note's open one in place by compare-and-set ('updated'), or finds it already so ('same').
+   */
+  upsertFollow(scope: OrgScope, locationId: string, content: FollowContent, input: { today: string; now: Date }): Promise<FollowOutcome>;
+  /** The note's open follow-up, if any, to expired. False when it had none. */
+  expireFollow(scope: OrgScope, locationId: string, noteId: string, now: Date): Promise<boolean>;
+  /** The owner-calendar events the location's `event` suggestions name, in any status (at most 500, newest first). */
+  eventKeysSuggested(scope: OrgScope, locationId: string): Promise<{ calendarId: string; uid: string }[]>;
   /** Location deletion: its suggestions and pass rows. Resolves the number of suggestions deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** A pass whose location was deleted while it ran: the week's pass row and the suggestions it stored. */
@@ -229,12 +348,46 @@ export interface AgentSuggestionStore {
 
 type SuggestionDoc = SuggestionFields & { _id: Types.ObjectId };
 
-function toSuggestion(doc: SuggestionDoc): SuggestionRecord {
+function datesOf(fields: DateFields): NoteDates {
+  return { startDate: fields.startDate, endDate: fields.endDate, startTime: fields.startTime, endTime: fields.endTime };
+}
+
+function dateFields(dates: NoteDates): DateFields {
+  return { startDate: dates.startDate, endDate: dates.endDate, startTime: dates.startTime, endTime: dates.endTime };
+}
+
+function followOf(fields: FollowFields): FollowUp {
+  return {
+    noteId: fields.noteId.toHexString(), calendarId: fields.calendarId.toHexString(), change: fields.change, from: datesOf(fields.from),
+    to: fields.to === null ? null : datesOf(fields.to), noteUpdatedAt: fields.noteUpdatedAt,
+  };
+}
+
+function followFields(follow: FollowUp): FollowFields {
+  return {
+    noteId: new Types.ObjectId(follow.noteId), calendarId: new Types.ObjectId(follow.calendarId), change: follow.change,
+    from: dateFields(follow.from), to: follow.to === null ? null : dateFields(follow.to), noteUpdatedAt: follow.noteUpdatedAt,
+  };
+}
+
+/** A row's content. Every write of an `event`, `move` or `remove` sets its sub-document (contentFields). */
+function contentOf(doc: SuggestionDoc): SuggestionContent {
   const c = doc.content;
   const shared = { kind: c.kind, startDate: c.startDate, weekdays: c.weekdays, effect: c.effect, expectedGuests: c.expectedGuests, startTime: c.startTime, endTime: c.endTime };
-  const content: SuggestionContent = doc.type === 'rule'
-    ? { type: 'rule', text: doc.text ?? '', schedule: { ...shared, endDate: c.endDate } }
-    : { type: 'note', note: { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail } };
+  if (doc.type === 'rule') return { type: 'rule', text: doc.text ?? '', schedule: { ...shared, endDate: c.endDate } };
+  const note: NoteContent = { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail };
+  if (doc.type === 'event' && doc.event !== undefined) {
+    const { event } = doc;
+    return { type: 'event', note, event: { calendarId: event.calendarId.toHexString(), uid: event.uid, ...datesOf(event) } };
+  }
+  if ((doc.type === 'move' || doc.type === 'remove') && doc.follow !== undefined) return { type: doc.type, note, follow: followOf(doc.follow) };
+  if (doc.type === 'note') return { type: 'note', note };
+  throw new Error(`suggestion ${doc._id.toHexString()} of type ${doc.type} has no ${doc.type === 'event' ? 'event' : 'follow'}`);
+}
+
+function toSuggestion(doc: SuggestionDoc): SuggestionRecord {
+  const c = doc.content;
+  const content = contentOf(doc);
   return {
     ...content,
     id: doc._id.toHexString(),
@@ -248,16 +401,22 @@ function toSuggestion(doc: SuggestionDoc): SuggestionRecord {
   };
 }
 
-function contentFields(content: SuggestionContent): { type: 'note' | 'rule'; content: ContentFields; text: string | null } {
-  if (content.type === 'note') {
+function contentFields(content: SuggestionContent): Pick<SuggestionFields, 'type' | 'content' | 'text' | 'event' | 'follow'> {
+  if (content.type !== 'rule') {
     const n = content.note;
-    return {
-      type: 'note', text: null,
+    const fields = {
+      text: null,
       content: {
         kind: n.kind, startDate: n.startDate, endDate: n.endDate, weekdays: n.weekdays === null ? null : [...n.weekdays], effect: n.effect,
         expectedGuests: n.expectedGuests, detail: n.detail, startTime: n.startTime, endTime: n.endTime,
       },
     };
+    if (content.type === 'event') {
+      const { event } = content;
+      return { type: 'event', ...fields, event: { calendarId: new Types.ObjectId(event.calendarId), uid: event.uid, ...dateFields(event) } };
+    }
+    if (content.type === 'note') return { type: 'note', ...fields };
+    return { type: content.type, ...fields, follow: followFields(content.follow) };
   }
   const s = content.schedule;
   return {
@@ -269,11 +428,33 @@ function contentFields(content: SuggestionContent): { type: 'note' | 'rule'; con
   };
 }
 
+/** The Monday of the week `day` (YYYY-MM-DD) falls in. */
+function mondayOf(day: string): string {
+  const at = new Date(`${day}T00:00:00.000Z`);
+  return utcDay(at, -((at.getUTCDay() + 6) % 7));
+}
+
+/** Same dates and hours (a null target is a removal's). */
+function sameDates(a: NoteDates | null, b: NoteDates | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.startDate === b.startDate && a.endDate === b.endDate && a.startTime === b.startTime && a.endTime === b.endTime;
+}
+
+/** A compare-and-set lost to a concurrent run this many times gives up: a later refresh recomputes from stored state. */
+const FOLLOW_ATTEMPTS = 3;
+
 export function createAgentSuggestionStore(connection: Connection): AgentSuggestionStore {
   const Suggestion = agentSuggestionModel(connection);
   const Pass = suggestionPassModel(connection);
   const of = (scope: OrgScope, locationId: string) => ({ orgId: new Types.ObjectId(scope.orgId), locationId: new Types.ObjectId(locationId) });
   const one = (scope: OrgScope, locationId: string, id: string) => ({ ...of(scope, locationId), _id: new Types.ObjectId(id) });
+  async function expireFollow(scope: OrgScope, locationId: string, noteId: string, now: Date): Promise<boolean> {
+    const result = await Suggestion.updateOne(
+      { ...of(scope, locationId), openFollowFor: new Types.ObjectId(noteId), status: 'open' },
+      { $set: { status: 'expired', updatedAt: now }, $unset: { openFollowFor: '' } },
+    );
+    return result.modifiedCount === 1;
+  }
   return {
     async claimPass(scope, input) {
       try {
@@ -340,23 +521,76 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
     async markAccepted(scope, locationId, id, input) {
       const result = await Suggestion.updateOne(
         { ...one(scope, locationId, id), status: trusted({ $in: ['open', 'dismissed'] }) },
-        { $set: { status: 'accepted', decidedBy: input.by, decidedAt: input.now, updatedAt: input.now } },
+        { $set: { status: 'accepted', decidedBy: input.by, decidedAt: input.now, updatedAt: input.now }, $unset: { openFollowFor: '' } },
       );
       return result.modifiedCount === 1;
     },
     async markDismissed(scope, locationId, id, input) {
       const result = await Suggestion.updateOne(
         { ...one(scope, locationId, id), status: 'open' },
-        { $set: { status: 'dismissed', decidedBy: input.by, decidedAt: input.now, updatedAt: input.now } },
+        { $set: { status: 'dismissed', decidedBy: input.by, decidedAt: input.now, updatedAt: input.now }, $unset: { openFollowFor: '' } },
       );
       return result.modifiedCount === 1;
     },
     async expire(scope, locationId, today, now) {
       const result = await Suggestion.updateMany(
         { ...of(scope, locationId), status: 'open', 'content.startDate': trusted({ $lte: today }) },
-        { $set: { status: 'expired', updatedAt: now } },
+        { $set: { status: 'expired', updatedAt: now }, $unset: { openFollowFor: '' } },
       );
       return result.modifiedCount;
+    },
+    async markExpired(scope, locationId, id, now) {
+      const result = await Suggestion.updateOne(
+        { ...one(scope, locationId, id), status: 'open' }, { $set: { status: 'expired', updatedAt: now }, $unset: { openFollowFor: '' } },
+      );
+      return result.modifiedCount === 1;
+    },
+    async upsertFollow(scope, locationId, content, input) {
+      const { follow } = content;
+      const noteId = new Types.ObjectId(follow.noteId);
+      const dismissed = await Suggestion.exists({
+        ...of(scope, locationId), status: 'dismissed', type: content.type, 'follow.noteId': noteId,
+        ...(follow.to === null ? {} : {
+          'follow.to.startDate': follow.to.startDate, 'follow.to.endDate': follow.to.endDate,
+          'follow.to.startTime': follow.to.startTime, 'follow.to.endTime': follow.to.endTime,
+        }),
+      });
+      if (dismissed !== null) {
+        await expireFollow(scope, locationId, follow.noteId, input.now);
+        return 'dismissed';
+      }
+      const fields = { ...contentFields(content), week: mondayOf(input.today) };
+      for (let attempt = 0; attempt < FOLLOW_ATTEMPTS; attempt += 1) {
+        const open = await Suggestion.findOne({ ...of(scope, locationId), openFollowFor: noteId, status: 'open' }).lean();
+        if (open === null) {
+          try {
+            await Suggestion.create({
+              ...of(scope, locationId), ...fields, why: null, calendarIds: [], status: 'open', openFollowFor: noteId, decidedBy: null,
+              decidedAt: null, createdAt: input.now, updatedAt: input.now,
+            });
+            return 'made';
+          } catch (err) {
+            // Another run made the note's open follow-up first: compare against it.
+            if (!isDuplicateKeyError(err)) throw err;
+            continue;
+          }
+        }
+        const current = open.follow === undefined ? null : followOf(open.follow);
+        if (open.type === content.type && current !== null && sameDates(current.to, follow.to)
+          && current.noteUpdatedAt.getTime() === follow.noteUpdatedAt.getTime()) return 'same';
+        const updated = await Suggestion.updateOne(
+          { _id: open._id, openFollowFor: noteId, status: 'open', type: open.type, updatedAt: open.updatedAt },
+          { $set: { ...fields, updatedAt: input.now } },
+        );
+        if (updated.modifiedCount === 1) return 'updated';
+      }
+      // Lost every race: the runs that won wrote the note's open follow-up, and the next refresh recomputes it.
+      return 'same';
+    },
+    expireFollow,
+    async eventKeysSuggested(scope, locationId) {
+      const docs = await Suggestion.find({ ...of(scope, locationId), type: 'event' }, { event: 1 }).sort({ _id: -1 }).limit(RECENT_LIMIT).lean();
+      return docs.flatMap((doc) => (doc.event === undefined ? [] : [{ calendarId: doc.event.calendarId.toHexString(), uid: doc.event.uid }]));
     },
     async removeForLocation(scope, locationId) {
       await Pass.deleteMany(of(scope, locationId));

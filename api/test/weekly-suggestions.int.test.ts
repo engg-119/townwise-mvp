@@ -12,7 +12,7 @@ import type { OrgScope } from '../src/access/policy.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import type { DecideResult } from '../src/handlers/weekly-suggestions.ts';
 import { SUGGESTIONS_SEEN_MS } from '../src/lab/schedule.ts';
-import { createAgentSuggestionStore, type NewSuggestion, type SuggestionRecord } from '../src/stores/agent-suggestions.ts';
+import { createAgentSuggestionStore, type FollowContent, type NewSuggestion, type SuggestionRecord } from '../src/stores/agent-suggestions.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
@@ -324,5 +324,137 @@ describe('suggestions', () => {
     expect(await count('tw_agent_suggestions', t.locationId)).toBe(0);
     expect(await count('tw_suggestion_passes', t.locationId)).toBe(0);
     expect(await count('tw_agent_suggestions', kept)).toBe(1);
+  });
+});
+
+describe('the owner-calendar kinds in the store (calendar-event-suggestions, design decisions 3 and 4)', () => {
+  const PARTY: NoteContent = {
+    kind: 'private_event', startDate: '2026-06-13', endDate: '2026-06-13', weekdays: null, effect: 'closed', expectedGuests: 40,
+    detail: null, startTime: '18:00', endTime: '22:00',
+  };
+  const ON_13 = { startDate: '2026-06-13', endDate: '2026-06-13', startTime: '18:00', endTime: '22:00' };
+  const ON_20 = { startDate: '2026-06-20', endDate: '2026-06-20', startTime: '18:00', endTime: '22:00' };
+  const ON_27 = { startDate: '2026-06-27', endDate: '2026-06-27', startTime: '18:00', endTime: '22:00' };
+  const calendarId = new Types.ObjectId().toHexString();
+  const store = () => createAgentSuggestionStore(server.connection);
+
+  function moveTo(noteId: string, to: typeof ON_20, noteUpdatedAt = new Date('2026-05-20T12:00:00.000Z')): FollowContent {
+    return { type: 'move', note: { ...PARTY, ...to }, follow: { noteId, calendarId, change: 'moved', from: ON_13, to, noteUpdatedAt } };
+  }
+
+  function removal(noteId: string): FollowContent {
+    return {
+      type: 'remove', note: PARTY,
+      follow: { noteId, calendarId, change: 'gone', from: ON_13, to: null, noteUpdatedAt: new Date('2026-05-20T12:00:00.000Z') },
+    };
+  }
+
+  function rowsFor(noteId: string) {
+    return server.connection.collection('tw_agent_suggestions').find({ 'follow.noteId': new Types.ObjectId(noteId) }).toArray();
+  }
+
+  // Wed, Jun 3: the follow-up's week is that Monday, Jun 1.
+  const AT = { today: '2026-06-03', now: new Date('2026-06-03T15:00:00.000Z') };
+
+  it('makes a follow-up open with its note id held, its week the Monday, no why and no calendar entries; the same again changes nothing', async () => {
+    const t = await team();
+    const noteId = new Types.ObjectId().toHexString();
+    expect(await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_20), AT)).toBe('made');
+    const [row] = await rowsFor(noteId);
+    expect(row).toMatchObject({
+      type: 'move', week: '2026-06-01', status: 'open', why: null, calendarIds: [], openFollowFor: new Types.ObjectId(noteId),
+      content: { startDate: '2026-06-20', kind: 'private_event', expectedGuests: 40 },
+    });
+    const record = await store().find(t.scope, t.locationId, String(row?._id));
+    expect(record).toMatchObject({ type: 'move', why: null, firstDate: '2026-06-20', follow: { noteId, calendarId, change: 'moved', from: ON_13, to: ON_20 } });
+    expect(await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_20), { ...AT, now: new Date(AT.now.getTime() + 60_000) })).toBe('same');
+    expect(await rowsFor(noteId)).toEqual([row]);
+  });
+
+  it('a newer change updates the open follow-up in place, and the index refuses a second open one for the note', async () => {
+    const t = await team();
+    const noteId = new Types.ObjectId().toHexString();
+    await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_20), AT);
+    const [first] = await rowsFor(noteId);
+    expect(await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_27), { today: '2026-06-09', now: new Date('2026-06-09T15:00:00.000Z') })).toBe('updated');
+    expect(await store().upsertFollow(t.scope, t.locationId, removal(noteId), { today: '2026-06-09', now: new Date('2026-06-09T16:00:00.000Z') })).toBe('updated');
+    const rows = await rowsFor(noteId);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ _id: first?._id, type: 'remove', week: '2026-06-08', follow: { change: 'gone', to: null } });
+
+    const copy = Object.fromEntries(Object.entries(rows[0] ?? {}).filter(([key]) => key !== '_id'));
+    await expect(server.connection.collection('tw_agent_suggestions').insertOne(copy)).rejects.toThrow(/duplicate key/);
+    // Two runs at once still leave one open follow-up.
+    const other = new Types.ObjectId().toHexString();
+    await Promise.all([
+      store().upsertFollow(t.scope, t.locationId, moveTo(other, ON_20), AT), store().upsertFollow(t.scope, t.locationId, moveTo(other, ON_27), AT),
+    ]);
+    expect((await rowsFor(other)).filter((row) => row.status === 'open')).toHaveLength(1);
+  });
+
+  it('every change of status lets the note go, and a change an org admin dismissed is not made again', async () => {
+    const t = await team();
+    const noteId = new Types.ObjectId().toHexString();
+    await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_20), AT);
+    const [made] = await rowsFor(noteId);
+    const id = String(made?._id);
+    expect(await store().markDismissed(t.scope, t.locationId, id, { by: 'admin-0001', now: AT.now })).toBe(true);
+    expect((await rowsFor(noteId))[0]).not.toHaveProperty('openFollowFor');
+
+    // The same note, kind and target: not again. Another target is a new follow-up.
+    expect(await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_20, new Date('2026-05-25T12:00:00.000Z')), AT)).toBe('dismissed');
+    expect(await rowsFor(noteId)).toHaveLength(1);
+    expect(await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_27), AT)).toBe('made');
+    // Back at the dismissed target, the open one goes too.
+    expect(await store().upsertFollow(t.scope, t.locationId, moveTo(noteId, ON_20), AT)).toBe('dismissed');
+    expect((await rowsFor(noteId)).map((row): [unknown, boolean] => [row.status, 'openFollowFor' in row])).toEqual([['dismissed', false], ['expired', false]]);
+
+    // A removal dismissed is not made again either.
+    const gone = new Types.ObjectId().toHexString();
+    await store().upsertFollow(t.scope, t.locationId, removal(gone), AT);
+    const [open] = await rowsFor(gone);
+    await store().markDismissed(t.scope, t.locationId, String(open?._id), { by: 'admin-0001', now: AT.now });
+    expect(await store().upsertFollow(t.scope, t.locationId, removal(gone), AT)).toBe('dismissed');
+
+    // Accepting, expiring by date, expireFollow and markExpired each clear the note's hold.
+    for (const end of ['accepted', 'expired-by-date', 'expireFollow', 'markExpired'] as const) {
+      const each = new Types.ObjectId().toHexString();
+      await store().upsertFollow(t.scope, t.locationId, moveTo(each, ON_20), AT);
+      const [row] = await rowsFor(each);
+      const rowId = String(row?._id);
+      if (end === 'accepted') expect(await store().markAccepted(t.scope, t.locationId, rowId, { by: 'admin-0001', now: AT.now })).toBe(true);
+      if (end === 'expired-by-date') expect(await store().expire(t.scope, t.locationId, '2026-06-20', AT.now)).toBeGreaterThan(0);
+      if (end === 'expireFollow') expect(await store().expireFollow(t.scope, t.locationId, each, AT.now)).toBe(true);
+      if (end === 'markExpired') expect(await store().markExpired(t.scope, t.locationId, rowId, AT.now)).toBe(true);
+      expect((await rowsFor(each))[0]).not.toHaveProperty('openFollowFor');
+      expect(await store().upsertFollow(t.scope, t.locationId, moveTo(each, ON_27), AT)).toBe('made');
+    }
+    expect(await store().expireFollow(t.scope, t.locationId, new Types.ObjectId().toHexString(), AT.now)).toBe(false);
+  });
+
+  it('stores a spotted event with its calendar and uid, and eventKeysSuggested names it in any status', async () => {
+    const t = await team();
+    const [spot] = await stored(t, [{
+      content: { type: 'event', note: { ...PARTY, effect: 'unknown', expectedGuests: null }, event: { calendarId, uid: 'party@bookings.example.test', ...ON_13 } },
+      why: null, calendarIds: [],
+    }]);
+    expect(spot).toMatchObject({ type: 'event', why: null, event: { calendarId, uid: 'party@bookings.example.test', ...ON_13 }, note: { effect: 'unknown' } });
+    await store().markDismissed(t.scope, t.locationId, spot?.id ?? '', { by: 'admin-0001', now: AT.now });
+    expect(await store().eventKeysSuggested(t.scope, t.locationId)).toEqual([{ calendarId, uid: 'party@bookings.example.test' }]);
+    const other = await team();
+    expect(await store().eventKeysSuggested(other.scope, t.locationId)).toEqual([]);
+  });
+
+  it('reads a note or rule suggestion stored before the change as it was', async () => {
+    const t = await team();
+    const [note, rule] = await stored(t, [THANKSGIVING_LIKE, COMMENCEMENT_RULE]);
+    const raw = await server.connection.collection('tw_agent_suggestions').findOne({ _id: new Types.ObjectId(note?.id) });
+    for (const field of ['event', 'follow', 'openFollowFor']) expect(raw).not.toHaveProperty(field);
+    expect(await store().find(t.scope, t.locationId, note?.id ?? '')).toEqual(note);
+    expect(note).toMatchObject({ type: 'note', why: THANKSGIVING_LIKE.why, note: THANKSGIVING_LIKE.content.type === 'note' ? THANKSGIVING_LIKE.content.note : null });
+    expect(rule).toMatchObject({ type: 'rule', text: 'Private party after Commencement', why: 'Commencement is Sun, Jun 14.' });
+    // The follow-up kinds are not listed by the panel yet, and are not this pass's to avoid.
+    await store().upsertFollow(t.scope, t.locationId, moveTo(new Types.ObjectId().toHexString(), ON_20), AT);
+    expect((await panel(t, t.member)).suggestions.map((each) => each.type).sort()).toEqual(['note', 'rule']);
   });
 });

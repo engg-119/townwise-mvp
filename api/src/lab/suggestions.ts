@@ -41,7 +41,7 @@ import { effectHistory, reasonEffects } from '../forecasts/effects.ts';
 import { townCalendarOf, townTermEntries } from '../forecasts/reasons.ts';
 import { readNoteContent, readRuleSchedule } from '../handlers/notes.ts';
 import { ruleTextOf } from '../handlers/rules.ts';
-import type { NewSuggestion, SuggestionContent } from '../stores/agent-suggestions.ts';
+import type { NewSuggestion, NoteOrRuleContent } from '../stores/agent-suggestions.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent } from '../stores/notes.ts';
@@ -145,7 +145,7 @@ export interface SuggestionsInput {
   readonly notes: readonly NoteContent[];
   readonly rules: readonly { readonly text: string; readonly schedule: RuleSchedule }[];
   /** The location's earlier suggestions whose days overlap from to to, in any status: not to be suggested again. */
-  readonly suggested: readonly SuggestionContent[];
+  readonly suggested: readonly NoteOrRuleContent[];
 }
 
 /** The request one pass sends, exactly. */
@@ -192,7 +192,7 @@ function sameDays(a: Days, b: Days): boolean {
     && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays);
 }
 
-function daysOf(content: SuggestionContent): Days {
+function daysOf(content: NoteOrRuleContent): Days {
   return content.type === 'note' ? content.note : content.schedule;
 }
 
@@ -205,7 +205,7 @@ export interface SuggestionChecks {
   readonly notes: readonly NoteContent[];
   /** Every rule of the location (its words), with its schedule or none. */
   readonly rules: readonly { readonly text: string; readonly schedule: RuleSchedule | null }[];
-  readonly suggested: readonly SuggestionContent[];
+  readonly suggested: readonly NoteOrRuleContent[];
   /** The calendar ids the request sent. */
   readonly calendarIds: ReadonlySet<string>;
 }
@@ -218,7 +218,7 @@ function whyOf(raw: string): string | null {
 }
 
 /** One answered item's content, through the note rules or D31's schedule rules; null when they refuse it. */
-function contentOf(item: z.infer<typeof answerItem>, today: string): SuggestionContent | null {
+function contentOf(item: z.infer<typeof answerItem>, today: string): NoteOrRuleContent | null {
   const days = {
     kind: item.kind, startDate: item.startDate, weekdays: item.weekdays, effect: item.effect, expectedGuests: item.expectedGuests,
     startTime: item.startTime, endTime: item.endTime,
@@ -322,7 +322,7 @@ function monthOf(at: Date): string {
  * lengthen the request). `checks` is what its answer is held to, with every earlier suggestion.
  */
 export async function suggestionsInput(
-  ctx: Pick<SuggestionsContext, 'stores'>, scope: OrgScope, location: LocationRecord, today: string, suggested: readonly SuggestionContent[],
+  ctx: Pick<SuggestionsContext, 'stores'>, scope: OrgScope, location: LocationRecord, today: string, suggested: readonly NoteOrRuleContent[],
 ): Promise<{ input: SuggestionsInput; checks: SuggestionChecks }> {
   const { stores } = ctx;
   const at = (days: number): string => utcDay(new Date(`${today}T00:00:00.000Z`), days);
@@ -439,9 +439,11 @@ export async function suggestFor(
   const today = localDay(now, timeZoneOf(location.town).timeZone);
   try {
     await stores.agentSuggestions.expire(scope, location.id, today, now);
-    const earlier = (await stores.agentSuggestions.recent(scope, location.id)).map((record): SuggestionContent => (record.type === 'note'
-      ? { type: 'note', note: record.note }
-      : { type: 'rule', text: record.text, schedule: record.schedule }));
+    // The owner-calendar kinds (calendar-event-suggestions) are not this pass's to repeat or avoid.
+    const earlier = (await stores.agentSuggestions.recent(scope, location.id)).flatMap((record): NoteOrRuleContent[] => {
+      if (record.type === 'note') return [{ type: 'note', note: record.note }];
+      return record.type === 'rule' ? [{ type: 'rule', text: record.text, schedule: record.schedule }] : [];
+    });
     const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier);
     const params = suggestionsRequest(input);
     const reserve = suggestionsReserveMicroUsd(params);

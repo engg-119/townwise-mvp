@@ -88,9 +88,16 @@ function calendarById(location: LocationRecord, today: string): Map<string, Sugg
     .map((event) => [event.id, { id: event.id, title: event.title, start: event.start, end: event.end }]));
 }
 
-function suggestionView(record: SuggestionRecord, calendar: ReadonlyMap<string, SuggestionCalendarView>): SuggestionView {
+/** The kinds the panel shows so far; the owner-calendar kinds (calendar-event-suggestions) are not listed yet. */
+type NoteOrRuleRecord = Extract<SuggestionRecord, { type: 'note' | 'rule' }>;
+
+function isNoteOrRule(record: SuggestionRecord): record is NoteOrRuleRecord {
+  return record.type === 'note' || record.type === 'rule';
+}
+
+function suggestionView(record: NoteOrRuleRecord, calendar: ReadonlyMap<string, SuggestionCalendarView>): SuggestionView {
   const shared = {
-    id: record.id, why: record.why, createdAt: record.createdAt.toISOString(),
+    id: record.id, why: record.why ?? '', createdAt: record.createdAt.toISOString(),
     calendar: record.calendarIds.flatMap((id) => {
       const entry = calendar.get(id);
       return entry === undefined ? [] : [entry];
@@ -119,7 +126,7 @@ export async function suggestionsPanel(
   const seen = worker.ranAt !== null && ctx.now().getTime() - worker.ranAt.getTime() <= SUGGESTIONS_SEEN_MS;
   const calendar = calendarById(location, today);
   return {
-    suggestions: open.map((record) => suggestionView(record, calendar)),
+    suggestions: open.filter(isNoteOrRule).map((record) => suggestionView(record, calendar)),
     weeklySuggestions: {
       on: org?.weeklySuggestions.on ?? true,
       available: ctx.config.weeklySuggestions && seen && !worker.paused,
@@ -214,7 +221,7 @@ export async function acceptSuggestion(ctx: TownwiseContext, req: Request, res: 
   parseInput(decideBody, req.body);
   const { location, record } = await suggestionOf(ctx, admin, req);
   if (record.status !== 'accepted') {
-    if (!isOpen(ctx, location, record)) throw notFound();
+    if (!isOpen(ctx, location, record) || !isNoteOrRule(record)) throw notFound();
     // The note or rule takes the suggestion's id, so a retry or a second tab finds the one already written.
     if (record.type === 'note') await addNote(ctx, admin, location, record.note, { id: record.id });
     else await addRule(ctx, admin, location, record.text, { id: record.id, via: 'townwise_ai', schedule: record.schedule });

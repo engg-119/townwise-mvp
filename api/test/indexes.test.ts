@@ -56,6 +56,13 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwSuggestionPass')).toContainEqual([{ orgId: 1, locationId: 1, week: 1 }, expect.objectContaining({ unique: true })]);
   });
 
+  it('holds at most one open calendar follow-up per note (calendar-event-suggestions)', () => {
+    expect(indexesOf(registered(), 'TwAgentSuggestion')).toContainEqual([
+      { openFollowFor: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { openFollowFor: { $type: 'objectId' } } }),
+    ]);
+  });
+
   it('declares only indexes DocumentDB 5.0 builds', () => {
     expect(documentDbIndexProblems(registered())).toEqual([]);
   });
