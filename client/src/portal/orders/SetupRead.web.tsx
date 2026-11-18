@@ -14,6 +14,7 @@ import { Small } from '../ui/text';
 import { readSetupWithAi, type SetupRead as SetupReadAnswer, type SetupReadSource } from './api';
 import { importProposal, problemLine, proposalSummary, type ProposalImport, type ReadFrom } from './proposal';
 import type { ReadSlot } from './SetupEditor';
+import { heicToJpeg } from './heic.web';
 import { onlyLinks, READ_ACCEPT, READ_COPY, readError, readingLine, readKindOf } from './setupReadWords';
 
 // Reading the ordering setup with TownwiseAI on the web (D41, P31), drawn only while the setup's `canReadWithAi` holds.
@@ -35,7 +36,7 @@ type Shown =
   | { kind: 'stopped' };
 
 /** A file's bytes as standard base64, read in the browser. */
-function base64Of(file: File): Promise<string> {
+function base64Of(file: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => {
@@ -118,9 +119,19 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
       let source: SetupReadSource;
       if (from === 'file') {
         if (file === null || checked === null || 'problem' in checked) return;
+        let sent: Blob = file;
+        if (checked.heic) {
+          const converted = await heicToJpeg(file);
+          if (run.current !== mine) return;
+          if ('problem' in converted) {
+            setShown({ kind: 'failed', message: converted.problem === 'too_large' ? READ_COPY.heicLarge : READ_COPY.heicNotRead });
+            return;
+          }
+          sent = converted.jpeg;
+        }
         let data: string;
         try {
-          data = await base64Of(file);
+          data = await base64Of(sent);
         } catch {
           if (run.current === mine) setShown({ kind: 'failed', message: READ_COPY.notRead });
           return;

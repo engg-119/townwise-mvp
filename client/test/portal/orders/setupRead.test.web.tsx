@@ -3,13 +3,19 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+jest.mock('../../../src/portal/orders/heic.web', () => ({ heicToJpeg: jest.fn() }));
+
 import { ApiError } from '../../../src/api/client';
 import type { OrderSetup, OrderSetupAnswer, SetupRead } from '../../../src/portal/orders/api';
+import { heicToJpeg as realHeicToJpeg } from '../../../src/portal/orders/heic.web';
 import { onlyLinks, readKindOf } from '../../../src/portal/orders/setupReadWords';
+
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { analyticsFake } from '../analytics/fakes';
+
+const heicToJpeg = jest.mocked(realHeicToJpeg);
 
 // Reading the ordering setup with TownwiseAI on the web (D41, P31), through the whole app: shown only while the setup's
 // canReadWithAi holds; a chosen file goes as its kind and bytes, never its name, and pasted text as the text; the answer
@@ -206,7 +212,7 @@ test('pasted text goes as the text; while TownwiseAI reads the page says so with
 
 test('JSON, Markdown, rich text or XML goes as text', () => {
   for (const name of ['export.json', 'notes.md', 'guide.rtf', 'feed.xml']) {
-    expect(readKindOf({ name, size: 10 })).toEqual({ kind: 'text' });
+    expect(readKindOf({ name, size: 10 })).toEqual({ kind: 'text', heic: false });
   }
 });
 
@@ -220,6 +226,32 @@ test('pasted text that is only links is refused before anything is sent: Townwis
   expect(reads(api)).toEqual([]);
   // Text with a link in it is still read.
   expect(onlyLinks('Order guide at https://example.com: Sample IPA, Tuesdays')).toBe(false);
+});
+
+test('an iPhone’s HEIC photo is turned into a JPEG in the browser and sent as a picture; one that can’t be, or is too large as a JPEG, says so and sends nothing', async () => {
+  const api = portal();
+  api.answers[`${PATH}/setup/read`] = () => ({ read: READ });
+  renderAt(api);
+  await screen.findByRole('heading', { name: HEADING });
+  // A HEIC photo may be larger than the picture cap: the cap is checked on the JPEG.
+  const photo = sized('IMG_0412.HEIC', 3_750_001);
+  heicToJpeg.mockResolvedValueOnce({ problem: 'not_read' });
+  await pick(photo);
+  await click('Read the file');
+  await waitFor(() => {
+    expect(screen.getByRole('alert').textContent).toBe('Townwise couldn’t open that HEIC photo in your browser. Save it as a JPEG, or take a screenshot of it, and choose that.');
+  });
+  heicToJpeg.mockResolvedValueOnce({ problem: 'too_large' });
+  await click('Read the file');
+  await waitFor(() => {
+    expect(screen.getByRole('alert').textContent).toBe('That photo is more than TownwiseAI reads once it is a JPEG: up to 3.75 MB and 8,000 pixels a side. Save a smaller copy and choose it again.');
+  });
+  expect(reads(api)).toEqual([]);
+  heicToJpeg.mockResolvedValueOnce({ jpeg: new Blob(['jpeg-bytes'], { type: 'image/jpeg' }) });
+  await click('Read the file');
+  await waitFor(() => { expect(reads(api)).toHaveLength(1); });
+  expect(heicToJpeg).toHaveBeenLastCalledWith(photo);
+  expect(reads(api)).toEqual([{ source: { type: 'file', kind: 'picture', data: btoa('jpeg-bytes') } }]);
 });
 
 test('each refusal from the API is said in plain words, as an alert', async () => {
@@ -260,12 +292,11 @@ test('a file over the caps, an old Excel file or two files at once are refused i
     [sized('guide.xls', 10), 'TownwiseAI can’t read old Excel files (.xls). Save it as .xlsx and choose it again.'],
     [sized('guides.zip', 10), 'TownwiseAI reads one file at a time, not a ZIP. Choose a file from inside it.'],
     [sized('empty.csv', 0), 'That file is empty.'],
-    [sized('IMG_0412.HEIC', 10), 'TownwiseAI can’t read HEIC photos, the kind an iPhone saves. Take a screenshot of the photo, or save it as a JPEG, and choose that.'],
     [sized('scan.tiff', 10), 'TownwiseAI can’t read TIFF pictures. Save it as a PNG or JPEG and choose it again.'],
     [sized('rep.eml', 10), 'TownwiseAI can’t read saved emails. Paste the email’s text, or choose the file attached to it.'],
     [sized('prices.html', 10), 'TownwiseAI can’t read saved web pages. Paste the page’s text, or save the page as a PDF and choose that.'],
     [sized('guide.pages', 10), 'TownwiseAI can’t read Pages files. Export it as PDF or Word and choose it again.'],
-    [sized('clip.mov', 10), 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.'],
+    [sized('clip.mov', 10), 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and PNG, JPEG, GIF, WebP or HEIC pictures. You can also paste the text.'],
   ];
   for (const [file, words] of refusals) {
     await pick(file);

@@ -13,6 +13,8 @@ type FileKind = Extract<SetupReadSource, { type: 'file' }>['kind'];
 const KINDS: Readonly<Record<string, FileKind>> = {
   pdf: 'pdf', xlsx: 'xlsx', docx: 'docx', csv: 'text', tsv: 'text', txt: 'text', png: 'picture', jpg: 'picture', jpeg: 'picture',
   gif: 'picture', webp: 'picture',
+  // An iPhone's photo: the browser turns it into a JPEG before it is sent (heic.web.ts).
+  heic: 'picture', heif: 'picture',
   // Text under another name: the server reads each as the text it is.
   md: 'text', json: 'text', rtf: 'text', xml: 'text',
 };
@@ -23,8 +25,6 @@ const OTHER_FORMAT: Readonly<Record<string, string>> = {
   doc: 'TownwiseAI can’t read old Word files (.doc). Save it as .docx and choose it again.',
   zip: 'TownwiseAI reads one file at a time, not a ZIP. Choose a file from inside it.',
   numbers: 'TownwiseAI can’t read Numbers files. Export it as CSV or Excel and choose it again.',
-  heic: 'TownwiseAI can’t read HEIC photos, the kind an iPhone saves. Take a screenshot of the photo, or save it as a JPEG, and choose that.',
-  heif: 'TownwiseAI can’t read HEIC photos, the kind an iPhone saves. Take a screenshot of the photo, or save it as a JPEG, and choose that.',
   tif: 'TownwiseAI can’t read TIFF pictures. Save it as a PNG or JPEG and choose it again.',
   tiff: 'TownwiseAI can’t read TIFF pictures. Save it as a PNG or JPEG and choose it again.',
   pages: 'TownwiseAI can’t read Pages files. Export it as PDF or Word and choose it again.',
@@ -65,6 +65,8 @@ export const READ_COPY = {
   stopped: 'Stopped. Nothing was added to the setup.',
   oneFile: 'TownwiseAI reads one file at a time. Choose just one.',
   notRead: 'Townwise couldn’t open that file in your browser. Choose it again.',
+  heicNotRead: 'Townwise couldn’t open that HEIC photo in your browser. Save it as a JPEG, or take a screenshot of it, and choose that.',
+  heicLarge: 'That photo is more than TownwiseAI reads once it is a JPEG: up to 3.75 MB and 8,000 pixels a side. Save a smaller copy and choose it again.',
   link: 'TownwiseAI can’t open links. Download the sheet or page as a file and choose it, or paste what it says.',
 } as const;
 
@@ -77,21 +79,27 @@ function extensionOf(name: string): string {
   return dot === -1 ? '' : name.slice(dot + 1).toLowerCase();
 }
 
-/** The kind to send for `file`, from its extension, or why the browser refuses it before anything is sent. */
-export function readKindOf(file: { name: string; size: number }): { kind: FileKind } | { problem: string } {
+const HEIC: ReadonlySet<string> = new Set(['heic', 'heif']);
+
+/**
+ * The kind to send for `file`, from its extension, or why the browser refuses it before anything is sent. A HEIC photo
+ * (`heic`) is turned into a JPEG first: it may be as large as any file, and the picture cap is checked on the JPEG.
+ */
+export function readKindOf(file: { name: string; size: number }): { kind: FileKind; heic: boolean } | { problem: string } {
   const extension = extensionOf(file.name);
   const kind = KINDS[extension];
   if (kind === undefined) {
     const other = OTHER_FORMAT[extension];
     if (other !== undefined) return { problem: other };
-    return { problem: 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.' };
+    return { problem: 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and PNG, JPEG, GIF, WebP or HEIC pictures. You can also paste the text.' };
   }
   if (file.size === 0) return { problem: 'That file is empty.' };
-  if (kind === 'picture' && file.size > READ_PICTURE_BYTES) {
+  const heic = HEIC.has(extension);
+  if (kind === 'picture' && !heic && file.size > READ_PICTURE_BYTES) {
     return { problem: 'That picture is larger than 3.75 MB, the most TownwiseAI reads. Save a smaller copy and choose it again.' };
   }
   if (file.size > READ_FILE_BYTES) return { problem: 'That file is larger than 5 MB, the most TownwiseAI reads at once.' };
-  return { kind };
+  return { kind, heic };
 }
 
 /** True for pasted text that is only web addresses: TownwiseAI reads what is sent and opens nothing. */
