@@ -28,7 +28,7 @@ function forecastDay(fields: Partial<ForecastDay> & Pick<ForecastDay, 'date'>): 
 }
 
 function windowOf(days: ForecastDay[]): ForecastWindow {
-  return { available: true, reason: null, runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-11-01', live: null }], days, weeks: [] };
+  return { available: true, reason: null, runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, dataThrough: '2026-10-31', madeAt: '2026-11-01', live: null }], days, weeks: [] };
 }
 
 const NONE: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] };
@@ -833,15 +833,14 @@ test('each cell’s label and tooltip say “forecast” or “actual” after t
   expect(figureLabel(1, { kind: 'past_forecast' })).toBe('1 guest, forecast');
 });
 
-test('a past day says how its forecast did, only from a scored day made by it', () => {
+test('a past day says how its forecast did, from any scored day, and when its run came after the day, from sales through when', () => {
   const day = (fields: Partial<ForecastDay>) => forecastDay({ ...PAST, ...fields });
-  expect(forecastCheck(PAST, TODAY)).toEqual({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside' });
-  expect(checkWords({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside' })).toBe('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range');
+  expect(forecastCheck(PAST, TODAY)).toEqual({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside', dataThrough: null });
+  expect(checkWords({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside', dataThrough: null })).toBe('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range');
   expect(forecastCheck(day({ actual: 160, inRange: false }), TODAY)?.verdict).toBe('above');
   expect(forecastCheck(day({ actual: 1, inRange: false }), TODAY)?.verdict).toBe('below');
-  // Not scored (closed, likely closed, no guests, or a run made after the day), not passed, or no range: no comparison.
+  // Not scored (closed, likely closed, no guests, or a later note the run may have read), not passed, or no range: no comparison.
   expect(forecastCheck(day({ scored: false }), TODAY)).toBeNull();
-  expect(forecastCheck(day({ madeAt: '2026-11-08' }), TODAY)).toBeNull();
   expect(forecastCheck(day({ inRange: null }), TODAY)).toBeNull();
   expect(forecastCheck(day({ date: TODAY }), TODAY)).toBeNull();
   expect(forecastCheck(undefined, TODAY)).toBeNull();
@@ -853,11 +852,25 @@ test('a past day says how its forecast did, only from a scored day made by it', 
     figure: { before: '', value: '138', after: 'guests', source: 'actual' },
     lines: ['Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.'],
   });
-  // A run made after the day fills it but is never compared with it, and the panel says why.
-  const late = input({ forecast: windowOf([day({ madeAt: '2026-11-09', scored: false, inRange: null })]) });
-  expect(tooltipLines('2026-11-07', late)?.lines).toEqual(['138 guests, actual', 'Saturday']);
-  expect(forecastWords(dayView('2026-11-07', late).forecast, 'Sawtooth').lines).toEqual([
-    'A forecast made after this day put it at 120 to 150, so it isn’t scored.',
+  // A run made after the day never saw its sales (D49 as amended): it is compared all the same, and says what it saw.
+  const made = day({ madeAt: '2026-11-09' });
+  expect(forecastCheck(made, TODAY, [{ id: 'r1', dataThrough: '2026-10-31' }])).toMatchObject({ verdict: 'inside', dataThrough: '2026-10-31' });
+  expect(checkWords({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside', dataThrough: '2026-10-31' }))
+    .toBe('Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range');
+  const later = input({ forecast: windowOf([made]) });
+  expect(tooltipLines('2026-11-07', later)?.lines.slice(0, 2)).toEqual([
+    '138 guests, actual', 'Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range',
+  ]);
+  expect(forecastWords(dayView('2026-11-07', later).forecast, 'Sawtooth').lines).toEqual([
+    'Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range.',
+  ]);
+  expect(pastForecastLines('2026-11-07', later)).toEqual(['Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range.']);
+  expect(monthCheckLine('2026-11', later)).toBe('So far this month: 1 of 1 day inside the forecast range.');
+  // A day whose run may have read a note or rule written on or after it is never compared, and the panel says why.
+  const noted = input({ forecast: windowOf([day({ madeAt: '2026-11-09', scored: false, inRange: null, laterNote: true })]) });
+  expect(tooltipLines('2026-11-07', noted)?.lines).toEqual(['138 guests, actual', 'Saturday']);
+  expect(forecastWords(dayView('2026-11-07', noted).forecast, 'Sawtooth').lines).toEqual([
+    'Townwise’s model forecast 120 to 150, but it may have used a note or rule written on or after this day, so it isn’t scored.',
   ]);
   // A past day with no stored guests shows the run's figure in the panel as the cell does: a forecast.
   const unstored = input({ salesDays: [], forecast: windowOf([day({ actual: null, inRange: null, scored: false })]) });
@@ -873,7 +886,8 @@ test('the month says how many of its days landed inside the forecast range, in t
   expect(insideWords(2, 3)).toBe('2 of 3 days inside the forecast range');
   expect(monthCheckLine('2026-11', input({ forecast: windowOf(days) }))).toBe('So far this month: 2 of 3 days inside the forecast range.');
   expect(monthCheckLine('2026-10', input({ forecast: windowOf([{ ...scored('2026-10-30', 130, true), madeAt: '2026-10-26' }]) }))).toBe('In October: 1 of 1 day inside the forecast range.');
-  expect(monthCheckLine('2026-11', input({ forecast: windowOf([forecastDay({ date: TODAY })]) }))).toBe('No day this month has both its guests and a forecast made before it yet.');
+  expect(monthCheckLine('2026-11', input({ forecast: windowOf([forecastDay({ date: TODAY })]) }))).toBe('No day this month can be compared with its forecast yet.');
+  expect(monthCheckLine('2026-10', input({ forecast: windowOf([forecastDay({ date: '2026-10-30' })]) }))).toBe('No day in October could be compared with its forecast.');
   // A later month, a read that hasn't answered or failed, or nothing published: no line.
   expect(monthCheckLine('2026-12', input({ forecast: windowOf(days) }))).toBeNull();
   expect(monthCheckLine('2026-11', input({ forecast: null }))).toBeNull();

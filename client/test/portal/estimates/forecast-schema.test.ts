@@ -50,7 +50,7 @@ describe('forecastWindowSchema', () => {
     const parsed = forecastWindowSchema.parse(WINDOW);
     expect(parsed).toEqual({
       available: true, reason: null,
-      runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-05-01', live: RUN.live, backtest: null }],
+      runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-05-01', dataThrough: '2026-04-30', live: RUN.live, backtest: null }],
       days: [
         {
           date: '2026-05-01', status: 'open', low: 80, mid: 100, high: 120,

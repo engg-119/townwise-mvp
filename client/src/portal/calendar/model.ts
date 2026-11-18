@@ -1,4 +1,4 @@
-import { formatCount, plural } from '../format';
+import { formatCount, formatDate, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
 import { mondayOf, weekDates } from '../analytics/cells';
 import { closureOf, likelyClosedWords, noteCovers, typicalGuests } from '../analytics/days';
@@ -378,10 +378,10 @@ export type ForecastPart =
    */
   | {
     kind: 'past'; actual: number | null; likelyClosed: boolean; model: { low: number; mid: number | null; high: number } | null; modelClosed: boolean;
-    /** How the forecast did, from a run made by the day (forecastCheck); null otherwise. */
+    /** How the forecast did (forecastCheck); null otherwise. */
     check: ForecastCheck | null;
-    /** The run was made after the day: it fills the day but is never compared with it (decision 11). */
-    late: boolean;
+    /** The run may have read a note or rule written on or after the day, so it isn't compared with it (D49 as amended). */
+    laterNote: boolean;
   }
   /** unavailable: the forecast read is loading or failed. */
   | { kind: 'none'; why: 'no_published_forecast' | 'not_covered' | 'unavailable' };
@@ -443,7 +443,7 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
     const model = low !== null && high !== null ? { low, mid: day?.model.mid ?? null, high } : null;
     return {
       kind: 'past', actual: storedGuests(date, input) ?? day?.actual ?? null, likelyClosed: likelyClosedGuests(date, input) !== null, model,
-      modelClosed: day?.model.status === 'closed', check: forecastCheck(day, input.today), late: day !== null && madeAfterDay(day),
+      modelClosed: day?.model.status === 'closed', check: forecastCheck(day, input.today, input.forecast?.runs), laterNote: day?.laterNote === true,
     };
   }
   if (input.forecast === null) return { kind: 'none', why: 'unavailable' };
@@ -755,7 +755,9 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
       else if (part.check !== null) lines.push(`${checkWords(part.check)}.`);
       else if (part.model !== null) {
         const range = rangeWords(part.model.low, part.model.high);
-        lines.push(part.late && part.actual !== null ? `A forecast made after this day put it at ${range}, so it isn’t scored.` : `Townwise’s model forecast ${range}.`);
+        lines.push(part.laterNote && part.actual !== null
+          ? `Townwise’s model forecast ${range}, but it may have used a note or rule written on or after this day, so it isn’t scored.`
+          : `Townwise’s model forecast ${range}.`);
       }
       return { figure, lines };
     }
@@ -801,7 +803,7 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
     if (likely !== null) lines.push(likelyClosedWords(plural(likely, 'guest', 'guests')));
     else if (guests !== null) {
       lines.push(figureLabel(guests, { kind: 'actual' }));
-      const check = forecastCheck(day, input.today);
+      const check = forecastCheck(day, input.today, input.forecast?.runs);
       if (check !== null) lines.push(checkWords(check));
     }
     // No stored guests: the forecast made for the day, as the cell shows it (figureOf).
@@ -839,10 +841,15 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
   return lines.length === 0 ? null : { date: shortDate(date), lines };
 }
 
-// How the forecast did (D49, design decision 11, owner 2026-11-18)
+// How the forecast did (D49, design decision 11, owner 2026-11-18; amended the same day)
 
-/** A past day's forecast against what happened, from the run's own figures. */
-export interface ForecastCheck { mid: number; low: number; high: number; actual: number; verdict: 'inside' | 'above' | 'below' }
+/**
+ * A past day's forecast against what happened, from the run's own figures. `dataThrough` is the run's last day of sales
+ * when the run was made after the day (it never saw the day's sales, so it is compared all the same), else null.
+ */
+export interface ForecastCheck {
+  mid: number; low: number; high: number; actual: number; verdict: 'inside' | 'above' | 'below'; dataThrough: string | null;
+}
 
 /** The day's run was made after the day (its made-at day is later); a run made on the day, before service, is not. */
 function madeAfterDay(day: Pick<ForecastDay, 'date' | 'madeAt'>): boolean {
@@ -851,21 +858,28 @@ function madeAfterDay(day: Pick<ForecastDay, 'date' | 'madeAt'>): boolean {
 
 /**
  * How a past day's forecast did, only when the read scored the day (open in the model, not closed or likely closed,
- * with stored guests, from a run made by the day; api/src/forecasts/score.ts) and says whether it landed in range;
- * null otherwise. The run's own figures, which are the day's before today.
+ * with stored guests, and no note or rule written on or after it that its run may have read; api/src/forecasts/score.ts)
+ * and says whether it landed in range; null otherwise. The run's own figures, which are the day's before today. `runs`
+ * are the read's, for the data end of a run made after the day.
  */
-export function forecastCheck(day: ForecastDay | null | undefined, today: string): ForecastCheck | null {
+export function forecastCheck(
+  day: ForecastDay | null | undefined, today: string, runs: readonly Pick<ForecastWindow['runs'][number], 'id' | 'dataThrough'>[] = [],
+): ForecastCheck | null {
   if (day === null || day === undefined || day.date >= today || day.scored !== true || day.inRange === null || day.actual === null) return null;
-  if (madeAfterDay(day)) return null;
   const { low, mid, high } = day.model;
   if (low === null || mid === null || high === null) return null;
   const verdict = day.inRange ? 'inside' : day.actual > high ? 'above' : 'below';
-  return { mid, low, high, actual: day.actual, verdict };
+  const dataThrough = madeAfterDay(day) ? runs.find((run) => run.id === day.runId)?.dataThrough ?? null : null;
+  return { mid, low, high, actual: day.actual, verdict, dataThrough };
 }
 
-/** “Forecast was about 82 (likely 70 to 95); 94 guests came: inside the range”. */
+/**
+ * “Forecast was about 82 (likely 70 to 95); 94 guests came: inside the range”, or for a run made after the day
+ * “Forecast from sales through Oct 21, 2026: about 82 (likely 70 to 95); 94 guests came: inside the range”.
+ */
 export function checkWords(check: ForecastCheck): string {
-  return `Forecast was about ${whole(check.mid)} (likely ${rangeWords(check.low, check.high)}); ${plural(check.actual, 'guest', 'guests')} came: ${check.verdict} the range`;
+  const forecast = check.dataThrough === null ? 'Forecast was about' : `Forecast from sales through ${formatDate(check.dataThrough)}: about`;
+  return `${forecast} ${whole(check.mid)} (likely ${rangeWords(check.low, check.high)}); ${plural(check.actual, 'guest', 'guests')} came: ${check.verdict} the range`;
 }
 
 /** The words after a count of days in range, on the month line, the model card and Last week. */
@@ -885,14 +899,14 @@ export function monthCheckLine(month: string, input: CalendarInput): string | nu
   const thisMonth = input.today.slice(0, 7);
   if (input.forecast === null || !input.forecast.available || month > thisMonth) return null;
   const checks = input.forecast.days.filter((day) => day.date.startsWith(month)).flatMap((day) => {
-    const check = forecastCheck(day, input.today);
+    const check = forecastCheck(day, input.today, input.forecast?.runs);
     return check === null ? [] : [check];
   });
   const current = month === thisMonth;
   if (checks.length === 0) {
     if (current && input.today.endsWith('-01')) return null;
-    return current ? 'No day this month has both its guests and a forecast made before it yet.'
-      : `No day in ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''} has both its guests and a forecast made before it.`;
+    return current ? 'No day this month can be compared with its forecast yet.'
+      : `No day in ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''} could be compared with its forecast.`;
   }
   const words = insideWords(checks.filter((check) => check.verdict === 'inside').length, checks.length);
   return current ? `So far this month: ${words}.` : `In ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''}: ${words}.`;
@@ -904,7 +918,7 @@ export function monthCheckLine(month: string, input: CalendarInput): string | nu
  */
 export function pastForecastLines(date: string, input: CalendarInput): string[] {
   if (date >= input.today) return [];
-  const check = forecastCheck(forecastDayOf(date, input), input.today);
+  const check = forecastCheck(forecastDayOf(date, input), input.today, input.forecast?.runs);
   if (check !== null) return [`${checkWords(check)}.`];
   const found = figureOf(date, input);
   return found.figure?.kind === 'past_forecast' && found.words !== null ? [found.words] : [];
