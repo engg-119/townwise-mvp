@@ -98,7 +98,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - a confirmed card moves into the list in place (`useRules`).
 - [x] 4.4 P25 panel (`AgentSidePanel.tsx`, `useAgentPanel.ts`): a "Suggested rules" section before Questions for you; Edit links to P29 with `?suggestion=`.
 - [x] 4.5 Home (`Home.tsx`): the count adds `ruleSuggestions`.
-- [ ] 4.6 P27 `AiSection.tsx` and `aiCopy.ts`:
+- [x] 4.6 P27 `AiSection.tsx` and `aiCopy.ts`:
   - "Suggested {n} rules on Business rules";
   - the guard line counts only events still left out;
   - the undo dialog names "the {n} suggested rules still waiting";
