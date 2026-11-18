@@ -628,10 +628,28 @@ describe('both routes', () => {
   });
 });
 
+type Stores = TownwiseTestServer['ctx']['stores'];
+
+/**
+ * A reader that reads every row of every published run and chooses each date from rows, as the reader did before D52:
+ * every run looks as if it had gaps, and every read answers every row.
+ */
+function everyRowReader(stores: Stores) {
+  return createForecastReader({
+    stores: {
+      ...stores,
+      forecasts: {
+        ...stores.forecasts,
+        published: async (...args: Parameters<Stores['forecasts']['published']>) => (await stores.forecasts.published(...args)).map((run) => ({ ...run, dayCount: -1 })),
+        rows: async (s: OrgScope, id: string) => stores.forecasts.rows(s, id, (await stores.forecasts.published(s, id)).map((run) => run.id)),
+      },
+    },
+  });
+}
+
 // D52: year-long runs, read straight from the reader with the spec's dates as its today.
 describe('year-long runs and the outlook (D52)', () => {
   const scope = (): OrgScope => ({ orgId } as OrgScope);
-  type Stores = TownwiseTestServer['ctx']['stores'];
 
   /** A published run of `file`'s days, as a staff import makes it. */
   async function publishRun(locationId: string, file: ForecastRunFile): Promise<string> {
@@ -653,23 +671,6 @@ describe('year-long runs and the outlook (D52)', () => {
       days: days.map((day) => ({ ...day, low: mid - 12, mid, high: mid + 15, baseline: mid })),
       weeks: weeks.map((each) => ({ ...each, low: (mid - 12) * each.openDays, mid: mid * each.openDays, high: (mid + 15) * each.openDays })),
     };
-  }
-
-  /**
-   * A reader that reads every row of every published run and chooses each date from rows, as the reader did before D52:
-   * every run looks as if it had gaps, and every read answers every row.
-   */
-  function everyRowReader(stores: Stores) {
-    return createForecastReader({
-      stores: {
-        ...stores,
-        forecasts: {
-          ...stores.forecasts,
-          published: async (...args: Parameters<Stores['forecasts']['published']>) => (await stores.forecasts.published(...args)).map((run) => ({ ...run, dayCount: -1 })),
-          rows: async (s: OrgScope, id: string) => stores.forecasts.rows(s, id, (await stores.forecasts.published(s, id)).map((run) => run.id)),
-        },
-      },
-    });
   }
 
   async function locationNamed(name: string) {
@@ -774,6 +775,21 @@ describe('year-long runs and the outlook (D52)', () => {
     expect(answer.days.filter((day) => day.mid === 40).map((day) => day.date)).toEqual(['2026-05-20']);
     expect(answer).toEqual(await everyRowReader(server.ctx.stores).window(scope(), location, range, '2026-06-01'));
   });
+
+  it('weeks from a gapped import and a gap-free run come in date order, as the every-row reader gives them', async () => {
+    const location = await locationNamed('Gap Weeks Room');
+    // The gap-free run supplies Apr 27 to May 3 (the gapped one saw those days); the gapped one every later week.
+    await publishRun(location.id, runFile('2026-04-26', 91, 40));
+    const gapped = runFile('2026-05-03', 91, 70);
+    await publishRun(location.id, { ...gapped, days: gapped.days.filter((day) => day.date !== '2026-05-20') });
+    const range = { from: '2026-04-27', to: '2026-06-07' };
+    const answer = await createForecastReader({ stores: server.ctx.stores }).window(scope(), location, range, '2026-06-01');
+    const froms = answer.weeks.map((week) => week.from);
+    expect(froms).toEqual([...froms].sort());
+    expect(froms[0]).toBe('2026-04-27');
+    expect(new Set(answer.weeks.map((week) => week.runId)).size).toBe(2);
+    expect(answer).toEqual(await everyRowReader(server.ctx.stores).window(scope(), location, range, '2026-06-01'));
+  });
 });
 
 // U13B. Last in the file: it moves the clock into the evening of June 1 in Hanover (June 2 in UTC).
@@ -830,6 +846,7 @@ describe('the forecast reader with a year of weekly runs (D42)', () => {
       stores: { ...stores, forecasts: { ...stores.forecasts, rows: (s, id, runIds) => stores.forecasts.rows(s, id, runIds) } },
     });
     const all = await stores.forecasts.rows(scope, locationId, (await stores.forecasts.published(scope, locationId)).map((run) => run.id));
+    const reference = everyRowReader(stores);
     for (const range of [
       { from: '2026-05-11', to: '2026-06-21' }, // last weeks and the next three: 42 days
       { from: '2025-12-01', to: '2026-01-11' }, // in the past, every day scored
@@ -840,6 +857,8 @@ describe('the forecast reader with a year of weekly runs (D42)', () => {
       const answer = await ranged.window(scope, location, range, today);
       expect(answer.available).toBe(true);
       expect(answer).toEqual(await unranged.window(scope, location, range, today));
+      // Metadata choice equals row choice (D52): the same answer as a reader that chooses every date from every row
+      expect(answer).toEqual(await reference.window(scope, location, range, today));
       // Bounded: the window, a week either side, and the days of the runs it uses
       expect(asked.length).toBeGreaterThan(0);
       for (const bound of asked) {
@@ -849,6 +868,12 @@ describe('the forecast reader with a year of weekly runs (D42)', () => {
       // Every day is in about 13 weekly runs, so a span's rows grow with its days, never with the number of runs
       expect(Math.max(...counted)).toBeLessThan(all.length);
     }
+    // Around the closure note on 2026-04-18: its likely-closed scoring is the every-row reader's too
+    const april = { from: '2026-04-06', to: '2026-04-26' };
+    const aroundClosure = await ranged.window(scope, location, april, today);
+    expect(aroundClosure.days.find((day) => day.date === '2026-04-18')).toMatchObject({ scored: false });
+    expect(aroundClosure).toEqual(await reference.window(scope, location, april, today));
+    expect(await ranged.latest(scope, locationId, today)).toEqual(await reference.latest(scope, locationId, today));
     asked.length = 0;
     expect(await ranged.latest(scope, locationId, today)).toEqual(await unranged.latest(scope, locationId, today));
     expect(asked.every((bound) => bound !== undefined && daysBetween(bound.from, bound.to) <= 91)).toBe(true);

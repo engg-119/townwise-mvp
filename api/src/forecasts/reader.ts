@@ -197,9 +197,13 @@ function runChooser(runs: readonly ForecastRunRecord[], gappyRows: readonly Fore
     && (full.get(run.id) === true ? run.range.from <= date && date <= run.range.to : supplied.has(`${run.id}|${date}`)));
 }
 
-/** Each date's chosen run with its day row from `rows` (deduplicated), dates in order; a date with no row is left out. */
+/**
+ * Each date's chosen run with its day row from `rows` (deduplicated, then in the store's order, by `from` then `span`, so
+ * weeks read from several reads come in date order), dates in order; a date with no row is left out.
+ */
 function choiceOf(picks: ReadonlyMap<string, ForecastRunRecord>, rows: readonly ForecastRow[]): Choice {
-  const unique = [...new Map(rows.map((row) => [`${row.runId}|${row.span}|${row.from}`, row])).values()];
+  const unique = [...new Map(rows.map((row) => [`${row.runId}|${row.span}|${row.from}`, row])).values()]
+    .sort((a, b) => (a.from < b.from ? -1 : a.from > b.from ? 1 : a.span < b.span ? -1 : a.span > b.span ? 1 : 0));
   const dayRow = new Map(unique.filter((row) => row.span === 'day').map((row) => [`${row.runId}|${row.from}`, row]));
   const chosen = new Map<string, Chosen>();
   for (const date of [...picks.keys()].sort()) {
