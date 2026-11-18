@@ -4,7 +4,7 @@
 // Each write is a compare-and-set on the record still `running` (and an append also on the count stored), so a write
 // that applied but reported an error is never doubled and a write to a settled or deleted record matches nothing. The
 // events and the person's message are the same class of data as the conversation: never logged or audited from here.
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { AttachmentKind } from '../files/items.ts';
@@ -82,6 +82,8 @@ interface TurnFields {
   message: { text: string; attachments: { ref: string; kind: AttachmentKind }[] } | null;
   events: { seq: number; type: string; data: unknown }[];
   eventCount: number;
+  /** Set by the sweep's end of a lapsed turn until it has released the turn's claims (turn-sweeper.ts). */
+  releasePending: boolean;
 }
 
 function turnSchema(): Schema<TurnFields> {
@@ -115,13 +117,14 @@ function turnSchema(): Schema<TurnFields> {
     message: { type: message, default: null },
     events: { type: [event], default: [] },
     eventCount: { type: Number, required: true },
+    releasePending: { type: Boolean, default: false },
   }, { strict: true, versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, turnId: 1 }, { unique: true });
   schema.index({ orgId: 1, conversationId: 1 });
   schema.index({ orgId: 1, locationId: 1 });
   // Person deletion, across organizations (stores/cross-tenant.ts).
   schema.index({ userId: 1 });
-  // The sweep: running records whose lease has passed.
+  // The sweep: running records whose lease has passed, and interrupted ones whose claims it has yet to release.
   schema.index({ state: 1, leaseUntil: 1 });
   // The sweep: records 15 minutes after their turn ended.
   schema.index({ endedAt: 1 });
@@ -151,6 +154,14 @@ export interface ChatTurnStore {
    * running and holds exactly `from` events. False when it matched nothing, as `append`.
    */
   end(scope: OrgScope, turnId: string, input: { from: number; events: readonly TurnRecordEvent[]; state: EndedTurnState; endedAt: Date }): Promise<boolean>;
+  /**
+   * The sweep's end of a lapsed turn: as `end` with state `interrupted`, only while the record is running, holds exactly
+   * `from` events and its lease passed before `lapsedBefore`, so a renewal or a write that got in first leaves it
+   * running. Marks the record until `claimsReleased`. False when it matched nothing.
+   */
+  interruptLapsed(scope: OrgScope, turnId: string, input: { from: number; events: readonly TurnRecordEvent[]; lapsedBefore: Date; endedAt: Date }): Promise<boolean>;
+  /** The sweep released the claims of a turn it ended with `interruptLapsed`. */
+  claimsReleased(scope: OrgScope, turnId: string): Promise<void>;
   /** The record's state and how many events it holds, else null (deleted, or another organization's). */
   progress(scope: OrgScope, turnId: string): Promise<{ state: TurnState; eventCount: number } | null>;
   /**
@@ -226,6 +237,16 @@ export function createChatTurnStore(connection: Connection): ChatTurnStore {
         $set: { eventCount: input.from + input.events.length, state: input.state, endedAt: input.endedAt },
       });
       return result.matchedCount === 1;
+    },
+    async interruptLapsed(scope, turnId, input) {
+      const result = await Turn.updateOne({ ...running(scope, turnId), eventCount: input.from, leaseUntil: trusted({ $lt: input.lapsedBefore }) }, {
+        $push: pushed(input.events),
+        $set: { eventCount: input.from + input.events.length, state: 'interrupted', endedAt: input.endedAt, releasePending: true },
+      });
+      return result.matchedCount === 1;
+    },
+    async claimsReleased(scope, turnId) {
+      await Turn.updateOne({ ...org(scope), turnId, releasePending: true }, { $set: { releasePending: false } });
     },
     async progress(scope, turnId) {
       const doc = await Turn.findOne({ ...org(scope), turnId }, { state: 1, eventCount: 1 }).lean();

@@ -809,7 +809,10 @@ export async function countedWeekRows(connection: Connection, week: string): Pro
   return forecastWeekModel(connection).countDocuments({ week, status: trusted({ $in: [...COUNTED_WEEK_STATUSES] }) });
 }
 
-/** A running TownwiseAI turn whose lease has passed: its replica died, or shut down without settling it. */
+/**
+ * A running TownwiseAI turn whose lease has passed (its replica died, or shut down without settling it), or one the
+ * sweep ended as interrupted whose claims it has yet to release.
+ */
 export interface StaleChatTurn {
   readonly orgId: string;
   readonly locationId: string;
@@ -820,11 +823,13 @@ export interface StaleChatTurn {
 
 /**
  * The TownwiseAI turn sweep (chat/turn-sweeper.ts, openspec change resumable-chat-turns): running records in any
- * organization whose lease passed before `now`, oldest lease first, at most `limit`. Ids only, never the events.
+ * organization whose lease passed before `now`, and interrupted ones the sweep has yet to release the claims of, oldest
+ * lease first, at most `limit`. Ids only, never the events.
  */
 export async function staleChatTurns(connection: Connection, now: Date, limit: number): Promise<StaleChatTurn[]> {
+  const stale = { $or: [{ state: 'running' as const, leaseUntil: trusted({ $lt: now }) }, { state: 'interrupted' as const, releasePending: true }] };
   const docs = await chatTurnModel(connection)
-    .find({ state: 'running', leaseUntil: trusted({ $lt: now }) }, { orgId: 1, locationId: 1, conversationId: 1, userId: 1, turnId: 1 })
+    .find(stale, { orgId: 1, locationId: 1, conversationId: 1, userId: 1, turnId: 1 })
     .sort({ leaseUntil: 1 }).limit(limit).lean();
   return docs.map((doc) => ({
     orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), conversationId: doc.conversationId.toHexString(),

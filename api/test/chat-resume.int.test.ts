@@ -12,8 +12,7 @@ import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
-import { createTurnSweeper, type TurnSweeper } from '../src/chat/turn-sweeper.ts';
-import type { SettleStores } from '../src/chat/turn-runner.ts';
+import { createTurnSweeper, type SweepStores, type TurnSweeper } from '../src/chat/turn-sweeper.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
 import {
   addChatTurn, addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
@@ -200,7 +199,7 @@ async function crashedTurn(existing?: string): Promise<{ id: string; turnId: str
 }
 
 /** The other instance's sweep, run by hand, over `stores` (its own by default). */
-function sweeperOn(stores: SettleStores = other.ctx.stores): TurnSweeper {
+function sweeperOn(stores: SweepStores = other.ctx.stores): TurnSweeper {
   return createTurnSweeper({ connection: other.connection, stores, logger: other.ctx.logger, now: other.clock.now });
 }
 
@@ -638,36 +637,66 @@ describe('the sweep', () => {
     expect((await record(turnId))?.state).toBe('interrupted');
   });
 
-  it('a sweep that stops between its steps is completed by the next one', async () => {
+  it('a renewal between the sweep’s query and its settle leaves the turn running with its claims', async () => {
+    const { id, turnId } = await crashedTurn();
+    const { stores } = other.ctx;
+    // The turn's replica was only slow: its renewal lands after the sweep found the record stale.
+    const renewing: SweepStores = {
+      ...stores,
+      chatTurns: {
+        ...stores.chatTurns,
+        progress: async (scope, renewed) => {
+          await stores.chatTurns.renew(scope, renewed, new Date(other.clock.now().getTime() + LEASE_MS));
+          return stores.chatTurns.progress(scope, renewed);
+        },
+      },
+    };
+    await sweeperOn(renewing).sweep();
+    expect(await record(turnId)).toMatchObject({ state: 'running', eventCount: 2 });
+    expect(await conversationDoc(id)).toMatchObject({ liveTurn: { turnId } });
+    expect(await liveTurns()).toBe(1);
+    // Its turn ends it: here, as the replica that died would have, by hand.
+    await stores.chatTurns.end(orgScope(), turnId, { from: 2, events: [{ seq: 3, type: 'stopped', data: {} }], state: 'stopped', endedAt: other.clock.now() });
+    await stores.chatConversations.release(orgScope(), id, turnId);
+    await stores.chatLiveTurns.release(orgScope(), session.userId, turnId);
+  });
+
+  it('a sweep that stops after ending the record is completed by the next one', async () => {
     const { id, turnId } = await crashedTurn();
     const { stores } = other.ctx;
     let failOnce = true;
-    const failing: SettleStores = {
-      chatTurns: stores.chatTurns,
-      chatConversations: stores.chatConversations,
-      chatLiveTurns: {
-        release: (scope, userId, releasing) => {
+    const failing: SweepStores = {
+      ...stores,
+      chatConversations: {
+        ...stores.chatConversations,
+        release: (scope, conversationId, releasing) => {
           if (failOnce) {
             failOnce = false;
             return Promise.reject(new Error('Sentinel-store down'));
           }
-          return stores.chatLiveTurns.release(scope, userId, releasing);
+          return stores.chatConversations.release(scope, conversationId, releasing);
         },
       },
     };
     const sweeper = sweeperOn(failing);
     other.logs.length = 0;
     await sweeper.sweep();
-    // The conversation's claim went (and with it the new conversation); the person's claim and the record did not.
-    expect(await conversationDoc(id)).toBeNull();
+    // The record ended first; the claims did not go.
+    expect(await record(turnId)).toMatchObject({ state: 'interrupted', eventCount: 3 });
+    expect(await conversationDoc(id)).toMatchObject({ liveTurn: { turnId } });
     expect(await liveTurns()).toBe(1);
-    expect((await record(turnId))?.state).toBe('running');
     expect(other.logs.join('\n')).toContain('townwise.chat_turn_not_settled');
     expect(other.logs.join('\n')).not.toContain('Sentinel');
 
     await sweeper.sweep();
+    expect(await conversationDoc(id)).toBeNull();
     expect(await liveTurns()).toBe(0);
     expect(await record(turnId)).toMatchObject({ state: 'interrupted', eventCount: 3 });
+    // Once completed, a later sweep finds nothing of it.
+    other.logs.length = 0;
+    await sweeper.sweep();
+    const swept = other.logs.find((line) => line.includes('townwise.chat_turns_swept'));
+    if (swept !== undefined) expect(JSON.parse(swept)).toMatchObject({ found: 0 });
   });
 
   it('deletes a record 15 minutes after its turn ended, and no running one', async () => {

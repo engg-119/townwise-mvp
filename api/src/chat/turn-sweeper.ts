@@ -1,17 +1,22 @@
 // The TownwiseAI turn sweep (openspec change resumable-chat-turns, design decisions 1 and 2): a loop in each API replica,
 // shaped like the TownwiseAI reader (files/ai-reader.ts). Every 15 seconds it finds, through stores/cross-tenant.ts, the
 // running turns whose lease has passed (their replica died, or shut down without settling them) and settles each as
-// interrupted, in an order a retry completes: the conversation's claim (deleting a conversation that never finished a
-// turn), the person's claim, then the record, with its last `error { code: "interrupted" }` event. A turn is never
-// continued here. It also deletes each record 15 minutes after its turn ended; the saved conversation is then the only
-// copy. Both replicas may sweep the same record: every step is keyed to the turn id, and the record's end is a
-// compare-and-set. Logs carry ids and counts only, never a message, a reply or anything a tool showed.
+// interrupted. The record ends first, by a compare-and-set that also requires the lease still passed, so a turn whose
+// renewal got in after the query is left running with its claims; only a record it ended has its claims released
+// then: the conversation's (deleting a conversation that never finished a turn), then the person's. The record stays
+// marked until both are released, and the next sweep finds it again, so a sweep that stopped between its steps is
+// completed. A turn is never continued here. It also deletes each record 15 minutes after its turn ended; the saved
+// conversation is then the only copy. Both replicas may sweep the same record: every step is keyed to the turn id.
+// Logs carry ids and counts only, never a message, a reply or anything a tool showed.
 import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
 
-import { scopeForStaleChatTurn } from '../access/policy.ts';
+import { scopeForStaleChatTurn, type OrgScope } from '../access/policy.ts';
+import type { ChatConversationStore } from '../stores/chat-conversations.ts';
+import type { ChatLiveTurnStore } from '../stores/chat-live-turns.ts';
+import type { ChatTurnStore } from '../stores/chat-turns.ts';
 import { removeEndedChatTurns, staleChatTurns } from '../stores/cross-tenant.ts';
-import { settleInterrupted, type SettleStores } from './turn-runner.ts';
+import { INTERRUPTED } from './turn-runner.ts';
 
 /** How often each replica sweeps. With the 30-second lease, a dead turn is settled within about 45 seconds. */
 const POLL_MS = 15_000;
@@ -20,9 +25,16 @@ export const ENDED_TURN_KEPT_MS = 15 * 60 * 1000;
 /** The most stale turns one sweep settles; the next sweep takes the rest. */
 const BATCH = 50;
 
+/** What the sweep's settle needs: the record's end, then the claims. */
+export interface SweepStores {
+  readonly chatTurns: Pick<ChatTurnStore, 'progress' | 'interruptLapsed' | 'claimsReleased'>;
+  readonly chatConversations: Pick<ChatConversationStore, 'release'>;
+  readonly chatLiveTurns: Pick<ChatLiveTurnStore, 'release'>;
+}
+
 export interface TurnSweeperDeps {
   readonly connection: Connection;
-  readonly stores: SettleStores;
+  readonly stores: SweepStores;
   readonly logger: Logger;
   readonly now: () => Date;
   /** Tests sweep by hand with sweep(). */
@@ -39,6 +51,29 @@ export interface TurnSweeper {
 
 function errTypeOf(err: unknown): string {
   return err instanceof Error ? err.constructor.name : typeof err;
+}
+
+/**
+ * Ends a lapsed turn's record as interrupted, then releases its claims; a record this sweep or an earlier one already
+ * ended has only its claims released. True when the turn is settled; false when it is left as it is (renewed, written
+ * or ended by its own replica meanwhile, or gone).
+ */
+async function settleLapsed(
+  stores: SweepStores, scope: OrgScope, turn: { conversationId: string; userId: string; turnId: string }, at: Date,
+): Promise<boolean> {
+  const progress = await stores.chatTurns.progress(scope, turn.turnId);
+  if (progress === null) return false;
+  if (progress.state === 'running') {
+    const from = progress.eventCount;
+    const events = [{ seq: from + 1, ...INTERRUPTED }];
+    if (!(await stores.chatTurns.interruptLapsed(scope, turn.turnId, { from, events, lapsedBefore: at, endedAt: at }))) return false;
+  } else if (progress.state !== 'interrupted') {
+    return false;
+  }
+  await stores.chatConversations.release(scope, turn.conversationId, turn.turnId);
+  await stores.chatLiveTurns.release(scope, turn.userId, turn.turnId);
+  await stores.chatTurns.claimsReleased(scope, turn.turnId);
+  return true;
 }
 
 export function createTurnSweeper(deps: TurnSweeperDeps): TurnSweeper {
@@ -59,9 +94,9 @@ export function createTurnSweeper(deps: TurnSweeperDeps): TurnSweeper {
       for (const turn of stale) {
         if (stopped) break;
         try {
-          if (await settleInterrupted(stores, scopeForStaleChatTurn(turn), turn, at)) settled += 1;
+          if (await settleLapsed(stores, scopeForStaleChatTurn(turn), turn, at)) settled += 1;
         } catch (err) {
-          // Left running: the next sweep finds it again and repeats the steps, each keyed to the turn id.
+          // Left running, or ended with its claims held: the next sweep finds it again and repeats what is left.
           failed += 1;
           logger.warn({
             orgId: turn.orgId, locationId: turn.locationId, conversationId: turn.conversationId, errType: errTypeOf(err),

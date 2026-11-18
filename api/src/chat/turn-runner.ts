@@ -98,12 +98,13 @@ const BATCH_BYTES = 4_096;
 /** Within the shutdown hook's 2 seconds, with time left to settle what has not ended. */
 const SETTLE_MS = 1_200;
 
-const INTERRUPTED: StreamEvent = { type: 'error', data: { code: 'interrupted' } };
+/** The last event of a turn that was interrupted: its replica shut down or died. */
+export const INTERRUPTED: StreamEvent = { type: 'error', data: { code: 'interrupted' } };
 
 const isDelta = (type: string): boolean => type === 'text' || type === 'thinking';
 
 /**
- * Settles a turn that will not end on its own (a replica that shut down or died), in an order a retry completes: the
+ * Shutdown: settles a turn of this runner that did not end on its own in time, in an order a retry completes: the
  * conversation's claim (which deletes a conversation that never finished a turn), the person's claim, then the record
  * from running to interrupted with a last `error { code: "interrupted" }` event. True when the record ended here or had
  * already ended; false when it is still running (another write got in first) or is gone.
