@@ -640,8 +640,12 @@ describe('with stored files on', () => {
       const conversationId = new Types.ObjectId(first.id);
       const record = await records.findOne({ conversationId });
       expect(record?.message).toEqual({ text: 'What is on these?', attachments: [{ ref: textRef, kind: 'text' }, { ref: pictureRef, kind: 'picture' }] });
-      // As if it were still running.
-      await records.updateOne({ conversationId }, { $set: { state: 'running', leaseUntil: new Date(server.clock.now().getTime() + 30_000) } });
+      // As if it were still running: a running turn's nodes are not saved yet, and a turn whose nodes the conversation
+      // already holds is never live (liveTurnOf), so the record gets fresh node ids.
+      await records.updateOne({ conversationId }, { $set: {
+        state: 'running', leaseUntil: new Date(server.clock.now().getTime() + 30_000),
+        userNodeId: new Types.ObjectId().toHexString(), replyNodeId: new Types.ObjectId().toHexString(),
+      } });
       try {
         expect((await view(first.id)).liveTurn?.message?.attachments).toEqual([
           { ref: textRef, kind: 'text', name: 'Catering.txt', state: 'on' }, { ref: pictureRef, kind: 'picture', name: 'Patio.png', state: 'on' },
