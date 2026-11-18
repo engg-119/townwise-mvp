@@ -234,7 +234,8 @@ function toSuggestion(doc: SuggestionDoc): SuggestionRecord {
   const shared = { kind: c.kind, startDate: c.startDate, weekdays: c.weekdays, effect: c.effect, expectedGuests: c.expectedGuests, startTime: c.startTime, endTime: c.endTime };
   const content: SuggestionContent = doc.type === 'rule'
     ? { type: 'rule', text: doc.text ?? '', schedule: { ...shared, endDate: c.endDate } }
-    : { type: 'note', note: { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail } };
+    // A suggestion never carries a title (D49): the weekly pass proposes none.
+    : { type: 'note', note: { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail, title: null } };
   return {
     ...content,
     id: doc._id.toHexString(),

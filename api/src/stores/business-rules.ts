@@ -16,10 +16,10 @@ export const MAX_RULES = 30;
 export type RuleVia = 'page' | 'townwise_ai';
 
 /**
- * A rule's forecast effect (D31): a note's fields but its detail, since the rule's own text says what it is, with an
+ * A rule's forecast effect (D31): a note's fields but its detail and title, since the rule's own text says what it is, with an
  * `endDate` of null for a schedule with no end. Validated by readRuleSchedule (handlers/notes.ts) with a note's rules.
  */
-export interface RuleSchedule extends Omit<NoteContent, 'detail' | 'endDate'> {
+export interface RuleSchedule extends Omit<NoteContent, 'detail' | 'endDate' | 'title'> {
   /** Inclusive; null: no end ("ongoing"). */
   readonly endDate: string | null;
 }

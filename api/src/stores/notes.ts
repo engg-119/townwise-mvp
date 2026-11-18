@@ -1,12 +1,16 @@
 // tw_notes (spec 6.7, 12): structured notes per location, the tuning step. The forecast reader and the tuning chat read
 // them. A note may carry local hours (`startTime`, `endTime`); a note stored before they existed reads as no hours.
-// `detail` is the owner's own words: no function here logs, and nothing copies it into an audit event.
+// `detail` and `title` are the owner's own words: no function here logs, and nothing copies them into an audit event. A
+// note stored before titles existed (D49) has no `title` key and reads as untitled.
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { AiSource } from './files.ts';
 
 export const NOTES_COLLECTION = 'tw_notes';
+
+/** D49: a note's title, at most, in code points. [CONFIRM: 120 characters, matching the file reader's event titles] */
+export const MAX_NOTE_TITLE_CHARS = 120;
 
 export type NoteKind = 'closure' | 'private_event' | 'opening' | 'other';
 export type NoteEffect = 'closed' | 'more_guests' | 'fewer_guests' | 'unknown';
@@ -22,6 +26,8 @@ export interface NoteContent {
   readonly effect: NoteEffect;
   readonly expectedGuests: number | null;
   readonly detail: string | null;
+  /** D49: the event's name, one line of 1 to 120 code points, or null. */
+  readonly title: string | null;
   /** Local wall-clock 'HH:MM' (24-hour), with `endTime`, or null for all day; both or neither, start before end. */
   readonly startTime: string | null;
   readonly endTime: string | null;
@@ -37,6 +43,8 @@ interface NoteFields {
   effect: NoteEffect;
   expectedGuests: number | null;
   detail: string | null;
+  /** Missing on a note stored before titles existed (D49); every later write stores it, null included. */
+  title?: string | null;
   /** Missing on a note stored before hours existed. */
   startTime?: string | null;
   endTime?: string | null;
@@ -59,6 +67,8 @@ function noteSchema(): Schema<NoteFields> {
     effect: { type: String, required: true, enum: ['closed', 'more_guests', 'fewer_guests', 'unknown'] },
     expectedGuests: { type: Number, default: null },
     detail: { type: String, default: null, maxlength: 280 },
+    // 120 code points, which a String's maxlength (UTF-16 units) cannot count.
+    title: { type: String, validate: (title: string | null) => title === null || Array.from(title).length <= MAX_NOTE_TITLE_CHARS },
     startTime: { type: String, default: null },
     endTime: { type: String, default: null },
     createdBy: { type: String, required: true },
@@ -134,6 +144,7 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
     effect: doc.effect,
     expectedGuests: doc.expectedGuests,
     detail: doc.detail,
+    title: doc.title ?? null,
     startTime: doc.startTime ?? null,
     endTime: doc.endTime ?? null,
     createdBy: doc.createdBy,
@@ -147,7 +158,7 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
 /** The stored content, field by field. */
 function fieldsOf(
   content: NoteContent,
-): Pick<NoteFields, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'detail' | 'startTime' | 'endTime'> {
+): Pick<NoteFields, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'detail' | 'title' | 'startTime' | 'endTime'> {
   return {
     kind: content.kind,
     startDate: content.startDate,
@@ -156,6 +167,7 @@ function fieldsOf(
     effect: content.effect,
     expectedGuests: content.expectedGuests,
     detail: content.detail,
+    title: content.title,
     startTime: content.startTime,
     endTime: content.endTime,
   };

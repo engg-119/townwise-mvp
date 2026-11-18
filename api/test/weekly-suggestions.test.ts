@@ -30,10 +30,12 @@ function answer(...items: unknown[]): unknown {
   return { suggestions: items };
 }
 
-const NOTE: NoteContent = {
+/** A note as the request sends it: every field but the title (D49), which the weekly pass never sends. */
+const SENT_NOTE = {
   kind: 'closure', startDate: '2026-11-26', endDate: '2026-11-26', weekdays: null, effect: 'closed', expectedGuests: null,
   detail: 'Sentinel-detail: family dinner', startTime: null, endTime: null,
-};
+} as const;
+const NOTE: NoteContent = { ...SENT_NOTE, title: null };
 
 const SCHEDULE = {
   kind: 'closure', startDate: '2026-11-26', endDate: '2026-11-26', weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
@@ -47,8 +49,8 @@ describe('the request', () => {
       kind: 'holiday', scope: 'national', groupLabel: 'Thanksgiving', confidence: null, sources: [],
       history: { direction: 'fewer', pct: 40, days: 1 }, pastDays: { open: 0, closed: 1, noSales: 0 },
     }],
-    notes: [NOTE],
-    rules: [{ text: 'Closed on Mondays in January', schedule: { ...NOTE, startDate: '2027-01-04', endDate: '2027-01-25', weekdays: [1] } }],
+    notes: [{ ...NOTE, title: 'Sentinel-title' }],
+    rules: [{ text: 'Closed on Mondays in January', schedule: { ...SENT_NOTE, startDate: '2027-01-04', endDate: '2027-01-25', weekdays: [1] } }],
     suggested: [{ type: 'note', note: { ...NOTE, startDate: '2026-12-25', endDate: '2026-12-25', detail: null } }],
   };
 
@@ -74,9 +76,10 @@ describe('the request', () => {
     const sent = JSON.parse(typeof message?.content === 'string' ? message.content : '') as Record<string, unknown>;
     expect(Object.keys(sent).sort()).toEqual(['alreadySuggested', 'calendar', 'from', 'notes', 'rules', 'to', 'today', 'town']);
     expect(sent.calendar).toEqual(input.calendar);
-    expect(sent.notes).toEqual([NOTE]);
+    expect(sent.notes).toStrictEqual([SENT_NOTE]);
     expect(sent.rules).toEqual(input.rules);
-    expect(sent.alreadySuggested).toEqual([{ type: 'note', ...NOTE, startDate: '2026-12-25', endDate: '2026-12-25', detail: null }]);
+    expect(sent.alreadySuggested).toStrictEqual([{ type: 'note', ...SENT_NOTE, startDate: '2026-12-25', endDate: '2026-12-25', detail: null }]);
+    expect(JSON.stringify(sent)).not.toContain('Sentinel-title');
   });
 });
 

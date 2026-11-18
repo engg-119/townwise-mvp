@@ -46,7 +46,7 @@ function input(
 function note(over: Partial<NoteContent>): NoteContent {
   return {
     kind: 'closure', startDate: '2026-01-01', endDate: '2026-01-01', weekdays: null, effect: 'closed', expectedGuests: null,
-    detail: null, startTime: null, endTime: null, ...over,
+    detail: null, title: null, startTime: null, endTime: null, ...over,
   };
 }
 
@@ -461,7 +461,7 @@ describe('question ids and the notes an answer saves', () => {
   const likelyQ = { kind: 'likely_closed', date: '2026-03-14' } as const;
   const openDay: NoteContent = {
     kind: 'other', startDate: '2026-03-14', endDate: '2026-03-14', weekdays: null, effect: 'fewer_guests', expectedGuests: null,
-    detail: 'Open, with very few guests (your answer to TownwiseAI).', startTime: null, endTime: null,
+    detail: 'Open, with very few guests (your answer to TownwiseAI).', title: null, startTime: null, endTime: null,
   };
 
   it('an id round-trips to what it asks, and anything else names no question', () => {

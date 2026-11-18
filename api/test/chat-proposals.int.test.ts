@@ -115,7 +115,8 @@ describe('saving a proposal', () => {
     expect(status).toBe(200);
     const noteId = body.proposal.noteId ?? '';
     expect(body.proposal).toEqual({ id: 'toolu_proposal0001', status: 'saved', noteId, edited: false });
-    expect(body.note).toMatchObject({ ...PROPOSAL, id: noteId, canEdit: true });
+    // A proposal stored before titles (D49) reads, and saves, as untitled.
+    expect(body.note).toMatchObject({ ...PROPOSAL, title: null, id: noteId, canEdit: true });
     const notes = await notesOf();
     expect(notes).toHaveLength(1);
     expect(notes[0]).toMatchObject({ ...PROPOSAL, createdBy: author.userId });

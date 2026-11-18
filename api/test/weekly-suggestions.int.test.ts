@@ -47,7 +47,7 @@ function closureOn(date: string): NewSuggestion {
       type: 'note',
       note: {
         kind: 'closure', startDate: date, endDate: date, weekdays: null, effect: 'closed', expectedGuests: null,
-        detail: null, startTime: null, endTime: null,
+        detail: null, title: null, startTime: null, endTime: null,
       },
     },
     why: 'Independence Day is Sat, Jul 4, and you were closed on it last year.',

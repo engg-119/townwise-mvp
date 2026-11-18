@@ -148,6 +148,14 @@ export interface SuggestionsInput {
   readonly suggested: readonly SuggestionContent[];
 }
 
+/** A note as the request sends it: never its title (D49), since the pass proposes none and needs no new words. */
+function sentNote(note: NoteContent): Omit<NoteContent, 'title'> {
+  return {
+    kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
+    expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
+  };
+}
+
 /** The request one pass sends, exactly. */
 export function suggestionsRequest(input: SuggestionsInput): BetaMessageStreamParams {
   return {
@@ -160,13 +168,10 @@ export function suggestionsRequest(input: SuggestionsInput): BetaMessageStreamPa
     system: SUGGESTIONS_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: JSON.stringify({
       today: input.today, from: input.from, to: input.to, town: input.town, calendar: input.calendar,
-      notes: input.notes.map((note) => ({
-        kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
-        expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
-      })),
+      notes: input.notes.map(sentNote),
       rules: input.rules.map((rule) => ({ text: rule.text, schedule: rule.schedule })),
       alreadySuggested: input.suggested.map((content) => (content.type === 'note'
-        ? { type: 'note', ...content.note }
+        ? { type: 'note', ...sentNote(content.note) }
         : { type: 'rule', ruleText: content.text, ...content.schedule })),
     }) }],
   };

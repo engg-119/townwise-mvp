@@ -824,7 +824,7 @@ describe('weekly suggestions', () => {
     const closure = (date: string) => ({
       content: { type: 'note' as const, note: {
         kind: 'closure' as const, startDate: date, endDate: date, weekdays: null, effect: 'closed' as const, expectedGuests: null,
-        detail: null, startTime: null, endTime: null,
+        detail: null, title: null, startTime: null, endTime: null,
       } },
       why: `Synthetic why for ${date}.`, calendarIds: [],
     });

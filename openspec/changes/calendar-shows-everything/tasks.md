@@ -2,7 +2,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 
 ## 0. Before building
 
-- [ ] 0.1 Merge develop after d6's calendar commit lands. It brings:
+- [x] 0.1 Merge develop after d6's calendar commit lands. It brings:
   - d6's `figureOf`, `no_data` and `no_forecast`, `headLine`, `CalendarWeek.web.tsx`, `DayTooltip.web.tsx` and spec 16.3;
   - 3710fb01 ("keep hover tooltips off the hovered day"), which changed `DayTooltip.web.tsx` and `CalendarWeek.web.tsx` after this branch's base.
   - Resolve conflicts in d6's favor for the first tooltip line and the cell status, then record the baseline: `npm test -w @ckeith26/expo-shell -- test/portal/calendar test/portal/home`.
@@ -18,7 +18,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 
 ## 1. API: note titles
 
-- [ ] 1.1 Tests in `api/test/notes.int.test.ts`:
+- [x] 1.1 Tests in `api/test/notes.int.test.ts`:
   - save, read and clear a title;
   - 121 code points is 400;
   - a newline, U+202E or another `Cc` or `Cf` character is 400, and runs of spaces collapse;
@@ -27,7 +27,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - an `other` note with only a title saves;
   - a rule schedule with `title` is 400 (`api/test/business-rules.int.test.ts`);
   - a sentinel title in no log line or audit event.
-- [ ] 1.2 `api/src/stores/notes.ts` (`title`, optional, max 120) and `api/src/handlers/notes.ts`:
+- [x] 1.2 `api/src/stores/notes.ts` (`title`, optional, max 120) and `api/src/handlers/notes.ts`:
   - `readNoteContent(raw, today, { keepTitle })` cleans `title` (NFC, white space collapsed, `Cc` and `Cf` refused, 1 to 120 code points, empty is null);
   - `updateNote` merges the stored title when `!Object.hasOwn(body, 'title')`, before the `other` rule;
   - `other` needs a title or a detail;
@@ -35,7 +35,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - the equality check includes `title`;
   - the note view answers `title`;
   - `noteDetails` is unchanged.
-- [ ] 1.3 `NoteContent` gains `title`: everything that builds or stores it reads it, or sets `title: null`. Run `npm run typecheck -w @townwise/api` and `npm test -w @townwise/api -- test/business-rules test/agent-questions test/weekly-suggestions test/chat-proposals`. The places:
+- [x] 1.3 `NoteContent` gains `title`: everything that builds or stores it reads it, or sets `title: null`. Run `npm run typecheck -w @townwise/api` and `npm test -w @townwise/api -- test/business-rules test/agent-questions test/weekly-suggestions test/chat-proposals`. The places:
   - `api/src/stores/business-rules.ts` (`RuleSchedule` omits `title`);
   - `api/src/agent/questions.ts`;
   - `api/src/lab/suggestions.ts` (the request carries no `title`);
