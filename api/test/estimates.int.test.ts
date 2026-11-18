@@ -558,6 +558,15 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         const body = await read();
         expect(['2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11'].map((date) => dayOf(body, date)?.status)).toEqual(['open', 'closed', 'closed', 'open']);
         expect(dayOf(body, '2026-06-09')?.reasons[0]).toMatchObject({ kind: 'rule', label: 'Your rule: closed Jun 9 to Jun 10 every year' });
+        // A season across the new year (Jun 13 to Jun 2 the next year): its two ends close, the days between stay open.
+        await server.connection.collection('tw_business_rules').deleteMany({ locationId: new Types.ObjectId(noted) });
+        const crossing = await suggest('closed|w=*|yearly=06-13..06-02', {
+          weekdays: null, startDate: '2026-06-01', season: { repeat: 'yearly', from: '06-13', to: '06-02' },
+        });
+        expect((await accept(crossing)).status).toBe(200);
+        const across = await read();
+        expect(['2026-05-31', '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-12', '2026-06-13', '2026-06-14'].map((date) => dayOf(across, date)?.status))
+          .toEqual(['open', 'closed', 'closed', 'open', 'open', 'closed', 'closed']);
       });
 
       it('a rule’s party and a note’s on the same day add up; a closure from either wins; a rule without a schedule changes nothing', async () => {

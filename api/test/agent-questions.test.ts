@@ -415,6 +415,16 @@ describe('business rule schedules (D31)', () => {
     }
   });
 
+  it('a yearly closure across the new year (D46) explains a gap over Dec 29 to Jan 2; the same days with no rule are asked', () => {
+    const missing = (day: string) => day >= '2025-12-29' && day <= '2026-01-02';
+    const asked = input('2025-10-06', TO, missing);
+    expect(questionsFor(asked).map((q) => q.id)).toEqual(['gap_2025-12-29_2026-01-02']);
+    const holidays = rule({ weekdays: null, startDate: '2025-06-01', season: { repeat: 'yearly', from: '12-20', to: '01-05' } });
+    expect(questionsFor({ ...asked, rules: [holidays] })).toEqual([]);
+    // Before the rule's start, last winter's days are not explained.
+    expect(questionsFor({ ...asked, rules: [{ ...holidays, startDate: '2026-01-01' }] }).map((q) => q.id)).toEqual(['gap_2025-12-29_2025-12-31']);
+  });
+
   it('a closed weekday asks nothing, whatever the schedules (D46: the weekday question is gone)', () => {
     const closedMondays = (day: string) => weekday(day) === 1;
     expect(questionsFor(input(FROM, TO, closedMondays, { rules: [rule({ weekdays: [1] })] }))).toEqual([]);
