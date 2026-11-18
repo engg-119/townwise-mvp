@@ -34,8 +34,8 @@ const detailsBody = z.object({
  * imports this module, so the number is repeated here (places-map.int.test.ts checks the two agree).
  */
 const MAX_MAP_PLACES = 25;
-/** 1 to MAX_MAP_PLACES distinct place ids, and the mode. */
-const mapBody = z.object({ placeIds: z.array(placeIdSchema).min(1).max(MAX_MAP_PLACES), theme: mapTheme })
+/** 1 to MAX_MAP_PLACES distinct place ids, the mode, and (D47) whether each pin carries its letter, A for the first. */
+const mapBody = z.object({ placeIds: z.array(placeIdSchema).min(1).max(MAX_MAP_PLACES), theme: mapTheme, labeled: z.boolean().default(false) })
   .refine((body) => new Set(body.placeIds).size === body.placeIds.length);
 
 /** Address component types that can name the town, in the order a town outside the twelve takes its name. */
@@ -137,12 +137,14 @@ export async function placesDetails(ctx: TownwiseContext, req: Request, res: Res
 }
 
 /**
- * Request `{ placeIds, theme? }`; answers `{ map }`, the signed map of every place (a mint pin each, in the order
- * given) in the mode `theme` names (dark without one), or null while the map is off. Signing is local: it never calls
+ * Request `{ placeIds, theme?, labeled? }`; answers `{ map }`, the signed map of every place (a mint pin each, in the
+ * order given; with `labeled: true` (D47) each pin carries its letter, A for the first) in the mode `theme` names (dark without one), or null while the map is off. Signing is local: it never calls
  * Google and works with the Places search off.
  */
 export function placesMap(ctx: TownwiseContext, req: Request, res: Response): Promise<void> {
-  const { placeIds, theme } = parseInput(mapBody, req.body);
-  res.status(200).json({ map: ctx.placesMap?.mapOfPlaces(placeIds, theme) ?? null });
+  const { placeIds, theme, labeled } = parseInput(mapBody, req.body);
+  const signer = ctx.placesMap;
+  const map = signer === null ? null : labeled ? signer.mapOfLabeledPlaces(placeIds, theme) : signer.mapOfPlaces(placeIds, theme);
+  res.status(200).json({ map });
   return Promise.resolve();
 }
