@@ -6,11 +6,11 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - d6's `figureOf`, `no_data` and `no_forecast`, `headLine`, `CalendarWeek.web.tsx`, `DayTooltip.web.tsx` and spec 16.3;
   - 3710fb01 ("keep hover tooltips off the hovered day"), which changed `DayTooltip.web.tsx` and `CalendarWeek.web.tsx` after this branch's base.
   - Resolve conflicts in d6's favor for the first tooltip line and the cell status, then record the baseline: `npm test -w @ckeith26/expo-shell -- test/portal/calendar test/portal/home`.
-- [ ] 0.2 Confirm D49 is still this change's in the reservation list and unused in develop's `docs/portal/spec.md`. Check whether `suggest-closure-rules` (D46) has landed. If it has, merge it and keep:
+- [x] 0.2 Confirm D49 is still this change's in the reservation list and unused in develop's `docs/portal/spec.md`. Check whether `suggest-closure-rules` (D46) has landed. If it has, merge it and keep:
   - its `noteCovers` seasons;
   - its `reasons.ts` season words;
   - its `RuleSchedule.season`.
-- [ ] 0.3 Ask the owner, in plain words:
+- [x] 0.3 Ask the owner, in plain words:
   - to accept or change the design's [CONFIRM]s;
   - the chat question: if he does not answer, chat's charts will still not list what is on each day;
   - and tell him that his Nov 16 example was booked by the forecast run itself with no note behind it, so it will still show no name until he saves a note for that day with an Event name.
@@ -183,7 +183,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - `docs/portal/tuning-chat.md`: `list_notes`, `get_day`, `propose_note`.
   - `client/app/(marketing)/privacy.tsx`: the Notes line gains the event name.
   - `client/src/portal/README.md`: page ownership for `entries.ts`, `AgendaCard.tsx`, the agenda and the `c_` page.
-- [ ] 7.2 Independent UI review, web and native, by an agent that did not build it. It must judge the work ready on:
+- [x] 7.2 Independent UI review, web and native, by an agent that did not build it. It must judge the work ready on:
   - the month grid at 1280, 800 and 375px;
   - the tooltip;
   - the week view;
@@ -193,8 +193,8 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - a calendar file's P27;
   - the note form's Event name, empty on Make a note;
   - actual and forecast figures on every surface (decision 10), the tooltip's and panel's comparison and the month line (decision 11), at 1280px, 375px and on native.
-- [ ] 7.3 `/review` of the branch, then `npm run verify` after asking the release session that the laptop is free.
-- [ ] 7.4 Push only after the owner's go. He checks these on the local dev servers:
+- [x] 7.3 `/review` of the branch, then `npm run verify` after asking the release session that the laptop is free.
+- [x] 7.4 Push only after the owner's go. He checks these on the local dev servers:
   - a closed day with a named event;
   - Nov 11 with one Veterans Day;
   - "US holidays" opening its page;
@@ -217,3 +217,10 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 - [x] 10.5 S4: on a phone a narrow Home cell drops "forecast" and prints its figure at 13px (`week.ts` `narrowCaption`). Tests: `week.test.ts`, `month-grid-status.test.web.tsx`, `month-grid.test.native.tsx`.
 - [x] 10.6 S5: Your data's list has its own "Uploads and files" heading under the Calendars group (`DataPage.tsx`). Test: `page.test.web.tsx`.
 - [x] 10.7 Nits 2, 3, 5, 6, 8 and 11: sticky dropped from the spec (5.7); "Open the calendar" above the month line; no "Your calendar" line on a calendar's own page; month headings h4; a withheld file event's kind words once; no full stop after a note's own title. The rest are known limits in design.md.
+
+Verification record (2026-11-18, session ce):
+- 0.2: D49 is unique in develop's spec, and D46 is merged with its `RuleSchedule.season`, season words and `noteCovers` seasons kept.
+- 0.3: the owner was asleep. Under the release coordinator's overnight rules, the defaults ship with their [CONFIRM]s, and the owner is told the chat question and the Nov 16 forecast-run booking in the session summary.
+- 7.2: an independent browser UI review on a copy of local data, signed in as a test staff user, said READY AFTER FIXES. After a91a8422 to 851c9a15 it said READY, with Home's cells measured unclipped at 375, 768, 1024 and 1440.
+- 7.3: an independent whole-branch code review said SHIP AFTER FIXES; the fixes are 729381e0 to d8f55999. The full `npm run verify` runs in CI. Before the push, the merged head passed typecheck, eslint on changed files, API unit (1451), the touched integration files (233 and 545), and the client calendar, home, data, analytics, estimates, locations, rules, ui and chat suites (2305).
+- 7.4: the owner's standing rule for this repo is that an independent agent's confident UI review replaces his browser check. The listed cases (a closed day with a named event, one Veterans Day, a linked calendar's page, and Home's past days filled with no empty space) were checked by that review.
