@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { plural } from '../format';
+import { webAria } from '../ui/aria';
 import { usePortal } from '../PortalProvider';
 import { PlaceMap } from '../places/PlaceMap';
 import { useLocationsMap, type LocationsMapAnswer } from '../places/useLocationsMap';
@@ -134,6 +135,21 @@ function namesByPlace(pinned: readonly { location: LocationSummary }[], org: Org
   return new Map([...names].map(([id, list]) => [id, list.join(', ')]));
 }
 
+/**
+ * A press: on web the pointer has already lit it by hovering (and a tap by focusing), so a press keeps it lit; on
+ * native, where there is no hover, a press toggles it.
+ */
+function pressed(lit: boolean, placeId: string): string | null {
+  return Platform.OS === 'web' || !lit ? placeId : null;
+}
+
+/** Where a pin's label goes: below the pin near the top of the map, and kept inside the frame near its sides. */
+function labelPlace(pin: { x: number; y: number }): object {
+  const vertical = pin.y < 0.4 ? styles.labelBelow : styles.labelAbove;
+  const horizontal = pin.x < 0.25 ? styles.labelLeft : pin.x > 0.75 ? styles.labelRight : styles.labelCenter;
+  return [vertical, horizontal];
+}
+
 /** The transparent targets over the image's pins, the ring on the lit one, and its name above it. */
 function PinTargets(props: { pins: LocationsMapAnswer['pins']; names: Map<string, string>; hover: Hover }): React.JSX.Element {
   const { pins, names, hover } = props;
@@ -145,19 +161,19 @@ function PinTargets(props: { pins: LocationsMapAnswer['pins']; names: Map<string
         return (
           <View key={pin.placeId} style={[styles.anchor, { left: `${String(pin.x * 100)}%`, top: `${String(pin.y * 100)}%` }]} pointerEvents="box-none">
             {lit ? (
-              <View style={styles.label} pointerEvents="none">
+              <View style={[styles.label, labelPlace(pin)]} pointerEvents="none">
                 <Text style={styles.labelText} numberOfLines={1}>{name}</Text>
               </View>
             ) : null}
             <Pressable
               role="button"
               accessibilityLabel={`${pin.letter}: ${name}`}
-              accessibilityState={{ selected: lit }}
+              {...(Platform.OS === 'web' ? webAria({ 'aria-pressed': lit }) : { accessibilityState: { selected: lit } })}
               onHoverIn={() => { hover.setActive(pin.placeId); }}
               onHoverOut={() => { hover.setActive(null); }}
               onFocus={() => { hover.setActive(pin.placeId); }}
               onBlur={() => { hover.setActive(null); }}
-              onPress={() => { hover.setActive(lit ? null : pin.placeId); }}
+              onPress={() => { hover.setActive(pressed(lit, pin.placeId)); }}
               style={[styles.target, lit ? styles.targetLit : null]}
             />
           </View>
@@ -208,7 +224,7 @@ function LocationRow(props: {
       focusable={false}
       onHoverIn={() => { light(true); }}
       onHoverOut={() => { light(false); }}
-      onPress={() => { light(!lit); }}
+      onPress={() => { light(pressed(lit, placeId ?? '') !== null); }}
       style={[styles.row, lit ? styles.rowLit : null]}
     >
       {body}
@@ -240,14 +256,18 @@ function MapsLink(props: { url: string; label: string; onLight?: (on: boolean) =
 const PIN = 24;
 
 const styles = StyleSheet.create({
-  frame: { width: '100%', maxWidth: 640, position: 'relative' },
+  // Clipped, so nothing over the map (a target, the ring, a label) can reach outside it.
+  frame: { width: '100%', maxWidth: 640, position: 'relative', overflow: 'hidden' },
   /** A pin's tip sits on its point; the target covers its head above. */
   anchor: { position: 'absolute', width: 0, height: 0 },
   target: { position: 'absolute', left: -16, top: -42, width: 32, height: 42, borderRadius: 16 },
   targetLit: { borderWidth: 2, borderColor: theme.color.white, backgroundColor: theme.color.mintRing },
-  label: {
-    position: 'absolute', bottom: 46, left: -120, width: 240, alignItems: 'center',
-  },
+  label: { position: 'absolute', width: 240 },
+  labelAbove: { bottom: 46 },
+  labelBelow: { top: 6 },
+  labelCenter: { left: -120, alignItems: 'center' },
+  labelLeft: { left: -16, alignItems: 'flex-start' },
+  labelRight: { right: -16, alignItems: 'flex-end' },
   labelText: {
     ...theme.type.small, color: theme.color.white, backgroundColor: theme.color.panel,
     borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: theme.space[2], paddingVertical: theme.space[1], overflow: 'hidden',

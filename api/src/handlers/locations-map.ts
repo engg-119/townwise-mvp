@@ -6,6 +6,9 @@
 // indefinitely); it is never written to Mongo, logged or answered except as a pin's position on the image. Without
 // every point (the search off, Google failing, a place Google doesn't know), the answer is the lettered map Google
 // fits itself (as POST /api/places/map with `labeled: true`) and no pins, so the page shows the map without hover.
+// A point is keyed by the place id, not the organization, and holds only Google's public position for a public place,
+// so a location changing its place or being deleted leaves it to expire rather than deleting it: nothing in it says
+// whose it was. A place Google doesn't know is remembered as such for a day.
 import { parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
@@ -24,9 +27,14 @@ const MAX_PINS = 26;
 
 const query = z.object({ theme: mapThemeSchema.default('dark') });
 
+/** ioredis adds REDIS_KEY_PREFIX (`townwise:` in production), so the key itself carries no prefix. */
 export function placePointKey(placeId: string): string {
-  return `townwise:place-point:${placeId}`;
+  return `place-point:${placeId}`;
 }
+
+/** A place Google doesn't know, remembered for a day so each view doesn't ask again. */
+export const NO_POINT = 'none';
+export const NO_POINT_TTL_SECONDS = 24 * 60 * 60;
 
 /** The distinct place ids in the organization's order, at most 26, each with its letter: as Settings letters them. */
 export function letteredPlaces(locations: readonly { placeId: string | null }[]): { placeId: string; letter: string }[] {
@@ -48,12 +56,17 @@ function parsePoint(raw: string | null): LatLng | null {
 
 /** The place's point from Valkey, else from Google (then kept); null when it can't be had. */
 async function pointOf(ctx: TownwiseContext, placeId: string): Promise<LatLng | null> {
-  const cached = parsePoint(await ctx.redis.get(placePointKey(placeId)));
+  const raw = await ctx.redis.get(placePointKey(placeId));
+  if (raw === NO_POINT) return null;
+  const cached = parsePoint(raw);
   if (cached !== null) return cached;
   if (ctx.places === null) return null;
   try {
     const at = await ctx.places.locate(placeId);
-    if (at === null) return null;
+    if (at === null) {
+      await ctx.redis.set(placePointKey(placeId), NO_POINT, 'EX', NO_POINT_TTL_SECONDS);
+      return null;
+    }
     await ctx.redis.set(placePointKey(placeId), `${String(at.lat)},${String(at.lng)}`, 'EX', PLACE_POINT_TTL_SECONDS);
     return at;
   } catch (err) {

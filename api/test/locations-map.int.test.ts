@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { PLACE_POINT_TTL_SECONDS, placePointKey } from '../src/handlers/locations-map.ts';
+import { NO_POINT, NO_POINT_TTL_SECONDS, PLACE_POINT_TTL_SECONDS, placePointKey } from '../src/handlers/locations-map.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
 import { createStaticMapSigner, STATIC_MAP_HEIGHT, STATIC_MAP_WIDTH } from '../src/places/static-map.ts';
 import { fitView } from '../src/places/view.ts';
@@ -93,6 +93,18 @@ describe('GET /api/org/locations/map', () => {
     const again = await get('/api/org/locations/map?theme=light');
     expect(fake.calls).toHaveLength(1);
     expect(((await again.json()) as { pins: unknown[] }).pins).toHaveLength(1);
+  });
+
+  it('a place Google doesn’t know is remembered for a day, so the next view asks nothing and falls back again', async () => {
+    await placeAt(await addLocation(server, { orgId, name: 'Gone' }), ID_A);
+    fake.script({ kind: 'json', status: 404, body: {} });
+    expect(((await (await get()).json()) as { pins: unknown[] }).pins).toEqual([]);
+    expect(await server.redis.get(placePointKey(ID_A))).toBe(NO_POINT);
+    const ttl = await server.redis.ttl(placePointKey(ID_A));
+    expect(ttl).toBeGreaterThan(NO_POINT_TTL_SECONDS - 60);
+    expect(ttl).toBeLessThanOrEqual(NO_POINT_TTL_SECONDS);
+    await get();
+    expect(fake.calls).toHaveLength(1);
   });
 
   it('never pins another organization’s places', async () => {
