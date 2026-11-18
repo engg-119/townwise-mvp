@@ -2,6 +2,7 @@ import { act, renderHook, waitFor } from '@testing-library/react-native';
 import { AppState, type AppStateStatus } from 'react-native';
 
 import { ApiError } from '../../src/api/client';
+import { lastChatKey, RETURN_MS, type LastChatStore } from '../../src/chat/lastChat';
 import { versionsOf } from '../../src/chat/tree';
 import {
   BUDGET_SPENT, canSend, chatReducer, CUT_OFF, FLUSH_MS, initialChatState, INTERRUPTED, LIST_POLL_MS, messageText, NOT_SAVED, RATING_FAILED,
@@ -10,7 +11,20 @@ import {
 import { CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
 import { daily } from './visuals-fixtures';
 
-interface Who { onNoteAdded?: () => void; readOnly?: boolean; userId?: string }
+interface Who { onNoteAdded?: () => void; readOnly?: boolean; userId?: string; viewAsId?: string | null; lastChat?: MemoryStore }
+
+/** lastChat.ts's store in memory: each hook gets its own unless a test shares one. */
+interface MemoryStore extends LastChatStore { values: Map<string, string> }
+
+function memoryStore(): MemoryStore {
+  const values = new Map<string, string>();
+  return {
+    values,
+    read: (key) => Promise.resolve(values.get(key) ?? null),
+    write: (key, value) => { values.set(key, value); return Promise.resolve(); },
+    remove: (key) => { values.delete(key); return Promise.resolve(); },
+  };
+}
 
 // Drafts live in memory for the whole test file, so each hook is a different person unless a test names one.
 let people = 0;
@@ -18,7 +32,10 @@ let people = 0;
 function hook(api: FakeChatApi, who: Who = {}): () => TuningChat {
   people += 1;
   const userId = who.userId ?? `user-${String(people)}`;
-  const options = { userId, readOnly: who.readOnly ?? false, ...(who.onNoteAdded === undefined ? {} : { onNoteAdded: who.onNoteAdded }) };
+  const options = {
+    userId, readOnly: who.readOnly ?? false, viewAsId: who.viewAsId ?? null, lastChat: who.lastChat ?? memoryStore(),
+    ...(who.onNoteAdded === undefined ? {} : { onNoteAdded: who.onNoteAdded }),
+  };
   return () => useTuningChat(api, 'l1', options);
 }
 
@@ -1890,4 +1907,92 @@ test('while History is open and a conversation is replying, the list is read eve
   } finally {
     jest.useRealTimers();
   }
+});
+
+// Owner request, 2026-11-18: "if i am on a chat and navigate somewhere else. if i go back to that page within 5 minutes
+// then i should still be on that chat instead of the new chat page".
+describe('coming back to the page within 5 minutes', () => {
+  const KEY = lastChatKey('returner', 'l1', null);
+
+  async function mount(api: FakeChatApi, store: MemoryStore, viewAsId: string | null = null) {
+    const rendered = await renderHook(hook(api, { userId: 'returner', lastChat: store, viewAsId }));
+    await waitFor(() => { expect(rendered.result.current.state.status).toBe('ready'); });
+    return rendered;
+  }
+
+  function leftAt(store: MemoryStore, key: string, conversationId: string, at: number): void {
+    store.values.set(key, JSON.stringify({ conversationId, leftAt: at }));
+  }
+
+  test('leaving on a conversation keeps only its id and the time; back within 5 minutes it opens, after that the new chat page, and the memory goes', async () => {
+    const api = fakeChatApi();
+    const store = memoryStore();
+    const first = await mount(api, store);
+    await opened(first.result, 'c1');
+    const before = Date.now();
+    await first.unmount();
+    const kept = JSON.parse(store.values.get(KEY) ?? 'null') as Record<string, unknown>;
+    expect(Object.keys(kept).sort()).toEqual(['conversationId', 'leftAt']);
+    expect(kept.conversationId).toBe('c1');
+    expect(kept.leftAt).toBeGreaterThanOrEqual(before);
+
+    const back = await mount(api, store);
+    await waitFor(() => { expect(back.result.current.state).toMatchObject({ conversationId: 'c1', conversationLoading: false }); });
+    expect(shown(back.result).map(([role]) => role)).toEqual(['user', 'assistant']);
+    await back.unmount();
+
+    leftAt(store, KEY, 'c1', Date.now() - RETURN_MS - 1000);
+    const later = await mount(api, store);
+    expect(later.result.current.state).toMatchObject({ conversationId: null, messages: [] });
+    expect(store.values.has(KEY)).toBe(false);
+    // Leaving on the new chat page keeps nothing.
+    await later.unmount();
+    expect(store.values.has(KEY)).toBe(false);
+  });
+
+  test('a conversation kept with a live turn reattaches to it, ahead of the list’s live turn', async () => {
+    const api = fakeChatApi();
+    const store = memoryStore();
+    leftAt(store, KEY, 'c1', Date.now() - 60_000);
+    api.summary = { ...SUMMARY, conversations: [...SUMMARY.conversations, { id: 'c9', title: 'Other', updatedAt: LIVE_AT, turnCount: 1 }], liveTurn: { conversationId: 'c9', turnId: 'turn-8' } };
+    api.conversation = LIVE_VIEW;
+    const { result } = await mount(api, store);
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api)).toMatchObject({ method: 'GET', path: `${TAIL}?after=0` });
+    expect(result.current.state).toMatchObject({ conversationId: 'c1', streaming: true });
+    expect(api.conversationReads).toEqual(['/api/org/locations/l1/chat/c1']);
+  });
+
+  test('a conversation deleted meanwhile (404) opens the new chat page and forgets it', async () => {
+    const api = fakeChatApi();
+    const store = memoryStore();
+    leftAt(store, KEY, 'gone', Date.now() - 1000);
+    api.reads['/api/org/locations/l1/chat/gone'] = () => refusal(404, 'not_found');
+    const { result } = await mount(api, store);
+    await waitFor(() => { expect(store.values.has(KEY)).toBe(false); });
+    expect(result.current.state).toMatchObject({ conversationId: null, conversationLoading: false, error: null, messages: [] });
+  });
+
+  test('New chat forgets the conversation kept', async () => {
+    const api = fakeChatApi();
+    const store = memoryStore();
+    leftAt(store, KEY, 'c1', Date.now() - 1000);
+    const { result } = await mount(api, store);
+    await waitFor(() => { expect(result.current.state.conversationId).toBe('c1'); });
+    await act(() => { result.current.newConversation(); });
+    expect(store.values.has(KEY)).toBe(false);
+  });
+
+  test('each view-as target keeps its own, apart from the person’s own', async () => {
+    const api = fakeChatApi();
+    const store = memoryStore();
+    leftAt(store, lastChatKey('returner', 'l1', 'target-1'), 'c1', Date.now() - 1000);
+    for (const viewAsId of [null, 'target-2']) {
+      const other = await mount(api, store, viewAsId);
+      expect(other.result.current.state.conversationId).toBeNull();
+      await other.unmount();
+    }
+    const target = await mount(api, store, 'target-1');
+    await waitFor(() => { expect(target.result.current.state.conversationId).toBe('c1'); });
+  });
 });

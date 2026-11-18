@@ -28,6 +28,8 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 
 afterEach(() => {
   cleanup();
+  // TownwiseAI keeps the conversation it closed on in localStorage (src/chat/lastChat.ts): each test opens a new page.
+  localStorage.clear();
   width = 320;
   act(() => { window.dispatchEvent(new Event('resize')); });
 });

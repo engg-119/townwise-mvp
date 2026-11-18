@@ -26,7 +26,8 @@ import { serveAbout } from './about-fakes';
 
 // TownwiseAI's questions on native (spec P25; contract section 7): ?panel=questions (Home's link) opens the sheet on
 // phones and the column from 1024px, the questions show inline on the landing, and Something else… sends its message to
-// the chat before answering `other`. Nothing goes to device storage.
+// the chat before answering `other`. Device storage holds at most the conversation the page closed on (an id and a
+// time, src/chat/lastChat.ts), never the words.
 
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
 
@@ -143,5 +144,10 @@ test('the landing shows the questions under the chips, and Something else… sen
     expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/gap_2026-05-12_2026-05-13', body: { answer: 'other' } }]);
   });
   expect(screen.getByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
-  for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
+  for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) {
+    for (const call of jest.mocked(SecureStore[name]).mock.calls) {
+      expect(call[0]).toMatch(/^townwise\.chatReturn\./);
+      expect(JSON.stringify(call)).not.toContain(WORDS);
+    }
+  }
 });

@@ -38,6 +38,8 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   resetDrafts();
 });
 

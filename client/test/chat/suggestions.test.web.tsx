@@ -44,6 +44,8 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   resetDrafts();
   resetProfiles();
   resetVersionFocus();

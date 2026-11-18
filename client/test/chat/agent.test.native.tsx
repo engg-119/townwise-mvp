@@ -28,7 +28,8 @@ import { PUBLISHED, serveAbout } from './about-fakes';
 // P25 TownwiseAI on native (spec 16.3, D26): the chat page and its side panel inside the portal, against a fake of
 // the chat and side panel routes. The Pillars: every tool call is a card and the Based on line comes from the
 // cards (transparency); the How TownwiseAI works panel and each question's help line (explainability); "Leave out
-// guest names" under the composer, view-as with every write disabled, nothing in device storage (privacy).
+// guest names" under the composer, view-as with every write disabled, nothing in device storage but the conversation
+// the page closed on, an id and a time (privacy).
 
 afterEach(async () => {
   await cleanup();
@@ -880,7 +881,7 @@ describe('the portal’s client (spec 4.3)', () => {
   });
 });
 
-test('nothing goes to device storage', async () => {
+test('nothing goes to device storage while the page is open; leaving it keeps only the conversation’s id and a time', async () => {
   const { chat } = await renderAgent(meOf(ACCESS.member));
   const store = Object.values(SecureStore).filter((value) => jest.isMockFunction(value));
   expect(store).toContain(SecureStore.setItemAsync);
@@ -888,10 +889,17 @@ test('nothing goes to device storage', async () => {
   await send('Hello');
   await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'Half typed');
   await act(() => {
+    turn(chat).emit('conversation', { id: 'c2', title: 'Hello', turnId: 'turn-1' });
     turn(chat).emit('text', { delta: 'Hi.' });
     turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });
     turn(chat).end();
   });
   expect(await screen.findByText('Hi.')).toBeTruthy();
   for (const fn of store) expect(fn).not.toHaveBeenCalled();
+  await cleanup();
+  const kept = jest.mocked(SecureStore.setItemAsync).mock.calls;
+  expect(kept).toHaveLength(1);
+  expect(kept[0]?.[0]).toMatch(/^townwise\.chatReturn\./);
+  expect(Object.keys(JSON.parse(kept[0]?.[1] ?? '{}') as object).sort()).toEqual(['conversationId', 'leftAt']);
+  for (const fn of store) expect(JSON.stringify(fn.mock.calls)).not.toMatch(/Hello|Half typed|Hi\./);
 });

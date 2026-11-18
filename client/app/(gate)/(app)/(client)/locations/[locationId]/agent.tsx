@@ -56,7 +56,8 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   const { desktop } = useBreakpoint();
   // A note saved from a card or an answer changes the location's notes count: the organization is read again on leaving.
   const markOrgStale = useOrgRefreshOnLeave();
-  const chat = useTuningChat(api, location.id, { userId: me.user.id, readOnly, onNoteAdded: markOrgStale });
+  // Back within 5 minutes, the page opens the conversation it closed on, kept per person, location and view-as target.
+  const chat = useTuningChat(api, location.id, { userId: me.user.id, readOnly, onNoteAdded: markOrgStale, viewAsId: me.viewAs?.target.userId ?? null });
   const panel = useAgentPanel(api, location.id, markOrgStale);
   const about = useLoad(useCallback(() => fetchEstimatesAbout(api, location.id), [api, location.id]));
   const params = useLocalSearchParams<{

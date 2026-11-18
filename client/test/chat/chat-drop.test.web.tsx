@@ -39,6 +39,8 @@ if (typeof globalThis.ResizeObserver !== 'function') globalThis.ResizeObserver =
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   resetDrafts();
   jest.useRealTimers();
   Reflect.deleteProperty(window, 'matchMedia');

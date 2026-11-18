@@ -68,6 +68,8 @@ function setWidth(next: number): void {
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   // Drafts and the name outlive the page in memory, as they do between visits in one session.
   resetDrafts();
   resetProfiles();
@@ -610,6 +612,25 @@ test('History marks a conversation TownwiseAI is replying in, and the mark goes 
   expect(api.summaryLoads).toBe(loads + 1);
   expect(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' })).toBeTruthy();
 }, 10_000);
+
+test('leaving the page on a conversation and coming back opens it again, keeping only its id and a time in this browser', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  await openEarlierChat();
+  cleanup();
+  const kept = Object.keys(localStorage).filter((key) => key.startsWith('townwise.chatReturn.'));
+  expect(kept).toHaveLength(1);
+  expect(Object.keys(JSON.parse(localStorage.getItem(kept[0] ?? '') ?? '{}') as object).sort()).toEqual(['conversationId', 'leftAt']);
+  renderAt('/locations/l1/agent', api);
+  expect(await screen.findByText('We close for the holidays.')).toBeTruthy();
+  // New chat forgets it: back again, the landing.
+  fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+  expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+  cleanup();
+  expect(Object.keys(localStorage).filter((key) => key.startsWith('townwise.chatReturn.'))).toEqual([]);
+  renderAt('/locations/l1/agent', api);
+  expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+});
 
 describe('on phones, where the header stays put as the landing and the thread replace each other, so focus goes where it does on wider screens', () => {
   test('opening a conversation gives focus to History, and New chat from the thread keeps it on New chat', async () => {

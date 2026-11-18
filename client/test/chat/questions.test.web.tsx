@@ -53,6 +53,8 @@ function setWidth(next: number): void {
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   resetDrafts();
   resetProfiles();
   resetVersionFocus();

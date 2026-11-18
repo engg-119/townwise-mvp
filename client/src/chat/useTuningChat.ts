@@ -10,6 +10,8 @@ import {
   type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
+import { forgetChat, lastChatKey, recallChat, rememberChat, type LastChatStore } from './lastChat';
+import { lastChatStore, onPageLeave } from './lastChatStore';
 import { isHiddenTool, type SourceLink, type ToolStep } from './tools';
 import { siblingAt, withTurn, type TreeNode } from './tree';
 import type { Visual } from './visuals/schema';
@@ -46,6 +48,9 @@ import { onWake } from './wake';
 // locations, so a send elsewhere meanwhile answers 409 `chat_turn_in_progress`: the text stays in the composer, the
 // page names the chat still replying (`runningElsewhere`) with a link to it, and reads the list every 3 seconds until
 // that turn ends, when the notice goes and a send can go.
+//
+// Leaving the page on a conversation and coming back within 5 minutes opens it again (lastChat.ts), reattaching to a
+// turn still live in it; after that, or for a conversation the server no longer has, the page opens on a new chat.
 
 export type CardStatus = 'open' | 'editing' | 'saving' | 'saved' | 'dismissed';
 
@@ -835,6 +840,10 @@ export interface TuningChatOptions {
   readOnly: boolean;
   /** Runs after each note a card saves, so the page can mark the location's notes count stale. */
   onNoteAdded?: () => void;
+  /** The view-as target's user id (spec 15.5), else null: the conversation the page closed on is kept per target. */
+  viewAsId?: string | null;
+  /** Where that is kept (lastChat.ts); the platform's own store by default. */
+  lastChat?: LastChatStore;
 }
 
 export function canSend(state: TuningChatState): boolean {
@@ -965,6 +974,8 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 
 export function useTuningChat(api: ApiClient, locationId: string, options: TuningChatOptions): TuningChat {
   const { userId, readOnly, onNoteAdded } = options;
+  const store = options.lastChat ?? lastChatStore;
+  const returnKey = lastChatKey(userId, locationId, options.viewAsId ?? null);
   const [state, setState] = useState(() => ({ ...initialChatState(), draft: readDraft(draftKey(userId, locationId, null)) }));
   const [generation, setGeneration] = useState(0);
   // The state after the last action, ahead of the render that draws it: a send that follows a stop builds on it.
@@ -1017,20 +1028,24 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     dispatch({ type: 'event', event: { type: pending.kind, delta }, key: nextKey(), at: '' });
   }
 
-  // The newest render's openConversation, for the load below: a turn still live here opens its conversation.
-  const reopen = useRef<(id: string) => void>(() => undefined);
+  // The newest render's openConversation, for the load below: the conversation the page closed on, or a turn still
+  // live here, opens.
+  const reopen = useRef<(id: string, recalled: boolean) => void>(() => undefined);
   useEffect(() => {
     reopen.current = openConversation;
   });
 
   useEffect(() => {
     let cancelled = false;
-    void loadChat(api, locationId).then(
-      (summary) => {
+    // The conversation the page closed on within 5 minutes, read beside the list (a store that fails is nothing kept).
+    void Promise.all([loadChat(api, locationId), recallChat(store, returnKey, Date.now()).catch(() => null)]).then(
+      ([summary, recalled]) => {
         if (cancelled) return;
         dispatch({ type: 'loaded', summary });
-        // A refresh mid-reply, or a second tab: the turn's conversation opens and its reply is followed.
-        if (summary.liveTurn !== null) reopen.current(summary.liveTurn.conversationId);
+        // Back within 5 minutes: that conversation, reattached if its turn is live. Else a refresh mid-reply, or a
+        // second tab: the turn's conversation opens and its reply is followed.
+        if (recalled !== null) reopen.current(recalled, true);
+        else if (summary.liveTurn !== null) reopen.current(summary.liveTurn.conversationId, false);
       },
       (error: unknown) => { if (!cancelled) dispatch({ type: 'loadFailed', notFound: isStatus(error, 404), error: describeError(error) }); },
     );
@@ -1044,7 +1059,21 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       pending.timer = null;
       pending.text = '';
     };
-  }, [api, locationId, generation, dispatch]);
+  }, [api, locationId, generation, dispatch, store, returnKey]);
+
+  // The page closing (its unmount, or on web the tab closing or reloading) keeps the conversation it shows, or forgets
+  // the one kept when it shows a new chat; a page that never loaded changes nothing.
+  useEffect(() => {
+    const leave = (): void => {
+      const now = latest.current;
+      if (now.status === 'ready') void rememberChat(store, returnKey, now.conversationId, Date.now());
+    };
+    const stopListening = onPageLeave(leave);
+    return () => {
+      stopListening();
+      leave();
+    };
+  }, [store, returnKey]);
 
   // A wake reads a dropped stream again at once, and closes an open one to read it again from its cursor (it may be
   // dead after the app or tab was suspended). A turn without its id yet is left alone: it can't be read back.
@@ -1409,7 +1438,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     run({ type: 'send', content, attachments: [...attachments], userKey, replyKey, request }, request, retries, telling, returned);
   }
 
-  function openConversation(id: string): void {
+  /** `recalled`: the conversation the page closed on; one the server no longer has opens a new chat instead. */
+  function openConversation(id: string, recalled = false): void {
     // The conversation whose reply the page follows is open already.
     if (live.current !== null && latest.current.conversationId === id) return;
     const leaving = live.current !== null;
@@ -1424,7 +1454,14 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         else dispatch({ type: 'opened', id, shown: shownOf(load, id) });
       },
       (error: unknown) => {
-        if (token === opening.current) dispatch({ type: 'openFailed', id, error: describeError(error) });
+        if (token !== opening.current) return;
+        if (recalled && isStatus(error, 404)) {
+          void forgetChat(store, returnKey);
+          opening.current += 1;
+          dispatch({ type: 'new', draft: draftFor(null) });
+          return;
+        }
+        dispatch({ type: 'openFailed', id, error: describeError(error) });
       },
     );
     // The list shows the conversation left as it is now.
@@ -1637,12 +1674,14 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     stopAndSend,
     newConversation: () => {
       const leaving = live.current !== null;
+      // New chat forgets the conversation kept for coming back.
+      void forgetChat(store, returnKey);
       letGo();
       opening.current += 1;
       dispatch({ type: 'new', draft: draftFor(null) });
       if (leaving) refresh();
     },
-    openConversation,
+    openConversation: (id) => { openConversation(id); },
     deleteConversation: async (id) => {
       await removeConversation(api, locationId, id);
       if (latest.current.conversationId === id) opening.current += 1;
