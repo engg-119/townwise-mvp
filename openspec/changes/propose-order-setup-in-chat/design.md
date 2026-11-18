@@ -110,3 +110,19 @@ Built: Decision 4's move, the tool object with its check, run and views (not reg
 - The integration tests seed stored calls, as `orders.int.test.ts` does for the other kinds. The turn-driven tests wait for phase B.
 - `proposalSummary` takes a `CutWording` (cap, limit, rest); the default is D41's sentence, and `setupCard.ts` exports the chat's as `CHAT_CUT`.
 - The preview keeps the leads of its two lists (`changesLead`, `problemsLead`) apart from its prose `lines`, so the card can place each list under its own lead.
+
+### Phase B (2026-11-18, same branch)
+
+Built: the turn's `sent` and the registry append, the prompt rule, the card in the chat, the handoff on Ordering setup, the docs and the privacy wording.
+
+- `TurnFiles.sent` is a required `Map<string, SentFile>` in `registry.ts`. Eight test builders gained it, not seven: `api/test/chat.test.ts` builds a context that runs `read_data_item` too.
+- The prompt holds no digits (a rule of `api/test/chat.test.ts`), so it says "at most sixty items".
+- `OrderProposalCard.tsx` still makes the card's one GET, for every kind, and hands a `setup` card to `OrderSetupCard.tsx`; the client's `fetchSetupProposal` is used by Ordering setup alone.
+- `SetupProposal.tsx` reads `?proposal=` itself and takes two counters from the editor (`loads`, `saves`), so `SetupEditor.tsx` gained four small edits. After a save it renders nothing and calls `router.setParams({ proposal: undefined })`.
+- The card shows no actions under view-as and once the suggestions are in the setup. A setup that fails to load says so and offers nothing.
+- The privacy wording shipped unapproved, in its own commit, with a `[CONFIRM]` marker on D56. The page's date line was left alone.
+- Not done: the timing spike (0.3) and the independent UI review (6.3).
+
+### Rebased onto `resumable-chat-turns` (2026-11-18)
+
+That change landed on `develop` while phase B was built, and the branch was rebased onto it. The one conflict in code was `api/src/handlers/chat.ts`, where the turn's `files` gained `sent: new Map(attached?.sent)` again inside the detached run. `'propose_order_setup'` joined `DISPLAY_TOOLS` in `api/src/chat/turn.ts`. The three lines in `client/src/chat/useTuningChat.ts` and the tool list in `api/test/chat.int.test.ts` merged cleanly.
