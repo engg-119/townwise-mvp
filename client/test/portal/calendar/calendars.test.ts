@@ -111,8 +111,19 @@ describe('statusWords', () => {
 
   test('every status a Google calendar records has its words, key_mismatch its own for Google', () => {
     const words = (status: string): string | null => statusWords(status, 'google');
-    expect(words('google_revoked'))
-      .toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.');
+    // Revoked, by who can reconnect it: anyone else unless told, the person who added it here or, on native, on the web.
+    expect(words('google_revoked')).toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. Ask whoever added it to reconnect, or remove it.');
+    expect(statusWords('google_revoked', 'google', 'other')).toBe(words('google_revoked'));
+    expect(statusWords('google_revoked', 'google', 'here')).toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. Reconnect, or remove it.');
+    expect(statusWords('google_revoked', 'google', 'web'))
+      .toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. Reconnect on the web, or remove it.');
+    // Google calendars off: no Google option is named, as the help and native's line name none.
+    expect(statusWords('google_revoked', 'google', 'none')).toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. You can remove it.');
+    // Only google_revoked depends on it: key_mismatch still says remove and add again, since a fresh token can't open
+    // calendar ids sealed under an old key.
+    expect(statusWords('key_mismatch', 'google', 'here')).toBe('Townwise can’t open this Google connection any more. Remove the calendar and add it again.');
+    expect(statusWords('google_not_found', 'google', 'here')).toBe(words('google_not_found'));
+    expect(statusWords('google_revoked', 'link', 'here')).toBe('Couldn’t refresh this link.');
     expect(words('google_not_found'))
       .toBe('Couldn’t refresh: this Google calendar was deleted or is no longer shared with the account that added it.');
     expect(words('google_forbidden')).toBe('Couldn’t refresh: Google refused to share this calendar’s events.');

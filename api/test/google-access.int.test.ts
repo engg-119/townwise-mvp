@@ -382,8 +382,9 @@ describe('with Google calendars on', () => {
     await addGoogle(t.locationId, t.member, SHARED_ID);
     server.clock.advance(MINUTE);
     google.calls.length = 0;
-    // removeLocation stops at its first sweep after locations.remove.
-    const spy = failNextDeleteMany('TwUpload');
+    // removeLocation stops at a sweep after locations.remove. Since D44 the org admin's delete removes the sales data,
+    // uploads and notes before the row, so the chats sweep is the first delete that only happens after it.
+    const spy = failNextDeleteMany('TwChatConversation');
     try {
       expect(await send(`/api/org/locations/${t.locationId}`, t.admin.session, { method: 'DELETE' })).toMatchObject({ status: 500, body: { error: 'internal' } });
     } finally {
@@ -472,7 +473,7 @@ describe('with Google calendars off and the calendar key set', () => {
       orgId: t.orgId, locationId: t.locationId, connectionId, key: KEY, googleCalendarId: SHARED_ID,
     });
     const listed = await send(calendarsPath(t.locationId), t.member.session);
-    expect(listed.body.google).toEqual({ available: false, connected: false, clientId: null });
+    expect(listed.body.google).toEqual({ available: false, connected: false, clientId: null, canConnect: false });
     expect(listed.body.calendars).toEqual([expect.objectContaining({ id: calendarId, kind: 'google', host: null })]);
     expect(await send(`${calendarsPath(t.locationId)}/${calendarId}/refresh`, t.member.session, { method: 'POST' }))
       .toMatchObject({ status: 503, body: { error: 'google_calendar_unavailable' } });

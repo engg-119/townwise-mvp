@@ -45,6 +45,12 @@ export const aiReadSchema = z.object({
   calibration: z.object({ status: z.string(), id: z.string().nullable() }).nullable(),
   /** The caller may undo it: done and made something, or failed or skipped after it began adding. */
   canUndo: z.boolean(),
+  /**
+   * D46: the suggested closure rules the read stored, and those still waiting (what an undo removes); 0 from an API
+   * before them.
+   */
+  rulesSuggested: z.number().default(0),
+  rulesWaiting: z.number().default(0),
 });
 export type AiRead = z.infer<typeof aiReadSchema>;
 

@@ -59,6 +59,6 @@ test('the page carries its date, with nothing left saying staff must turn foreca
   forecastsParagraph();
   const text = screen.getByRole('main').textContent;
   expect(text).toContain('Effective November 5, 2026. Last updated November 18, 2026.');
-  expect(text).toContain('a forecast update it started keeps running, and goes live if it passes Townwise’s accuracy checks and your forecasts are on.');
+  expect(text).toContain('A forecast update it started keeps running, and goes live if it passes Townwise’s accuracy checks and your forecasts are on.');
   expect(text).not.toMatch(/turns forecasts on for you/);
 });

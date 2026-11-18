@@ -30,6 +30,12 @@ import type { DateRange } from './grid';
 // never stands alone. A day before today has no sizes and keeps the read's order. On the calendar leaves out a holiday,
 // event or term Why already names. The tooltip and Home's day detail take the three largest either way, in Why's order
 // and short words (shortReasons).
+// An outlook day (D52: after its run's forecast tier, more than 3 months after the run was made or 6 months after its
+// last sales) shows its middle figure marked "Outlook", says "Outlook about ..." in its label and tooltip, heads its
+// panel part "Outlook" and never claims 8 in 10, since no location's outlook has had that measured; a key line under the grid says what an
+// outlook is whenever a shown day is one (outlookKey). [CONFIRM: the outlook's words on the Calendar, Home and
+// TownwiseAI's visuals: a cell's middle figure marked "Outlook", its range in the day panel, and no "8 in 10" claim
+// for an outlook day]
 
 /** The filter chips, in toolbar order. `imported` ("Your calendar") shows only when the location has a calendar. */
 export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported'] as const;
@@ -163,9 +169,10 @@ export interface CalendarCell {
   /**
    * A day the forecast has closed or booked (before today, only when no guests were stored); before today, a
    * likely-closed day (spec D32); no_data, a day before today with neither stored guests nor a forecast; no_forecast,
-   * from today on, a day the answered forecast read doesn't cover.
+   * from today on, a day the answered forecast read doesn't cover; outlook, from today on, an open day in its run's
+   * outlook (D52), which keeps its figure.
    */
-  status: 'closed' | 'booked' | 'likely_closed' | 'no_data' | 'no_forecast' | null;
+  status: 'closed' | 'booked' | 'likely_closed' | 'no_data' | 'no_forecast' | 'outlook' | null;
   figure: CellFigure | null;
   /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
   noteGuests: number;
@@ -220,10 +227,10 @@ function figureOf(date: string, input: CalendarInput): FigureOf {
   }
   if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_forecast', words: 'No forecast.' };
   const words = [
-    `Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${rangeWords(day.low, day.high)}.`,
+    `${day.outlook ? 'Outlook' : 'Forecast'} about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${rangeWords(day.low, day.high)}.`,
     day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : null,
   ].filter((part) => part !== null).join(' ');
-  return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
+  return { status: day.outlook ? 'outlook' : null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
 }
 
 /** One day's cell from the reads in `input`, whichever range they were made for; today's week comes from `input.today`. */
@@ -282,8 +289,31 @@ export function statusWord(status: CalendarCell['status']): string | null {
     case 'likely_closed': return 'Likely closed';
     case 'no_data': return 'No data';
     case 'no_forecast': return 'No forecast';
+    case 'outlook': return 'Outlook';
     case null: return null;
   }
+}
+
+/**
+ * Whether a cell shows its status word in its figure's place: every status but an outlook day's, which keeps its figure
+ * (D52), and, from 641px, a booked day's, which says so in its top row over its party.
+ */
+export function statusTakesFigure(status: CalendarCell['status'], phone: boolean): boolean {
+  if (status === null || status === 'outlook') return false;
+  return phone || status !== 'booked';
+}
+
+/** The word in a cell's top row from 641px: a booked or outlook day's status word, else its figure's caption. */
+export function topRightOf(cell: Pick<CalendarCell, 'status' | 'figure'>): string | null {
+  return cell.status === 'booked' || cell.status === 'outlook' ? statusWord(cell.status) : captionOf(cell);
+}
+
+/** The key line under the grid when a shown day is an outlook day (D52). */
+export const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.';
+
+/** OUTLOOK_KEY when any of the shown cells is an outlook day; null otherwise. */
+export function outlookKey(cells: readonly Pick<CalendarCell, 'status'>[]): string | null {
+  return cells.some((cell) => cell.status === 'outlook') ? OUTLOOK_KEY : null;
 }
 
 // The day panel
@@ -292,6 +322,8 @@ export function statusWord(status: CalendarCell['status']): string | null {
 export type ForecastPart =
   | {
     kind: 'open'; low: number; mid: number; high: number; noteGuests: number;
+    /** An outlook day (D52): its part is headed “Outlook” and makes no 8 in 10 claim. */
+    outlook: boolean;
     /** Whose those guests are: “your notes”, “your rules” or “your notes and rules”. */
     from: string;
     /** The model's own range when notes changed the day; null otherwise. */
@@ -386,7 +418,7 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
   if (day.low === null || day.mid === null || day.high === null) return { kind: 'none', why: 'not_covered' };
   const model = day.noteGuests > 0 && day.model.low !== null && day.model.high !== null ? { low: day.model.low, high: day.model.high } : null;
   return {
-    kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, from: guestsFromWords(day), model,
+    kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, outlook: day.outlook, from: guestsFromWords(day), model,
     modelClosed: day.model.status === 'closed',
   };
 }
@@ -616,6 +648,14 @@ export interface ForecastWords {
   lines: string[];
 }
 
+/** An outlook day's sentence in place of the 8 in 10 one (D52). */
+export const OUTLOOK_RANGE = 'This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.';
+
+/** The Forecast part's heading: “Outlook” for an outlook day (D52), “Forecast” otherwise. */
+export function forecastLabel(part: ForecastPart): 'Forecast' | 'Outlook' {
+  return part.kind === 'open' && part.outlook ? 'Outlook' : 'Forecast';
+}
+
 /** The Forecast part's words. `locationName` is the shown name (shownLocationName). */
 export function forecastWords(part: ForecastPart, locationName: string): ForecastWords {
   switch (part.kind) {
@@ -625,12 +665,15 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
         return { figure, lines: [`Townwise’s model expects you closed. ${sentence(part.from)} open the day with ${plural(part.noteGuests, 'guest', 'guests')}.`] };
       }
       const likely = `Likely ${rangeWords(part.low, part.high)}.`;
-      if (part.model === null) return { figure, lines: [`${likely} About 8 in 10 days land in the range.`] };
+      // An outlook day's range has had no 8 in 10 measured live, so it says why it is wider instead (D52).
+      const claim = part.outlook ? OUTLOOK_RANGE : 'About 8 in 10 days land in the range.';
+      if (part.model === null) return { figure, lines: [`${likely} ${claim}`] };
+      const modelClaim = part.outlook ? '' : ' About 8 in 10 days land in that range.';
       return {
         figure,
         lines: [
-          likely,
-          `Townwise’s model: ${rangeWords(part.model.low, part.model.high)}. About 8 in 10 days land in that range. ${sentence(part.from)} add ${plural(part.noteGuests, 'guest', 'guests')}.`,
+          part.outlook ? `${likely} ${OUTLOOK_RANGE}` : likely,
+          `Townwise’s model: ${rangeWords(part.model.low, part.model.high)}.${modelClaim} ${sentence(part.from)} add ${plural(part.noteGuests, 'guest', 'guests')}.`,
         ],
       };
     }
@@ -700,7 +743,8 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
     if (day.status === 'closed') lines.push('Closed');
     else if (day.status === 'booked') lines.push(bookedWords(day));
     else if (day.mid !== null && day.low !== null && day.high !== null) {
-      lines.push(`About ${plural(Math.round(day.mid), 'guest', 'guests')} (${rangeWords(day.low, day.high)})`);
+      const about = `about ${plural(Math.round(day.mid), 'guest', 'guests')} (${rangeWords(day.low, day.high)})`;
+      lines.push(day.outlook ? `Outlook: ${about}` : `A${about.slice(1)}`);
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }

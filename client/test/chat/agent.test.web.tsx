@@ -411,13 +411,18 @@ describe('the composer', () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
-    await stream(() => { turn(api).emit('text', { delta: 'December was' }); });
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'How was December?', turnId: 'turn-1' });
+      turn(api).emit('text', { delta: 'December was' });
+    });
     const input = screen.getByLabelText(COMPOSER_LABEL);
     fireEvent.change(input, { target: { value: 'And January?' } });
     // Enter does nothing while a reply streams.
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(api.turns).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Stop and send' }));
+    // The stop route first; the send once the turn's stopped arrived.
+    expect(api.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/chat/c2/turns/turn-1/stop', body: {} }]);
     await waitFor(() => { expect(api.turns).toHaveLength(2); });
     expect(turn(api).body).toEqual({ content: 'And January?' });
     expect(screen.getByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
@@ -667,6 +672,8 @@ describe('a tool card', () => {
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
     await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
+    // The timeline starts closed (owner request, 2026-11-17).
+    fireEvent.click(screen.getByRole('button', { name: /^Working for/ }));
     return screen.getByText('your sales for Dec 1 to Dec 31, 2025');
   }
 
@@ -687,7 +694,7 @@ describe('a tool card', () => {
     expect(faded(await running(fakeChatApi()))).toBe(false);
   });
 
-  test('the counter alone shows it is working, a running tool shows as its row in the timeline, and the caret goes on done', async () => {
+  test('the counter alone shows it is working; the timeline starts closed, opens while it streams, shows a running tool as its row and stays open after done', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
@@ -695,6 +702,11 @@ describe('a tool card', () => {
     expect(screen.queryByText('Thinking…')).toBeNull();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
     await stream(() => { turn(api).emit('thinking', { delta: 'Weighing the weekend.' }); });
+    const toggle = screen.getByRole('button', { name: /^Working for \d+ seconds?$/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     expect(screen.queryByText('Thinking…')).toBeNull();
     await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
@@ -711,14 +723,12 @@ describe('a tool card', () => {
     });
     expect(screen.queryByText('▍')).toBeNull();
     expect(screen.queryByText(/^Working for/)).toBeNull();
-    // The timeline folds under a collapsed Worked for, which opens to the summary and the step.
-    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+    // The same button now reads Worked for, still open on the summary and the step.
     const worked = screen.getByRole('button', { name: /^Worked for \d+ seconds?$/ });
-    expect(worked.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(worked);
+    expect(worked).toBe(toggle);
     expect(worked.getAttribute('aria-expanded')).toBe('true');
-    expect(document.getElementById(worked.getAttribute('aria-controls') ?? '')).not.toBeNull();
-    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
+    expect(document.getElementById(worked.getAttribute('aria-controls') ?? '')?.contains(screen.getByText('Weighing the weekend.'))).toBe(true);
+    expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
   });
 
   test('the live region says what it starts reading and never the streamed text or a figure', async () => {
@@ -807,7 +817,7 @@ test('one primary: only the composer’s button has the white fill', async () =>
   await openEarlierChat();
   expect(screen.getByText('Proposed note')).toBeTruthy();
   const side = await openPanel();
-  await within(side).findByRole('button', { name: 'Yes, closed Mondays' });
+  await within(side).findByRole('button', { name: 'No, we were closed' });
   fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
   const send = screen.getByRole('button', { name: 'Send' });
   expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([send]);
@@ -884,8 +894,8 @@ test('under view-as every write is disabled in place and versions still switch b
   await openPanel();
   // Beside the landing, the cards are under its chips; the panel's column leaves them out.
   const cards = await screen.findByTestId('chat-landing-questions');
-  expectReadOnly(await within(cards).findByRole('button', { name: 'Yes, closed Mondays' }));
-  fireEvent.click(within(cards).getByRole('button', { name: 'Yes, closed Mondays' }));
+  expectReadOnly(await within(cards).findByRole('button', { name: 'No, we were closed' }));
+  fireEvent.click(within(cards).getByRole('button', { name: 'No, we were closed' }));
   // Reading is allowed: the target's conversation opens, with every action in place and disabled.
   await openEarlierChat();
   // The docked composer shows no example to accept, so Tab can't fill it.
@@ -1073,6 +1083,13 @@ describe('a proposal to keep text (D28)', () => {
       turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'running', input: { chars: 21 }, result: null });
       turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: { shown: true } });
     });
+    // Held while the reply works (owner, 2026-11-18): the card shows once it ends.
+    expect(screen.queryByRole('group', { name: 'Proposed for Your data' })).toBeNull();
+    await stream(() => {
+      turn(api).emit('text', { delta: 'I showed it to you as a card.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
     return screen.getByRole('group', { name: 'Proposed for Your data' });
   }
 
@@ -1083,15 +1100,8 @@ describe('a proposal to keep text (D28)', () => {
       proposal: { ...VIEW, status: 'saved', item: itemOf('f_kept', { name: 'Catering list.txt', via: 'townwise_ai', state: 'kept', outcome: 'reference' }) },
     });
     const card = await proposedItem(api);
-    // Until the turn is stored, the card waits: the text is never streamed, only read from the card's own route.
-    expect(within(card).getByText('The text shows here when this reply finishes.')).toBeTruthy();
-    expect(within(card).queryByRole('button', { name: 'Keep on Your data' })).toBeNull();
+    // The text is never streamed, only read from the card's own route.
     expect(screen.queryByText(/text to keep on Your data/)).toBeNull();
-    await stream(() => {
-      turn(api).emit('text', { delta: 'I showed it to you as a card.' });
-      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
-      turn(api).end();
-    });
     expect(await within(card).findByText('Party of 40 on Dec 12')).toBeTruthy();
     expect(within(card).getByText('Catering list')).toBeTruthy();
     expect(within(card).getByRole('region', { name: 'Text of Catering list' }).getAttribute('tabindex')).toBe('0');
@@ -1112,10 +1122,6 @@ describe('a proposal to keep text (D28)', () => {
     let answer: unknown = { proposal: { ...VIEW, status: 'dismissed' } };
     api.respond[PATH] = () => answer;
     const card = await proposedItem(api);
-    await stream(() => {
-      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
-      turn(api).end();
-    });
     fireEvent.click(await within(card).findByRole('button', { name: 'Not now' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Show the text' }));
     answer = chatRefusal(409, 'storage_full');
@@ -1125,15 +1131,20 @@ describe('a proposal to keep text (D28)', () => {
     expect(within(again).getByRole('button', { name: 'Keep on Your data' }).getAttribute('aria-disabled')).not.toBe('true');
   });
 
-  test('a reply that wasn’t saved has nothing to keep, and a call that showed nothing has no card', async () => {
+  test('a reply that wasn’t saved never shows its card, and a call that showed nothing has none', async () => {
     const api = fakeChatApi();
-    const card = await proposedItem(api);
+    renderAt('/locations/l1/agent', api);
+    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Keep this: Party of 40 on Dec 12' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
     await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Keep this' });
+      turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: { shown: true } });
       turn(api).emit('tool', { id: 'toolu_item_0002', name: 'propose_data_item', state: 'done', input: { chars: 3 }, result: { shown: false } });
       turn(api).fail(chatRefusal(500, 'internal'));
     });
-    expect(within(card).getByText('This reply wasn’t saved, so there’s nothing to keep from it. Paste the text on Your data to keep it.')).toBeTruthy();
-    expect(screen.getAllByRole('group', { name: 'Proposed for Your data' })).toHaveLength(1);
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy(); });
+    expect(screen.queryByRole('group', { name: 'Proposed for Your data' })).toBeNull();
     expect(api.writes.filter((write) => write.path.includes('item-proposals'))).toEqual([]);
   });
 
@@ -1185,7 +1196,7 @@ test('nothing goes to browser storage', async () => {
     const [notSure] = await within(side).findAllByRole('button', { name: 'Not sure' });
     if (notSure === undefined) throw new Error('no answer');
     fireEvent.click(notSure);
-    await within(side).findByText('Got it. TownwiseAI won’t ask about these days again.');
+    await within(side).findByText('Got it. TownwiseAI won’t ask about this day again.');
     expect(setItem).not.toHaveBeenCalled();
   } finally {
     setItem.mockRestore();
@@ -1383,5 +1394,76 @@ describe('files on the message (D36)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save and send' }));
     await waitFor(() => { expect(api.turns).toHaveLength(1); });
     expect(turn(api).body).toEqual({ conversationId: 'c1', content: 'We close for the holidays, all week.', parentId: null, attachments: [REF] });
+  });
+});
+
+// resumable-chat-turns on web: a turn runs on the server whatever the page does, so a refresh or a dropped network
+// picks the reply up again, and Stop stops it there.
+describe('a reply that outlives its connection', () => {
+  const AT = '2026-11-02T15:00:00.000Z';
+  const ASKED = { nodeId: 'u2', role: 'user', text: 'And January?', proposals: [], parts: [], at: AT };
+  /** CONVERSATION while a second turn runs: the path to the node it hangs under, and the person's message. */
+  const LIVE = {
+    ...CONVERSATION,
+    liveTurn: { turnId: 'turn-9', state: 'running', startedAt: AT, userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', message: ASKED },
+  };
+  const TAIL = '/api/org/locations/l1/chat/c1/turns/turn-9';
+  const BEGUN = { id: 'c1', title: 'Earlier chat', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-9' };
+
+  test('a refresh mid-reply shows the message and the reply so far and follows it; Stop stops it on the server', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE;
+    renderAt('/locations/l1/agent', api);
+    expect(await screen.findByText('And January?')).toBeTruthy();
+    expect(screen.getByText('We close for the holidays.')).toBeTruthy();
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api)).toMatchObject({ method: 'GET', path: `${TAIL}?after=0` });
+    await stream(() => {
+      turn(api).emit('conversation', BEGUN, 1);
+      turn(api).emit('text', { delta: 'January was quiet' }, 2);
+    });
+    expect(await screen.findByText('January was quiet')).toBeTruthy();
+    api.conversation = { ...LIVE, liveTurn: null };
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(await screen.findByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
+    expect(api.writes).toEqual([{ method: 'POST', path: `${TAIL}/stop`, body: {} }]);
+    expect(screen.getByText('January was quiet')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  test('a dropped network keeps the reply streaming; back online, or the tab back in view, it is read again at once, with no text twice', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    await send(api, 'And January?');
+    await stream(() => {
+      turn(api).emit('conversation', BEGUN, 1);
+      turn(api).emit('text', { delta: 'January ' }, 2);
+    });
+    api.conversation = LIVE;
+    await stream(() => { turn(api).fail(new ApiError('network', 'The connection closed before the reply finished.')); });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    expect(screen.queryByText(/didn’t finish|weren’t saved/)).toBeNull();
+    expect(api.turns).toHaveLength(1);
+    await stream(() => { window.dispatchEvent(new Event('online')); });
+    expect(api.turns).toHaveLength(2);
+    expect(turn(api)).toMatchObject({ method: 'GET', path: `${TAIL}?after=2` });
+    await stream(() => {
+      turn(api).emit('text', { delta: 'January ' }, 2);
+      turn(api).emit('text', { delta: 'was ' }, 3);
+      turn(api).fail(new ApiError('network', 'The connection closed before the reply finished.'));
+    });
+    await stream(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(api.turns).toHaveLength(3);
+    expect(turn(api).path).toBe(`${TAIL}?after=3`);
+    await stream(() => {
+      turn(api).emit('text', { delta: 'quiet.' }, 4);
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a2' }, 5);
+      turn(api).end();
+    });
+    expect(await screen.findByText('January was quiet.')).toBeTruthy();
+    expect(screen.queryByText(/January January/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
   });
 });

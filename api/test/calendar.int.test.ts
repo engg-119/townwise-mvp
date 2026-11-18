@@ -61,7 +61,7 @@ describe('GET /api/org/locations/:locationId/calendar', () => {
     expect(Object.keys(body).sort()).toEqual(['covers', 'events', 'researched', 'town']);
     expect(body.town).toEqual({ townId: 'hanover-nh', name: 'Hanover', state: 'NH' });
     expect(body.researched).toBe(true);
-    expect(body.covers).toEqual({ from: '2025-01-06', to: '2027-11-24' });
+    expect(body.covers).toEqual({ from: '2025-01-06', to: '2028-06-11' });
     expect(body.events.map((event) => event.id)).toEqual([
       'hanover-nh:2026-09-14:fall-term-classes',
       'hanover-nh:2026-11-17:fall-term-classes-end',

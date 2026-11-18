@@ -19,6 +19,8 @@ import { createForecastReader, type ForecastWindow } from '../src/forecasts/read
 import { rowsOf } from '../src/handlers/forecast-runs.ts';
 import type { PeopleInTownWindow } from '../src/people-in-town/estimate.ts';
 import type { PeopleData } from '../src/people-in-town/sources.ts';
+import { createAgentSuggestionStore } from '../src/stores/agent-suggestions.ts';
+import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { Town } from '../src/towns.ts';
 import { addGrant, addLocation, addNote, addOwnerCalendar, addSalesDay, addSeat, createOrg } from './helpers/fixtures.ts';
 import { runDays } from './helpers/lab.ts';
@@ -146,7 +148,7 @@ describe('GET /api/org/locations/:locationId/estimates/about', () => {
       location: { name: 'Hanover Room', town: { name: 'Hanover', state: 'NH' } },
       today: { date: '2026-06-01', weekday: 'Mon', timeZone: 'America/New_York', approximate: false },
       forecast: { run: null, live: null },
-      calendar: { researched: true, covers: { from: '2025-01-06', to: '2027-11-24' } },
+      calendar: { researched: true, covers: { from: '2025-01-06', to: '2028-06-11' } },
       people: { headcountInputs: [], sources: [] },
     });
   });
@@ -226,7 +228,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         { kind: 'weekday', label: 'Friday', effectPct: null, effect: null, sources: [], note: null, rule: null },
         { kind: 'term', label: 'Spring term classes', effectPct: null, effect: null, sources: expect.any(Array) as unknown, note: null, rule: null },
       ],
-      runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true, scored: true,
+      runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true, scored: true, outlook: false,
       model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0, moreRules: 0,
     });
     expect(body.days.find((day) => day.date === '2026-05-06')).toMatchObject({ actual: 130, inRange: false, madeAfterDay: false });
@@ -531,6 +533,42 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         expect(after.weeks).toHaveLength(3);
       });
 
+      it('D46: an open suggested closure rule changes nothing until a member confirms it; a confirmed yearly rule closes its season only', async () => {
+        const store = createAgentSuggestionStore(server.connection);
+        const scope = { orgId } as OrgScope;
+        const suggest = async (closureKey: string, ruleSchedule: Record<string, unknown>) => {
+          const id = new Types.ObjectId().toHexString();
+          await store.insertOne(scope, {
+            id, locationId: noted, week: '2026-06-01', source: 'file', fileId: new Types.ObjectId().toHexString(), text: 'Closed on Mondays',
+            schedule: schedule(ruleSchedule) as unknown as RuleSchedule, closureKey, now: server.clock.now(),
+          });
+          return id;
+        };
+        const mondays = await suggest('closed|w=1|ongoing', { startDate: '2026-06-01' });
+        expect(dayOf(await read(), '2026-06-08')).toMatchObject(UNCHANGED);
+        const accept = (id: string) => call(server, `/api/org/locations/${noted}/agent/rule-suggestions/${id}/accept`, { session: member, json: {} });
+        expect((await accept(mondays)).status).toBe(200);
+        expect(dayOf(await read(), '2026-06-08')).toMatchObject({ status: 'closed', mid: null });
+        await server.connection.collection('tw_business_rules').deleteMany({ locationId: new Types.ObjectId(noted) });
+        const season = await suggest('closed|w=*|yearly=06-09..06-10', {
+          weekdays: null, startDate: '2026-06-01', season: { repeat: 'yearly', from: '06-09', to: '06-10' },
+        });
+        expect(dayOf(await read(), '2026-06-09')).toMatchObject(UNCHANGED);
+        expect((await accept(season)).status).toBe(200);
+        const body = await read();
+        expect(['2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11'].map((date) => dayOf(body, date)?.status)).toEqual(['open', 'closed', 'closed', 'open']);
+        expect(dayOf(body, '2026-06-09')?.reasons[0]).toMatchObject({ kind: 'rule', label: 'Your rule: closed Jun 9 to Jun 10 every year' });
+        // A season across the new year (Jun 13 to Jun 2 the next year): its two ends close, the days between stay open.
+        await server.connection.collection('tw_business_rules').deleteMany({ locationId: new Types.ObjectId(noted) });
+        const crossing = await suggest('closed|w=*|yearly=06-13..06-02', {
+          weekdays: null, startDate: '2026-06-01', season: { repeat: 'yearly', from: '06-13', to: '06-02' },
+        });
+        expect((await accept(crossing)).status).toBe(200);
+        const across = await read();
+        expect(['2026-05-31', '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-12', '2026-06-13', '2026-06-14'].map((date) => dayOf(across, date)?.status))
+          .toEqual(['open', 'closed', 'closed', 'open', 'open', 'closed', 'closed']);
+      });
+
       it('a rule’s party and a note’s on the same day add up; a closure from either wins; a rule without a schedule changes nothing', async () => {
         await addRule('Rehearsal dinners on Saturdays', schedule({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40, weekdays: [6] }));
         await addRule('We are a cozy place', null);
@@ -628,6 +666,170 @@ describe('both routes', () => {
   });
 });
 
+type Stores = TownwiseTestServer['ctx']['stores'];
+
+/**
+ * A reader that reads every row of every published run and chooses each date from rows, as the reader did before D52:
+ * every run looks as if it had gaps, and every read answers every row.
+ */
+function everyRowReader(stores: Stores) {
+  return createForecastReader({
+    stores: {
+      ...stores,
+      forecasts: {
+        ...stores.forecasts,
+        published: async (...args: Parameters<Stores['forecasts']['published']>) => (await stores.forecasts.published(...args)).map((run) => ({ ...run, dayCount: -1 })),
+        rows: async (s: OrgScope, id: string) => stores.forecasts.rows(s, id, (await stores.forecasts.published(s, id)).map((run) => run.id)),
+      },
+    },
+  });
+}
+
+// D52: year-long runs, read straight from the reader with the spec's dates as its today.
+describe('year-long runs and the outlook (D52)', () => {
+  const scope = (): OrgScope => ({ orgId } as OrgScope);
+
+  /** A published run of `file`'s days, as a staff import makes it. */
+  async function publishRun(locationId: string, file: ForecastRunFile): Promise<string> {
+    const { run } = await server.ctx.stores.forecasts.upsertRun(scope(), locationId, {
+      id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: 'staff-0000', lab: null, now: server.clock.now(),
+    });
+    await server.ctx.stores.forecasts.writeRows(scope(), locationId, run.id, rowsOf(file, 'hanover-nh'));
+    await server.ctx.stores.forecasts.setStatus(scope(), run.id, { from: ['importing'], to: 'published', at: server.clock.now(), by: 'staff-0000' });
+    return run.id;
+  }
+
+  /** A run file whose sales end `dataThrough`, made the next day, with `length` days of middle `mid`. */
+  function runFile(dataThrough: string, length: number, mid = 50): ForecastRunFile {
+    const { days, weeks } = runDays(dataThrough, length);
+    return {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-03-01', dataThrough, madeAt: utcDay(new Date(`${dataThrough}T00:00:00.000Z`), 1),
+      frozen: null, interval: { level: 0.8, widened: true }, backtest: null,
+      days: days.map((day) => ({ ...day, low: mid - 12, mid, high: mid + 15, baseline: mid })),
+      weeks: weeks.map((each) => ({ ...each, low: (mid - 12) * each.openDays, mid: mid * each.openDays, high: (mid + 15) * each.openDays })),
+    };
+  }
+
+  async function locationNamed(name: string) {
+    const locationId = await addLocation(server, { orgId, name: `${name} ${randomUUID().slice(0, 6)}` });
+    const location = await server.ctx.stores.locations.find(scope(), locationId);
+    if (location === null) throw new Error('no location');
+    return location;
+  }
+
+  it('a read across the outlook boundary: days after the forecast tier, and a week holding one, are outlook', async () => {
+    const location = await locationNamed('Outlook Room');
+    // Made 2026-11-23 with sales through 2026-11-22, covering 2026-11-23 to 2027-11-23 (today plus 365).
+    await publishRun(location.id, runFile('2026-11-22', 366));
+    const reader = createForecastReader({ stores: server.ctx.stores });
+    const body = await reader.window(scope(), location, { from: '2027-02-16', to: '2027-03-01' }, '2026-11-23');
+    expect(body.days).toHaveLength(14);
+    expect(body.days.filter((day) => day.outlook).map((day) => day.date)).toEqual(eachDay('2027-02-23', '2027-03-01'));
+    expect(body.days.find((day) => day.date === '2027-02-22')).toMatchObject({ outlook: false, scored: false, mid: 50, low: 38, high: 65 });
+    expect(body.weeks.map((week) => [week.from, week.to, week.outlook])).toEqual([
+      ['2027-02-15', '2027-02-21', false], ['2027-02-22', '2027-02-28', true], ['2027-03-01', '2027-03-07', true],
+    ]);
+    expect(body).toEqual(await everyRowReader(server.ctx.stores).window(scope(), location, { from: '2027-02-16', to: '2027-03-01' }, '2026-11-23'));
+  });
+
+  it('a note adjusts an outlook day as it does a forecast day', async () => {
+    const location = await locationNamed('Outlook Note Room');
+    await publishRun(location.id, runFile('2026-11-22', 366));
+    await server.connection.collection('tw_notes').insertOne({
+      _id: new Types.ObjectId(), orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(location.id), kind: 'private_event',
+      startDate: '2027-02-27', endDate: '2027-02-27', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: 'A synthetic party',
+      startTime: null, endTime: null, createdBy: 'fixture', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+    });
+    const body = await createForecastReader({ stores: server.ctx.stores }).window(scope(), location, { from: '2027-02-22', to: '2027-02-28' }, '2026-11-23');
+    const day = body.days.find((each) => each.date === '2027-02-27');
+    expect(day).toMatchObject({ outlook: true, status: 'open', low: 108, mid: 120, high: 135, noteGuests: 70, model: { low: 38, mid: 50, high: 65 } });
+    expect(day?.reasons[0]).toMatchObject({ kind: 'note', note: { guests: 70, outcome: 'added' } });
+    expect(body.weeks).toEqual([expect.objectContaining({ from: '2027-02-22', to: '2027-02-28', mid: 7 * 50 + 70, noteGuests: 70, outlook: true })]);
+  });
+
+  it('52 year-long runs: a 42-day read in 2027 answers as an every-row reader and reads rows of the chosen runs only', async () => {
+    const location = await locationNamed('Year Weekly Room');
+    const today = '2026-06-01';
+    await server.connection.collection('tw_sales_days').insertMany(eachDay('2025-03-01', '2026-05-31').map((date, index) => ({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(location.id), date, guests: 60 + (index % 7) * 9 + (index % 5),
+      netSalesCents: null, uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+    })));
+    // 52 weekly runs, each reaching a year past its today, each a little different
+    for (let week = 0; week < 52; week += 1) {
+      await publishRun(location.id, runFile(utcDay(new Date('2025-06-01T00:00:00.000Z'), 7 * week), 365, 60 + (week % 9)));
+    }
+    const stores = server.ctx.stores;
+    const askedIds: string[][] = [];
+    const counted: number[] = [];
+    const spied = createForecastReader({
+      stores: {
+        ...stores,
+        forecasts: {
+          ...stores.forecasts,
+          rows: async (...args: Parameters<typeof stores.forecasts.rows>) => {
+            askedIds.push([...args[2]]);
+            const rows = await stores.forecasts.rows(...args);
+            counted.push(rows.length);
+            return rows;
+          },
+        },
+      },
+    });
+    const reference = everyRowReader(stores);
+    for (const range of [
+      { from: '2027-01-04', to: '2027-02-14' }, // 42 days in 2027: the newest run's outlook
+      { from: '2026-05-11', to: '2026-06-21' }, // across today
+      { from: '2025-12-01', to: '2026-01-11' }, // in the past, every day scored
+    ]) {
+      askedIds.length = 0;
+      counted.length = 0;
+      const answer = await spied.window(scope(), location, range, today);
+      expect(answer.available).toBe(true);
+      expect(answer).toEqual(await reference.window(scope(), location, range, today));
+      // The runs chosen for the read's days and a week either side, as the every-row reader chooses them
+      const around = await reference.window(scope(), location, { from: utcDay(new Date(`${range.from}T00:00:00.000Z`), -6), to: utcDay(new Date(`${range.to}T00:00:00.000Z`), 6) }, today);
+      const chosen = new Set(around.runs.map((run) => run.id));
+      expect(askedIds.flat().every((id) => chosen.has(id))).toBe(true);
+      expect(askedIds.flat().length).toBeGreaterThan(0);
+      // Rows grow with the read's days and the chosen runs' past days, never with the runs' reach (about 417 rows a run)
+      expect(counted.reduce((sum, each) => sum + each, 0)).toBeLessThan(chosen.size * 120);
+    }
+    // In 2027 every day comes from the newest run, made 2026-05-25, and is in its outlook (its tier ends 2026-08-24)
+    const outlook = await spied.window(scope(), location, { from: '2027-01-04', to: '2027-02-14' }, today);
+    expect(new Set(outlook.days.map((day) => day.runId)).size).toBe(1);
+    expect(outlook.days.every((day) => day.outlook) && outlook.weeks.every((week) => week.outlook)).toBe(true);
+    expect(await spied.latest(scope(), location.id, today)).toEqual(await reference.latest(scope(), location.id, today));
+  });
+
+  it('an imported run with a gap chooses by rows: the day it skips comes from the older run', async () => {
+    const location = await locationNamed('Gap Room');
+    await publishRun(location.id, runFile('2026-04-26', 91, 40));
+    const gapped = runFile('2026-05-03', 91, 70);
+    await publishRun(location.id, { ...gapped, days: gapped.days.filter((day) => day.date !== '2026-05-20') });
+    const range = { from: '2026-05-04', to: '2026-06-14' };
+    const answer = await createForecastReader({ stores: server.ctx.stores }).window(scope(), location, range, '2026-06-01');
+    expect(answer.days.find((day) => day.date === '2026-05-20')).toMatchObject({ mid: 40 });
+    expect(answer.days.filter((day) => day.mid === 40).map((day) => day.date)).toEqual(['2026-05-20']);
+    expect(answer).toEqual(await everyRowReader(server.ctx.stores).window(scope(), location, range, '2026-06-01'));
+  });
+
+  it('weeks from a gapped import and a gap-free run come in date order, as the every-row reader gives them', async () => {
+    const location = await locationNamed('Gap Weeks Room');
+    // The gap-free run supplies Apr 27 to May 3 (the gapped one saw those days); the gapped one every later week.
+    await publishRun(location.id, runFile('2026-04-26', 91, 40));
+    const gapped = runFile('2026-05-03', 91, 70);
+    await publishRun(location.id, { ...gapped, days: gapped.days.filter((day) => day.date !== '2026-05-20') });
+    const range = { from: '2026-04-27', to: '2026-06-07' };
+    const answer = await createForecastReader({ stores: server.ctx.stores }).window(scope(), location, range, '2026-06-01');
+    const froms = answer.weeks.map((week) => week.from);
+    expect(froms).toEqual([...froms].sort());
+    expect(froms[0]).toBe('2026-04-27');
+    expect(new Set(answer.weeks.map((week) => week.runId)).size).toBe(2);
+    expect(answer).toEqual(await everyRowReader(server.ctx.stores).window(scope(), location, range, '2026-06-01'));
+  });
+});
+
 // U13B. Last in the file: it moves the clock into the evening of June 1 in Hanover (June 2 in UTC).
 describe('the forecast reader with a year of weekly runs (D42)', () => {
   it('reads rows by a bounded range, and answers exactly as a reader that reads every row', async () => {
@@ -682,6 +884,7 @@ describe('the forecast reader with a year of weekly runs (D42)', () => {
       stores: { ...stores, forecasts: { ...stores.forecasts, rows: (s, id, runIds) => stores.forecasts.rows(s, id, runIds) } },
     });
     const all = await stores.forecasts.rows(scope, locationId, (await stores.forecasts.published(scope, locationId)).map((run) => run.id));
+    const reference = everyRowReader(stores);
     for (const range of [
       { from: '2026-05-11', to: '2026-06-21' }, // last weeks and the next three: 42 days
       { from: '2025-12-01', to: '2026-01-11' }, // in the past, every day scored
@@ -692,6 +895,8 @@ describe('the forecast reader with a year of weekly runs (D42)', () => {
       const answer = await ranged.window(scope, location, range, today);
       expect(answer.available).toBe(true);
       expect(answer).toEqual(await unranged.window(scope, location, range, today));
+      // Metadata choice equals row choice (D52): the same answer as a reader that chooses every date from every row
+      expect(answer).toEqual(await reference.window(scope, location, range, today));
       // Bounded: the window, a week either side, and the days of the runs it uses
       expect(asked.length).toBeGreaterThan(0);
       for (const bound of asked) {
@@ -701,6 +906,12 @@ describe('the forecast reader with a year of weekly runs (D42)', () => {
       // Every day is in about 13 weekly runs, so a span's rows grow with its days, never with the number of runs
       expect(Math.max(...counted)).toBeLessThan(all.length);
     }
+    // Around the closure note on 2026-04-18: its likely-closed scoring is the every-row reader's too
+    const april = { from: '2026-04-06', to: '2026-04-26' };
+    const aroundClosure = await ranged.window(scope, location, april, today);
+    expect(aroundClosure.days.find((day) => day.date === '2026-04-18')).toMatchObject({ scored: false });
+    expect(aroundClosure).toEqual(await reference.window(scope, location, april, today));
+    expect(await ranged.latest(scope, locationId, today)).toEqual(await reference.latest(scope, locationId, today));
     asked.length = 0;
     expect(await ranged.latest(scope, locationId, today)).toEqual(await unranged.latest(scope, locationId, today));
     expect(asked.every((bound) => bound !== undefined && daysBetween(bound.from, bound.to) <= 91)).toBe(true);

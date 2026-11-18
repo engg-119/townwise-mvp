@@ -1,4 +1,4 @@
-import { readdirSync } from 'node:fs';
+import { existsSync, readdirSync } from 'node:fs';
 import { join, sep } from 'node:path';
 
 import { CONTACT_HREF } from '../../src/marketing/links';
@@ -13,7 +13,7 @@ export const ROUTES = [
   '/locations/[locationId]/sales/upload', '/locations/[locationId]/data', '/locations/[locationId]/data/[ref]', '/locations/[locationId]/notes', '/locations/[locationId]/town',
   '/locations/[locationId]/orders', '/locations/[locationId]/orders/setup', '/locations/[locationId]/agent', '/locations/[locationId]/rules',
   '/locations/[locationId]/settings', '/locations/[locationId]/chat', '/team', '/settings',
-  '/admin', '/admin/orgs', '/admin/orgs/[orgId]', '/admin/people', '/admin/audit',
+  '/admin', '/admin/overview', '/admin/orgs', '/admin/orgs/[orgId]', '/admin/people', '/admin/audit',
 ];
 
 // The homepage sections the nav and footer link to (/#map and so on).
@@ -39,6 +39,10 @@ export function brokenHref(href: string, pageIds: readonly string[] = []): strin
   if (href.startsWith('https://')) return null;
   if (href.startsWith('#')) return pageIds.includes(href.slice(1)) ? null : `no element with id ${href}`;
   const [path = '', id] = href.split('#');
+  // A file the site serves from public/licenses/ (the open-source notices) resolves when it is there.
+  if (path.startsWith('/licenses/') && id === undefined) {
+    return existsSync(join(__dirname, '..', '..', 'public', ...path.split('/').filter((part) => part !== ''))) ? null : `no file ${path}`;
+  }
   if (!ROUTES.includes(path)) return `no route ${path}`;
   if (id !== undefined && !(path === '/' && HOME_SECTIONS.includes(id))) return `no section ${href}`;
   return null;

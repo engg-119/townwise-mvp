@@ -8,7 +8,7 @@ import { toDataURL } from 'qrcode';
 import type { AuthContext, AuthRuntime } from '../create-auth.ts';
 import { mountMethod } from '../http.ts';
 import { createRequireAuth, authOf } from '../middleware.ts';
-import { mfaVerifyBody, totpConfirmBody, totpDisableBody } from '../routes.ts';
+import { mfaVerifyBody, totpConfirmBody, totpDisableBody, totpResetBody } from '../routes.ts';
 import { hashToken } from '../sessions.ts';
 import { completeSignIn } from '../sign-in.ts';
 import { resolvePlatform } from '../transport.ts';
@@ -135,6 +135,7 @@ async function mfaVerify(rt: AuthRuntime, req: Request, res: Response): Promise<
     const claimed = step !== null && await rt.stores.totp.claimStep({
       userId: claims.sub,
       step,
+      verifiedSecretEnc: factor.secretEnc,
       ...(secretEnc !== undefined ? { secretEnc } : {}),
     });
     if (!claimed) {
@@ -172,7 +173,7 @@ async function disable(rt: AuthRuntime, req: Request, res: Response): Promise<vo
   let accepted = false;
   if (body.code !== undefined) {
     const step = verifyCode(secret, body.code, now);
-    accepted = step !== null && await rt.stores.totp.claimStep({ userId: ctx.userId, step });
+    accepted = step !== null && await rt.stores.totp.claimStep({ userId: ctx.userId, step, verifiedSecretEnc: factor.secretEnc });
   } else if (body.recoveryCode !== undefined) {
     accepted = await rt.stores.totp.consumeRecoveryCode({
       userId: ctx.userId,
@@ -187,6 +188,89 @@ async function disable(rt: AuthRuntime, req: Request, res: Response): Promise<vo
   res.status(204).end();
 }
 
+/**
+ * Reset, step 1 (Townwise local change): a person with two-step sign-in on proves themselves with a code from the
+ * current authenticator or a recovery code, and gets a new secret to add to another one. The new secret is only
+ * pending: the live secret, its recovery codes and `enabledAt` are untouched until `resetConfirm`, so a person who
+ * leaves keeps what they had. The proof is spent here (the code's step is claimed, the recovery code pulled), so the
+ * same proof never starts a second reset.
+ */
+async function resetStart(rt: AuthRuntime, req: Request, res: Response): Promise<void> {
+  const ctx = requireRecent(rt, req);
+  const body = parseInput(totpResetBody, req.body);
+  await rt.limits.consume('totpUser', ctx.userId);
+  await rt.limits.consume('totpUserDay', ctx.userId);
+  const factor = await rt.stores.totp.get(ctx.userId);
+  if (factor?.status !== 'enabled') throw new AppError(409, 'totp_not_enabled', 'TOTP is not enabled');
+  const user = await rt.stores.users.findById(ctx.userId);
+  if (user === null) throw new AppError(401, 'unauthenticated', 'Unauthenticated');
+  const context = secretContext(ctx.userId);
+  const now = rt.now();
+  let accepted = false;
+  if (body.code !== undefined) {
+    const step = verifyCode(rt.cipher.decrypt(factor.secretEnc, context), body.code, now);
+    accepted = step !== null && await rt.stores.totp.claimStep({ userId: ctx.userId, step, verifiedSecretEnc: factor.secretEnc });
+  } else if (body.recoveryCode !== undefined) {
+    accepted = await rt.stores.totp.consumeRecoveryCode({ userId: ctx.userId, codeHash: hashToken(body.recoveryCode) });
+  }
+  if (!accepted) throw new AppError(400, 'invalid_code', 'Invalid code');
+  const secret = generateSecret();
+  const expiresAt = new Date(now.getTime() + PENDING_MINUTES * 60 * 1000);
+  const started = await rt.stores.totp.startReset({
+    userId: ctx.userId,
+    pendingSecretEnc: rt.cipher.encrypt(secret, context),
+    pendingExpiresAt: expiresAt,
+    sessionId: ctx.sessionId,
+  });
+  if (!started) throw new AppError(409, 'totp_not_enabled', 'TOTP is not enabled');
+  const uri = otpauthUri({ issuer: rt.config.totpIssuer, account: user.email, secret });
+  const qrPngDataUrl = await toDataURL(uri, { errorCorrectionLevel: 'M', margin: 2, width: 240 });
+  rt.logger.info({ userId: ctx.userId }, 'auth.totp_reset_started');
+  res.status(200).json({ secret, otpauthUri: uri, expiresAt: expiresAt.toISOString(), qrPngDataUrl });
+}
+
+/**
+ * Reset, step 2: a code from the NEW authenticator, in the session that started the reset and before it expires,
+ * swaps the secret in one compare-and-set, replaces the recovery codes and signs out the other sessions. Anything
+ * else leaves the factor as it was. The limiter is reset only here, never by the proof alone.
+ */
+async function resetConfirm(rt: AuthRuntime, req: Request, res: Response): Promise<void> {
+  const ctx = requireRecent(rt, req);
+  const body = parseInput(totpConfirmBody, req.body);
+  await rt.limits.consume('totpUser', ctx.userId);
+  await rt.limits.consume('totpUserDay', ctx.userId);
+  const now = rt.now();
+  const factor = await rt.stores.totp.get(ctx.userId);
+  if (
+    factor?.status !== 'enabled' || factor.pendingSecretEnc === null || factor.pendingSessionId !== ctx.sessionId
+    || factor.pendingExpiresAt === null || factor.pendingExpiresAt.getTime() <= now.getTime()
+  ) {
+    throw new AppError(400, 'enrollment_expired', 'Enrollment expired');
+  }
+  const step = verifyCode(rt.cipher.decrypt(factor.pendingSecretEnc, secretContext(ctx.userId)), body.code, now);
+  if (step === null) throw new AppError(400, 'invalid_code', 'Invalid code');
+  const codes = generateRecoveryCodes();
+  const swapped = await rt.stores.totp.confirmReset({
+    userId: ctx.userId,
+    pendingSecretEnc: factor.pendingSecretEnc,
+    sessionId: ctx.sessionId,
+    step,
+    recoveryCodeHashes: codes.hashes,
+    now,
+  });
+  if (!swapped) throw new AppError(400, 'enrollment_expired', 'Enrollment expired');
+  await rt.stores.sessions.revokeAllForUser({
+    userId: ctx.userId,
+    reason: 'totp_enabled',
+    now,
+    exceptId: ctx.sessionId,
+  });
+  await rt.limits.reset('totpUser', ctx.userId);
+  await rt.limits.reset('totpUserDay', ctx.userId);
+  rt.logger.info({ userId: ctx.userId }, 'auth.totp_reset');
+  res.status(200).json({ recoveryCodes: codes.display });
+}
+
 export function mountTotpRoutes(router: Router, rt: AuthRuntime): void {
   const requireAuth = createRequireAuth(rt);
   mountMethod(router, 'post', '/mfa/verify', (req, res) => mfaVerify(rt, req, res));
@@ -198,5 +282,11 @@ export function mountTotpRoutes(router: Router, rt: AuthRuntime): void {
   });
   router.post('/totp/disable', requireAuth, (req, res, next) => {
     void disable(rt, req, res).catch(next);
+  });
+  router.post('/totp/reset', requireAuth, (req, res, next) => {
+    void resetStart(rt, req, res).catch(next);
+  });
+  router.post('/totp/reset/confirm', requireAuth, (req, res, next) => {
+    void resetConfirm(rt, req, res).catch(next);
   });
 }

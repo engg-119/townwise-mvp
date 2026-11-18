@@ -146,7 +146,7 @@ describe('an empty conversation', () => {
 });
 
 describe('a reply', () => {
-  test('shows Working for with no Thinking… line, then a running card, then text; folds them under Worked for when done, with a Based on line from them', async () => {
+  test('shows Working for with no Thinking… line, its timeline closed until pressed, then a running card, then text; open, it stays open as Worked for when done, with a Based on line from them', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('How was December?');
     expect(screen.getByText('How was December?')).toBeTruthy();
@@ -155,7 +155,11 @@ describe('a reply', () => {
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
     await act(() => { turn(chat).emit('thinking', { delta: 'Weighing the weekend.' }); });
-    expect(await screen.findByText('Weighing the weekend.')).toBeTruthy();
+    const working = await screen.findByRole('button', { name: /^Working for \d+ seconds?$/ });
+    expect(working.props.accessibilityState).toMatchObject({ expanded: false });
+    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+    await fireEvent.press(working);
+    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     expect(screen.queryByText('Thinking…')).toBeNull();
     await act(() => { turn(chat).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
     expect(screen.getByText('Reading')).toBeTruthy();
@@ -169,12 +173,9 @@ describe('a reply', () => {
     expect(await screen.findByText('December was steady.')).toBeTruthy();
     expect(screen.queryByText(/^Working for/)).toBeNull();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
-    // Folded under Worked for: the summary and the row show on pressing it, and the row opens to what it read.
-    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
-    expect(screen.queryByText('31 days: guests on 31, net sales on 30')).toBeNull();
+    // Still open under Worked for: the summary and the row show, and the row opens to what it read.
     const worked = screen.getByRole('button', { name: /^Worked for \d+ seconds?$/ });
-    expect(worked.props.accessibilityState).toMatchObject({ expanded: false });
-    await fireEvent.press(worked);
+    expect(worked.props.accessibilityState).toMatchObject({ expanded: true });
     expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Read your sales for Dec 1 to Dec 31, 2025. 31 days: guests on 31, net sales on 30' }));
     expect(screen.getByText('Days with net sales')).toBeTruthy();
@@ -184,7 +185,10 @@ describe('a reply', () => {
   test('a stopped reply keeps what arrived, says it wasn’t saved, and Try again sends the message again', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('Hello');
-    await act(() => { turn(chat).emit('text', { delta: 'Half a rep' }); });
+    await act(() => {
+      turn(chat).emit('conversation', { id: 'c2', title: 'Hello', turnId: 'turn-1' });
+      turn(chat).emit('text', { delta: 'Half a rep' });
+    });
     await fireEvent.press(screen.getByRole('button', { name: 'Stop' }));
     expect(await screen.findByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
     expect(screen.getByText('Half a rep')).toBeTruthy();
@@ -224,8 +228,8 @@ describe('a proposed note', () => {
       turn(chat).emit('text', { delta: 'Here is a note.' });
       turn(chat).emit('proposal', { id: PROPOSAL_ID, proposal: PROPOSAL });
     });
-    // Until the turn is stored, the actions wait.
-    disabled('Save note');
+    // Held while the reply works (owner, 2026-11-18): the card shows once it ends.
+    expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
     await act(() => {
       turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(chat).end();
@@ -413,16 +417,16 @@ describe('the side panel', () => {
     const side = await openPanel();
     expect(within(side).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
     expect(await within(side).findByText('2 open')).toBeTruthy();
-    expect(within(side).getByRole('heading', { name: 'Are you closed on Mondays?' })).toBeTruthy();
-    expect(within(side).getByText('Main Street Bar has no sales on 41 of the 52 Mondays in weeks with sales on other days.')).toBeTruthy();
-    expect(within(side).getByText('Yes saves a closure note for Mondays from Nov 3, 2025 to Nov 2, 2026. Something else lets you tell TownwiseAI in the chat. Any answer stops this question.')).toBeTruthy();
+    expect(within(side).getByRole('heading', { name: 'Were you open on Sat, Jan 24, 2026?' })).toBeTruthy();
+    expect(within(side).getByText('Only 1 guest was recorded. Saturdays usually have about 100.')).toBeTruthy();
+    expect(within(side).getByText('Townwise treats this day as likely closed until you say. Yes saves a note that you were open with fewer guests, so the day counts. No saves a closure note for it. Something else lets you tell TownwiseAI in the chat.')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Were you closed Feb 1 to Feb 3, 2026?' })).toBeTruthy();
     expect(within(side).getByText('There are no sales for these 3 days.')).toBeTruthy();
     expect(within(side).getByText('TownwiseAI’s own research (unusual nights, town events it finds) is planned.')).toBeTruthy();
 
-    await fireEvent.press(within(side).getByRole('button', { name: 'Yes, closed Mondays' }));
-    expect(await within(side).findByText('Saved a note: Closure, Mondays, Nov 3, 2025 to Nov 2, 2026. TownwiseAI treats those days as closed.')).toBeTruthy();
-    expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/weekday_1_2025-11-03_2026-11-02', body: { answer: 'closed' } }]);
+    await fireEvent.press(within(side).getByRole('button', { name: 'No, we were closed' }));
+    expect(await within(side).findByText('Saved a note: Closure, Sat, Jan 24, 2026. TownwiseAI treats that day as closed.')).toBeTruthy();
+    expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/likely_closed_2026-01-24', body: { answer: 'closed' } }]);
     expect(within(side).getByText('1 open')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Questions and activity (1)' })).toBeTruthy();
     await fireEvent.press(within(side).getByRole('button', { name: 'Not sure' }));
@@ -531,9 +535,9 @@ describe('the side panel', () => {
     chat.panelError = null;
     await fireEvent.press(first(within(side).getAllByRole('button', { name: 'Try again' })));
     // Read, they show under the landing's chips, and the column beside it leaves them out.
-    expect(await within(await screen.findByTestId('chat-landing-questions')).findByText('Are you closed on Mondays?')).toBeTruthy();
+    expect(await within(await screen.findByTestId('chat-landing-questions')).findByText('Were you open on Sat, Jan 24, 2026?')).toBeTruthy();
     expect(within(side).queryByText('Couldn’t load TownwiseAI’s questions.')).toBeNull();
-    expect(within(side).queryByText('Are you closed on Mondays?')).toBeNull();
+    expect(within(side).queryByText('Were you open on Sat, Jan 24, 2026?')).toBeNull();
   });
 });
 
@@ -552,7 +556,7 @@ describe('phones', () => {
     await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'Half typed');
     await fireEvent.press(questions);
     // In the sheet (the landing shows the same question under its chips).
-    expect(await within(await screen.findByTestId('agent-side')).findByText('Are you closed on Mondays?')).toBeTruthy();
+    expect(await within(await screen.findByTestId('agent-side')).findByText('Were you open on Sat, Jan 24, 2026?')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Close' }));
     expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('Half typed');
     // After the first send the header stays above the thread, and the composer stays under it.
@@ -762,9 +766,9 @@ describe('view-as', () => {
     disabled('Which days last month were unusual?');
     await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
     await openPanel();
-    disabled('Yes, closed Mondays');
+    disabled('No, we were closed');
     // Beside the landing, the cards are under its chips; the panel's column leaves them out.
-    await fireEvent.press(within(screen.getByTestId('chat-landing-questions')).getByRole('button', { name: 'Yes, closed Mondays' }));
+    await fireEvent.press(within(screen.getByTestId('chat-landing-questions')).getByRole('button', { name: 'No, we were closed' }));
     // Reading is allowed: the target's past conversation opens, and its actions are disabled too.
     await fireEvent.press(screen.getByRole('button', { name: 'History' }));
     disabled('Delete Earlier chat');
@@ -803,7 +807,7 @@ describe('the portal’s client (spec 4.3)', () => {
 
   test('a view-as grant that expired meanwhile lands staff on the console', async () => {
     const { router } = await refusedChat(viewAsMe(ACCESS.member), staffMe());
-    await waitFor(() => { expect(router.getPathname()).toBe('/admin'); });
+    await waitFor(() => { expect(router.getPathname()).toBe('/admin/overview'); });
   });
 
   test('a note saved from a card reads the organization again on leaving, so Locations shows the new count', async () => {

@@ -2,7 +2,8 @@
 // message. One document per rule. `text` is the owner's own words: no function here logs, and nothing copies it into an
 // audit event. The unique { orgId, locationId, key } index refuses a rule that differs only in case. A rule may carry a
 // `schedule` (D31): a note's fields but its detail, which the forecast read applies as it applies notes (spec 14.5). A
-// rule stored without one has no `schedule` field at all.
+// rule stored without one has no `schedule` field at all. A schedule may repeat each year (D46, `season`); a schedule
+// stored without one has no `season` field.
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
@@ -22,7 +23,18 @@ export type RuleVia = 'page' | 'townwise_ai';
 export interface RuleSchedule extends Omit<NoteContent, 'detail' | 'endDate'> {
   /** Inclusive; null: no end ("ongoing"). */
   readonly endDate: string | null;
+  /**
+   * D46: the months and days the schedule covers every year from its start, `to` before `from` crossing the new year;
+   * `endDate` is then null. Absent or null: none. [CONFIRM: a yearly rule runs every year from its start until it is
+   * deleted; Feb 29 can't start or end a season; a season is shorter than a year]
+   */
+  readonly season?: RuleSeason | null;
 }
+
+/** A yearly season: 'MM-DD' to 'MM-DD', both inclusive. */
+export interface RuleSeason { readonly repeat: 'yearly'; readonly from: string; readonly to: string }
+
+interface SeasonFields { repeat: 'yearly'; from: string; to: string }
 
 interface ScheduleFields {
   kind: RuleSchedule['kind'];
@@ -33,6 +45,8 @@ interface ScheduleFields {
   expectedGuests: number | null;
   startTime: string | null;
   endTime: string | null;
+  /** Absent on a schedule with no season. */
+  season?: SeasonFields;
 }
 
 interface BusinessRuleFields {
@@ -60,7 +74,17 @@ function scheduleSchema(): Schema<ScheduleFields> {
     expectedGuests: { type: Number, default: null },
     startTime: { type: String, default: null },
     endTime: { type: String, default: null },
+    season: { type: seasonSchema(), required: false },
   }, { _id: false, strict: true, versionKey: false });
+}
+
+/** A rule schedule's yearly season (D46); also tw_agent_suggestions' content (stores/agent-suggestions.ts). */
+export function seasonSchema(): Schema<SeasonFields> {
+  return new Schema<SeasonFields>({
+    repeat: { type: String, required: true, enum: ['yearly'] },
+    from: { type: String, required: true, match: /^\d{2}-\d{2}$/ },
+    to: { type: String, required: true, match: /^\d{2}-\d{2}$/ },
+  }, { _id: false, strict: 'throw', versionKey: false });
 }
 
 function businessRuleSchema(): Schema<BusinessRuleFields> {
@@ -130,6 +154,13 @@ export interface BusinessRuleStore {
   removeForOrg(scope: OrgScope): Promise<number>;
 }
 
+/** True when both schedules have the same season, or neither has one (absent and null alike). */
+export function sameSeason(a: RuleSeason | null | undefined, b: RuleSeason | null | undefined): boolean {
+  const x = a ?? null;
+  const y = b ?? null;
+  return x === null || y === null ? x === y : x.from === y.from && x.to === y.to;
+}
+
 /** The duplicate check's key: the same rule in another case is the same rule. */
 export function ruleKey(text: string): string {
   return text.toLowerCase();
@@ -145,12 +176,17 @@ function toSchedule(fields: ScheduleFields): RuleSchedule {
     expectedGuests: fields.expectedGuests ?? null,
     startTime: fields.startTime ?? null,
     endTime: fields.endTime ?? null,
+    ...(fields.season === undefined ? {} : { season: { repeat: 'yearly', from: fields.season.from, to: fields.season.to } }),
   };
 }
 
-/** The stored schedule, field by field. */
+/** The stored schedule, field by field: a season only when it has one. */
 function scheduleFieldsOf(schedule: RuleSchedule): ScheduleFields {
-  return { ...schedule, weekdays: schedule.weekdays === null ? null : [...schedule.weekdays] };
+  const { season, ...rest } = schedule;
+  return {
+    ...rest, weekdays: schedule.weekdays === null ? null : [...schedule.weekdays],
+    ...(season === undefined || season === null ? {} : { season: { repeat: 'yearly', from: season.from, to: season.to } }),
+  };
 }
 
 function toRule(doc: BusinessRuleFields & { _id: Types.ObjectId }): BusinessRuleRecord {

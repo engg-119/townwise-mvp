@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
@@ -145,6 +148,13 @@ test('the count includes a spotted calendar event and the follow-ups of notes wh
   };
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, agent));
   expect(await screen.findByRole('link', { name: '4 questions from TownwiseAI' })).toBeTruthy();
+});
+
+test('the count of TownwiseAI’s questions includes its open suggested rules (D46)', async () => {
+  const ruleSuggestions = (JSON.parse(readFileSync(join(__dirname, '../../chat/agent-panel.json'), 'utf8')) as { panel: { ruleSuggestions: unknown[] } }).panel.ruleSuggestions;
+  const agent = { questions: QUESTIONS, activity: [], ruleSuggestions };
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, agent));
+  expect((await screen.findByRole('link', { name: '4 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
 });
 
 test('the last week chart prints its key and scale; the history heatmap is one picture with no focusable cell', async () => {
@@ -395,6 +405,26 @@ test('with a published forecast, This month shows each future day’s guests and
   expect(within(detail).getByText('Saturday: usually more guests')).toBeTruthy();
   expect(within(detail).getByText('Sample game: more guests in Townwise’s model')).toBeTruthy();
   expect(within(detail).queryByText(/^Fall term/)).toBeNull();
+});
+
+test('a stale run on Home (D52): the days after its forecast tier read Outlook in This month, the day detail and This week', async () => {
+  const days = [];
+  for (let day = 5; day <= 30; day += 1) {
+    const date = `2026-11-${String(day).padStart(2, '0')}`;
+    days.push(day < 9 ? forecastDay({ date }) : forecastDay({ date, low: 150, mid: 212, high: 290, model: { status: 'open', low: 150, mid: 212, high: 290 }, outlook: true }));
+  }
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf(days)), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-09').textContent).toContain('Outlook'); });
+  expect(cellOf('2026-11-09').textContent).toContain('212');
+  expect(cellOf('2026-11-09').getAttribute('aria-label')).toContain('Outlook about 212 guests, 150 to 290.');
+  expect(cellOf('2026-11-06').textContent).not.toContain('Outlook');
+  fireEvent.pointerOver(cellOf('2026-11-09'));
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  expect(within(detail).getByText('Outlook')).toBeTruthy();
+  expect(within(detail).getByText('About 212 guests, likely 150 to 290.')).toBeTruthy();
+  const strip = screen.getByRole('table', { name: 'This week, day by day' });
+  expect(within(strip).getAllByText(sentence('Outlook: about 212 guests, 150 to 290'))).toHaveLength(3);
+  expect(within(strip).getAllByText(sentence('About 212 guests, 180 to 240'))).toHaveLength(4);
 });
 
 test('the day detail’s Why rows end in their source chips, and On the calendar leaves out what Why names, as the Calendar does', async () => {

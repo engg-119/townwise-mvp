@@ -104,7 +104,7 @@ function serveGoogle(fake: CalendarFake, google: GoogleCalendars): void {
   }) as typeof json;
 }
 
-async function renderPage(google: GoogleCalendars = { available: true, connected: false, clientId: CLIENT_ID }): Promise<{ api: FakePortalApi; fake: CalendarFake }> {
+async function renderPage(google: GoogleCalendars = { available: true, connected: false, clientId: CLIENT_ID, canConnect: true }): Promise<{ api: FakePortalApi; fake: CalendarFake }> {
   const days = Array.from({ length: 20 }, (_, at) => forecastDay({ date: `2026-11-${String(11 + at)}` }));
   const fake = calendarFake({ events: [townEvent({ start: '2026-11-21', title: 'Dartmouth home football' })], forecasts: { '2026-11': forecastOf(days) } });
   serveGoogle(fake, google);

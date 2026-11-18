@@ -78,7 +78,7 @@ const SECOND = ics(
 );
 const JUNE = '?from=2026-06-01&to=2026-06-30';
 /** The list's `google` while Google calendars are off (connect-google-calendar): no Google client is passed here. */
-const GOOGLE_OFF = { available: false, connected: false, clientId: null };
+const GOOGLE_OFF = { available: false, connected: false, clientId: null, canConnect: false };
 
 /** FIRST padded to exactly `bytes` bytes with lines of 40 to 79 bytes that the parser passes over: about 26,000 CRLFs. */
 function padded(bytes: number): string {
@@ -224,7 +224,7 @@ describe('with the calendar key', () => {
     const calendar = calendarOf(added);
     expect(calendar).toEqual({
       id: expect.any(String) as string, label: LABEL, kind: 'file', host: null, eventCount: 2, skippedRepeating: 1, status: 'ok',
-      lastSuccessAt: now, lastAttemptAt: now, createdAt: now,
+      lastSuccessAt: now, lastAttemptAt: now, createdAt: now, mine: false,
     });
     expect(sent).toEqual([]);
     expect((await send(base(t), t.admin)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
@@ -308,7 +308,7 @@ describe('with the calendar key', () => {
     const calendar = calendarOf(added);
     expect(calendar).toEqual({
       id: expect.any(String) as string, label: LABEL, kind: 'link', host: 'calendar.google.com', eventCount: 2, skippedRepeating: 1,
-      status: 'ok', lastSuccessAt: now.toISOString(), lastAttemptAt: now.toISOString(), createdAt: now.toISOString(),
+      status: 'ok', lastSuccessAt: now.toISOString(), lastAttemptAt: now.toISOString(), createdAt: now.toISOString(), mine: false,
     });
     // One request, to the address's path, naming itself only as the calendar reader.
     expect(sent.map((options) => [options.hostname, options.path, options.headers])).toEqual([
@@ -629,17 +629,19 @@ describe('with Google calendars on', () => {
     const added = await send(base(t), t.member, { json: { kind: 'google', googleCalendarId: SHARED_ID } });
     expect(added.status).toBe(201);
     const calendar = calendarOf(added);
-    expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok' });
-    // Connected is the caller's own: the admin, who never connected, reads false.
-    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID } });
-    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID } });
+    expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok', mine: true });
+    // Connected and mine are the caller's own: the admin, who never connected and added no Google calendar, reads false.
+    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true } });
+    expect((await send(base(t), t.admin)).body).toEqual({
+      calendars: [file, { ...calendar, mine: false }], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: true },
+    });
 
     google.state.events[SHARED_ID] = [allDay('shared-2', 'Book club', '2026-06-15'), allDay('shared-3', 'Graduation lunch', '2026-06-27')];
     server.clock.advance(MINUTE);
     const refreshed = await send(`${base(t)}/${calendar.id}/refresh`, t.admin, { method: 'POST' });
     const at = server.clock.now().toISOString();
     expect(refreshed.status).toBe(200);
-    expect(calendarOf(refreshed)).toEqual({ ...calendar, eventCount: 2, lastSuccessAt: at, lastAttemptAt: at });
+    expect(calendarOf(refreshed)).toEqual({ ...calendar, eventCount: 2, lastSuccessAt: at, lastAttemptAt: at, mine: false });
     expect(await titles(t)).toEqual(['Rehearsal dinner', 'Book club', 'Office party', 'Graduation lunch']);
     expect((await auditOf(calendar.id)).map((event) => [event.action, event.details])).toEqual([
       ['owner_calendar.added', { locationId: t.locationId, calendarId: calendar.id, kind: 'google', eventCount: 1, status: 'ok' }],

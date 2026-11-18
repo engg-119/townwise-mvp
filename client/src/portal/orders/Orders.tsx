@@ -17,6 +17,7 @@ import { Heading, Small } from '../ui/text';
 import { dayInOrder, orderCoverSentence, orderForDay, REORDER_OVERVIEW } from '../home/beside';
 import { fetchOrderBoard, type LiveBoard, type OrderBoard, type OrderLine, type SupplierOrder } from './api';
 import { CountForm } from './CountForm';
+import { CoverChart } from './CoverChart';
 import { LineEditor } from './LineEditor';
 import { amount, orderQuantity } from './words';
 
@@ -179,6 +180,7 @@ function Board(props: {
           <Heading>{order.supplier}</Heading>
           <Small white>{order.deadline}</Small>
           <DataTable label={`${order.supplier} order`} columns={COLUMNS} rows={rows(order, props.locationId)} />
+          <CoverChart order={order} />
           {data.sample ? null : (
             <Actions>
               <LinkButton

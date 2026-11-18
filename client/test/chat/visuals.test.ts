@@ -84,3 +84,22 @@ test('a daily visual stored before the forecast’s middle and status were sent 
   expect(visualRows(parsed).columns.map((c) => c.label)).toEqual(['Date', 'Guests', 'Forecast low', 'Forecast high']);
   expect(visualSchema.safeParse({ ...forecastOnly, days: [{ ...forecastOnly.days[0], status: 'open' }] }).success).toBe(false);
 });
+
+test('a daily visual with outlook days counts only the forecast’s days for 8 in 10 and says the outlook is wider (D52)', () => {
+  // A band over 10 days, 2 of them outlook days (a stale run's): 8 for the 8 in 10 sentence, and the outlook sentence.
+  const days = Array.from({ length: 10 }, (_, i) => ({
+    date: `2026-11-${String(16 + i)}`, value: null, low: 100, mid: 150, high: 200, status: null, ...(i >= 8 ? { outlook: true } : {}),
+  }));
+  const withOutlook = { ...forecastOnly, from: '2026-11-16', to: '2026-11-25', days };
+  const summary = visualSummary(withOutlook);
+  expect(summary).toContain('forecast range, made Nov 12, 2026, for 8 days, plus guests from your notes on days that have them. On days without a note, about 8 in 10 land inside it. Days marked outlook have a wider range.');
+  // With no outlook day the words are as before, and every day an outlook day makes no 8 in 10 claim.
+  expect(visualSummary(forecastOnly)).not.toContain('outlook');
+  const allOutlook = visualSummary({ ...withOutlook, days: days.map((day) => ({ ...day, outlook: true })) });
+  expect(allOutlook).not.toContain('8 in 10');
+  expect(allOutlook).toContain('Days marked outlook have a wider range.');
+  // An old stored visual with no outlook still parses and replays.
+  const parsed = visualSchema.parse(storedBeforeMid);
+  expect(parsed.kind === 'daily' && parsed.days.every((day) => day.outlook === undefined)).toBe(true);
+  expect(visualSchema.parse(withOutlook)).toEqual(withOutlook);
+});

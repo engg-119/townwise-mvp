@@ -110,7 +110,8 @@ const CHANGED = 'Your calendar changed';
 test('members see each suggestion with its why and calendar entries, and whether the switch is on, with no buttons', async () => {
   renderAt(chatApi(false), meOf(ACCESS.member));
   const panel = await side();
-  // The rule, the note and the spotted event; the move and the removal count in their own section.
+  // The rule, the note and the spotted event; the move and the removal count in their own section, and the suggested
+  // rules above them (D46) have theirs.
   expect(within(section(panel, SUGGESTED)).getByText('3 to decide')).toBeTruthy();
   expect(within(section(panel, CHANGED)).getByText('2 to decide')).toBeTruthy();
   const note = card(panel, NOTE_HEADING);
@@ -245,17 +246,17 @@ test('with none open, the section says so and still shows the switch', async () 
 });
 
 test('the header’s Questions and activity button counts open questions and open suggestions, as Home’s link does', async () => {
-  // The fixture asks 3 questions and has 5 suggestions open (a rule, a note, a spotted event, a move and a removal):
-  // Home's link reads "8 questions from TownwiseAI".
+  // The fixture asks 2 questions and has 5 weekly suggestions open (a rule, a note, a spotted event, a move and a
+  // removal) and (D46) 2 suggested rules: Home's link reads "9 questions from TownwiseAI".
   const api = chatApi(true);
   api.respond['/api/org/locations/l1/agent/suggestions/0000000000000000000000c2/dismiss'] = () => (
     { suggestion: { id: '0000000000000000000000c2', status: 'dismissed' }, note: null, rule: null }
   );
   renderAt(api, meOf(ACCESS.admin));
   const panel = await side();
-  expect(screen.getByRole('button', { name: 'Questions and activity (8)' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Questions and activity (9)' })).toBeTruthy();
   fireEvent.click(within(card(panel, RULE_HEADING)).getByRole('button', { name: 'Dismiss' }));
-  expect(await screen.findByRole('button', { name: 'Questions and activity (7)' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Questions and activity (8)' })).toBeTruthy();
 });
 
 test('while weekly passes aren’t running, the panel says only that, never that TownwiseAI is unavailable', async () => {
@@ -292,7 +293,9 @@ const ALONGSIDE_EFFECT = 'These guests add to the whole day’s total.';
 test('“Your calendar changed” comes before the suggestions, with the move and the removal in the server’s words; the spotted event is a suggestion', async () => {
   renderAt(chatApi(false), meOf(ACCESS.member));
   const panel = await side();
-  expect(within(panel).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent).slice(0, 2)).toEqual([CHANGED, SUGGESTED]);
+  // The fixture's suggested rules (D46) come first, in their own section.
+  expect(within(panel).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent).slice(0, 3))
+    .toEqual(['Suggested rules', CHANGED, SUGGESTED]);
   const changed = section(panel, CHANGED);
   expect(within(changed).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([MOVE_HEADING, REMOVE_HEADING]);
   expect(within(card(changed, MOVE_HEADING)).getByText('The private event on Sat, Jul 18 moved to Sat, Jul 25 on your calendar.')).toBeTruthy();

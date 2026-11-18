@@ -25,6 +25,8 @@ describe('indexes', () => {
       // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
       'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
       'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
+      // A TownwiseAI turn's progress (openspec change resumable-chat-turns).
+      'tw_chat_turns',
       'tw_file_entries', 'tw_file_sweeps', 'tw_files', 'tw_files_usage', 'tw_imports', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_upload_days',
       'tw_uploads', 'tw_view_as_grants',
       // U11, statement moments.
@@ -45,7 +47,17 @@ describe('indexes', () => {
       'tw_calendar_sources', 'tw_calendar_events',
       // Google access for calendars (openspec change connect-google-calendar).
       'tw_google_connections',
+      // The days each person used the app (openspec change staff-overview).
+      'tw_activity_days',
     ].sort());
+  });
+
+  it('reads active days by organization and day, by day across organizations, and by person (staff-overview)', () => {
+    const connection = registered();
+    const keys = indexesOf(connection, 'TwActivityDay').map(([fields]) => fields);
+    expect(keys).toEqual([{ orgId: 1, day: 1 }, { day: 1 }, { userId: 1 }]);
+    expect(connection.models.TwActivityDay?.schema.get('strict')).toBe('throw');
+    expect(connection.models.TwActivityDay?.schema.get('versionKey')).toBe(false);
   });
 
   it('keeps one weekly refresh row per location per week (D42)', () => {
@@ -60,6 +72,13 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwAgentSuggestion')).toContainEqual([
       { openFollowFor: 1 },
       expect.objectContaining({ unique: true, partialFilterExpression: { openFollowFor: { $type: 'objectId' } } }),
+    ]);
+  });
+
+  it('keeps one suggested closure rule per closure key at a location, in any status (D46)', () => {
+    expect(indexesOf(registered(), 'TwAgentSuggestion')).toContainEqual([
+      { orgId: 1, locationId: 1, closureKey: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { closureKey: { $type: 'string' } } }),
     ]);
   });
 
@@ -104,6 +123,8 @@ describe('indexes', () => {
       'TwBusinessRule',
       // The owner's own calendars, and Google access for them.
       'TwCalendarSource', 'TwCalendarEvent', 'TwGoogleConnection',
+      // Active days (staff-overview).
+      'TwActivityDay',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);
@@ -150,6 +171,14 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwChatLiveTurn')).toContainEqual([
       { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+  });
+
+  it('keeps one record per TownwiseAI turn, and indexes the sweep’s and the deletions’ queries (resumable-chat-turns)', () => {
+    const turns = indexesOf(registered(), 'TwChatTurn');
+    expect(turns).toContainEqual([{ orgId: 1, turnId: 1 }, expect.objectContaining({ unique: true })]);
+    for (const keys of [{ orgId: 1, conversationId: 1 }, { orgId: 1, locationId: 1 }, { userId: 1 }, { state: 1, leaseUntil: 1 }, { endedAt: 1 }]) {
+      expect(turns.map(([fields]) => fields)).toContainEqual(keys);
+    }
   });
 
   // U11, statement moments.

@@ -12,8 +12,8 @@ import { Panel, Stack } from '../../ui/layout';
 import { useFocusMessage } from '../../ui/messageFocus';
 import { Heading, Small } from '../../ui/text';
 import {
-  AI, aiError, cantReadLine, daysLine, forecastLine, guardLine, itemLine, kindFoundLine, noteLine, notesLine, settledLine, undidLine,
-  undoBody,
+  AI, aiError, cantReadLine, daysLine, forecastLine, guardLine, itemLine, kindFoundLine, noteLine, notesLine, rulesSuggestedLine, settledLine,
+  undidLine, undoBody,
 } from '../aiCopy';
 import { readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
 
@@ -22,7 +22,8 @@ import { readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
 // people who may ask (`canAiRead`) get what reading sends and does, the privacy link and “Let TownwiseAI read this
 // file”; a kind TownwiseAI can't read says why instead. While it reads, the item is read again every 3 seconds until
 // the read settles; leaving the page stops that. A done read shows what TownwiseAI found and what it added, each with
-// its link or why not, and, for the person who asked or an org admin, Undo behind a confirm dialog; so does a read that
+// its link or why not (D46: how many closure rules it suggested, linked to Business rules), and, for the person who
+// asked or an org admin, Undo behind a confirm dialog; so does a read that
 // failed or was skipped after it began adding (`canUndo`), with a line that it may have added some. Under view-as the
 // API sends no summary, facts or note titles and no rights, so only the statuses show. The line that says how an
 // action ended takes focus (ui/messageFocus.tsx), since each action takes its button away.
@@ -155,6 +156,7 @@ function Done(props: { ai: AiRead; locationId: string; onUndo: () => void }): Re
   const kind = kindFoundLine(ai.kind);
   const forecast = forecastLine(ai.calibration);
   const guard = guardLine(ai.notesSkipped);
+  const rules = rulesSuggestedLine(ai.rulesSuggested);
   return (
     <Stack gap={theme.space[3]}>
       {kind === null ? null : <Small white>{kind}</Small>}
@@ -168,6 +170,12 @@ function Done(props: { ai: AiRead; locationId: string; onUndo: () => void }): Re
           <Small>{notesLine(ai.notes.length)}</Small>
           <Lines label={AI.notesList} items={ai.notes.map(noteLine)} />
           <LinkButton href={locationHref(locationId, 'notes')} label={AI.notesLink} />
+        </Stack>
+      )}
+      {rules === null ? null : (
+        <Stack gap={theme.space[2]}>
+          <Small>{rules}</Small>
+          <LinkButton href={locationHref(locationId, 'rules')} label={AI.rulesLink} />
         </Stack>
       )}
       {guard === null ? null : <Small>{guard}</Small>}

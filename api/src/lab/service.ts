@@ -13,6 +13,7 @@ import { applyRecorded, recordAfter, recordBefore, recordNotApplied, SYSTEM_ACTO
 import { daysBetween, utcDay } from '../dates.ts';
 import { runFileSha256, type FileIssue, type LabRunFile } from '../forecasts/file.ts';
 import { engineOf } from '../forecasts/reader.ts';
+import { forecastThrough } from '../forecasts/tiers.ts';
 import { rowsOf } from '../handlers/forecast-runs.ts';
 import { LIVE_STATUSES, type CalibrationFailure, type CalibrationOutcome, type CalibrationRecord } from '../stores/calibrations.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
@@ -327,9 +328,12 @@ async function gateDraft(
   // is not published unseen. A first forecast has none to compare with.
   const lapsed = calibration.championRunId === null && championNow === null ? published.find((each) => each.status === 'published') ?? null : null;
   const against = given ?? lapsed;
+  // Only the compared run's forecast tier counts (D52), so a lapsed run's outlook never feeds the comparison.
   const from = result.run.madeAt;
+  const last = utcDay(new Date(`${from}T00:00:00.000Z`), GATE.jumpDays - 1);
+  const through = against === null ? last : forecastThrough(against);
   const jumpRows = against === null ? [] : await forecasts.rows(scope, location.id, [against.id], {
-    from, to: utcDay(new Date(`${from}T00:00:00.000Z`), GATE.jumpDays - 1),
+    from, to: through < last ? through : last,
   });
   const decision = decideGate({
     forecastsOn: org !== null && org.forecasts.on && org.status === 'active',

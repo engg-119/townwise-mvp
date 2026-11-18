@@ -7,7 +7,7 @@ import type { Request } from 'express';
 import type { ListedBlob } from '../files/blobs.ts';
 import type {
   ClaimedAiRead, ClaimedCalendar, ClaimedGoogleConnection, ClaimedImport, JoinedSeat, LabCallbackClaim, LiveScheduledCalibration,
-  StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, WeeklyCandidate,
+  StaleChatTurn, StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
@@ -78,9 +78,25 @@ export function scopeForWeeklyRefresh(found: WeeklyCandidate | LiveScheduledCali
   return mint(found.orgId);
 }
 
+/**
+ * The TownwiseAI turn sweep only (chat/turn-sweeper.ts, openspec change resumable-chat-turns), for the organization of a
+ * running turn whose lease passed, found by a cross-tenant lookup.
+ */
+export function scopeForStaleChatTurn(found: StaleChatTurn): OrgScope {
+  return mint(found.orgId);
+}
+
 /** Approval (F3) and staff creation (F10) only, for the organization that handler just created. */
 export function scopeForNewOrg(_staff: StaffPrincipal, orgId: string): OrgScope {
   return mint(orgId);
+}
+
+/**
+ * The staff Overview only (handlers/overview.ts, openspec change staff-overview), for an organization `orgs.list()` just
+ * returned, so it is not read again through scopeForStaffOrg.
+ */
+export function scopeForListedOrg(_staff: StaffPrincipal, org: OrgRecord): OrgScope {
+  return mint(org.id);
 }
 
 /** The resolver only (D25), for the organization of the open-as-admin grant holding the staff session. */

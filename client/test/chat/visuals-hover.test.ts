@@ -39,6 +39,13 @@ test('dailyTip gives a forecast day as the product does, about the middle and li
   expect(dailyTip({ date: '2026-11-21', value: null, ...none, status: 'booked' }, 'guests').lines).toEqual(['Forecast: booked for a private event']);
 });
 
+test('dailyTip words an outlook day as Townwise’s outlook (D52)', () => {
+  expect(dailyTip({ date: '2026-11-16', value: null, low: 117, mid: 180, high: 256, status: null, outlook: true }, 'guests').lines)
+    .toEqual(['Outlook about 180, likely 117 to 256']);
+  expect(dailyTip({ date: '2026-11-16', value: null, low: 117, mid: 180, high: 256, status: null, outlook: false }, 'guests').lines)
+    .toEqual(['Forecast about 180, likely 117 to 256']);
+});
+
 test('barTip gives the label, value and days, and nothing for a bar with no value', () => {
   expect(barTip('Saturday', 150, 4, 'guests')).toEqual({ title: 'Saturday', lines: ['150 guests', '4 days with data'] });
   expect(barTip('Saturday', 150, 1, 'guests')?.lines[1]).toBe('1 day with data');

@@ -192,4 +192,16 @@ export const TOWN_CALENDAR: readonly TownCalendarEntry[] = [
   homeFootball('Columbia', '2027-10-23', medium(FIVE_YEAR_OCT_2026)),
   homeFootball('Princeton', '2027-11-06', medium(FIVE_YEAR_OCT_2026)),
   homeFootball('Cornell', '2027-11-13', medium(FIVE_YEAR_OCT_2026)),
+
+  // Researched 2026-11-17 from the registrar's 2027-28 key dates page, read that day, so the trained model's outlook
+  // (D52) is not cut at fall 2027 finals.
+  // The page lists Martin Luther King Jr. Day on 2028-01-17 without saying whether classes are held.
+  classes('winter', '2028-01-04', '2028-03-07', high(REGISTRAR_2027_28)),
+  // Scheduled exams end 2028-03-13; the exam period ends 2028-03-14.
+  finals('winter', '2028-03-10', '2028-03-14', high(REGISTRAR_2027_28)),
+  // No classes on 2028-05-29 (Memorial Day).
+  classes('spring', '2028-03-27', '2028-05-31', high(REGISTRAR_2027_28)),
+  // Scheduled exams end 2028-06-05; the exam period ends 2028-06-06.
+  finals('spring', '2028-06-02', '2028-06-06', high(REGISTRAR_2027_28)),
+  event('Commencement', 'commencement', 'Commencement', '2028-06-11', '2028-06-11', high(REGISTRAR_2027_28)),
 ];

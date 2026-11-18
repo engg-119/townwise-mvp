@@ -6,6 +6,7 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 import { checkLabRunFile } from '../src/forecasts/file.ts';
+import { FORECAST_TIER_CAP_DAYS, FORECAST_TIER_DAYS } from '../src/forecasts/tiers.ts';
 import { LAB_MODEL_VERSION, labInputSchema } from '../src/lab/input.ts';
 import { checkLabResult, labResultSchema } from '../src/lab/result.ts';
 import { scorecardSchema } from '../src/lab/scorecard.ts';
@@ -21,6 +22,13 @@ describe('lab contract', () => {
     const versions = [...source.matchAll(/^MODEL_VERSION = "([^"]+)"$/gm)].map((match) => match[1]);
     expect(versions).toEqual([LAB_MODEL_VERSION]);
     expect(LAB_MODEL_VERSION).toBe('v8');
+  });
+
+  it('the forecast tier’s days and cap are the lab’s REACH_DAYS and HORIZON_DAYS (forecast.py), D42’s run end', () => {
+    const source = readFileSync(new URL('../../modeling/lab/townwise_lab/forecast.py', import.meta.url), 'utf8');
+    const constant = (name: string) => [...source.matchAll(new RegExp(`^${name} = (\\d+)\\b`, 'gm'))].map((match) => Number(match[1]));
+    expect(constant('REACH_DAYS')).toEqual([FORECAST_TIER_DAYS]);
+    expect(constant('HORIZON_DAYS')).toEqual([FORECAST_TIER_CAP_DAYS]);
   });
 
   it('golden input and result parse with labInputSchema, labResultSchema, scorecardSchema and checkLabRunFile', () => {

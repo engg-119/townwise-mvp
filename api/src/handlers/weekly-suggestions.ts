@@ -401,12 +401,15 @@ async function writtenView(
   return { note: note === null ? null : noteView(note, await authorEmail(ctx, note.createdBy, note.byStaff), caller), rule: null };
 }
 
-/** The suggestion named by the path, of this location; 404 for anything else. */
+/**
+ * The weekly suggestion named by the path, of this location; 404 for anything else, a file or sales suggestion (D46,
+ * handlers/rule-suggestions.ts) included.
+ */
 async function suggestionOf(ctx: TownwiseContext, caller: MemberPrincipal, req: Request): Promise<{ location: LocationRecord; record: SuggestionRecord }> {
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const id = parseInput(objectId, req.params.suggestionId);
   const record = await ctx.stores.agentSuggestions.find(caller.scope, location.id, id);
-  if (record === null) throw notFound();
+  if (record?.source !== 'weekly') throw notFound();
   return { location, record };
 }
 

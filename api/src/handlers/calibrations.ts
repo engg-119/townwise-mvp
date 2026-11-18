@@ -63,9 +63,9 @@ function forecastsView(org: OrgRecord): { on: boolean; at: string | null } {
 }
 
 /** The weekly refresh as staff see it (D42): whether it runs at all (the lab runner and TOWNWISE_WEEKLY_FORECASTS), and the pause. */
-interface ScheduleView { running: boolean; paused: { at: string; email: string } | null }
+export interface ScheduleView { running: boolean; paused: { at: string; email: string } | null }
 
-function scheduleView(ctx: TownwiseContext, paused: SchedulePause | null): ScheduleView {
+export function scheduleView(ctx: TownwiseContext, paused: SchedulePause | null): ScheduleView {
   return {
     running: ctx.labRunner !== null && ctx.config.weeklyForecasts,
     paused: paused === null ? null : { at: paused.at.toISOString(), email: paused.email },

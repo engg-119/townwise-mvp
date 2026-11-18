@@ -1,4 +1,4 @@
-import { formatCount, formatDate, formatTime } from '../format';
+import { formatCount, formatDate, formatTime, plural } from '../format';
 import type { AddResult, AuditEvent, Person, PersonKind } from './schemas';
 
 // The console's words for the API's codes (spec 16.4): person kinds, actor roles, two-step states, add results,
@@ -156,6 +156,8 @@ const SUGGESTION_TYPE: Readonly<Record<string, string>> = {
   note: 'Note', rule: 'Business rule', event: 'Private event spotted on a calendar', move: 'Moving a note with its calendar event',
   remove: 'Deleting a note whose calendar event went',
 };
+/** D46: where a suggested closure rule came from. */
+const SUGGESTION_SOURCE: Readonly<Record<string, string>> = { file: 'from a file', sales: 'from the sales history' };
 
 const END_REASON: Readonly<Record<string, string>> = {
   ended: 'Ended by staff', expired: 'Ran out', replaced: 'Replaced by a new view-as',
@@ -212,8 +214,16 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
     case 'agent.question_answered':
       return questionAnswer(text(d.questionId), text(d.answer));
     case 'agent.suggestion_accepted':
-    case 'agent.suggestion_dismissed':
-      return SUGGESTION_TYPE[text(d.type)] ?? '';
+    case 'agent.suggestion_dismissed': {
+      const what = SUGGESTION_TYPE[text(d.type)] ?? '';
+      // D46: where a suggested closure rule came from, and whether it was edited before it was confirmed.
+      return [what, SUGGESTION_SOURCE[text(d.source)] ?? '', d.edited === true ? 'edited' : ''].filter((part) => part !== '').join(', ');
+    }
+    // D46: how many closure rules a read suggested, and how many still waiting an undo removed.
+    case 'file.ai_read':
+      return typeof d.rulesSuggested === 'number' && d.rulesSuggested > 0 ? plural(d.rulesSuggested, 'suggested rule', 'suggested rules') : '';
+    case 'file.ai_undone':
+      return typeof d.suggestions === 'number' && d.suggestions > 0 ? `${plural(d.suggestions, 'suggested rule', 'suggested rules')} removed` : '';
     case 'org.weekly_suggestions_changed':
     case 'org.calendar_titles_ai_changed':
       return d.on === true ? 'On' : d.on === false ? 'Off' : '';

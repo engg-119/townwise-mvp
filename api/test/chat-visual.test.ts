@@ -45,7 +45,8 @@ function fc(date: string, low: number | null, high: number | null): ForecastDayV
   const mid = low === null || high === null ? null : (low + high) / 2;
   return {
     date, weekday: weekdayOf(date), status, low, mid, high, baseline: null, reasons: [], runId: 'run-0001', madeAt: run.madeAt,
-    madeAfterDay: false, actual: null, inRange: null, scored: false, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0, moreRules: 0,
+    madeAfterDay: false, actual: null, inRange: null, scored: false, outlook: false, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0,
+    moreRules: 0,
   };
 }
 
@@ -59,6 +60,16 @@ describe('the figures of each kind', () => {
         { date: '2026-10-03', value: 52, low: 45, mid: 53, high: 60 },
       ],
     });
+  });
+
+  it('daily: a day in its run’s outlook carries outlook (D52); a forecast day carries none, and replays as stored', () => {
+    const v = dailyVisual(req('daily', 'guests', '2026-10-02', '2026-10-03'), [], [fc('2026-10-02', 45, 60), { ...fc('2026-10-03', 117, 256), outlook: true }], run);
+    expect(v).toMatchObject({
+      days: [{ date: '2026-10-02', low: 45, high: 60 }, { date: '2026-10-03', low: 117, mid: 187, high: 256, outlook: true }],
+    });
+    if (v.kind !== 'daily') return expect.unreachable('a daily visual');
+    expect(v.days[0]).not.toHaveProperty('outlook');
+    expect(visualOf(JSON.stringify({ shown: SHOWN_FORECAST, visual: v }))).toEqual(v);
   });
 
   it('daily: the band rounds low down and high up, as get_forecast does; a closed forecast day has none; no band, no forecast', () => {

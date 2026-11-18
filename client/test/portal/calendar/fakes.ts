@@ -142,7 +142,7 @@ export function forecastDay(fields: Partial<ForecastDay> & Pick<ForecastDay, 'da
   const high = fields.high ?? 240;
   return {
     status: 'open', low, mid, high, model: { status: 'open', low, mid, high }, noteGuests: 0, moreNotes: 0,
-    reasons: [{ kind: 'weekday', label: 'Weekday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null,
+    reasons: [{ kind: 'weekday', label: 'Weekday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null, outlook: false,
     ...fields,
   };
 }
@@ -157,7 +157,7 @@ export function ownerCalendar(fields: Partial<OwnerCalendar> = {}): OwnerCalenda
   return {
     id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 0, skippedRepeating: 0, status: 'ok',
     lastSuccessAt: '2026-11-11T15:00:00.000Z', lastAttemptAt: '2026-11-11T15:00:00.000Z', createdAt: '2026-11-01T15:00:00.000Z',
-    ...fields,
+    mine: false, ...fields,
   };
 }
 

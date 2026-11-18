@@ -11,7 +11,8 @@
 // The answer is at most 5 suggestions, each a note or a business rule with a schedule (D31), a one-sentence why and the
 // calendar ids it rests on. Each is checked by the note rules (spec 12) or D31's schedule rules, and dropped when it
 // fails them, starts before tomorrow in the town or after the 91 days, decides the same days the same way as a note, a
-// rule or an earlier suggestion of the location, or repeats a rule's words. Kept ones are stored open
+// rule or an earlier suggestion of the location, or repeats a rule's words, or (D46) is a rule whose closure key a file or
+// sales suggestion holds (those are never sent: nothing new reaches Anthropic). Kept ones are stored open
 // (stores/agent-suggestions.ts) and change nothing until an org admin accepts one.
 //
 // Bounds: the organization's switch is read again right before each location (an org admin's off stops the locations
@@ -52,6 +53,8 @@ import type {
 import { z } from 'zod';
 
 import type { OrgScope } from '../access/policy.ts';
+import { closureKeyOf } from '../agent/closure-suggestions.ts';
+import { salesSuggestions } from '../agent/rule-suggestion-views.ts';
 import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { ChatModel } from '../chat/model.ts';
@@ -64,7 +67,7 @@ import { townCalendarOf, townTermEntries } from '../forecasts/reasons.ts';
 import { readNoteContent, readRuleSchedule } from '../handlers/notes.ts';
 import { ruleTextOf } from '../handlers/rules.ts';
 import type { NewSuggestion, NoteOrRuleContent, SuggestedEvent } from '../stores/agent-suggestions.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import { sameSeason, type RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent, NoteDates } from '../stores/notes.ts';
 import { localDay, timeZoneOf, weekdayOf } from '../time-zones.ts';
@@ -136,6 +139,7 @@ export const SUGGESTIONS_SYSTEM_PROMPT = [
   'Only three things change Townwise\'s forecast: a closure (kind closure, effect closed), a buyout (kind private_event, effect closed, expectedGuests the party\'s size), and a private event with a guest count (kind private_event, effect more_guests, expectedGuests set). Suggest those. Never suggest more_guests or fewer_guests without a guest count, an opening, or a reminder: they change nothing.',
   'Good suggestions: a closure on a holiday this location was closed on in past years (see each entry\'s pastDays and history), a closure on a day the town calendar suggests the owner would close (a holiday most restaurants in a small town close for), a counted private event the owner usually books around a town event (commencement, reunions), a standing rule for a recurring pattern that the calendar makes likely. Prefer fewer, surer suggestions; answer an empty list when nothing is worth asking.',
   'A note covers one date range (endDate at most 366 days after startDate). A business rule is a standing fact with short words (text, at most 200 characters, like "Closed on Thanksgiving") and a schedule with the same fields as a note but no detail; its endDate may be null for no end. Use type "note" for a one-off and "rule" only for something that repeats.',
+  'A rule\'s season, when set, repeats its closure on the same months and days every year from its startDate.',
   'Every date is YYYY-MM-DD, from the request\'s from to its to. weekdays is null for every day in the range, or numbers from 0 (Sunday) to 6. startTime and endTime are both null (all day) or both HH:MM. detail is null or at most 280 characters (required on kind other). On a rule, detail is null and ruleText holds the words; on a note, ruleText is null.',
   'Never repeat a note, a rule or an earlier suggestion in the request: one that covers the same days the same way is dropped.',
   'why is one short sentence the owner reads beside the suggestion, in plain words, naming the calendar entry (for example "Thanksgiving is Thu, Nov 26, and you were closed on it last year."). calendarIds lists the ids of the calendar entries it rests on.',
@@ -271,13 +275,16 @@ export function suggestionsReserveMicroUsd(params: BetaMessageStreamParams): num
   return Math.max(SUGGESTIONS_RESERVE_MICRO_USD, ceiling);
 }
 
-/** The days a note, a rule's schedule or a suggestion decides, field by field; its words (a note's detail) aside. */
-type Days = Pick<RuleSchedule, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'startTime' | 'endTime'>;
+/**
+ * The days a note, a rule's schedule or a suggestion decides, field by field; its words (a note's detail) aside. A note
+ * has no season (D46).
+ */
+type Days = Pick<RuleSchedule, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'startTime' | 'endTime' | 'season'>;
 
 function sameDays(a: Days, b: Days): boolean {
   return a.kind === b.kind && a.startDate === b.startDate && a.endDate === b.endDate && a.effect === b.effect
     && a.expectedGuests === b.expectedGuests && a.startTime === b.startTime && a.endTime === b.endTime
-    && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays);
+    && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays) && sameSeason(a.season, b.season);
 }
 
 function daysOf(content: NoteOrRuleContent): Days {
@@ -300,6 +307,11 @@ export interface SuggestionChecks {
   readonly calendarTitles: ReadonlyMap<string, string>;
   /** The owner-calendar events the request sent, by ref; empty when it sent none. */
   readonly ownerEvents: ReadonlyMap<string, SentOwnerEvent>;
+  /**
+   * D46: the closure keys of the location's file and sales suggestions (any status): a rule with one is dropped, since
+   * sameDays compares starts and would miss a standing rule. They are never sent.
+   */
+  readonly closureKeys?: ReadonlySet<string>;
 }
 
 /** The why: one line, trimmed, 1 to 280 characters with no control or format character; null otherwise. */
@@ -544,6 +556,7 @@ export function keptSuggestions(output: unknown, checks: SuggestionChecks): NewS
     if (days.startDate < tomorrow || days.startDate > checks.to) continue;
     if (taken.some((other) => sameDays(other, days))) continue;
     if (content.type === 'rule' && words.has(content.text.toLowerCase())) continue;
+    if (content.type === 'rule' && checks.closureKeys?.has(closureKeyOf(content.schedule)) === true) continue;
     const calendarIds = [...new Set(item.data.calendarIds.filter((id) => checks.calendarIds.has(id)))].slice(0, MAX_CALENDAR_IDS);
     // A private event on the owner's calendar comes only as an event item; a note or rule rests on the town calendar,
     // and no title's distinctive word is kept.
@@ -661,7 +674,7 @@ async function ownerEventsFor(
  */
 export async function suggestionsInput(
   ctx: Pick<SuggestionsContext, 'stores'>, scope: OrgScope, location: LocationRecord, today: string, suggested: readonly NoteOrRuleContent[],
-  opts: { titles: boolean },
+  opts: { titles: boolean }, closureKeys: ReadonlySet<string> = new Set(),
 ): Promise<{ input: SuggestionsInput; checks: SuggestionChecks }> {
   const { stores } = ctx;
   const at = (days: number): string => utcDay(new Date(`${today}T00:00:00.000Z`), days);
@@ -729,6 +742,7 @@ export async function suggestionsInput(
     checks: {
       today, to, notes, rules: rules.map((rule) => ({ text: rule.text, schedule: rule.schedule })), suggested,
       calendarIds: new Set(calendar.map((entry) => entry.id)), calendarTitles: new Map(calendar.map((entry) => [entry.id, entry.title])), ownerEvents: owner.sent,
+      closureKeys,
     },
   };
 }
@@ -788,13 +802,21 @@ export async function suggestFor(
   const today = localDay(now, timeZoneOf(location.town).timeZone);
   try {
     await stores.agentSuggestions.expire(scope, location.id, today, now);
-    // Earlier notes and rules only (recent reads no other kind): a spotted event is avoided by its key (ownerEventsFor),
-    // and a follow-up is not this pass's to repeat or avoid.
-    const earlier = (await stores.agentSuggestions.recent(scope, location.id)).flatMap((record): NoteOrRuleContent[] => {
+    const recent = await stores.agentSuggestions.recent(scope, location.id);
+    // Earlier weekly notes and rules only. recent reads no other kind: a spotted event is avoided by its key
+    // (ownerEventsFor), and a follow-up is not this pass's to repeat or avoid. D46: file and sales suggestions are never
+    // sent; their closure keys drop a matching rule instead.
+    const earlier = recent.flatMap((record): NoteOrRuleContent[] => {
+      if (record.source !== 'weekly') return [];
       if (record.type === 'note') return [{ type: 'note', note: record.note }];
       return record.type === 'rule' ? [{ type: 'rule', text: record.text, schedule: record.schedule }] : [];
     });
-    const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier, on);
+    // The sales history's suggestions not stored yet (computed on read) count too, so one pattern is asked once.
+    const closureKeys = new Set([
+      ...recent.flatMap((record) => (record.closureKey === null ? [] : [record.closureKey])),
+      ...(await salesSuggestions(ctx, scope, location.id)).map((each) => closureKeyOf(each.schedule)),
+    ]);
+    const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier, on, closureKeys);
     const params = suggestionsRequest(input);
     const reserve = suggestionsReserveMicroUsd(params);
     const budget = Math.round(ctx.config.chatMonthlyBudgetUsd * 1_000_000);

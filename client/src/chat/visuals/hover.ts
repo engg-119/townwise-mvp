@@ -6,8 +6,9 @@ import { forecastLine, NO_DATA, unitsOf } from './words';
 
 // The words of a chart's hover tooltip (D21), pure so they are testable without a DOM. The wording is the summary's
 // and "Show the numbers" table's: the date as "Fri, Oct 9, 2026", the value with its unit, and the forecast as the
-// product words it, "Forecast about 180, likely 117 to 256" ("Forecast 117 to 256" for a visual stored before the
-// middle was sent, "Forecast: closed" or "Forecast: booked for a private event"); "No data" for a day with neither.
+// product words it, "Forecast about 180, likely 117 to 256" ("Outlook about 180, likely 117 to 256" for an outlook day,
+// D52; "Forecast 117 to 256" for a visual stored before the middle was sent, "Forecast: closed" or "Forecast: booked for
+// a private event"); "No data" for a day with neither.
 
 export interface TipWords {
   /** The mono first line: a date or a bar's label. */

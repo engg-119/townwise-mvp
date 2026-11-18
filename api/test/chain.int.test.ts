@@ -15,7 +15,7 @@ import { addGoogleConnection, createFakeGoogle, GOOGLE_CLIENT_ID, linkGoogle } f
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import {
   call, limiterKey, logLines, makeStaff, MINUTE, refresh, removeStaffFactor, signIn, signInStaff, startTownwiseServer,
-  STAFF_EMAIL, type TestSession, type TownwiseTestServer,
+  STAFF_EMAIL, writesDuring as writesOf, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -29,6 +29,8 @@ beforeAll(async () => {
   server = await startTownwiseServer({
     probe: PROBE_ROUTES, files: blobs, calendarKey: CALENDAR_KEY, googleCalendar: google.client, googleCalendarClientId: GOOGLE_CLIENT_ID,
     revokeGoogle: google.revoke,
+    // Active days are recorded as in production (staff-overview), so the no-write check below sees the chain's one write.
+    activity: true,
   });
 });
 afterAll(async () => { await server.close(); });
@@ -101,6 +103,27 @@ describe('GET is side-effect free (7.3)', () => {
     await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 120, netSalesCents: 345_600 });
     const uploadId = await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
     await addNote(server, { orgId, locationId, detail: 'Closed for a staff day' });
+    // D46: a sales history with no Mondays (the panel and the rules page compute a suggested rule from it, writing
+    // nothing), an open file suggestion, and an open range that has ended (hidden, never expired by a read).
+    const history: Record<string, unknown>[] = [];
+    for (let day = '2026-03-02'; day <= '2026-04-30'; day = new Date(Date.parse(`${day}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10)) {
+      if (new Date(`${day}T00:00:00.000Z`).getUTCDay() === 1) continue;
+      history.push({
+        orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date: day, guests: 90, netSalesCents: null,
+        uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+      });
+    }
+    await server.connection.collection('tw_sales_days').insertMany(history);
+    const closureRow = (closureKey: string, content: Record<string, unknown>) => ({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', type: 'rule', text: 'Closed', why: null,
+      calendarIds: [], status: 'open', decidedBy: null, decidedAt: null, source: 'file', fileId: new Types.ObjectId(), closureKey,
+      content: { kind: 'closure', weekdays: null, effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null, ...content },
+      createdAt: server.clock.now(), updatedAt: server.clock.now(),
+    });
+    await server.connection.collection('tw_agent_suggestions').insertMany([
+      closureRow('closed|w=2|ongoing', { weekdays: [2], startDate: '2026-06-01', endDate: null }),
+      closureRow('closed|w=*|2026-04-01..2026-04-30', { startDate: '2026-04-01', endDate: '2026-04-30' }),
+    ]);
     const fileId = await seedReadFile(server, blobs, {
       orgId, locationId, uploadedBy: admin.userId, name: 'sales.csv', raw: Buffer.from('Date\n'), clean: 'date,guests,net_sales\r\n',
     });
@@ -141,6 +164,8 @@ describe('GET is side-effect free (7.3)', () => {
     await addGoogleConnection(server, { orgId, userId: member.userId, key: CALENDAR_KEY });
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
+      // staff-overview.
+      'admin.overview': '?days=28',
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
       'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
       // U13A.
@@ -155,6 +180,16 @@ describe('GET is side-effect free (7.3)', () => {
       return `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => own[name] ?? '')}${query[route.id] ?? ''}`;
     };
     const gets = getRoutes.map((route) => pathOf(route, ids));
+    // The chain's one write on a GET (staff-overview): a member's first request of a UTC day records their active day,
+    // and nothing else. Each member's day is recorded here, so every GET below writes nothing.
+    for (const session of [admin, member]) {
+      const writes = await writesOf(server, async () => {
+        expect((await call(server, '/api/me', { session })).status).toBe(200);
+        await server.ctx.activity.idle();
+      });
+      expect(writes).toContain('update tw_activity_days');
+      expect(writes.filter((write) => !write.endsWith(' tw_activity_days'))).toEqual([]);
+    }
     const answered = new Set<string>();
     for (const session of [admin, member, invited, staff, viewing]) {
       for (const path of gets) {

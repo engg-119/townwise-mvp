@@ -135,7 +135,7 @@ function serveGoogle(fake: CalendarFake, google: GoogleCalendars): void {
 test('with Google calendars on, native offers no “Add a Google calendar”: the native line shows, and a Google calendar lists with Refresh now and Remove', async () => {
   const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_rate_limited' });
   const { api, fake } = setup({ calendars: [KITCHEN, google] });
-  serveGoogle(fake, { available: true, connected: true, clientId: '123-abc.apps.googleusercontent.com' });
+  serveGoogle(fake, { available: true, connected: true, clientId: '123-abc.apps.googleusercontent.com', canConnect: true });
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
   const card = popover();
@@ -148,5 +148,22 @@ test('with Google calendars on, native offers no “Add a Google calendar”: th
   expect(within(card).getByRole('button', { name: 'Remove Google calendar' })).toBeTruthy();
   expect(within(card).queryByRole('button', { name: 'Refresh now: Kitchen' })).toBeNull();
   expect(fake.paths.filter((path) => path.includes('google-calendars'))).toEqual([]);
+  expect(writes(api)).toEqual([]);
+});
+
+test('native connects nowhere: a revoked Google calendar its person added tells them to reconnect on the web, a teammate’s to ask whoever added it, and neither offers Reconnect', async () => {
+  const revoked = 'Couldn’t refresh: Google no longer lets Townwise read this calendar.';
+  const mine = ownerCalendar({ id: 'c3', label: 'Bookings', kind: 'google', eventCount: 40, status: 'google_revoked', mine: true });
+  const theirs = ownerCalendar({ id: 'c4', label: 'Staff rota', kind: 'google', eventCount: 2, status: 'google_revoked' });
+  const { api, fake } = setup({ calendars: [mine, theirs] });
+  serveGoogle(fake, { available: true, connected: false, clientId: '123-abc.apps.googleusercontent.com', canConnect: true });
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
+  const card = popover();
+  expect(within(card).getByText(`${revoked} Reconnect on the web, or remove it.`)).toBeTruthy();
+  expect(within(card).getByText(`${revoked} Ask whoever added it to reconnect, or remove it.`)).toBeTruthy();
+  expect(within(card).getByText(NATIVE_LINE_GOOGLE)).toBeTruthy();
+  expect(within(card).queryByRole('button', { name: 'Reconnect Bookings' })).toBeNull();
+  expect(within(card).getByRole('button', { name: 'Remove Bookings' })).toBeTruthy();
   expect(writes(api)).toEqual([]);
 });

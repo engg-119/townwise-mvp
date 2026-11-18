@@ -70,7 +70,7 @@ test('armed, the letters wait below the edge, but the links stay readable and fo
   const footer = renderFooter();
   expect(footer.className).toBe('ft is-armed');
   const links = within(footer).getAllByRole('link');
-  expect(links).toHaveLength(12);
+  expect(links).toHaveLength(13);
   for (const link of links) {
     expect(link.closest('[aria-hidden="true"]')).toBeNull();
     expect(link.closest('[hidden]')).toBeNull();
@@ -106,7 +106,7 @@ test('Request early access is in the Account group unless the shell says not to 
   expect(within(within(footer).getByRole('navigation', { name: 'Account' })).getAllByRole('link').map((link) => link.textContent))
     .toEqual(['Sign in']);
   expect(within(footer).queryByRole('link', { name: 'Request early access' })).toBeNull();
-  expect(within(footer).getAllByRole('link')).toHaveLength(11);
+  expect(within(footer).getAllByRole('link')).toHaveLength(12);
 });
 
 test('the letters rise once the footer is in view, and the observer disconnects', () => {

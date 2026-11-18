@@ -4,6 +4,7 @@ import { ApiError, type ApiClient } from '../api/client';
 import { useLoad, type LoadState } from '../portal/hooks';
 import type { Note } from '../portal/locations/api';
 import type { Rule } from '../portal/rules/api';
+import { useRuleDecisions, type RuleDecisions } from '../portal/rules/useRuleDecisions';
 import {
   answerQuestion, decideSuggestion, loadAgentPanel, setCalendarTitles, setWeeklySuggestions, type AgentPanel, type EventChoice, type QuestionAnswer,
 } from './api';
@@ -34,6 +35,9 @@ import { suggestionDaysText } from './format';
 // event that moved or went (409 event_changed) is gone: the panel reads again and the section's notice says, by its
 // days, never its title, why its card went. The titles switch keeps what was last set here, as the
 // weekly switch does. A removal's accept deletes a note, so it marks the notes stale as a saved note does.
+//
+// Suggested closure rules (D46): any member confirms or dismisses one here (`rules`, portal/rules/useRuleDecisions.ts),
+// Edit being P29's form; a decided one stays with what it did until the panel is read again, and a 404 reads it again.
 
 export interface Answered {
   answer: QuestionAnswer;
@@ -123,6 +127,8 @@ export interface AgentPanelState {
   titlesError: string | null;
   /** Turns reading the calendars' event titles on or off (`orgId` from openAsAdminOrgId). */
   setTitles: (on: boolean, orgId: string | null) => void;
+  /** D46: Confirm and Dismiss on the suggested closure rules. */
+  rules: RuleDecisions;
 }
 
 export function answerErrorText(error: unknown): string {
@@ -153,6 +159,12 @@ export function openSuggestions(panel: AgentPanelState): number | null {
   return panel.state.data.suggestions.filter((suggestion) => panel.decided[suggestion.id] === undefined).length;
 }
 
+/** The suggested closure rules not decided yet (D46); null while they load or when they can't be read. */
+export function openRuleSuggestions(panel: AgentPanelState): number | null {
+  if (panel.state.status !== 'ready') return null;
+  return panel.state.data.ruleSuggestions.filter((suggestion) => panel.rules.decided[suggestion.id] === undefined).length;
+}
+
 /** The questions not answered yet; null while they load or when they can't be read. */
 export function openQuestions(panel: AgentPanelState): number | null {
   if (panel.state.status !== 'ready') return null;
@@ -160,12 +172,12 @@ export function openQuestions(panel: AgentPanelState): number | null {
 }
 
 /**
- * What the panel asks the person to decide: its open questions and open weekly suggestions, as Home's link counts them
- * ("{n} questions from TownwiseAI"); null while they load or when they can't be read.
+ * What the panel asks the person to decide: its open questions, open weekly suggestions and (D46) open suggested rules,
+ * as Home's link counts them ("{n} questions from TownwiseAI"); null while they load or when they can't be read.
  */
 export function openToDecide(panel: AgentPanelState): number | null {
   const questions = openQuestions(panel);
-  return questions === null ? null : questions + (openSuggestions(panel) ?? 0);
+  return questions === null ? null : questions + (openSuggestions(panel) ?? 0) + (openRuleSuggestions(panel) ?? 0);
 }
 
 const CLOSED: SomethingElse = { open: false, text: '', sent: false, error: null };
@@ -203,7 +215,8 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
     setDrafts((current) => ({ ...(listed === null ? current : Object.fromEntries(Object.entries(current).filter(([id]) => listed.has(id)))), [suggestionId]: draft }));
   }
 
-  const reload = useCallback(() => {
+  /** Reads the panel again, from scratch but the suggested rules' decisions, which the caller clears. */
+  const readAgain = useCallback(() => {
     setAnswered({});
     setErrors({});
     setDecided({});
@@ -213,6 +226,13 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
     setTitlesOn(null);
     read();
   }, [read]);
+  // A suggested rule gone from under a decision (404) clears the rules' own decisions, then reads the panel again.
+  const rules = useRuleDecisions(api, locationId, { onGone: readAgain });
+  const { reset: resetRules } = rules;
+  const reload = useCallback(() => {
+    resetRules();
+    readAgain();
+  }, [resetRules, readAgain]);
 
   function decide(suggestionId: string, decision: 'accept' | 'dismiss', choice?: EventChoice): void {
     if (deciding !== null || decided[suggestionId] !== undefined) return;
@@ -340,7 +360,7 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
   return {
     state, reload, answered, answering, errors, answer, actedIn, others, telling, tell,
     decided, deciding, suggestionErrors, decide, eventDrafts, setEventDraft, suggestionsNotice, weeklyOn, switching, switchError, setWeekly,
-    titlesOn, switchingTitles, titlesError, setTitles,
+    titlesOn, switchingTitles, titlesError, setTitles, rules,
     openOther: (questionId) => { patchOther(questionId, { open: true }); },
     foldOther: (questionId) => { patchOther(questionId, { open: false }); },
     closeOther: (questionId) => { setOthers((current) => without(current, questionId)); },

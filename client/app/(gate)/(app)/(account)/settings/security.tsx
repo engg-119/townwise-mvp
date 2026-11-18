@@ -3,7 +3,7 @@ import { useFocusEffect } from 'expo-router';
 import { Image, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../../../../src/api/client';
-import { normalizeTotpCode, type Me } from '../../../../../src/auth/auth';
+import { normalizeRecoveryCode, normalizeTotpCode, type Me } from '../../../../../src/auth/auth';
 import { useAuth } from '../../../../../src/auth/AuthProvider';
 import { errorCopy } from '../../../../../src/portal/errors';
 import { plural } from '../../../../../src/portal/format';
@@ -23,9 +23,17 @@ import { useSubmit } from '../../../../../src/ui';
 // panel. Step 1 adds Townwise to an authenticator app (the otpauth link on this phone, the setup key, or the QR
 // from another screen); step 2 confirms a code; then the recovery codes. Staff in staff_setup_required read why
 // in the lead, and after the recovery codes sign in again, so the next session passes a code.
+// With two-step sign-in on (D54), “Move to a new authenticator app” asks for a code from the current app or a
+// recovery code, then runs the same two steps for a new secret. The account keeps the current authenticator until
+// the new app's code is confirmed: Cancel, leaving the page or a timeout changes nothing.
 
 const INVALID_CODE = 'That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.';
 const REAUTH = 'For your security, sign in again to set up two-step sign-in.';
+const REAUTH_RESET = 'For your security, sign in again to move two-step sign-in to a new app.';
+const INVALID_RECOVERY = 'That recovery code didn’t work. Each one works once.';
+const EMPTY_CODE = 'Enter the 6-digit code from your authenticator app.';
+const EMPTY_RECOVERY = 'Enter one of your recovery codes.';
+const RESET_EXPIRED = 'That took too long, so nothing changed. Your current authenticator app still works. Start again.';
 const STAFF_SETUP_NOTICE = 'Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.';
 
 /** "ABCD EFGH IJKL …": the setup key in fours, so a line breaks between groups and it is easier to type. */
@@ -78,6 +86,11 @@ export default function SecurityScreen(): React.JSX.Element {
   const [message, setMessage] = useState<string | null>(null);
   const [reauth, setReauth] = useState(false);
   const [othersSignedOut, setOthersSignedOut] = useState(false);
+  // Moving to a new authenticator (D54): `proof` asks who you are; `pending` shows the new secret's two steps.
+  const [reset, setReset] = useState<'proof' | 'pending' | null>(null);
+  const [useRecovery, setUseRecovery] = useState(false);
+  const [proof, setProof] = useState('');
+  const [proofMessage, setProofMessage] = useState<string | null>(null);
 
   const load = useCallback(() => {
     let cancelled = false;
@@ -101,7 +114,7 @@ export default function SecurityScreen(): React.JSX.Element {
   async function refuse(error: unknown): Promise<void> {
     if (error instanceof ApiError && error.code === 'reauth_required') {
       setReauth(true);
-      setMessage(REAUTH);
+      setMessage(reset === null ? REAUTH : REAUTH_RESET);
       return;
     }
     if (error instanceof ApiError && error.code === 'totp_already_enabled') {
@@ -132,19 +145,61 @@ export default function SecurityScreen(): React.JSX.Element {
     }
   });
 
+  function leaveReset(): void {
+    clearEnrollment();
+    setReset(null);
+    setUseRecovery(false);
+    setProof('');
+    setCode('');
+    setProofMessage(null);
+    setCodeMessage(null);
+  }
+
+  const startReset = useSubmit(async () => {
+    setMessage(null);
+    setProofMessage(null);
+    setReauth(false);
+    const value = useRecovery ? normalizeRecoveryCode(proof) : normalizeTotpCode(proof);
+    if (value === '') {
+      setProofMessage(useRecovery ? EMPTY_RECOVERY : EMPTY_CODE);
+      return;
+    }
+    try {
+      const next = await auth.beginTotpReset(useRecovery ? { recoveryCode: value } : { code: value });
+      setSecret(next.secret);
+      setOtpauthUri(next.otpauthUri);
+      setQr(next.qrPngDataUrl);
+      setProof('');
+      setCode('');
+      setReset('pending');
+    } catch (error) {
+      if (error instanceof ApiError && error.code === 'invalid_code') {
+        setProofMessage(useRecovery ? INVALID_RECOVERY : INVALID_CODE);
+        return;
+      }
+      await refuse(error);
+    }
+  });
+
   const confirm = useSubmit(async () => {
     setCodeMessage(null);
     setMessage(null);
     try {
-      const result = await auth.confirmTotpEnrollment(normalizeTotpCode(code));
+      const result = reset === 'pending'
+        ? await auth.confirmTotpReset(normalizeTotpCode(code))
+        : await auth.confirmTotpEnrollment(normalizeTotpCode(code));
       setCodes(result.recoveryCodes);
       clearEnrollment();
+      setReset(null);
+      setCode('');
       setOthersSignedOut(true);
     } catch (error) {
       if (error instanceof ApiError && error.code === 'enrollment_expired') {
-        clearEnrollment();
+        const resetting = reset === 'pending';
+        if (resetting) leaveReset();
+        else clearEnrollment();
         setCodes(null);
-        setMessage('Setup timed out. Start again.');
+        setMessage(resetting ? RESET_EXPIRED : 'Setup timed out. Start again.');
         return;
       }
       if (error instanceof ApiError && error.code === 'invalid_code') {
@@ -175,8 +230,9 @@ export default function SecurityScreen(): React.JSX.Element {
     const scan = <Image key="qr" source={{ uri: qr }} accessibilityLabel="Authentication QR code" style={styles.qr} />;
     steps = (
       <>
+        {reset === 'pending' ? <Notice text="Your current authenticator app keeps working until you confirm a code from the new one." /> : null}
         <Panel>
-          <View style={styles.head}><Eyebrow>Step 1</Eyebrow><Heading>Add Townwise to your authenticator app</Heading></View>
+          <View style={styles.head}><Eyebrow>Step 1</Eyebrow><Heading>{reset === 'pending' ? 'Add Townwise to your new authenticator app' : 'Add Townwise to your authenticator app'}</Heading></View>
           <Small>
             {phone
               ? 'Open the link on this phone, or type the setup key into your authenticator app.'
@@ -203,6 +259,11 @@ export default function SecurityScreen(): React.JSX.Element {
           />
           <Button label="Confirm" block={phone} disabled={confirm.pending} onPress={() => { confirm.submit(); }} />
         </Panel>
+        {reset === 'pending' ? (
+          <Actions>
+            <Button variant="outline" label="Cancel and keep my current app" onPress={leaveReset} />
+          </Actions>
+        ) : null}
       </>
     );
   } else if (codes !== null) {
@@ -244,7 +305,70 @@ export default function SecurityScreen(): React.JSX.Element {
       </Panel>
     );
   } else if (me?.totp.enabled === true) {
-    steps = <Body>{`Two-step sign-in is on. ${plural(me.totp.recoveryCodesRemaining, 'recovery code', 'recovery codes')} left.`}</Body>;
+    const on = <Body>{`Two-step sign-in is on. ${plural(me.totp.recoveryCodesRemaining, 'recovery code', 'recovery codes')} left.`}</Body>;
+    steps = reset === 'proof' ? (
+      <>
+        {on}
+        <Panel>
+          <Heading>Confirm it’s you</Heading>
+          <Small>
+            {useRecovery
+              ? 'Enter one of your recovery codes. It is used up when you continue, even if you don’t finish.'
+              : 'Enter the 6-digit code your current authenticator app shows for Townwise.'}
+          </Small>
+          {useRecovery ? (
+            <FormField
+              key="recovery"
+              label="Recovery code"
+              value={proof}
+              onChangeText={setProof}
+              onSubmitEditing={() => { startReset.submit(); }}
+              autoComplete="off"
+              autoCorrect={false}
+              numeric
+              messages={proofMessage === null ? [] : [proofMessage]}
+              alert
+            />
+          ) : (
+            <FormField
+              key="code"
+              label="Current code"
+              value={proof}
+              onChangeText={setProof}
+              onSubmitEditing={() => { startReset.submit(); }}
+              textContentType="oneTimeCode"
+              autoComplete="one-time-code"
+              keyboardType="number-pad"
+              inputMode="numeric"
+              numeric
+              messages={proofMessage === null ? [] : [proofMessage]}
+              alert
+            />
+          )}
+          <Actions>
+            <Button label="Continue" disabled={startReset.pending} onPress={() => { startReset.submit(); }} />
+            {/* Not while the proof is on its way: its answer would show the new key after Cancel. */}
+            <Button variant="outline" label="Cancel" disabled={startReset.pending} onPress={leaveReset} />
+          </Actions>
+          <Button
+            variant="link"
+            label={useRecovery ? 'Use your authenticator app instead' : 'Use a recovery code instead'}
+            onPress={() => { setUseRecovery((current) => !current); setProof(''); setProofMessage(null); setMessage(null); }}
+          />
+        </Panel>
+      </>
+    ) : (
+      <>
+        {on}
+        <Panel>
+          <Heading>New phone or authenticator app?</Heading>
+          <Small>Move two-step sign-in to it. You confirm with a code from your current app or a recovery code, then add Townwise to the new one. Nothing changes until you confirm a code from the new app.</Small>
+          <Actions>
+            <Button variant="outline" label="Move to a new authenticator app" onPress={() => { setMessage(null); setReauth(false); setReset('proof'); }} />
+          </Actions>
+        </Panel>
+      </>
+    );
   } else if (me === null && message === null) {
     // Until the account is read: the Before you start panel's skeleton (spec 15.7).
     steps = <SecuritySkeleton label="Loading two-step sign-in" />;
@@ -264,7 +388,7 @@ export default function SecurityScreen(): React.JSX.Element {
             {message === null ? null : <ErrorNotice message={message} />}
             {reauth ? (
               <Actions>
-                <Button label="Sign in again" onPress={() => { void auth.signOut('Sign in again to finish setting up two-step sign-in.'); }} />
+                <Button label="Sign in again" onPress={() => { void auth.signOut(reset === null ? 'Sign in again to finish setting up two-step sign-in.' : 'Sign in again to move two-step sign-in to a new app.'); }} />
               </Actions>
             ) : null}
           </Stack>

@@ -13,9 +13,9 @@ import { z } from 'zod';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
-import { daysBetween, EARLIEST_DATE, isoDate, plusYears, utcDay } from '../dates.ts';
+import { daysBetween, EARLIEST_DATE, isCalendarDate, isoDate, plusYears, utcDay } from '../dates.ts';
 import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import type { RuleSchedule, RuleSeason } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { MAX_LINK_UID_CHARS, type NoteContent, type NoteLink, type NoteRecord } from '../stores/notes.ts';
 import { loadLocation, memberOf } from './locations.ts';
@@ -55,15 +55,42 @@ const sharedFields = {
   endTime: clockTime.nullish(),
 };
 
-const noteBody = z.object({ ...sharedFields, endDate: isoDate, detail: z.string().trim().max(280).nullish() });
+/** A note never has a season (D46: seasons are for rules only). */
+const noteBody = z.object({ ...sharedFields, endDate: isoDate, detail: z.string().trim().max(280).nullish(), season: z.null().optional() });
 
 /** Make a note's event, beside the note's fields in a create body: strict, its dates never taken from the request. */
 const linkBody = z.object({
   fromEvent: z.strictObject({ calendarId: objectId, uid: z.string().min(1).max(MAX_LINK_UID_CHARS) }).nullish(),
 });
 
-/** A rule's schedule: strict, with no detail (the rule's text is its words), and no end when `endDate` is null or left out. */
-const scheduleBody = z.strictObject({ ...sharedFields, endDate: isoDate.nullish() });
+/** 'MM-DD': a month and a day. Whether it is a real one is checked by validSeason. */
+const monthDay = z.string().regex(/^\d{2}-\d{2}$/);
+
+/** A rule's yearly season (D46). */
+const seasonBody = z.strictObject({ repeat: z.literal('yearly'), from: monthDay, to: monthDay });
+
+/**
+ * A rule's schedule: strict, with no detail (the rule's text is its words), no end when `endDate` is null or left out,
+ * and a yearly season or none.
+ */
+const scheduleBody = z.strictObject({ ...sharedFields, endDate: isoDate.nullish(), season: seasonBody.nullish() });
+
+/** A non-leap year, to count a season's days in. */
+const SEASON_YEAR = '2027';
+/** A season lasts at most this many days, counted in a non-leap year: shorter than a year. */
+const MAX_SEASON_DAYS = 364;
+
+/**
+ * D46: a season's months and days are real ones, neither Feb 29, and it lasts less than a year (at most 364 days in a
+ * non-leap year, `to` before `from` crossing the new year).
+ */
+function validSeason(season: RuleSeason): boolean {
+  const from = `${SEASON_YEAR}-${season.from}`;
+  const to = `${SEASON_YEAR}-${season.to}`;
+  if (!isCalendarDate(from) || !isCalendarDate(to)) return false;
+  const days = (daysBetween(from, to) + 365) % 365 + 1;
+  return days <= MAX_SEASON_DAYS;
+}
 
 type SharedBody = z.infer<z.ZodObject<typeof sharedFields>>;
 
@@ -88,12 +115,14 @@ function sharedContentOf(body: SharedBody): Omit<RuleSchedule, 'endDate'> {
  */
 function validDays(content: RuleSchedule, today: string): boolean {
   const { startTime, endTime, endDate } = content;
+  const season = content.season ?? null;
   // 'HH:MM' strings order as the times do. [CONFIRM: an event with hours ends by midnight on its own day]
   const validHours = startTime === null || endTime === null
     ? startTime === endTime
     : startTime < endTime && content.kind !== 'closure';
   return content.startDate >= EARLIEST_DATE && content.startDate <= plusYears(today, 2)
     && (endDate === null || (endDate >= content.startDate && daysBetween(content.startDate, endDate) <= MAX_SPAN_DAYS))
+    && (season === null || (endDate === null && validSeason(season)))
     && (content.weekdays === null || new Set(content.weekdays).size === content.weekdays.length)
     && (content.effect !== 'closed' || content.kind === 'private_event' || content.expectedGuests === null)
     && validHours;
@@ -131,7 +160,11 @@ export function readNoteContent(raw: unknown, today: string): NoteContent | null
 export function readRuleSchedule(raw: unknown, today: string): RuleSchedule | null {
   const parsed = scheduleBody.safeParse(raw);
   if (!parsed.success) return null;
-  const schedule: RuleSchedule = { ...sharedContentOf(parsed.data), endDate: parsed.data.endDate ?? null };
+  const { season } = parsed.data;
+  const schedule: RuleSchedule = {
+    ...sharedContentOf(parsed.data), endDate: parsed.data.endDate ?? null,
+    ...(season === undefined || season === null ? {} : { season: { repeat: season.repeat, from: season.from, to: season.to } }),
+  };
   return validDays(schedule, today) ? schedule : null;
 }
 

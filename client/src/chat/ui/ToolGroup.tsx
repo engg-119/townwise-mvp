@@ -8,15 +8,20 @@ import { theme } from '../../theme';
 import { toolLine, viewRows, type ToolContext, type ToolStep } from '../tools';
 
 // The tool calls of a reply (spec P25): one row per call, each fading in as it starts while the reply streams; the
-// "Worked for" disclosure (Worked.tsx) holds them once it is done. A done row opens to
+// timeline under "Working for" and "Worked for" (Worked.tsx) holds them. A done row opens to
 // what it read, as dates, counts and its sources as chips, opening in a new tab (never rows of figures or raw data). No
 // icons but the source chips' site logos (portal/ui/SourceChip.tsx, the chip every source link is): the mono status
 // word ("Reading", "Read", "Couldn’t read") carries the state, in `text2`, `text3` or the error color.
 
-/** Fades its child in over `duration` (easeOut), or shows it at once under reduced motion or until that is known. */
-export function FadeIn(props: { children: React.ReactNode; duration?: number }): React.JSX.Element {
+/**
+ * Fades its child in over `duration` (easeOut), or shows it at once under reduced motion or until that is known.
+ * `appear` false (read once, when it mounts) shows it at once too, as the same element, so a parent can keep it in
+ * place when it stops fading new children in.
+ */
+export function FadeIn(props: { children: React.ReactNode; duration?: number; appear?: boolean }): React.JSX.Element {
   const reduced = useReducedMotion();
-  const animate = reduced === false;
+  const [appear] = useState(props.appear ?? true);
+  const animate = reduced === false && appear;
   const [opacity] = useState(() => new Animated.Value(animate ? 0 : 1));
   const duration = props.duration ?? theme.motion.fade;
   useEffect(() => {
@@ -76,15 +81,16 @@ function Row(props: { step: ToolStep; ctx: ToolContext; ended: boolean }): React
   );
 }
 
-/** One row per call, each fading in as it starts while the reply streams; `live` false once the reply has ended. */
+/**
+ * One row per call, each fading in as it starts while the reply streams; `live` false once the reply has ended. A row
+ * stays the same element when the reply ends, so one the person opened stays open and nothing redraws.
+ */
 export function ToolGroup(props: { steps: readonly ToolStep[]; live: boolean; ctx: ToolContext }): React.JSX.Element | null {
   const { steps, live, ctx } = props;
   if (steps.length === 0) return null;
   return (
     <View style={styles.group} testID="tool-group">
-      {steps.map((step) => (live
-        ? <FadeIn key={step.id}><Row step={step} ctx={ctx} ended={false} /></FadeIn>
-        : <Row key={step.id} step={step} ctx={ctx} ended />))}
+      {steps.map((step) => <FadeIn key={step.id} appear={live}><Row step={step} ctx={ctx} ended={!live} /></FadeIn>)}
     </View>
   );
 }

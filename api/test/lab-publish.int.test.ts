@@ -310,6 +310,26 @@ describe('one set of rules for every calibration (D42)', () => {
     expect(await runDoc(jumped.runId ?? '')).toMatchObject({ status: 'draft' });
     expect((await calibrateWith(t, 0.17, 55)).gate).toMatchObject({ published: true, reason: 'published' });
   });
+
+  it('a lapsed year-long run’s outlook stays out of the jump guard (D52): only its forecast tier’s days are compared', async () => {
+    const t = await team({ forecastsOn: true });
+    // An imported year-long run made 2026-03-11 (82 days before today, 2026-06-01): its forecast tier ends 2026-06-10,
+    // 10 days into the draft's 28, so it is lapsed. Its middles are 50 through then and 100 in its outlook.
+    const { days, weeks } = runDays('2026-03-10', 366);
+    const file = {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v5', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-03-10', madeAt: '2026-03-11', frozen: null,
+      interval: { level: 0.8, widened: true }, backtest: null, weeks,
+      days: days.map((day) => (day.date > '2026-06-10' ? { ...day, low: 80, mid: 100, high: 125, baseline: 100 } : day)),
+    };
+    const imported = await call(server, `/api/admin/orgs/${t.orgId}/locations/${t.locationId}/forecast-runs`, { session: staff, json: file });
+    expect(imported.status).toBe(201);
+    const { run } = await imported.json() as { run: { id: string } };
+    expect((await changeRun(t, run.id, 'publish')).status).toBe(200);
+    // Middles of 50 against its 10 forecast-tier days of 50: no jump. Its 18 outlook days at 100 would have held it.
+    const draft = await calibrateWith(t, 0.17, 50);
+    expect(draft.gate).toMatchObject({ published: true, reason: 'published' });
+  });
 });
 
 describe('retries, races and existing runs', () => {

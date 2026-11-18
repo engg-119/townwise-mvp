@@ -19,18 +19,39 @@
 // (its note's id) only while open, under a unique partial index, so a note has at most one open follow-up; every change
 // of status clears it. upsertFollow inserts one, or updates the open one in place by compare-and-set, and never makes
 // again a change an org admin dismissed (same note, kind and target). A uid names a booking: nothing here logs it.
+//
+// Suggested closure rules (openspec change suggest-closure-rules, D46) share the collection: `source` is `file` (a file
+// read, with its `fileId`) or `sales` (the sales history, with its `evidence`), absent on the weekly pass's rows (read as
+// `weekly`). They carry a `closureKey` (agent/closure-suggestions.ts), unique per location in any status (a partial
+// index), have no why (their origin is worded from `source`, `fileId` and `evidence`), and are open while their end is
+// null or not before today in the town. Members decide them (handlers/rule-suggestions.ts). The three owner-calendar
+// kinds carry no `source` either: they are neither a file's nor the sales history's, an org admin decides them in the
+// weekly panel (handlers/weekly-suggestions.ts), and they list and expire by first date with the weekly pass's rows.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import { utcDay } from '../dates.ts';
-import type { RuleSchedule } from './business-rules.ts';
+import { seasonSchema, type RuleSchedule, type RuleSeason } from './business-rules.ts';
 import type { NoteContent, NoteDates } from './notes.ts';
 
 export const AGENT_SUGGESTIONS_COLLECTION = 'tw_agent_suggestions';
 export const SUGGESTION_PASSES_COLLECTION = 'tw_suggestion_passes';
 
 export type SuggestionStatus = 'open' | 'accepted' | 'dismissed' | 'expired';
+/** Who made a suggestion: the weekly pass (absent on its rows), a file read, or the sales history (D46). */
+export type SuggestionSource = 'weekly' | 'file' | 'sales';
+/** Rule suggestions a member decides (D46). */
+export type RuleSuggestionSource = Exclude<SuggestionSource, 'weekly'>;
+
+/** Why the sales history suggests a closed weekday: counts and one date only. */
+export interface SalesEvidence {
+  /** Counted days of the weekday with no sales, and all its counted days. */
+  readonly noSalesCount: number;
+  readonly weekdayCount: number;
+  /** The last counted day of the weekday with sales (guests or net sales), or null when it had none. */
+  readonly lastSalesDate: string | null;
+}
 /** How a location's weekly pass ended: still running (or died running), suggested some, none, budget spent, failed. */
 export type SuggestionPassStatus = 'running' | 'suggested' | 'none' | 'budget' | 'failed';
 
@@ -84,6 +105,8 @@ interface ContentFields {
   detail: string | null;
   startTime: string | null;
   endTime: string | null;
+  /** A rule schedule's yearly season (D46); absent otherwise. */
+  season?: { repeat: 'yearly'; from: string; to: string };
 }
 
 interface DateFields {
@@ -117,7 +140,7 @@ interface SuggestionFields {
   content: ContentFields;
   /** A rule's words; null on a note. */
   text: string | null;
-  /** TownwiseAI's one sentence on why; null on `event`, `move` and `remove`, whose words are written at read time. */
+  /** TownwiseAI's one sentence on why, on a weekly `note` or `rule`; null on a file or sales row and on `event`, `move` and `remove`, whose words are written at read time. */
   why: string | null;
   /** On `event`: the owner-calendar event spotted. */
   event?: EventFields;
@@ -125,6 +148,14 @@ interface SuggestionFields {
   follow?: FollowFields;
   /** On an open `move` or `remove`: its note's id, unique among open follow-ups; cleared on every change of status. */
   openFollowFor?: Types.ObjectId;
+  /** Absent on the weekly pass's rows and the owner-calendar kinds. */
+  source?: RuleSuggestionSource;
+  /** The file a file row was read from. */
+  fileId?: Types.ObjectId;
+  /** A sales row's evidence. */
+  evidence?: { noSalesCount: number; weekdayCount: number; lastSalesDate: string | null };
+  /** File and sales rows only: one per key at a location, in any status. */
+  closureKey?: string;
   /** The town calendar entries it rests on. */
   calendarIds: string[];
   status: SuggestionStatus;
@@ -161,6 +192,7 @@ function contentSchema(): Schema<ContentFields> {
     detail: { type: String, default: null },
     startTime: { type: String, default: null },
     endTime: { type: String, default: null },
+    season: { type: seasonSchema(), required: false },
   }, { _id: false, strict: 'throw', versionKey: false });
 }
 
@@ -181,7 +213,13 @@ function suggestionSchema(): Schema<SuggestionFields> {
     type: { type: String, required: true, enum: ['note', 'rule', 'event', 'move', 'remove'] },
     content: { type: contentSchema(), required: true },
     text: { type: String, default: null },
-    why: { type: String, default: null, maxlength: 400 },
+    // Required on a weekly `note` or `rule` only; a file or sales row, an `event`, a `move` and a `remove` have none.
+    why: {
+      type: String, maxlength: 400, default: null,
+      required: function required(this: { source?: string; type?: string }) {
+        return (this.source === undefined || this.source === 'weekly') && (this.type === 'note' || this.type === 'rule');
+      },
+    },
     event: {
       type: new Schema<EventFields>({
         calendarId: { type: Schema.Types.ObjectId, required: true },
@@ -203,6 +241,16 @@ function suggestionSchema(): Schema<SuggestionFields> {
       }, { _id: false, strict: 'throw', versionKey: false }),
     },
     openFollowFor: { type: Schema.Types.ObjectId },
+    source: { type: String, enum: ['file', 'sales'] },
+    fileId: { type: Schema.Types.ObjectId },
+    evidence: {
+      type: new Schema({
+        noSalesCount: { type: Number, required: true, min: 0 },
+        weekdayCount: { type: Number, required: true, min: 0 },
+        lastSalesDate: { type: String, default: null },
+      }, { _id: false, strict: 'throw', versionKey: false }),
+    },
+    closureKey: { type: String },
     calendarIds: { type: [String], default: [] },
     status: { type: String, required: true, enum: ['open', 'accepted', 'dismissed', 'expired'] },
     decidedBy: { type: String, default: null },
@@ -214,6 +262,8 @@ function suggestionSchema(): Schema<SuggestionFields> {
   schema.index({ orgId: 1, locationId: 1, status: 1, 'content.startDate': 1 });
   // At most one open follow-up per note (design decision 3), as tw_calibrations.liveLocation holds one live calibration.
   schema.index({ openFollowFor: 1 }, { unique: true, partialFilterExpression: { openFollowFor: { $type: 'objectId' } } });
+  // D46: one suggested closure rule per key at a location, in any status, so a dismissed one is never suggested again.
+  schema.index({ orgId: 1, locationId: 1, closureKey: 1 }, { unique: true, partialFilterExpression: { closureKey: { $type: 'string' } } });
   return schema;
 }
 
@@ -253,14 +303,33 @@ export type SuggestionRecord = SuggestionContent & {
   readonly week: string;
   /** The first date it names (the note's or schedule's start); it expires once that is today or past in the town. */
   readonly firstDate: string;
-  /** Null on `event`, `move` and `remove`. */
+  /** Null on a file or sales row, and on `event`, `move` and `remove`. */
   readonly why: string | null;
   readonly calendarIds: readonly string[];
   readonly status: SuggestionStatus;
   readonly createdAt: Date;
   /** Its last write: an accept of a follow-up compares and sets on it, so a refresh's rewrite is never accepted unseen. */
   readonly updatedAt: Date;
+  readonly source: SuggestionSource;
+  readonly fileId: string | null;
+  readonly evidence: SalesEvidence | null;
+  readonly closureKey: string | null;
 };
+
+/** A suggested closure rule to store (D46): a file or sales row, under a given id. */
+export interface NewRuleSuggestion {
+  readonly id: string;
+  readonly locationId: string;
+  /** The town's Monday of the day it was made. */
+  readonly week: string;
+  readonly source: RuleSuggestionSource;
+  readonly text: string;
+  readonly schedule: RuleSchedule;
+  readonly closureKey: string;
+  readonly fileId?: string;
+  readonly evidence?: SalesEvidence;
+  readonly now: Date;
+}
 
 export interface SuggestionPassRecord {
   readonly locationId: string;
@@ -313,8 +382,23 @@ export interface AgentSuggestionStore {
   findPass(scope: OrgScope, locationId: string, week: string): Promise<SuggestionPassRecord | null>;
   /** Stores a pass's kept suggestions, each `open`. */
   insert(scope: OrgScope, input: { locationId: string; week: string; suggestions: readonly NewSuggestion[]; now: Date }): Promise<SuggestionRecord[]>;
-  /** The open suggestions whose first date is after `today`, soonest first. */
+  /**
+   * D46: a file or sales suggestion under its given id. `created` false: a row with the id was there (a retry wrote
+   * it). Null when another row holds its closure key (in any status).
+   */
+  insertOne(scope: OrgScope, input: NewRuleSuggestion): Promise<{ readonly record: SuggestionRecord; readonly created: boolean } | null>;
+  /** The open weekly suggestions whose first date is after `today`, soonest first (never a file or sales row). */
   listOpen(scope: OrgScope, locationId: string, today: string): Promise<SuggestionRecord[]>;
+  /** D46: the open file and sales suggestions whose end is null or not before `today`, oldest first. */
+  listOpenRules(scope: OrgScope, locationId: string, today: string): Promise<SuggestionRecord[]>;
+  /** D46: the row holding this closure key at the location, in any status, else null. */
+  findByKey(scope: OrgScope, locationId: string, closureKey: string): Promise<SuggestionRecord | null>;
+  /** D46: the open suggestions a file's read made. */
+  openFromFile(scope: OrgScope, locationId: string, fileId: string): Promise<SuggestionRecord[]>;
+  /** D46: deletes one file or sales suggestion while it is open (a compare-and-set); false otherwise. */
+  removeOpen(scope: OrgScope, locationId: string, id: string): Promise<boolean>;
+  /** D46: a sales delete, the location's sales suggestions that are not accepted. Resolves the number deleted. */
+  removeSalesUndecided(scope: OrgScope, locationId: string): Promise<number>;
   /**
    * The location's `note` and `rule` suggestions in any status, newest first (at most 500): what a pass must not suggest
    * again. The owner-calendar kinds are left out, so follow-ups and spotted events never crowd earlier notes out of it.
@@ -331,7 +415,10 @@ export interface AgentSuggestionStore {
   markAccepted(scope: OrgScope, locationId: string, id: string, input: { by: string; now: Date; updatedAt?: Date; orExpired?: boolean }): Promise<boolean>;
   /** Open to dismissed; false otherwise. */
   markDismissed(scope: OrgScope, locationId: string, id: string, input: { by: string; now: Date }): Promise<boolean>;
-  /** Open suggestions whose first date is `today` or past, to expired. Resolves the number changed. */
+  /**
+   * To expired: open weekly suggestions whose first date is `today` or past, and open file and sales suggestions whose
+   * end is before `today` (an ongoing one never). Resolves the number changed.
+   */
   expire(scope: OrgScope, locationId: string, today: string, now: Date): Promise<number>;
   /** One open suggestion to expired (what it rests on is gone); false otherwise. */
   markExpired(scope: OrgScope, locationId: string, id: string, now: Date): Promise<boolean>;
@@ -377,11 +464,15 @@ function followFields(follow: FollowUp): FollowFields {
   };
 }
 
+function seasonOf(season: ContentFields['season']): { season?: RuleSeason } {
+  return season === undefined ? {} : { season: { repeat: 'yearly', from: season.from, to: season.to } };
+}
+
 /** A row's content. Every write of an `event`, `move` or `remove` sets its sub-document (contentFields). */
 function contentOf(doc: SuggestionDoc): SuggestionContent {
   const c = doc.content;
   const shared = { kind: c.kind, startDate: c.startDate, weekdays: c.weekdays, effect: c.effect, expectedGuests: c.expectedGuests, startTime: c.startTime, endTime: c.endTime };
-  if (doc.type === 'rule') return { type: 'rule', text: doc.text ?? '', schedule: { ...shared, endDate: c.endDate } };
+  if (doc.type === 'rule') return { type: 'rule', text: doc.text ?? '', schedule: { ...shared, endDate: c.endDate, ...seasonOf(c.season) } };
   const note: NoteContent = { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail };
   if (doc.type === 'event' && doc.event !== undefined) {
     const { event } = doc;
@@ -401,11 +492,16 @@ function toSuggestion(doc: SuggestionDoc): SuggestionRecord {
     locationId: doc.locationId.toHexString(),
     week: doc.week,
     firstDate: c.startDate,
-    why: doc.why,
+    why: doc.why ?? null,
     calendarIds: doc.calendarIds,
     status: doc.status,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+    source: doc.source ?? 'weekly',
+    fileId: doc.fileId?.toHexString() ?? null,
+    evidence: doc.evidence === undefined ? null
+      : { noSalesCount: doc.evidence.noSalesCount, weekdayCount: doc.evidence.weekdayCount, lastSalesDate: doc.evidence.lastSalesDate ?? null },
+    closureKey: doc.closureKey ?? null,
   };
 }
 
@@ -432,6 +528,7 @@ function contentFields(content: SuggestionContent): Pick<SuggestionFields, 'type
     content: {
       kind: s.kind, startDate: s.startDate, endDate: s.endDate, weekdays: s.weekdays === null ? null : [...s.weekdays], effect: s.effect,
       expectedGuests: s.expectedGuests, detail: null, startTime: s.startTime, endTime: s.endTime,
+      ...(s.season === undefined || s.season === null ? {} : { season: { repeat: 'yearly', from: s.season.from, to: s.season.to } }),
     },
   };
 }
@@ -450,6 +547,12 @@ function sameDates(a: NoteDates | null, b: NoteDates | null): boolean {
 
 /** A compare-and-set lost to a concurrent run this many times gives up: a later refresh recomputes from stored state. */
 const FOLLOW_ATTEMPTS = 3;
+/** The weekly pass's rows carry no source. */
+const weeklyRows = () => ({ source: trusted({ $exists: false }) });
+/** File and sales rows (D46). */
+const ruleRows = () => ({ source: trusted({ $in: ['file', 'sales'] satisfies RuleSuggestionSource[] }) });
+/** A file or sales row (D46) with no end, or an end not before `today` (a null end is never less than a date). */
+const live = (today: string) => ({ 'content.endDate': trusted({ $not: { $lt: today } }) });
 
 export function createAgentSuggestionStore(connection: Connection): AgentSuggestionStore {
   const Suggestion = agentSuggestionModel(connection);
@@ -513,10 +616,48 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
       })));
       return docs.map((doc) => toSuggestion(doc.toObject<SuggestionDoc>()));
     },
+    async insertOne(scope, input) {
+      const id = new Types.ObjectId(input.id);
+      try {
+        const doc = await Suggestion.create({
+          _id: id, ...of(scope, input.locationId), week: input.week, ...contentFields({ type: 'rule', text: input.text, schedule: input.schedule }),
+          why: null, calendarIds: [], status: 'open', decidedBy: null, decidedAt: null, createdAt: input.now, updatedAt: input.now,
+          source: input.source, closureKey: input.closureKey,
+          ...(input.fileId === undefined ? {} : { fileId: new Types.ObjectId(input.fileId) }),
+          ...(input.evidence === undefined ? {} : { evidence: { ...input.evidence } }),
+        });
+        return { record: toSuggestion(doc.toObject<SuggestionDoc>()), created: true };
+      } catch (err) {
+        if (!isDuplicateKeyError(err)) throw err;
+        const written = await Suggestion.findOne({ ...of(scope, input.locationId), _id: id }).lean();
+        return written === null ? null : { record: toSuggestion(written), created: false };
+      }
+    },
     async listOpen(scope, locationId, today) {
-      const docs = await Suggestion.find({ ...of(scope, locationId), status: 'open', 'content.startDate': trusted({ $gt: today }) })
+      const docs = await Suggestion.find({ ...of(scope, locationId), ...weeklyRows(), status: 'open', 'content.startDate': trusted({ $gt: today }) })
         .sort({ 'content.startDate': 1, _id: 1 }).lean();
       return docs.map(toSuggestion);
+    },
+    async listOpenRules(scope, locationId, today) {
+      const docs = await Suggestion.find({ ...of(scope, locationId), ...ruleRows(), status: 'open', ...live(today) })
+        .sort({ createdAt: 1, _id: 1 }).lean();
+      return docs.map(toSuggestion);
+    },
+    async findByKey(scope, locationId, closureKey) {
+      const doc = await Suggestion.findOne({ ...of(scope, locationId), closureKey }).lean();
+      return doc === null ? null : toSuggestion(doc);
+    },
+    async openFromFile(scope, locationId, fileId) {
+      const docs = await Suggestion.find({ ...of(scope, locationId), source: 'file', fileId: new Types.ObjectId(fileId), status: 'open' })
+        .sort({ _id: 1 }).lean();
+      return docs.map(toSuggestion);
+    },
+    async removeOpen(scope, locationId, id) {
+      const result = await Suggestion.deleteOne({ ...one(scope, locationId, id), ...ruleRows(), status: 'open' });
+      return result.deletedCount === 1;
+    },
+    async removeSalesUndecided(scope, locationId) {
+      return (await Suggestion.deleteMany({ ...of(scope, locationId), source: 'sales', status: trusted({ $ne: 'accepted' }) })).deletedCount;
     },
     async recent(scope, locationId) {
       const docs = await Suggestion.find({ ...of(scope, locationId), type: trusted({ $in: ['note', 'rule'] }) }).sort({ _id: -1 }).limit(RECENT_LIMIT).lean();
@@ -544,11 +685,15 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
       return result.modifiedCount === 1;
     },
     async expire(scope, locationId, today, now) {
-      const result = await Suggestion.updateMany(
-        { ...of(scope, locationId), status: 'open', 'content.startDate': trusted({ $lte: today }) },
+      const ofWeek = await Suggestion.updateMany(
+        { ...of(scope, locationId), ...weeklyRows(), status: 'open', 'content.startDate': trusted({ $lte: today }) },
         { $set: { status: 'expired', updatedAt: now }, $unset: { openFollowFor: '' } },
       );
-      return result.modifiedCount;
+      const ended = await Suggestion.updateMany(
+        { ...of(scope, locationId), ...ruleRows(), status: 'open', 'content.endDate': trusted({ $type: 'string', $lt: today }) },
+        { $set: { status: 'expired', updatedAt: now } },
+      );
+      return ofWeek.modifiedCount + ended.modifiedCount;
     },
     async markExpired(scope, locationId, id, now) {
       const result = await Suggestion.updateOne(
