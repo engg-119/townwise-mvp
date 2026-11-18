@@ -93,9 +93,32 @@ test('Later moves a month on; a month with none says so; Earlier comes back', as
   expect(await screen.findByRole('list', { name: 'US holidays events, November 2026' })).toBeTruthy();
 });
 
-test('an unknown calendar, or another organization’s, shows the not-found state', async () => {
+test('an unknown calendar, or another organization’s, shows the not-found state, which stays on the page', async () => {
   const fake = setup('/locations/l1/data/c_aaaaaaaaaaaaaaaaaaaaaaaa');
-  expect(await screen.findByText(ITEM.gone)).toBeTruthy();
+  // A row in the page, not a toast that fades and leaves the page blank (UI review S3).
+  const gone = await screen.findByText(ITEM.calendarGone);
+  expect(screen.queryByTestId('toasts')?.contains(gone) ?? false).toBe(false);
   expect(screen.getByRole('link', { name: ITEM.back })).toBeTruthy();
   expect(fake.paths.some((path) => path.includes('/data/c_'))).toBe(false);
+});
+
+// UI review S6: a status that asks the owner to remove and add the link again leads to where that is done.
+test('a calendar with a status links to the Calendar’s Your calendars; one without has no such link', async () => {
+  setup(`/locations/l1/data/c_${ID}`);
+  expect(await screen.findByRole('heading', { name: 'US holidays' })).toBeTruthy();
+  expect(screen.queryByRole('link', { name: ITEM.manageCalendars })).toBeNull();
+  cleanup();
+  const fake = dataFake({ inner: locationsFake() });
+  fake.calendars = [{ ...HOLIDAYS, status: 'key_mismatch' }];
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
+  const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
+  const path = `/locations/l1/data/c_${ID}`;
+  window.history.replaceState(null, '', path);
+  render(
+    <Head.Provider>
+      <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location={path} />
+    </Head.Provider>,
+  );
+  expect(await screen.findByText('Townwise can’t open this link any more. Remove it and add the link again.')).toBeTruthy();
+  expect(screen.getByRole('link', { name: ITEM.manageCalendars }).getAttribute('href')).toBe('/locations/l1/calendar');
 });

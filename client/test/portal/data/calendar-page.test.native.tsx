@@ -48,5 +48,8 @@ test('the page shows the calendar and its month, and a tap opens the event’s d
 test('an unknown calendar shows the not-found state', async () => {
   const { api } = setup();
   await renderApp('/locations/l1/data/c_aaaaaaaaaaaaaaaaaaaaaaaa', api);
-  expect(await screen.findByText(ITEM.gone)).toBeTruthy();
+  // A row in the page, not a toast that fades (UI review S3).
+  const gone = await screen.findByText(ITEM.calendarGone);
+  expect(screen.queryByTestId('toast-text')).toBeNull();
+  expect(gone).toBeTruthy();
 });

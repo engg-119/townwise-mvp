@@ -9,10 +9,10 @@ import { errorCopy } from '../../errors';
 import { useLoad } from '../../hooks';
 import { localToday, monthRange } from '../../locations/dates';
 import { usePortal } from '../../PortalProvider';
-import { locationHref } from '../../routing';
+import { calendarHref, locationHref } from '../../routing';
 import { useLocation } from '../../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../../ui/Button';
-import { ErrorNotice, LoadingLine, Notice } from '../../ui/feedback';
+import { ErrorNotice, InlineNotice, LoadingLine } from '../../ui/feedback';
 import { Section, Stack } from '../../ui/layout';
 import { Heading, Mono, Small } from '../../ui/text';
 import { agendaMonths, calendarEventItem, emptyMonthLine } from './agenda';
@@ -25,7 +25,8 @@ import { ITEM } from './copy';
 // events"; never the link's address, which no answer holds, D33), the repeating events left out, its status and last
 // refresh; then the month's events as an agenda (data/item/CalendarAgenda.tsx), today's month first, with Earlier and
 // Later across the months the Calendar shows. An unknown or removed calendar, or another organization's, is P27's
-// not-found state. Refresh and Remove stay in the Calendar's Your calendars, so one place manages calendars.
+// not-found state, a line that stays on the page (InlineNotice, never a toast). Refresh and Remove stay in the
+// Calendar's Your calendars, so one place manages calendars; a calendar with a status links there.
 
 export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
   const { api } = usePortal();
@@ -40,7 +41,7 @@ export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
   if (list.state.status === 'loading') return <Section><LoadingLine text="Loading this calendar" /></Section>;
   if (list.state.status === 'failed') return <Section><ErrorNotice message={errorCopy(list.state.error)} onRetry={list.reload} />{back}</Section>;
   const calendar = list.state.data.calendars.find((each) => each.id === props.calendarId) ?? null;
-  if (calendar === null) return <Section><Notice text={ITEM.gone} />{back}</Section>;
+  if (calendar === null) return <Section><InlineNotice text={ITEM.calendarGone} />{back}</Section>;
 
   const row = rowLines(calendar);
   const status = statusWords(calendar.status, calendar.kind);
@@ -55,6 +56,7 @@ export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
           <Mono>{row.summary}</Mono>
           {row.repeating === null ? null : <Small>{row.repeating}</Small>}
           {status === null ? null : <Small white>{status}</Small>}
+          {status === null ? null : <LinkButton variant="link" href={calendarHref(location.id)} label={ITEM.manageCalendars} />}
           {row.updated === null ? null : <Mono>{row.updated}</Mono>}
         </View>
         <Heading level={3}>Events</Heading>
