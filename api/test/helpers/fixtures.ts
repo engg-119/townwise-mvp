@@ -254,6 +254,13 @@ export async function addChatUsage(server: Server, opts: { orgId: string; month:
   });
 }
 
+/** A tw_activity_days record (openspec change staff-overview): the person used the app in the organization that UTC day. */
+export async function addActivityDay(server: Server, opts: { orgId: string; userId: string; day: string }): Promise<void> {
+  await server.connection.collection<{ _id: string }>('tw_activity_days').insertOne({
+    _id: `${opts.orgId}:${opts.userId}:${opts.day}`, orgId: new Types.ObjectId(opts.orgId), userId: opts.userId, day: opts.day,
+  });
+}
+
 /** Ordering's six collections that hold a location's records. */
 export const ORDER_COLLECTIONS = [
   'tw_order_decisions', 'tw_order_rules', 'tw_order_cards', 'tw_order_setups', 'tw_item_sales', 'tw_order_counts',

@@ -5,8 +5,8 @@
 // existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, Google access's
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
-// countedWeekRows (D42), and the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
-// weekly-forecast-suggestions).
+// countedWeekRows (D42), the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
+// weekly-forecast-suggestions), and the active days recorder's removeOldActivityDays (openspec change staff-overview).
 // Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
 // (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
@@ -18,6 +18,7 @@ import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
+import { activityDayModel } from './activity-days.ts';
 import { agentSuggestionModel, suggestionPassModel } from './agent-suggestions.ts';
 import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
@@ -284,7 +285,7 @@ export interface DeletedPersonRecords {
  * and their Google connections for calendars, in every organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab), and from the weekly suggestions switch they last set
- * and the suggestions they decided. Never an active
+ * and the suggestions they decided. Their active days go too, in every organization (staff-overview). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
@@ -341,6 +342,9 @@ export async function deletePersonRecords(
   // Google access for calendars (connect-google-calendar): the handler has already ended any still found, revoking
   // each; this is the backstop for one left by a crash. Not counted, so the audit details are unchanged.
   await googleConnectionModel(connection).deleteMany({ userId });
+  // The days they used the app, in every organization (openspec change staff-overview). Not counted, so the audit
+  // details are unchanged.
+  await activityDayModel(connection).deleteMany({ userId });
   return { requests, seats: invites + removed, conversations, liveTurns };
 }
 
@@ -527,6 +531,14 @@ export async function sweepCandidates(
 /** Daily upload counters for days before `beforeDay` (YYYY-MM-DD), every organization's. Resolves the number deleted. */
 export async function removeOldUploadDays(connection: Connection, beforeDay: string): Promise<number> {
   return (await uploadDayModel(connection).deleteMany({ day: trusted({ $lt: beforeDay }) })).deletedCount;
+}
+
+/**
+ * Active days dated before `beforeDay` (YYYY-MM-DD), every organization's (openspec change staff-overview, design
+ * decision 3): the recorder's daily removal. Resolves the number deleted.
+ */
+export async function removeOldActivityDays(connection: Connection, beforeDay: string): Promise<number> {
+  return (await activityDayModel(connection).deleteMany({ day: trusted({ $lt: beforeDay }) })).deletedCount;
 }
 
 /** Which of `ids` (file ids) still have a row, in any organization: the orphan check for blobs. */

@@ -1,5 +1,6 @@
 // tw_activity_days (openspec change staff-overview, design decision 1): one row per person, organization and UTC day,
-// whose _id is built from those three, so no time is kept anywhere in it; and the organization deletion's removal.
+// whose _id is built from those three, so no time is kept anywhere in it; old-row removal (stores/cross-tenant.ts); and
+// the organization deletion's removal.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -7,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import { createActivityDayStore, type ActivityDayStore } from '../src/stores/activity-days.ts';
+import { removeOldActivityDays } from '../src/stores/cross-tenant.ts';
 import { createOrg } from './helpers/fixtures.ts';
 import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -57,6 +59,17 @@ describe('tw_activity_days', () => {
     const a = await tenant();
     await Promise.all(Array.from({ length: 8 }, () => days.record(a.scope, 'user-0003', '2026-06-01')));
     expect(await rows()).toHaveLength(1);
+  });
+
+  it('removeOldActivityDays deletes every organization’s rows dated before the day it is given, and keeps that day', async () => {
+    const a = await tenant();
+    const b = await tenant();
+    await days.record(a.scope, 'user-0006', '2025-12-03');
+    await days.record(b.scope, 'user-0006', '2025-12-03');
+    await days.record(a.scope, 'user-0006', '2025-12-04');
+    await days.record(b.scope, 'user-0007', '2026-06-01');
+    expect(await removeOldActivityDays(server.connection, '2025-12-04')).toBe(2);
+    expect((await rows()).map((row) => row.day).sort()).toEqual(['2025-12-04', '2026-06-01']);
   });
 
   it('removeForOrg deletes the organization’s rows and never another’s', async () => {

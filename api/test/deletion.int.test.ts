@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
-  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
+  addActivityDay, addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
   addRemovedSeat, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { addGoogleCalendar, addGoogleConnection, createFakeGoogle, REFRESH_TOKEN, SHARED_ID } from './helpers/google.ts';
@@ -416,6 +416,9 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   // Orders: the location's records, with an order card in the person's conversation.
   await addOrderRecords(server, { orgId: formerOrgId, locationId, conversationId });
   await addLiveTurn(server, { orgId: formerOrgId, userId });
+  // The days they used the app, in both organizations they were in (staff-overview).
+  await addActivityDay(server, { orgId: formerOrgId, userId, day: '2026-05-30' });
+  await addActivityDay(server, { orgId: olderOrgId, userId, day: '2026-04-02' });
   const inviting = await createOrg(server, { name: `${name} Inviting Cafe` });
   const paused = await createOrg(server, { name: `${name} Paused Inviter`, status: 'suspended' });
   await addInvite(server, { orgId: inviting, email: doomed.email, invitedBy: 'f'.repeat(24) });
@@ -468,6 +471,7 @@ async function snapshotOfPerson(target: Person): Promise<string> {
     await server.connection.collection('tw_order_cards').find({ conversationId: { $in: conversationIds } }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_profiles').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_google_connections').find({ userId }).sort({ _id: 1 }).toArray(),
+    await server.connection.collection('tw_activity_days').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_audit_events').find({ $or: [{ actorUserId: userId }, { 'details.email': target.email }] }).sort({ _id: 1 }).toArray(),
     await server.authStores.totp.get(userId),
   ];
@@ -513,6 +517,8 @@ describe('POST /api/admin/people/delete', () => {
     expect(await count('tw_chat_proposals', { userId })).toBe(0);
     expect(await count('tw_order_cards', { conversationId: new Types.ObjectId(doomed.conversationId) })).toBe(0);
     expect(await count('tw_profiles', { userId })).toBe(0);
+    // Their active days, in both organizations (staff-overview); not counted, so the answer above is unchanged.
+    expect(await count('tw_activity_days', { userId })).toBe(0);
     expect(await server.authStores.totp.get(userId)).toBeNull();
     for (const session of [doomed.person.session, doomed.second]) {
       expect(await errorOf(await call(server, '/api/me', { session }))).toEqual({ status: 401, error: 'unauthenticated' });
