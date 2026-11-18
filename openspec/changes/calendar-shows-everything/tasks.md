@@ -154,6 +154,16 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - Tests: `client/test/portal/data/calendar-page.test.web.tsx` and `calendar-page.test.native.tsx` (new).
 - [x] 6.4 `item/AiSection.tsx` and `aiCopy.ts`: a `calendar` read shows its `ai.events` in the agenda, marked "Note made" or "No note made". Tests: `client/test/portal/data/item-ai.test.web.tsx` and `item-ai.test.native.tsx`.
 
+## 8. Owner requests of 2026-11-18: actual or forecast, and how the forecast did
+
+- [x] 8.1 API, tests first: `api/test/forecast-score.test.ts` (a late day is never scored) and `api/test/estimates.int.test.ts` (a late run alone fills days but scores none, its week has no `inRange`; with a run made in time, the past days use it). Then `api/src/forecasts/score.ts` (`madeAfter`, `ScoredDay.late`) and `reader.ts` (`chooseDays` takes the newest run made by the day, `inRange` null from a late run, a late week's `inRange` null); `api/README.md`.
+- [ ] 8.2 The rule beside `figureOf` in `client/src/portal/calendar/model.ts`, tests first in `client/test/portal/calendar/model.test.ts`: `figureSource`, `markedFigure`, `figureTone`, `FORECAST_TAG`, `figureLabel`, `FIGURE_KEY`; the cell labels and tooltip lines in those words; `forecastCheck`, `checkWords`, `insideWords` and `monthCheckLine`; the tooltip's and day panel's comparison.
+- [ ] 8.3 Calendar surfaces: `CalendarGrid.web.tsx`, `CalendarGrid.tsx`, `CalendarWeek.web.tsx`, `CalendarWeek.tsx` (`grid.ts` `headLine`), `CalendarDay.tsx`, a new `FigureKey.tsx` and the month line in `CalendarPage.tsx`. Tests: `grid.test.web.tsx`, `grid.test.native.tsx`, `week.test.web.tsx`, `week.test.native.tsx`, `calendar.test.web.tsx`, `calendar.test.native.tsx`.
+- [ ] 8.4 Home surfaces: `analytics/week.ts` (`monthGrid`'s caption, `forecastPhrase`), `MonthGrid.web.tsx`, `MonthGrid.tsx`, `MonthKey.tsx`, `ThisWeek.tsx`, `ThisMonth.tsx` (the month line, a past day's forecast and comparison to the detail) and `DayDetail.tsx`. Tests: `month-figure-parity.test.ts` (the mark and label on both), `week.test.ts`, `month-grid-status.test.web.tsx`, `month-grid.test.native.tsx`, `home.test.web.tsx`, `home.test.native.tsx`.
+- [ ] 8.5 Same words: `estimates/ModelCard.tsx` `liveLine` and `analytics/week.ts` Last week through `insideWords`; TownwiseAI's daily chart names its line "Actual guests" and its hover "180 guests, actual" beside a forecast (`chat/visuals/DailyChart.web.tsx`, `hover.ts`). Tests: their existing suites.
+- [ ] 8.6 Docs: the D49 row (the requests in the owner's words, Claude's calls, the two [CONFIRM]s), 14.4 (the read's rule), P11, P28 and 16.3, section 22 and the change log in `docs/portal/spec.md`; `client/src/portal/README.md`. Run `openspec validate calendar-shows-everything --strict`.
+- [ ] 8.7 Run each touched client directory's suites, the API unit project and `estimates.int.test.ts`, typecheck, and eslint on the changed files.
+
 ## 7. Docs, review and ship
 
 - [x] 7.1 Update the docs:
@@ -180,7 +190,8 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - Home's four surfaces, and specifically Home's "This month in {Town}": past days show the same figures as the Calendar, and there is no empty area under the grid at 1280px and 1440px (side by side), 900px, 375px or on native, with the Reorder disclosure closed. Its verdict on empty space decides 5.7.
   - Your data's Calendars group and a `c_` page;
   - a calendar file's P27;
-  - the note form's Event name, empty on Make a note.
+  - the note form's Event name, empty on Make a note;
+  - actual and forecast figures on every surface (decision 10), the tooltip's and panel's comparison and the month line (decision 11), at 1280px, 375px and on native.
 - [ ] 7.3 `/review` of the branch, then `npm run verify` after asking the release session that the laptop is free.
 - [ ] 7.4 Push only after the owner's go. He checks these on the local dev servers:
   - a closed day with a named event;

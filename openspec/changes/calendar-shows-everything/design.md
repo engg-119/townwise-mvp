@@ -246,6 +246,62 @@ The owner's words: "it looks like the calendar in the home page is not showing a
 | under 720px, and every phone | stacked: grid full width (entry lines only if cells reach 88px, as on a tablet held wide), the legend, Open the calendar, then the day detail |
 | native (iOS, Android) | stacked as above at every width, with no sticky and no tooltip; entry lines by the same 88px cell rule; the Reorder disclosure works by tap |
 
+### 10. Actual or forecast, one mark on every surface (owner, 2026-11-18)
+
+The owner's words are in the proposal. His screenshots showed Home's This month with past days empty, the Calendar's past fallback days with a number and a small "FORECAST" tag while today and future days (forecasts too) showed a bare number, and a BOOKED day with no number.
+
+What the build already did, checked on 2026-11-18:
+- Home's This month fills past days (decision 9, tasks 5.3 and 5.4): its cells are the Calendar's `dayCell`, so a past day shows its stored guests first, else the run's figure, else "No data". `month-figure-parity.test.ts` pins it, including a past day with stored guests.
+- The marking was not one rule: `captionOf` tagged only `past_forecast` ("forecast") and `actual` ("guests"), and every cell drew an actual in `text2` and a forecast in `white`, so a forecast looked like the solid figure.
+- A booked day has no figure unless a buyout note gave its party a guest count (14.5: a booked day has no walk-in forecast, and a run's booked row has no figures). So the BOOKED cell with no number had no number to show; a buyout with a guest count shows its party.
+
+**The rule lives once, in `calendar/model.ts` beside `figureOf`:**
+- `figureSource(kind)`: `actual` for stored guests (or Home's stored net sales); `forecast` for a published day's middle figure, a past day's run figure (`past_forecast`) and a buyout's party (`booked`, an expected count, not a count of guests who came).
+- `markedFigure(text, kind)`: a forecast's figure is printed with a leading "~" ("~82"); an actual is printed bare ("94").
+- `figureTone(kind)`: an actual is `white` (solid); a forecast is `text2` (lighter).
+- `FORECAST_TAG` ("forecast"): the word a surface prints beside a forecast's figure where it has room; an actual gets no tag.
+- `figureLabel(value, kind, metric)`: what a screen reader hears and the tooltip's first line says: "82 guests, forecast", "94 guests, actual".
+- `FIGURE_KEY`: the key's two entries, "Actual guests" ("Actual sales" on a net-sales Home) and "Forecast", each shown with its own sample figure ("94", "~82").
+
+**The treatment (Claude's call, [CONFIRM: a forecast's figure is lighter with a leading "~" and the word "forecast"; an actual is a plain solid figure]).** The "~" is text, so the mark never rests on color alone, and it fits a phone cell where no tag does. It reads as "about", which is what a forecast's middle figure is. No new token: `white` and `text2` are the theme's.
+
+| Surface | Actual | Forecast |
+|---|---|---|
+| Calendar month cell, web and native, from 641px | solid figure, no caption | "~82" lighter, "FORECAST" in the top row (a booked day keeps "BOOKED" there; its party's "~70" still carries the "~") |
+| Calendar month cell at 640px and below | solid figure | "~82" lighter (no room for a tag); a booked day keeps its status word in the figure's place, its label says both |
+| Calendar week view head | solid figure | "~82" lighter, then "forecast, 70 to 95" (or "forecast" alone) |
+| Tooltip (Calendar and Home) | "94 guests, actual" | "82 guests, forecast (likely 70 to 95)"; a past fallback day keeps d6's "No data." before it |
+| Calendar day panel | "Actual" over the figure | "Forecast" over "About 82 guests" |
+| Home This month cell | solid figure, no caption ("sales" stays under a net-sales figure) | "~82" lighter, "forecast" under it |
+| Home This week | the day's own figure, solid | the Forecast row: "~90 guests, forecast, likely 68 to 112", lighter |
+| Home day detail | "This day": the stored figure | "Forecast": the run's figure for a past day with no data, the published one from today on |
+| Home Last week | unchanged: actual rows plain, forecast-only rows already say "Forecast, no guest count uploaded yet" | |
+| TownwiseAI daily chart | its line is named "Actual guests" in the key, and "180 guests, actual" in the hover, when the chart also draws a forecast | the band and dashed middle, as today |
+| Analytics | shows stored days only, so nothing to mark | |
+
+Each grid's key gains the two entries: Home's `MonthKey`, and a new `FigureKey` under the Calendar's month and week views (the Calendar had no key). Every cell's label says "forecast" or "actual" after its figure. Tests pin the distinction on the Calendar and on Home, and their parity, on web and native.
+
+### 11. How the forecast did against what happened (owner, 2026-11-18)
+
+**Only a forecast made before the day is compared with it.** The read (`api/src/forecasts/reader.ts` `chooseDays`) took each day from the newest published run whose data ended before it, whatever its `madeAt`. A run made after a day (data uploads lagging, as Sawtooth's: data through Oct 21, runs made in November) never saw the day's sales, but came after it, and it won over an older run made in time. Its `inRange` and `scored` then counted in live accuracy, the window's `accuracy` and Last week.
+- Now a day takes the newest run made by it (`madeAt` on or before the day), and only with none the newest made after it, which fills the day (owner's first request: data first, else a forecast, else a word).
+- A day from a run made after it has `inRange: null` and `scored: false` and counts in no `live` or `accuracy`; a week from a run made after its first day has `inRange: null`.
+- A run made on the day itself counts as made by it: the lab makes its weekly run at 03:00 in the town, before service, forecasting from that day ([CONFIRM: a run made on the day counts as made before it]).
+- No field is added. Pinned by `api/test/forecast-score.test.ts` and `api/test/estimates.int.test.ts`.
+
+**A past day says how the forecast did.** `forecastCheck(day)` in `model.ts` gives `{ mid, low, high, actual, verdict }` only when the read's day has passed, is `scored` (open in the model, not closed or likely closed, stored guests, made by the day) and has an `inRange`. Its words: "Forecast was about 82 (likely 70 to 95); 94 guests came: inside the range" ("above the range", "below the range"). They use the model's own figures, which are the day's before today. They show in:
+- the tooltip (Calendar and Home's This month), after the first line;
+- the Calendar's day panel, in place of "and the day landed in that range";
+- Home's day detail, in its Forecast part.
+
+A past day whose run was made after it says so in the panel ("A forecast made after this day put it at 70 to 95, so it isn't scored.").
+
+**The month says how many days landed inside.** `monthCheckLine(month, input)`: "So far this month: 5 of 6 days inside the forecast range." for today's month, "In October: 5 of 6 days inside the forecast range." for an earlier month on the Calendar. With no comparable day yet in a month that has begun: "No day this month has both its guests and a forecast made before it yet." Nothing for a later month, or while the read loads or failed. It shows under the Calendar's month view and under Home's This month key. It counts the read's own days of that month, so it agrees with each day's words.
+
+**Same words where views overlap.** "inside the forecast range" (`insideWords`) is also the model card's live line ("So far: 5 of 6 days inside the forecast range; typical miss 12%, ...") and Last week's ("5 of 6 days inside the forecast range."), which read "inside the range" and "landed in its range" before.
+
+**No API change beyond the rule above**: the read already answers each day's `actual`, `inRange`, `scored`, `madeAt` and `model`. Nothing is logged.
+
 ## Risks / Trade-offs
 
 - [Notes first in a cell can push a holiday past "+N more"] → The label, tooltip and panel still list it, and the order is a [CONFIRM] in the D49 row.
@@ -256,6 +312,8 @@ The owner's words: "it looks like the calendar in the home page is not showing a
 - [Dedupe hides which source a compact entry came from] → The day panel and Home's day detail keep every source.
 - [Merging run reasons drops a smaller effect] → Only for two reasons with one label on one day, which read as a bug today. The larger effect is kept.
 - [An old native build saving a note] → It sends no `title`, and the keep-on-omit rule keeps the stored one.
+- [A past day can lose a later run's figure to an earlier one] → Only when the earlier run was made by the day: its figure is the forecast the owner could have read, and the later run still fills any day no earlier run covers (decision 11).
+- [Live accuracy can drop to "Not scored yet"] → A location whose every past day came from a run made after it has no honest score; the model card and Last week say so rather than score a late run (decision 11).
 - [The `c_` ref shares P27's route] → `ItemPage` branches on the prefix before any read, and a test pins that a `c_` ref never calls `org.data.get`.
 
 ## Where Claude departs from the audit
@@ -277,4 +335,6 @@ No schema migration. `title` is optional, and a note without it reads as null. T
   - a rule's entry is its text;
   - 120 characters for a title;
   - a link calendar's host as text only;
-  - "Your file" naming no file.
+  - "Your file" naming no file;
+  - a forecast's figure lighter with a leading "~" and the word "forecast", an actual plain (decision 10);
+  - a run made on the day counts as made before it (decision 11).
