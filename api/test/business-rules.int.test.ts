@@ -314,6 +314,13 @@ describe('a rule’s schedule (D31)', () => {
     const later = { ...winter, season: { repeat: 'yearly', from: '12-20', to: '01-05' } };
     const changed = await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: { schedule: later } });
     expect((await changed.json() as { rule: RuleView }).rule.schedule).toEqual(later);
+    // An edit from an older client sends the schedule with no season key: the stored season is kept (code review N4).
+    const older = Object.fromEntries(Object.entries(later).filter(([key]) => key !== 'season'));
+    const kept = await call(server, `${rulesPath(location)}/${rule.id}`, {
+      method: 'PATCH', session: author.session, json: { text: 'Closed over the holidays', schedule: older },
+    });
+    expect((await kept.json() as { rule: RuleView }).rule).toMatchObject({ text: 'Closed over the holidays', schedule: later });
+    expect((await stored(rule.id))?.schedule).toEqual(later);
     // Taking the season off is a change too, and stores no season.
     const plain = { ...winter, season: null };
     const off = await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: { schedule: plain } });

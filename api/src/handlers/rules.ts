@@ -194,18 +194,31 @@ export async function createRule(ctx: TownwiseContext, req: Request, res: Respon
 }
 
 /**
+ * A schedule an edit sends with no `season` key keeps the stored rule's season (D46): a client from before seasons
+ * never sends one, and must not turn a yearly rule into every day. `season: null` takes it off.
+ */
+function keepingSeason(raw: unknown, stored: RuleSchedule | null): unknown {
+  const season = stored?.season ?? null;
+  if (season === null || typeof raw !== 'object' || raw === null || Array.isArray(raw) || 'season' in raw) return raw;
+  return { ...raw, season };
+}
+
+/**
  * PATCH /api/org/locations/:locationId/rules/:ruleId, by the author or an org admin. Only the fields that differ from
  * the stored rule are written, so an edit of the text and another of the schedule racing both land, and a field the
- * request leaves out (or sends unchanged) keeps whatever a racing edit wrote. Nothing different writes nothing.
+ * request leaves out (or sends unchanged) keeps whatever a racing edit wrote. Nothing different writes nothing. A
+ * schedule with no `season` key keeps the stored season (keepingSeason).
  */
 export async function updateRule(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const { scope } = caller;
   const body = parseInput(updateBody, req.body);
   const text = body.text === undefined ? undefined : ruleTextIn(body.text);
-  const schedule = body.schedule === undefined ? undefined : scheduleIn(body.schedule, utcDay(ctx.now()));
+  // Checked before any read, so a bad schedule is 400 whatever the rule.
+  if (body.schedule !== undefined) scheduleIn(body.schedule, utcDay(ctx.now()));
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const existing = await editableRule(ctx, caller, location.id, req.params.ruleId);
+  const schedule = body.schedule === undefined ? undefined : scheduleIn(keepingSeason(body.schedule, existing.schedule), utcDay(ctx.now()));
   const change = {
     ...(text === undefined || text === existing.text ? {} : { text }),
     ...(schedule === undefined || sameSchedule(schedule, existing.schedule) ? {} : { schedule }),
