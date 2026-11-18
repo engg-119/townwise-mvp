@@ -123,7 +123,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - check the marketing FAQ (`client/src/marketing/Home.web.tsx`) again and change any sentence the change makes untrue.
 - [x] 5.4 `docs/portal/tuning-chat.md`: section 3 (a rule's "Forecast schedule" line can say "every year") and section 9 (the closure-key drop, `alreadySuggested` without file and sales rows, the season sentence). The chat sees confirmed rules only; no tool changes.
 - [x] 5.5 `infra/README.md`: the two rollback cleanup lines (design Migration Plan).
-- [ ] 5.6 The coordinator records the D46 claim in the shared spec-number reservations.
+- [x] 5.6 The coordinator records the D46 claim in the shared spec-number reservations.
 
 ## 6. Tests
 
