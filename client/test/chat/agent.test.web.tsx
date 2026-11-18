@@ -354,7 +354,13 @@ describe('following the reply (owner, 2026-11-18: “as the prompt goes it shoul
   const VIEW = 600;
 
   /** The thread as a browser lays it out: its content `height` tall in a 600px view, scrolled to `top`. */
-  function laidOut(log: HTMLElement): { content: HTMLElement; scrolledTo: jest.Mock<undefined, [ScrollToOptions]>; grow: (height: number) => void; scrollTo: (top: number) => Promise<void> } {
+  function laidOut(log: HTMLElement): {
+    content: HTMLElement;
+    scrolledTo: jest.Mock<undefined, [ScrollToOptions]>;
+    grow: (height: number, heard?: boolean) => void;
+    scrollTo: (top: number) => Promise<void>;
+    wheelTo: (top: number) => Promise<void>;
+  } {
     const content = first(Array.from(log.children)) as HTMLElement;
     let height = VIEW;
     let top = 0;
@@ -367,15 +373,25 @@ describe('following the reply (owner, 2026-11-18: “as the prompt goes it shoul
     return {
       content,
       scrolledTo,
-      // The content's new height after a layout: its observers fire before paint, with no timer in between.
-      grow: (next) => {
+      // The content's new height after a layout: its observers fire before paint, with no timer in between. `heard`
+      // false: a frame whose height a scroll event reads before the observers hear it.
+      grow: (next, heard = true) => {
         height = next;
+        if (!heard) return;
         const watching = observers.filter((observer) => observer.targets.has(content));
         expect(watching).not.toHaveLength(0);
         act(() => { for (const observer of watching) observer.callback([{ target: content } as unknown as ResizeObserverEntry], observer); });
       },
-      // The person (or a jump landing) moves the view: react-native-web reports it, and again when the scroll ends.
+      // Something other than the person moves the view (a jump landing, content growing): react-native-web reports
+      // it, and again when the scroll ends.
       scrollTo: async (next) => {
+        top = next;
+        fireEvent.scroll(log);
+        await act(() => new Promise((resolve) => { setTimeout(resolve, 120); }));
+      },
+      // The person moves it, with a wheel.
+      wheelTo: async (next) => {
+        fireEvent.wheel(log, { deltaY: next - top });
         top = next;
         fireEvent.scroll(log);
         await act(() => new Promise((resolve) => { setTimeout(resolve, 120); }));
@@ -411,23 +427,61 @@ describe('following the reply (owner, 2026-11-18: “as the prompt goes it shoul
     await thread.scrollTo(1200 - VIEW);
 
     // The person scrolls up: the reply grows below without moving the view, and Latest shows.
-    await thread.scrollTo(300);
+    await thread.wheelTo(300);
     thread.scrolledTo.mockClear();
     thread.grow(1400);
     thread.grow(1500);
     expect(thread.scrolledTo).not.toHaveBeenCalled();
     expect(await screen.findByRole('button', { name: 'Latest' })).toBeTruthy();
     // Back down near the end: followed again.
-    await thread.scrollTo(1500 - VIEW - 20);
+    await thread.wheelTo(1500 - VIEW - 20);
     expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
     thread.grow(1600);
     expect(thread.scrolledTo).toHaveBeenCalledWith({ top: 1600, left: 0, behavior: 'auto' });
 
     // Scrolled up again, a new prompt goes to the end.
-    await thread.scrollTo(200);
+    await thread.wheelTo(200);
     thread.scrolledTo.mockClear();
     await send(api, 'And January?');
     expect(thread.scrolledTo).toHaveBeenCalledWith(expect.objectContaining({ top: 1600 }));
+  });
+  // An independent browser review, 2026-11-18: in a new chat whose thread still fit, "Working for" pressed; the
+  // timeline's open animation made the thread overflow for the first time, a scroll event read mid-growth sat short of
+  // an end that had moved on (85 with the end at 146), and the rest of the reply streamed off screen behind Latest.
+  test('a thread that first overflows as the timeline opens stays pinned, though a scroll event lands mid-growth; only the person’s scroll unpins', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    const thread = laidOut(log);
+    await layout(screen.getByTestId('chat-dock'), 120);
+    // It fits: nothing scrolls.
+    thread.grow(420);
+    thread.grow(VIEW);
+    // "Working for" is pressed (a click, not a scroll), and its region opens over 200ms.
+    fireEvent.pointerDown(screen.getByTestId('chat-column'), { pointerType: 'mouse' });
+    fireEvent.pointerUp(screen.getByTestId('chat-column'), { pointerType: 'mouse' });
+    thread.grow(685);
+    expect(lastScroll(thread.scrolledTo)).toEqual({ top: 685, left: 0, behavior: 'auto' });
+    // The jump's scroll event, read a frame later with the content already taller: 61px short of the end.
+    thread.grow(746, false);
+    await thread.scrollTo(85);
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    // The rest of the animation and the reply are followed.
+    for (const height of [746, 800, 1000, 1500]) {
+      thread.scrolledTo.mockClear();
+      thread.grow(height);
+      expect(thread.scrolledTo).toHaveBeenCalledWith({ top: height, left: 0, behavior: 'auto' });
+      await thread.scrollTo(height - VIEW);
+    }
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    // A scroll key from inside the thread is the person's: it unpins.
+    fireEvent.keyDown(screen.getByTestId('chat-column'), { key: 'PageUp' });
+    await thread.scrollTo(400);
+    thread.scrolledTo.mockClear();
+    thread.grow(1700);
+    expect(thread.scrolledTo).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: 'Latest' })).toBeTruthy();
   });
 });
 

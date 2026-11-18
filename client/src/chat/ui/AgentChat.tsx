@@ -15,6 +15,7 @@ import { Skeleton, SkeletonBlock, SkeletonButton, SkeletonHeading, SkeletonText 
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
+import { watchScrollIntent, type ScrollIntent } from '../scrollIntent';
 import { INITIAL_PIN, nextPin, type PinEvent, type PinState } from '../scrollPin';
 import { nextFallback, suggestionsFor } from '../suggestions';
 import { readsLine, toolLine, type ToolContext } from '../tools';
@@ -186,6 +187,10 @@ export function AgentChat(props: {
   // The pin lives in a ref (every scroll event moves it); only whether Latest shows is drawn.
   const pin = useRef<PinState>(INITIAL_PIN);
   const [behind, setBehind] = useState(false);
+  // Whether the person is scrolling the thread, which alone can unpin it (scrollPin.ts): on web the input heard on
+  // its scrolling element (scrollIntent.ts); on native a drag, and the momentum it leaves.
+  const intent = useRef<ScrollIntent | null>(null);
+  const touching = useRef({ drag: false, momentum: false });
   // The docked composer's measured height (with the lines above it): the room the thread keeps at its end.
   const [dock, setDock] = useState(0);
   const dockWas = useRef(0);
@@ -246,7 +251,8 @@ export function AgentChat(props: {
   // content, whose callback runs after layout and before paint, so a pinned thread is at its end in the frame that grew
   // it: every frame of the timeline's 200ms open and close, a chart drawn, a reattached turn's first layout. (The
   // ScrollView's onContentSizeChange measures in a timeout on web, a frame late: each growing frame was drawn short of
-  // the end, then moved.) `heard` is the latest render's, read when the observer fires.
+  // the end, then moved.) `heard` is the latest render's, read when the observer fires. The person's scrolling is heard
+  // on the same element.
   const thread = state.status === 'ready' && state.enabled && !landing;
   const heard = useRef<(height: number) => void>(() => undefined);
   useLayoutEffect(() => {
@@ -256,13 +262,19 @@ export function AgentChat(props: {
     };
   });
   useLayoutEffect(() => {
-    if (Platform.OS !== 'web' || !thread || typeof ResizeObserver !== 'function') return undefined;
+    if (Platform.OS !== 'web' || !thread) return undefined;
     const node = scroll.current?.getScrollableNode() as unknown as HTMLElement | null | undefined;
-    const content = node?.firstElementChild as HTMLElement | null | undefined;
-    if (content == null) return undefined;
-    const observer = new ResizeObserver(() => { heard.current(content.offsetHeight); });
-    observer.observe(content);
-    return () => { observer.disconnect(); };
+    if (node == null) return undefined;
+    const watching = watchScrollIntent(node);
+    intent.current = watching;
+    const content = node.firstElementChild as HTMLElement | null;
+    const observer = content === null || typeof ResizeObserver !== 'function' ? null : new ResizeObserver(() => { heard.current(content.offsetHeight); });
+    if (content !== null) observer?.observe(content);
+    return () => {
+      observer?.disconnect();
+      watching.stop();
+      intent.current = null;
+    };
   }, [thread]);
 
   function measureBar(): void {
@@ -602,8 +614,14 @@ export function AgentChat(props: {
           if (pin.current.pinned && contentSize.height - layoutMeasurement.height - contentOffset.y <= 1) {
             pin.current = { ...pin.current, lastY: Math.min(pin.current.lastY, y) };
           }
-          apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height });
+          const person = Platform.OS === 'web' ? intent.current?.person() === true : touching.current.drag || touching.current.momentum;
+          apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height, person });
         }}
+        // Native's own word for the person scrolling: a drag, then the momentum it leaves (react-native-web sends none).
+        onScrollBeginDrag={() => { touching.current.drag = true; }}
+        onScrollEndDrag={() => { touching.current.drag = false; }}
+        onMomentumScrollBegin={() => { touching.current.momentum = true; }}
+        onMomentumScrollEnd={() => { touching.current.momentum = false; }}
         // Native's content height (web's is the ResizeObserver above). The content's width changes whenever the scrollbar
         // comes or goes, so the bar is measured with it.
         {...(Platform.OS === 'web' ? {} : {

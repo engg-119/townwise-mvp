@@ -614,6 +614,14 @@ describe('the docked composer', () => {
     });
   }
 
+  /** The person drags the thread to `y` (a drag's scroll events come between its begin and end). */
+  async function dragged(y: number, height: number): Promise<void> {
+    const thread = screen.getByTestId('chat-thread');
+    await fireEvent(thread, 'scrollBeginDrag');
+    await scrolled(y, height);
+    await fireEvent(thread, 'scrollEndDrag');
+  }
+
   async function contentAt(height: number): Promise<void> {
     await fireEvent(screen.getByTestId('chat-thread'), 'contentSizeChange', 760, height);
   }
@@ -674,7 +682,7 @@ describe('the docked composer', () => {
     await scrolled(1196 - VIEW, 1196);
 
     // The person scrolls up: unpinned, with nothing new below.
-    await scrolled(400, 1196);
+    await dragged(400, 1196);
     toEnd.mockClear();
     // The dock shrinks and grows: the thread stays where it is, and that is no reply growing.
     await dockAt(120);
@@ -722,7 +730,7 @@ describe('the docked composer', () => {
     expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
     // A scroll up from that end still unpins.
     await scrolled(VIEW + 400 - VIEW, VIEW + 400);
-    await scrolled(300, VIEW + 400);
+    await dragged(300, VIEW + 400);
     await contentAt(VIEW + 600);
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
   });
@@ -751,7 +759,7 @@ describe('the docked composer', () => {
     expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
     await scrolled(1400 - VIEW, 1400);
     // A scroll up: nothing pulls the view back as the reply grows.
-    await scrolled(500, 1400);
+    await dragged(500, 1400);
     toEnd.mockClear();
     await contentAt(1500);
     expect(toEnd).not.toHaveBeenCalled();
@@ -763,6 +771,32 @@ describe('the docked composer', () => {
     expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
   });
 
+  test('a thread that first overflows as the timeline opens stays pinned through a scroll event read mid-growth; a drag, and its momentum, unpin', async () => {
+    const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
+    await renderAgent(meOf(ACCESS.member));
+    await send('How was last week?');
+    await screen.findByTestId('chat-thread');
+    await dockAt(120);
+    await contentAt(500);
+    // The timeline opens: the thread passes the view, and the scroll event read mid-growth sits short of the end.
+    await contentAt(VIEW + 85);
+    await scrolled(85, VIEW + 146);
+    toEnd.mockClear();
+    await contentAt(VIEW + 400);
+    expect(toEnd).toHaveBeenCalledWith({ animated: false });
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    await scrolled(400, VIEW + 400);
+    // The momentum a flick leaves is the person's too.
+    const thread = screen.getByTestId('chat-thread');
+    await fireEvent(thread, 'momentumScrollBegin');
+    await scrolled(200, VIEW + 400);
+    await fireEvent(thread, 'momentumScrollEnd');
+    toEnd.mockClear();
+    await contentAt(VIEW + 600);
+    expect(toEnd).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
+  });
+
   test('the dock shrinking under an unpinned thread leaves it unpinned: a small scroll up near the end is still a scroll up', async () => {
     const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
     await renderAgent(meOf(ACCESS.member));
@@ -771,14 +805,14 @@ describe('the docked composer', () => {
     await contentAt(1196);
     await scrolled(1196 - VIEW, 1196);
     // The person scrolls up 60 from the end.
-    await scrolled(1196 - VIEW - 30, 1196);
-    await scrolled(1196 - VIEW - 60, 1196);
+    await dragged(1196 - VIEW - 30, 1196);
+    await dragged(1196 - VIEW - 60, 1196);
     // They delete two lines of the draft: the dock and the room under the thread shrink by 60, and the offset, now at
     // the end, stays put (no scroll event).
     await dockAt(120);
     await contentAt(1136);
     // Another 10 up, then the reply grows: it is flagged, not followed.
-    await scrolled(1136 - VIEW - 10, 1136);
+    await dragged(1136 - VIEW - 10, 1136);
     toEnd.mockClear();
     await contentAt(1336);
     expect(toEnd).not.toHaveBeenCalled();
