@@ -1,0 +1,7 @@
+on: push
+jobs:
+  deploy:
+    runs-on: [self-hosted, townwise-deploy, townwise-laptop]
+    permissions:
+      id-token: write
+    steps: [{run: echo}]
