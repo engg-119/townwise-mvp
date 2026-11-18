@@ -36,7 +36,7 @@ Tests first in every group. Run single suites only (`npm test -w @townwise/api -
 
 ## 4. API docs
 
-- [ ] 4.1 `api/README.md`: the route in the endpoint table, `tw_activity_days` in collections, the recorder (when it writes, what it keeps, 180 days, deletion), the new log lines.
+- [x] 4.1 `api/README.md`: the route in the endpoint table, `tw_activity_days` in collections, the recorder (when it writes, what it keeps, 180 days, deletion), the new log lines.
 
 ## 5. Spec (written now, during implementation)
 
