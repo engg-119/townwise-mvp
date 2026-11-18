@@ -672,6 +672,8 @@ describe('a tool card', () => {
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
     await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
+    // The timeline starts closed (owner request, 2026-11-17).
+    fireEvent.click(screen.getByRole('button', { name: /^Working for/ }));
     return screen.getByText('your sales for Dec 1 to Dec 31, 2025');
   }
 
@@ -692,7 +694,7 @@ describe('a tool card', () => {
     expect(faded(await running(fakeChatApi()))).toBe(false);
   });
 
-  test('the counter alone shows it is working, a running tool shows as its row in the timeline, and the caret goes on done', async () => {
+  test('the counter alone shows it is working; the timeline starts closed, opens while it streams, shows a running tool as its row and stays open after done', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
@@ -700,6 +702,11 @@ describe('a tool card', () => {
     expect(screen.queryByText('Thinking…')).toBeNull();
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
     await stream(() => { turn(api).emit('thinking', { delta: 'Weighing the weekend.' }); });
+    const toggle = screen.getByRole('button', { name: /^Working for \d+ seconds?$/ });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     expect(screen.queryByText('Thinking…')).toBeNull();
     await stream(() => { turn(api).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
@@ -716,14 +723,12 @@ describe('a tool card', () => {
     });
     expect(screen.queryByText('▍')).toBeNull();
     expect(screen.queryByText(/^Working for/)).toBeNull();
-    // The timeline folds under a collapsed Worked for, which opens to the summary and the step.
-    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+    // The same button now reads Worked for, still open on the summary and the step.
     const worked = screen.getByRole('button', { name: /^Worked for \d+ seconds?$/ });
-    expect(worked.getAttribute('aria-expanded')).toBe('false');
-    fireEvent.click(worked);
+    expect(worked).toBe(toggle);
     expect(worked.getAttribute('aria-expanded')).toBe('true');
-    expect(document.getElementById(worked.getAttribute('aria-controls') ?? '')).not.toBeNull();
-    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
+    expect(document.getElementById(worked.getAttribute('aria-controls') ?? '')?.contains(screen.getByText('Weighing the weekend.'))).toBe(true);
+    expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
   });
 
   test('the live region says what it starts reading and never the streamed text or a figure', async () => {

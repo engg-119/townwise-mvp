@@ -5,8 +5,10 @@ import type { ToolContext, ToolStep } from '../../src/chat/tools';
 import type { TreeNode } from '../../src/chat/tree';
 import { initialChatState, type ChatMessage, type MessagePart, type TuningChat, type TuningChatState } from '../../src/chat/useTuningChat';
 import { NextChips } from '../../src/chat/ui/NextChips';
+import { COLLAPSE_MS } from '../../src/chat/ui/Collapse';
 import { ReplyView } from '../../src/chat/ui/ReplyView';
 import { UserMessage } from '../../src/chat/ui/UserMessage';
+import { workedOpenStore } from '../../src/chat/ui/workedOpen';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { visualTitle } from '../../src/chat/visuals/words';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles.web';
@@ -83,7 +85,7 @@ type UserProps = React.ComponentProps<typeof UserMessage>;
 function replyProps(over: Partial<ReplyProps> = {}): ReplyProps {
   return {
     message: SAVED, ctx: CTX, tree: TREE, newest: true, actions: 'always', chat: fakeChat(), locationId: 'l1', readOnlyId: null, canAct: true,
-    onRetry: jest.fn(), onAnnounce: jest.fn(), ...over,
+    onRetry: jest.fn(), onAnnounce: jest.fn(), workedOpen: workedOpenStore(), ...over,
   };
 }
 
@@ -122,17 +124,25 @@ it('shows the caret only while the reply streams, and removes it on done, stop a
   const running: ToolStep = { ...step, state: 'running', result: null };
   view.rerender(<ReplyView {...replyProps({ message: { ...live, parts: [text('a', 'Let me look.'), { type: 'tools', key: 'b', steps: [running] }] } })} />);
   expect(screen.queryByText('▍')).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: /^Working for/ }));
   expect(screen.getByText('your sales for Dec 1 to Dec 31, 2025')).toBeTruthy();
 });
 
-it('while it streams, only the counter shows until the thinking summary, in small text2, or a step arrives', () => {
+it('while it streams, only the counter shows until the thinking summary or a step arrives; then it is a closed button over them, in small text2', () => {
   const running: ToolStep = { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: { ...SALES_STEP.input }, result: null };
   const view = render(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [], { state: 'streaming' }) })} />);
   expect(screen.getByText('Working for 0s')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: /^Working for/ })).toBeNull();
   expect(screen.queryByText('Thinking…')).toBeNull();
   expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
   view.rerender(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [{ type: 'thinking', key: 't', text: 'Weighing the weekend.' }], { state: 'streaming' }) })} />);
   expect(screen.queryByText('Thinking…')).toBeNull();
+  const working = button('Working for 0 seconds');
+  expect(working.textContent).toBe('Working for 0s');
+  expect(working.getAttribute('aria-expanded')).toBe('false');
+  expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+  fireEvent.click(working);
+  expect(working.getAttribute('aria-expanded')).toBe('true');
   expect(window.getComputedStyle(screen.getByText('Weighing the weekend.')).color).toBe(theme.color.text2);
   view.rerender(<ReplyView {...replyProps({ message: msg('m2', 'assistant', [{ type: 'tools', key: 'b', steps: [running] }], { state: 'streaming' }) })} />);
   expect(screen.queryByText('Thinking…')).toBeNull();
@@ -141,6 +151,127 @@ it('while it streams, only the counter shows until the thinking summary, in smal
   expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Helpful' })).toBeNull();
   expect(screen.queryByText(/^Based on/)).toBeNull();
+});
+
+describe('the Working for / Worked for timeline (owner request, 2026-11-17)', () => {
+  const done: ToolStep = { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: { ...SALES_STEP.input }, result: { ...SALES_STEP.result } };
+  const thinking: MessagePart = { type: 'thinking', key: 't', text: 'Weighing the weekend.' };
+  const steps = (...list: ToolStep[]): MessagePart => ({ type: 'tools', key: 'b', steps: list });
+  const live = msg('m2', 'assistant', [thinking], { state: 'streaming', parentId: 'u1', startedAt: 0 });
+
+  function region(toggle: HTMLElement): HTMLElement {
+    const element = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
+    if (element === null) throw new Error('no region');
+    return element;
+  }
+
+  it('starts closed on a new reply; opened while it streams, it stays open, as the same elements, as steps stream in and after it ends', () => {
+    const workedOpen = workedOpenStore();
+    const view = render(<ReplyView {...replyProps({ message: live, workedOpen })} />);
+    const block = screen.getByTestId('worked');
+    const toggle = screen.getByRole('button', { name: /^Working for \d+ seconds?$/ });
+    const area = region(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(area.textContent).toBe('');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(area.textContent).toContain('Weighing the weekend.');
+    const running: ToolStep = { ...done, state: 'running', result: null };
+    view.rerender(<ReplyView {...replyProps({ message: { ...live, parts: [thinking, steps(running)] }, workedOpen })} />);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(within(area).getByText('Reading')).toBeTruthy();
+    view.rerender(<ReplyView {...replyProps({ message: { ...live, parts: [thinking, steps(done)] }, workedOpen })} />);
+    const row = within(area).getByText('your sales for Dec 1 to Dec 31, 2025');
+    view.rerender(<ReplyView {...replyProps({
+      message: { ...live, parts: [thinking, steps(done), text('c', 'Done.')], state: 'complete', nodeId: 'a1', endedAt: 12_000 }, workedOpen,
+    })} />);
+    // The same header, region and row: nothing was drawn anew when the reply ended.
+    expect(screen.getByTestId('worked')).toBe(block);
+    expect(button('Worked for 12 seconds')).toBe(toggle);
+    expect(toggle.textContent).toBe('Worked for 12s');
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    expect(region(toggle)).toBe(area);
+    expect(within(area).getByText('your sales for Dec 1 to Dec 31, 2025')).toBe(row);
+    // Closed, it says so, and opens again.
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+  });
+
+  it('a second prompt’s reply starts closed, while the first keeps the person’s choice', () => {
+    const workedOpen = workedOpenStore();
+    const firstReply = msg('m2', 'assistant', [thinking, text('c', 'Done.')], { nodeId: 'a1', parentId: 'u1', startedAt: 0, endedAt: 3000 });
+    const view = render(<ReplyView {...replyProps({ message: firstReply, workedOpen })} />);
+    fireEvent.click(button('Worked for 3 seconds'));
+    view.rerender(
+      <>
+        <ReplyView {...replyProps({ message: firstReply, workedOpen, newest: false })} />
+        <ReplyView {...replyProps({ message: { ...live, key: 'm4', parentId: null }, workedOpen })} />
+      </>,
+    );
+    expect(button('Worked for 3 seconds').getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: /^Working for/ }).getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('a reply drawn anew keeps the choice: by its key, by its node once saved, and by the node its turn named while it streamed', () => {
+    const workedOpen = workedOpenStore();
+    const turn: TuningChatState['turn'] = { kind: 'send', nodes: { user: 'u2', reply: 'a2', parentId: 'a1' }, earlier: null };
+    const chat = fakeChat({}, { turn });
+    const view = render(<ReplyView {...replyProps({ message: { ...live, key: 'm6' }, chat, workedOpen })} />);
+    fireEvent.click(screen.getByRole('button', { name: /^Working for/ }));
+    view.unmount();
+    // The same reply read again with a new key once its turn is saved (a reattached turn's reread).
+    const saved = msg('m9', 'assistant', [thinking, text('c', 'Done.')], { nodeId: 'a2', parentId: 'u2', startedAt: 0, endedAt: 3000 });
+    const again = render(<ReplyView {...replyProps({ message: saved, workedOpen })} />);
+    expect(button('Worked for 3 seconds').getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(button('Worked for 3 seconds'));
+    again.unmount();
+    render(<ReplyView {...replyProps({ message: { ...saved, key: 'm12' }, workedOpen })} />);
+    expect(button('Worked for 3 seconds').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('opens and closes the region’s height smoothly, keeping a closing timeline until it has folded and taking it out of reach at once', () => {
+    jest.useFakeTimers();
+    const view = render(<ReplyView {...replyProps({ message: live })} />);
+    const toggle = screen.getByRole('button', { name: /^Working for/ });
+    const area = region(toggle);
+    expect(area.style.gridTemplateRows).toBe('0fr');
+    expect(area.style.transition).toContain('grid-template-rows 200ms');
+    fireEvent.click(toggle);
+    expect(area.style.gridTemplateRows).toBe('1fr');
+    const inner = area.firstElementChild as HTMLElement;
+    // Clipped while it opens, then not, so a row's focus ring shows in full.
+    expect(inner.style.overflow).toBe('hidden');
+    act(() => { jest.advanceTimersByTime(COLLAPSE_MS); });
+    expect(inner.style.overflow).toBe('visible');
+    fireEvent.click(toggle);
+    expect(area.style.gridTemplateRows).toBe('0fr');
+    expect(inner.hasAttribute('inert')).toBe(true);
+    expect(area.textContent).toContain('Weighing the weekend.');
+    act(() => { jest.advanceTimersByTime(COLLAPSE_MS); });
+    expect(area.textContent).toBe('');
+    view.unmount();
+  });
+
+  it('under reduced motion opens and closes at once, with no transition', () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true, writable: true,
+      value: (query: string) => ({ media: query, matches: query === '(prefers-reduced-motion: reduce)', addEventListener: () => undefined, removeEventListener: () => undefined }),
+    });
+    try {
+      render(<ReplyView {...replyProps({ message: live })} />);
+      const toggle = screen.getByRole('button', { name: /^Working for/ });
+      const area = region(toggle);
+      expect(area.style.transition).toBe('none');
+      fireEvent.click(toggle);
+      expect((area.firstElementChild as HTMLElement).style.overflow).toBe('visible');
+      fireEvent.click(toggle);
+      expect(area.textContent).toBe('');
+    } finally {
+      Reflect.deleteProperty(window, 'matchMedia');
+    }
+  });
 });
 
 it('counts Working for {n}s once a second while it streams, and drops it when the reply ends', () => {
@@ -816,6 +947,8 @@ it('a web search card reads Searching the web while the reply streams, and once 
   const searching: ToolStep = { id: 'srvtoolu_02', name: 'web_search', state: 'running', input: null, result: null };
   const live = msg('m2', 'assistant', [{ type: 'tools', key: 'b', steps: [SEARCHED, searching] }], { state: 'streaming' });
   const view = render(<ReplyView {...replyProps({ message: live })} />);
+  // Opened while it streams, it stays open once the reply ends.
+  fireEvent.click(screen.getByRole('button', { name: /^Working for/ }));
   expect(screen.getByText('Searching')).toBeTruthy();
   expect(screen.getByText('Searched')).toBeTruthy();
   expect(screen.getAllByText('the web')).toHaveLength(2);
@@ -824,16 +957,14 @@ it('a web search card reads Searching the web while the reply streams, and once 
   expect(screen.queryByRole('button', { name: /^Searched the web/ })).toBeNull();
   for (const state of ['complete', 'stopped', 'failed'] as const) {
     view.rerender(<ReplyView {...replyProps({ message: { ...live, state, parts: [...live.parts, text('c', 'Done.')] } })} />);
-    fireEvent.click(button('Worked'));
+    expect(button('Worked').getAttribute('aria-expanded')).toBe('true');
     expect(screen.getByText('Stopped')).toBeTruthy();
     expect(screen.getByText('before the search finished')).toBeTruthy();
     expect(screen.queryByText('Searching')).toBeNull();
     expect(screen.getByText('9 pages: example.com, example.org')).toBeTruthy();
-    fireEvent.click(button('Worked'));
   }
   const failed: ToolStep = { ...searching, state: 'error', result: { code: 'max_uses_exceeded' } };
   view.rerender(<ReplyView {...replyProps({ message: { ...live, state: 'complete', parts: [{ type: 'tools', key: 'b', steps: [failed] }, text('c', 'Done.')] } })} />);
-  fireEvent.click(button('Worked'));
   expect(screen.getByText('Couldn’t search')).toBeTruthy();
   expect(screen.queryByText(/max_uses_exceeded/)).toBeNull();
   expect(screen.getByText('Based on this conversation only.')).toBeTruthy();

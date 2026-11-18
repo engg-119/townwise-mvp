@@ -17,13 +17,15 @@ import { messageMark, type RowShow } from './MessageTime';
 import { ReplyActions } from './ReplyActions';
 import { ReplySources } from './ReplySources';
 import { useVersionNav, VersionNav } from './VersionNav';
-import { isProcessPart, wholeSeconds, Worked, Working } from './Worked';
+import { isProcessPart, wholeSeconds, Worked } from './Worked';
+import { useWorkedOpen, type WorkedOpen } from './workedOpen';
 
 // One of TownwiseAI's replies (owner decisions 3 to 5): no label box, only a hidden "TownwiseAI said", then its parts
 // in the order they streamed: Markdown text (with a static caret at its end while text is what streams), visuals
-// Townwise drew, and proposal cards (a note's, or one to keep text on Your data, D28). Its thinking summary and tool calls are the timeline at its top: "Working for
-// {n}s" with the timeline under it while it streams (the counter alone before anything arrives), then a collapsed "Worked
-// for {n}s" that opens to the same timeline (Worked.tsx). Finished, it has its actions, its version navigator when it has siblings, the Based on line
+// Townwise drew, and proposal cards (a note's, or one to keep text on Your data, D28). Its thinking summary and tool calls are the timeline at its top
+// (Worked.tsx): one component for the whole turn, "Working for {n}s" while it streams and "Worked for {n}s" once it
+// ended, closed for every new prompt and opened by the person (owner request, 2026-11-17), their choice kept in the
+// page's `workedOpen` by the reply's key and node ids, so it holds as the reply ends and is read again. Finished, it has its actions, its version navigator when it has siblings, the Based on line
 // built from its tool calls (never written by the model), the web pages it cites (D37, ReplySources.tsx) and why it
 // ended early, if it did. One that failed or was stopped keeps its note and Try again.
 
@@ -47,6 +49,8 @@ export function ReplyView(props: {
    * page says its own sentences. Each call is news, even when the words repeat the last ones.
    */
   onAnnounce: (words: string) => void;
+  /** The page's open timelines (workedOpen.ts). */
+  workedOpen: WorkedOpen;
 }): React.JSX.Element {
   const { message, chat } = props;
   const live = message.state === 'streaming';
@@ -60,6 +64,8 @@ export function ReplyView(props: {
   // The caret ends the text while text is what streams; once a step or visual follows, the counter says it is working.
   const last = message.parts.at(-1);
   const caretOn = live && last?.type === 'text' ? last.key : null;
+  // A live reply's node is known from its turn's first event, before the reply has it.
+  const [open, setOpen] = useWorkedOpen(props.workedOpen, message.key, [message.nodeId, live ? chat.state.turn?.nodes?.reply ?? null : null]);
 
   // A regenerated reply: once it is saved as the newest version, focus goes to its navigator (the Regenerate
   // button that was pressed went with the earlier reply), unless the person has put focus somewhere since, such as
@@ -90,8 +96,15 @@ export function ReplyView(props: {
   return (
     <View style={styles.reply} {...messageMark()}>
       <Hidden>TownwiseAI said</Hidden>
-      {live ? <Working startedAt={message.startedAt ?? mounted} parts={process} ctx={props.ctx} /> : null}
-      {!live ? <Worked seconds={endedFor} parts={process} ctx={props.ctx} /> : null}
+      <Worked
+        live={live}
+        startedAt={message.startedAt ?? mounted}
+        seconds={endedFor}
+        parts={process}
+        ctx={props.ctx}
+        open={open}
+        onOpen={setOpen}
+      />
       {message.parts.map((part) => {
         if (part.type === 'text') return <Markdown key={part.key} source={part.text} caret={part.key === caretOn} />;
         if (part.type === 'thinking' || part.type === 'tools') return null;

@@ -1405,6 +1405,7 @@ describe('a turn that outlives its connection', () => {
       turn(api).emit('text', { delta: 'quiet.' }, 3);
     });
     await waitFor(() => { expect(messageText(reply(chat))).toBe('January was quiet.'); });
+    const streamed = reply(chat);
     api.conversation = SAVED_VIEW;
     const reads = api.conversationReads.length;
     await act(() => {
@@ -1416,6 +1417,9 @@ describe('a turn that outlives its connection', () => {
     expect(api.conversationReads).toHaveLength(reads + 1);
     expect(shown(chat).slice(2)).toEqual([['user', 'And January?', 'complete'], ['assistant', 'January was quiet.', 'complete']]);
     expect(at(chat, 3)).toMatchObject({ nodeId: 'a2', parentId: 'u2' });
+    // Read again, the reply keeps the keys it streamed with, so the page keeps drawing it (its Worked for, 2026-11-17).
+    expect(reply(chat).key).toBe(streamed.key);
+    expect(reply(chat).parts.map((part) => part.key)).toEqual(streamed.parts.map((part) => part.key));
     expect(chat.current.state).toMatchObject({ leafId: 'a2', error: null });
     expect(api.turns).toHaveLength(1);
   });

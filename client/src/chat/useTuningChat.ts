@@ -429,6 +429,30 @@ function shownState(state: TuningChatState, shown: ShownPath): TuningChatState {
   return { ...state, messages: shown.messages, tree: shown.tree, leafId: shown.leafId };
 }
 
+/**
+ * The path read again after a turn (`reread`): a message already on the page keeps its key, and each part the key of
+ * the part of the same type in its place, so the page keeps drawing it rather than drawing it anew (owner request,
+ * 2026-11-17: the reply's "Worked for" never flashes). A message is the same by its node, or, for the reply that
+ * streamed, by the node its turn named.
+ */
+function keptKeys(state: TuningChatState, shown: ShownPath): ShownPath {
+  const nodeOf = (message: ChatMessage): string | null => message.nodeId ?? (message.state === 'streaming' ? state.turn?.nodes?.reply ?? null : null);
+  return {
+    ...shown,
+    messages: shown.messages.map((message) => {
+      const was = message.nodeId === null ? undefined : state.messages.find((item) => nodeOf(item) === message.nodeId);
+      if (was === undefined) return message;
+      return {
+        ...message, key: was.key,
+        parts: message.parts.map((part, index) => {
+          const before = was.parts[index];
+          return before?.type === part.type ? { ...part, key: before.key } : part;
+        }),
+      };
+    }),
+  };
+}
+
 /** `now` (ms since the epoch) stamps when a reply starts and ends. */
 export function chatReducer(state: TuningChatState, action: ChatAction, now: number): TuningChatState {
   switch (action.type) {
@@ -457,7 +481,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       };
     case 'opened':
       if (state.conversationId !== action.id) return state;
-      return { ...shownState(state, action.shown), conversationLoading: false };
+      return { ...shownState(state, keptKeys(state, action.shown)), conversationLoading: false };
     case 'openFailed':
       if (state.conversationId !== action.id) return state;
       return { ...state, conversationLoading: false, error: action.error };
