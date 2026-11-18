@@ -390,7 +390,8 @@ test('a note’s event name (D49): Notes shows it, then the kind; Edit fills it 
   await fireEvent.press(within(coming).getByRole('button', { name: `Edit Private event note, ${formatDate(day(15))}` }));
   const name = screen.getByLabelText('Event name (optional)');
   expect(name.props.value).toBe('Holiday party');
-  expect(name.props.maxLength).toBe(120);
+  // The field's limit is in UTF-16 units, so it never cuts 120 code points (an emoji is two units); checkNote counts code points.
+  expect(name.props.maxLength).toBe(240);
   await fireEvent.changeText(name, 'Holiday party, upstairs');
   await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved.')).toBeTruthy();

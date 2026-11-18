@@ -251,7 +251,8 @@ test('the note form on web: date inputs, pressed buttons, and the note it sends'
   // The event name (D49): after Kind, optional, with its placeholder, helper and limit.
   const name = screen.getByRole('textbox', { name: 'Event name (optional)' });
   expect(name.getAttribute('placeholder')).toBe('Holiday party');
-  expect(name.getAttribute('maxlength')).toBe('120');
+  // In UTF-16 units: room for 120 code points of emoji; checkNote refuses past 120 code points.
+  expect(name.getAttribute('maxlength')).toBe('240');
   expect(screen.getByText('Name the event, not the guests.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Closure' }).compareDocumentPosition(name) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   expect(name.compareDocumentPosition(starts) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

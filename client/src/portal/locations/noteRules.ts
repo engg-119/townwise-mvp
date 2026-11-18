@@ -16,6 +16,11 @@ export { EFFECT_LABEL, KIND_LABEL };
 export const MAX_DETAIL = 280;
 /** An event name's limit in code points, as the API counts it (D49). */
 export const MAX_TITLE = 120;
+/**
+ * The event name field's own limit, in UTF-16 units as a text field counts: room for MAX_TITLE code points even when each
+ * is two units (an emoji), so the field never cuts a name the API would take; checkNote refuses past MAX_TITLE.
+ */
+export const MAX_TITLE_UNITS = MAX_TITLE * 2;
 const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 const MAX_SPAN_DAYS = 366;
 const MAX_GUESTS = 20_000;

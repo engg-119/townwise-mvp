@@ -4,7 +4,7 @@ import { FormField } from '../ui/FormField';
 import { Pair } from '../ui/layout';
 import { NOTE_EFFECTS, NOTE_KINDS, type NoteKind } from './api';
 import { DateField } from './DateField';
-import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, MAX_TITLE, NOTE_COPY, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
+import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, MAX_TITLE_UNITS, NOTE_COPY, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
 import { ToggleGroup } from './parts';
 
 // The fields a note (C6, spec 12) and a business rule's schedule (D31, P29) share: Kind, then on a note only its
@@ -64,7 +64,7 @@ export function NoteFields(props: {
           placeholder="Holiday party"
           value={draft.title}
           onChangeText={(title) => { set({ title }); }}
-          maxLength={MAX_TITLE}
+          maxLength={MAX_TITLE_UNITS}
           autoCapitalize="sentences"
           messages={list(messages.title)}
         />
