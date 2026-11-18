@@ -51,7 +51,7 @@ Listing, adding, refreshing and removing calendars SHALL be allowed for every me
 - **AND** their file imports and link adds still work as before
 
 ### Requirement: The calendar list never returns a subscription address
-The calendar list, the events read and every add, refresh and remove answer SHALL show a link calendar by its name and host only, never its address, and a Google calendar by its name only, with a null host, never its Google calendar id, a Google token or the Google account it came from; under view-as a Google calendar's name SHALL be "Google calendar" and its events' titles "Google calendar event" (the google-calendar capability). The calendar list SHALL also answer `google: { available, connected, clientId }`: whether Google calendars are configured, whether the caller has a Google connection that is not revoked (false under view-as), and the public OAuth client id when available, else null.
+The calendar list, the events read and every add, refresh and remove answer SHALL show a link calendar by its name and host only, never its address, and a Google calendar by its name only, with a null host, never its Google calendar id, a Google token or the Google account it came from; under view-as a Google calendar's name SHALL be "Google calendar" and its events' titles "Google calendar event" (the google-calendar capability). The calendar list SHALL also answer `google: { available, connected, clientId, canConnect }`: whether Google calendars are configured, whether the caller has a Google connection that is not revoked (false under view-as), the public OAuth client id when available, else null (null open as admin), and whether the caller may connect one (false for staff under view-as or open as admin, and when off).
 
 #### Scenario: List after adding a link
 - **WHEN** a member lists the calendars after adding a Google Calendar link
@@ -59,7 +59,7 @@ The calendar list, the events read and every add, refresh and remove answer SHAL
 
 #### Scenario: List after adding a Google calendar
 - **WHEN** a connected member lists the calendars after adding their primary Google calendar
-- **THEN** it appears with the name "Google calendar", kind `google`, host null, its event count, status and last refresh time, and no Google calendar id, and the answer's `google` is `{ available: true, connected: true, clientId }`
+- **THEN** it appears with the name "Google calendar", kind `google`, host null, its event count, status and last refresh time, and no Google calendar id, and the answer's `google` is `{ available: true, connected: true, clientId, canConnect: true }`
 
 #### Scenario: Under view-as
 - **WHEN** staff viewing as a connected member list the calendars, one of which is a Google calendar named "Bookings"

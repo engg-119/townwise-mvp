@@ -71,17 +71,19 @@ import { IcsImport } from './IcsImport';
 // and when none was the picker stays (or, refused as no longer connected, the explainer shows). Cancel after a fresh
 // connect with nothing added drops the connection (`DELETE /api/org/google-connection`), whose 404, 409 or failure
 // changes nothing here: the API's connection check ends an unused connection a day after its connect. Native never
-// offers the section (its line points to the web), and under view-as "Add a Google calendar" stays in place, disabled,
-// described by the read-only line.
+// offers the section (its line points to the web). Staff (the list's `canConnect` false, under view-as or open as
+// admin; owner decision, 2026-11-17) see "Add a Google calendar" in place, disabled, described by the line under the
+// actions "Members of this organization connect their own Google calendars. Staff can't connect one." (and under
+// view-as by the read-only line too), and pressing it opens nothing.
 // Reconnect: a Google calendar Google no longer lets Townwise read (`google_revoked`) says who can mend it. For the
 // person who added it (the list's `mine`) on web, while the list answers Google calendars on, its row offers
 // "Reconnect", which opens the same section on its explainer, in place of the row's Reconnect and of "Add a Google
 // calendar"; a connect started there shows no picker: the section closes, the messages line says Townwise reads their
 // Google calendars again (the API makes them due at once), focus moves to it, and the list and the stored events read
 // again (`onChanged(false)`). Its Cancel gives focus back to that row's Reconnect. Anyone else's row asks them to ask
-// whoever added it, and native's, which connects nowhere, tells the person who added it to reconnect on the web. The
-// API answers `mine` false under view-as, so staff see the words for anyone else; a Reconnect shown under view-as would
-// stay in place, disabled, described by the read-only line, as every write does.
+// whoever added it, and native's, which connects nowhere, tells the person who added it to reconnect on the web. Staff
+// never get a Reconnect: the API answers them `mine` false, so they read the words for anyone else, and Reconnect needs
+// `canConnect` as the section does.
 // While a link add, a file import, a Refresh now, or a Google choices read, wait, connect or add runs the popover waits
 // for its answer (Popover's `busy`: Close disabled in place, Escape, back and a press outside doing nothing), and a
 // press outside never closes it while its Remove dialog is open, so every answer lands in the open popover. The
@@ -109,6 +111,8 @@ const READ_ONLY_ID = 'your-calendars-ro';
 const GOOGLE_CHOICE_ID = 'your-calendars-google';
 /** The explainer, which describes "Continue to Google": its press is the person's agreement. */
 const EXPLAINER_ID = 'your-calendars-google-explainer';
+/** The line that tells staff they can't connect, which describes "Add a Google calendar" disabled in place. */
+const STAFF_ID = 'your-calendars-google-staff';
 
 export interface YourCalendarsProps {
   /** The location's calendars, oldest first; null before the list's first answer. */
@@ -391,8 +395,14 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const list = props.failed ? null : props.calendars;
   const count = list === null ? 0 : list.length;
   const platform = Platform.OS === 'web' ? 'web' : 'native';
-  // The Google section, on web while the list answers Google calendars on, with the client id Google is asked with.
-  const googleClientId = Platform.OS === 'web' && props.google.available ? props.google.clientId : null;
+  // "Add a Google calendar" shows on web while the list answers Google calendars on. The section opens only for someone
+  // who may connect (`canConnect`), with the client id Google is asked with; staff see the button disabled in place with
+  // the staff line under the actions, and nothing they press starts Google's window.
+  const googleShown = Platform.OS === 'web' && props.google.available;
+  const googleClientId = googleShown && props.google.canConnect ? props.google.clientId : null;
+  const staffGoogle = googleShown && !props.google.canConnect;
+  // Staff's disabled "Add a Google calendar" is described by the read-only line under view-as and by the staff line.
+  const googleDescribedBy = ids(readOnlyId, staffGoogle ? STAFF_ID : null);
   const [googleStep, setGoogleStep] = useState<GoogleStep>('closed');
   const [choices, setChoices] = useState<readonly GoogleChoice[]>([]);
   const [checked, setChecked] = useState<readonly string[]>([]);
@@ -613,6 +623,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   }, [api, location.id, platform, onChanged, focusMessage]));
 
   function openGoogle(): void {
+    // Only someone who may connect opens the section; staff's button is disabled in place.
+    if (googleClientId === null) return;
     setReconnectId(null);
     if (props.google.connected) {
       setGoogleStep('loading');
@@ -726,16 +738,19 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
             <Button variant="outline" label="Add a link" focusOnMount={form === 'cancelled'} {...ro} onPress={() => { setForm('opening'); }} />
           )}
           {/* While a connected person's choices are read it stays in place, disabled, so it keeps focus. */}
-          {googleClientId === null || (googleStep !== 'closed' && googleStep !== 'loading') ? null : (
+          {!googleShown || (googleStep !== 'closed' && googleStep !== 'loading') ? null : (
             <Button
               variant="outline"
               label={googleStep === 'loading' ? GOOGLE_COPY.loadingChoices : GOOGLE_COPY.add}
               focusOnMount={googleFocus === 'add'}
-              {...(ro ?? { disabled: googleStep === 'loading' })}
+              {...(googleClientId === null
+                ? { disabled: true, ...(googleDescribedBy === undefined ? {} : { describedBy: googleDescribedBy }) }
+                : (ro ?? { disabled: googleStep === 'loading' }))}
               onPress={openGoogle}
             />
           )}
         </Actions>
+        {staffGoogle ? <Small nativeID={STAFF_ID}>{GOOGLE_COPY.staffLine}</Small> : null}
         {adding ? (
           <AddLink
             name={name}

@@ -78,7 +78,7 @@ const SECOND = ics(
 );
 const JUNE = '?from=2026-06-01&to=2026-06-30';
 /** The list's `google` while Google calendars are off (connect-google-calendar): no Google client is passed here. */
-const GOOGLE_OFF = { available: false, connected: false, clientId: null };
+const GOOGLE_OFF = { available: false, connected: false, clientId: null, canConnect: false };
 
 /** FIRST padded to exactly `bytes` bytes with lines of 40 to 79 bytes that the parser passes over: about 26,000 CRLFs. */
 function padded(bytes: number): string {
@@ -613,9 +613,9 @@ describe('with Google calendars on', () => {
     const calendar = calendarOf(added);
     expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok', mine: true });
     // Connected and mine are the caller's own: the admin, who never connected and added no Google calendar, reads false.
-    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID } });
+    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true } });
     expect((await send(base(t), t.admin)).body).toEqual({
-      calendars: [file, { ...calendar, mine: false }], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID },
+      calendars: [file, { ...calendar, mine: false }], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: true },
     });
 
     google.state.events[SHARED_ID] = [allDay('shared-2', 'Book club', '2026-06-15'), allDay('shared-3', 'Graduation lunch', '2026-06-27')];

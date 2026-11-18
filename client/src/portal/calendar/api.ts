@@ -62,18 +62,21 @@ export type OwnerCalendarEvent = z.infer<typeof ownerCalendarEventSchema>;
 
 /**
  * The list's `google`: whether Google calendars are on (`available`), whether the caller has a Google connection that
- * is not revoked (`connected`, false under view-as), and the public OAuth client id the browser asks Google with
- * (`clientId`, null unless available).
+ * is not revoked (`connected`, false under view-as), the public OAuth client id the browser asks Google with
+ * (`clientId`, null unless available, and open as admin), and whether the caller may connect one (`canConnect`: false
+ * for staff, under view-as or open as admin, who see the option disabled; true from an API older than it, which never
+ * answered staff `available`).
  */
 export const googleCalendarsSchema = z.object({
   available: z.boolean(),
   connected: z.boolean(),
   clientId: z.string().nullable(),
+  canConnect: z.boolean().default(true),
 });
 export type GoogleCalendars = z.infer<typeof googleCalendarsSchema>;
 
 /** Google calendars off: what an API without `google` in its list answer means. */
-export const GOOGLE_OFF: GoogleCalendars = { available: false, connected: false, clientId: null };
+export const GOOGLE_OFF: GoogleCalendars = { available: false, connected: false, clientId: null, canConnect: false };
 
 /**
  * One calendar the person could add, from their own Google calendar list: Google's id (only ever posted back in an add's

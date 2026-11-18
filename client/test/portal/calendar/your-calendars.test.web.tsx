@@ -12,7 +12,9 @@ import { formatDate, formatTime } from '../../../src/portal/format';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import {
+  ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
+} from '../../helpers/portal';
 import { townEvent } from '../analytics/fakes';
 import { CALENDARS_PATH, calendarFake, forecastDay, forecastOf, ownerCalendar, ownerEvent, type CalendarFake } from './fakes';
 
@@ -913,7 +915,9 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
   const SHARED: GoogleChoice = { id: 'c_fake0123@group.calendar.google.com', name: 'Bookings', primary: false, added: false };
   const STAFF: GoogleChoice = { id: 'c_fake4567@group.calendar.google.com', name: 'Staff rota', primary: false, added: false };
   const PRIVATE: GoogleChoice = { id: 'c_fake89ab@group.calendar.google.com', name: 'Private dining', primary: false, added: false };
-  const ON: GoogleCalendars = { available: true, connected: false, clientId: CLIENT_ID };
+  const ON: GoogleCalendars = { available: true, connected: false, clientId: CLIENT_ID, canConnect: true };
+  /** What the list answers staff under view-as (owner decision, 2026-11-17): on, but not theirs to connect. */
+  const VIEW_AS: GoogleCalendars = { ...ON, canConnect: false };
 
   interface Served {
     google: GoogleCalendars;
@@ -1018,7 +1022,7 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
 
   test('Google calendars not available: no “Add a Google calendar”, and a stored Google calendar still lists with Refresh now and Remove', async () => {
     const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40 });
-    const { api } = await renderGoogle({ calendars: [google], google: { available: false, connected: false, clientId: null } });
+    const { api } = await renderGoogle({ calendars: [google], google: { available: false, connected: false, clientId: null, canConnect: false } });
     const panel = openPopover();
     expect(within(panel).queryByRole('button', { name: 'Add a Google calendar' })).toBeNull();
     // The help says nothing of a Google option the popover doesn't offer.
@@ -1390,7 +1394,7 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
   });
 
   test('with Google calendars off, a revoked Google calendar the person added offers no Reconnect', async () => {
-    await renderGoogle({ calendars: [MINE_REVOKED], google: { available: false, connected: false, clientId: null } });
+    await renderGoogle({ calendars: [MINE_REVOKED], google: { available: false, connected: false, clientId: null, canConnect: false } });
     const panel = openPopover();
     expect(within(panel).queryByRole('button', { name: 'Reconnect Bookings' })).toBeNull();
     expect(within(panel).getByRole('button', { name: 'Remove Bookings' })).toBeTruthy();
@@ -1445,33 +1449,57 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(within(panel).getByRole('button', { name: 'Add a Google calendar' })).toBeTruthy();
   });
 
-  test('view-as: a revoked Google calendar shows the words for anyone else and no Reconnect (the API answers mine false to staff); one answered mine would keep Reconnect in place, disabled', async () => {
+  test('view-as: a revoked Google calendar shows the words for anyone else, and staff get no Reconnect, even on a row answered mine', async () => {
     const targets = ownerCalendar({ id: 'c4', label: 'Staff rota', kind: 'google', eventCount: 2, status: 'google_revoked' });
-    const { api, fake } = await renderGoogle({ calendars: [targets, MINE_REVOKED] }, viewAsMe(ACCESS.admin));
+    const { api, fake } = await renderGoogle({ calendars: [targets, MINE_REVOKED], google: VIEW_AS }, viewAsMe(ACCESS.admin));
     const panel = openPopover();
     const [targetRow] = within(within(panel).getByRole('list')).getAllByRole('listitem');
     if (targetRow === undefined) throw new Error('row missing');
     expect(within(targetRow).getByText(`${REVOKED} Ask whoever added it to reconnect, or remove it.`)).toBeTruthy();
-    expect(within(targetRow).queryByRole('button', { name: 'Reconnect Staff rota' })).toBeNull();
-    const line = within(panel).getByText('Read-only while viewing as gm@example.org.');
-    const action = within(panel).getByRole('button', { name: 'Reconnect Bookings' });
-    expect(action.getAttribute('aria-disabled')).toBe('true');
-    expect(action.getAttribute('aria-describedby')?.split(' ')).toContain(line.id);
-    fireEvent.click(action);
-    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    // The API answers staff mine false; and Reconnect needs canConnect as the section does, so none shows either way.
+    expect(within(panel).queryByRole('button', { name: /^Reconnect / })).toBeNull();
     expect(document.querySelector(`script[src="${GIS_SRC}"]`)).toBeNull();
     expect(fake.paths).not.toContain(GOOGLE_PATH);
     expect(writes(api)).toEqual([]);
   });
 
-  test('view-as: “Add a Google calendar” stays in place, disabled and described by the read-only line; no choices are read and nothing is sent', async () => {
-    const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40 });
-    const { api, fake } = await renderGoogle({ calendars: [google] }, viewAsMe(ACCESS.admin));
+  test('open as admin: staff see “Add a Google calendar” in place, disabled, described by the staff line under the actions, and pressing it opens nothing', async () => {
+    const revoked = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_revoked' });
+    const { api, fake } = await renderGoogle({ calendars: [revoked], google: { available: true, connected: false, clientId: null, canConnect: false } }, openAsAdminMe());
     const panel = openPopover();
-    const line = within(panel).getByText('Read-only while viewing as gm@example.org.');
     const action = within(panel).getByRole('button', { name: 'Add a Google calendar' });
     expect(action.getAttribute('aria-disabled')).toBe('true');
-    expect(action.getAttribute('aria-describedby')?.split(' ')).toContain(line.id);
+    const line = within(panel).getByText('Members of this organization connect their own Google calendars. Staff can’t connect one.');
+    expect(GOOGLE_COPY.staffLine).toBe(line.textContent);
+    expect(action.getAttribute('aria-describedby')).toBe(line.id);
+    // Under the actions: after the button, before the help.
+    expect(action.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(line.compareDocumentPosition(within(panel).getByRole('button', { name: 'How importing works' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    fireEvent.click(action);
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    expect(within(panel).queryByRole('button', { name: 'Continue to Google' })).toBeNull();
+    expect(within(panel).queryByRole('button', { name: /^Reconnect / })).toBeNull();
+    expect(document.querySelector(`script[src="${GIS_SRC}"]`)).toBeNull();
+    expect(fake.paths).not.toContain(GOOGLE_PATH);
+    expect(writes(api)).toEqual([]);
+  });
+
+  test('a member who may connect sees no staff line', async () => {
+    await renderGoogle();
+    const panel = openPopover();
+    expect(within(panel).getByRole('button', { name: 'Add a Google calendar' }).getAttribute('aria-disabled')).toBeNull();
+    expect(within(panel).queryByText(GOOGLE_COPY.staffLine)).toBeNull();
+  });
+
+  test('view-as: “Add a Google calendar” stays in place, disabled and described by the read-only line and the staff line; no choices are read and nothing is sent', async () => {
+    const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40 });
+    const { api, fake } = await renderGoogle({ calendars: [google], google: VIEW_AS }, viewAsMe(ACCESS.admin));
+    const panel = openPopover();
+    const line = within(panel).getByText('Read-only while viewing as gm@example.org.');
+    const staffLine = within(panel).getByText(GOOGLE_COPY.staffLine);
+    const action = within(panel).getByRole('button', { name: 'Add a Google calendar' });
+    expect(action.getAttribute('aria-disabled')).toBe('true');
+    expect(action.getAttribute('aria-describedby')?.split(' ')).toEqual([line.id, staffLine.id]);
     fireEvent.click(action);
     expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
     expect(fake.paths).not.toContain(GOOGLE_PATH);

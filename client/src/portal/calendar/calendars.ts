@@ -92,6 +92,8 @@ export const GOOGLE_COPY = {
   reconnectAction: 'Reconnect',
   /** A connect started from Reconnect worked: no picker, and the refresh loop reads the healed calendars soon. */
   reconnected: 'Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.',
+  /** Under the actions for staff, open as admin or under view-as, beside "Add a Google calendar" disabled in place. */
+  staffLine: 'Members of this organization connect their own Google calendars. Staff can’t connect one.',
 } as const;
 
 /** The picker's first line. */

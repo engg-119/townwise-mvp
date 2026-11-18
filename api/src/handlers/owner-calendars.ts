@@ -67,11 +67,15 @@ export interface OwnerCalendarView {
   mine: boolean;
 }
 
-/** Whether Google calendars are on, whether the caller has a connection that is not revoked, and the public client id. */
+/**
+ * Whether Google calendars are on, whether the caller has a connection that is not revoked, the public client id, and
+ * whether the caller may connect one: false for staff, who see the option but never use it (owner decision, 2026-11-17).
+ */
 export interface GoogleCalendarsView {
   available: boolean;
   connected: boolean;
   clientId: string | null;
+  canConnect: boolean;
 }
 
 /** A link's address, as pasted. */
@@ -227,15 +231,18 @@ function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal): Owne
 }
 
 /**
- * The list's `google`: under view-as `connected` is the staff member's own state, which is never a connection here.
- * Open as admin it is unavailable, as when off: staff never connect, and every Google route and add refuses them.
+ * The list's `google`. Staff see that Google calendars are on but can't connect one (`canConnect` false; owner decision,
+ * 2026-11-17), and every Google route and add still refuses them: under view-as `connected` is the staff member's own
+ * state, which is never a connection here, and open as admin there is no client id either, so nothing can start
+ * Google's window.
  */
 async function googleView(ctx: TownwiseContext, caller: MemberPrincipal): Promise<GoogleCalendarsView> {
-  const off = ctx.googleCalendar === null || ctx.calendarKey === null || caller.openAsAdmin !== null;
-  const clientId = off ? null : ctx.googleCalendarClientId;
-  if (clientId === null) return { available: false, connected: false, clientId: null };
-  const connection = caller.viewAs === null ? await ctx.stores.googleConnections.findForUser(caller.scope, caller.userId) : null;
-  return { available: true, connected: connection !== null && connection.revokedAt === null, clientId };
+  const clientId = ctx.googleCalendar === null || ctx.calendarKey === null ? null : ctx.googleCalendarClientId;
+  if (clientId === null) return { available: false, connected: false, clientId: null, canConnect: false };
+  if (caller.openAsAdmin !== null) return { available: true, connected: false, clientId: null, canConnect: false };
+  if (caller.viewAs !== null) return { available: true, connected: false, clientId, canConnect: false };
+  const connection = await ctx.stores.googleConnections.findForUser(caller.scope, caller.userId);
+  return { available: true, connected: connection !== null && connection.revokedAt === null, clientId, canConnect: true };
 }
 
 /**

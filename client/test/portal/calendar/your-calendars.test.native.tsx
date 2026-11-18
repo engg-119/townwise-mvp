@@ -129,7 +129,7 @@ function serveGoogle(fake: CalendarFake, google: GoogleCalendars): void {
 test('with Google calendars on, native offers no “Add a Google calendar”: the native line shows, and a Google calendar lists with Refresh now and Remove', async () => {
   const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_rate_limited' });
   const { api, fake } = setup({ calendars: [KITCHEN, google] });
-  serveGoogle(fake, { available: true, connected: true, clientId: '123-abc.apps.googleusercontent.com' });
+  serveGoogle(fake, { available: true, connected: true, clientId: '123-abc.apps.googleusercontent.com', canConnect: true });
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
   const card = popover();
@@ -150,7 +150,7 @@ test('native connects nowhere: a revoked Google calendar its person added tells 
   const mine = ownerCalendar({ id: 'c3', label: 'Bookings', kind: 'google', eventCount: 40, status: 'google_revoked', mine: true });
   const theirs = ownerCalendar({ id: 'c4', label: 'Staff rota', kind: 'google', eventCount: 2, status: 'google_revoked' });
   const { api, fake } = setup({ calendars: [mine, theirs] });
-  serveGoogle(fake, { available: true, connected: false, clientId: '123-abc.apps.googleusercontent.com' });
+  serveGoogle(fake, { available: true, connected: false, clientId: '123-abc.apps.googleusercontent.com', canConnect: true });
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
   const card = popover();
