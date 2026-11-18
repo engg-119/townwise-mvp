@@ -41,7 +41,8 @@ import { ThisWeek } from './ThisWeek';
 // month's events beside Who's in town; this month in past years beside the bar order; and the location's
 // history. Every figure is a sum, an average or a share of the location's own stored days, of a past day, except This
 // month's days from today on, which show the published forecast's own figures (spec 16.3 P11, 14.5,
-// D30), and Last week's published forecast for its seven days (D42), never an unpublished guess of Home's: with no
+// D30), At a glance's This week, which adds up This week's seven forecast figures with no range (D43), and Last
+// week's published forecast for its seven days (D42), never an unpublished guess of Home's: with no
 // published forecast the lead says so and those days show none. It reads three
 // routes in parallel (sales history, notes, the town calendar), then on their own TownwiseAI's questions (for the
 // lead's count), the location's business rules (a schedule with more or fewer guests says a near-empty day was open,
@@ -152,6 +153,7 @@ function HomeView(props: {
       {needs || !hasDays ? null : (
         <Glance
           week={week}
+          forecast={forecast?.available === true ? forecast : null}
           lastWeek={lastWeek}
           next={next}
           calendar={calendar}

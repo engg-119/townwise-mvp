@@ -198,6 +198,8 @@ export const forecastWindowSchema = z.object({
   reason: z.enum(['no_published_forecast', 'not_covered']).nullable(),
   runs: z.array(z.object({
     id: z.string(), model: z.object({ label: z.string() }), engine: z.string().optional(), madeAt: z.string(), live: liveAccuracySchema.nullable(),
+    /** The run's backtest; Home reads its weekly 80% band, as percents below and above a week's total (D43). */
+    backtest: z.object({ weeklyRangePct: z.object({ below: z.number(), above: z.number() }).nullable() }).nullable().optional(),
   })),
   days: z.array(forecastDaySchema),
   /** Live accuracy over the window's own scored days, each from its own run (D42); null under 5, missing from an API before it. */
