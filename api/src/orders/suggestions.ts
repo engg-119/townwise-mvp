@@ -128,6 +128,7 @@ const itemEntry = z.object({
   servingsEstimated: z.boolean().catch(true),
   dealSize: z.number().int().min(1).max(999).nullable().catch(null),
   posNames: z.unknown().optional(),
+  // No length limit here: a long note keeps its start, and `redacted` reads only a bounded part of it.
   note: z.string().catch('').transform((text) => redacted(text.trim(), ITEM_NOTE_CHARS)),
 });
 

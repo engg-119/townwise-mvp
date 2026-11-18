@@ -38,11 +38,22 @@ const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}
 const PHONE = /(?<![\w$.,/-])(?:(?:1[\s.-])?(?:\([2-9]\d{2}\)[\s.-]?|[2-9]\d{2}[\s.-])[2-9]\d{2}[\s.-]\d{4}|\+\d{1,3}[\s.-]?(?:(?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])\d{3}[\s.-]\d{4}|(?:\(\d{2}\)[\s.-]?|\d{2}[\s.-])\d{4}[\s.-]\d{4}))(?![\w/-]|[.,]\d)/g;
 
 /**
+ * How much of a text `redacted` reads: this many times the characters it keeps. The email pattern takes quadratic time
+ * on a long run of letters with no "@" (40,000 characters took over a second), and a stored chat call is checked again
+ * on every read of its conversation, so no model-written text reaches a pattern at its full length.
+ */
+export const REDACT_SCAN_FACTOR = 4;
+
+/**
  * `text` with each email address as "[email]" and each phone number as "[phone]", within `max` characters (never
- * between the two halves of a surrogate pair). The prompt forbids them; this keeps one the model wrote anyway.
+ * between the two halves of a surrogate pair). The prompt forbids them; this keeps one the model wrote anyway. Only the
+ * first `max` times REDACT_SCAN_FACTOR characters are read. A text within that is redacted whole, as it always was; a
+ * longer one loses its tail before the patterns run, which changes what is kept only when replacements shrink that
+ * start to under `max` characters (then the result is shorter, and may end in the cut start of an address).
  */
 export function redacted(text: string, max: number): string {
-  const out = text.replace(EMAIL, '[email]').replace(PHONE, '[phone]');
+  const read = text.length > max * REDACT_SCAN_FACTOR ? text.slice(0, max * REDACT_SCAN_FACTOR) : text;
+  const out = read.replace(EMAIL, '[email]').replace(PHONE, '[phone]');
   if (out.length <= max) return out;
   const code = out.charCodeAt(max - 1);
   return out.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);

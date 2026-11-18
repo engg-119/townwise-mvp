@@ -50,3 +50,51 @@ describe('orders/suggestions.ts', () => {
     expect(readFileSync(join(SRC, 'files/extract/reader-prompt.ts'), 'utf8')).not.toMatch(/export function (?:entries|isRecord|oneOf|redacted)\b/);
   });
 });
+
+// Security review M1: the email pattern is quadratic on a long run with no "@", and a stored chat call is checked
+// again on every read of its conversation, so no model-written string may reach a pattern unbounded.
+describe('a model-written string of any length', () => {
+  const RUN = 'a'.repeat(60_000);
+  const item = { name: 'Sample Lager', supplier: null, category: null, unit: null, servingsPerUnit: null, servingsEstimated: false, dealSize: null, posNames: [], note: '' };
+  const timed = <T>(work: () => T): { result: T; ms: number } => {
+    const start = performance.now();
+    const result = work();
+    return { result, ms: performance.now() - start };
+  };
+
+  it('is checked in well under 100 ms: a note, a name, a supplier, a point-of-sale name and a redacted text of 60,000 characters', () => {
+    const answer = {
+      kind: 'order_guide', confidence: 'high', itemsCut: false,
+      suppliers: [{ name: RUN, deliveries: [{ deliveryWeekday: 2, cutoffWeekday: null, cutoffTime: RUN }] }],
+      items: [
+        { ...item, note: RUN },
+        { ...item, name: 'Sample Stout', note: `${RUN} ${RUN}`, supplier: RUN, posNames: [{ name: RUN, perSale: 1 }] },
+        { ...item, name: RUN },
+      ],
+    };
+    const checked = timed(() => suggestions.setupResult(answer, null));
+    expect(checked.ms).toBeLessThan(100);
+    // A name past its limit is no name, as before; a note keeps its first 120 characters.
+    expect(checked.result?.suppliers).toEqual([]);
+    expect(checked.result?.items.map((each) => [each.name, each.note.length, each.supplier, each.posNames])).toEqual([
+      ['Sample Lager', 120, null, []], ['Sample Stout', 120, null, []],
+    ]);
+    expect(timed(() => modelAnswer.redacted(RUN, 600)).ms).toBeLessThan(100);
+    expect(modelAnswer.redacted(RUN, 600)).toBe(RUN.slice(0, 600));
+  });
+
+  it('within the scan bound, four times the limit, is redacted exactly as before; past it only the start is read', () => {
+    const tail = ' Ask rep@quillvane.example or (603) 555-0123.';
+    // An address 400 characters in is still found and replaced before the cut at 120.
+    const padded = `${'x '.repeat(40)}rep@quillvane.example ${'y '.repeat(150)}${tail}`;
+    expect(padded.length).toBeLessThanOrEqual(120 * 4);
+    expect(modelAnswer.redacted(padded, 120)).toBe(`${'x '.repeat(40)}[email] ${'y '.repeat(150)}`.slice(0, 120));
+    expect(modelAnswer.redacted(`Call (603) 555-0123 or a.b+c@d-e.example.org now`, 120)).toBe('Call [phone] or [email] now');
+    // Addresses back to back are each replaced.
+    expect(modelAnswer.redacted('a@b.co.uk1x@y.org', 120)).toBe('[email][email]');
+    // Past the bound nothing is read: what is kept is the same first characters.
+    expect(modelAnswer.redacted(`${'z'.repeat(480)}${tail}`, 120)).toBe('z'.repeat(120));
+    expect(modelAnswer.REDACT_SCAN_FACTOR).toBe(4);
+  });
+});
+
