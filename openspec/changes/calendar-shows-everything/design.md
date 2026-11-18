@@ -232,6 +232,7 @@ The owner's words: "it looks like the calendar in the home page is not showing a
 
 **Space: each of these is Claude's call, refining the orchestrator's four proposals.**
 - (a) **Home cells list entries where they fit.** The grid column measures its width (`onLayout`). When a cell is at least 88px wide, each cell shows up to 2 compact entry lines from the shared helper, or 1 line and "+N more", under its figure, at a fixed cell height of 96px, so the grid has one height per tier. Narrower cells keep corner marks at today's height. The cell's label says everything either way.
+  - A wide cell lays out as the Calendar's (UI review B1): the day with a booked or outlook day's status word or the figure's caption beside it, then the figure with its "+40" beside it, or the status in its place, each row at a fixed height (`week.ts` `WIDE_ROWS`: 16px and 24px of the 86px inside the border and padding). `monthEntryLines` takes a line budget, `WIDE_LINES`, which is what is left (2 lines); "+N more" counts as a line. A booked buyout's party shows "~70" with no "forecast" beside it, since "Booked" holds that place; the "~" and the label say it.
 - (b) **A sticky grid column, only if still needed** (the audit's N4). On web, when grid and detail sit side by side, the grid column would be `position: sticky`, `top: 16`, aligned to the top.
   - React Native's style types do not allow `position: 'sticky'`, so it would need a `.web` style. It breaks under any ancestor with `overflow: hidden`, and jsdom cannot test it.
   - So (a), (c) and (d) ship first. The UI review (task 7.2) judges whether an empty area is left at 1280px and 1440px. Sticky is added (task 5.7) only if it is.
@@ -273,8 +274,8 @@ What the build already did, checked on 2026-11-18:
 | Calendar month cell at 640px and below | solid figure | "~82" lighter (no room for a tag); a booked day keeps its status word in the figure's place, its label says both |
 | Calendar week view head | solid figure | "~82" lighter, then "forecast, 70 to 95" (or "forecast" alone) |
 | Tooltip (Calendar and Home) | "94 guests, actual" | "82 guests, forecast (likely 70 to 95)"; a past fallback day keeps d6's "No data." before it |
-| Calendar day panel | "Actual" over the figure | "Forecast" over "About 82 guests" |
-| Home This month cell | solid figure, no caption ("sales" stays under a net-sales figure) | "~82" lighter, "forecast" under it |
+| Calendar day panel | the part headed "Actual guests" over the figure | the part headed "Forecast" over "About 82 guests" ("Outlook" over "Forecast" for an outlook day) |
+| Home This month cell | solid figure, no caption ("sales" stays with a net-sales figure) | "~82" lighter, "forecast" under it in a narrow cell, beside the day in a wide one, and none on a phone |
 | Home This week | the day's own figure, solid | the Forecast row: "~90 guests, forecast, likely 68 to 112", lighter |
 | Home day detail | "This day": the stored figure | "Forecast": the run's figure for a past day with no data, the published one from today on |
 | Home Last week | unchanged: actual rows plain, forecast-only rows already say "Forecast, no guest count uploaded yet" | |
@@ -325,6 +326,18 @@ The review's should-fix items and nits 1 to 4 and 6 to 8 are fixed. These are le
 - **An `other` file event with no detail and a title of only format characters** (nit 3). Nothing is left to save, so the event is skipped as invalid; the cut to 120 code points means a long title no longer drops its event.
 - **The Calendars group ignores the all-locations view** (nit 9). Your data's "All locations" lists every location's items, while the Calendars group above it still shows the current location's calendars. Naming the location there, or hiding the group, is a choice for the UI review.
 - **Home's day detail takes town events from `monthDay`** (nit 10). `home/DayDetail.tsx` reads town events from `dayContext` and notes, rules and imported events from `dayView`. The output matches today, since Home's filters are all on, but it is one more list than the one-helper design.
+
+### Known limits (UI review of 2026-11-18)
+
+The review's blocker (B1), its should-fix items (S1 to S6) and nits 2, 3, 5, 6, 8 and 11 are fixed (tasks 10.1 to 10.7). These are left as they are:
+- **"Manage it on the Calendar" opens the Calendar, not the popover** (S6). Your calendars stays closed on every load (spec 16.3), so the link lands on the Calendar, whose toolbar holds "Your calendars". Opening it from a link would need a query parameter and an exception to that rule.
+- **Home's day detail Forecast part has no "~"** (nit 1). It reads "About 82 guests, likely 49 to 96." under "Forecast", which says it is a forecast; the Calendar's panel marks the figure too.
+- **The Calendar's key below 1024px names only the figures** (nit 4). The corner marks there (town, yours, your calendar) predate D49; Home's `MonthKey` explains them, and `FigureKey` could gain them.
+- **Changing month on a `c_` page announces nothing** (nit 6, its second half). The month heading is now an h4 under Events; a live region over the whole agenda would read every event again on each move.
+- **A file calendar shows no import date** (nit 7). Its row and page read "File, 4 events"; the view's `createdAt` could give "Imported Nov 16".
+- **A buyout at 375px shows "BOOKED" and no "~70"** (nit 9). A phone cell holds one of them; the label says both.
+- **Home's day detail says a past day with no data twice** (nit 10): "No data. 98 guests, forecast…" under Forecast, then "No sales stored for this day." under This day.
+- **A note titled like a holiday hides the holiday's source from compact lists** (nit 12). Per decision 4, the earlier source (the note) wins in the month list, cells and tooltip; the day panel and Home's day detail keep every source.
 
 ## Where Claude departs from the audit
 

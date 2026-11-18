@@ -138,10 +138,11 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - "Open the calendar" moves under the legend.
   - Tests: `month-grid-status.test.web.tsx` (entry lines at a wide grid, marks at a narrow one) and `month-grid.test.native.tsx` (stacked).
 - [x] 5.6 `DayDetail.tsx` only: `REORDER_OVERVIEW` goes behind "How Townwise builds an order", closed by default (`aria-expanded` on web, an expanded state on native). The status line and "Open this day on Orders" stay. `home/beside.ts` and `orders/Orders.tsx` are unchanged. Tests: `home.test.web.tsx` and `home.test.native.tsx`.
-- [ ] 5.7 Only if the UI review (7.2) still finds an empty area under Home's grid at 1280px or 1440px:
+- [x] 5.7 Only if the UI review (7.2) still finds an empty area under Home's grid at 1280px or 1440px:
   - a sticky grid column on web, through a `.web` style, when side by side and when it fits the viewport;
   - first check that no ancestor has `overflow: hidden`.
   - Otherwise, mark this task not needed.
+  - Not needed: the UI review of 2026-11-18 found the grid and the detail end about 100px apart with the busiest day selected (its nit 2). The day-entries spec no longer asks for sticky.
 
 ## 6. Client: calendars in Your data
 
@@ -206,3 +207,13 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 - [x] 9.3 SF3: the boot backfill titles a note only while its detail still says the event's title (`ai-actions.ts` `detailSays`). Tests: `note-title-backfill.int.test.ts`, `event-note-title.test.ts`.
 - [x] 9.4 SF4: Home's This week forecast row reads "~90 guests, forecast, likely 68 to 112" (`week.ts` `forecastPhrase`). Tests: `week.test.ts`, `home.test.web.tsx`.
 - [x] 9.5 Nits: `madeAfterDay` is `madeAt > date` (`estimates.int.test.ts`); the Event name field allows 240 UTF-16 units for 120 code points; `mondayOf` and `weekDates` move to `analytics/cells.ts` (`import-cycle.test.ts`); a file event's cleaned title is cut to 120 code points; an edited chat proposal without `title` keeps the proposal's; Make a note's Event name is pinned empty; the `c_` page lists an event that began last month under the month shown. The rest are known limits in design.md.
+
+## 10. UI review fixes (2026-11-18)
+
+- [x] 10.1 B1: a wide Home cell lays out as the Calendar's, its status or caption beside the day and "+40" beside the figure, each row at a fixed height (`week.ts` `WIDE_ROWS`, `wideCell`), and `monthEntryLines` takes a line budget. Tests: `week.test.ts`, `month-grid-status.test.web.tsx`, `month-grid.test.native.tsx`.
+- [x] 10.2 S1: an in-app source chip hugs its pill (`SourceChip.tsx` `appTarget`). Tests: `source-chip.test.web.tsx`, `source-chip.test.native.tsx`.
+- [x] 10.3 S2: the day panel heads a day with stored guests "Actual guests" and shows the figure's kind only when the heading doesn't say it (`model.ts` `forecastLabel`, `CalendarDay.tsx`). Tests: `model.test.ts`, `calendar.test.web.tsx`.
+- [x] 10.4 S3 and S6: a `c_` page that isn't found shows an `InlineNotice` that stays, worded for a calendar; a calendar with a status links to the Calendar (`CalendarItem.tsx`). Tests: `calendar-page.test.web.tsx`, `calendar-page.test.native.tsx`.
+- [x] 10.5 S4: on a phone a narrow Home cell drops "forecast" and prints its figure at 13px (`week.ts` `narrowCaption`). Tests: `week.test.ts`, `month-grid-status.test.web.tsx`, `month-grid.test.native.tsx`.
+- [x] 10.6 S5: Your data's list has its own "Uploads and files" heading under the Calendars group (`DataPage.tsx`). Test: `page.test.web.tsx`.
+- [x] 10.7 Nits 2, 3, 5, 6, 8 and 11: sticky dropped from the spec (5.7); "Open the calendar" above the month line; no "Your calendar" line on a calendar's own page; month headings h4; a withheld file event's kind words once; no full stop after a note's own title. The rest are known limits in design.md.

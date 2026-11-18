@@ -12,7 +12,7 @@ Your data (P26) SHALL show a "Calendars" group above its list, read from `GET ..
 - **THEN** no Calendars group shows
 
 ### Requirement: A calendar's page shows its events by month
-The client's route guard SHALL allow `/locations/[id]/data/c_<calendarId>` as it allows `f_` and `u_` refs. P27 with a ref `c_<calendarId>` SHALL render the calendar's page without reading `org.data.get`. It SHALL show the calendar's name, kind, host as text, event count, repeating events not imported, status and last refresh, then an agenda of the events of one month at a time (today's month first, "Earlier" and "Later" within the events route's range). It SHALL read the existing events route over that month and keep the events of this calendar, and a month with none SHALL read "No events in {Month}." Each event SHALL show its title, dates and hours and SHALL link to `/locations/[id]/calendar?day=<startDate>`. An unknown or removed calendar SHALL show P27's not-found state. The page SHALL work on web and native.
+The client's route guard SHALL allow `/locations/[id]/data/c_<calendarId>` as it allows `f_` and `u_` refs. P27 with a ref `c_<calendarId>` SHALL render the calendar's page without reading `org.data.get`. It SHALL show the calendar's name, kind, host as text, event count, repeating events not imported, status and last refresh, then an agenda of the events of one month at a time (today's month first, "Earlier" and "Later" within the events route's range). It SHALL read the existing events route over that month and keep the events of this calendar, and a month with none SHALL read "No events in {Month}." Each event SHALL show its title, dates and hours and SHALL link to `/locations/[id]/calendar?day=<startDate>`. An unknown or removed calendar SHALL show P27's not-found state, a line that stays on the page ("This calendar isn’t here anymore. It may have been removed."), never a toast. A calendar with a status SHALL link to the Calendar, where Your calendars refreshes and removes it. The page SHALL work on web and native.
 
 #### Scenario: Open a linked calendar
 - **WHEN** a member opens the page of the linked calendar "US holidays" in November 2026
@@ -29,6 +29,10 @@ The client's route guard SHALL allow `/locations/[id]/data/c_<calendarId>` as it
 #### Scenario: A ref of another organization
 - **WHEN** a member opens `c_` with another organization's calendar id
 - **THEN** the page shows the not-found state
+
+#### Scenario: A calendar Townwise can't open
+- **WHEN** a member opens the page of a link calendar whose status reads "Remove it and add the link again"
+- **THEN** the status shows with a link to the Calendar, where Your calendars removes it
 
 #### Scenario: No data read
 - **WHEN** the page loads for any `c_` ref
