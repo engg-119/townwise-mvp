@@ -471,8 +471,9 @@ test('a staff window that ran out mid-action signs staff out to the ordinary sig
   expect(await screen.findByText('Staff sessions need a fresh sign-in with your code every 60 minutes.')).toBeTruthy();
 });
 
+/** The Requests item of the console nav, after Overview (D48). */
 function navCount(): string | null | undefined {
-  return within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')[0]?.textContent;
+  return within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Requests/ }).textContent;
 }
 
 test('the console nav’s Requests count reads again after an approve and after a reject', async () => {
