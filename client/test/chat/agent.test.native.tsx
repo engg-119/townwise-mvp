@@ -441,7 +441,7 @@ describe('the side panel', () => {
     expect(within(side).getByText('November: 6% used. Resets Dec 1.')).toBeTruthy();
   });
 
-  test('How TownwiseAI works says what it reads, what it can’t see, that no forecast exists, and who receives the data', async () => {
+  test('How TownwiseAI works says what it reads, that it can search the web, what it can’t see, that no forecast exists, and who receives the data', async () => {
     at(1280);
     await renderAgent(meOf(ACCESS.member));
     const side = await openPanel();
@@ -449,7 +449,8 @@ describe('the side panel', () => {
     expect(await within(side).findByText('Townwise has no forecast for this location yet, so TownwiseAI answers from your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data.')).toBeTruthy();
     for (const text of [
       'It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads.',
-      'It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.',
+      'It can search the web for public facts about the town, such as an event’s dates or the weather, and lists the pages it used.',
+      'It can’t see your staffing, your bookings unless you add them as notes, or guest names.',
       'It suggests notes; it never saves one without you.',
     ]) expect(within(side).getByText(text)).toBeTruthy();
     expect(within(side).getByText(/Your messages and the data it reads go to Anthropic/)).toBeTruthy();
