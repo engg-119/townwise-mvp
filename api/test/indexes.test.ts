@@ -66,6 +66,13 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwSuggestionPass')).toContainEqual([{ orgId: 1, locationId: 1, week: 1 }, expect.objectContaining({ unique: true })]);
   });
 
+  it('keeps one suggested closure rule per closure key at a location, in any status (D46)', () => {
+    expect(indexesOf(registered(), 'TwAgentSuggestion')).toContainEqual([
+      { orgId: 1, locationId: 1, closureKey: 1 },
+      expect.objectContaining({ unique: true, partialFilterExpression: { closureKey: { $type: 'string' } } }),
+    ]);
+  });
+
   it('declares only indexes DocumentDB 5.0 builds', () => {
     expect(documentDbIndexProblems(registered())).toEqual([]);
   });

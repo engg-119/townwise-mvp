@@ -90,7 +90,7 @@ function calendarById(location: LocationRecord, today: string): Map<string, Sugg
 
 function suggestionView(record: SuggestionRecord, calendar: ReadonlyMap<string, SuggestionCalendarView>): SuggestionView {
   const shared = {
-    id: record.id, why: record.why, createdAt: record.createdAt.toISOString(),
+    id: record.id, why: record.why ?? '', createdAt: record.createdAt.toISOString(),
     calendar: record.calendarIds.flatMap((id) => {
       const entry = calendar.get(id);
       return entry === undefined ? [] : [entry];

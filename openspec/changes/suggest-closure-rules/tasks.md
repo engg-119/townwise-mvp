@@ -2,7 +2,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 
 ## 1. API: store, routes and the file source
 
-- [ ] 1.1 `stores/agent-suggestions.ts`:
+- [x] 1.1 `stores/agent-suggestions.ts`:
   - optional `source` (absent reads as `weekly`), `fileId`, `evidence { noSalesCount, weekdayCount, lastSalesDate }` and `closureKey`;
   - the partial unique index `{ orgId, locationId, closureKey }` (`closureKey` a string);
   - `why` required for `weekly` only, null otherwise;
@@ -12,8 +12,8 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - `expire` source-aware;
   - `findByKey`;
   - `openFromFile(scope, locationId, fileId)`.
-- [ ] 1.2 New `agent/closure-suggestions.ts` (pure): `closureKeyOf(schedule)` (weekdays, dates, `yearly=`, `ongoing`), `closureRuleText(schedule)` (the six forms in design decision 3), and `isSuggestable(schedule, { rules })` (a covering closure rule; same words only on a rule with a schedule).
-- [ ] 1.3 `files/extract/reader-prompt.ts`:
+- [x] 1.2 New `agent/closure-suggestions.ts` (pure): `closureKeyOf(schedule)` (weekdays, dates, `yearly=`, `ongoing`), `closureRuleText(schedule)` (the six forms in design decision 3), and `isSuggestable(schedule, { rules })` (a covering closure rule; same words only on a rule with a schedule).
+- [x] 1.3 `files/extract/reader-prompt.ts`:
   - the `closedPatterns` bullet exactly as in design decision 2;
   - `closedPatterns` in `readerAnswer` (max 5, `yearly`);
   - `readerResult(raw, today)` with the drops of decision 2, each kept entry built into a full schedule and run through `readRuleSchedule`;

@@ -6,6 +6,7 @@ import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
+import type { RuleSchedule } from './business-rules.ts';
 
 export const FILES_COLLECTION = 'tw_files';
 
@@ -136,6 +137,11 @@ export interface AiReadResult {
    * saved, so a retry needs no second read of the original; null when the file has no text (a picture).
    */
   readonly daysBorneOut: readonly number[] | null;
+  /**
+   * D46: the closed patterns the file states, as closure schedules (files/extract/reader-prompt.ts), at most 5; no words
+   * of the file. Absent on an answer saved before them, which reads as none.
+   */
+  readonly closedPatterns?: readonly RuleSchedule[];
 }
 
 /**

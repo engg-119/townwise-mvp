@@ -159,7 +159,7 @@ const WEEKDAY_PLURAL = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursda
 const MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0];
 
 /** "Mondays", "Saturdays and Sundays", "Tuesdays, Wednesdays and Thursdays", Monday first; null for every day. */
-function weekdayList(weekdays: readonly number[] | null): string | null {
+export function weekdayList(weekdays: readonly number[] | null): string | null {
   if (weekdays === null || weekdays.length >= 7) return null;
   const names = MONDAY_FIRST.filter((day) => weekdays.includes(day)).map((day) => WEEKDAY_PLURAL[day] ?? '');
   return names.length === 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1) ?? ''}`;
@@ -193,7 +193,7 @@ function hoursWords(schedule: Pick<RuleSchedule, 'startTime' | 'endTime'>): stri
 }
 
 /** 'MM-DD' in words: "Jan 1". */
-function monthDayWords(monthDay: string): string {
+export function monthDayWords(monthDay: string): string {
   const [month = '', day = ''] = monthDay.split('-');
   return `${SHORT_MONTHS[Number(month) - 1] ?? ''} ${String(Number(day))}`;
 }

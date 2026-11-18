@@ -214,7 +214,7 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
       await finish('failed', reply.kind === 'refused' ? 'refused' : 'answer_too_long', reply.costMicroUsd);
       return null;
     }
-    const answered = readerResult(reply.output);
+    const answered = readerResult(reply.output, today);
     if (answered === null) {
       // No answer to keep; a retry would cost again, so the read fails.
       await finish('failed', 'internal', reply.costMicroUsd);

@@ -326,3 +326,62 @@ describe('suggestions', () => {
     expect(await count('tw_agent_suggestions', kept)).toBe(1);
   });
 });
+
+describe('suggested closure rules beside weekly ones (openspec change suggest-closure-rules)', () => {
+  const MONDAYS = {
+    kind: 'closure', startDate: '2026-06-01', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+  } as const;
+
+  async function fileRow(t: Team, schedule: typeof MONDAYS | Readonly<Record<string, unknown>>, key: string): Promise<string> {
+    const id = new Types.ObjectId().toHexString();
+    const made = await createAgentSuggestionStore(server.connection).insertOne(t.scope, {
+      id, locationId: t.locationId, week: '2026-06-01', source: 'file', fileId: new Types.ObjectId().toHexString(),
+      text: 'Closed on Mondays', schedule: schedule as typeof MONDAYS, closureKey: key, now: server.clock.now(),
+    });
+    expect(made?.created).toBe(true);
+    return id;
+  }
+
+  it('the weekly pass’s expire leaves an ongoing file row that starts today open, and expires a file range that has ended', async () => {
+    const t = await team();
+    const store = createAgentSuggestionStore(server.connection);
+    const ongoing = await fileRow(t, MONDAYS, 'closed|w=1|ongoing');
+    const ended = await fileRow(t, { ...MONDAYS, weekdays: null, startDate: '2026-05-01', endDate: '2026-05-31' }, 'closed|w=*|2026-05-01..2026-05-31');
+    const endsToday = await fileRow(t, { ...MONDAYS, weekdays: null, startDate: '2026-05-01', endDate: '2026-06-01' }, 'closed|w=*|2026-05-01..2026-06-01');
+    const [weekly] = await stored(t, [closureOn('2026-06-01')]);
+    expect(await store.expire(t.scope, t.locationId, '2026-06-01', server.clock.now())).toBe(2);
+    const status = async (id: string) => (await store.find(t.scope, t.locationId, id))?.status;
+    expect([await status(ongoing), await status(ended), await status(endsToday), await status(weekly?.id ?? '')])
+      .toEqual(['open', 'expired', 'open', 'expired']);
+    expect((await store.listOpenRules(t.scope, t.locationId, '2026-06-01')).map((record) => record.id).sort()).toEqual([ongoing, endsToday].sort());
+    expect(await store.listOpenRules(t.scope, t.locationId, '2026-06-02')).toEqual([expect.objectContaining({ id: ongoing })]);
+  });
+
+  it('listOpen holds weekly rows only, and the panel’s weekly suggestions never show a file row', async () => {
+    const t = await team();
+    await fileRow(t, { ...MONDAYS, startDate: '2026-07-06' }, 'closed|w=1|ongoing');
+    const [weekly] = await stored(t, [THANKSGIVING_LIKE]);
+    expect((await createAgentSuggestionStore(server.connection).listOpen(t.scope, t.locationId, '2026-06-01')).map((record) => record.id))
+      .toEqual([weekly?.id]);
+    expect((await panel(t, t.member)).suggestions.map((suggestion) => suggestion.id)).toEqual([weekly?.id]);
+  });
+
+  it('one row per closure key in any status; the same id again is the row a retry wrote', async () => {
+    const t = await team();
+    const store = createAgentSuggestionStore(server.connection);
+    const id = await fileRow(t, MONDAYS, 'closed|w=1|ongoing');
+    const again = await store.insertOne(t.scope, {
+      id, locationId: t.locationId, week: '2026-06-01', source: 'file', fileId: new Types.ObjectId().toHexString(),
+      text: 'Closed on Mondays', schedule: MONDAYS, closureKey: 'closed|w=1|ongoing', now: server.clock.now(),
+    });
+    expect(again).toMatchObject({ created: false, record: { id, source: 'file', why: null, closureKey: 'closed|w=1|ongoing' } });
+    expect(await store.markDismissed(t.scope, t.locationId, id, { by: t.member.userId, now: server.clock.now() })).toBe(true);
+    const other = await store.insertOne(t.scope, {
+      id: new Types.ObjectId().toHexString(), locationId: t.locationId, week: '2026-06-01', source: 'sales',
+      evidence: { noSalesCount: 9, weekdayCount: 11, lastSalesDate: '2026-03-02' },
+      text: 'Closed on Mondays', schedule: MONDAYS, closureKey: 'closed|w=1|ongoing', now: server.clock.now(),
+    });
+    expect(other).toBeNull();
+    expect(await store.findByKey(t.scope, t.locationId, 'closed|w=1|ongoing')).toMatchObject({ id, status: 'dismissed' });
+  });
+});
