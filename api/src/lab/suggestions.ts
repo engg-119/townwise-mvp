@@ -32,6 +32,7 @@ import { z } from 'zod';
 
 import type { OrgScope } from '../access/policy.ts';
 import { closureKeyOf } from '../agent/closure-suggestions.ts';
+import { salesSuggestions } from '../agent/rule-suggestion-views.ts';
 import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { ChatModel } from '../chat/model.ts';
@@ -457,7 +458,11 @@ export async function suggestFor(
     const earlier = recent.filter((record) => record.source === 'weekly').map((record): SuggestionContent => (record.type === 'note'
       ? { type: 'note', note: record.note }
       : { type: 'rule', text: record.text, schedule: record.schedule }));
-    const closureKeys = new Set(recent.flatMap((record) => (record.closureKey === null ? [] : [record.closureKey])));
+    // The sales history's suggestions not stored yet (computed on read) count too, so one pattern is asked once.
+    const closureKeys = new Set([
+      ...recent.flatMap((record) => (record.closureKey === null ? [] : [record.closureKey])),
+      ...(await salesSuggestions(ctx, scope, location.id)).map((each) => closureKeyOf(each.schedule)),
+    ]);
     const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier, closureKeys);
     const params = suggestionsRequest(input);
     const reserve = suggestionsReserveMicroUsd(params);

@@ -50,7 +50,7 @@ export const SALES_ID = /^sales_weekday_([0-6])$/;
  * The sales history's suggestions at the location now (questions.ts weekdayEvidence and salesSuggestionsFor), with no
  * row checked: the window's days, its turned-off days, the done answers and the location's rules.
  */
-export async function salesSuggestions(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<SalesSuggestion[]> {
+export async function salesSuggestions(ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, locationId: string): Promise<SalesSuggestion[]> {
   const { salesDays, agentAnswers, businessRules } = ctx.stores;
   const coverage = await salesDays.coverage(scope, locationId);
   const window = questionWindow(coverage);

@@ -414,3 +414,28 @@ describe('the weekly pass beside suggested closure rules (D46)', () => {
     ]);
   });
 });
+
+describe('the weekly pass beside the sales history’s suggestion (code review S2)', () => {
+  it('drops a weekly rule the sales history already suggests, though no row holds its key yet', async () => {
+    const t = await team();
+    const rows: Record<string, unknown>[] = [];
+    for (let day = '2026-03-02'; day <= '2026-05-31'; day = new Date(Date.parse(`${day}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10)) {
+      if (new Date(`${day}T00:00:00.000Z`).getUTCDay() === 1) continue;
+      rows.push({
+        orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(t.locationId), date: day, guests: 80, netSalesCents: null,
+        uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+      });
+    }
+    await server.connection.collection('tw_sales_days').insertMany(rows);
+    const chat = scriptedModel();
+    chat.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: [{
+      type: 'rule', ruleText: 'Shut Mondays', kind: 'closure', startDate: '2026-06-08', endDate: null, weekdays: [1], effect: 'closed',
+      expectedGuests: null, detail: null, startTime: null, endTime: null, why: 'Mondays had no sales.', calendarIds: [],
+    }] }))]) });
+    const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('no location');
+    const outcome = await suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, chat }, t.scope, location, '2026-06-01');
+    expect(outcome).toEqual({ status: 'none' });
+    expect((await panel(t, t.member)).ruleSuggestions.map((each) => each.id)).toEqual(['sales_weekday_1']);
+  });
+});
