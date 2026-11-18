@@ -214,3 +214,55 @@ test('a character split across chunks decodes whole', async () => {
   await client.stream(TURNS, { body: { content: 'x' }, onEvent });
   expect(events).toEqual([{ event: 'text', data: '{"delta":"café ☕"}' }]);
 });
+
+// resumable-chat-turns: a running turn's events are read back with a GET and a cursor.
+const TAIL = '/api/org/locations/l1/chat/c1/turns/t1?after=41';
+
+test('a GET stream sends no body and keeps its query, with the same headers, and hands each event its id', async () => {
+  const { client, network } = await bearerClient(() => closedStream(
+    `id: 42\n${sseText('text', { delta: 'Hi' })}`, `id: 43\n${sseText('done', { stopReason: 'end_turn', costUsd: 0 })}`,
+  ));
+  const { events, onEvent } = collect();
+  await client.stream(TAIL, { method: 'GET', onEvent });
+  expect(events).toEqual([
+    { event: 'text', data: '{"delta":"Hi"}', id: '42' },
+    { event: 'done', data: '{"stopReason":"end_turn","costUsd":0}', id: '43' },
+  ]);
+  const [call] = network.calls;
+  const headers = new Headers(call?.init.headers);
+  expect(call?.url).toBe(`${BASE}${TAIL}`);
+  expect(call?.init.method).toBe('GET');
+  expect(call?.init.body).toBeUndefined();
+  expect(call?.init.credentials).toBe('omit');
+  expect(headers.get('authorization')).toBe('Bearer at-1');
+  expect(headers.get('accept')).toBe('text/event-stream');
+  expect(headers.get('content-type')).toBeNull();
+});
+
+test('a GET stream refreshes a 401 before it starts, maps a refusal, and stops on its signal', async () => {
+  let tails = 0;
+  const { client, network } = cookieClient((call) => {
+    if (isRefresh(call.url)) return jsonResponse(204);
+    tails += 1;
+    return tails === 1 ? jsonResponse(401, { error: 'unauthenticated' }) : closedStream(sseText('done', { stopReason: 'end_turn', costUsd: 0 }));
+  });
+  await client.stream(TAIL, { method: 'GET', onEvent: () => undefined });
+  expect(network.calls.map((call) => [call.init.method, new URL(call.url).pathname])).toEqual([
+    ['GET', '/api/org/locations/l1/chat/c1/turns/t1'], ['POST', '/auth/refresh'], ['GET', '/api/org/locations/l1/chat/c1/turns/t1'],
+  ]);
+
+  const refused = cookieClient(() => jsonResponse(404, { error: 'not_found' }));
+  await expect(refused.client.stream(TAIL, { method: 'GET', onEvent: () => undefined })).rejects.toMatchObject({ kind: 'http', status: 404, code: 'not_found' });
+
+  const stream = fakeEventStream();
+  const open = cookieClient(() => stream.response);
+  const controller = new AbortController();
+  const { events, onEvent } = collect();
+  const pending = open.client.stream(TAIL, { method: 'GET', signal: controller.signal, onEvent });
+  stream.push(`id: 42\n${sseText('text', { delta: 'Part' })}`);
+  await new Promise((resolve) => { setTimeout(resolve, 0); });
+  controller.abort();
+  await expect(pending).rejects.toMatchObject({ kind: 'aborted' });
+  expect(stream.cancelled).toBe(true);
+  expect(events).toEqual([{ event: 'text', data: '{"delta":"Part"}', id: '42' }]);
+});
