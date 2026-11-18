@@ -49,10 +49,13 @@ const entryLine = {
   fontFamily: theme.font.sans, fontSize: 11, lineHeight: `${String(WIDE_ROWS.entry)}px`, color: C.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
 } as const;
 
+/** Today's number, filled in the primary button's colors so it reads apart from the selected day's mint outline. */
+const TODAY_BADGE = { color: C.onCta, backgroundColor: C.cta, fontWeight: 600, padding: '0 5px', borderRadius: 2 } as const;
+
 function DayNumber(props: { cell: MonthCell }): React.JSX.Element {
   const { cell } = props;
   return (
-    <span style={{ ...mono, fontSize: 13, color: cell.isToday ? C.white : C.text2, fontWeight: cell.isToday ? 600 : 400 }}>
+    <span style={cell.isToday ? { ...mono, fontSize: 13, ...TODAY_BADGE } : { ...mono, fontSize: 13, color: C.text2 }}>
       {String(Number(cell.date.slice(8, 10)))}
     </span>
   );

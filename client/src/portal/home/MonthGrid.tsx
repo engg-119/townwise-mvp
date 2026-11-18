@@ -157,7 +157,8 @@ const styles = StyleSheet.create({
   week: { borderColor: c.line },
   selected: { borderColor: c.mint },
   number: { ...theme.type.mono, fontSize: 13, color: c.text2, fontVariant: ['tabular-nums'] },
-  today: { color: c.white, fontWeight: '600' },
+  // Filled in the primary button's colors so today reads apart from the selected day's mint outline.
+  today: { color: c.onCta, backgroundColor: c.cta, fontWeight: '600', paddingHorizontal: 5, borderRadius: 2, overflow: 'hidden', alignSelf: 'flex-start' },
   status: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text2, textTransform: 'uppercase' },
   middle: { alignItems: 'center' },
   figure: { ...theme.type.monoValue, color: c.white, fontVariant: ['tabular-nums'] },
