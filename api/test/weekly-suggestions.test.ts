@@ -26,7 +26,7 @@ const CLOSURE = {
 function checks(over: Partial<SuggestionChecks> = {}): SuggestionChecks {
   return {
     today: TODAY, to: TO, notes: [], rules: [], suggested: [], calendarIds: new Set(['us:thanksgiving:2026', 'us:christmas:2026']),
-    calendarTitles: ['Thanksgiving Day', 'Christmas Day'], ownerEvents: new Map(), ...over,
+    calendarTitles: new Map([['us:thanksgiving:2026', 'Thanksgiving Day'], ['us:christmas:2026', 'Christmas Day']]), ownerEvents: new Map(), ...over,
   };
 }
 
@@ -185,6 +185,18 @@ describe('owner-calendar events in the request (calendar-event-suggestions, desi
     expect(sentTitle('Book via jane.doe@example.test or Sam@bookings.example.test')).toBe('Book via [removed] or [removed]');
     for (const kept of ['Smith 40th, upstairs', 'Reunion 2026, 400 guests', 'Dinner 2026-12-05 for 12', 'Table 7 at 6:30']) expect(sentTitle(kept)).toBe(kept);
   });
+
+  it('replaces phone numbers in any grouping, with their extension, full-width digits and a full-width @, and keeps times, years and short numbers', () => {
+    for (const phone of [
+      '555 1234', '555–123–4567', '555/123/4567', '555-1234567', '06 12 34 56 78', '+33 6 12 34 56 78', '07700 900123', '555-123-4567 x204',
+      '555-123-4567 ext. 204', '５５５-１２３-４５６７', '555—123—4567',
+    ]) expect({ phone, sent: sentTitle(`Party, ${phone}`) }).toEqual({ phone, sent: 'Party, [removed]' });
+    expect(sentTitle('Book via john＠example.com')).toBe('Book via [removed]');
+    for (const kept of ['Party 40 1730-2200', 'Gala 2026 1800-2200', 'Party 25 100 200', 'Dec 5 6pm 40 guests', 'Party 4 x 5', 'Reunion 2026 400 guests']) {
+      expect(sentTitle(kept)).toBe(kept);
+    }
+    expect(sentTitle('Party 1730-2200, call 555-1234')).toBe('Party 1730-2200, call [removed]');
+  });
 });
 
 describe('the checks on spotted events and sent titles (calendar-event-suggestions, design decision 7)', () => {
@@ -213,6 +225,23 @@ describe('the checks on spotted events and sent titles (calendar-event-suggestio
       why: null, calendarIds: [],
     }]);
     expect(JSON.stringify(kept)).not.toContain('Sentinel model');
+  });
+
+  it('keeps a count only when the sent title says it beside a guest word', () => {
+    const counted = (title: string, guests: number): number | null => {
+      const [one] = keptSuggestions(answer(eventItem('e1', { expectedGuests: guests })), checks({ ownerEvents: new Map([['e1', sent(title)]]) }));
+      return one?.content.type === 'event' ? one.content.note.expectedGuests : null;
+    };
+    expect(counted('Smith party, 40 guests', 40)).toBe(40);
+    expect(counted('Smith party 25 people', 25)).toBe(25);
+    expect(counted('Smith party 12 ppl', 12)).toBe(12);
+    expect(counted('Smith party 30 pax', 30)).toBe(30);
+    expect(counted('Smith party of 8', 8)).toBe(8);
+    expect(counted('Dinner for 12', 12)).toBe(12);
+    expect(counted('Gala 2026', 2026)).toBeNull();
+    expect(counted('Party 40 1730-2200', 40)).toBeNull();
+    expect(counted('Table 7 at 6:30', 7)).toBeNull();
+    expect(counted('Dinner for 6:30', 6)).toBeNull();
   });
 
   it('nulls a guessed count, and drops a forged ref, a reused one, and an event item when no event was sent', () => {
@@ -246,7 +275,8 @@ describe('the checks on spotted events and sent titles (calendar-event-suggestio
   it('with events sent, drops a private-event note or rule and any item repeating a sent title’s distinctive word, keeping generic and town words', () => {
     const withTown = checks({
       ownerEvents: new Map([...ownerEvents, ['e4', sent('Commencement brunch for the Qwertyx group', '2026-12-26')]]),
-      calendarTitles: ['Thanksgiving Day', 'Commencement'],
+      calendarIds: new Set(['us:thanksgiving:2026', 'town:commencement']),
+      calendarTitles: new Map([['us:thanksgiving:2026', 'Thanksgiving Day'], ['town:commencement', 'Commencement']]),
     });
     const party = { ...CLOSURE, kind: 'private_event', effect: 'more_guests', expectedGuests: 30, startDate: '2026-11-28', endDate: '2026-11-28', why: 'A party.' };
     const named = { ...CLOSURE, why: 'The Zyxwvut family closes it for Thanksgiving.' };
@@ -255,11 +285,39 @@ describe('the checks on spotted events and sent titles (calendar-event-suggestio
     expect(keptSuggestions(answer(party, named, detailed, rule), withTown)).toEqual([]);
     // Generic event and food words, and a town calendar entry's words, pass.
     const holiday = { ...CLOSURE, why: 'Thanksgiving draws a holiday dinner crowd elsewhere.' };
-    const town = { ...CLOSURE, startDate: '2026-11-30', endDate: '2026-11-30', why: 'Commencement brunch week closes the street.' };
+    const town = { ...CLOSURE, startDate: '2026-11-30', endDate: '2026-11-30', why: 'Commencement brunch week closes the street.', calendarIds: ['town:commencement'] };
     expect(keptSuggestions(answer(holiday, town), withTown).map((each) => each.why)).toEqual([holiday.why, town.why]);
     expect(GENERIC_TITLE_WORDS.has('dinner')).toBe(true);
     // Without events sent, a private-event note is suggested as before.
     expect(keptSuggestions(answer(party), checks())).toHaveLength(1);
+  });
+
+  it('with events sent, keeps a note or rule only when it cites a town calendar entry the request sent', () => {
+    expect(keptSuggestions(answer({ ...CLOSURE, calendarIds: [] }, { ...CLOSURE, startDate: '2026-11-27', endDate: '2026-11-27', calendarIds: ['made-up'] }), checks({ ownerEvents }))).toEqual([]);
+    expect(keptSuggestions(answer(CLOSURE), checks({ ownerEvents }))).toHaveLength(1);
+    expect(keptSuggestions(answer({ ...CLOSURE, calendarIds: [] }), checks())).toHaveLength(1);
+  });
+
+  it('drops a why naming an owner title however it is spelled, cased, split, joined or accented, and one holding 7 digits in a row', () => {
+    const names = new Map([
+      ['e1', sent('Ng buyout', '2026-12-05')], ['e2', sent('Johnsons 50th', '2026-12-06')], ['e3', sent('Smith-Jones rehearsal', '2026-12-07')],
+      ['e4', sent('McDonald retirement', '2026-12-08')], ['e5', sent('Bo Kim 30', '2026-12-09')], ['e6', sent('Rodríguez quinceañera', '2026-12-10')],
+    ]);
+    const whys = [
+      'Closed for the Ng buyout.', 'Closed for Johnson.', 'Closed for SmithJones.', 'Closed for Mc Donald.', 'Closed for Bo Kim.',
+      'Closed for Rodriguez quinceanera.', 'Closed for SMITH.', 'Closed for Ｊｏｎｅｓ.', 'Call 5551234 first.',
+    ];
+    for (const why of whys) expect({ why, kept: keptSuggestions(answer({ ...CLOSURE, why }), checks({ ownerEvents: names })) }).toEqual({ why, kept: [] });
+    expect(keptSuggestions(answer({ ...CLOSURE, detail: 'For the Johnson’s' }), checks({ ownerEvents: names }))).toEqual([]);
+    expect(keptSuggestions(answer({ ...CLOSURE, detail: 'For the family' }), checks({ ownerEvents: names }))).toHaveLength(1);
+    // A closure citing a town entry, its why naming only that entry, stays; an entry it does not cite is not exempt.
+    const town = checks({
+      ownerEvents: new Map([['e1', sent('Thanksgiving Day Commencement buyout', '2026-12-05')]]),
+      calendarIds: new Set(['us:thanksgiving:2026', 'town:commencement']),
+      calendarTitles: new Map([['us:thanksgiving:2026', 'Thanksgiving Day'], ['town:commencement', 'Commencement']]),
+    });
+    expect(keptSuggestions(answer({ ...CLOSURE, why: 'Thanksgiving Day closes the town, and you were closed for it last year.' }), town)).toHaveLength(1);
+    expect(keptSuggestions(answer({ ...CLOSURE, why: 'Commencement is that week.' }), town)).toEqual([]);
   });
 
   it('sentinel titles: no distinctive word of a sent title is in any kept suggestion', () => {

@@ -34,12 +34,15 @@
 // With either switch off, or no such event, the request is exactly as it was before (prompt, format and message). The
 // answer may then also hold up to 5 `event` items, read apart from the 5 notes and rules: one is kept only for a ref the
 // request sent and no other item used, with no private-event or closure note over its days, its dates and hours taken
-// from the event, its guest count only when that number is in the sent title as digits, and no model words kept (its
-// why and detail are dropped; the panel words the card at read time). On such a pass every note or rule of kind
-// private_event is dropped, and so is one whose why, detail or rule words hold a distinctive word of a sent title (4 or
-// more characters, in no title of the town calendar sent, not in GENERIC_TITLE_WORDS), so no title reaches a stored
-// suggestion. This call has its own system prompt and output format, sent without prompt caching: it is not a chat
-// frozen-prefix change, and TownwiseAI chat's prompt and tools are untouched.
+// from the event, its guest count only when the sent title states that number beside a guest word (40 guests, party of
+// 8, for 12), and no model words kept (its why and detail are dropped; the panel words the card at read time). On such
+// a pass every note or rule of kind private_event is dropped, so is one citing no town calendar entry the request sent,
+// and so is one whose why, detail or rule words hold 7 digits in a row or a word of a sent title (compared after NFKD
+// with marks stripped, lowercased, punctuation inside a word removed, one trailing "s" off, each pair of words side by
+// side also joined; a title word of 3 or more characters, or a pair, unless GENERIC_TITLE_WORDS, COMMON_WORDS or a word
+// of a town entry the item cites), so no title reaches a stored suggestion. This call has its own system prompt and
+// output format, sent without prompt caching: it is not a chat frozen-prefix change, and TownwiseAI chat's prompt and
+// tools are untouched.
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type {
   BetaMessage, BetaMessageStreamParams, BetaRawMessageStreamEvent,
@@ -101,8 +104,19 @@ export const GENERIC_TITLE_WORDS: ReadonlySet<string> = new Set([
   'party', 'dinner', 'lunch', 'brunch', 'private', 'event', 'events', 'birthday', 'wedding', 'rehearsal', 'reception', 'meeting',
   'booking', 'reservation', 'table', 'group', 'guests', 'celebration', 'holiday', 'buyout',
 ]);
-/** A title word of fewer characters never marks a leak. */
-const MIN_LEAK_WORD_CHARS = 4;
+/**
+ * Words of 3 or more letters that nearly every sentence holds and no name is, so a why like "closed for it last year"
+ * is not dropped because an owner title also says "for". They never mark a leak on their own. [CONFIRM]
+ */
+export const COMMON_WORDS: ReadonlySet<string> = new Set([
+  'the', 'and', 'for', 'with', 'from', 'into', 'onto', 'our', 'you', 'your', 'are', 'was', 'were', 'has', 'had', 'have', 'its', 'not',
+  'but', 'all', 'this', 'that', 'these', 'those', 'they', 'them', 'their', 'then', 'than', 'who', 'per', 'via', 'off', 'out', 'over',
+  'after', 'before', 'until', 'last', 'next', 'year', 'week', 'closed', 'close', 'open',
+]);
+/** A title word of fewer characters never marks a leak alone (it still does joined to the word beside it). */
+const MIN_LEAK_WORD_CHARS = 3;
+/** A why, detail or rule's words holding this many digits in a row (a phone number, say) are dropped on such a pass. */
+const LONG_DIGITS = /\p{Nd}{7,}/u;
 /** Characters a request token is taken to be at most, to estimate its input tokens, as the file reader does. */
 const CHARS_PER_TOKEN = 3;
 const MAX_WHY_CHARS = 280;
@@ -287,8 +301,8 @@ export interface SuggestionChecks {
   readonly suggested: readonly NoteOrRuleContent[];
   /** The calendar ids the request sent. */
   readonly calendarIds: ReadonlySet<string>;
-  /** The titles of the town calendar entries the request sent. */
-  readonly calendarTitles: readonly string[];
+  /** The titles of the town calendar entries the request sent, by id. */
+  readonly calendarTitles: ReadonlyMap<string, string>;
   /** The owner-calendar events the request sent, by ref; empty when it sent none. */
   readonly ownerEvents: ReadonlyMap<string, SentOwnerEvent>;
 }
@@ -315,28 +329,129 @@ function contentOf(item: z.infer<typeof answerItem>, today: string): NoteOrRuleC
   return text === null || schedule === null ? null : { type: 'rule', text, schedule };
 }
 
-/** An email address, or a phone number: written with separators in three groups, as 555-0100, or as 10 to 15 digits. */
+/** An email address: any run holding an @ (after NFKC, so a full-width ＠ is one). */
 const EMAIL = /[^\s@]+@[^\s@]+/gu;
-const PHONE = /(?:\+\d{1,3}[\s.-]?)?(?:\(\d{2,4}\)\s?|\b\d{2,4}[\s.-])\d{3,4}[\s.-]\d{3,4}\b|\b\d{3}[.-]\d{4}\b|\+?\b\d{10,15}\b/gu;
+/**
+ * A run of digit groups that may hold a phone number: an optional + or (, groups joined by spaces, dots, hyphens, en or
+ * em dashes, slashes or parentheses, and an optional extension (x or ext and digits). phonesOut decides which part is one.
+ */
+const NUMBER_RUN = /(?<![\p{L}\p{N}])\+?\(?\d+(?:[ ./\-–—()]{1,3}\d+)*\)?(?:\s?(?:x|ext\.?)\s?\d{1,6})?(?![\p{L}\p{N}])/giu;
+const EXTENSION = /\s?(?:x|ext\.?)\s?\d{1,6}$/iu;
+const REMOVED = '[removed]';
 
-/** A title as the request sends it: every email address and phone number replaced by `[removed]`. */
-export function sentTitle(title: string): string {
-  return title.replace(EMAIL, '[removed]').replace(PHONE, '[removed]');
-}
+const isYear = (digits: string): boolean => /^(?:19|20)\d\d$/u.test(digits);
+const isClock = (digits: string): boolean => /^(?:[01]\d|2[0-3])[0-5]\d$/u.test(digits);
+const isDash = (separator: string): boolean => /^\s*[-–—]\s*$/u.test(separator);
 
-/** The words of a text, lowercased: runs of letters, marks and digits holding a letter. */
-function wordsOf(text: string): string[] {
-  return (text.normalize('NFC').toLowerCase().match(/[\p{L}\p{M}\p{N}]+/gu) ?? []).filter((word) => /\p{L}/u.test(word));
+/**
+ * A number run with every phone number in it replaced: 7 to 15 digits, in one group, after a + or (, joined by any
+ * separator but a space alone, or by spaces with a last group of 4 or more digits or as 4 or more pairs (06 12 34 56 78),
+ * with its extension. Not part of one: a time range (1730-2200), a date (2026-12-05, 12/05/2026), or a year that starts
+ * the run before a space (Gala 2026 ...), so "Party 25 100 200" and "Party 40 1730-2200" stay as they are.
+ */
+function phonesOut(run: string): string {
+  const ext = EXTENSION.exec(run);
+  const main = ext === null ? run : run.slice(0, ext.index);
+  const groups = [...main.matchAll(/\d+/gu)].map((match) => ({ start: match.index, end: match.index + match[0].length, digits: match[0] }));
+  const sep = (index: number): string => main.slice(groups[index - 1]?.end ?? 0, groups[index]?.start ?? 0);
+  const breaks = new Set<number>();
+  groups.forEach((group, index) => {
+    const next = groups[index + 1];
+    const third = groups[index + 2];
+    if (next !== undefined && isClock(group.digits) && isClock(next.digits) && isDash(sep(index + 1))) [index, index + 1].forEach((each) => breaks.add(each));
+    if (next !== undefined && third !== undefined && /^[-/.]$/u.test(sep(index + 1)) && sep(index + 1) === sep(index + 2)) {
+      const ymd = isYear(group.digits) && next.digits.length <= 2 && third.digits.length <= 2;
+      const dmy = group.digits.length <= 2 && next.digits.length <= 2 && isYear(third.digits);
+      if (ymd || dmy) [index, index + 1, index + 2].forEach((each) => breaks.add(each));
+    }
+  });
+  const [first, second] = groups;
+  if (first !== undefined && second !== undefined && isYear(first.digits) && /^\s+$/u.test(sep(1))) breaks.add(0);
+  let out = '';
+  let at = 0;
+  for (let index = 0; index < groups.length;) {
+    if (breaks.has(index)) {
+      index += 1;
+      continue;
+    }
+    let last = index;
+    while (last + 1 < groups.length && !breaks.has(last + 1)) last += 1;
+    const segment = groups.slice(index, last + 1);
+    const digits = segment.reduce((sum, group) => sum + group.digits.length, 0);
+    const lead = index === 0 ? main.slice(0, groups[0]?.start ?? 0) : '';
+    const inner = segment.slice(1).map((_, offset) => sep(index + offset + 1));
+    const spaced = inner.every((each) => /^\s+$/u.test(each));
+    const lastGroup = segment.at(-1)?.digits ?? '';
+    const pairs = segment.length >= 4 && segment.every((group) => group.digits.length === 2);
+    const phone = digits >= 7 && digits <= 15
+      && (segment.length === 1 || /[+(]/u.test(lead) || !spaced || lastGroup.length >= 4 || pairs);
+    if (phone) {
+      const start = index === 0 ? 0 : segment[0]?.start ?? 0;
+      const end = last === groups.length - 1 ? run.length : segment.at(-1)?.end ?? 0;
+      out += run.slice(at, start) + REMOVED;
+      at = end;
+    }
+    index = last + 1;
+  }
+  return out + run.slice(at);
 }
 
 /**
- * The distinctive words of the sent titles: 4 or more characters, in no title of the town calendar sent and not in
- * GENERIC_TITLE_WORDS. A note or rule holding one repeats an owner's title, and is dropped.
+ * A title as the request sends it: NFKC (so full-width digits and ＠ are plain), then every email address and phone
+ * number replaced by `[removed]`.
  */
-function distinctiveWords(checks: SuggestionChecks): Set<string> {
-  const town = new Set(checks.calendarTitles.flatMap(wordsOf));
-  return new Set([...checks.ownerEvents.values()].flatMap((event) => wordsOf(event.title))
-    .filter((word) => Array.from(word).length >= MIN_LEAK_WORD_CHARS && !town.has(word) && !GENERIC_TITLE_WORDS.has(word)));
+export function sentTitle(title: string): string {
+  return title.normalize('NFKC').replace(EMAIL, REMOVED).replace(NUMBER_RUN, phonesOut);
+}
+
+/** A text's tokens (split at spaces): NFKD with its marks stripped, lowercased, each its letters and digits with the punctuation inside it removed (`joined`) and its pieces. */
+function leakTokensOf(text: string): { readonly joined: string; readonly parts: readonly string[] }[] {
+  return text.normalize('NFKD').replace(/\p{M}/gu, '').toLowerCase().split(/\s+/u).flatMap((raw) => {
+    const parts = raw.match(/[\p{L}\p{N}]+/gu) ?? [];
+    return parts.length === 0 ? [] : [{ joined: parts.join(''), parts }];
+  });
+}
+
+/** One trailing "s" off, so a plural or a possessive meets its name ("Johnsons", "Johnson's"). */
+function stemOf(word: string): string {
+  return word.length > 1 && word.endsWith('s') ? word.slice(0, -1) : word;
+}
+
+const hasLetter = (word: string): boolean => /\p{L}/u.test(word);
+
+/** A token's words: the token with its punctuation removed and, when it had any, each piece (Smith-Jones: smithjones, smith, jones). */
+function wordsOfToken(token: { readonly joined: string; readonly parts: readonly string[] }): readonly string[] {
+  return token.parts.length > 1 ? [token.joined, ...token.parts] : [token.joined];
+}
+
+/** Every word of a text to compare, stemmed: each token's words, and each pair of tokens side by side joined (Mc Donald: mcdonald). */
+function textWords(text: string): Set<string> {
+  const tokens = leakTokensOf(text);
+  return new Set(tokens.flatMap((token, index) => {
+    const next = tokens[index + 1];
+    return [...wordsOfToken(token), ...(next === undefined ? [] : [token.joined + next.joined])].filter(hasLetter).map(stemOf);
+  }));
+}
+
+/**
+ * The words of the sent titles that mark a leak, stemmed: each title word of 3 or more characters, and each pair of
+ * title words side by side joined (Ng buyout: ngbuyout), unless exempt. Exempt are GENERIC_TITLE_WORDS, COMMON_WORDS and
+ * the words of the town calendar entries the item cites; a pair only when both its words are (or hold no letter).
+ */
+function leakWords(titles: readonly string[], exempt: ReadonlySet<string>): Set<string> {
+  const isExempt = (word: string): boolean => !hasLetter(word) || exempt.has(word) || exempt.has(stemOf(word));
+  const leaks = new Set<string>();
+  for (const title of titles) {
+    const tokens = leakTokensOf(title);
+    tokens.forEach((token, index) => {
+      for (const word of wordsOfToken(token)) {
+        if (Array.from(word).length >= MIN_LEAK_WORD_CHARS && !isExempt(word)) leaks.add(stemOf(word));
+      }
+      const next = tokens[index + 1];
+      if (next !== undefined && !(isExempt(token.joined) && isExempt(next.joined))) leaks.add(stemOf(token.joined + next.joined));
+    });
+  }
+  return leaks;
 }
 
 /** Dates and hours as a note holds them: hours only when the start is before the end (calendar/follow-up.ts). */
@@ -345,10 +460,13 @@ function asNoteDates(dates: NoteDates): NoteDates {
   return { startDate: dates.startDate, endDate: dates.endDate, startTime: timed ? dates.startTime : null, endTime: timed ? dates.endTime : null };
 }
 
-/** The guest count only when that number is in the sent title as digits, and a note may hold it; else null. */
+/** A guest count a title states: N guests, N people, N ppl, N pax, party of N, or for N (not a clock time). */
+const GUEST_COUNT = /(?<!\p{N})(\d{1,5})\s*-?\s*(?:guests?|people|ppl|pax)(?!\p{L})|(?<!\p{L})(?:party of|for)\s+(\d{1,5})(?!\p{N}|[:.]\d|\s?[ap]\.?m(?!\p{L}))/giu;
+
+/** The guest count only when the sent title states that number beside a guest word, and a note may hold it; else null. */
 function countFromTitle(guests: number | null, title: string): number | null {
   if (guests === null || guests < 1 || guests > 20_000) return null;
-  const stated = new Set((title.match(/\d+/gu) ?? []).map((digits) => String(Number(digits))));
+  const stated = new Set([...title.matchAll(GUEST_COUNT)].map((match) => String(Number(match[1] ?? match[2]))));
   return stated.has(String(guests)) ? guests : null;
 }
 
@@ -390,7 +508,8 @@ function spottedOf(raw: unknown, checks: SuggestionChecks, used: Set<string>): N
  * rules, starting from tomorrow to `to`, deciding days no note, rule, earlier suggestion or kept one already decides the
  * same way, and (a rule) with words no rule already has. Its calendar ids are those the request sent, at most 5. Apart
  * from them, at most 5 spotted events read (spottedOf). When the request sent owner events, a note or rule of kind
- * private_event, or one whose why, detail or words hold a distinctive word of a sent title, is dropped.
+ * private_event, one citing no calendar id the request sent, or one whose why, detail or words repeat a sent title's
+ * word or hold 7 digits in a row (repeatsTitle), is dropped.
  */
 export function keptSuggestions(output: unknown, checks: SuggestionChecks): NewSuggestion[] {
   const parsed = z.object({ suggestions: z.array(z.unknown()) }).safeParse(output);
@@ -404,9 +523,14 @@ export function keptSuggestions(output: unknown, checks: SuggestionChecks): NewS
     ...checks.suggested.flatMap((content) => (content.type === 'rule' ? [content.text.toLowerCase()] : [])),
   ]);
   const sentEvents = checks.ownerEvents.size > 0;
-  const distinctive = distinctiveWords(checks);
-  const repeatsTitle = (...texts: (string | null)[]): boolean =>
-    texts.some((text) => text !== null && wordsOf(text).some((word) => distinctive.has(word)));
+  const titles = [...checks.ownerEvents.values()].map((event) => event.title);
+  const generic = [...GENERIC_TITLE_WORDS, ...COMMON_WORDS];
+  /** Whether a text repeats a sent title's word (the town entries it cites exempt), or holds 7 digits in a row. */
+  const repeatsTitle = (cited: readonly string[], ...texts: (string | null)[]): boolean => {
+    const exempt = new Set([...generic, ...cited.flatMap((id) => [...textWords(checks.calendarTitles.get(id) ?? '')])]);
+    const leaks = leakWords(titles, exempt);
+    return texts.some((text) => text !== null && (LONG_DIGITS.test(text.normalize('NFKC')) || [...textWords(text)].some((word) => leaks.has(word))));
+  };
   const items = parsed.data.suggestions;
   const kept: NewSuggestion[] = [];
   for (const raw of items.filter((each) => !isEventItem(each)).slice(0, MAX_SUGGESTIONS)) {
@@ -419,10 +543,11 @@ export function keptSuggestions(output: unknown, checks: SuggestionChecks): NewS
     if (days.startDate < tomorrow || days.startDate > checks.to) continue;
     if (taken.some((other) => sameDays(other, days))) continue;
     if (content.type === 'rule' && words.has(content.text.toLowerCase())) continue;
-    // A private event on the owner's calendar comes only as an event item, and no title's distinctive word is kept.
-    if (sentEvents && (days.kind === 'private_event'
-      || repeatsTitle(why, content.type === 'note' ? content.note.detail : content.text))) continue;
     const calendarIds = [...new Set(item.data.calendarIds.filter((id) => checks.calendarIds.has(id)))].slice(0, MAX_CALENDAR_IDS);
+    // A private event on the owner's calendar comes only as an event item; a note or rule rests on the town calendar,
+    // and no title's distinctive word is kept.
+    if (sentEvents && (days.kind === 'private_event' || calendarIds.length === 0
+      || repeatsTitle(calendarIds, why, content.type === 'note' ? content.note.detail : content.text))) continue;
     kept.push({ content, why, calendarIds });
     taken.push(days);
     if (content.type === 'rule') words.add(content.text.toLowerCase());
@@ -604,7 +729,7 @@ export async function suggestionsInput(
     },
     checks: {
       today, to, notes, rules: rules.map((rule) => ({ text: rule.text, schedule: rule.schedule })), suggested,
-      calendarIds: new Set(calendar.map((entry) => entry.id)), calendarTitles: calendar.map((entry) => entry.title), ownerEvents: owner.sent,
+      calendarIds: new Set(calendar.map((entry) => entry.id)), calendarTitles: new Map(calendar.map((entry) => [entry.id, entry.title])), ownerEvents: owner.sent,
     },
   };
 }
