@@ -21,16 +21,22 @@ const NO_ANSWERS: ReadonlyMap<string, PlaceMap> = new Map();
 const mapAnswerSchema = z.object({ map: placeMapSchema });
 
 /** The signed map of every place in the mode, or null while the map is off. Google is not called. */
-async function askMap(api: ApiClient, placeIds: readonly string[], theme: ThemeMode): Promise<PlaceMap> {
-  const body = await api.json('/api/places/map', mapAnswerSchema, { method: 'POST', body: { placeIds, theme } });
-  return body.map;
+async function askMap(api: ApiClient, placeIds: readonly string[], theme: ThemeMode, labeled: boolean): Promise<PlaceMap> {
+  const body = labeled ? { placeIds, theme, labeled } : { placeIds, theme };
+  const answer = await api.json('/api/places/map', mapAnswerSchema, { method: 'POST', body });
+  return answer.map;
 }
 
-export function usePlacesMap(api: ApiClient, placeIds: readonly string[]): PlaceMap {
+/**
+ * `labeled` (D47, Settings' map of every location): each pin carries its letter, A for the first id, so the ids keep
+ * the order given instead of being sorted, and the same set in another order is another map.
+ */
+export function usePlacesMap(api: ApiClient, placeIds: readonly string[], opts: { labeled?: boolean } = {}): PlaceMap {
   const theme = useMapTheme();
-  const ids = [...placeIds].sort().join(',');
-  /** The set and the mode; empty with no ids. */
-  const key = ids === '' ? '' : `${theme} ${ids}`;
+  const labeled = opts.labeled === true;
+  const ids = (labeled ? [...placeIds] : [...placeIds].sort()).join(',');
+  /** The set, the mode and whether it is lettered; empty with no ids. */
+  const key = ids === '' ? '' : `${theme}${labeled ? ' labeled' : ''} ${ids}`;
   /** Each set's map, by key. */
   const [answers, setAnswers] = useState(NO_ANSWERS);
   /** The key whose ask failed, while it is current. */
@@ -43,7 +49,7 @@ export function usePlacesMap(api: ApiClient, placeIds: readonly string[]): Place
     if (known) return undefined;
     let current = true;
     const timer = setTimeout(() => {
-      askMap(api, ids.split(','), theme).then(
+      askMap(api, ids.split(','), theme, labeled).then(
         (map) => { if (current) setAnswers((before) => new Map(before).set(key, map)); },
         () => { if (current) setFailed(key); },
       );
@@ -52,7 +58,7 @@ export function usePlacesMap(api: ApiClient, placeIds: readonly string[]): Place
       current = false;
       clearTimeout(timer);
     };
-  }, [api, ids, theme, key, known]);
+  }, [api, ids, theme, labeled, key, known]);
 
   // undefined while the set's map is still being asked for.
   const shown = key === '' ? null : answers.has(key) ? (answers.get(key) ?? null) : failed === key ? null : undefined;

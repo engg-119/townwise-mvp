@@ -8,9 +8,12 @@ import type { PlaceMap as PlaceMapData } from './map';
 // straight from Google (a signed Maps Static URL, see map.ts), at the 2:1 ratio of its logical size and never cropped
 // or covered, so Google's logo in its bottom-left corner stays visible. The address and town lines carry the
 // information: with no map, or when the image fails to load, nothing renders, never an empty box. `frame` sizes a
-// box around the image, such as the checklist's column up to 640 wide, which goes with the image.
+// box around the image, such as the checklist's column up to 640 wide, which goes with the image. `onFailed` tells the
+// page an image failed, so a legend beside it can drop its letters (settings/LocationsMap.tsx).
 
-export function PlaceMap(props: { map: PlaceMapData; label: string; frame?: StyleProp<ViewStyle> }): React.JSX.Element | null {
+export function PlaceMap(props: {
+  map: PlaceMapData; label: string; frame?: StyleProp<ViewStyle>; onFailed?: (url: string) => void;
+}): React.JSX.Element | null {
   const { map } = props;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
   if (map === null || failedUrl === map.url) return null;
@@ -22,7 +25,7 @@ export function PlaceMap(props: { map: PlaceMapData; label: string; frame?: Styl
       accessible
       role="img"
       aria-label={props.label}
-      onError={() => { setFailedUrl(map.url); }}
+      onError={() => { setFailedUrl(map.url); props.onFailed?.(map.url); }}
     />
   );
   return props.frame === undefined ? image : <View style={props.frame}>{image}</View>;
