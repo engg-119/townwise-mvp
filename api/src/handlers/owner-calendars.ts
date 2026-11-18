@@ -60,6 +60,11 @@ export interface OwnerCalendarView {
   lastSuccessAt: string | null;
   lastAttemptAt: string | null;
   createdAt: string;
+  /**
+   * The caller's own Google calendar, which they can reconnect: true only for a Google calendar the caller added, so
+   * read through their own connection; false for a file or a link, and for staff under view-as or open as admin.
+   */
+  mine: boolean;
 }
 
 /** Whether Google calendars are on, whether the caller has a connection that is not revoked, and the public client id. */
@@ -118,7 +123,7 @@ function calendarLimit(): AppError {
   return new AppError(409, 'calendar_limit', `This location already has ${String(MAX_CALENDARS)} calendars`);
 }
 
-export function ownerCalendarView(calendar: OwnerCalendarRecord): OwnerCalendarView {
+export function ownerCalendarView(calendar: OwnerCalendarRecord, mine: boolean): OwnerCalendarView {
   return {
     id: calendar.id,
     label: calendar.label,
@@ -130,6 +135,7 @@ export function ownerCalendarView(calendar: OwnerCalendarRecord): OwnerCalendarV
     lastSuccessAt: calendar.lastSuccessAt?.toISOString() ?? null,
     lastAttemptAt: calendar.lastAttemptAt?.toISOString() ?? null,
     createdAt: calendar.createdAt.toISOString(),
+    mine,
   };
 }
 
@@ -208,9 +214,15 @@ function staffReads(caller: MemberPrincipal): boolean {
   return caller.viewAs !== null || caller.openAsAdmin !== null;
 }
 
-/** A calendar as the caller may see it: to staff a Google calendar is "Google calendar" (design decision 12). */
-function shownView(calendar: OwnerCalendarRecord, staff: boolean): OwnerCalendarView {
-  const view = ownerCalendarView(calendar);
+/**
+ * A calendar as the caller may see it: to staff a Google calendar is "Google calendar" (design decision 12). It is
+ * `mine` when it is a Google calendar the caller added: a Google add stores the adder's own connection (one per person
+ * per organization, kept across a reconnect) and ending a connection removes its calendars, so the adder's connection
+ * is the one that reads it. Never for staff: under view-as `userId` is the target's.
+ */
+function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal): OwnerCalendarView {
+  const staff = staffReads(caller);
+  const view = ownerCalendarView(calendar, !staff && calendar.kind === 'google' && calendar.createdBy === caller.userId);
   return staff && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
 }
 
@@ -227,14 +239,15 @@ async function googleView(ctx: TownwiseContext, caller: MemberPrincipal): Promis
 }
 
 /**
- * GET /api/org/locations/:locationId/owner-calendars: the location's calendars, oldest first, and `google`: whether
- * Google calendars are on, whether the caller has a connection that is not revoked, and the public client id.
+ * GET /api/org/locations/:locationId/owner-calendars: the location's calendars, oldest first, each with `mine` (a Google
+ * calendar the caller added, which they can reconnect), and `google`: whether Google calendars are on, whether the
+ * caller has a connection that is not revoked, and the public client id.
  */
 export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const calendars = await ctx.stores.ownerCalendars.list(caller.scope, location.id);
-  res.status(200).json({ calendars: calendars.map((calendar) => shownView(calendar, staffReads(caller))), google: await googleView(ctx, caller) });
+  res.status(200).json({ calendars: calendars.map((calendar) => shownView(calendar, caller)), google: await googleView(ctx, caller) });
 }
 
 function googleNotFound(): AppError {
@@ -362,7 +375,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     throw googleNotConnected();
   }
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
-  res.status(201).json({ calendar: ownerCalendarView(added) });
+  res.status(201).json({ calendar: shownView(added, caller) });
 }
 
 /** 429 rate_limited until 5 minutes after the calendar's last "Refresh now". */
@@ -430,7 +443,7 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
   const refreshed = await calendars.find(scope, location.id, found.id);
   if (refreshed === null) throw notFound();
   await recordCalendar(ctx, caller, 'owner_calendar.refreshed', refreshed, now);
-  res.status(200).json({ calendar: shownView(refreshed, staffReads(caller)) });
+  res.status(200).json({ calendar: shownView(refreshed, caller) });
 }
 
 /**
