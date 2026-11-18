@@ -75,7 +75,8 @@ export async function actOnProposal(ctx: TownwiseContext, req: Request, res: Res
     const row = await proposals.dismiss(scope, key, { ...owner, now });
     result = resultOf(row, row.status === 'saved' ? await savedNoteView(ctx, caller, location, row) : null);
   } else {
-    const content = body.note === undefined ? shown : noteContent(body.note, today);
+    // An edit with no `title` key (an app from before titles) keeps the proposal's title, as a note edit keeps its own.
+    const content = body.note === undefined ? shown : noteContent(body.note, today, { keepTitle: shown.title });
     const claimed = await proposals.claimSave(scope, key, { ...owner, edited: !sameNoteContent(content, shown), now });
     if (claimed === null) {
       // Saved already, by an earlier press or another tab: answer with that save.

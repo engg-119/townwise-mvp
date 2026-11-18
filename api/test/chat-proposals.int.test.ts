@@ -156,6 +156,11 @@ describe('saving a proposal', () => {
     const edited = await act(other, { action: 'save', note: { ...PROPOSAL, title: 'Reunion dinner' } });
     expect(edited.body.proposal.edited).toBe(true);
     expect(edited.body.note).toMatchObject({ title: 'Reunion dinner' });
+
+    // An app from before titles sends its edit with no `title` key: the proposal's title stays, as a note edit keeps it.
+    const older = await conversationWithProposal({ input: { ...PROPOSAL, title: 'Alumni weekend dinner' } });
+    const kept = await act(older, { action: 'save', note: { ...PROPOSAL, expectedGuests: 90 } });
+    expect(kept.body.note).toMatchObject({ title: 'Alumni weekend dinner', expectedGuests: 90 });
   });
 
   it('an edit identical to the proposal is not counted as edited', async () => {
