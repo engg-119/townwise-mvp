@@ -1,18 +1,16 @@
 import { useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { Platform, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 
 import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
-import type { DayContext } from '../analytics/days';
 import { noteWords } from '../analytics/panel';
-import { eventLine, monthDay, monthFactPhrase, monthFactsHead, monthGrid, monthItems, type HomeInput, type MonthFact } from '../analytics/week';
+import {
+  eventLine, monthDay, monthFactPhrase, monthFactsHead, monthGrid, monthItems, WIDE_CELL, type HomeInput, type MonthFact,
+} from '../analytics/week';
 import { MONTH_NAMES, type Metric } from '../analytics/words';
-import { ALL_FILTERS, tooltipLines, type CalendarInput } from '../calendar/model';
+import { dayView, tooltipLines, type CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
-import type { Note } from '../locations/api';
-import { monthRange } from '../locations/dates';
-import type { Rule } from '../rules/api';
 import { weekdaysLine } from '../locations/noteRules';
 import { useBreakpoint, type LoadState } from '../hooks';
 import type { OrderBoard } from '../orders/api';
@@ -32,7 +30,10 @@ import { MonthGrid } from './MonthGrid';
 // day the keys select (today at first) or a pointer rests on with its detail beside the grid; on web a pointer also
 // shows the day's tooltip (the Calendar's lines). Choosing a day (a click, Enter, a tap) opens it in the Calendar
 // (P28), which the card also links to. On the calendar in {month} is every town event, holiday and note of the month
-// in date order with its sources. Who's in town is the month's people in town from today on, grouped by time under
+// in date order with its sources. D49: the grid's cells are the Calendar's (dayCell, one figure rule), the tooltip and
+// the day detail read the same CalendarInput, with the location's own calendars' events. The grid column grows 3 to the
+// detail's 2 side by side; it measures its width, and cells of 88px or more list two entry lines. "Open the calendar"
+// sits under the key, in the grid's column. Who's in town is the month's people in town from today on, grouped by time under
 // headings, then the county's food-service jobs for the month (InTown.tsx). Your {month} in past years is the
 // location's own days, each year with its day count.
 
@@ -41,36 +42,39 @@ export const PEOPLE_HEAD = 'Who’s in town';
 const monthNameOf = (today: string): string => MONTH_NAMES[Number(today.slice(5, 7)) - 1] ?? '';
 
 export function ThisMonth(props: {
-  input: HomeInput; calendar: Calendar; notes: readonly Note[]; rules: readonly Rule[]; forecast: ForecastWindow | null; history: boolean;
+  input: HomeInput; calendar: Calendar; forecast: ForecastWindow | null; history: boolean;
+  /** Home's one CalendarInput (D49): the town calendar, notes, rules, the location's calendars' events and the forecast. */
+  entries: CalendarInput;
   locationId: string; board: LoadState<OrderBoard>;
 }): React.JSX.Element {
-  const { input, calendar, notes, rules, forecast, history, locationId } = props;
-  const { today, context, metric } = input;
+  const { input, calendar, forecast, history, locationId, entries } = props;
+  const { today, metric } = input;
   const router = useRouter();
   const town = calendar.town;
   const monthName = monthNameOf(today);
   const label = `${monthName} ${today.slice(0, 4)}`;
   const forecastDays = useMemo(() => new Map((forecast?.days ?? []).map((day): [string, ForecastDay] => [day.date, day])), [forecast]);
-  const rows = useMemo(() => monthGrid(today, context, { input, forecast: forecastDays }), [today, context, input, forecastDays]);
-  // The Calendar's own tooltip words, with the same business rules as the grid (D31, D32); nothing is imported on Home
-  // and no filter is off.
-  const tipInput = useMemo<CalendarInput>(() => ({
-    today, covered: monthRange(today.slice(0, 7)), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported: [],
-    filters: ALL_FILTERS,
-  }), [today, forecast, input.byDate, calendar.events, notes, rules]);
-  const tooltip = useCallback((date: string) => tooltipLines(date, tipInput), [tipInput]);
+  const rows = useMemo(() => monthGrid(today, entries, metric), [today, entries, metric]);
+  // The Calendar's own tooltip words, from the same input as the grid.
+  const tooltip = useCallback((date: string) => tooltipLines(date, entries), [entries]);
+  // The grid column's width, measured: a cell is a seventh of it less the 3px gaps.
+  const [gridWidth, setGridWidth] = useState(0);
+  const wide = (gridWidth - 6 * 3) / 7 >= WIDE_CELL;
   const [selected, setSelected] = useState(today);
   const [preview, setPreview] = useState<string | null>(null);
   const shown = preview ?? selected;
   const day = useMemo(() => monthDay(shown, input), [shown, input]);
+  const view = useMemo(() => dayView(shown, entries), [shown, entries]);
   const forecastDay = shown >= today ? forecastDays.get(shown) ?? null : null;
   return (
     <Block label={`This month in ${town.name}`} eyebrow={label} title={`This month in ${town.name}`}>
       <Small>{Platform.OS === 'web' ? 'Point at a day to see what’s on it. Choose one to open it in the Calendar.' : 'Tap a day to open it in the Calendar.'}</Small>
       <View style={styles.split}>
-        <View style={styles.gridSide}>
+        <View style={styles.gridSide} onLayout={(event: LayoutChangeEvent) => { setGridWidth(event.nativeEvent.layout.width); }}>
           <MonthGrid
             rows={rows}
+            wide={wide}
+            footer={<View style={styles.open}><LinkButton href={calendarHref(locationId)} label="Open the calendar" /></View>}
             selected={selected}
             onSelect={(date) => { setPreview(null); setSelected(date); }}
             onPreview={setPreview}
@@ -80,19 +84,21 @@ export function ThisMonth(props: {
           />
         </View>
         <View style={styles.detailSide}>
-          <DayDetail day={day} forecast={forecastDay} metric={metric} history={history} locationId={locationId} board={props.board} />
+          <DayDetail day={day} forecast={forecastDay} metric={metric} history={history} locationId={locationId} board={props.board} view={view} />
         </View>
       </View>
-      <View style={styles.open}><LinkButton href={calendarHref(locationId)} label="Open the calendar" /></View>
     </Block>
   );
 }
 
-/** Every town event, holiday and note on the month, in date order, with its sources. */
-export function MonthList(props: { today: string; context: DayContext }): React.JSX.Element {
-  const { today, context } = props;
+/**
+ * Every town event, holiday, note, business rule and event of the location's calendars on the month (D49), each once by
+ * its first day, in date order; a town event with its sources (the Calendar's day panel has the rest).
+ */
+export function MonthList(props: { today: string; entries: CalendarInput }): React.JSX.Element {
+  const { today, entries } = props;
   const monthName = monthNameOf(today);
-  const items = useMemo(() => monthItems(today, context), [today, context]);
+  const items = useMemo(() => monthItems(today, entries), [today, entries]);
   const { phone } = useBreakpoint();
   return (
     <Block label={`On the calendar in ${monthName}`} eyebrow={`${monthName} ${today.slice(0, 4)}`} title={`On the calendar in ${monthName}`}>
@@ -107,11 +113,16 @@ export function MonthList(props: { today: string; context: DayContext }): React.
                     <Small white>{eventLine(item.event)}</Small>
                     <SourceChips sources={item.event.sources} />
                   </>
-                ) : (
+                ) : item.kind === 'note' ? (
                   <Small white>
-                    {[`Your note: ${noteWords(item.note)}`, weekdaysLine(item.note.weekdays)].filter((part) => part !== null).join(', ')}.
+                    {[`Your note: ${item.note.title ?? noteWords(item.note)}`, weekdaysLine(item.note.weekdays)].filter((part) => part !== null).join(', ')}.
                   </Small>
-                )}
+                ) : item.kind === 'rule' ? (
+                  <>
+                    <Small white>{`Your rule: ${item.rule.text}`}</Small>
+                    {item.rule.scheduleSummary === null || item.rule.scheduleSummary === undefined ? null : <Mono>{item.rule.scheduleSummary}</Mono>}
+                  </>
+                ) : <Small white>{`From your calendar: ${item.imported.title}`}</Small>}
               </View>
             </View>
           ))}
@@ -149,8 +160,9 @@ const c = theme.color;
 const styles = StyleSheet.create({
   open: { flexDirection: 'row' },
   split: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[6], rowGap: theme.space[5], alignItems: 'flex-start' },
-  gridSide: { flexGrow: 1, flexShrink: 1, flexBasis: 280, maxWidth: 420, minWidth: 0 },
-  detailSide: { flexGrow: 1, flexShrink: 1, flexBasis: 220, minWidth: 0 },
+  // Side by side from a 720px content column (416 + 24 + 280): the grid grows 3 to the detail's 2, with no cap (D49).
+  gridSide: { flexGrow: 3, flexShrink: 1, flexBasis: 416, minWidth: 0, gap: theme.space[3] },
+  detailSide: { flexGrow: 2, flexShrink: 1, flexBasis: 280, minWidth: 0 },
   list: { gap: theme.space[3] },
   item: { flexDirection: 'row', columnGap: theme.space[4], alignItems: 'flex-start' },
   itemPhone: { gap: 2 },

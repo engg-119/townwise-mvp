@@ -2,7 +2,7 @@ import { formatCount, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
 import { closureOf, likelyClosedWords, noteCovers, typicalGuests } from '../analytics/days';
 import { mondayOf, weekDates } from '../analytics/week';
-import { MONTH_NAMES, shortDate } from '../analytics/words';
+import { metricText, MONTH_NAMES, shortDate, type Metric } from '../analytics/words';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
@@ -98,6 +98,12 @@ function storedGuests(date: string, input: CalendarInput): number | null {
   return input.salesDays.find((day) => day.date === date)?.guests ?? null;
 }
 
+/** A stored day's figure in `metric`: its guests, or its net sales in cents (Home, for a location with no stored guests). */
+function storedValue(date: string, input: CalendarInput, metric: Metric): number | null {
+  if (metric === 'guests') return storedGuests(date, input);
+  return input.salesDays.find((day) => day.date === date)?.netSalesCents ?? null;
+}
+
 /**
  * A past day's stored guests when it was likely closed (spec D32), else null. Every note and rule schedule covering the
  * day counts, whatever the filters show: one with more or fewer guests says the day was open. Notes and rules go to
@@ -163,7 +169,7 @@ export interface CalendarCell {
 
 const MAX_CHIPS = 3;
 
-interface FigureOf { status: CalendarCell['status']; figure: CellFigure | null; noteGuests: number; words: string | null }
+export interface FigureOf { status: CalendarCell['status']; figure: CellFigure | null; noteGuests: number; words: string | null }
 
 function bookedWords(day: ForecastDay): string {
   if (!yoursDid(day, 'booked')) return 'Booked for a private event';
@@ -178,14 +184,16 @@ const NO_FIGURE: FigureOf = { status: null, figure: null, noteGuests: 0, words: 
  * guests or “Likely closed”, else the run's own figures for the day (the API leaves a past day as the run made it,
  * adjust.ts), else “No data”; from today on, the published forecast, else “No forecast”. The words wait for the
  * forecast read: while it loads or after it failed, a day with no data shows nothing rather than a word that may be wrong.
+ * `metric` is Home's (D49, design decision 9): with net sales, a past day's stored value is its net sales in cents; the
+ * fallbacks are the same guest figures, and likely closed stays guest-based. The Calendar always shows guests.
  */
-function figureOf(date: string, input: CalendarInput): FigureOf {
+export function figureOf(date: string, input: CalendarInput, metric: Metric = 'guests'): FigureOf {
   const day = forecastDayOf(date, input);
   if (date < input.today) {
     const likely = likelyClosedGuests(date, input);
     if (likely !== null) return { status: 'likely_closed', figure: null, noteGuests: 0, words: `${likelyClosedWords(plural(likely, 'guest', 'guests'))}.` };
-    const guests = storedGuests(date, input);
-    if (guests !== null) return { ...NO_FIGURE, figure: { value: guests, kind: 'actual' }, words: `${plural(guests, 'guest', 'guests')}.` };
+    const stored = storedValue(date, input, metric);
+    if (stored !== null) return { ...NO_FIGURE, figure: { value: stored, kind: 'actual' }, words: `${metricText(stored, metric)}.` };
     if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_data', words: 'No data.' };
     if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: 'No data. Forecast closed.' };
     if (day.status === 'booked') return { ...NO_FIGURE, status: 'booked', words: `No data. ${bookedWords(day)}.` };
@@ -218,12 +226,15 @@ export function entryLabel(entry: Pick<DayEntry, 'kind' | 'words'>): string {
   return withStop(entry.kind === 'imported' ? `From your calendar: ${entry.words}` : entry.words);
 }
 
-/** One day's cell from the reads in `input`, whichever range they were made for; today's week comes from `input.today`. */
-export function dayCell(date: string, input: CalendarInput): CalendarCell {
+/**
+ * One day's cell from the reads in `input`, whichever range they were made for; today's week comes from `input.today`.
+ * Home's month grid builds its cells here too, in its own metric (figureOf).
+ */
+export function dayCell(date: string, input: CalendarInput, metric: Metric = 'guests'): CalendarCell {
   const monday = mondayOf(input.today);
   const all = dayEntries(date, input);
   const entries = compactEntries(all).map((entry) => entry.words);
-  const found = figureOf(date, input);
+  const found = figureOf(date, input, metric);
   const isToday = date === input.today;
   // The label says the status and every entry, with no dedupe.
   const label = [

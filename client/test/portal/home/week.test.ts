@@ -4,13 +4,18 @@ import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
   calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, forecastPhrase, forecastRange, homeCalendarRange, lastWeekComparison, lastWeekLine,
   lastWeekForecastCell, lastWeekForecastOnly, lastWeekLines, lastWeekPhrase, lastWeekPhrases, lastWeekRange, lastYearDayPhrase,
-  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
-  nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
+  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, nextEvent,
+  nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, weekEntries, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import type { ForecastDay, ForecastWindow, LiveAccuracy } from '../../../src/portal/estimates/api';
 import { addDays } from '../../../src/portal/locations/dates';
 import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { ALL_FILTERS, type CalendarInput } from '../../../src/portal/calendar/model';
+import type { Note } from '../../../src/portal/locations/api';
+import type { TownEvent } from '../../../src/portal/analytics/api';
 import { forecastDay } from '../calendar/fakes';
+import { PARITY_DAY, PARITY_ORDER, parityInput } from '../calendar/parity-fixture';
+import { ruleOf } from '../rules/fakes';
 
 // Home's computations (home.md 2, 5.6), on synthetic days only. Explainability: every comparison says how many days
 // it is over, and "last year" is the same weekday 52 weeks earlier. Honesty: no figure for a day after the last day
@@ -20,6 +25,13 @@ const TODAY = '2026-11-05'; // a Thursday
 
 function input(days: readonly DayRecord[], context: DayContext = EMPTY_CONTEXT, today = TODAY): HomeInput {
   return { today, byDate: byDate(days), context, metric: 'guests', lastDate: days.at(-1)?.date ?? null };
+}
+
+/** Home's one CalendarInput (D49) over `notes` and `events`, with `fields` on top; no forecast read yet. */
+function calendarOf(notes: readonly Note[], events: readonly TownEvent[], fields: Partial<CalendarInput> = {}): CalendarInput {
+  return {
+    today: TODAY, covered: forecastRange(TODAY), forecast: null, salesDays: [], events, notes, rules: [], imported: [], filters: ALL_FILTERS, ...fields,
+  };
 }
 
 describe('weeks', () => {
@@ -402,20 +414,20 @@ describe('this month', () => {
   });
 
   test('the month grid marks events, notes, this week and today; the list is in date order', () => {
-    const context = dayContext(
+    const calendar = calendarOf(
       [note({ startDate: '2026-11-20', endDate: '2026-11-22', kind: 'private_event' })],
       [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), holiday('2026-11-26', 'Thanksgiving Day', 'us:thanksgiving', 'Thanksgiving')],
     );
-    const grid = monthGrid(TODAY, context);
+    const grid = monthGrid(TODAY, calendar);
     expect(grid[0]?.[0]).toBeNull(); // Oct 26 is not in November
     const cells = grid.flat().filter((cell) => cell !== null);
     expect(cells).toHaveLength(30);
-    expect(cells.find((cell) => cell.date === '2026-11-11')?.event).toBe(true);
-    expect(cells.find((cell) => cell.date === '2026-11-21')?.note).toBe(true);
+    expect(cells.find((cell) => cell.date === '2026-11-11')?.marks.event).toBe(true);
+    expect(cells.find((cell) => cell.date === '2026-11-21')?.marks.note).toBe(true);
     // This week is the seven days from today, as the This week card shows them.
     expect(cells.filter((cell) => cell.inWeek).map((cell) => cell.date)).toEqual(weekDates(TODAY));
     expect(cells.find((cell) => cell.isToday)?.date).toBe(TODAY);
-    const items = monthItems(TODAY, context);
+    const items = monthItems(TODAY, calendar);
     expect(items.map((item) => [item.kind, item.dates])).toEqual([['event', 'Nov 11'], ['note', 'Nov 20 to 22'], ['event', 'Nov 26']]);
     expect(eventLine({ title: 'Veterans Day', kind: 'holiday', scope: 'national' })).toBe('Veterans Day. Federal holiday.');
     expect(eventLine({ title: 'Sample game', kind: 'event', scope: 'town' })).toBe('Sample game. Town event.');
@@ -423,16 +435,42 @@ describe('this month', () => {
 });
 
 describe('the month card', () => {
-  const context = dayContext(
-    [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })],
-    [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })],
-  );
+  const NOTES = [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })];
+  const EVENTS = [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })];
+  const context = dayContext(NOTES, EVENTS);
 
-  test('each day of the grid says its marks in words', () => {
-    const cells = monthGrid(TODAY, context).flat().filter((cell) => cell !== null);
+  test('each day of the grid says its marks in words, every entry named (D49)', () => {
+    const cells = monthGrid(TODAY, calendarOf(NOTES, EVENTS)).flat().filter((cell) => cell !== null);
     expect(cells.find((cell) => cell.date === TODAY)?.label).toBe('Thu, Nov 5, 2026. Today. This week.');
-    expect(cells.find((cell) => cell.date === '2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. 1 note.');
+    expect(cells.find((cell) => cell.date === '2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. Private event.');
     expect(cells.find((cell) => cell.date === '2026-11-11')?.label).toBe('Wed, Nov 11, 2026. This week. Veterans Day.');
+  });
+
+  test('the month list adds rules, imported events and note names, a title once a day across sources (D49)', () => {
+    const rule = ruleOf('r1', 'Closed Mondays in winter', {
+      schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+      scheduleSummary: 'Closed on Mondays from Nov 1, 2026',
+    });
+    const imported = (uid: string, title: string, date: string) => ({
+      calendarId: 'c1', calendar: 'US holidays', uid, title, startDate: date, endDate: date, startTime: null, endTime: null,
+    });
+    const items = monthItems(TODAY, calendarOf([note({ startDate: '2026-11-06', title: 'Holiday party' })], EVENTS, {
+      rules: [rule], imported: [imported('v1', 'Veterans day', '2026-11-11'), imported('w1', 'Wine dinner', '2026-11-13')],
+    }));
+    expect(items.map((item) => [item.kind, item.dates])).toEqual([
+      ['rule', 'Nov 2'], ['note', 'Nov 6'], ['event', 'Nov 7'], ['event', 'Nov 11'], ['imported', 'Nov 13'],
+    ]);
+  });
+
+  test('This week’s days list the same entries in the same order as the Calendar’s week cards (D49 parity)', () => {
+    const fixture = parityInput();
+    const home = weekEntries(PARITY_DAY, fixture);
+    expect(home.lines.map((entry) => entry.words)).toEqual(PARITY_ORDER.slice(0, 2));
+    expect(home.more).toBe(`+${String(PARITY_ORDER.length - 2)} more`);
+    // Three or fewer show whole.
+    const few = weekEntries(PARITY_DAY, { ...fixture, imported: [], rules: [] });
+    expect(few).toEqual({ lines: expect.any(Array) as unknown, more: null });
+    expect(few.lines.map((entry) => entry.words)).toEqual(['Holiday party', 'Made-up Day', 'Craft fair']);
   });
 
   test('the keys move a day or a week and never leave the month', () => {
@@ -474,13 +512,13 @@ describe('the month card', () => {
     // 100 guests a day, but 1 on Tue, Nov 3, 2026 and on Tue, Nov 4, 2025; decoded, so each day has its typical guests.
     const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', (date) => (date === '2026-11-03' || date === '2025-11-04' ? 1 : 100))));
     const home = input(days, context);
-    const cellOn = (on: HomeInput, date: string) => monthGrid(TODAY, on.context, { input: on, forecast: new Map() }).flat().find((each) => each?.date === date);
+    // Home's cells are the Calendar's (D49): the same likely-closed rule, over the stored days.
+    const cellOn = (on: HomeInput, date: string, notes: readonly Note[] = NOTES) => monthGrid(TODAY, calendarOf(notes, EVENTS, {
+      salesDays: [...on.byDate.values()], forecast: { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] },
+    })).flat().find((each) => each?.date === date);
     const cell = cellOn(home, '2026-11-03');
-    expect(cell).toMatchObject({ status: 'closed', likelyClosed: true, figure: null, label: 'Tue, Nov 3, 2026. Likely closed (1 guest recorded).' });
-    expect(cell === undefined || cell === null ? null : monthStatusWord(cell)).toBe('Likely closed');
-    expect(monthStatusWord({ status: 'closed', likelyClosed: false })).toBe('Closed');
-    expect(monthStatusWord({ status: 'booked', likelyClosed: false })).toBe('Booked');
-    expect(cellOn(home, '2026-11-02')).toMatchObject({ status: null, likelyClosed: false, figure: { value: 100, kind: 'actual' } });
+    expect(cell).toMatchObject({ status: 'likely_closed', figure: null, label: 'Tue, Nov 3, 2026. Likely closed (1 guest recorded).' });
+    expect(cellOn(home, '2026-11-02')).toMatchObject({ status: null, figure: { value: 100, kind: 'actual' }, figureText: '100', caption: 'guests' });
     const past = monthDay('2026-11-03', home);
     expect(past).toMatchObject({ value: 1, likelyClosed: true });
     expect(thisDayLine(past, 'guests')).toBe('Likely closed (1 guest recorded)');
@@ -488,8 +526,9 @@ describe('the month card', () => {
     expect(thisDayLine({ value: null, likelyClosed: false }, 'guests')).toBe('No sales stored for this day.');
     expect(past.lastYear).toMatchObject({ date: '2025-11-04', value: 1, closed: true, likelyClosed: true });
     // A note with fewer guests says the day was open: a real slow day.
-    const slow = input(days, dayContext([note({ startDate: '2026-11-03', kind: 'other', effect: 'fewer_guests' })], []));
-    expect(cellOn(slow, '2026-11-03')).toMatchObject({ status: null, likelyClosed: false, figure: { value: 1, kind: 'actual' } });
+    const slowNote = note({ startDate: '2026-11-03', kind: 'other', effect: 'fewer_guests' });
+    const slow = input(days, dayContext([slowNote], []));
+    expect(cellOn(slow, '2026-11-03', [slowNote])).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
     expect(monthDay('2026-11-03', slow)).toMatchObject({ likelyClosed: false });
   });
 

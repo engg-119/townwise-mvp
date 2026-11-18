@@ -13,7 +13,10 @@ afterEach(() => { cleanup(); jest.useRealTimers(); });
 function frame(): void { act(() => { jest.runOnlyPendingTimers(); }); }
 
 function cell(date: string): MonthCell {
-  return { date, event: false, note: false, inWeek: false, isToday: false, figure: null, status: null, noteGuests: 0, label: `Day ${date}` };
+  return {
+    date, isToday: false, inWeek: false, status: null, figure: null, figureText: null, caption: null, noteGuests: 0, chips: [], more: 0,
+    marks: { event: false, note: false, imported: false }, label: `Day ${date}`,
+  };
 }
 
 function setup(onPreview: (date: string | null) => void): void {

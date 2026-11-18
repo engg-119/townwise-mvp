@@ -2,17 +2,16 @@ import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
-import type { Calendar, TownEvent } from '../analytics/api';
-import { noteWords } from '../analytics/panel';
+import type { Calendar } from '../analytics/api';
 import {
   calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, forecastPhrase, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase,
   vsUsualDayPhrase,
   type PastDay, type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
+import type { DayEntry } from '../calendar/entries';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { useBreakpoint } from '../hooks';
-import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
 import { DataTable, type Column } from '../ui/DataTable';
 import { SourceChips } from '../ui/SourceChip';
@@ -36,37 +35,32 @@ import { Block } from './Block';
 // figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
 // day-by-day table, which stacks at 640px and below.
 
-function EventLines(props: { events: readonly TownEvent[] }): React.JSX.Element {
-  return (
-    <>
-      {props.events.map((event) => (
-        <View key={event.id} style={styles.item}>
-          <Text style={styles.title}>{event.title}</Text>
-          <Mono tone="text3">{EVENT_WORDS[event.kind]}</Mono>
-          <SourceChips sources={event.sources} />
-        </View>
-      ))}
-    </>
-  );
+/** An entry's kind words under its words: “Your note”, “Your rule”, “Holiday”, “Town event” or “Your calendar”. */
+function entryKind(entry: DayEntry): string {
+  if (entry.kind === 'note') return 'Your note';
+  if (entry.kind === 'rule') return 'Your rule';
+  if (entry.kind === 'imported') return 'Your calendar';
+  return EVENT_WORDS[entry.kind];
 }
 
-function NoteLines(props: { notes: readonly Note[] }): React.JSX.Element {
-  return (
-    <>
-      {props.notes.map((note) => (
-        <View key={note.id} style={styles.item}>
-          <Text style={styles.title}>{`Your note: ${noteWords(note)}`}</Text>
-          {note.detail === null ? null : <Small>{note.detail}</Small>}
-        </View>
-      ))}
-    </>
-  );
-}
-
+/**
+ * A day's compact entries (D49, week.ts weekEntries): three, or the first two and “+N more”, in the Calendar's order,
+ * with no source links (the Calendar's day panel and This month's day detail hold them).
+ */
 function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
-  const { row } = props;
-  if (row.events.length === 0 && row.notes.length === 0) return <Mono tone="text3">Nothing listed</Mono>;
-  return <View style={styles.cell}><EventLines events={row.events} /><NoteLines notes={row.notes} /></View>;
+  const { lines, more } = props.row.entries;
+  if (lines.length === 0) return <Mono tone="text3">Nothing listed</Mono>;
+  return (
+    <View style={styles.cell}>
+      {lines.map((entry) => (
+        <View key={entry.key} style={styles.item}>
+          <Text style={styles.title}>{entry.words}</Text>
+          <Mono tone="text3">{entryKind(entry)}</Mono>
+        </View>
+      ))}
+      {more === null ? null : <Mono tone="text3">{more}</Mono>}
+    </View>
+  );
 }
 
 /** A day's published forecast, its figure bold, or "No forecast". */

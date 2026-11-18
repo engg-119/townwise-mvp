@@ -10,6 +10,8 @@ import { byDate, decodeHistory } from '../analytics/history';
 import {
   forecastRange, homeCalendarRange, lastWeekComparison, lastWeekRange, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
 } from '../analytics/week';
+import { fetchOwnerCalendarEvents, type OwnerCalendarEvent } from '../calendar/api';
+import { ALL_FILTERS, type CalendarInput } from '../calendar/model';
 import { fetchForecast } from '../estimates/api';
 import { useBreakpoint, useLoad } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
@@ -48,14 +50,18 @@ import { ThisWeek } from './ThisWeek';
 // D31 and D32, as on the Calendar and Analytics; none while they load or if the read fails), this month's forecast
 // (GET .../forecast; Home never waits for it or fails with it), Last week's forecast (the same route for the seven days
 // before today, D42; likewise on its own), the month's people in town (in Who's in town) and the
-// next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), and writes nothing,
-// so view-as shows it unchanged with its upload links disabled.
+// next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), the events of the
+// location's own calendars over the forecast's range (D49: this month and This week's days past it, under the events
+// route's 92 days; none while they load or if the read fails), and writes nothing, so view-as shows it unchanged with
+// its upload links disabled. This week, This month (its grid, tooltip and day detail) and the month's list read one
+// CalendarInput, the Calendar's, through the shared entries helper (calendar/entries.ts).
 // "Today" is the device's date; This week in {Town} is the seven days from today, today first, and Last week the
 // seven days before today. While onboarding's needsHistory is true, its HistoryStep
 // takes the place of the blocks that need days, and when it has read the history Home loads again.
 
 const READ_ONLY_ID = 'home-ro';
 const NO_RULES: readonly Rule[] = [];
+const NO_EVENTS: readonly OwnerCalendarEvent[] = [];
 
 /** The lead's In progress line while no forecast is published. `locationName` is the shown name (shownLocationName). */
 export function forecastLine(locationName: string): string {
@@ -116,6 +122,9 @@ function HomeView(props: {
   const lastWeekRead = useLoad(useCallback(() => fetchForecast(api, locationId, lastWeekRange(today)), [api, locationId, today])).state;
   const lastWeekForecast = lastWeekRead.status === 'ready' ? lastWeekRead.data : null;
   const { history, notes, calendar } = data;
+  // The location's own calendars' events, on their own (D49): until they load, or if they can't, Home shows none.
+  const eventsRead = useLoad(useCallback(() => fetchOwnerCalendarEvents(api, locationId, forecastRange(today)), [api, locationId, today])).state;
+  const imported = eventsRead.status === 'ready' ? eventsRead.data : NO_EVENTS;
   // One read of the board for Bar order and the selected day's Reorder part; it fails on its own, in their places.
   const { state: board } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
   const days = useMemo(() => decodeHistory(history), [history]);
@@ -126,7 +135,12 @@ function HomeView(props: {
     () => ({ today, byDate: byDate(days), context, metric, lastDate: history.coverage.lastDate, uploadsOff: history.uploadsOff === true }),
     [today, days, context, metric, history.coverage.lastDate, history.uploadsOff],
   );
-  const week = useMemo(() => thisWeek(input), [input]);
+  // The one CalendarInput every Home calendar surface reads (D49), as the Calendar builds its own.
+  const entries = useMemo<CalendarInput>(() => ({
+    today, covered: forecastRange(today), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported,
+    filters: ALL_FILTERS,
+  }), [today, forecast, input.byDate, calendar.events, notes, rules, imported]);
+  const week = useMemo(() => thisWeek(input, entries), [input, entries]);
   const lastWeek = useMemo(() => lastWeekComparison(input, lastWeekForecast), [input, lastWeekForecast]);
   const share = useMemo(() => lateWeekShare(input), [input]);
   const facts = useMemo(() => monthFacts(input), [input]);
@@ -168,8 +182,7 @@ function HomeView(props: {
             key: 'month', span: wideLastWeek ? 12 : 8,
             node: (
               <ThisMonth
-                input={input} calendar={calendar} notes={notes} rules={rules} forecast={forecast} history={hasDays} locationId={locationId}
-                board={board}
+                input={input} calendar={calendar} entries={entries} forecast={forecast} history={hasDays} locationId={locationId} board={board}
               />
             ),
           },
@@ -178,7 +191,7 @@ function HomeView(props: {
       />
       <BlockRow
         items={[
-          { key: 'list', span: 6, node: <MonthList today={today} context={context} /> },
+          { key: 'list', span: 6, node: <MonthList today={today} entries={entries} /> },
           { key: 'people', span: 6, node: <WhoIsInTown today={today} calendar={calendar} locationId={locationId} /> },
         ]}
       />

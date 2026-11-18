@@ -85,7 +85,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - the label says every entry.
   - Update `client/test/portal/calendar/model.test.ts` and `day-tooltip.test.web.tsx`.
 - [x] 2.4 `client/src/portal/calendar/grid.ts` `weekCards` reads the helper (compact, terms last), and a cell's yours mark covers rules. Update `grid.test.ts` and `grid.test.web.tsx`.
-- [ ] 2.5 Cross-surface parity test `client/test/portal/calendar/entries-parity.test.ts` (new): one fixture day through the `dayCell` chips, `weekCards`, `tooltipLines` and Home's This week gives the same order and dedupe, cut only by each surface's limit. Home's half is filled in by 5.2.
+- [x] 2.5 Cross-surface parity test `client/test/portal/calendar/entries-parity.test.ts` (new): one fixture day through the `dayCell` chips, `weekCards`, `tooltipLines` and Home's This week gives the same order and dedupe, cut only by each surface's limit. Home's half is filled in by 5.2.
 - [x] 2.6 Run `npm test -w @ckeith26/expo-shell -- test/portal/calendar` and `npx eslint client/src/portal/calendar`.
 
 ## 3. Client: routing, the in-app chip and Calendar surfaces
@@ -111,14 +111,14 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 
 ## 5. Client: Home
 
-- [ ] 5.1 Home reads the events over `forecastRange(today)` in `client/src/portal/home/Home.tsx`. A failure leaves Home showing. Test first: `client/test/portal/home/home.test.web.tsx` checks that the request's range is under 92 days (Nov 1 to 30 for Nov 17) and that a refused read leaves Home showing.
-- [ ] 5.2 Home's surfaces read `dayEntries` over the one `CalendarInput` built in `ThisMonth.tsx` (now with imported events), and `analytics/days.ts` is not changed:
+- [x] 5.1 Home reads the events over `forecastRange(today)` in `client/src/portal/home/Home.tsx`. A failure leaves Home showing. Test first: `client/test/portal/home/home.test.web.tsx` checks that the request's range is under 92 days (Nov 1 to 30 for Nov 17) and that a refused read leaves Home showing.
+- [x] 5.2 Home's surfaces read `dayEntries` over the one `CalendarInput` built in `ThisMonth.tsx` (now with imported events), and `analytics/days.ts` is not changed:
   - `analytics/week.ts` `thisWeek`, `monthGrid` and `monthItems`, with `monthItems` still a list of items by first day, with no status;
   - `ThisWeek.tsx`, `ThisMonth.tsx` (the tooltip gets imported events) and `DayDetail.tsx` (rules, imported events and every chip).
   - Tests:
     - `client/test/portal/home/week.test.ts`, `home.test.web.tsx` and `home.test.native.tsx`;
     - Home's half of 2.5.
-- [ ] 5.3 Parity test first, `client/test/portal/home/month-figure-parity.test.ts` (design decision 9): one fixture month through `calendarMonth` and Home's `monthGrid` gives the same figure, caption and status for every day. The fixture covers:
+- [x] 5.3 Parity test first, `client/test/portal/home/month-figure-parity.test.ts` (design decision 9): one fixture month through `calendarMonth` and Home's `monthGrid` gives the same figure, caption and status for every day. The fixture covers:
   - a past day with stored guests;
   - a past day that was likely closed;
   - a past day with only the run's figure;
@@ -126,18 +126,18 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - today;
   - a future closed day, a future booked day, and a future day with no forecast.
   - Beside it, a Home-only net-sales expectation test: a past day shows its stored net sales in dollars, and a past day with none shows the run's guest figure captioned "forecast".
-- [ ] 5.4 `analytics/week.ts`: `monthGrid` builds each cell from `model.ts` `dayCell` (exported) over Home's `CalendarInput`, keeping Home's "This week" outline.
+- [x] 5.4 `analytics/week.ts`: `monthGrid` builds each cell from `model.ts` `dayCell` (exported) over Home's `CalendarInput`, keeping Home's "This week" outline.
   - Delete `cellFigure` and its `NO_FIGURE`.
   - `figureOf(date, input, metric = 'guests')` is exported; with net sales it reads stored net sales, and likely closed stays guest-based.
   - Home formats `kind: 'actual'` with `metricNumber` and every other kind with `formatCount`.
   - `ThisMonth.tsx` passes the one `CalendarInput` to both the grid and the tooltip.
   - Run `npm test -w @ckeith26/expo-shell -- test/portal/home test/portal/calendar/model`.
-- [ ] 5.5 `ThisMonth.tsx`, `MonthGrid.web.tsx` and `MonthGrid.tsx`:
+- [x] 5.5 `ThisMonth.tsx`, `MonthGrid.web.tsx` and `MonthGrid.tsx`:
   - the grid column measures its width, and cells of 88px or more show up to 2 entry lines at 96px high;
   - side by side, `flexGrow` 3 to 2, the grid's minimum 360px and the detail's 280px;
   - "Open the calendar" moves under the legend.
   - Tests: `month-grid-status.test.web.tsx` (entry lines at a wide grid, marks at a narrow one) and `month-grid.test.native.tsx` (stacked).
-- [ ] 5.6 `DayDetail.tsx` only: `REORDER_OVERVIEW` goes behind "How Townwise builds an order", closed by default (`aria-expanded` on web, an expanded state on native). The status line and "Open this day on Orders" stay. `home/beside.ts` and `orders/Orders.tsx` are unchanged. Tests: `home.test.web.tsx` and `home.test.native.tsx`.
+- [x] 5.6 `DayDetail.tsx` only: `REORDER_OVERVIEW` goes behind "How Townwise builds an order", closed by default (`aria-expanded` on web, an expanded state on native). The status line and "Open this day on Orders" stay. `home/beside.ts` and `orders/Orders.tsx` are unchanged. Tests: `home.test.web.tsx` and `home.test.native.tsx`.
 - [ ] 5.7 Only if the UI review (7.2) still finds an empty area under Home's grid at 1280px or 1440px:
   - a sticky grid column on web, through a `.web` style, when side by side and when it fits the viewport;
   - first check that no ancestor has `overflow: hidden`.

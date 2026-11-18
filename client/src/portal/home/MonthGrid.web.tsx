@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 
 import { theme } from '../../theme';
-import { monthMove, monthStatusWord } from '../analytics/week';
+import { monthEntryLines, monthMove, WIDE_CELL_HEIGHT } from '../analytics/week';
 import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import { anchorOf, DayTooltip, type TooltipAnchor } from '../calendar/DayTooltip.web';
+import { statusWord } from '../calendar/model';
 import { useBreakpoint } from '../hooks';
 import type { MonthGridProps } from './MonthGrid';
 import { MARK, MonthKey } from './MonthKey';
@@ -40,6 +41,10 @@ const square = { position: 'absolute', width: MARK, height: MARK, pointerEvents:
 /** The status line; its size is the stylesheet's (CSS), so it is not set here. */
 const statusStyle = { fontFamily: theme.font.mono, lineHeight: '12px', color: C.text2, textTransform: 'uppercase' } as const;
 const row = { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: 3 } as const;
+/** A wide cell's entry line: one line, cut with an ellipsis; the cell's label says it whole. */
+const entryLine = {
+  fontFamily: theme.font.sans, fontSize: 11, lineHeight: '14px', color: C.text2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', minWidth: 0,
+} as const;
 
 function dateOf(target: EventTarget | null): string | null {
   const element = target instanceof Element ? target.closest('[data-date]') : null;
@@ -58,6 +63,7 @@ const CLEAR_DELAY_MS = 80;
 export function MonthGrid(props: MonthGridProps): React.JSX.Element {
   const { rows, selected, onSelect, onPreview, onOpen, tooltip } = props;
   const { phone } = useBreakpoint();
+  const wide = props.wide === true;
   const figureSize = phone ? 15 : 18;
   const root = useRef<HTMLDivElement>(null);
   const box = useRef<HTMLDivElement>(null);
@@ -179,7 +185,8 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
                     style={{
                       // No aspect ratio: with one, a cell took its minimum height as its width too and overlapped the next
                       // in a grid narrower than seven of them.
-                      position: 'relative', minHeight: phone ? 52 : 64, minWidth: 0, boxSizing: 'border-box', padding: '4px 2px',
+                      position: 'relative', minWidth: 0, boxSizing: 'border-box', padding: '4px 2px',
+                      ...(wide ? { height: WIDE_CELL_HEIGHT, overflow: 'hidden' } : { minHeight: phone ? 52 : 64 }),
                       display: 'flex', flexDirection: 'column', gap: 2,
                       background: C.raised, border: `1px solid ${isSelected ? C.mint : cell.inWeek ? C.line : C.raised}`,
                     }}
@@ -190,18 +197,31 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
                       </span>
                     </span>
                     {cell.status === null ? null : (
-                      <span aria-hidden="true" className="tw-mg-status" style={statusStyle}>{monthStatusWord(cell)}</span>
+                      <span aria-hidden="true" className="tw-mg-status" style={statusStyle}>{statusWord(cell.status)}</span>
                     )}
                     {cell.figure === null ? null : (
                       <span aria-hidden="true" style={{ display: 'grid', justifyItems: 'center' }}>
                         <span style={{ ...mono, fontSize: figureSize, lineHeight: `${String(figureSize + 4)}px`, fontWeight: 500, color: cell.figure.kind === 'actual' ? C.text2 : C.white }}>
-                          {cell.figure.text}
+                          {cell.figureText}
                         </span>
                         {cell.noteGuests > 0 ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}
+                        {cell.caption === null ? null : <span style={{ ...mono, fontSize: 10, lineHeight: '12px', color: C.text3 }}>{cell.caption}</span>}
                       </span>
                     )}
-                    {cell.event ? <span aria-hidden="true" style={{ ...square, top: 0, right: 0, background: C.white }} /> : null}
-                    {cell.note ? <span aria-hidden="true" style={{ ...square, bottom: 0, left: 0, background: C.text2 }} /> : null}
+                    {wide ? (
+                      <span aria-hidden="true" style={{ display: 'grid', gap: 1, minWidth: 0 }}>
+                        {monthEntryLines(cell).lines.map((entry, at) => <span key={at} style={entryLine}>{entry}</span>)}
+                        {monthEntryLines(cell).more === null ? null : <span style={{ ...entryLine, color: C.text3 }}>{monthEntryLines(cell).more}</span>}
+                      </span>
+                    ) : (
+                      <>
+                        {cell.marks.event ? <span aria-hidden="true" style={{ ...square, top: 0, right: 0, background: C.white }} /> : null}
+                        {cell.marks.note ? <span aria-hidden="true" style={{ ...square, bottom: 0, left: 0, background: C.text2 }} /> : null}
+                        {cell.marks.imported ? (
+                          <span aria-hidden="true" style={{ ...square, bottom: 0, right: 0, width: MARK + 2, height: MARK + 2, boxSizing: 'border-box', border: `1px solid ${C.mint}` }} />
+                        ) : null}
+                      </>
+                    )}
                   </div>
                 );
               })}
@@ -211,6 +231,7 @@ export function MonthGrid(props: MonthGridProps): React.JSX.Element {
         {tip === null || lines === null ? null : <DayTooltip tip={lines} anchor={tip.anchor} />}
       </div>
       <MonthKey />
+      {props.footer}
     </div>
   );
 }

@@ -11,7 +11,8 @@ export function MonthKey(): React.JSX.Element {
   return (
     <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.key}>
       <View style={styles.item}><View style={styles.swatch}><View style={styles.event} /></View><Text style={styles.text}>Town event or holiday</Text></View>
-      <View style={styles.item}><View style={styles.swatch}><View style={styles.note} /></View><Text style={styles.text}>Your note</Text></View>
+      <View style={styles.item}><View style={styles.swatch}><View style={styles.note} /></View><Text style={styles.text}>Your note or rule</Text></View>
+      <View style={styles.item}><View style={styles.swatch}><View style={styles.imported} /></View><Text style={styles.text}>Your calendar</Text></View>
       <View style={styles.item}><View style={[styles.swatch, styles.week]} /><Text style={styles.text}>This week</Text></View>
       <View style={styles.item}><View style={[styles.swatch, styles.selected]} /><Text style={styles.text}>Selected day</Text></View>
     </View>
@@ -28,5 +29,6 @@ const styles = StyleSheet.create({
   selected: { borderColor: c.mint },
   event: { position: 'absolute', top: 0, right: 0, width: MARK, height: MARK, backgroundColor: c.white },
   note: { position: 'absolute', bottom: 0, left: 0, width: MARK, height: MARK, backgroundColor: c.text2 },
+  imported: { position: 'absolute', bottom: 0, right: 0, width: MARK + 2, height: MARK + 2, borderWidth: 1, borderColor: c.mint },
   text: { ...theme.type.mono, color: c.text2 },
 });

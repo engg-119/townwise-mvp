@@ -15,6 +15,7 @@ import { cleanup, fireEvent, screen } from 'expo-router/testing-library';
 import type { Calendar } from '../../../src/portal/analytics/api';
 import type { DayRecord } from '../../../src/portal/analytics/history';
 import { LAST_YEAR_FOOTNOTE } from '../../../src/portal/analytics/week';
+import { REORDER_OVERVIEW } from '../../../src/portal/home/beside';
 import { forecastLine } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
@@ -147,8 +148,9 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getAllByText('Sample game')).toHaveLength(2);
   expect(screen.getByText('Sat, Nov 7, 2026, in 2 days')).toBeTruthy();
   expect(screen.getByText('+10% against the same week last year (740), over all 7 days.')).toBeTruthy();
-  expect(screen.getByText('Your note: Private event, more guests than usual')).toBeTruthy();
-  expect(screen.getByText('A rehearsal dinner.')).toBeTruthy();
+  // Friday's compact entry (D49): the note's words and its kind; its detail is in the Calendar and the day detail.
+  expect(screen.getByText('Private event')).toBeTruthy();
+  expect(screen.getAllByText('Your note').length).toBeGreaterThan(0);
   expect(screen.getByText('Sat, Nov 8, 2025: 140 guests')).toBeTruthy();
   expect(screen.getByText('Sample game last year')).toBeTruthy();
   expect(screen.getByText('Sat, Nov 9, 2024: 140 guests')).toBeTruthy();
@@ -219,12 +221,12 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
 
   // Three reads in parallel, then the questions, the business rules, the month's forecast, Last week's forecast (D42),
-  // its people in town and the next orders on their own: the board once, for Bar order and the selected day's Reorder
-  // part (#68 review C6); no write, nothing stored.
+  // its people in town, the next orders and the location's calendars' events over the forecast's range (D49) on their
+  // own: the board once, for Bar order and the selected day's Reorder part (#68 review C6); no write, nothing stored.
   const reads = api.calls.filter((call) => call.path.startsWith(PATH)).map((call) => call.path);
   expect(reads.sort()).toEqual([
     AGENT, CALENDAR, FORECAST, `${PATH}/forecast?from=2026-10-29&to=2026-11-04`, PEOPLE, `${PATH}/notes`, `${PATH}/rules`, `${PATH}/sales/history`,
-    `${PATH}/orders`,
+    `${PATH}/orders`, `${PATH}/owner-calendars/events?from=2026-11-01&to=2026-11-30`,
   ].sort());
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
   for (const name of NO_STORE) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
@@ -235,7 +237,7 @@ test('tapping a day opens the calendar at that day', async () => {
   expect(await screen.findByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
   expect(screen.getByText('Tap a day to open it in the Calendar.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Open the calendar' })).toBeTruthy();
-  await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. This week. Veterans Day.'));
+  await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. This week. No forecast. Veterans Day.'));
   expect(router.getPathname()).toBe('/locations/l1/calendar');
   expect(router.getSearchParams()).toMatchObject({ day: '2026-11-11' });
 });
@@ -468,4 +470,15 @@ test('with one location the loading line names the organization (D29)', async ()
   await renderApp('/locations/l1', portal({ pending: true, locations: LOCATIONS.slice(0, 1) }));
   expect(await screen.findByText('Loading Test Group')).toBeTruthy();
   expect(screen.queryByText('Loading Main Street Bar')).toBeNull();
+});
+
+// D49 (design decision 9c): the Reorder part's explanation is behind a disclosure, closed by default, opened by a tap.
+test('the day detail’s Reorder explanation opens from “How Townwise builds an order”', async () => {
+  await renderApp('/locations/l1', portal());
+  const how = await screen.findByRole('button', { name: 'How Townwise builds an order' });
+  expect(how.props.accessibilityState).toMatchObject({ expanded: false });
+  expect(screen.queryByText(REORDER_OVERVIEW)).toBeNull();
+  await fireEvent.press(how);
+  expect(screen.getByRole('button', { name: 'How Townwise builds an order' }).props.accessibilityState).toMatchObject({ expanded: true });
+  expect(screen.getByText(REORDER_OVERVIEW)).toBeTruthy();
 });
