@@ -399,18 +399,19 @@ export function BusinessRules(): React.JSX.Element {
     setEditingSuggestion((current) => (current === suggestionId ? null : current));
     setCanceledSuggestion(null);
     if (decision.status === 'dismissed') setNotice(SUGGESTED_COPY.dismissed);
-    else if (decision.already && decision.rule !== null) setNotice(alreadyLine(decision.rule.text));
+    // Decided elsewhere first, so this press did nothing: that stays in the page, never a toast.
+    else if (decision.already && decision.rule !== null) setNotice(alreadyLine(decision.rule.text), true);
     else setNotice(decision.rule === null ? 'Added the rule.' : `Added the rule “${decision.rule.text}”.`);
     focusMessage();
-  }, [settle, focusMessage]);
+  }, [settle, focusMessage, setNotice]);
   /** A suggested rule gone in the meantime (404): says so and loads the page again. */
   const suggestionGone = useCallback(() => {
     setEditingSuggestion(null);
     setCanceledSuggestion(null);
-    setNotice(SUGGESTED_COPY.gone);
+    setNotice(SUGGESTED_COPY.gone, true);
     focusMessage();
     reload();
-  }, [reload, focusMessage]);
+  }, [reload, focusMessage, setNotice]);
   const decisions = useRuleDecisions(api, location.id, { onDecided: decided, onGone: suggestionGone });
 
   /** Edit's Save: confirms the suggestion as the edited rule. */
