@@ -188,17 +188,21 @@ export function chatMessageViews(
     for (const { param } of items) {
       if (param.role !== 'assistant') continue;
       written.push(...blocksOf(param));
-      // Text written ahead of a tool call is replayed as thinking, as the stream's `aside` event files it (turn.ts).
-      const aside = isAside(blocksOf(param), (id) => ran(results.get(id)));
+      // Text written ahead of a tool call is replayed as thinking, as the stream's `aside` event files it (turn.ts), and
+      // so is text ahead of the message's last web search (D37), which the stream files when that search starts.
+      const blocks = blocksOf(param);
+      const aside = isAside(blocks, (id) => ran(results.get(id)));
+      const lastSearch = blocks.findLastIndex((block) => (block.type === 'server_tool_use' && block.name === WEB_SEARCH) || block.type === 'web_search_tool_result');
       let asideText: { type: 'thinking'; text: string } | null = null;
-      for (const block of blocksOf(param)) {
+      for (const [index, block] of blocks.entries()) {
         const last = parts.at(-1);
         if (block.type === 'thinking') {
           if (block.thinking !== '') parts.push({ type: 'thinking', text: block.thinking });
         } else if (block.type === 'text') {
           if (block.text === '') continue;
-          if (aside && last !== undefined && last === asideText) last.text += block.text;
-          else if (aside) parts.push(asideText = { type: 'thinking', text: block.text });
+          const ahead = aside || index < lastSearch;
+          if (ahead && last !== undefined && last === asideText) last.text += block.text;
+          else if (ahead) parts.push(asideText = { type: 'thinking', text: block.text });
           else if (last?.type === 'text') last.text += block.text;
           else parts.push({ type: 'text', text: block.text });
         } else if (block.type === 'tool_use') {

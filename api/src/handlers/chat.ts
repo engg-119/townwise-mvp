@@ -38,7 +38,11 @@ import { actorOf } from './team.ts';
 
 /** Section 2. */
 export interface ChatBudget { month: string; usedUsd: number; limitUsd: number; exhausted: boolean }
-export interface ConversationListItem { id: string; title: string; updatedAt: string; turnCount: number }
+/**
+ * `running` (spec P25 build note, 2026-11-18): the conversation's newest turn is running with a live lease and the
+ * conversation has not saved it, so History shows it replying.
+ */
+export interface ConversationListItem { id: string; title: string; updatedAt: string; turnCount: number; running: boolean }
 /** resumable-chat-turns: `liveTurn` is the caller's running turn at this location, which the page opens on load. */
 export interface ChatSummary { enabled: boolean; budget: ChatBudget; conversations: ConversationListItem[]; liveTurn: RunningTurnRef | null }
 /**
@@ -119,11 +123,16 @@ async function budgetOf(ctx: TownwiseContext, scope: OrgScope): Promise<ChatBudg
   return { month, usedUsd: Math.round(used / 10_000) / 100, limitUsd, exhausted: used >= Math.round(limitUsd * 1_000_000) };
 }
 
-function listItem(conversation: ConversationSummary): ConversationListItem {
+function listItem(conversation: ConversationSummary, runningId: string | null): ConversationListItem {
   return {
     id: conversation.id, title: conversation.title, updatedAt: conversation.updatedAt.toISOString(),
-    turnCount: conversation.turnCount,
+    turnCount: conversation.turnCount, running: conversation.id === runningId,
   };
+}
+
+/** A live turn's record is running and its lease has not passed; readers treat a lapsed one as interrupted. */
+function isRunning(ctx: TownwiseContext, live: ChatTurnRecord): boolean {
+  return live.state === 'running' && live.leaseUntil.getTime() > ctx.now().getTime();
 }
 
 function isFull(conversation: ConversationRecord): boolean {
@@ -159,7 +168,13 @@ export async function getChat(ctx: TownwiseContext, req: Request, res: Response,
   const conversation = running === null ? null : await ctx.stores.chatConversations.find(caller.scope, owner, running.conversationId);
   const liveTurn = running === null || (conversation !== null && savedLeafOf(nodesOf(conversation.messages), running) !== null)
     ? null : { conversationId: running.conversationId, turnId: running.turnId };
-  const body: ChatSummary = { enabled: ctx.chat !== null, budget, conversations: conversations.map(listItem), liveTurn };
+  // The list marks that conversation running by the conversation view's rules (liveTurnOf, its `running` state). A
+  // person has one live turn, so only the conversation of their newest running record can be.
+  const live = conversation === null ? null : await liveTurnOf(ctx, caller.scope, conversation.id, nodesOf(conversation.messages));
+  const runningId = conversation !== null && live !== null && isRunning(ctx, live) ? conversation.id : null;
+  const body: ChatSummary = {
+    enabled: ctx.chat !== null, budget, conversations: conversations.map((item) => listItem(item, runningId)), liveTurn,
+  };
   res.status(200).json(body);
 }
 
@@ -242,7 +257,7 @@ async function conversationView(
     liveTurn: live === null ? null : {
       turnId: live.turnId,
       // Readers treat a running record whose lease has passed as interrupted; the sweep settles it.
-      state: live.state === 'running' && live.leaseUntil.getTime() > ctx.now().getTime() ? 'running' : 'interrupted',
+      state: isRunning(ctx, live) ? 'running' : 'interrupted',
       startedAt: live.startedAt.toISOString(), userNodeId: live.userNodeId, replyNodeId: live.replyNodeId, parentId: live.parentId,
       message: live.message === null || live.userNodeId === null ? null : personMessageView(
         live.userNodeId, live.startedAt, live.message.text, live.message.attachments.map(({ ref, kind }) => ({ ref, kind, ...fileOf(ref) })),

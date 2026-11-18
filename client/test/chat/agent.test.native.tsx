@@ -28,7 +28,8 @@ import { PUBLISHED, serveAbout } from './about-fakes';
 // P25 TownwiseAI on native (spec 16.3, D26): the chat page and its side panel inside the portal, against a fake of
 // the chat and side panel routes. The Pillars: every tool call is a card and the Based on line comes from the
 // cards (transparency); the How TownwiseAI works panel and each question's help line (explainability); "Leave out
-// guest names" under the composer, view-as with every write disabled, nothing in device storage (privacy).
+// guest names" under the composer, view-as with every write disabled, nothing in device storage but the conversation
+// the page closed on, an id and a time (privacy).
 
 afterEach(async () => {
   await cleanup();
@@ -596,6 +597,32 @@ describe('phones', () => {
   });
 });
 
+test('while the page loads it is a skeleton of the page, with Loading TownwiseAI… only as its status line (owner, 2026-11-18)', async () => {
+  const chat = fakeChatApi();
+  let answer: (() => void) | null = null;
+  chat.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(chat.summary); }; });
+  await renderAgent(meOf(ACCESS.member), chat);
+  const skeleton = await screen.findByTestId('skeleton-agent');
+  expect(StyleSheet.flatten(skeleton.props.style)).toMatchObject({ flex: 1 });
+  expect(within(skeleton).getByRole('status').props.children).toBe('Loading TownwiseAI…');
+  // The shapes are hidden from screen readers: the header's controls, the landing's column, composer and suggestions.
+  for (const id of ['skeleton-chat-header', 'skeleton-agent-landing', 'skeleton-agent-composer', 'skeleton-agent-suggestions']) {
+    expect(screen.queryByTestId(id)).toBeNull();
+    expect(screen.getByTestId(id, { includeHiddenElements: true })).toBeTruthy();
+  }
+  expect(StyleSheet.flatten(screen.getByTestId('skeleton-agent-landing', { includeHiddenElements: true }).props.style))
+    .toMatchObject({ flexGrow: 1, justifyContent: 'center', maxWidth: 760 });
+  // The landing's own words, as bars in its own type, so its rows take the lines the landing's will; hidden, never drawn.
+  expect(screen.queryByText(/^Ask TownwiseAI about/)).toBeNull();
+  const words = screen.getByText(/^Ask TownwiseAI about/, { includeHiddenElements: true });
+  expect(StyleSheet.flatten(words.props.style)).toMatchObject({ color: 'transparent', backgroundColor: theme.color.raised });
+  expect(screen.getAllByTestId('skeleton-chip', { includeHiddenElements: true }).length).toBeGreaterThan(0);
+  expect(screen.queryByRole('button', { name: 'History' })).toBeNull();
+  await act(async () => { answer?.(); await Promise.resolve(); });
+  expect(await screen.findByTestId('chat-landing')).toBeTruthy();
+  expect(screen.queryByTestId('skeleton-agent', { includeHiddenElements: true })).toBeNull();
+});
+
 describe('the docked composer', () => {
   // The thread runs the full height and scrolls under the composer, which is laid over its bottom edge; the room the
   // thread keeps at its end follows the dock's measured height, and the dock growing or shrinking moves the end,
@@ -610,6 +637,14 @@ describe('the docked composer', () => {
     await fireEvent.scroll(screen.getByTestId('chat-thread'), {
       nativeEvent: { contentOffset: { x: 0, y }, contentSize: { width: 760, height }, layoutMeasurement: { width: 760, height: VIEW } },
     });
+  }
+
+  /** The person drags the thread to `y` (a drag's scroll events come between its begin and end). */
+  async function dragged(y: number, height: number): Promise<void> {
+    const thread = screen.getByTestId('chat-thread');
+    await fireEvent(thread, 'scrollBeginDrag');
+    await scrolled(y, height);
+    await fireEvent(thread, 'scrollEndDrag');
   }
 
   async function contentAt(height: number): Promise<void> {
@@ -672,7 +707,7 @@ describe('the docked composer', () => {
     await scrolled(1196 - VIEW, 1196);
 
     // The person scrolls up: unpinned, with nothing new below.
-    await scrolled(400, 1196);
+    await dragged(400, 1196);
     toEnd.mockClear();
     // The dock shrinks and grows: the thread stays where it is, and that is no reply growing.
     await dockAt(120);
@@ -720,8 +755,70 @@ describe('the docked composer', () => {
     expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
     // A scroll up from that end still unpins.
     await scrolled(VIEW + 400 - VIEW, VIEW + 400);
-    await scrolled(300, VIEW + 400);
+    await dragged(300, VIEW + 400);
     await contentAt(VIEW + 600);
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
+  });
+
+  test('follows every frame of the timeline opening and closing, the shrink heard before its scroll included; a scroll up stops it; a send goes to the end (owner, 2026-11-18)', async () => {
+    const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
+    await renderAgent(meOf(ACCESS.member));
+    await openEarlierChat();
+    await dockAt(120);
+    await contentAt(1120);
+    await scrolled(1120 - VIEW, 1120);
+    for (let height = 1140; height <= 1320; height += 20) {
+      toEnd.mockClear();
+      await contentAt(height);
+      expect(toEnd).toHaveBeenCalledWith({ animated: false });
+      await scrolled(height - VIEW, height);
+    }
+    // Closing: the height is heard first, then the offset pulled back to the new end.
+    for (let height = 1300; height >= 1120; height -= 20) {
+      await contentAt(height);
+      await scrolled(height - VIEW, height);
+    }
+    toEnd.mockClear();
+    await contentAt(1400);
+    expect(toEnd).toHaveBeenCalledWith({ animated: false });
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    await scrolled(1400 - VIEW, 1400);
+    // A scroll up: nothing pulls the view back as the reply grows.
+    await dragged(500, 1400);
+    toEnd.mockClear();
+    await contentAt(1500);
+    expect(toEnd).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
+    // A send goes to the end.
+    await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'And January?');
+    await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
+    expect(toEnd).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+  });
+
+  test('a thread that first overflows as the timeline opens stays pinned through a scroll event read mid-growth; a drag, and its momentum, unpin', async () => {
+    const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
+    await renderAgent(meOf(ACCESS.member));
+    await send('How was last week?');
+    await screen.findByTestId('chat-thread');
+    await dockAt(120);
+    await contentAt(500);
+    // The timeline opens: the thread passes the view, and the scroll event read mid-growth sits short of the end.
+    await contentAt(VIEW + 85);
+    await scrolled(85, VIEW + 146);
+    toEnd.mockClear();
+    await contentAt(VIEW + 400);
+    expect(toEnd).toHaveBeenCalledWith({ animated: false });
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    await scrolled(400, VIEW + 400);
+    // The momentum a flick leaves is the person's too.
+    const thread = screen.getByTestId('chat-thread');
+    await fireEvent(thread, 'momentumScrollBegin');
+    await scrolled(200, VIEW + 400);
+    await fireEvent(thread, 'momentumScrollEnd');
+    toEnd.mockClear();
+    await contentAt(VIEW + 600);
+    expect(toEnd).not.toHaveBeenCalled();
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
   });
 
@@ -733,14 +830,14 @@ describe('the docked composer', () => {
     await contentAt(1196);
     await scrolled(1196 - VIEW, 1196);
     // The person scrolls up 60 from the end.
-    await scrolled(1196 - VIEW - 30, 1196);
-    await scrolled(1196 - VIEW - 60, 1196);
+    await dragged(1196 - VIEW - 30, 1196);
+    await dragged(1196 - VIEW - 60, 1196);
     // They delete two lines of the draft: the dock and the room under the thread shrink by 60, and the offset, now at
     // the end, stays put (no scroll event).
     await dockAt(120);
     await contentAt(1136);
     // Another 10 up, then the reply grows: it is flagged, not followed.
-    await scrolled(1136 - VIEW - 10, 1136);
+    await dragged(1136 - VIEW - 10, 1136);
     toEnd.mockClear();
     await contentAt(1336);
     expect(toEnd).not.toHaveBeenCalled();
@@ -843,7 +940,7 @@ describe('the portal’s client (spec 4.3)', () => {
   });
 });
 
-test('nothing goes to device storage', async () => {
+test('nothing goes to device storage while the page is open; leaving it keeps only the conversation’s id and a time', async () => {
   const { chat } = await renderAgent(meOf(ACCESS.member));
   const store = Object.values(SecureStore).filter((value) => jest.isMockFunction(value));
   expect(store).toContain(SecureStore.setItemAsync);
@@ -851,10 +948,17 @@ test('nothing goes to device storage', async () => {
   await send('Hello');
   await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'Half typed');
   await act(() => {
+    turn(chat).emit('conversation', { id: 'c2', title: 'Hello', turnId: 'turn-1' });
     turn(chat).emit('text', { delta: 'Hi.' });
     turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });
     turn(chat).end();
   });
   expect(await screen.findByText('Hi.')).toBeTruthy();
   for (const fn of store) expect(fn).not.toHaveBeenCalled();
+  await cleanup();
+  const kept = jest.mocked(SecureStore.setItemAsync).mock.calls;
+  expect(kept).toHaveLength(1);
+  expect(kept[0]?.[0]).toMatch(/^townwise\.chatReturn\./);
+  expect(Object.keys(JSON.parse(kept[0]?.[1] ?? '{}') as object).sort()).toEqual(['conversationId', 'leftAt']);
+  for (const fn of store) expect(JSON.stringify(fn.mock.calls)).not.toMatch(/Hello|Half typed|Hi\./);
 });

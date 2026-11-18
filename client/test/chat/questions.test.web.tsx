@@ -12,7 +12,7 @@ import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
-import { fakeChatApi, refusal, SUMMARY, type FakeChatApi, type LiveTurn } from '../helpers/chat';
+import { fakeChatApi, refusal, SUMMARY, type FakeChatApi, type LiveTurn, forgetLastChats } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { serveAbout } from './about-fakes';
@@ -53,7 +53,10 @@ function setWidth(next: number): void {
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   resetDrafts();
+  forgetLastChats();
   resetProfiles();
   resetVersionFocus();
   setWidth(1280);

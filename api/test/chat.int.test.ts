@@ -198,7 +198,7 @@ describe('a plain answer', () => {
     const list = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
     expect(list.enabled).toBe(true);
     expect(list.budget).toEqual({ month: '2026-06', usedUsd: 0.03, limitUsd: 20, exhausted: false });
-    expect(list.conversations[0]).toEqual({ id, title: 'What changed in May?', updatedAt: server.clock.now().toISOString(), turnCount: 1 });
+    expect(list.conversations[0]).toEqual({ id, title: 'What changed in May?', updatedAt: server.clock.now().toISOString(), turnCount: 1, running: false });
 
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
     const at = server.clock.now().toISOString();
@@ -275,10 +275,13 @@ describe('tools', () => {
     const { events } = await turn({ content: 'How did the Taproom do?' });
     expect(shape(events)).toEqual(['conversation', ...Array<string>(10).fill('tool'), 'text', 'done']);
     const may = { from: '2026-05-01', to: '2026-05-31' };
+    // The Your data items that hold May's days, by ref only (spec P25): addSalesDay writes each day as its own upload.
+    const ref = expect.stringMatching(/^u_[0-9a-f]{24}$/) as unknown;
+    const uploadRefs = [ref, ref];
     const town = { available: true, town: { name: 'Hanover', state: 'NH' }, sources: expect.any(Array) as unknown };
     const views = [
       { id: 't1', name: 'get_location_overview', input: null, result: { firstDate: '2026-05-01', lastDate: '2026-05-02', dayCount: 2, missingDays: 0, monthCount: 1 } },
-      { id: 't2', name: 'get_sales_days', input: may, result: { ...may, dayCount: 2, guestsDayCount: 2, netSalesDayCount: 1 } },
+      { id: 't2', name: 'get_sales_days', input: may, result: { ...may, dayCount: 2, guestsDayCount: 2, netSalesDayCount: 1, uploadRefs } },
       { id: 't3', name: 'list_notes', input: null, result: { count: 1 } },
       { id: 't4', name: 'get_town_profile', input: null, result: town },
     ];
@@ -309,6 +312,7 @@ describe('tools', () => {
     expect(content(1)).toEqual({
       from: '2026-05-01', to: '2026-05-31',
       days: [{ date: '2026-05-01', guests: 140, netSalesUsd: 5123.45 }, { date: '2026-05-02', guests: 90, netSalesUsd: null }],
+      uploadRefs,
     });
     expect(content(2)).toEqual({ notes: [{
       kind: 'closure', startDate: '2026-05-10', endDate: '2026-05-10', weekdays: null, startTime: null, endTime: null, effect: 'closed',

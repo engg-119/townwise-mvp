@@ -7,6 +7,7 @@ import {
 import { useReducedMotion } from '../../motion';
 import { formatCount } from '../../portal/format';
 import { useBreakpoint } from '../../portal/hooks';
+import { SkeletonWords } from '../../portal/skeleton/kit';
 import { ids, webAria } from '../../portal/ui/aria';
 import { theme } from '../../theme';
 import { composerKey, EXAMPLE_MS, nextExample } from '../composerKeys';
@@ -250,6 +251,21 @@ export function Composer(props: ComposerProps): React.JSX.Element {
       {box}
       {counter}
       <Text nativeID={helpId} style={styles.help}>{props.help}</Text>
+    </View>
+  );
+}
+
+/**
+ * The landing's composer at rest, for the page's skeleton (AgentChat): its own box, padding and help line, with the
+ * help's words as bars and the send button's disabled circle, so the composer takes its place without moving.
+ */
+export function ComposerSkeleton(props: { help: string }): React.JSX.Element {
+  return (
+    <View style={[styles.composer, styles.landing]}>
+      <View style={styles.box}>
+        <View style={styles.buttonEnd}><View style={[styles.button, styles.buttonDisabled]} /></View>
+      </View>
+      <Text style={styles.help}><SkeletonWords>{props.help}</SkeletonWords></Text>
     </View>
   );
 }

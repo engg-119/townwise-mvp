@@ -278,3 +278,13 @@ export function fakeChatApi(): FakeChatApi {
 export function refusal(status: number, code: string | null): ApiError {
   return new ApiError('http', 'The request was refused.', { status, code });
 }
+
+/**
+ * Forgets every chat a test page left open (`src/chat/lastChat.ts`, the 5-minute return): on web it is kept in this
+ * test environment's real localStorage, which outlives one test, so a later test's page would reopen it.
+ */
+export function forgetLastChats(): void {
+  const store = (globalThis as { localStorage?: Storage }).localStorage;
+  if (store === undefined) return;
+  for (const key of Object.keys(store)) if (key.startsWith('townwise.chatReturn')) store.removeItem(key);
+}

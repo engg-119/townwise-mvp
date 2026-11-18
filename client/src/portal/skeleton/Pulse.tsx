@@ -5,10 +5,12 @@ import { useReducedMotion } from '../../motion';
 import { theme } from '../../theme';
 import { PULSE } from './timing';
 
+const FILL = { flex: 1, minHeight: 0 } as const;
+
 // The skeleton's shapes on iOS and Android, hidden from assistive tech, pulsing in opacity on the native driver.
 // Still at full opacity under Reduce Motion, and until the system answers (useReducedMotion is null until then).
-// Pulse.web.tsx is the browser's, in CSS.
-export function Pulse(props: { children: React.ReactNode }): React.JSX.Element {
+// Pulse.web.tsx is the browser's, in CSS. `fill`: it takes its parent's height (a page laid out to fill the screen).
+export function Pulse(props: { children: React.ReactNode; fill?: boolean }): React.JSX.Element {
   const reduced = useReducedMotion();
   const on = reduced === false;
   const [opacity] = useState(() => new Animated.Value(1));
@@ -25,5 +27,5 @@ export function Pulse(props: { children: React.ReactNode }): React.JSX.Element {
     loop.start();
     return () => { loop.stop(); };
   }, [on, opacity]);
-  return <Animated.View aria-hidden testID="skeleton-shapes" style={{ opacity }}>{props.children}</Animated.View>;
+  return <Animated.View aria-hidden testID="skeleton-shapes" style={[{ opacity }, props.fill === true ? FILL : null]}>{props.children}</Animated.View>;
 }

@@ -5,7 +5,7 @@ import { theme } from '../../theme';
 import type { ToolContext } from '../tools';
 import type { MessagePart } from '../useTuningChat';
 import { Collapse } from './Collapse';
-import { ToolGroup } from './ToolGroup';
+import { ToolGroup, type HrefOf } from './ToolGroup';
 
 // How long TownwiseAI worked on a reply (owner follow-up, spec P25), and the timeline of its thinking summary and
 // steps. One component for the whole turn, mounted from the first event to the end and across a reattach: while the
@@ -40,12 +40,12 @@ function useElapsed(startedAt: number, live: boolean): number {
   return wholeSeconds(startedAt, now);
 }
 
-function Timeline(props: { parts: readonly ProcessPart[]; live: boolean; ctx: ToolContext }): React.JSX.Element {
+function Timeline(props: { parts: readonly ProcessPart[]; live: boolean; ctx: ToolContext; hrefOf: HrefOf | undefined }): React.JSX.Element {
   return (
     <View style={styles.timeline}>
       {props.parts.map((part) => (part.type === 'thinking'
         ? <Text key={part.key} style={styles.thinking}>{part.text}</Text>
-        : <ToolGroup key={part.key} steps={part.steps} live={props.live} ctx={props.ctx} />))}
+        : <ToolGroup key={part.key} steps={part.steps} live={props.live} ctx={props.ctx} {...(props.hrefOf === undefined ? {} : { hrefOf: props.hrefOf })} />))}
     </View>
   );
 }
@@ -63,6 +63,8 @@ export function Worked(props: {
   ctx: ToolContext;
   open: boolean;
   onOpen: (open: boolean) => void;
+  /** Where a step that read the team's own data opens (ToolGroup). */
+  hrefOf?: HrefOf;
 }): React.JSX.Element | null {
   const { live, open } = props;
   const elapsed = useElapsed(props.startedAt, live);
@@ -93,7 +95,7 @@ export function Worked(props: {
       </View>
       {any ? (
         <Collapse id={id} open={open}>
-          <Timeline parts={props.parts} live={live} ctx={props.ctx} />
+          <Timeline parts={props.parts} live={live} ctx={props.ctx} hrefOf={props.hrefOf} />
         </Collapse>
       ) : null}
     </View>

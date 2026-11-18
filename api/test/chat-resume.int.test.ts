@@ -347,7 +347,9 @@ describe('reattaching: liveTurn on both GETs', () => {
       },
     };
     for (const on of [server, other]) {
-      expect((await getJson<ChatSummary>(on, chatPath())).liveTurn).toEqual({ conversationId: id, turnId: held.turnId });
+      const summary = await getJson<ChatSummary>(on, chatPath());
+      expect(summary.liveTurn).toEqual({ conversationId: id, turnId: held.turnId });
+      expect(summary.conversations.find((each) => each.id === id)?.running).toBe(true);
       const view = await getJson<ConversationView>(on, `${chatPath()}/${id}`);
       expect(view.messages.map((each) => each.nodeId)).toEqual(before.messages.slice(0, 2).map((each) => each.nodeId));
       expect(view.activeLeafId).toBe(r1);
@@ -371,7 +373,9 @@ describe('reattaching: liveTurn on both GETs', () => {
 
     held.release();
     expect((await held.body).at(-1)?.event).toBe('done');
-    expect((await getJson<ChatSummary>(server, chatPath())).liveTurn).toBeNull();
+    const after = await getJson<ChatSummary>(server, chatPath());
+    expect(after.liveTurn).toBeNull();
+    expect(after.conversations.find((each) => each.id === id)?.running).toBe(false);
     const saved = await getJson<ConversationView>(server, `${chatPath()}/${id}`);
     expect(saved.liveTurn).toBeNull();
     expect(saved.messages.map((each) => each.nodeId)).toEqual([...before.messages.slice(0, 2).map((each) => each.nodeId), held.userNodeId, held.replyNodeId]);
@@ -422,6 +426,45 @@ describe('reattaching: liveTurn on both GETs', () => {
   });
 });
 
+describe('running on the conversation list (spec P25 build note, 2026-11-18)', () => {
+  it('marks a conversation while its newest turn runs with a live lease: not once the lease passed or the turn ended, nor for a turn the conversation saved; the list is the caller’s own, so a colleague’s running turn shows in no list of theirs', async () => {
+    const id = await addConversation(server, { orgId, locationId, userId: session.userId, text: 'Running question' });
+    const quiet = await addConversation(server, { orgId, locationId, userId: session.userId, text: 'Quiet question' });
+    const colleagueEmail = `colleague-${randomUUID().slice(0, 8)}@example.test`;
+    const colleague = await signIn(server, colleagueEmail);
+    await addSeat(server, { orgId, userId: colleague.userId, email: colleagueEmail });
+    const theirs = await addConversation(server, { orgId, locationId, userId: colleague.userId, text: 'Their question' });
+    const records = server.connection.collection('tw_chat_turns');
+    const running = async (as: TestSession = session): Promise<Record<string, boolean>> => Object.fromEntries(
+      (await getJson<ChatSummary>(server, chatPath(), as)).conversations.map((each) => [each.id, each.running]),
+    );
+    let turnId = '';
+    try {
+      expect(await running()).toMatchObject({ [id]: false, [quiet]: false });
+      turnId = await addChatTurn(server, { orgId, locationId, conversationId: id, userId: session.userId });
+      expect(await running()).toMatchObject({ [id]: true, [quiet]: false });
+      // The colleague's list holds only their own conversations, none running; mine never holds theirs.
+      expect(await running(colleague)).toEqual({ [theirs]: false });
+      expect(Object.keys(await running())).not.toContain(theirs);
+
+      await records.updateOne({ turnId }, { $set: { leaseUntil: new Date(server.clock.now().getTime() - 1000) } });
+      expect((await running())[id]).toBe(false);
+      await records.updateOne({ turnId }, { $set: { leaseUntil: new Date(server.clock.now().getTime() + LEASE_MS) } });
+      expect((await running())[id]).toBe(true);
+      await records.updateOne({ turnId }, { $set: { state: 'done', endedAt: server.clock.now() } });
+      expect((await running())[id]).toBe(false);
+
+      // A colleague's running turn at this location is no conversation of mine.
+      await records.deleteMany({ turnId });
+      turnId = await addChatTurn(server, { orgId, locationId, conversationId: theirs, userId: colleague.userId });
+      expect(Object.values(await running()).every((value) => !value)).toBe(true);
+      expect(await running(colleague)).toEqual({ [theirs]: true });
+    } finally {
+      await records.deleteMany({ turnId });
+    }
+  });
+});
+
 describe('a saved turn whose record did not end done', () => {
   it('is not live on either GET, the conversation shows its saved path, and its tail ends with done, not interrupted', async () => {
     model.script({ kind: 'message', message: message([text('Saturday looks busy.')]) });
@@ -445,7 +488,9 @@ describe('a saved turn whose record did not end done', () => {
         $set: { state: 'running', endedAt: null, eventCount: 2, leaseUntil: new Date(server.clock.now().getTime() + LEASE_MS) },
         $pop: { events: 1 },
       });
-      expect((await getJson<ChatSummary>(server, chatPath())).liveTurn).toBeNull();
+      const summary = await getJson<ChatSummary>(server, chatPath());
+      expect(summary.liveTurn).toBeNull();
+      expect(summary.conversations.find((each) => each.id === id)?.running).toBe(false);
       expect((await getJson<ConversationView>(server, `${chatPath()}/${id}`)).liveTurn).toBeNull();
       await records.updateOne({ turnId }, { $set: { leaseUntil: new Date(server.clock.now().getTime() - 1000) } });
       expect((await getJson<ConversationView>(other, `${chatPath()}/${id}`)).liveTurn).toBeNull();

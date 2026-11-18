@@ -24,6 +24,12 @@ const css = [
   // or a square ring is drawn inside the round one.
   '#tw-portal [data-ring="box"]:focus-visible{outline:none}',
   '[aria-modal="true"] [data-ring="box"]:focus-visible{outline:none}',
+  // A link whose 13px padding makes its tap target (`inlineTarget`) opts in with data-ring="text": its ring sits 2px
+  // outside its words, not around the padding, so it never covers the lines beside it. The link has no side padding, so
+  // while focused it gains 13px each side, given back by a -13px margin (nothing moves), and each line of a wrapped
+  // link is ringed on its own (box-decoration-break: clone).
+  '#tw-portal [data-ring="text"]:focus-visible{outline-offset:-11px;padding-left:13px;padding-right:13px;margin-left:-13px;margin-right:-13px;-webkit-box-decoration-break:clone;box-decoration-break:clone}',
+  '[aria-modal="true"] [data-ring="text"]:focus-visible{outline-offset:-11px;padding-left:13px;padding-right:13px;margin-left:-13px;margin-right:-13px;-webkit-box-decoration-break:clone;box-decoration-break:clone}',
   // The row of actions under a message: the newest message's always shows (data-actions="always"); the rest are
   // transparent until the pointer is over the message or focus is in it, and stay in the tab order. No hover, no hiding.
   '#tw-portal [data-actions="hover"]{opacity:0}',

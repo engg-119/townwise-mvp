@@ -20,13 +20,14 @@ const pulse: Record<string, unknown> = {
   animationIterationCount: 'infinite',
 };
 
-const styles = StyleSheet.create({ pulse: pulse as Record<string, never> });
+const styles = StyleSheet.create({ pulse: pulse as Record<string, never>, fill: { flex: 1, minHeight: 0 } });
 
-export function Pulse(props: { children: React.ReactNode }): React.JSX.Element {
+/** `fill`: it takes its parent's height (a page laid out to fill the screen). */
+export function Pulse(props: { children: React.ReactNode; fill?: boolean }): React.JSX.Element {
   const reduced = useReducedMotion() !== false;
   const mark = { dataSet: { pulse: reduced ? 'off' : 'on' } };
   return (
-    <View aria-hidden testID="skeleton-shapes" {...mark} style={reduced ? null : styles.pulse}>
+    <View aria-hidden testID="skeleton-shapes" {...mark} style={[props.fill === true ? styles.fill : null, reduced ? null : styles.pulse]}>
       {props.children}
     </View>
   );

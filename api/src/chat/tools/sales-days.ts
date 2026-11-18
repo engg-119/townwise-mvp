@@ -1,6 +1,7 @@
 // get_sales_days: the location's daily rows for a range of at most 92 days, each likely-closed day marked (spec D32): only
 // a day before the town's today, since today's upload may be partial, and the notes and rule schedules covering it
-// read apart, since a note on a day beats a rule there (closed-days.ts).
+// read apart, since a note on a day beats a rule there (closed-days.ts). The result names the Your data items that hold
+// the range's days by ref (`u_<id>`, spec P25), never a name, so the reply's step and Based on line can open them.
 import { z } from 'zod';
 
 import { noteCovers } from '../../agent/questions.ts';
@@ -18,6 +19,8 @@ const salesRange = z.object({ from: isoDate, to: isoDate })
 const salesResult = z.object({
   from: z.string(), to: z.string(),
   days: z.array(z.object({ guests: z.number().nullable(), netSalesUsd: z.number().nullable() })),
+  // Absent from a result saved before the refs were added.
+  uploadRefs: z.array(z.string()).optional(),
 });
 
 export interface SalesRange { from: string; to: string }
@@ -40,18 +43,20 @@ export const salesDaysTool: ChatTool<SalesRange> = {
     return range.success ? range.data : null;
   },
   inputView: (range) => ({ from: range.from, to: range.to }),
-  resultView: (content) => viewOf(content, salesResult, ({ from, to, days }) => ({
+  resultView: (content) => viewOf(content, salesResult, ({ from, to, days, uploadRefs }) => ({
     from, to, dayCount: days.length,
     guestsDayCount: days.filter((day) => day.guests !== null).length,
     netSalesDayCount: days.filter((day) => day.netSalesUsd !== null).length,
+    ...(uploadRefs === undefined ? {} : { uploadRefs }),
   })),
   async run(tc, range) {
     // The 8 weeks before the range too, for each day's typical guests.
     const read = { from: utcDay(new Date(`${range.from}T00:00:00.000Z`), -TYPICAL_LOOKBACK_DAYS), to: range.to };
-    const [stored, notes, scheduled] = await Promise.all([
+    const [stored, notes, scheduled, uploadIds] = await Promise.all([
       tc.ctx.stores.salesDays.days(tc.scope, tc.location.id, read),
       tc.ctx.stores.notes.list(tc.scope, tc.location.id),
       tc.ctx.stores.businessRules.scheduled(tc.scope, tc.location.id),
+      tc.ctx.stores.salesDays.uploadIdsIn(tc.scope, tc.location.id, range),
     ]);
     const rules = scheduledRules(scheduled);
     const typical = typicalByDate(stored);
@@ -62,6 +67,7 @@ export const salesDaysTool: ChatTool<SalesRange> = {
       }) === 'likely_closed';
       return { date: day.date, guests: day.guests, netSalesUsd: dollars(day.netSalesCents), ...(likely ? { likelyClosed: true } : {}) };
     });
-    return { content: JSON.stringify({ from: range.from, to: range.to, days }) };
+    const uploadRefs = uploadIds.map((id) => `u_${id}`);
+    return { content: JSON.stringify({ from: range.from, to: range.to, days, uploadRefs }) };
   },
 };

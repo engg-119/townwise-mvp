@@ -1,10 +1,14 @@
 import { Fragment, useEffect, useRef, useState } from 'react';
+import { Link } from 'expo-router';
 import { Platform, StyleSheet, Text, View } from 'react-native';
 
+import type { MeResponse } from '../../portal/schemas';
 import { Button } from '../../portal/ui/Button';
+import { inlineTarget } from '../../portal/ui/text';
 import { theme } from '../../theme';
+import { targetHref } from '../dataLinks';
 import { Markdown } from '../markdown/Markdown';
-import { basedOnLine, type ToolContext } from '../tools';
+import { basedOnParts, type DataTarget, type ToolContext } from '../tools';
 import type { TreeNode } from '../tree';
 import { stepsOf, type ChatMessage, type MessagePart, type TuningChat } from '../useTuningChat';
 import { VisualView } from '../visuals/Visual';
@@ -16,7 +20,7 @@ import { ProposalCard } from './ProposalCard';
 import { messageMark, type RowShow } from './MessageTime';
 import { ReplyActions } from './ReplyActions';
 import { ReplySources } from './ReplySources';
-import { FadeIn } from './ToolGroup';
+import { FadeIn, RING, type HrefOf } from './ToolGroup';
 import { useVersionNav, VersionNav } from './VersionNav';
 import { isProcessPart, wholeSeconds, Worked, type ProcessPart } from './Worked';
 import { useWorkedOpen, type WorkedOpen } from './workedOpen';
@@ -30,7 +34,8 @@ import { useWorkedOpen, type WorkedOpen } from './workedOpen';
 // built from its tool calls (never written by the model), the web pages it cites (D37, ReplySources.tsx) and why it
 // ended early, if it did. One that failed or was stopped keeps its note and Try again.
 // Its visuals and proposal cards are held until it ends (owner, 2026-11-18, spec P25: "charts show up while the agent
-// is still working"): see bodyParts.
+// is still working"): see bodyParts. A step or Based on piece that read the team's own data links to where it is (the
+// Calendar's day, the Your data item or list), when `me` may open that page (spec P25 build note, 2026-11-18).
 
 type BodyPart = Exclude<MessagePart, ProcessPart>;
 
@@ -86,8 +91,12 @@ export function ReplyView(props: {
   onAnnounce: (words: string) => void;
   /** The page's open timelines (workedOpen.ts). */
   workedOpen: WorkedOpen;
+  /** Who is reading (GET /api/me), for the links to the team's data; none without it. */
+  me?: MeResponse | null;
 }): React.JSX.Element {
   const { message, chat } = props;
+  const me = props.me ?? null;
+  const hrefOf: HrefOf = (target: DataTarget | null) => targetHref(target, props.locationId, me);
   const live = message.state === 'streaming';
   const ended = message.state === 'failed' || message.state === 'stopped';
   const complete = message.state === 'complete';
@@ -142,6 +151,7 @@ export function ReplyView(props: {
         ctx={props.ctx}
         open={open}
         onOpen={setOpen}
+        hrefOf={hrefOf}
       />
       {bodyParts(message).map((part) => {
         if (part.type === 'text') return <Markdown key={part.key} source={part.text} caret={part.key === caretOn} />;
@@ -157,7 +167,13 @@ export function ReplyView(props: {
           <ReplyActions message={message} newest={props.newest} show={props.actions} chat={chat} canAct={props.canAct} readOnlyId={props.readOnlyId}>
             {versions}
           </ReplyActions>
-          <Text style={styles.basedOn}>{basedOnLine(stepsOf(message), props.ctx)}</Text>
+          <Text style={styles.basedOn}>
+            {basedOnParts(stepsOf(message), props.ctx).map((part, index) => {
+              if (typeof part === 'string') return part;
+              const href = hrefOf(part.target);
+              return href === null ? part.text : <Link key={index} href={href} style={styles.basedOnLink} {...RING}>{part.text}</Link>;
+            })}
+          </Text>
           <ReplySources sources={message.sources} />
         </>
       ) : versions}
@@ -179,6 +195,8 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   reply: { gap: theme.space[3], minWidth: 0 },
-  basedOn: { ...theme.type.small, color: c.text2 },
+  // Lines 24 apart, so a link's focus ring 2px outside its words (RING) clears the lines beside it.
+  basedOn: { ...theme.type.small, lineHeight: 24, color: c.text2 },
+  basedOnLink: { ...inlineTarget, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
   note: { ...theme.type.small, color: c.text3 },
 });

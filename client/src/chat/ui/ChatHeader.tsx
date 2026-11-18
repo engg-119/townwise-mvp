@@ -1,6 +1,7 @@
-import { useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { SkeletonButton } from '../../portal/skeleton/kit';
 import { Button } from '../../portal/ui/Button';
 import { theme } from '../../theme';
 import type { ConversationSummary } from '../api';
@@ -9,9 +10,10 @@ import { HistoryMenu } from './HistoryMenu';
 
 // The chat's header: History, New chat and Questions and activity at the right, wrapping on narrow phones. It shows
 // no title and draws no rule, so the thread gets the height; History's list marks the open conversation. History
-// and New chat are off while a reply streams, so the open conversation can't change under it; the panel button is
-// never off. History is a disclosure over HistoryMenu: Escape or opening a conversation closes it and focus goes
-// back to the button, as it does after a delete.
+// and New chat work while a reply streams (owner request, 2026-11-18): leaving the conversation only stops following
+// its reply, which runs on (useTuningChat). New chat is off under view-as; the panel button is never off. History is a
+// disclosure over HistoryMenu: Escape or opening a conversation closes it and focus goes back to the button, as it
+// does after a delete.
 
 type Host = React.ComponentRef<typeof View>;
 
@@ -45,6 +47,7 @@ export function PanelButton(props: {
 export function ChatHeader(props: {
   conversations: readonly ConversationSummary[];
   openId: string | null;
+  /** A reply streams: History's Rename and Delete wait for it. */
   streaming: boolean;
   readOnlyId: string | null;
   panelOpen: boolean;
@@ -54,27 +57,24 @@ export function ChatHeader(props: {
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, title: string) => Promise<void>;
   onTogglePanel: () => void;
+  /** History opened or closed (its list is read again every 3 seconds while open and a conversation is replying). */
+  onListOpen?: (open: boolean) => void;
   /** Where the panel sheet returns focus to (web). */
   panelButtonRef?: React.RefObject<Host | null>;
 }): React.JSX.Element {
-  const [opened, setOpened] = useState(false);
-  // A reply that starts streaming shuts the list.
-  const open = opened && !props.streaming;
+  const [open, setOpened] = useState(false);
   const button = useRef<Host>(null);
+  const { onListOpen } = props;
+  useEffect(() => {
+    onListOpen?.(open);
+  }, [open, onListOpen]);
+  useEffect(() => () => { onListOpen?.(false); }, [onListOpen]);
   const menuId = 'chat-history-menu';
 
   function close(): void {
     setOpened(false);
     if (Platform.OS === 'web') button.current?.focus();
   }
-
-  // Like Button's disabled state: aria-disabled on the same element, which keeps its focus (web).
-  useLayoutEffect(() => {
-    if (Platform.OS !== 'web') return;
-    const element = button.current as unknown as { setAttribute: (n: string, v: string) => void; removeAttribute: (n: string) => void } | null;
-    if (props.streaming) element?.setAttribute('aria-disabled', 'true');
-    else element?.removeAttribute('aria-disabled');
-  }, [props.streaming]);
 
   // On web History floats over the thread instead of pushing it down. Native keeps it in the flow: Android does not
   // deliver a touch to a child drawn outside its parent's box.
@@ -89,16 +89,16 @@ export function ChatHeader(props: {
             role="button"
             aria-expanded={open}
             aria-controls={menuId}
-            {...(props.streaming ? {} : { onPress: () => { if (open) close(); else setOpened(true); } })}
-            accessibilityState={{ ...(Platform.OS === 'web' ? {} : { disabled: props.streaming }), expanded: open }}
+            onPress={() => { if (open) close(); else setOpened(true); }}
+            accessibilityState={{ expanded: open }}
             style={styles.link}
           >
-            <Text style={[styles.linkText, props.streaming ? styles.linkOff : null]}>History</Text>
+            <Text style={styles.linkText}>History</Text>
           </Pressable>
           <Button
             variant="link"
             label="New chat"
-            disabled={props.streaming || props.readOnlyId !== null}
+            disabled={props.readOnlyId !== null}
             {...described(props.readOnlyId)}
             onPress={() => {
               setOpened(false);
@@ -139,6 +139,24 @@ export function ChatHeader(props: {
   );
 }
 
+/**
+ * The header while the page loads (AgentChat's skeleton): its three controls as text links' shapes, each about as wide
+ * as its words, in the header's own row, so nothing moves when the header comes.
+ */
+export function ChatHeaderSkeleton(): React.JSX.Element {
+  return (
+    <View testID="skeleton-chat-header" style={styles.header}>
+      <View style={styles.bar}>
+        <View style={styles.controls}>
+          <SkeletonButton link width={58} />
+          <SkeletonButton link width={70} />
+          <SkeletonButton link width={170} />
+        </View>
+      </View>
+    </View>
+  );
+}
+
 const c = theme.color;
 
 const styles = StyleSheet.create({
@@ -150,5 +168,4 @@ const styles = StyleSheet.create({
   controls: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[4] },
   link: { minHeight: 44, minWidth: 44, justifyContent: 'center' },
   linkText: { ...theme.type.ui, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
-  linkOff: { color: c.text3, textDecorationColor: c.border },
 });

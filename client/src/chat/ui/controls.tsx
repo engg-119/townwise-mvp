@@ -1,6 +1,7 @@
 import { useImperativeHandle, useLayoutEffect, useRef } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View, type PressableStateCallbackType } from 'react-native';
 
+import { SkeletonWords } from '../../portal/skeleton/kit';
 import { webAria } from '../../portal/ui/aria';
 import { theme } from '../../theme';
 
@@ -93,6 +94,15 @@ export function ChatButton(props: {
         </Text>
       ))}
     </Pressable>
+  );
+}
+
+/** A `chip` for a skeleton: the pill outlined in `line`, its label's words as a bar. */
+export function ChipSkeleton(props: { label: string }): React.JSX.Element {
+  return (
+    <View testID="skeleton-chip" style={boxes.chip}>
+      <Text style={labels.chip}><SkeletonWords>{props.label}</SkeletonWords></Text>
+    </View>
   );
 }
 

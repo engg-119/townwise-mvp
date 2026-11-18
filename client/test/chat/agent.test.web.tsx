@@ -14,9 +14,7 @@ import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
 import { theme } from '../../src/theme';
 import { appRoutes, seededRoot } from '../helpers/app';
-import {
-  CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn,
-} from '../helpers/chat';
+import { CONVERSATION, fakeChatApi, PROPOSAL, PROPOSAL_ID, refusal as chatRefusal, SALES_STEP, SUMMARY, type FakeChatApi, type LiveTurn, forgetLastChats } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { itemOf } from '../portal/data/fakes';
@@ -68,8 +66,11 @@ function setWidth(next: number): void {
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   // Drafts and the name outlive the page in memory, as they do between visits in one session.
   resetDrafts();
+  forgetLastChats();
   resetProfiles();
   resetVersionFocus();
   Reflect.deleteProperty(window, 'matchMedia');
@@ -348,6 +349,240 @@ describe('the docked composer', () => {
   });
 });
 
+describe('following the reply (owner, 2026-11-18: “as the prompt goes it should scroll down automatically unless the user scrolls up and breaks that”)', () => {
+  const VIEW = 600;
+
+  /** The thread as a browser lays it out: its content `height` tall in a 600px view, scrolled to `top`. */
+  function laidOut(log: HTMLElement): {
+    content: HTMLElement;
+    scrolledTo: jest.Mock<undefined, [ScrollToOptions]>;
+    grow: (height: number, heard?: boolean) => void;
+    scrollTo: (top: number) => Promise<void>;
+    wheelTo: (top: number) => Promise<void>;
+  } {
+    const content = first(Array.from(log.children)) as HTMLElement;
+    let height = VIEW;
+    let top = 0;
+    const scrolledTo = jest.fn<undefined, [ScrollToOptions]>();
+    Object.defineProperty(log, 'scroll', { configurable: true, value: scrolledTo });
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, get: () => height });
+    Object.defineProperty(log, 'offsetHeight', { configurable: true, get: () => VIEW });
+    Object.defineProperty(log, 'scrollTop', { configurable: true, get: () => top, set: (value: number) => { top = value; } });
+    Object.defineProperty(content, 'offsetHeight', { configurable: true, get: () => height });
+    return {
+      content,
+      scrolledTo,
+      // The content's new height after a layout: its observers fire before paint, with no timer in between. `heard`
+      // false: a frame whose height a scroll event reads before the observers hear it.
+      grow: (next, heard = true) => {
+        height = next;
+        if (!heard) return;
+        const watching = observers.filter((observer) => observer.targets.has(content));
+        expect(watching).not.toHaveLength(0);
+        act(() => { for (const observer of watching) observer.callback([{ target: content } as unknown as ResizeObserverEntry], observer); });
+      },
+      // Something other than the person moves the view (a jump landing, content growing): react-native-web reports
+      // it, and again when the scroll ends.
+      scrollTo: async (next) => {
+        top = next;
+        fireEvent.scroll(log);
+        await act(() => new Promise((resolve) => { setTimeout(resolve, 120); }));
+      },
+      // The person moves it, with a wheel.
+      wheelTo: async (next) => {
+        fireEvent.wheel(log, { deltaY: next - top });
+        top = next;
+        fireEvent.scroll(log);
+        await act(() => new Promise((resolve) => { setTimeout(resolve, 120); }));
+      },
+    };
+  }
+
+  function lastScroll(scrolledTo: jest.Mock<undefined, [ScrollToOptions]>): ScrollToOptions | undefined {
+    return scrolledTo.mock.calls.at(-1)?.[0];
+  }
+
+  test('a pinned thread is at its end in the frame its content grows, every frame of an animation; a scroll up stops that until the person comes back; a send goes to the end', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const thread = laidOut(screen.getByRole('log', { name: 'Conversation with TownwiseAI' }));
+    thread.grow(1000);
+    expect(lastScroll(thread.scrolledTo)).toEqual({ top: 1000, left: 0, behavior: 'auto' });
+    await thread.scrollTo(1000 - VIEW);
+    // The timeline opening over 200ms: each frame's height is followed at once, before it is drawn.
+    for (let height = 1020; height <= 1240; height += 20) {
+      thread.scrolledTo.mockClear();
+      thread.grow(height);
+      expect(thread.scrolledTo).toHaveBeenCalledWith({ top: height, left: 0, behavior: 'auto' });
+    }
+    await thread.scrollTo(1240 - VIEW);
+    // And closing: the browser pulls the view back to the new end, which is no scroll up.
+    thread.grow(1100);
+    await thread.scrollTo(1100 - VIEW);
+    thread.scrolledTo.mockClear();
+    thread.grow(1200);
+    expect(thread.scrolledTo).toHaveBeenCalledWith({ top: 1200, left: 0, behavior: 'auto' });
+    await thread.scrollTo(1200 - VIEW);
+
+    // The person scrolls up: the reply grows below without moving the view, and Latest shows.
+    await thread.wheelTo(300);
+    thread.scrolledTo.mockClear();
+    thread.grow(1400);
+    thread.grow(1500);
+    expect(thread.scrolledTo).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: 'Latest' })).toBeTruthy();
+    // Back down near the end: followed again.
+    await thread.wheelTo(1500 - VIEW - 20);
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    thread.grow(1600);
+    expect(thread.scrolledTo).toHaveBeenCalledWith({ top: 1600, left: 0, behavior: 'auto' });
+
+    // Scrolled up again, a new prompt goes to the end.
+    await thread.wheelTo(200);
+    thread.scrolledTo.mockClear();
+    await send(api, 'And January?');
+    expect(thread.scrolledTo).toHaveBeenCalledWith(expect.objectContaining({ top: 1600 }));
+  });
+  // An independent browser review, 2026-11-18: in a new chat whose thread still fit, "Working for" pressed; the
+  // timeline's open animation made the thread overflow for the first time, a scroll event read mid-growth sat short of
+  // an end that had moved on (85 with the end at 146), and the rest of the reply streamed off screen behind Latest.
+  test('a thread that first overflows as the timeline opens stays pinned, though a scroll event lands mid-growth; only the person’s scroll unpins', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const log = screen.getByRole('log', { name: 'Conversation with TownwiseAI' });
+    const thread = laidOut(log);
+    await layout(screen.getByTestId('chat-dock'), 120);
+    // It fits: nothing scrolls.
+    thread.grow(420);
+    thread.grow(VIEW);
+    // "Working for" is pressed (a click, not a scroll), and its region opens over 200ms.
+    fireEvent.pointerDown(screen.getByTestId('chat-column'), { pointerType: 'mouse' });
+    fireEvent.pointerUp(screen.getByTestId('chat-column'), { pointerType: 'mouse' });
+    thread.grow(685);
+    expect(lastScroll(thread.scrolledTo)).toEqual({ top: 685, left: 0, behavior: 'auto' });
+    // The jump's scroll event, read a frame later with the content already taller: 61px short of the end.
+    thread.grow(746, false);
+    await thread.scrollTo(85);
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    // The rest of the animation and the reply are followed.
+    for (const height of [746, 800, 1000, 1500]) {
+      thread.scrolledTo.mockClear();
+      thread.grow(height);
+      expect(thread.scrolledTo).toHaveBeenCalledWith({ top: height, left: 0, behavior: 'auto' });
+      await thread.scrollTo(height - VIEW);
+    }
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    // A scroll key from inside the thread is the person's: it unpins.
+    fireEvent.keyDown(screen.getByTestId('chat-column'), { key: 'PageUp' });
+    await thread.scrollTo(400);
+    thread.scrolledTo.mockClear();
+    thread.grow(1700);
+    expect(thread.scrolledTo).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: 'Latest' })).toBeTruthy();
+  });
+});
+
+describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on townwise ai so there is one because it just says loading townwise ai”)', () => {
+  test('it is a skeleton of the page: the header’s controls, the heading, line, composer and suggestions, centered as the landing is; the words are only its status line', async () => {
+    const api = fakeChatApi();
+    let answer: (() => void) | null = null;
+    // The chat's summary answers when the test says.
+    api.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(api.summary); }; });
+    renderAt('/locations/l1/agent', api);
+    const skeleton = await screen.findByTestId('skeleton-agent');
+    const status = within(skeleton).getByRole('status');
+    expect(status.textContent).toBe('Loading TownwiseAI…');
+    expect(screen.getAllByText('Loading TownwiseAI…')).toEqual([status]);
+    // The shapes are hidden from screen readers, and stand where the page's pieces will.
+    const shapes = within(skeleton).getByTestId('skeleton-shapes');
+    expect(shapes.getAttribute('aria-hidden')).toBe('true');
+    expect(within(shapes).getByTestId('skeleton-chat-header')).toBeTruthy();
+    expect(within(shapes).getByTestId('skeleton-agent-composer')).toBeTruthy();
+    expect(within(shapes).getAllByTestId('skeleton-agent-suggestions')).toHaveLength(1);
+    // Filling the chat's height, its column centered top to bottom and 760px wide, as the landing's.
+    expect(style(skeleton).flexGrow).toBe('1');
+    expect(style(shapes).flexGrow).toBe('1');
+    const column = within(shapes).getByTestId('skeleton-agent-landing');
+    expect([style(column).justifyContent, style(column).maxWidth, style(column).flexGrow]).toEqual(['center', '760px', '1']);
+    expect(screen.queryByRole('button', { name: 'History' })).toBeNull();
+
+    await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    expect(await screen.findByTestId('chat-landing')).toBeTruthy();
+    expect(screen.queryByTestId('skeleton-agent')).toBeNull();
+    const landing = screen.getByTestId('chat-landing-column');
+    expect([style(landing).justifyContent, style(landing).maxWidth, style(landing).flexGrow]).toEqual(['center', '760px', '1']);
+    expect(screen.getByRole('button', { name: 'History' })).toBeTruthy();
+  });
+
+  // An independent browser review, 2026-11-18: the landing replaced the skeleton 48px higher at 1280px and 64px at
+  // 390px (two lines and one row of chips standing for three lines and two rows), with a square box for the round
+  // composer. The skeleton now sets the landing's own words in the landing's own type, drawn as bars, so each row
+  // wraps as the landing's will at any width, and its composer and chips are the real ones' shapes.
+  /** What sets a box's height and corners, apart from what it holds. */
+  function shape(element: Element): string[] {
+    const own = style(element);
+    return [own.minHeight, own.paddingTop, own.paddingBottom, own.paddingLeft, own.paddingRight, own.borderTopWidth, own.borderTopLeftRadius, own.borderBottomRightRadius, own.flexDirection, own.gap];
+  }
+
+  /** Each row's lines of words, as the size and line height of the text that sets them. */
+  function fonts(row: Element, nested: boolean): string[] {
+    return [row, ...Array.from(row.querySelectorAll('*'))]
+      .filter((node) => node.children.length === 0 && node.textContent !== '')
+      .map((node) => (nested ? node.parentElement ?? node : node))
+      .map((node) => `${style(node).fontSize}/${style(node).lineHeight}`);
+  }
+
+  test.each([1280, 390])('at %ipx the landing replaces the skeleton row for row: the same words in the same type, the composer’s round box, the same chips', async (width) => {
+    setWidth(width);
+    const api = fakeChatApi();
+    let answer: (() => void) | null = null;
+    api.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(api.summary); }; });
+    renderAt('/locations/l1/agent', api);
+    const column = within(await screen.findByTestId('skeleton-agent')).getByTestId('skeleton-agent-landing');
+    // Its words are there only to take the landing's lines: hidden from screen readers, never drawn as text.
+    expect(screen.queryByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBeNull();
+    const heading = within(column).getByText('Ask TownwiseAI about Main Street Bar');
+    expect(style(heading).color).toBe('rgba(0, 0, 0, 0)');
+    expect(style(heading).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
+    // The words sit in a span inside the row's own text, which sets their type.
+    const rows = Array.from(column.children).map((row) => ({ text: row.textContent, fonts: fonts(row, true), shape: shape(row) }));
+    const composer = within(column).getByTestId('skeleton-agent-composer');
+    const box = first(Array.from(first(Array.from(composer.children)).children));
+    const chips = within(column).getByTestId('skeleton-agent-suggestions');
+
+    await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    const landing = await screen.findByTestId('chat-landing-column');
+    // Row for row: the heading, the line, the composer with its help line, the chips. TownwiseAI's questions, under
+    // them, load with the side panel, on their own.
+    const real = Array.from(landing.children);
+    expect(real.at(-1)).toBe(screen.getByTestId('chat-landing-questions'));
+    const stood = real.slice(0, -1);
+    expect(stood.map((row) => row.textContent)).toEqual(rows.map((row) => row.text));
+    expect(stood.map((row) => fonts(row, false))).toEqual(rows.map((row) => row.fonts));
+    expect(stood.map(shape)).toEqual(rows.map((row) => row.shape));
+    // The composer: the same box (56 high, radius 28) under the same padding, its help line the same.
+    const input = screen.getByLabelText(COMPOSER_LABEL);
+    const realBox = input.closest('[data-testid="chat-landing-column"] > * > * > *');
+    expect(realBox).not.toBeNull();
+    if (realBox === null) return;
+    expect(shape(box)).toEqual(shape(realBox));
+    expect(shape(first(Array.from(composer.children)))).toEqual(shape(realBox.parentElement ?? realBox));
+    expect([style(box).minHeight, style(box).borderTopLeftRadius]).toEqual(['56px', '28px']);
+    // The chips: the same labels in the same pill, in one row on phones and wrapping from 641px.
+    const group = within(landing).getByRole('group', { name: 'Suggestions' });
+    const buttons = within(group).getAllByRole('button');
+    const shapes = within(chips).getAllByTestId('skeleton-chip');
+    expect(shapes.map((chip) => chip.textContent)).toEqual(buttons.map((chip) => chip.textContent));
+    for (const [index, chip] of buttons.entries()) {
+      const chipShape = shapes[index];
+      if (chipShape === undefined) throw new Error('no chip');
+      expect(shape(chipShape)).toEqual(shape(chip));
+    }
+  });
+});
+
 test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);
@@ -463,6 +698,57 @@ test('deleting the open conversation shows the landing and gives focus to Histor
   fireEvent.click(within(await screen.findByRole('dialog', { name: 'Delete this conversation?' })).getByRole('button', { name: 'Delete' }));
   expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
   await waitFor(() => { expect(document.activeElement).toBe(history); });
+});
+
+test('a send while the person’s reply runs in another chat keeps the text and names that chat in a status line, with a link that opens it', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  const input = await screen.findByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL);
+  api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+  api.refuse = chatRefusal(409, 'chat_turn_in_progress');
+  fireEvent.change(input, { target: { value: 'Hello' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+  const line = await screen.findByText('TownwiseAI is still replying in “Earlier chat”.');
+  expect(line.getAttribute('role')).toBe('status');
+  // Standing state, not an error: no alert.
+  expect(screen.queryByRole('alert')).toBeNull();
+  expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('Hello');
+  api.refuse = null;
+  fireEvent.click(within(screen.getByTestId('chat-running-elsewhere')).getByRole('button', { name: 'Open that chat' }));
+  await screen.findByText('We close for the holidays.');
+  expect(screen.queryByText('TownwiseAI is still replying in “Earlier chat”.')).toBeNull();
+});
+
+test('History marks a conversation TownwiseAI is replying in, and the mark goes by itself once the list read 3 seconds later shows the turn ended', async () => {
+  const api = fakeChatApi();
+  api.summary = { ...SUMMARY, conversations: SUMMARY.conversations.map((item) => ({ ...item, running: true })) };
+  renderAt('/locations/l1/agent', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+  expect(await screen.findByRole('button', { name: 'Earlier chat, Replying, Nov 2, 2026' })).toBeTruthy();
+  const loads = api.summaryLoads;
+  api.summary = SUMMARY;
+  await waitFor(() => { expect(screen.queryByText('Replying')).toBeNull(); }, { timeout: 4500 });
+  expect(api.summaryLoads).toBe(loads + 1);
+  expect(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' })).toBeTruthy();
+}, 10_000);
+
+test('leaving the page on a conversation and coming back opens it again, keeping only its id and a time in this browser', async () => {
+  const api = fakeChatApi();
+  renderAt('/locations/l1/agent', api);
+  await openEarlierChat();
+  cleanup();
+  const kept = Object.keys(localStorage).filter((key) => key.startsWith('townwise.chatReturn.'));
+  expect(kept).toHaveLength(1);
+  expect(Object.keys(JSON.parse(localStorage.getItem(kept[0] ?? '') ?? '{}') as object).sort()).toEqual(['conversationId', 'leftAt']);
+  renderAt('/locations/l1/agent', api);
+  expect(await screen.findByText('We close for the holidays.')).toBeTruthy();
+  // New chat forgets it: back again, the landing.
+  fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+  expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
+  cleanup();
+  expect(Object.keys(localStorage).filter((key) => key.startsWith('townwise.chatReturn.'))).toEqual([]);
+  renderAt('/locations/l1/agent', api);
+  expect(await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' })).toBeTruthy();
 });
 
 describe('on phones, where the header stays put as the landing and the thread replace each other, so focus goes where it does on wider screens', () => {
@@ -1430,6 +1716,26 @@ describe('a reply that outlives its connection', () => {
     expect(api.writes).toEqual([{ method: 'POST', path: `${TAIL}/stop`, body: {} }]);
     expect(screen.getByText('January was quiet')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  test('a refresh mid-reply goes from the page’s skeleton straight to the thread, never through the landing', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE;
+    let answer: (() => void) | null = null;
+    api.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(api.summary); }; });
+    let landed = false;
+    const watch = new MutationObserver(() => { landed ||= document.querySelector('[data-testid="chat-landing"]') !== null; });
+    watch.observe(document.body, { childList: true, subtree: true });
+    renderAt('/locations/l1/agent', api);
+    expect(await screen.findByTestId('skeleton-agent')).toBeTruthy();
+    await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    expect(await screen.findByText('And January?')).toBeTruthy();
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    watch.disconnect();
+    expect(landed).toBe(false);
+    expect(screen.queryByTestId('skeleton-agent')).toBeNull();
+    expect(screen.getByRole('log', { name: 'Conversation with TownwiseAI' })).toBeTruthy();
   });
 
   test('a dropped network keeps the reply streaming; back online, or the tab back in view, it is read again at once, with no text twice', async () => {

@@ -108,7 +108,10 @@ function sourceLinks(raw: readonly unknown[]): SourceLink[] {
 }
 
 const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
-const conversationSummarySchema = z.object({ id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number() });
+/** `running` (spec P25 build note, 2026-11-18): TownwiseAI is still replying in it; false from an API before it. */
+const conversationSummarySchema = z.object({
+  id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number(), running: z.boolean().catch(false).default(false),
+});
 /** resumable-chat-turns: the caller's running turn at the location, which the page opens on load; null for none. */
 const runningTurnSchema = z.object({ conversationId: z.string(), turnId: z.string() });
 const chatSummarySchema = z.object({

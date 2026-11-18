@@ -51,7 +51,8 @@ export type TurnEvent =
   | { type: 'thinking'; data: { delta: string } }
   /**
    * The text streamed since the last tool call was written ahead of work (isAside), not as the answer: the client files
-   * it with the reply's thinking. Sent once the message is whole, before its tools' events.
+   * it with the reply's thinking. Sent once the message is whole, before its tools' events; and (D37) when a web search
+   * starts after text in the same message, before the search's card (isSearch), since a search is work too.
    */
   | { type: 'aside'; data: Record<string, never> }
   | {
@@ -239,6 +240,11 @@ function searchEvent(block: BetaRawContentBlockStartEvent['content_block']): Tur
   return { type: 'tool', data: { id: block.tool_use_id, name: WEB_SEARCH, input: null, ...searchCard(block.content) } };
 }
 
+/** A web search starting (its server_tool_use block), not its result. */
+function isSearchStart(block: BetaRawContentBlockStartEvent['content_block']): boolean {
+  return block.type === 'server_tool_use' && block.name === WEB_SEARCH;
+}
+
 /**
  * Answers for tool calls that will not run (a reply cut off at max_tokens), so the stored history stays a valid
  * request: the API rejects a tool_use with no tool_result after it.
@@ -304,8 +310,8 @@ export function isAside(content: readonly { type: string; name?: string; id?: st
  * Whether the turn wrote an answer: text that no lookup followed. Text that one did is working notes, shown in the
  * reply's "Worked for" timeline, not as the answer ("Let me check your May sales."). In the order the turn streamed: a
  * web search (D37) follows the text before its block in the same message, and a message's tool calls run after all of
- * its text. For tool calls the stream's `aside` and the saved view (view.ts) mark working notes by the same rule (isAside,
- * isWork); text before a web search is not marked, and stays in the reply.
+ * its text. The stream's `aside` and the saved view (view.ts) mark the same working notes: for tool calls by isAside and
+ * isWork, and the text before a message's last web search block.
  */
 function wroteText(turn: readonly BetaMessageParam[]): boolean {
   const results = new Map(turn.flatMap((param) => (param.role === 'user' && typeof param.content !== 'string'
@@ -459,12 +465,21 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       let message: BetaMessage;
       try {
         const stream = input.model.stream(requestParams(requestMessages(), input.webSearch === true), { signal: input.signal });
+        // Text this message streamed since its last search card: working notes once a search follows it (wroteText's
+        // rule), so the client files it with the thinking, as the saved view replays it (view.ts, before a message's
+        // last search). Only this message's: the view reads a message at a time.
+        let textAhead = false;
         for await (const event of stream) {
           usage.observe(event);
           if (event.type === 'content_block_start') {
             const card = searchEvent(event.content_block);
-            if (card !== null) input.emit(card);
+            if (card !== null && textAhead && isSearchStart(event.content_block)) input.emit({ type: 'aside', data: {} });
+            if (card !== null) {
+              textAhead = false;
+              input.emit(card);
+            }
           } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+            if (event.delta.text.trim() !== '') textAhead = true;
             input.emit({ type: 'text', data: { delta: event.delta.text } });
           } else if (event.type === 'content_block_delta' && event.delta.type === 'thinking_delta') {
             input.emit({ type: 'thinking', data: { delta: event.delta.thinking } });

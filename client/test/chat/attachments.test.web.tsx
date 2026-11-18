@@ -7,7 +7,7 @@ import { resetDrafts } from '../../src/chat/drafts';
 import type { DataItem } from '../../src/portal/data/api';
 import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
-import { CONVERSATION, fakeChatApi, type FakeChatApi } from '../helpers/chat';
+import { CONVERSATION, fakeChatApi, type FakeChatApi, forgetLastChats } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
 import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal';
 import { itemOf } from '../portal/data/fakes';
@@ -38,7 +38,10 @@ const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0
 
 afterEach(() => {
   cleanup();
+  // The conversation the page closed on (src/chat/lastChat.ts) is kept in localStorage: each test opens a new page.
+  localStorage.clear();
   resetDrafts();
+  forgetLastChats();
 });
 
 function renderAt(path: string, api: FakeChatApi, me: MeResponse = meOf(ACCESS.member)): void {

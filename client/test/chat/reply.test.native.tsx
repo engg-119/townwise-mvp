@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { AccessibilityInfo, Animated, Linking } from 'react-native';
+import { AccessibilityInfo, Animated, Linking, StyleSheet } from 'react-native';
 
 import type { ToolStep } from '../../src/chat/tools';
 import type { TreeNode } from '../../src/chat/tree';
@@ -9,6 +9,7 @@ import { UserMessage } from '../../src/chat/ui/UserMessage';
 import { workedOpenStore } from '../../src/chat/ui/workedOpen';
 import { visualTitle } from '../../src/chat/visuals/words';
 import { PROPOSAL, PROPOSAL_ID, SALES_STEP } from '../helpers/chat';
+import { ACCESS, meOf } from '../helpers/portal';
 import { daily } from './visuals-fixtures';
 
 // B6 on native: no clipboard module (the plan's Copy action is web only), so a reply keeps its text selectable for
@@ -21,7 +22,7 @@ function fakeChat(): TuningChat {
     openConversation: jest.fn(), deleteConversation: jest.fn(() => Promise.resolve()), rename: jest.fn(() => Promise.resolve()),
     save: jest.fn(), saveEdited: jest.fn(() => Promise.resolve()), edit: jest.fn(), cancelEdit: jest.fn(), dismiss: jest.fn(),
     reopen: jest.fn(), editMessage: jest.fn(), regenerate: jest.fn(), showVersion: jest.fn(), rate: jest.fn(), retry: jest.fn(),
-    reload: jest.fn(),
+    reload: jest.fn(), watchList: jest.fn(),
     // D28's item card: never answered here.
     loadItem: jest.fn(() => new Promise<never>(() => undefined)), keepItem: jest.fn(() => new Promise<never>(() => undefined)),
     setItemAside: jest.fn(() => new Promise<never>(() => undefined)),
@@ -77,6 +78,47 @@ it('hides Copy on native and keeps the reply text selectable', async () => {
   expect(selectableText('How was December?')).toBe(true);
   expect(screen.getByText('You said')).toBeTruthy();
   expect(screen.getByText('TownwiseAI said')).toBeTruthy();
+});
+
+it('an unsaved message keeps a 44px row hidden from screen readers, with no Edit until it is saved', async () => {
+  const chat = fakeChat();
+  const message = { ...msg('m1', 'user', 'How was December?', 'u1', null), nodeId: null, at: Date.now() };
+  const props = { tree: TREE, chat, locationId: 'l1', readOnlyId: null, busy: false, actions: 'hover' as const, onAnnounce: jest.fn() };
+  await render(<UserMessage message={message} {...props} />);
+  // Hidden from screen readers, so the query has to ask for hidden elements.
+  expect(screen.queryByTestId('user-actions')).toBeNull();
+  const pending = screen.getByTestId('user-actions', { includeHiddenElements: true });
+  expect(pending.props['aria-hidden']).toBe(true);
+  expect(StyleSheet.flatten(pending.props.style)).toMatchObject({ height: 44 });
+  expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  await screen.rerender(<UserMessage message={{ ...message, nodeId: 'u1' }} {...props} />);
+  expect(screen.getByTestId('user-actions').props['aria-hidden']).toBeUndefined();
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
+});
+
+it('links a day read to the Calendar and a sales read to Your data on native, only for a person who may open them', async () => {
+  const chat = fakeChat();
+  const day: ToolStep = {
+    id: 'd1', name: 'get_day', state: 'done', input: { date: '2026-05-30' },
+    result: { date: '2026-05-30', hasSales: true, closed: false, noteCount: 0, eventCount: 0, sources: [] },
+  };
+  const sales: ToolStep = { ...SALES_STEP, state: 'done', input: { ...SALES_STEP.input }, result: { ...SALES_STEP.result } };
+  const message: ChatMessage = {
+    ...msg('m2', 'assistant', 'May was busy.', 'a1', 'u1'),
+    parts: [{ type: 'tools', key: 'k', steps: [day, sales] }, { type: 'text', key: 't', text: 'May was busy.' }],
+  };
+  const props = {
+    message, ctx: { town: 'Hanover', hasTownProfile: true }, tree: TREE, newest: true, actions: 'hover' as const, chat, locationId: 'l1',
+    readOnlyId: null, canAct: true, onRetry: jest.fn(), onAnnounce: jest.fn(), workedOpen: workedOpenStore(),
+  };
+  await render(<ReplyView {...props} me={meOf(ACCESS.member)} />);
+  await fireEvent.press(screen.getByRole('button', { name: /^Worked/ }));
+  expect(screen.getByRole('link', { name: 'Open Sat, May 30, 2026 in Calendar' })).toBeTruthy();
+  // An older result that doesn't name its upload opens Your data's list.
+  expect(screen.getByRole('link', { name: 'Open Your data' })).toBeTruthy();
+  expect(screen.getByRole('link', { name: 'what Townwise has for Sat, May 30, 2026' })).toBeTruthy();
+  await screen.rerender(<ReplyView {...props} me={meOf(ACCESS.pending)} />);
+  expect(screen.queryAllByRole('link')).toHaveLength(0);
 });
 
 it('shows every row on native, whatever the message’s place', async () => {

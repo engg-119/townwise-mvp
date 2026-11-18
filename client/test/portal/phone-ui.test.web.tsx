@@ -443,8 +443,11 @@ test('a Modal (a popover, ConfirmDialog) renders outside #tw-portal, in aria-mod
   const css = [...document.querySelectorAll('style')].map((element) => element.textContent).find((text) => text.includes('#tw-portal')) ?? '';
   const rules = (scope: string): string[] => css.split('\n').filter((rule) => rule.startsWith(`${scope} `)).map((rule) => rule.slice(scope.length));
   const ring = `:focus-visible{outline:2px solid ${theme.color.focusRing};outline-offset:2px}`;
-  // The same three focus rules, the ring, no ring without focus-visible, and the opt-out of a box that draws its own.
+  // The same four focus rules, the ring, no ring without focus-visible, the opt-out of a box that draws its own, and
+  // the ring kept to a padded link's words.
   const portal = rules('#tw-portal').filter((rule) => rule.includes('outline'));
-  expect(portal).toEqual([` ${ring}`, ' :focus:not(:focus-visible){outline:none}', ' [data-ring="box"]:focus-visible{outline:none}']);
+  expect(portal).toEqual([
+    ` ${ring}`, ' :focus:not(:focus-visible){outline:none}', ' [data-ring="box"]:focus-visible{outline:none}', ' [data-ring="text"]:focus-visible{outline-offset:-11px;padding-left:13px;padding-right:13px;margin-left:-13px;margin-right:-13px;-webkit-box-decoration-break:clone;box-decoration-break:clone}',
+  ]);
   expect(rules('[aria-modal="true"]')).toEqual(portal);
 });

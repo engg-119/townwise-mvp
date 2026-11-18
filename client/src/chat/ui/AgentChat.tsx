@@ -6,13 +6,15 @@ import {
 
 import { useReducedMotion } from '../../motion';
 import { localToday } from '../../portal/locations/dates';
+import { useOptionalPortal } from '../../portal/PortalProvider';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
-import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../portal/ui/feedback';
-import { Skeleton, SkeletonText } from '../../portal/skeleton/kit';
+import { ErrorNotice, Messages, ReadOnlyLine } from '../../portal/ui/feedback';
+import { Skeleton, SkeletonButton, SkeletonText, SkeletonWords } from '../../portal/skeleton/kit';
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
+import { watchScrollIntent, type ScrollIntent } from '../scrollIntent';
 import { INITIAL_PIN, nextPin, type PinEvent, type PinState } from '../scrollPin';
 import { nextFallback, suggestionsFor } from '../suggestions';
 import { readsLine, toolLine, type ToolContext } from '../tools';
@@ -21,14 +23,14 @@ import type { MessageAttachment } from '../api';
 import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat, type TuningChatState } from '../useTuningChat';
 import { budgetLines } from './AgentSidePanel';
 import { ChatDrop } from './ChatDrop';
-import { ChatHeader, PanelButton } from './ChatHeader';
-import { Composer, type ComposerHandle } from './Composer';
+import { ChatHeader, ChatHeaderSkeleton, PanelButton } from './ChatHeader';
+import { Composer, ComposerSkeleton, type ComposerHandle } from './Composer';
 import { useComposerFiles } from './ComposerFiles';
 import { focusLost } from './controls';
 import { NextChips } from './NextChips';
 import { QuestionCard, questionChatOf } from './QuestionCard';
 import { ReplyView } from './ReplyView';
-import { Suggestions } from './Suggestions';
+import { Suggestions, SuggestionsSkeleton } from './Suggestions';
 import { FadeIn } from './ToolGroup';
 import { UserMessage } from './UserMessage';
 import { workedOpenStore } from './workedOpen';
@@ -105,9 +107,76 @@ export const DROP_BLOCKED = {
   budget: 'This month’s TownwiseAI budget is used up, so files can’t be attached.',
 } as const;
 
+/** The notice over the composer while a send waits on the person's turn running in another chat. */
+export function stillReplying(title: string): string {
+  return `TownwiseAI is still replying in “${title}”.`;
+}
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** The docked composer's last rotating example, once there are sales to tell about. */
 const SATURDAY = 'Tell me about last Saturday';
+
+/**
+ * The landing's words (spec P25), known from the location before the chat loads: the landing and its skeleton both
+ * set them, so the skeleton takes the lines the landing will.
+ */
+function landingWords(ctx: AgentChatContext): { heading: string; line: string; help: string; link: boolean } {
+  return {
+    heading: `Ask TownwiseAI about ${ctx.locationName}`,
+    line: ctx.hasSales
+      ? `It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`
+      : ctx.uploadsOff === true
+        ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
+        : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`,
+    help: `Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`,
+    // Without sales, Open Your data or (on web) Upload sales under the line.
+    link: !ctx.hasSales && (ctx.uploadsOff === true || Platform.OS === 'web'),
+  };
+}
+
+/** The landing's quick-start chips, from the location and today. */
+function landingSuggestions(ctx: AgentChatContext, today: string): ReturnType<typeof suggestionsFor> {
+  return suggestionsFor({ coverage: ctx.coverage, today, townName: ctx.town, hasTownProfile: ctx.hasTownProfile });
+}
+
+/**
+ * The page while TownwiseAI loads (spec P25, owner, 2026-11-18: "fix the skeleton loader on townwise ai so there is one
+ * because it just says loading townwise ai"): the header's controls, then the landing's heading, line, composer and
+ * chips, in the header's and the landing's own rows and column, centered top to bottom as the landing is. The landing's
+ * own words (`landingWords`, the chips' labels) are set in its own type and drawn as bars, and the composer and chips are
+ * their own shapes, so each row takes the lines the landing's will at any width and the landing replaces it without
+ * moving (an independent browser review saw it move 48px at 1280px and 64px at 390px when the skeleton guessed its
+ * lines). "Loading TownwiseAI…" stays its one status line for screen readers. TownwiseAI's questions under the chips
+ * load with the side panel, on their own. A turn still running opens its conversation as the page loads
+ * (useTuningChat), so a refresh mid-reply goes from this to the thread, never through the landing. Nothing here
+ * scrolls, so the thread's pin starts fresh when the thread mounts.
+ */
+function PageSkeleton(props: { ctx: AgentChatContext }): React.JSX.Element {
+  const words = landingWords(props.ctx);
+  const line = <Text style={styles.body}><SkeletonWords>{words.line}</SkeletonWords></Text>;
+  return (
+    <Skeleton name="agent" label="Loading TownwiseAI…" fill>
+      <View style={styles.fill}>
+        <ChatHeaderSkeleton />
+        <View style={[styles.fill, styles.landingScroll]}>
+          <View testID="skeleton-agent-landing" style={styles.landing}>
+            <Heading><SkeletonWords>{words.heading}</SkeletonWords></Heading>
+            {props.ctx.hasSales ? line : (
+              <View style={styles.noSales}>
+                {line}
+                {words.link ? <SkeletonButton link width={120} /> : null}
+              </View>
+            )}
+            <View testID="skeleton-agent-composer">
+              <ComposerSkeleton help={words.help} />
+            </View>
+            <SuggestionsSkeleton items={landingSuggestions(props.ctx, localToday())} />
+          </View>
+        </View>
+      </View>
+    </Skeleton>
+  );
+}
 
 /** An empty conversation, drawn as the landing: what to ask, the composer, the chips and TownwiseAI's questions. */
 function isLanding(state: TuningChatState): boolean {
@@ -146,6 +215,10 @@ export function AgentChat(props: {
   // The pin lives in a ref (every scroll event moves it); only whether Latest shows is drawn.
   const pin = useRef<PinState>(INITIAL_PIN);
   const [behind, setBehind] = useState(false);
+  // Whether the person is scrolling the thread, which alone can unpin it (scrollPin.ts): on web the input heard on
+  // its scrolling element (scrollIntent.ts); on native a drag, and the momentum it leaves.
+  const intent = useRef<ScrollIntent | null>(null);
+  const touching = useRef({ drag: false, momentum: false });
   // The docked composer's measured height (with the lines above it): the room the thread keeps at its end.
   const [dock, setDock] = useState(0);
   const dockWas = useRef(0);
@@ -158,6 +231,8 @@ export function AgentChat(props: {
   const saidCount = useRef(0);
   // Which replies' timelines the person opened (workedOpen.ts): the page's, so a reply drawn again keeps its own.
   const [workedOpen] = useState(workedOpenStore);
+  // Who is reading, for a reply's links to the team's own data (ReplyView); none outside the portal.
+  const me = useOptionalPortal()?.me ?? null;
   // A send from the landing, and what sent it: the composer moves under the thread, and focus follows it.
   const docking = useRef<'composer' | 'other' | null>(null);
   // What docked the composer, until another conversation shows: if the first turn is taken back (refused, or the
@@ -200,6 +275,36 @@ export function AgentChat(props: {
     dockWas.current = dock;
   }, [dock]);
 
+  // The thread's content height, for the pin. On native, onContentSizeChange (below). On web, a ResizeObserver on the
+  // content, whose callback runs after layout and before paint, so a pinned thread is at its end in the frame that grew
+  // it: every frame of the timeline's 200ms open and close, a chart drawn, a reattached turn's first layout. (The
+  // ScrollView's onContentSizeChange measures in a timeout on web, a frame late: each growing frame was drawn short of
+  // the end, then moved.) `heard` is the latest render's, read when the observer fires. The person's scrolling is heard
+  // on the same element.
+  const thread = state.status === 'ready' && state.enabled && !landing;
+  const heard = useRef<(height: number) => void>(() => undefined);
+  useLayoutEffect(() => {
+    heard.current = (height) => {
+      measureBar();
+      apply({ type: 'contentGrew', contentHeight: height - dockWas.current });
+    };
+  });
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web' || !thread) return undefined;
+    const node = scroll.current?.getScrollableNode() as unknown as HTMLElement | null | undefined;
+    if (node == null) return undefined;
+    const watching = watchScrollIntent(node);
+    intent.current = watching;
+    const content = node.firstElementChild as HTMLElement | null;
+    const observer = content === null || typeof ResizeObserver !== 'function' ? null : new ResizeObserver(() => { heard.current(content.offsetHeight); });
+    if (content !== null) observer?.observe(content);
+    return () => {
+      observer?.disconnect();
+      watching.stop();
+      intent.current = null;
+    };
+  }, [thread]);
+
   function measureBar(): void {
     if (Platform.OS !== 'web') return;
     const node = scroll.current?.getScrollableNode() as unknown as HTMLElement | null | undefined;
@@ -239,8 +344,8 @@ export function AgentChat(props: {
 
   /** The person opens conversation `to` (null: a new one): the composer's files stay with the one shown, as its draft does. */
   function opened(run: () => void, to: string | null): void {
-    // Opening and New chat do nothing while a reply streams (useTuningChat), so the files stay too.
-    if (!state.streaming) files.switchTo(state.conversationId, to);
+    // Opening the conversation whose reply streams changes nothing (useTuningChat), so its files stay too.
+    if (!(state.streaming && to === state.conversationId)) files.switchTo(state.conversationId, to);
     docking.current = null;
     docked.current = null;
     switched.current = true;
@@ -315,7 +420,7 @@ export function AgentChat(props: {
   );
 
   // Every state of the page catches a drop of files, so the browser never opens one in its place.
-  if (state.status === 'loading') return <View style={styles.fill}><LoadingLine text="Loading TownwiseAI…" />{drop}</View>;
+  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton ctx={ctx} />{drop}</View>;
   if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
   if (state.status === 'failed') {
     return (
@@ -338,7 +443,8 @@ export function AgentChat(props: {
   }
 
   const today = localToday();
-  const suggestions = suggestionsFor({ coverage: ctx.coverage, today, townName: ctx.town, hasTownProfile: ctx.hasTownProfile });
+  const suggestions = landingSuggestions(ctx, today);
+  const words = landingWords(ctx);
   const examples = [...suggestions.flatMap((item) => (item.kind === 'ask' ? [item.text] : [])), ...(ctx.hasSales ? [SATURDAY] : [])];
   const exhausted = state.budget?.exhausted === true;
   const warning = state.budget === null ? null : budgetLines(state.budget).warning;
@@ -364,9 +470,11 @@ export function AgentChat(props: {
     });
   }
 
+  // The conversation whose reply streams here is replying, whatever the list last read said.
+  const listed = state.conversations.map((item) => (state.streaming && item.id === state.conversationId && !item.running ? { ...item, running: true } : item));
   const header = (
     <ChatHeader
-      conversations={state.conversations}
+      conversations={listed}
       openId={state.conversationId}
       streaming={state.streaming}
       readOnlyId={props.readOnlyId}
@@ -386,14 +494,24 @@ export function AgentChat(props: {
       }}
       onRename={chat.rename}
       onTogglePanel={props.onTogglePanel}
+      onListOpen={chat.watchList}
       {...(props.panelButtonRef === undefined ? {} : { panelButtonRef: props.panelButtonRef })}
     />
   );
   
+  // A send refused because the person's one running turn is in another chat (useTuningChat): standing state, not an
+  // error (D55), with a link that opens that chat. The text stays in the composer for when that turn ends.
+  const elsewhere = state.runningElsewhere === null ? null : state.conversations.find((item) => item.id === state.runningElsewhere) ?? null;
   // What sits right above the composer, wherever it is.
   const notices = (
     <>
       {warning === null ? null : <Text style={styles.warning}>{warning}</Text>}
+      {elsewhere === null ? null : (
+        <View testID="chat-running-elsewhere" style={styles.error}>
+          <Messages live="status" items={[stillReplying(elsewhere.title)]} />
+          <Button variant="link" label="Open that chat" onPress={() => { opened(() => { chat.openConversation(elsewhere.id); }, elsewhere.id); }} />
+        </View>
+      )}
       {files.alerts.map((line) => <ErrorNotice key={line.key} message={line.text} />)}
       {state.error === null ? null : (
         <View style={styles.error}>
@@ -406,7 +524,7 @@ export function AgentChat(props: {
       {readOnlyLine}
     </>
   );
-  const noticed = warning !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
+  const noticed = warning !== null || elsewhere !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
 
   function composerAt(placement: 'landing' | 'dock'): React.JSX.Element {
     if (exhausted) {
@@ -428,7 +546,7 @@ export function AgentChat(props: {
         onSend={() => { sendFromComposer(chat.send); }}
         onStop={chat.stop}
         onStopAndSend={() => { sendFromComposer(chat.stopAndSend); }}
-        help={`Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`}
+        help={words.help}
         // On the landing the chips under it already show what to ask; under view-as nothing fills the composer.
         examples={placement === 'dock' && props.readOnlyId === null ? examples : []}
         readOnlyId={props.readOnlyId}
@@ -449,18 +567,10 @@ export function AgentChat(props: {
   const body = landing ? (
     <ScrollView testID="chat-landing" style={styles.fill} contentContainerStyle={styles.landingScroll} keyboardShouldPersistTaps="handled">
       <View testID="chat-landing-column" style={styles.landing}>
-        <Heading>{`Ask TownwiseAI about ${ctx.locationName}`}</Heading>
-        {ctx.hasSales ? (
-          <Text style={styles.body}>
-            {`It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`}
-          </Text>
-        ) : (
+        <Heading>{words.heading}</Heading>
+        {ctx.hasSales ? <Text style={styles.body}>{words.line}</Text> : (
           <View style={styles.noSales}>
-            <Text style={styles.body}>
-              {ctx.uploadsOff === true
-                ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
-                : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`}
-            </Text>
+            <Text style={styles.body}>{words.line}</Text>
             {ctx.uploadsOff === true
               ? <LinkButton href={locationHref(ctx.locationId, 'data')} label="Open Your data" />
               : Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
@@ -525,13 +635,22 @@ export function AgentChat(props: {
           if (pin.current.pinned && contentSize.height - layoutMeasurement.height - contentOffset.y <= 1) {
             pin.current = { ...pin.current, lastY: Math.min(pin.current.lastY, y) };
           }
-          apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height });
+          const person = Platform.OS === 'web' ? intent.current?.person() === true : touching.current.drag || touching.current.momentum;
+          apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height, person });
         }}
-        // The content's width changes whenever the scrollbar comes or goes, so the bar is measured here.
-        onContentSizeChange={(_width, height) => {
-          measureBar();
-          apply({ type: 'contentGrew', contentHeight: height - dock });
-        }}
+        // Native's own word for the person scrolling: a drag, then the momentum it leaves (react-native-web sends none).
+        onScrollBeginDrag={() => { touching.current.drag = true; }}
+        onScrollEndDrag={() => { touching.current.drag = false; }}
+        onMomentumScrollBegin={() => { touching.current.momentum = true; }}
+        onMomentumScrollEnd={() => { touching.current.momentum = false; }}
+        // Native's content height (web's is the ResizeObserver above). The content's width changes whenever the scrollbar
+        // comes or goes, so the bar is measured with it.
+        {...(Platform.OS === 'web' ? {} : {
+          onContentSizeChange: (_width: number, height: number) => {
+            measureBar();
+            apply({ type: 'contentGrew', contentHeight: height - dock });
+          },
+        })}
       >
         <View testID="chat-column" style={styles.column}>
           {state.conversationLoading ? (
@@ -572,6 +691,7 @@ export function AgentChat(props: {
                   onRetry={(key) => { send(() => { chat.retry(key); }); }}
                   onAnnounce={announce}
                   workedOpen={workedOpen}
+                  me={me}
                 />
                 {newest && message.state === 'complete' ? (
                   <NextChips

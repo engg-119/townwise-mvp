@@ -10,6 +10,8 @@ import {
   type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
+import { forgetChat, lastChatKey, recallChat, rememberChat, type LastChatStore } from './lastChat';
+import { lastChatStore, onPageLeave } from './lastChatStore';
 import { isHiddenTool, type SourceLink, type ToolStep } from './tools';
 import { siblingAt, withTurn, type TreeNode } from './tree';
 import type { Visual } from './visuals/schema';
@@ -40,6 +42,15 @@ import { onWake } from './wake';
 // a conversation with a live turn (on load after a refresh, or in a second tab) shows the person's message and follows
 // the reply from its first event, then reads the conversation again once it is saved. Stop asks the server to stop
 // the turn and waits for its `stopped`; closing the stream never stops it.
+//
+// New chat and History work while a reply streams (owner request, 2026-11-18): leaving the conversation only stops
+// following its turn, which runs on and is saved on the server (D45). A person has one running turn across chats and
+// locations, so a send elsewhere meanwhile answers 409 `chat_turn_in_progress`: the text stays in the composer, the
+// page names the chat still replying (`runningElsewhere`) with a link to it, and reads the list every 3 seconds until
+// that turn ends, when the notice goes and a send can go.
+//
+// Leaving the page on a conversation and coming back within 5 minutes opens it again (lastChat.ts), reattaching to a
+// turn still live in it; after that, or for a conversation the server no longer has, the page opens on a new chat.
 
 export type CardStatus = 'open' | 'editing' | 'saving' | 'saved' | 'dismissed';
 
@@ -167,6 +178,11 @@ export interface TuningChatState {
   error: string | null;
   draft: string;
   turn: LiveTurn | null;
+  /**
+   * A send was refused because the person's one running turn is in this conversation of the list (409
+   * `chat_turn_in_progress`): the page says so with a link to it, until the list shows that turn ended. Null otherwise.
+   */
+  runningElsewhere: string | null;
 }
 
 type CardPatch = Partial<Pick<ProposalCard, 'status' | 'error' | 'edited' | 'gone'>>;
@@ -176,6 +192,11 @@ export type ChatAction =
   | { type: 'loaded'; summary: ChatSummary }
   | { type: 'loadFailed'; notFound: boolean; error: string }
   | { type: 'summary'; summary: ChatSummary }
+  /**
+   * A send refused with 409 `chat_turn_in_progress`, and the list read after it (null when that read failed): the chat
+   * running names the notice, else `error` shows.
+   */
+  | { type: 'held'; summary: ChatSummary | null; error: string }
   | { type: 'draft'; text: string }
   /** `draft`: the one kept for where it leads. */
   | { type: 'new'; draft: string }
@@ -221,6 +242,8 @@ export const STOP_FAILED = 'Couldn’t stop the reply. Try again.';
 /** Why a question card's message (Something else…) can't go, once the month's budget is used up. */
 export const TELL_BUDGET = 'This month’s budget is used up, so TownwiseAI can’t answer in the chat.';
 const TELL_WAIT = 'Wait for TownwiseAI’s reply to finish, then try again.';
+/** A question card's message whose conversation the person left before its reply ended: its answer wasn't saved. */
+export const TELL_LEFT = 'You left the conversation before TownwiseAI replied, so your answer wasn’t saved. Try again.';
 
 /** The `done` stop reasons of a turn the server saved; any other (a refusal) saved nothing. */
 const SAVED_STOP_REASONS: readonly string[] = ['end_turn', 'max_tokens', 'tool_limit', 'budget'];
@@ -238,11 +261,25 @@ const CLAIM_RETRY_MS = 500;
 /** A dropped turn's stream is read again after these waits, then every last one, unless a wake comes first. */
 export const RESUME_MS: readonly number[] = [1000, 2000, 4000];
 
+/**
+ * While a send waits on a turn running in another chat, or History is open with a conversation replying, the list is
+ * read this often until that turn ends.
+ */
+export const LIST_POLL_MS = 3000;
+
+/** The conversation of the list holding the person's running turn at this location, else null. */
+export function runningIn(summary: ChatSummary): string | null {
+  const marked = summary.conversations.find((conversation) => conversation.running)?.id;
+  if (marked !== undefined) return marked;
+  const id = summary.liveTurn?.conversationId ?? null;
+  return id !== null && summary.conversations.some((conversation) => conversation.id === id) ? id : null;
+}
+
 export function initialChatState(): TuningChatState {
   return {
     status: 'loading', loadError: null, enabled: false, budget: null, conversations: [],
     conversationId: null, conversationLoading: false, messages: [], tree: [], leafId: null, streaming: false, switching: false,
-    error: null, draft: '', turn: null,
+    error: null, draft: '', turn: null, runningElsewhere: null,
   };
 }
 
@@ -468,19 +505,33 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       };
     case 'loadFailed':
       return { ...state, status: action.notFound ? 'not_found' : 'failed', loadError: action.error };
-    case 'summary':
-      return { ...state, enabled: action.summary.enabled, budget: action.summary.budget, conversations: action.summary.conversations };
+    case 'summary': {
+      // The notice stays only while the list still shows that conversation's turn running.
+      const still = state.runningElsewhere !== null && runningIn(action.summary) === state.runningElsewhere;
+      return {
+        ...state, enabled: action.summary.enabled, budget: action.summary.budget, conversations: action.summary.conversations,
+        runningElsewhere: still ? state.runningElsewhere : null,
+      };
+    }
+    case 'held': {
+      const id = action.summary === null ? null : runningIn(action.summary);
+      const listed = action.summary === null ? {} : {
+        enabled: action.summary.enabled, budget: action.summary.budget, conversations: action.summary.conversations,
+      };
+      return id === null ? { ...state, ...listed, error: action.error } : { ...state, ...listed, error: null, runningElsewhere: id };
+    }
     case 'draft':
       return { ...state, draft: action.text };
+    // Leaving a conversation whose reply streams only stops following it (useTuningChat letGo): the turn runs on.
     case 'new':
       return {
         ...state, conversationId: null, conversationLoading: false, messages: [], tree: [], leafId: null, switching: false, error: null,
-        draft: action.draft,
+        draft: action.draft, streaming: false, turn: null, runningElsewhere: null,
       };
     case 'open':
       return {
         ...state, conversationId: action.id, conversationLoading: true, messages: [], tree: [], leafId: null, switching: false, error: null,
-        draft: action.draft,
+        draft: action.draft, streaming: false, turn: null, runningElsewhere: null,
       };
     case 'opened':
       if (state.conversationId !== action.id) return state;
@@ -490,7 +541,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       return { ...state, conversationLoading: false, error: action.error };
     case 'send':
       return {
-        ...state, error: null, streaming: true,
+        ...state, error: null, streaming: true, runningElsewhere: null,
         draft: state.draft.trim() === action.content ? '' : state.draft,
         turn: { kind: 'send', nodes: null, earlier: null },
         messages: [...state.messages, ...turnPair(action, now)],
@@ -500,7 +551,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       const at = state.messages.findIndex((message) => message.key === action.messageKey);
       if (at < 0) return state;
       return {
-        ...state, error: null, streaming: true,
+        ...state, error: null, streaming: true, runningElsewhere: null,
         leafId: 'parentId' in action.request ? action.request.parentId ?? null : null,
         turn: { kind: 'edit', nodes: null, earlier: null },
         messages: [...state.messages.slice(0, at), ...turnPair(action, now)],
@@ -510,7 +561,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       const earlier = state.messages.at(-1);
       if (earlier?.key !== action.replyKey) return state;
       return {
-        ...state, error: null, streaming: true, leafId: earlier.parentId,
+        ...state, error: null, streaming: true, runningElsewhere: null, leafId: earlier.parentId,
         turn: { kind: 'regenerate', nodes: null, earlier: { message: earlier, leafId: state.leafId } },
         messages: [
           ...state.messages.slice(0, -1),
@@ -654,7 +705,7 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       return {
         ...state,
         conversationId: event.id,
-        conversations: known ? state.conversations : [{ id: event.id, title: event.title, updatedAt: at, turnCount: 0 }, ...state.conversations],
+        conversations: known ? state.conversations : [{ id: event.id, title: event.title, updatedAt: at, turnCount: 0, running: false }, ...state.conversations],
         turn: state.turn === null ? null : { ...state.turn, nodes: { user: event.userNodeId, reply: event.replyNodeId, parentId: event.parentId } },
       };
     }
@@ -770,6 +821,8 @@ export interface TuningChat {
   setItemAside: (card: ItemCard) => Promise<ItemProposal>;
   /** Reads the page again after it failed to load. */
   reload: () => void;
+  /** History opened or closed: while it is open with a conversation replying, the list is read every 3 seconds. */
+  watchList: (open: boolean) => void;
 }
 
 /** How a question card's message goes (TuningChat.tell). */
@@ -787,6 +840,10 @@ export interface TuningChatOptions {
   readOnly: boolean;
   /** Runs after each note a card saves, so the page can mark the location's notes count stale. */
   onNoteAdded?: () => void;
+  /** The view-as target's user id (spec 15.5), else null: the conversation the page closed on is kept per target. */
+  viewAsId?: string | null;
+  /** Where that is kept (lastChat.ts); the platform's own store by default. */
+  lastChat?: LastChatStore;
 }
 
 export function canSend(state: TuningChatState): boolean {
@@ -832,12 +889,14 @@ interface TurnHandle {
   stopping: boolean;
   /** Ends the wait before the stream is read again. */
   wake: (() => void) | null;
+  /** The person left its conversation (New chat, another one opened): the page stopped following it; it runs on. */
+  left: boolean;
 }
 
 function handleFor(conversationId: string | null): TurnHandle {
   return {
     controller: new AbortController(), connection: null, conversationId, turnId: null, cursor: 0, ended: false, saved: false, stopping: false,
-    wake: null,
+    wake: null, left: false,
   };
 }
 
@@ -915,6 +974,8 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 
 export function useTuningChat(api: ApiClient, locationId: string, options: TuningChatOptions): TuningChat {
   const { userId, readOnly, onNoteAdded } = options;
+  const store = options.lastChat ?? lastChatStore;
+  const returnKey = lastChatKey(userId, locationId, options.viewAsId ?? null);
   const [state, setState] = useState(() => ({ ...initialChatState(), draft: readDraft(draftKey(userId, locationId, null)) }));
   const [generation, setGeneration] = useState(0);
   // The state after the last action, ahead of the render that draws it: a send that follows a stop builds on it.
@@ -967,20 +1028,24 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     dispatch({ type: 'event', event: { type: pending.kind, delta }, key: nextKey(), at: '' });
   }
 
-  // The newest render's openConversation, for the load below: a turn still live here opens its conversation.
-  const reopen = useRef<(id: string) => void>(() => undefined);
+  // The newest render's openConversation, for the load below: the conversation the page closed on, or a turn still
+  // live here, opens.
+  const reopen = useRef<(id: string, recalled: boolean) => void>(() => undefined);
   useEffect(() => {
     reopen.current = openConversation;
   });
 
   useEffect(() => {
     let cancelled = false;
-    void loadChat(api, locationId).then(
-      (summary) => {
+    // The conversation the page closed on within 5 minutes, read beside the list (a store that fails is nothing kept).
+    void Promise.all([loadChat(api, locationId), recallChat(store, returnKey, Date.now()).catch(() => null)]).then(
+      ([summary, recalled]) => {
         if (cancelled) return;
         dispatch({ type: 'loaded', summary });
-        // A refresh mid-reply, or a second tab: the turn's conversation opens and its reply is followed.
-        if (summary.liveTurn !== null) reopen.current(summary.liveTurn.conversationId);
+        // Back within 5 minutes: that conversation, reattached if its turn is live. Else a refresh mid-reply, or a
+        // second tab: the turn's conversation opens and its reply is followed.
+        if (recalled !== null) reopen.current(recalled, true);
+        else if (summary.liveTurn !== null) reopen.current(summary.liveTurn.conversationId, false);
       },
       (error: unknown) => { if (!cancelled) dispatch({ type: 'loadFailed', notFound: isStatus(error, 404), error: describeError(error) }); },
     );
@@ -994,7 +1059,21 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       pending.timer = null;
       pending.text = '';
     };
-  }, [api, locationId, generation, dispatch]);
+  }, [api, locationId, generation, dispatch, store, returnKey]);
+
+  // The page closing (its unmount, or on web the tab closing or reloading) keeps the conversation it shows, or forgets
+  // the one kept when it shows a new chat; a page that never loaded changes nothing.
+  useEffect(() => {
+    const leave = (): void => {
+      const now = latest.current;
+      if (now.status === 'ready') void rememberChat(store, returnKey, now.conversationId, Date.now());
+    };
+    const stopListening = onPageLeave(leave);
+    return () => {
+      stopListening();
+      leave();
+    };
+  }, [store, returnKey]);
 
   // A wake reads a dropped stream again at once, and closes an open one to read it again from its cursor (it may be
   // dead after the app or tab was suspended). A turn without its id yet is left alone: it can't be read back.
@@ -1007,6 +1086,46 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
 
   function refresh(): void {
     void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
+  }
+
+  // The list is read every 3 seconds while a send waits on a turn running in another chat, or while History is open
+  // with a conversation replying, until the list shows none; nothing is read while nothing runs.
+  const [watching, setWatching] = useState(false);
+  const polling = state.runningElsewhere !== null || (watching && state.conversations.some((conversation) => conversation.running));
+  useEffect(() => {
+    if (!polling) return undefined;
+    const timer = setInterval(() => {
+      void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
+    }, LIST_POLL_MS);
+    return () => { clearInterval(timer); };
+  }, [api, locationId, dispatch, polling]);
+
+  /** A send refused because the person's running turn holds the claim: the list says which chat it is in. */
+  function held(error: string): void {
+    void loadChat(api, locationId).then(
+      (summary) => { dispatch({ type: 'held', summary, error }); },
+      () => { dispatch({ type: 'held', summary: null, error }); },
+    );
+  }
+
+  /**
+   * The person leaves the conversation whose turn the page follows (New chat, or another conversation opened): the
+   * page stops following it and draws nothing more of it; the turn runs on, and is saved, on the server (D45). A send
+   * waiting on it (Stop and send) is taken back.
+   */
+  function letGo(): void {
+    const handle = live.current;
+    if (handle === null) return;
+    handle.left = true;
+    live.current = null;
+    turnEnd.current = null;
+    waiting.current?.returned?.();
+    waiting.current = null;
+    handle.controller.abort();
+    const pending = buffer.current;
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    pending.timer = null;
+    pending.text = '';
   }
 
   /** The turn's stream; with `retries`, a 409 `chat_turn_in_progress` is tried again after a pause. */
@@ -1177,6 +1296,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     let found = false;
     // Why it saved nothing, in the words the chat shows for it.
     let failure: string | null = null;
+    // The server refused it because the person's one running turn holds the claim (409 chat_turn_in_progress): its words.
+    let claimHeld: string | null = null;
     const onEvent = listener(handle, (event) => {
       if (!started) {
         started = true;
@@ -1222,11 +1343,14 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     };
     turnEnd.current = follows().then(
       () => {
+        if (handle.left) return;
         flush();
         dispatch({ type: 'ended' });
         failure ??= CUT_OFF;
       },
       (error: unknown) => {
+        // The person left the conversation: nothing of the turn is drawn.
+        if (handle.left) return;
         flush();
         if (error instanceof ApiError && error.kind === 'aborted') {
           dispatch({ type: 'stopped' });
@@ -1238,7 +1362,9 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         // A card's words stay in the card, never in the composer.
         const content = telling === undefined && 'content' in request ? request.content : '';
         const draftBefore = latest.current.draft;
-        dispatch({ type: 'failed', error: exhausted ? null : sendErrorText(error, attached), content, exhausted });
+        // The person's running turn is in another chat: the list read next says which, in place of the error.
+        if (isClaimHeld(error)) claimHeld = sendErrorText(error, attached);
+        dispatch({ type: 'failed', error: exhausted || claimHeld !== null ? null : sendErrorText(error, attached), content, exhausted });
         // The turn was taken back (its message left the page) and its text went back to the composer, so its files go
         // back with it. Text typed meanwhile stays, and so do the composer's files as the person left them.
         const takenBack = action.type === 'send' && !latest.current.messages.some((message) => message.key === action.userKey);
@@ -1246,10 +1372,13 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       },
     ).finally(() => {
       if (live.current === handle) live.current = null;
-      if (request.conversationId === null && created !== null && !saved && !found) dispatch({ type: 'discard', id: created });
+      // A turn the person left runs on: its conversation stays in the list.
+      if (!handle.left && request.conversationId === null && created !== null && !saved && !found) dispatch({ type: 'discard', id: created });
       // The list, the budget and the off switch may all have changed with this turn.
-      refresh();
-      telling?.ended(saved ? null : failure ?? NOT_SAVED);
+      if (claimHeld === null) refresh();
+      else held(claimHeld);
+      // A card whose conversation the person left hears so: its answer waits for a reply the page no longer follows.
+      telling?.ended(saved ? null : handle.left ? TELL_LEFT : failure ?? NOT_SAVED);
     });
   }
 
@@ -1270,6 +1399,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     const onEvent = listener(handle, () => undefined);
     turnEnd.current = follow(handle, { conversationId: id, turnId: turn.turnId }, onEvent, false).then(() => reread(handle)).then(
       () => {
+        if (handle.left) return;
         flush();
         dispatch({ type: 'ended' });
       },
@@ -1308,8 +1438,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     run({ type: 'send', content, attachments: [...attachments], userKey, replyKey, request }, request, retries, telling, returned);
   }
 
-  function openConversation(id: string): void {
-    if (state.streaming) return;
+  /** `recalled`: the conversation the page closed on; one the server no longer has opens a new chat instead. */
+  function openConversation(id: string, recalled = false): void {
+    // The conversation whose reply the page follows is open already.
+    if (live.current !== null && latest.current.conversationId === id) return;
+    const leaving = live.current !== null;
+    letGo();
     opening.current += 1;
     const token = opening.current;
     dispatch({ type: 'open', id, draft: draftFor(id) });
@@ -1320,9 +1454,18 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         else dispatch({ type: 'opened', id, shown: shownOf(load, id) });
       },
       (error: unknown) => {
-        if (token === opening.current) dispatch({ type: 'openFailed', id, error: describeError(error) });
+        if (token !== opening.current) return;
+        if (recalled && isStatus(error, 404)) {
+          void forgetChat(store, returnKey);
+          opening.current += 1;
+          dispatch({ type: 'new', draft: draftFor(null) });
+          return;
+        }
+        dispatch({ type: 'openFailed', id, error: describeError(error) });
       },
     );
+    // The list shows the conversation left as it is now.
+    if (leaving) refresh();
   }
 
   function shownOf(load: ConversationLoad, conversationId: string): ShownPath {
@@ -1530,11 +1673,15 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     stop,
     stopAndSend,
     newConversation: () => {
-      if (state.streaming) return;
+      const leaving = live.current !== null;
+      // New chat forgets the conversation kept for coming back.
+      void forgetChat(store, returnKey);
+      letGo();
       opening.current += 1;
       dispatch({ type: 'new', draft: draftFor(null) });
+      if (leaving) refresh();
     },
-    openConversation,
+    openConversation: (id) => { openConversation(id); },
     deleteConversation: async (id) => {
       await removeConversation(api, locationId, id);
       if (latest.current.conversationId === id) opening.current += 1;
@@ -1589,5 +1736,6 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     loadItem,
     keepItem,
     setItemAside,
+    watchList: setWatching,
   };
 }
