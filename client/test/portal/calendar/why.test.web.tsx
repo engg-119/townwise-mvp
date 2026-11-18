@@ -36,7 +36,7 @@ function renderDay(reasons: ForecastReason[], fields: Partial<ForecastDay> = {})
     <CalendarDay
       view={dayView(DAY, input)}
       locationName="Main Street Bar"
-      rulesHref="/locations/l1/rules"
+      rulesHref="/locations/l1/rules" locationId="l1"
       notice={null}
       readOnlyId={null}
       readOnlyText=""

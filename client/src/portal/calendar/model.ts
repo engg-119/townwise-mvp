@@ -527,12 +527,18 @@ function inOrder(day: Pick<ForecastDay, 'reasons' | 'model'>, past: boolean): Si
   ];
 }
 
-function reasonLines(day: ForecastDay | null, past: boolean): ReasonLine[] {
+/**
+ * Why's lines. A note reason's label stays made in code, with its note's title after it as the person's own words
+ * (D30 as D49 amends it), joined by the reason's note id against `notes`.
+ */
+function reasonLines(day: ForecastDay | null, past: boolean, notes: readonly Note[]): ReasonLine[] {
   if (day === null) return [];
   return inOrder(day, past).map(({ reason, index, size }): ReasonLine => {
     const applied = appliedOf(reason);
     const effect = effectOf(reason, past);
-    const line = { key: `${String(index)}:${reason.kind}`, label: reason.label, sources: reason.sources, ...markOf(size, applied === null) };
+    const title = noteTitleOf(reason, notes);
+    const label = title === null ? reason.label : `${reason.label}: ${title}`;
+    const line = { key: `${String(index)}:${reason.kind}`, label, sources: reason.sources, ...markOf(size, applied === null) };
     if (applied !== null) return { ...line, detail: reasonOutcomeWords(applied.outcome, applied.guests, size ?? 0) };
     if (effect !== null) return { ...line, detail: effectWords(reason.kind, effect) };
     return { ...line, detail: !past && AGAINST.has(reason.kind) ? NO_HISTORY : null };
@@ -589,7 +595,7 @@ export function dayView(date: string, input: CalendarInput): CalendarDayView {
     date,
     heading: date === input.today ? `Today, ${short.replace(/, \d{4}$/, '')}` : short,
     forecast: forecastPart(date, input),
-    reasons: reasonLines(day, date < input.today),
+    reasons: reasonLines(day, date < input.today, input.notes),
     moreNotes: day?.moreNotes ?? 0,
     moreRules: day?.moreRules ?? 0,
     events,

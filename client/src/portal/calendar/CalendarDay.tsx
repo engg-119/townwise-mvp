@@ -8,10 +8,11 @@ import { eventLine } from '../analytics/week';
 import type { Note } from '../locations/api';
 import { Loading } from '../locations/parts';
 import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/noteRules';
+import { itemHref } from '../routing';
 import { Actions, Button, LinkButton, type ButtonProps } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
 import type { PopoverAnchor } from '../ui/Popover';
-import { SourceChips } from '../ui/SourceChip';
+import { AppChip, SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
 import { forecastWords, type CalendarDayView, type EffectGrade, type EffectMark, type ImportedEvent, type ReasonLine } from './model';
 
@@ -27,6 +28,9 @@ import { forecastWords, type CalendarDayView, type EffectGrade, type EffectMark,
 // hand the page the button that was pressed, which anchors the page's note form popover (refine-calendar-and-home
 // design decision 2), so the panel never changes shape while the form is open. Under view-as the writes are disabled in
 // place with the read-only line. It reads and writes nothing itself: the page owns the reads, the form and the dialog.
+// Each entry keeps its source, with no dedupe (D49): a note shows its event name, then its kind words and detail, and a
+// note TownwiseAI made from a file a "Your file" chip to that file's item while its ref exists; an imported event ends
+// with a chip to its calendar's page in Your data (`c_<calendarId>`), named by the calendar's own label.
 
 export const PANEL_ID = 'calendar-day';
 
@@ -97,6 +101,8 @@ export function CalendarDay(props: {
   locationName: string;
   /** The location's Business rules page. */
   rulesHref: string;
+  /** For the chips to a calendar's page and a file's item in Your data. */
+  locationId: string;
   notice: string | null;
   readOnlyId: string | null;
   readOnlyText: string;
@@ -151,9 +157,13 @@ export function CalendarDay(props: {
           const name = `${KIND_LABEL[note.kind]} note, ${datesLine(note)}`;
           return (
             <View key={note.id} style={styles.item}>
-              <Small white>{`Your note: ${noteWords(note)}.`}</Small>
+              <Small white>{`Your note: ${note.title ?? noteWords(note)}.`}</Small>
+              {note.title === null || note.title === undefined ? null : <Small>{noteWords(note)}</Small>}
               <Mono>{noteLine(note)}</Mono>
               {note.detail === null ? null : <Small>{note.detail}</Small>}
+              {note.source?.ref ? (
+                <AppChip href={itemHref(props.locationId, note.source.ref)} name="Your file" label="Your file. Opens it in Your data" glyph="file" />
+              ) : null}
               {note.canEdit ? (
                 <Actions>
                   <Opener variant="link" label="Edit" accessibilityLabel={`Edit ${name}`} {...ro} onPress={(anchor) => { props.onEdit(note, anchor); }} />
@@ -178,6 +188,12 @@ export function CalendarDay(props: {
           <View key={`${event.calendarId}:${event.uid}`} style={styles.item}>
             <Small white>{`From your calendar: ${event.title}`}</Small>
             <Mono>{importedLine(event)}</Mono>
+            <AppChip
+              href={itemHref(props.locationId, `c_${event.calendarId}`)}
+              name={event.calendar ?? 'Your calendar'}
+              label={`${event.calendar ?? 'Your calendar'}. Opens this calendar in Your data`}
+              glyph="calendar"
+            />
             <Actions>
               <Opener
                 variant="link"

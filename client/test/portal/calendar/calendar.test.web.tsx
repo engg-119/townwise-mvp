@@ -831,3 +831,51 @@ test('from 1024px the panel is beside the grid, so a clicked day scrolls nothing
     Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
   }
 });
+
+// D49 (day-entries): a day's status shows beside its entries and never hides one, and a note shows its event name.
+const WINTER_RULE = ruleOf('r1', 'Closed Tuesdays in winter', {
+  schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+  scheduleSummary: 'Closed on Tuesdays from Nov 1, 2026',
+});
+const HOLIDAY_PARTY = noteOf('n1', { kind: 'private_event', startDate: '2026-11-24', endDate: '2026-11-24', effect: 'more_guests', expectedGuests: 40, title: 'Holiday party' });
+const REHEARSAL = noteOf('n2', { kind: 'private_event', startDate: '2026-11-11', endDate: '2026-11-11', effect: 'closed', expectedGuests: 60, title: 'Rehearsal dinner' });
+
+/** November from today on, with Nov 24 closed by the rule and today booked by the buyout note. */
+function statusNovember(): unknown {
+  const days = [];
+  for (let day = 11; day <= 30; day += 1) {
+    const date = `2026-11-${String(day)}`;
+    if (date === '2026-11-24') days.push(forecastDay({ date, status: 'closed', low: null, mid: null, high: null, reasons: [] }));
+    else if (date === '2026-11-11') {
+      days.push(forecastDay({
+        date, status: 'booked', low: null, mid: null, high: null, noteGuests: 60,
+        reasons: [{ kind: 'note', label: 'Your private buyout, 60 guests', effectPct: null, sources: [], note: { id: 'n2', guests: 60, outcome: 'booked' } }],
+      }));
+    } else days.push(forecastDay({ date }));
+  }
+  return forecastOf(days);
+}
+
+test('a closed day with a named event shows its status word and both entries; a booked day its party’s name before Veterans Day (D49)', async () => {
+  const { api } = setup(meOf(ACCESS.member), { notes: [HOLIDAY_PARTY, REHEARSAL], rules: [WINTER_RULE], forecasts: { '2026-11': statusNovember() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-24', api);
+  const closed = cell('2026-11-24');
+  expect(closed.textContent).toBe('24ClosedHoliday partyClosed Tuesdays in winter');
+  expect(closed.getAttribute('aria-label')).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
+  const booked = cell('2026-11-11');
+  expect(booked.textContent).toBe('11Booked60Rehearsal dinnerVeterans Day');
+  // The tooltip: the status line, the buyout's reason with its note's name, then the holiday no reason names.
+  fireEvent(booked, pointer('pointerover', 'mouse'));
+  expect(within(screen.getByTestId('calendar-tooltip')).getAllByText(/./).map((line) => line.textContent)).toEqual(expect.arrayContaining([
+    'Booked: a private buyout, 60 guests', 'Your private buyout, 60 guests: Rehearsal dinner', 'Veterans Day',
+  ]));
+});
+
+test('at phone width a cell shows corner marks and no entry lines, and its label still names every entry (D49)', async () => {
+  setWidth(375);
+  const { api } = setup(meOf(ACCESS.member), { notes: [HOLIDAY_PARTY], rules: [WINTER_RULE], forecasts: { '2026-11': statusNovember() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-24', api);
+  const closed = cell('2026-11-24');
+  expect(closed.textContent).toBe('24Closed');
+  expect(closed.getAttribute('aria-label')).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
+});

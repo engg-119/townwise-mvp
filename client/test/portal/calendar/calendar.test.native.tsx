@@ -7,11 +7,13 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
+import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import { ACCESS, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
+import { noteOf } from '../locations/fakes';
+import { ruleOf } from '../rules/fakes';
 import {
   CALENDARS_PATH, calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake,
 } from './fakes';
@@ -62,7 +64,7 @@ function november(guests = 0): unknown {
 }
 
 function setup(
-  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents'>> = {}, me = meOf(ACCESS.member),
+  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents' | 'notes' | 'rules'>> = {}, me = meOf(ACCESS.member),
 ): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': november() }, ...init });
   return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake }), fake };
@@ -248,4 +250,24 @@ test('the Month and Week switch: Week shows the agenda of the block from today t
   expect(await screen.findByLabelText('November 2026')).toBeTruthy();
   expect(screen.queryByLabelText('Nov 18 to 24, 2026')).toBeNull();
   expect(fake.paths.slice(reads)).toEqual([]);
+});
+
+test('a closed-by-rule day with a named event: its label names both, its panel shows the name, and an imported event’s chip opens its calendar’s page (D49)', async () => {
+  const tuesday = '2026-11-24';
+  const id = 'fedcba9876543210fedcba98';
+  const { api } = setup({
+    notes: [noteOf('n1', { kind: 'private_event', startDate: tuesday, endDate: tuesday, effect: 'more_guests', expectedGuests: 40, title: 'Holiday party' })],
+    rules: [ruleOf('r1', 'Closed Tuesdays in winter', {
+      schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    })],
+    calendars: [ownerCalendar({ id, label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 1 })],
+    ownerEvents: [ownerEvent({ calendarId: id, calendar: 'US holidays', uid: 'e1', title: 'Wine dinner', startDate: tuesday })],
+  });
+  const { router } = await renderApp(`/locations/l1/calendar?day=${tuesday}`, api);
+  const day = await screen.findByLabelText(/^Tue, Nov 24, 2026\./);
+  expect(day.props.accessibilityLabel).toContain('Holiday party. Closed Tuesdays in winter. From your calendar: Wine dinner.');
+  expect(within(panel()).getByText('Your note: Holiday party.')).toBeTruthy();
+  expect(within(panel()).getByText('Your rule: Closed Tuesdays in winter')).toBeTruthy();
+  await fireEvent.press(within(panel()).getByRole('link', { name: 'US holidays. Opens this calendar in Your data' }));
+  await waitFor(() => { expect(router.getPathname()).toBe(`/locations/l1/data/c_${id}`); });
 });

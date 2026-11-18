@@ -412,6 +412,7 @@ function CalendarView(): React.JSX.Element {
         view={dayPanel}
         locationName={locationName}
         rulesHref={locationHref(location.id, 'rules')}
+        locationId={location.id}
         notice={noticeText}
         readOnlyId={readOnlyId}
         readOnlyText={line}
