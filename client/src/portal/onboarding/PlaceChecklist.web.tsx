@@ -9,9 +9,10 @@ import { PlaceChecklistShell, type ChecklistFieldProps, type PlaceChecklistProps
 // The places checklist on web (PlaceChecklist.tsx is native's): PlaceSearch.web's ARIA 1.2 combobox with a
 // multiselectable listbox. Each option's aria-selected says whether its place is checked; the active option shows only
 // by highlight and aria-activedescendant. Down and Up move the active option; Enter, and Space while an option is
-// active, toggle it and leave the list open (with none active Space types); typing clears the active option and opens
-// the list again. A mouse press toggles without taking focus from the field. A refused or full option is
-// aria-disabled. Each option is named “{name}, {line}” (suggestionLine: “Street address · ” marks an address) and
+// active, toggle it (with none active Space types): checking a place clears the text, which closes the list (owner,
+// 2026-11-18), and unchecking leaves the list open; typing clears the active option and opens the list again. A
+// mouse press toggles without taking focus from the field. A refused or full option is aria-disabled. Each option
+// is named “{name}, {line}” (suggestionLine: “Street address · ” marks an address) and
 // starts with a drawn 16px box, hidden from assistive technology, in Checkbox.web's colors.
 // Remove gives the field focus back. Escape closes the list, then clears the text. Focus never opens or closes the
 // list: it sits in the page's flow, so a list that closed on blur would move the buttons below it between a press and

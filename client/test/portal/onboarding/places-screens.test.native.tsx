@@ -94,6 +94,8 @@ describe('P3 Request access with the search on', () => {
     await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
     await waitFor(() => { expect(screen.getByLabelText('Organization name').props.value).toBe('Lou’s Restaurant'); });
     expect(screen.getByLabelText('Number of locations').props.value).toBe('1');
+    // Checking a place clears the text and closes the list (owner, 2026-11-18), so the next check searches again.
+    await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
     await waitFor(() => { expect(screen.getByLabelText('Number of locations').props.value).toBe('2'); });
     // The checked places stay in the checklist; there is no summary and no Change places.
@@ -126,6 +128,7 @@ describe('P3 Request access with the search on', () => {
     await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
     await waitFor(() => { expect(screen.getByLabelText('Organization name').props.value).toBe('Lou’s Bakery'); });
     await fireEvent.changeText(screen.getByLabelText('Organization name'), 'Lou’s Group');
+    await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
     await waitFor(() => { expect(screen.getByLabelText('Number of locations').props.value).toBe('3'); });
     expect(screen.getByLabelText('Organization name').props.value).toBe('Lou’s Group');
@@ -162,6 +165,7 @@ describe('P3 Request access with the search on', () => {
     await renderApp('/request-access', api);
     await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
     await find(SEARCH, 'Lou Lebanon');
     await fireEvent.press(await screen.findByRole('checkbox', { name: LEBANON }));
@@ -188,6 +192,7 @@ describe('P3 Request access with the search on', () => {
     await fireEvent.press(await screen.findByRole('button', { name: 'Search Google Maps instead' }));
     await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
     await waitFor(() => { expect(groups(BAKERY)).toHaveLength(1); });
     expect(screen.getByLabelText('Number of locations').props.value).toBe('3');
@@ -202,6 +207,7 @@ describe('P3 Request access with the search on', () => {
     await renderApp('/request-access', api);
     await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: RESTAURANT }));
+    await find(SEARCH, 'Lou');
     await fireEvent.press(await screen.findByRole('checkbox', { name: BAKERY }));
     await waitFor(() => { expect(screen.getByLabelText('Number of locations').props.value).toBe('2'); });
     await fireEvent.press(screen.getByRole('button', { name: 'Can’t find it? Enter your town yourself' }));
@@ -363,6 +369,7 @@ describe('P10 Add location with the search on', () => {
     const { router } = await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     expect((await nameOf(RESTAURANT)).props.value).toBe('Lou’s Restaurant, Hanover');
     expect((await nameOf(BAKERY)).props.value).toBe('Lou’s Bakery, Norwich');
@@ -383,7 +390,9 @@ describe('P10 Add location with the search on', () => {
     await check(RESTAURANT);
     await waitFor(() => { expect(within(group(RESTAURANT)).getByText(HANOVER_LINE)).toBeTruthy(); });
     expect(within(group(RESTAURANT)).queryByLabelText('Name')).toBeNull();
-    // A second check asks a Name of each, with its default; removing it hides them again.
+    // A second check asks a Name of each, with its default; removing it hides them again. Checking cleared the text
+    // and closed the list (owner, 2026-11-18), so it searches again.
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     expect((await nameOf(RESTAURANT)).props.value).toBe('Lou’s Restaurant, Hanover');
     expect((await nameOf(BAKERY)).props.value).toBe('Lou’s Bakery, Norwich');
@@ -441,6 +450,7 @@ describe('P10 Add location with the search on', () => {
     const { router } = await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     await find(P10_SEARCH, 'Lou Lebanon');
     await check(LEBANON);
@@ -467,6 +477,7 @@ describe('P10 Add location with the search on', () => {
     await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     await fireEvent.changeText(await nameOf(RESTAURANT), 'Lou’s on Main');
     await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
@@ -488,6 +499,7 @@ describe('P10 Add location with the search on', () => {
     const { router } = await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
     expect((await nameOf(BAKERY)).props.editable).toBe(false);
@@ -504,6 +516,7 @@ describe('P10 Add location with the search on', () => {
     await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     const held = holdOrg(api);
     await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
@@ -582,6 +595,7 @@ describe('P10 Add location with the search on', () => {
     const { router } = await renderApp('/dashboard', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     await fireEvent.changeText(await nameOf(RESTAURANT), 'Lou’s on Main');
     await fireEvent.press(screen.getByRole('button', { name: `Remove ${BAKERY}` }));
@@ -600,6 +614,7 @@ describe('P10 Add location with the search on', () => {
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
     await nameOf(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     places.holdingDetails = true;
     await check(BAKERY);
     await waitFor(() => { expect(places.heldDetails).toHaveLength(1); });
@@ -620,6 +635,7 @@ describe('P10 Add location with the search on', () => {
     const { router } = await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
     expect(await within(group(RESTAURANT)).findByText(PLACE_COPY.changed)).toBeTruthy();
@@ -657,6 +673,7 @@ describe('P10 Add location with the search on', () => {
     await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     await fireEvent.changeText(await nameOf(BAKERY), '   ');
     await fireEvent.press(screen.getByRole('button', { name: 'Add 2 locations' }));
@@ -690,6 +707,7 @@ describe('P10 Add location with the search on', () => {
     const { router } = await renderApp('/locations/new', api);
     await find(P10_SEARCH, 'Lou');
     await check(RESTAURANT);
+    await find(P10_SEARCH, 'Lou');
     await check(BAKERY);
     await fireEvent.press(await screen.findByRole('button', { name: 'Add 2 locations' }));
     expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();

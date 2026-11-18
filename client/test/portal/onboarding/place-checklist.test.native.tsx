@@ -11,7 +11,8 @@ import { DETAILS, installPlaces, manyPlaces, mapOf, SUGGESTIONS, type PlacesFake
 
 // The places checklist on native (usePlaceChecklist over PlaceChecklist), over the Places proxy fake: each suggestion
 // is a checkbox named by place and town; checking one asks Google for its details (the first check of a search ends
-// that search's session with its token, later ones carry none) and adds the place below the field, in check order,
+// that search's session with its token, later ones carry none), clears the text so the suggestions go (unchecking one
+// keeps them; owner, 2026-11-18), and adds the place below the field, in check order,
 // with its facts and Remove, under one map of every checked place; a place outside a US town, a 503 or a 404 leaves it unchecked and says why; at 25
 // the other boxes are disabled; and a search 503 hands the page its manual fields only while nothing is checked.
 
@@ -28,8 +29,9 @@ const BAKERY = 'Lou’s Bakery, Norwich, VT, USA';
 const CANTINA = 'Lou’s Cantina, San Juan, Puerto Rico';
 
 const HANOVER = DETAILS.ChIJTestPlace0001;
+const BAKERY_SUGGESTION = SUGGESTIONS[1];
 const CANTINA_SUGGESTION = SUGGESTIONS[2];
-if (HANOVER === undefined || CANTINA_SUGGESTION === undefined) throw new Error('fixture');
+if (HANOVER === undefined || BAKERY_SUGGESTION === undefined || CANTINA_SUGGESTION === undefined) throw new Error('fixture');
 
 /** The hook's state as last rendered, to toggle a suggestion the way a web press on an aria-disabled box would. */
 let rendered: PlaceChecklistState | null = null;
@@ -112,6 +114,8 @@ test('each suggestion is a checkbox named by place and town; checking shows the 
   places.holdingDetails = true;
   await fireEvent.press(box(RESTAURANT));
   expect(within(group(RESTAURANT)).getByText('Getting Lou’s Restaurant from Google Maps…')).toBeTruthy();
+  // The text cleared, so the suggestions went; the next search shows the box checked while it loads.
+  await search('Lou');
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: true, disabled: false });
   places.holdingDetails = false;
   await run(() => { for (const release of places.heldDetails.splice(0)) release(); });
@@ -129,7 +133,8 @@ test('one session per search: the first check ends it with its token, later chec
   const { api, places } = await setup();
   await search('Lou');
   await press(RESTAURANT);
-  await press(BAKERY);
+  // Checking cleared the text, so a second check from the same answer can only come straight from the hook.
+  await toggleDirectly(BAKERY_SUGGESTION);
   expect(places.detailCalls).toEqual([
     { placeId: 'ChIJTestPlace0001', sessionToken: 'token-1' },
     { placeId: 'ChIJTestPlace0002', sessionToken: undefined },
@@ -157,9 +162,14 @@ test('a check while an autocomplete runs ends its session: the late answer bring
   places.holding = false;
   await run(() => { for (const release of places.held.splice(0)) release(); });
   await wait(0);
-  expect(screen.getByText('3 places match “Lou”. Check each one that’s yours.')).toBeTruthy();
+  // The check cleared the text, and the late answer shows nothing.
+  expect(screen.queryAllByRole('checkbox')).toEqual([]);
+  expect(screen.queryByText(/places? match/)).toBeNull();
+  // Nor did its token come back: the next search starts a new session.
+  await search('Lou');
+  expect(places.autocompletes.at(-1)).toEqual({ input: 'Lou', sessionToken: undefined });
   await press(BAKERY);
-  expect(places.detailCalls.map((call) => call.sessionToken)).toEqual(['token-1', undefined]);
+  expect(places.detailCalls.map((call) => call.sessionToken)).toEqual(['token-1', 'token-2']);
 });
 
 test('searching again keeps the checked places, and a checked place shows checked in the new answer', async () => {
@@ -173,11 +183,32 @@ test('searching again keeps the checked places, and a checked place shows checke
   expect(box(BAKERY).props.accessibilityState).toMatchObject({ checked: false, disabled: false });
 });
 
+test('checking a place clears the text and the suggestions go; searching again shows it checked, and unchecking it there keeps the text and the suggestions (owner, 2026-11-18: “it should clear whatever i\'ve typed too right and the dropdown should close”)', async () => {
+  const { places } = await setup();
+  await search('Lou');
+  await press(RESTAURANT);
+  expect(screen.getByLabelText(LABEL).props.value).toBe('');
+  expect(screen.queryAllByRole('checkbox')).toEqual([]);
+  expect(screen.queryByText(/places? match/)).toBeNull();
+  expect(groupNames()).toEqual([RESTAURANT]);
+  await search('Lou');
+  expect(screen.queryAllByRole('checkbox')).toHaveLength(3);
+  expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: true });
+  await press(RESTAURANT);
+  expect(screen.getByLabelText(LABEL).props.value).toBe('Lou');
+  expect(screen.queryAllByRole('checkbox')).toHaveLength(3);
+  expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: false });
+  expect(screen.getByText('3 places match “Lou”. Check each one that’s yours.')).toBeTruthy();
+  expect(groupNames()).toEqual([]);
+  expect(places.detailCalls).toHaveLength(1);
+});
+
 test('pressing a checked box, or Remove, unchecks it without asking Google again', async () => {
   const { places } = await setup();
   await search('Lou');
   await press(RESTAURANT);
   expect(places.detailCalls).toHaveLength(1);
+  await search('Lou');
   await press(RESTAURANT);
   expect(groupNames()).toEqual([]);
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: false });
@@ -187,6 +218,7 @@ test('pressing a checked box, or Remove, unchecks it without asking Google again
   await fireEvent.press(screen.getByRole('button', { name: `Remove ${BAKERY}` }));
   await wait(0);
   expect(groupNames()).toEqual([]);
+  await search('Lou');
   expect(box(BAKERY).props.accessibilityState).toMatchObject({ checked: false });
   expect(places.detailCalls).toHaveLength(2);
   expect(screen.queryByText(PLACES_SOURCE)).toBeNull();
@@ -198,6 +230,8 @@ test('unchecking while its details load drops the late answer; two loading check
   places.holdingDetails = true;
   await fireEvent.press(box(RESTAURANT));
   expect(groupNames()).toEqual([RESTAURANT]);
+  // Each check clears the text (owner, 2026-11-18), so the next press searches again first.
+  await search('Lou');
   await fireEvent.press(box(RESTAURANT));
   expect(groupNames()).toEqual([]);
   await run(() => { for (const release of places.heldDetails.splice(0)) release(); });
@@ -205,6 +239,7 @@ test('unchecking while its details load drops the late answer; two loading check
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: false });
 
   await fireEvent.press(box(RESTAURANT));
+  await search('Lou');
   await fireEvent.press(box(BAKERY));
   const [first, second] = places.heldDetails.splice(0);
   await run(() => { second?.(); });
@@ -217,8 +252,12 @@ test('unchecking while its details load drops the late answer; two loading check
 
   // Off the list, then checked, unchecked and checked again while the first answer is late: a 503 for the first check
   // says nothing, and only the new check's answer counts.
+  await search('Lou');
   await fireEvent.press(box(RESTAURANT));
-  for (let i = 0; i < 3; i += 1) await fireEvent.press(box(RESTAURANT));
+  await fireEvent.press(box(RESTAURANT));
+  await search('Lou');
+  await fireEvent.press(box(RESTAURANT));
+  await fireEvent.press(box(RESTAURANT));
   const [stale, fresh] = places.heldDetails.splice(0);
   places.details.ChIJTestPlace0001 = refusal(503, 'places_unavailable');
   await run(() => { stale?.(); });
@@ -236,14 +275,13 @@ test('a place outside a US town is not checked: the line says why, and its box i
   await press(CANTINA);
   expect(screen.getByText(outsideUsLine('Lou’s Cantina'))).toBeTruthy();
   expect(groupNames()).toEqual([]);
+  // The check cleared the text. New text clears the line; the box is disabled in the next answer.
+  await search('Lou’s');
+  expect(screen.queryByText(outsideUsLine('Lou’s Cantina'))).toBeNull();
   expect(box(CANTINA).props.accessibilityState).toMatchObject({ checked: false, disabled: true });
   await press(CANTINA);
   await toggleDirectly(CANTINA_SUGGESTION);
   expect(places.detailCalls).toHaveLength(1);
-  // New text clears the line; the box stays disabled in the next answer.
-  await search('Lou’s');
-  expect(screen.queryByText(outsideUsLine('Lou’s Cantina'))).toBeNull();
-  expect(box(CANTINA).props.accessibilityState).toMatchObject({ checked: false, disabled: true });
 });
 
 test('503 on a check leaves it unchecked with the page’s line; 503 on the search hands over only while nothing is checked', async () => {
@@ -253,6 +291,9 @@ test('503 on a check leaves it unchecked with the page’s line; 503 on the sear
   await press(RESTAURANT);
   expect(screen.getByText(LINE)).toBeTruthy();
   expect(groupNames()).toEqual([]);
+  // The check cleared the text; new text clears the line, and the box is unchecked and enabled.
+  await search('Lou');
+  expect(screen.queryByText(LINE)).toBeNull();
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: false, disabled: false });
   await press(BAKERY);
   expect(screen.queryByText(LINE)).toBeNull();
@@ -282,6 +323,7 @@ test('404 on a check says Google Maps can’t find it', async () => {
   await press(RESTAURANT);
   expect(screen.getByText(CHECKLIST_COPY.gone)).toBeTruthy();
   expect(groupNames()).toEqual([]);
+  await search('Lou');
   expect(box(RESTAURANT).props.accessibilityState).toMatchObject({ checked: false });
 });
 
@@ -289,14 +331,16 @@ test('at 25 checked or loading the other boxes are disabled with “You can add 
   const { places } = await setup();
   const queries = manyPlaces(places, 30);
   expect(queries).toEqual(['Many 1', 'Many 2', 'Many 3', 'Many 4', 'Many 5', 'Many 6']);
+  // Each check clears the text, so each searches again.
   for (let i = 1; i <= 24; i += 1) {
-    if (i % 5 === 1) await search(`Many ${String(Math.ceil(i / 5))}`);
+    await search(`Many ${String(Math.ceil(i / 5))}`);
     await press(`Many Place ${String(i)}, Hanover, NH, USA`);
   }
   expect(places.detailCalls).toHaveLength(24);
   expect(groupNames()).toHaveLength(24);
   expect(screen.queryByText(CHECKLIST_COPY.limit)).toBeNull();
   places.holdingDetails = true;
+  await search('Many 5');
   await press('Many Place 25, Hanover, NH, USA');
   expect(groupNames()).toHaveLength(25);
   await search('Many 6');
@@ -330,6 +374,7 @@ test('one map above the checked places on native; none with nothing checked', as
   expect(screen.queryByLabelText(/^Map of/)).toBeNull();
   expect(places.mapCalls).toEqual([]);
   await press(RESTAURANT);
+  await search('Lou');
   await press(BAKERY);
   await wait(400);
   expect(places.mapCalls).toEqual([['ChIJTestPlace0001', 'ChIJTestPlace0002']]);
@@ -366,6 +411,7 @@ test('each row carries its pin’s letter, in check order, while the map shows; 
   const { places } = await setup();
   await search('Lou');
   await press(BAKERY);
+  await search('Lou');
   await press(RESTAURANT);
   expect(within(group(BAKERY)).queryByText('A')).toBeNull();
   await wait(400);
