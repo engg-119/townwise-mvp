@@ -162,7 +162,7 @@ test('view-as ended: the console opens with the time in a toast', async () => {
   renderAt('/dashboard', api);
   await screen.findByRole('region', { name: 'View-as' });
   fireEvent.click(screen.getByRole('button', { name: 'End view-as' }));
-  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/overview'); });
   await expectToast(/^View-as ended at \d{1,2}:\d{2} (AM|PM)\.$/);
   expect(toasts()).toHaveLength(1);
 });
