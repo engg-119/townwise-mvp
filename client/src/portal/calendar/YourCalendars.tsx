@@ -40,7 +40,8 @@ import { IcsImport } from './IcsImport';
 // for a link or a Google calendar and "Remove"; a kind the page doesn't know reads "Calendar, {n} events" with "Remove"
 // only; "No calendars yet." with none; "Couldn't load your calendars." with Try again, which reads the list and the
 // grid's stored events again, when the list couldn't be read), the messages line (results as status, refusals as
-// alerts), the import (IcsImport: the file picker on web, native's line pointing to it), "Add a link", which the
+// alerts), the weekly reading's words (CALENDARS_COPY.weeklyReading, once for a file and a link), the import
+// (IcsImport: the file picker on web, native's line pointing to it), "Add a link", which the
 // add-a-link form replaces while it is open, and on web, while the list answers `google.available`, "Add a Google
 // calendar", which the Google section replaces while it is open; then "How importing works" with its help, mounted
 // while hidden and describing the import, and under view-as the popover's own read-only line. The help, and native's
@@ -655,6 +656,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
           </View>
         )}
         {message === null ? null : <Messages live={message.live} takesFocus items={message.items} />}
+        <Small>{CALENDARS_COPY.weeklyReading}</Small>
         <Actions>
           <IcsImport
             describedBy={HELP_ID}

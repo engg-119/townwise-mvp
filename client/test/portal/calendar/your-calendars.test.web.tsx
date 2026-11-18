@@ -16,6 +16,9 @@ import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, 
 import { townEvent } from '../analytics/fakes';
 import { CALENDARS_PATH, calendarFake, forecastDay, forecastOf, ownerCalendar, ownerEvent, type CalendarFake } from './fakes';
 
+/** The words on adding a file or a link (calendar-event-suggestions design decision 11). [CONFIRM: the add screens' words] */
+const WEEKLY_READING = 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of this calendar’s events, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.';
+
 // "Your calendars" on web (P28; owner-calendar's "The Calendar page shows and manages stored calendars", refine-calendar-
 // and-home design decision 1): the header row's last control, a button with the location's calendar count that opens a
 // popover anchored to it, over the page, so nothing under the row moves. The popover lists the calendars, says when the
@@ -657,6 +660,20 @@ test('the popover holds “Import a calendar file” and “How importing works�
   expect(shown(help)).toBe(true);
   fireEvent.click(toggle);
   expect(shown(help)).toBe(false);
+});
+
+test('the popover says once, before “Import a calendar file” and “Add a link”, that TownwiseAI reads a calendar’s titles weekly', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const panel = openPopover();
+  const [words, ...more] = within(panel).getAllByText(WEEKLY_READING);
+  expect(more).toHaveLength(0);
+  expect(CALENDARS_COPY.weeklyReading).toBe(WEEKLY_READING);
+  for (const name of ['Import a calendar file', 'Add a link']) {
+    expect((words as Element).compareDocumentPosition(within(panel).getByRole('button', { name })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  }
+  fireEvent.click(within(panel).getByRole('button', { name: 'Add a link' }));
+  expect(within(panel).getAllByText(WEEKLY_READING)).toHaveLength(1);
 });
 
 test('closing the popover keeps a half-typed link, the shown message and the open help, and opening it again shows them all', async () => {

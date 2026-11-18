@@ -38,7 +38,7 @@ export function weeklyWords(town: string): string {
 /**
  * The titles switch's words (calendar-event-suggestions design decision 9). [CONFIRM: the switch's words]
  */
-export const TITLES_WORDS = 'Read your calendars’ event titles. Each Monday TownwiseAI also reads the titles, dates and hours of the next 3 months of events on this location’s calendars, to suggest notes for private events. They are sent to Anthropic, which doesn’t train on them.';
+export const TITLES_WORDS = 'Read your calendars’ event titles. Once a week TownwiseAI also reads the titles, dates and hours of the next 3 months of events on this location’s calendars, to suggest notes for private events. They are sent to Anthropic, which doesn’t train on them.';
 
 /** A spotted event's two choices, neither chosen until the admin picks one. */
 const EVENT_CHOICES: readonly { value: EventChoice['effect']; label: string }[] = [

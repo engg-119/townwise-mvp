@@ -37,6 +37,12 @@ export const CALENDARS_COPY = {
   linkLong: 'This link is too long. Copy it again from your calendar’s settings.',
   calendarLimit: 'This location has 5 calendars, the most it can hold. Remove one to add another.',
   alreadyRemoved: 'This calendar was already removed.',
+  /**
+   * Above "Import a calendar file" and "Add a link", said once for both (calendar-event-suggestions design decision 11:
+   * a file's or link's titles go into the weekly call only when it was added after these words shipped). [CONFIRM: the
+   * add screens' words on the weekly reading of titles]
+   */
+  weeklyReading: 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of this calendar’s events, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.',
 } as const;
 
 const HELP_IMPORT = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours.';
@@ -67,7 +73,7 @@ export function nativeLine(google: boolean): string {
  */
 const EXPLAINER_PARAGRAPHS = [
   'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included.',
-  'Everyone on your team can see these events. TownwiseAI reads their titles when you ask about your bookings, and each Monday it reads the titles, dates and hours of the next 3 months of events, with email addresses and phone numbers removed, to suggest notes for private events. Either way, the titles reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the Monday reading on the TownwiseAI page. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one.',
+  'Everyone on your team can see these events. TownwiseAI reads their titles when you ask about your bookings, and once a week it reads the titles, dates and hours of the next 3 months of events, with email addresses and phone numbers removed, to suggest notes for private events. Either way, the titles reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one.',
   'Removing your last Google calendar, or leaving your organization, ends Townwise’s access to your Google account. Google may warn that Townwise isn’t verified yet while Google reviews it.',
 ] as const;
 

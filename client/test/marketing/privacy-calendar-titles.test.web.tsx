@@ -13,7 +13,7 @@ import { fakeAuth } from '../helpers/fakes';
 // change calendar-event-suggestions, task 9.1), awaiting the owner: what is sent (titles, dates and hours of the next 3
 // months, with email addresses and phone numbers removed, never a calendar's name), to whom (Anthropic, which doesn't
 // train on it), how often (weekly), who can turn it off (an org admin), that following a note's event uses no AI, that
-// a Google calendar connected before the new words sends no titles until its person connects again, and that the
+// a calendar added or connected before the new words sends no titles until it is added or connected again, and that the
 // Limited Use statement is unchanged.
 
 class ResizeObserverPolyfill {
@@ -58,18 +58,19 @@ test('Your calendars: TownwiseAI reads them when asked and weekly, and a note ma
   expect(calendars).toContain('Removing a calendar deletes its events, not the notes you made from them.');
 });
 
-test('Google calendars: both ways titles reach Anthropic, and an older connection sends none weekly until its person connects again', () => {
+test('Google calendars: both ways titles reach Anthropic, and the older-calendar rule is told once, under weekly suggestions', () => {
   renderPrivacy();
   const google = item('Your organization and team', 'Google calendars.');
   expect(google).toContain('TownwiseAI reads their names and their events’ titles when you ask about your bookings, and once a week reads their events’ titles, dates and hours, never their names, for its suggestions (see TownwiseAI’s weekly suggestions), so they reach Anthropic, which doesn’t train on them.');
-  expect(google).toContain('If a Google calendar was connected before the screen with Continue to Google said its titles go to the weekly suggestions, its titles stay out of them until its person connects again.');
+  expect(google).not.toContain('If a Google calendar was connected before');
   expect(google).not.toContain('when you ask about your bookings, so they reach Anthropic');
 });
 
-test('weekly suggestions: what they read from the calendars, the org admin’s switch, and follow-ups with no AI', () => {
+test('weekly suggestions: what they read from the calendars, the org admin’s switch, older calendars left out, and follow-ups with no AI', () => {
   renderPrivacy();
   const weekly = item('Your organization and team', 'TownwiseAI’s weekly suggestions.');
   expect(weekly).toContain('It also reads the titles, dates and hours of the next 3 months of events on the location’s own calendars, with email addresses and phone numbers removed and never a calendar’s name, to spot private events, such as a party or a buyout, and ask whether each takes the whole restaurant. An org admin can turn this part off on its own on the TownwiseAI page.');
+  expect(weekly).toContain('A calendar added or connected before November 18, 2026, when the screens for adding one began to say this, sends no titles to the weekly suggestions until it is added or connected again.');
   expect(weekly).toContain('When an event you made a note from moves or leaves your calendar, Townwise suggests moving or deleting the note. That comparison runs on our server with no AI, sends nothing to Anthropic, and runs even with weekly suggestions off.');
   expect(weekly).toContain('A suggestion from your calendars keeps the event’s ID, dates and hours, never its title, and its card reads the title from your calendar each time it shows.');
 });

@@ -392,6 +392,7 @@ test('the titles switch: members see whether it is on; an org admin turns it off
   renderAt(chatApi(false), meOf(ACCESS.member));
   let panel = await side();
   expect(within(panel).getByText(TITLES_WORDS, { exact: false })).toBeTruthy();
+  expect(TITLES_WORDS).toContain('Once a week TownwiseAI also reads the titles, dates and hours of the next 3 months of events');
   expect(within(panel).getByText('Reading event titles is on.')).toBeTruthy();
   expect(within(panel).queryByRole('button', { name: 'Turn off reading event titles' })).toBeNull();
   cleanup();
