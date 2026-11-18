@@ -32,7 +32,7 @@ import type { AgentPanelState, Decided } from '../useAgentPanel';
 
 /** The switch's words (spec P25), with the town's name. */
 export function weeklyWords(town: string): string {
-  return `Each Monday TownwiseAI reads the next 3 months of ${town}’s calendar with your notes and rules, and suggests notes or rules for you to accept. It sends them to Anthropic and uses this organization’s TownwiseAI budget.`;
+  return `Once a week TownwiseAI reads the next 3 months of ${town}’s calendar with your notes and rules, and suggests notes or rules for you to accept. It sends them to Anthropic and uses this organization’s TownwiseAI budget.`;
 }
 
 /**
