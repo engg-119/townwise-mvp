@@ -29,7 +29,7 @@ import { loadDataItem, parseRef } from '../data/library.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
-import type { ChatTurnRecord, RunningTurnRef } from '../stores/chat-turns.ts';
+import type { ChatTurnRecord, RunningTurnRef, TurnRecordEvent } from '../stores/chat-turns.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { sameNoteContent } from './notes.ts';
@@ -62,9 +62,14 @@ const MAX_STORED_BYTES = 1_500_000;
 /** A live-turn claim older than this may be taken over, the person's and the conversation's alike. */
 const STALE_TURN_MS = 3 * 60 * 1000;
 /** Keeps the Container Apps ingress from closing an idle stream. */
-const PING_MS = 15_000;
+export const PING_MS = 15_000;
 /** A turn's stream ends after one of these (resumable-chat-turns: `stopped` for a stopped turn). */
-const TERMINAL_EVENTS = new Set(['done', 'error', 'stopped']);
+export const TERMINAL_EVENTS: ReadonlySet<string> = new Set(['done', 'error', 'stopped']);
+
+/** One numbered event as a turn's streams send it: its number is the SSE id, so a reader resumes after the last one. */
+export function eventFrame(event: TurnRecordEvent): string {
+  return `id: ${String(event.seq)}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`;
+}
 const TITLE_CHARS = 60;
 /** D36: the bytes of attached files this replica holds for its turns, from a send's checks to the end of its turn. */
 export const attachmentBytes = createByteGate(ATTACHMENT_BYTES_IN_FLIGHT);
@@ -656,7 +661,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   unsubscribe = running.subscribe((event) => {
     if (res.writableEnded || res.destroyed) return;
     // Each event's number is its SSE id, so a reader that loses the stream resumes after the last one it had.
-    res.write(`id: ${String(event.seq)}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
+    res.write(eventFrame(event));
     if (TERMINAL_EVENTS.has(event.type)) {
       stopListening();
       res.end();

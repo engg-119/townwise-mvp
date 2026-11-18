@@ -134,6 +134,30 @@ async function holdTurn(json: unknown, reply: string): Promise<Held> {
   };
 }
 
+const tailPath = (conversationId: string, turnId: string, after?: string): string =>
+  `${chatPath()}/${conversationId}/turns/${turnId}${after === undefined ? '' : `?after=${after}`}`;
+
+/** A tail read to its end. */
+async function tail(on: TownwiseTestServer, path: string, as: TestSession = session): Promise<SseEvent[]> {
+  const res = await call(on, path, { session: as });
+  expect(res.status).toBe(200);
+  expect(res.headers.get('content-type')).toContain('text/event-stream');
+  return parseSse(await res.text());
+}
+
+async function statusOf(on: TownwiseTestServer, path: string, as: TestSession = session): Promise<{ status: number; error: unknown }> {
+  const res = await call(on, path, { session: as });
+  return { status: res.status, error: ((await res.json()) as { error?: unknown }).error };
+}
+
+/** A conversation of the author with a running record whose lease has passed, holding one stored event. */
+async function lapsedTurn(): Promise<{ id: string; turnId: string }> {
+  const id = await addConversation(server, { orgId, locationId, userId: session.userId, text: 'Earlier question' });
+  const turnId = await addChatTurn(server, { orgId, locationId, conversationId: id, userId: session.userId });
+  await server.connection.collection('tw_chat_turns').updateOne({ turnId }, { $set: { leaseUntil: new Date(server.clock.now().getTime() - 1000) } });
+  return { id, turnId };
+}
+
 const liveTurns = (): Promise<number> => server.connection.collection('tw_chat_live_turns').countDocuments({ orgId: new Types.ObjectId(orgId) });
 
 describe('a turn and its record', () => {
@@ -349,6 +373,94 @@ describe('reattaching: liveTurn on both GETs', () => {
       expect(ended.messages).toHaveLength(2);
     } finally {
       await records.deleteMany({ turnId });
+    }
+  });
+});
+
+describe('reading a turn back', () => {
+  it('the turn runs on one instance and its tail on the other: the same numbered events, to the same end; after=n resumes at n + 1', async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    for (const each of [server, other]) each.clock.advance(1000);
+    otherModel.script(
+      { kind: 'message', message: message([text('Let me check. '), toolUse('t1', 'list_notes', {})]) },
+      { kind: 'message', message: message([text('Nothing on the calendar.')]), gate },
+    );
+    const res = await call(other, turnsPath(), { session, json: { content: 'Anything on Friday?' } });
+    expect(res.status).toBe(200);
+    const posted = res.text().then(parseSse);
+    let running: (StoredTurn & { conversationId: Types.ObjectId }) | null = null;
+    await until(async () => {
+      running = await server.connection.collection<StoredTurn & { conversationId: Types.ObjectId }>('tw_chat_turns')
+        .findOne({ userId: session.userId, state: 'running' });
+      return (running?.eventCount ?? 0) >= 4;
+    });
+    const { turnId, conversationId } = running as unknown as StoredTurn & { conversationId: Types.ObjectId };
+    const id = conversationId.toHexString();
+    // Read while the turn waits for its second model call: what is stored, then what comes.
+    const tailed = tail(server, tailPath(id, turnId, '0'));
+    await new Promise((resolve) => { setTimeout(resolve, 100); });
+    release();
+    const all = await posted;
+    expect(all.map((each) => each.event)).toEqual(['conversation', 'text', 'tool', 'tool', 'text', 'done']);
+    expect(await tailed).toEqual(all);
+
+    const resumed = await tail(server, tailPath(id, turnId, '2'));
+    expect(resumed).toEqual(all.slice(2));
+    expect(resumed[0]?.id).toBe(3);
+    // No `after` is 0; a turn that ended at or before `after` sends nothing.
+    expect(await tail(other, tailPath(id, turnId))).toEqual(all);
+    expect(await tail(other, tailPath(id, turnId, String(all.length)))).toEqual([]);
+  });
+
+  it('a running record whose lease passed ends with error interrupted, numbered next, and nothing is written', async () => {
+    const { id, turnId } = await lapsedTurn();
+    try {
+      expect(await tail(other, tailPath(id, turnId, '0'))).toEqual([
+        { id: 1, event: 'text', data: { delta: 'Sentinel live reply' } },
+        { id: 2, event: 'error', data: { code: 'interrupted' } },
+      ]);
+      expect(await record(turnId)).toMatchObject({ state: 'running', eventCount: 1 });
+      expect((await record(turnId))?.events).toHaveLength(1);
+    } finally {
+      await server.connection.collection('tw_chat_turns').deleteMany({ turnId });
+    }
+  });
+
+  it('404 for a colleague’s turn, another organization’s, another conversation’s or an unknown one; 400 for a malformed after; view-as reads it', async () => {
+    const { id, turnId } = await lapsedTurn();
+    const otherId = await addConversation(server, { orgId, locationId, userId: session.userId, text: 'Another question' });
+    const colleagueEmail = `colleague-${randomUUID().slice(0, 8)}@example.test`;
+    const colleague = await signIn(server, colleagueEmail);
+    await addSeat(server, { orgId, userId: colleague.userId, email: colleagueEmail });
+    const elsewhereOrg = await createOrg(server, { name: 'Elsewhere Inn' });
+    const strangerEmail = `stranger-${randomUUID().slice(0, 8)}@example.test`;
+    const stranger = await signIn(server, strangerEmail);
+    await addSeat(server, { orgId: elsewhereOrg, userId: stranger.userId, email: strangerEmail });
+    const strangerLocation = await addLocation(server, { orgId: elsewhereOrg, name: 'Elsewhere Bar' });
+    try {
+      const notFound = { status: 404, error: 'not_found' };
+      expect(await statusOf(other, tailPath(id, turnId), colleague)).toEqual(notFound);
+      expect(await statusOf(other, tailPath(id, turnId), stranger)).toEqual(notFound);
+      expect(await statusOf(other, `/api/org/locations/${strangerLocation}/chat/${id}/turns/${turnId}`, stranger)).toEqual(notFound);
+      expect(await statusOf(other, tailPath(otherId, turnId))).toEqual(notFound);
+      expect(await statusOf(other, tailPath(id, randomUUID()))).toEqual(notFound);
+      expect(await statusOf(other, tailPath(id, 'x'.repeat(65)))).toEqual(notFound);
+      for (const after of ['abc', '-1', '01', '1.5', '']) {
+        expect(await statusOf(other, tailPath(id, turnId, after))).toEqual({ status: 400, error: 'invalid_request' });
+      }
+      expect(await statusOf(other, `${tailPath(id, turnId, '0')}&from=1`)).toEqual({ status: 400, error: 'invalid_request' });
+
+      const staff = await signInStaff(server);
+      try {
+        await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: session.userId, orgId });
+        expect((await tail(other, tailPath(id, turnId), staff)).map((each) => each.event)).toEqual(['text', 'error']);
+      } finally {
+        await removeStaffFactor(server);
+        await server.connection.collection('tw_view_as_grants').deleteMany({});
+      }
+    } finally {
+      await server.connection.collection('tw_chat_turns').deleteMany({ turnId });
     }
   });
 });
