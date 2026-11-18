@@ -2,7 +2,8 @@
 // detail of "title: detail", so they would keep showing kind words. Each is named once, exactly from its file's stored
 // read: the event at the note's place in the read's plan (as Your data's item view reads it, handlers/data.ts aiView),
 // cleaned as a new note's title is. It is null when that event is no longer stored (the original deleted, the file
-// removed or being deleted, or nothing left after cleaning). The detail is left as it is.
+// removed or being deleted, or nothing left after cleaning), and when the note's detail no longer says the event's
+// title as duplicates() reads it (the owner rewrote it, perhaps to take a name out). The detail is left as it is.
 //
 // The lookup spans organizations, so it lives in stores/cross-tenant.ts; each write runs through the tenant store under
 // the note's own organization's scope, as a compare-and-set on the missing key, so a second run or a second replica
@@ -14,7 +15,7 @@ import type { Connection } from 'mongoose';
 import { scopeForNoteTitleBackfill } from '../access/policy.ts';
 import { untitledAiNotes, type UntitledAiNote } from '../stores/cross-tenant.ts';
 import type { TownwiseStores } from '../stores/index.ts';
-import { eventNoteTitle } from './ai-actions.ts';
+import { detailSays, eventNoteTitle } from './ai-actions.ts';
 
 /** Names every note from before titles once. Resolves the notes this run named (`titled`) and set to null (`untitled`). */
 export async function backfillNoteTitles(deps: {
@@ -37,7 +38,8 @@ export async function backfillNoteTitles(deps: {
     const ai = file?.ai ?? null;
     for (const note of notes) {
       const event = ai?.result?.events[ai.actions?.plan.noteIds.indexOf(note.id) ?? -1];
-      const title = event === undefined ? null : eventNoteTitle(event.title);
+      // Only while the note still says the event's name: one the owner rewrote never gets back a name they removed.
+      const title = event === undefined || !detailSays(note.detail, event.title) ? null : eventNoteTitle(event.title);
       if (await stores.notes.setTitleOnce(scope, note.id, title)) {
         if (title === null) untitled += 1;
         else titled += 1;

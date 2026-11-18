@@ -723,7 +723,7 @@ export async function staleSuggestionPasses(connection: Connection, before: Date
 }
 
 /** A note TownwiseAI made from a file before notes had titles (D49): its id, organization and file. */
-export interface UntitledAiNote { readonly id: string; readonly orgId: string; readonly fileId: string }
+export interface UntitledAiNote { readonly id: string; readonly orgId: string; readonly fileId: string; readonly detail: string | null }
 
 /**
  * The title backfill's lookup (D49): every note, in any organization, made by TownwiseAI from a file (`source` set)
@@ -731,10 +731,10 @@ export interface UntitledAiNote { readonly id: string; readonly orgId: string; r
  */
 export async function untitledAiNotes(connection: Connection): Promise<UntitledAiNote[]> {
   const docs = await noteModel(connection).find(
-    { 'source.fileId': trusted({ $exists: true }), title: trusted({ $exists: false }) }, { orgId: 1, source: 1 },
+    { 'source.fileId': trusted({ $exists: true }), title: trusted({ $exists: false }) }, { orgId: 1, source: 1, detail: 1 },
   ).lean();
   return docs.flatMap((doc) => (doc.source === undefined ? [] : [{
-    id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), fileId: doc.source.fileId.toHexString(),
+    id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), fileId: doc.source.fileId.toHexString(), detail: doc.detail ?? null,
   }]));
 }
 

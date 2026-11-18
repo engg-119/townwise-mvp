@@ -120,10 +120,15 @@ function duplicates(note: NoteRecord, event: AiReadEvent): boolean {
   if (note.kind !== event.kind || note.startDate !== event.startDate || note.endDate !== event.endDate) return false;
   const named = eventNoteTitle(event.title);
   if (named !== null && note.title !== null && folded(note.title) === folded(named)) return true;
-  if (note.detail === null) return false;
-  const detail = folded(note.detail);
-  const title = folded(event.title);
-  return detail === title || detail.startsWith(`${title}:`);
+  return detailSays(note.detail, event.title);
+}
+
+/** A note's detail still says the event's title, as a note from before titles wrote it: "title" or "title: detail". */
+export function detailSays(detail: string | null, title: string): boolean {
+  if (detail === null) return false;
+  const said = folded(detail);
+  const name = folded(title);
+  return said === name || said.startsWith(`${name}:`);
 }
 
 /** The summary item's title: "TownwiseAI’s notes on" the file's name without its extension, at most 120 characters. */

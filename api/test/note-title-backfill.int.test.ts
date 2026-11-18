@@ -111,6 +111,17 @@ describe('backfillNoteTitles', () => {
     expect(await run()).toEqual({ titled: 0, untitled: 0 });
   });
 
+  it('leaves a note untitled once the owner rewrote its detail, so a name they removed never comes back', async () => {
+    const { noteIds } = await olderRead();
+    await notes().updateOne({ _id: oid(noteIds[0] ?? '') }, { $set: { detail: 'Party of 60, back room' } });
+    await notes().updateOne({ _id: oid(noteIds[1] ?? '') }, { $set: { detail: null } });
+    expect(await run()).toEqual({ titled: 0, untitled: 2 });
+    const after = await notes().find({ _id: { $in: noteIds.map(oid) } }).sort({ startDate: 1 }).toArray();
+    expect(after.map((note) => ({ title: note.title as unknown, detail: note.detail as unknown }))).toEqual([
+      { title: null, detail: 'Party of 60, back room' }, { title: null, detail: null },
+    ]);
+  });
+
   it('two runs at once name each note once between them', async () => {
     await olderRead();
     const [a, b] = await Promise.all([run(), run()]);

@@ -68,7 +68,7 @@ A note TownwiseAI makes from a file's event SHALL take the event's title as its 
 - **THEN** no note is made and `duplicate` is counted
 
 ### Requirement: Notes TownwiseAI already made are named once
-At boot, the API SHALL give each note that has a `source` and no `title` key the title of the event it was made from, read from the file's stored read at the note's planned index and cleaned as a new note's is, or null when that event is no longer stored. It SHALL write only where the `title` key is still absent, SHALL leave `detail` unchanged, SHALL write no audit event and SHALL log only counts, so a second run changes nothing.
+At boot, the API SHALL give each note that has a `source` and no `title` key the title of the event it was made from, read from the file's stored read at the note's planned index and cleaned as a new note's is, or null when that event is no longer stored or the note's detail no longer says the event's title (its folded detail neither equals the folded title nor starts with it followed by ":"). It SHALL write only where the `title` key is still absent, SHALL leave `detail` unchanged, SHALL write no audit event and SHALL log only counts, so a second run changes nothing.
 
 #### Scenario: An older note from a calendar file
 - **WHEN** a note made before this change from the event "Rehearsal dinner" has detail "Rehearsal dinner: party of 60" and no title
@@ -77,6 +77,10 @@ At boot, the API SHALL give each note that has a `source` and no `title` key the
 #### Scenario: The original was deleted
 - **WHEN** such a note's file had its original deleted
 - **THEN** after the next boot its title is null, and a later boot does not visit it again
+
+#### Scenario: The owner rewrote the detail
+- **WHEN** such a note's detail was edited by the owner to "Party of 60, back room", taking the event's name out
+- **THEN** after the next boot its title is null, so the name does not come back
 
 ### Requirement: TownwiseAI reads and proposes the title
 `list_notes` and `get_day` SHALL return each note's `title`. `propose_note` SHALL take `title` (a string of at most 120 characters naming the event and never a person, or null), and its card SHALL show it and save it. The weekly suggestion card SHALL show a note's title when it has one. The side panel's activity line SHALL stay without it.
