@@ -2,8 +2,8 @@ Tests first in every group. Run single suites only (`npm test -w @townwise/api -
 
 ## 0. Before building
 
-- [ ] 0.1 Owner: answer the design's Open Questions (or accept their defaults) and the proposal's sign-offs.
-- [ ] 0.2 Confirm D45 is still this change's in the sessions' reservation list and unused on `develop`'s `docs/portal/spec.md`, and that 6.29 is the next free collection section; take the next free ones and tell the other sessions if not.
+- [x] 0.1 Owner: answer the design's Open Questions (or accept their defaults) and the proposal's sign-offs. (2026-11-17: the owner chose the defaults: a stopped turn saves nothing, an interrupted turn ends and the person resends, the limit stays 150 seconds; and "push it and build it".)
+- [x] 0.2 Confirm D45 is still this change's in the sessions' reservation list and unused on `develop`'s `docs/portal/spec.md`, and that 6.29 is the next free collection section; take the next free ones and tell the other sessions if not. (2026-11-17: the reservation list names D45 for this change, after D43 (c2, `home-week-forecast`) and D44 (location delete, on develop), next free D46; `develop`'s spec (d170f77) has rows up to D44 and collection sections up to 6.28 `tw_suggestion_passes`, and no local or remote branch's spec has a D45 row or a 6.29 section. D45 and 6.29 stand.)
 
 ## 1. Turn records
 
