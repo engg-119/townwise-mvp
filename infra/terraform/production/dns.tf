@@ -97,6 +97,26 @@ resource "azurerm_dns_cname_record" "acs_dkim" {
   record              = each.value.value
 }
 
+# Inbound mail: ImprovMX receives mail for townwise.tech and forwards it (hello@ goes to the team; the alias
+# list lives in the ImprovMX dashboard, not in DNS). Receive-only: nothing sends through ImprovMX, so the apex
+# SPF above stays Communication Services alone.
+resource "azurerm_dns_mx_record" "apex" {
+  name                = "@"
+  zone_name           = azurerm_dns_zone.main.name
+  resource_group_name = local.rg
+  ttl                 = 3600
+
+  record {
+    preference = 10
+    exchange   = "mx1.improvmx.com"
+  }
+
+  record {
+    preference = 20
+    exchange   = "mx2.improvmx.com"
+  }
+}
+
 # Reject from day one, for the apex and every subdomain, with strict DKIM alignment. Only Communication
 # Services sends as townwise.tech, and it DKIM-signs with the selector1/selector2 keys above. Before any other
 # sender is added (a newsletter tool, a help desk), it must DKIM-sign as townwise.tech with an aligned key, or
