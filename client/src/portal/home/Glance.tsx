@@ -13,7 +13,7 @@ import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from
 import { formatCount, plural } from '../format';
 import { UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
-import { LoadingLine } from '../ui/feedback';
+import { Skeleton, SkeletonFigure, SkeletonText } from '../skeleton';
 import { Panel } from '../ui/layout';
 import { PhraseParts } from '../ui/PhraseParts';
 import { Eyebrow, Small } from '../ui/text';
@@ -73,7 +73,14 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric; forecast: Forecas
   // Last year's total only once the forecast read is back without one, so the tile never shows it and then swaps it
   // for the forecast's (767 guests, then ~999).
   if (props.forecastLoading && props.metric === 'guests') {
-    return <Tile eyebrow="This week’s forecast"><LoadingLine text="Loading this week’s forecast…" minHeight={0} /></Tile>;
+    return (
+      <Tile eyebrow="This week’s forecast">
+        <Skeleton name="week-forecast" label="Loading this week’s forecast">
+          <SkeletonFigure width={120} />
+          <View style={styles.lines}><SkeletonText lines={4} lastWidth="70%" /></View>
+        </Skeleton>
+      </Tile>
+    );
   }
   const { summary } = props.week;
   if (summary === null) {

@@ -277,11 +277,12 @@ test('while the forecast loads, the tile waits rather than show last year’s to
   const json = fake.json.bind(fake);
   fake.json = (path, schema, opts) => (path === MONTH ? held.then(() => json(path, schema, opts)) : json(path, schema, opts));
   await renderHome(fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake }));
-  expect(await within(glance()).findByText('Loading this week’s forecast…')).toBeTruthy();
+  expect(await within(glance()).findByTestId('skeleton-week-forecast')).toBeTruthy();
+  expect(within(glance()).getByRole('status').textContent).toBe('Loading this week’s forecast');
   expect(within(glance()).queryByText('This week, last year')).toBeNull();
   release();
   expect(await within(glance()).findByText('~770')).toBeTruthy();
-  expect(within(glance()).queryByText('Loading this week’s forecast…')).toBeNull();
+  expect(within(glance()).queryByTestId('skeleton-week-forecast')).toBeNull();
 });
 
 test('6 of the 7 days with a forecast: their total, the missing day named, no weekly range', async () => {
