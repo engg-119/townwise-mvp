@@ -234,6 +234,30 @@ test('Make a note opens a dialog “Make a note” from the event, without its t
   expect(document.activeElement).toBe(make);
 });
 
+test('a note made from an event sends the event’s calendar id and uid; Add an event and an edit send none', async () => {
+  const { api } = setup({ calendars: [KITCHEN], ownerEvents: [DINNER], notes: [PARTY] });
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  api.answers[NOTES_PATH] = (body) => savedNote('n9', body);
+  api.answers[`${NOTES_PATH}/n1`] = (body) => savedNote('n1', body);
+  press('Make a note from Smith rehearsal dinner');
+  fireEvent.click(within(dialog('Make a note')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  press('Add an event');
+  fireEvent.click(within(dialog('Add an event')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  press(EDIT);
+  fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  const sent = writes(api).map((call) => ({ path: call.path, fromEvent: (call.body as { fromEvent?: unknown }).fromEvent }));
+  expect(sent).toEqual([
+    { path: NOTES_PATH, fromEvent: { calendarId: 'c1', uid: 'i1' } },
+    { path: NOTES_PATH, fromEvent: undefined },
+    { path: `${NOTES_PATH}/n1`, fromEvent: undefined },
+  ]);
+  // Never the title.
+  expect(JSON.stringify(writes(api))).not.toContain('Smith');
+});
+
 type Measured = HTMLElement & { measureInWindow: (callback: (...box: number[]) => void) => void };
 
 /** Gives the panel's button `name` the box x, y, width, height in the window, which jsdom's layout leaves 0 by 0. */

@@ -4,7 +4,7 @@ import { ApiError, type ApiClient, type RequestOptions } from '../../../src/api/
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import type { OwnerCalendar, OwnerCalendarEvent } from '../../../src/portal/calendar/api';
 import type { ForecastDay } from '../../../src/portal/estimates/api';
-import type { Note, NoteInput, SalesDay } from '../../../src/portal/locations/api';
+import type { NewNoteInput, Note, SalesDay } from '../../../src/portal/locations/api';
 import { addDays } from '../../../src/portal/locations/dates';
 import type { Rule } from '../../../src/portal/rules/api';
 import { EMAIL, refusal } from '../../helpers/portal';
@@ -170,7 +170,15 @@ export function ownerEvent(fields: Partial<OwnerCalendarEvent> = {}): OwnerCalen
   };
 }
 
-/** A note the API saved from this body. */
+/**
+ * A note the API saved from this body. A body's `fromEvent` ({ calendarId, uid }, Make a note) comes back as the link
+ * the API stores, with the note's dates standing in for the event's.
+ */
 export function savedNote(id: string, body: unknown): { note: Note } {
-  return { note: noteOf(id, { ...(body as NoteInput), createdByEmail: EMAIL, createdAt: '2026-11-11T15:00:00.000Z' }) };
+  const { fromEvent, ...input } = body as NewNoteInput;
+  const link = fromEvent === undefined ? null : {
+    ...fromEvent, startDate: input.startDate, endDate: input.endDate, startTime: input.startTime ?? null, endTime: input.endTime ?? null,
+    linkedAt: '2026-11-11T15:00:00.000Z',
+  };
+  return { note: noteOf(id, { ...input, createdByEmail: EMAIL, createdAt: '2026-11-11T15:00:00.000Z', fromEvent: link }) };
 }

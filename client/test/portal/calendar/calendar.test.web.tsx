@@ -489,11 +489,13 @@ test('a calendar file is posted and kept, its events show once read again, and M
   };
   fireEvent.click(within(form).getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
+  // The note names its event by calendar id and uid (calendar-event-suggestions), so a move or a cancellation at the
+  // source can be followed; the API reads the event's dates itself.
   expect(writes(api).slice(1)).toEqual([{
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
-      startTime: '18:00', endTime: '21:00',
+      startTime: '18:00', endTime: '21:00', fromEvent: { calendarId: 'c1', uid: 'i1' },
     },
   }]);
   // The file's own POST carries its text; no other write carries a title.
@@ -501,6 +503,21 @@ test('a calendar file is posted and kept, its events show once read again, and M
   await waitFor(() => { expect(cell('2026-11-21').textContent).toContain('+70'); });
   // The stored events stay: a note's save reads the notes and the forecast again, not the calendars.
   expect(within(panel()).getByText('From your calendar: Smith rehearsal dinner')).toBeTruthy();
+  // The linked note says where it came from, with no title.
+  expect(within(panel()).getByText('From your calendar')).toBeTruthy();
+});
+
+test('a note linked to a calendar event says “From your calendar” with no title; an unlinked one says nothing of it', async () => {
+  const linked = noteOf('n1', {
+    kind: 'private_event', effect: 'closed', startDate: '2026-11-21', endDate: '2026-11-21', expectedGuests: 40,
+    fromEvent: { calendarId: 'c1', uid: 'i1', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null, linkedAt: '2026-11-11T15:00:00.000Z' },
+  });
+  const plain = noteOf('n2', { kind: 'other', effect: 'more_guests', startDate: '2026-11-21', endDate: '2026-11-21', fromEvent: null });
+  const { api } = setup(meOf(ACCESS.member), { notes: [linked, plain] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const day = panel();
+  expect(within(day).getAllByText('From your calendar')).toHaveLength(1);
+  expect(within(day).getByText('From your calendar').parentElement?.textContent).toContain('40 guests');
 });
 
 test('a file over 1 MB is refused unread, and a file that isn’t a calendar says so', async () => {

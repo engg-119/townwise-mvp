@@ -22,7 +22,8 @@ import { forecastWords, type CalendarDayView, type EffectGrade, type EffectMark,
 // on the theme's effect ramp, or a = in text2, which screen readers skip, then its sources as chips, ui/SourceChip.tsx,
 // on their own wrapping line); On the calendar (the holidays, town events and term dates Why doesn't already name, with
 // their sources as chips, the day's notes with Edit and Delete where the API allows, the business rules whose schedule
-// covers the day with their summary and a link to Rules, where they are changed (D31), events from the location's
+// covers the day with their summary and a link to Rules, where they are changed (D31), a note made from one of the
+// location's calendar events saying "From your calendar" with no title (calendar-event-suggestions), events from the location's
 // calendars (D33) with Make a note); then Add an event. Add an event, a note's Edit and an event's Make a note each
 // hand the page the button that was pressed, which anchors the page's note form popover (refine-calendar-and-home
 // design decision 2), so the panel never changes shape while the form is open. Under view-as the writes are disabled in
@@ -153,6 +154,7 @@ export function CalendarDay(props: {
             <View key={note.id} style={styles.item}>
               <Small white>{`Your note: ${noteWords(note)}.`}</Small>
               <Mono>{noteLine(note)}</Mono>
+              {note.fromEvent === null || note.fromEvent === undefined ? null : <Small>From your calendar</Small>}
               {note.detail === null ? null : <Small>{note.detail}</Small>}
               {note.canEdit ? (
                 <Actions>

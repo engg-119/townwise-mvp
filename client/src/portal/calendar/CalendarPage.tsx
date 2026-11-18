@@ -11,7 +11,7 @@ import { MONTH_NAMES } from '../analytics/words';
 import { hasCode } from '../errors';
 import { fetchForecast } from '../estimates/api';
 import { useAction, useBreakpoint, useLoad } from '../hooks';
-import { createNote, deleteNote, fetchNotes, fetchSalesDays, updateNote, type Note, type NoteInput } from '../locations/api';
+import { createNote, deleteNote, fetchNotes, fetchSalesDays, updateNote, type NewNoteInput, type Note, type NoteInput } from '../locations/api';
 import { addDays, localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
 import { NoteForm } from '../locations/NoteForm';
@@ -72,7 +72,9 @@ import { YourCalendars } from './YourCalendars';
 // and 17, D33, D39) are kept by the API, each an imported .ics file, a link or a Google calendar, and their events show
 // as "Your calendar" on web and native; after one is added the list and the range's stored events read again (never
 // the forecast: stored events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
-// events with its dates and hours but never its title; it is disabled under view-as. "Today" is the device's date.
+// events with its dates and hours but never its title, and the saved note is linked to that event by its calendar id and
+// uid (calendar-event-suggestions), so the day panel says "From your calendar" on it; it is disabled under view-as.
+// "Today" is the device's date.
 
 const READ_ONLY_ID = 'calendar-ro';
 /** The grid's slot: on web, focus that was on a cell the last render removed goes to the selected cell. */
@@ -84,9 +86,10 @@ const sticky = (Platform.OS === 'web' ? { position: 'sticky', top: 16 } : {}) as
 
 /**
  * A new note's `source` keys its form, so the form starts again from each stored event (`{calendarId}:{uid}`); 'add' is
- * Add an event's.
+ * Add an event's. A note made from a stored event sends that event's `fromEvent` with it, so the API links the note
+ * to the event (calendar-event-suggestions).
  */
-type FormState = { mode: 'new'; draft: NoteDraft; source: string } | { mode: 'edit'; note: Note } | null;
+type FormState = { mode: 'new'; draft: NoteDraft; source: string; fromEvent?: NonNullable<NewNoteInput['fromEvent']> } | { mode: 'edit'; note: Note } | null;
 
 /** The note form popover's heading, which names it: by the button that opened it. */
 function formLabel(form: NonNullable<FormState>): string {
@@ -291,10 +294,12 @@ function CalendarView(): React.JSX.Element {
   }, [reloadDay]);
 
   const editing = form?.mode === 'edit' ? form.note : null;
+  const fromEvent = form?.mode === 'new' ? form.fromEvent : undefined;
   const save = useCallback(async (body: NoteInput): Promise<Note | null> => {
     setSaving(true);
     try {
-      return editing === null ? await createNote(api, location.id, body) : await updateNote(api, location.id, editing.id, body);
+      if (editing === null) return await createNote(api, location.id, fromEvent === undefined ? body : { ...body, fromEvent });
+      return await updateNote(api, location.id, editing.id, body);
     } catch (error) {
       if (!hasCode(error, 404, 'not_found')) throw error;
       // The note's Edit goes with it once the notes read again.
@@ -304,7 +309,7 @@ function CalendarView(): React.JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [api, location.id, editing, gone]);
+  }, [api, location.id, editing, fromEvent, gone]);
 
   const onSaved = useCallback((note: Note) => {
     // An edit that moved the note off the selected day: its Edit goes once the notes read again.
@@ -421,7 +426,10 @@ function CalendarView(): React.JSX.Element {
         onEdit={(note, pressed) => { openForm({ mode: 'edit', note }, pressed); }}
         onDelete={(note) => { setStaleError(remove.error); setDeleting(note); }}
         onMakeNote={(event: ImportedEvent, pressed) => {
-          openForm({ mode: 'new', draft: draftOfImported(event), source: `${event.calendarId}:${event.uid}` }, pressed);
+          openForm({
+            mode: 'new', draft: draftOfImported(event), source: `${event.calendarId}:${event.uid}`,
+            fromEvent: { calendarId: event.calendarId, uid: event.uid },
+          }, pressed);
         }}
       />
       <NotePopover
