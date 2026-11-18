@@ -270,7 +270,7 @@ describe('suggest_next', () => {
     );
     const events = await turn({ content: 'How did May start?' });
     expect(model.calls).toHaveLength(2);
-    expect(shape(events)).toEqual(['conversation', 'text', 'tool', 'tool', 'text', 'tool', 'suggestions', 'tool', 'done']);
+    expect(shape(events)).toEqual(['conversation', 'text', 'aside', 'tool', 'tool', 'text', 'tool', 'suggestions', 'tool', 'done']);
     expect(events.find((e) => e.event === 'suggestions')?.data).toEqual({ id: 'toolu_n1', prompts: THREE });
     expect(eventData(events, 'tool').slice(2)).toEqual([
       { id: 'toolu_n1', name: 'suggest_next', state: 'running', input: null, result: null },
@@ -287,7 +287,7 @@ describe('suggest_next', () => {
     const { messages } = await view(id);
     expect(messages.at(-1)?.next).toEqual(THREE);
     expect(messages.at(0)?.next).toBeNull();
-    expect(messages.at(-1)?.parts.map((p) => p.type)).toEqual(['text', 'tool', 'text']);
+    expect(messages.at(-1)?.parts.map((p) => p.type)).toEqual(['thinking', 'tool', 'text']);
   });
 
   it('suggest_next alone before the turn wrote any text asks for the answer and the loop continues until it is written', async () => {

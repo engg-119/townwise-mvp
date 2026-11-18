@@ -520,7 +520,7 @@ describe('stop reasons', () => {
       { kind: 'message', message: message([], { stopReason: 'refusal' }) },
     );
     const { events } = await turn({ conversationId: id, content: 'Refuse later.' });
-    expect(shape(events)).toEqual(['conversation', 'text', 'tool', 'tool', 'done']);
+    expect(shape(events)).toEqual(['conversation', 'text', 'aside', 'tool', 'tool', 'done']);
     expect(events.at(-1)?.data).toMatchObject({ stopReason: 'refusal' });
     expect(await conversationDoc(id)).toEqual(before);
 
@@ -762,7 +762,7 @@ describe('caps, budget and limits', () => {
     }) });
     const { events } = await turn({ content: 'Spend the rest' });
     expect(model.calls).toHaveLength(1);
-    expect(shape(events)).toEqual(['conversation', 'text', 'tool', 'tool', 'done']);
+    expect(shape(events)).toEqual(['conversation', 'text', 'aside', 'tool', 'tool', 'done']);
     expect(events.at(-1)?.data).toMatchObject({ stopReason: 'budget', costUsd: 0.026 });
     expect(await usedMicroUsd()).toBe(19_990_000 + 26_000);
 
