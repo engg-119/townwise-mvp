@@ -8,7 +8,7 @@
 // TownwiseAI, with the suggestion's id as the rule's id; then a compare-and-set marks the suggestion accepted, and only
 // the request whose compare-and-set lands records `agent.suggestion_accepted`, with `edited` worked out from the stored
 // rule. No transactions: a retry or a second tab finds the rule by its id, and a request that would write other words or
-// another schedule than the stored rule answers 409 already_decided with it. A dismiss that finds the rule written
+// another schedule than the stored rule finishes that accept if it is still open, then answers 409 already_decided with it. A dismiss that finds the rule written
 // finishes the accept instead. A suggestion whose end has passed in the town is gone (404), as an unknown id or another
 // organization's is. 409 rule_limit and rule_exists leave it open. Logs and audit events carry ids, the source and
 // whether it was edited only: never the rule's words, its schedule or the file's name.
@@ -165,11 +165,13 @@ export async function acceptRuleSuggestion(ctx: TownwiseContext, req: Request, r
     rule = await addRule(ctx, caller, location, wanted.text, { id: record.id, via: 'townwise_ai', schedule: wanted.schedule });
   }
   const view = await viewOf(ctx, caller, rule);
+  // The rule is there: an accept that wrote it and stopped before its compare-and-set is finished first, as dismiss does,
+  // so the suggestion never stays open beside its rule (UI review S5).
+  if (record.status !== 'accepted') await finishAccepted(ctx, caller, location, record, rule);
   if (!sameRule(rule, wanted.text, wanted.schedule)) {
     res.status(409).json({ error: 'already_decided', message: 'This suggestion was already confirmed as another rule.', rule: view });
     return;
   }
-  if (record.status !== 'accepted') await finishAccepted(ctx, caller, location, record, rule);
   ctx.logger.info({
     orgId: scope.orgId, locationId: location.id, suggestionId: record.id, decision: 'accepted', source: record.source,
     edited: !sameRule(rule, record.text, record.schedule),

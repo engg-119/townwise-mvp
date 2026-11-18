@@ -394,7 +394,11 @@ describe('confirm, edit and dismiss', () => {
     held.push(marks);
     const confirm = decide(team.member, locationId, id, 'accept');
     await marks.arrived(1);
-    const edit = await decide(team.colleague, locationId, id, 'accept', { rule: { text: 'Closed Mondays all year', schedule: null } });
+    // The Edit finds the confirm's rule with the suggestion still open, finishes that accept (UI review S5), then answers 409.
+    const editing = decide(team.colleague, locationId, id, 'accept', { rule: { text: 'Closed Mondays all year', schedule: null } });
+    await marks.arrived(2);
+    marks.release(2);
+    const edit = await editing;
     expect(edit.status).toBe(409);
     expect(await edit.json()).toMatchObject({ error: 'already_decided', rule: { id, text: 'Closed on Mondays' } });
     marks.open();
@@ -402,6 +406,21 @@ describe('confirm, edit and dismiss', () => {
     expect(await count('tw_business_rules', { locationId: oid(locationId) })).toBe(1);
     expect((await eventsOf('agent.suggestion_accepted')).filter((event) => (event.details as { suggestionId: string }).suggestionId === id).map((event) => event.details))
       .toEqual([{ locationId, suggestionId: id, type: 'rule', source: 'file', edited: false }]);
+  });
+
+  it('an accept that finds the rule written and the suggestion still open finishes that accept before its 409 (UI review S5)', async () => {
+    const { locationId, id } = await oneSuggestion();
+    expect((await decide(team.member, locationId, id, 'accept')).status).toBe(200);
+    // A Confirm that wrote its rule and stopped before marking the suggestion accepted leaves this.
+    await server.connection.collection('tw_agent_suggestions').updateOne({ _id: oid(id) }, { $set: { status: 'open' } });
+    expect((await rulesPage(locationId)).suggested.map((each) => each.id)).toEqual([id]);
+    const edit = await decide(team.colleague, locationId, id, 'accept', { rule: { text: 'Closed Mondays all year', schedule: null } });
+    expect(edit.status).toBe(409);
+    expect(await edit.json()).toMatchObject({ error: 'already_decided', rule: { id, text: 'Closed on Mondays' } });
+    expect(await suggestionDoc(id)).toMatchObject({ status: 'accepted' });
+    expect((await rulesPage(locationId)).suggested).toEqual([]);
+    expect((await eventsOf('agent.suggestion_accepted')).filter((event) => (event.details as { suggestionId: string }).suggestionId === id).at(-1)?.details)
+      .toEqual({ locationId, suggestionId: id, type: 'rule', source: 'file', edited: false });
   });
 
   it('a Dismiss whose compare-and-set lands after a racing Confirm wrote its rule answers the end state, accepted (code review N3)', async () => {
