@@ -43,6 +43,7 @@ import {
 import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
+import { acceptRuleSuggestion, dismissRuleSuggestion } from '../handlers/rule-suggestions.ts';
 import { createRule, deleteRule, listRules, updateRule } from '../handlers/rules.ts';
 import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
 import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetupLocation, uploadSetupSales } from '../handlers/staff-setup.ts';
@@ -426,6 +427,18 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.agent.suggestion_dismiss', method: 'POST', path: '/org/locations/:locationId/agent/suggestions/:suggestionId/dismiss',
     policy: 'org_admin', bodyLimit: '1kb', openAsAdmin: true, handler: dismissSuggestion,
+  },
+  // Suggested closure rules (openspec change suggest-closure-rules, D46): any member confirms, edits or dismisses a
+  // file or sales suggestion; 2 KB so an Edit of 200 four-byte characters and a schedule fits. A weekly one is 404 here.
+  {
+    id: 'org.agent.rule_suggestion_accept', method: 'POST',
+    path: '/org/locations/:locationId/agent/rule-suggestions/:suggestionId/accept', policy: 'member', bodyLimit: '2kb', openAsAdmin: true,
+    handler: acceptRuleSuggestion,
+  },
+  {
+    id: 'org.agent.rule_suggestion_dismiss', method: 'POST',
+    path: '/org/locations/:locationId/agent/rule-suggestions/:suggestionId/dismiss', policy: 'member', bodyLimit: '2kb', openAsAdmin: true,
+    handler: dismissRuleSuggestion,
   },
   {
     id: 'org.weekly_suggestions.switch', method: 'PATCH', path: '/org/weekly-suggestions', policy: 'org_admin', bodyLimit: '2kb',

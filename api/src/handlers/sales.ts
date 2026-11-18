@@ -307,6 +307,9 @@ export async function removeSalesData(
   // question is asked, and the same days uploaded again are asked about again. Closure notes they saved stay.
   // Order edits and rules stay: they are not about these days, and a sales delete must not forget them.
   await ctx.stores.agentAnswers.removeForLocation(scope, locationId);
+  // D46: the sales history's suggested closure rules were made from these days: those not accepted go, so a new history
+  // can suggest again. An accepted one stays, as its rule does.
+  await ctx.stores.agentSuggestions.removeSalesUndecided(scope, locationId);
   // Item sales are sales data too. The ordering setup and counts stay, as edits and rules do.
   await ctx.stores.itemSales.removeForLocation(scope, locationId);
   if (removed.deletedFiles > 0) {

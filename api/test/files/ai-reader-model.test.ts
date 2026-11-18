@@ -86,7 +86,9 @@ describe('the reader’s model client', () => {
   it('sends a strict schema, with the limits the API does not enforce as descriptions', () => {
     const schema = READER_FORMAT.schema as { additionalProperties: unknown; required: string[]; properties: Record<string, { description?: string }> };
     expect(schema.additionalProperties).toBe(false);
-    expect(schema.required.sort()).toEqual(['confidence', 'days', 'daysCut', 'events', 'facts', 'kind', 'summary']);
+    expect(schema.required.sort()).toEqual(['closedPatterns', 'confidence', 'days', 'daysCut', 'events', 'facts', 'kind', 'summary']);
+    // D46: at most 5 closed patterns, as a description the API does not enforce.
+    expect(JSON.stringify(schema.properties.closedPatterns)).toContain('5');
     expect(schema.properties.summary?.description).toContain('600');
     expect(JSON.stringify(schema.properties.days)).toContain('1500');
     expect(JSON.stringify(schema)).not.toContain('"maxLength"');

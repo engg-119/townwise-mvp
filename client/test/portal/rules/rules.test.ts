@@ -114,3 +114,55 @@ describe('a rule’s schedule (D31)', () => {
     expect(forecastLine({})).toBe('TownwiseAI reads this. It doesn’t change the forecast.');
   });
 });
+
+describe('Every year (D46): a yearly season, checked as api/src/handlers/notes.ts validDays checks it', () => {
+  const WINTER: RuleSchedule = {
+    ...CLOSED_MONDAYS, startDate: '2027-01-01', weekdays: null, season: { repeat: 'yearly', from: '01-01', to: '03-31' },
+  };
+
+  test('Starts and Ends set the first season; the schedule has no end', () => {
+    expect(checkSchedule(draft({ startDate: '2027-01-01', endDate: '2027-03-31', yearly: true }), TODAY)).toEqual({ input: WINTER });
+    // Across the new year, with weekdays.
+    expect(checkSchedule(draft({ startDate: '2026-12-20', endDate: '2027-01-05', weekdays: [1], yearly: true }), TODAY)).toEqual({
+      input: { ...CLOSED_MONDAYS, startDate: '2026-12-20', season: { repeat: 'yearly', from: '12-20', to: '01-05' } },
+    });
+    // Unchecked, the same dates are a dated range, as before.
+    expect(checkSchedule(draft({ startDate: '2027-01-01', endDate: '2027-03-31', yearly: false }), TODAY)).toEqual({
+      input: { ...WINTER, endDate: '2027-03-31', season: undefined },
+    });
+  });
+
+  test('Ends is required, a season is shorter than a year, and Feb 29 can’t start or end one', () => {
+    expect(checkSchedule(draft({ startDate: '2027-01-01', yearly: true }), TODAY)).toEqual({ messages: { endDate: RULES_COPY.seasonEnd } });
+    for (const [startDate, endDate] of [['2027-01-01', '2027-12-31'], ['2027-03-01', '2028-03-01'], ['2028-02-29', '2028-03-31'], ['2028-01-01', '2028-02-29']] as const) {
+      expect(checkSchedule(draft({ startDate, endDate, yearly: true }), TODAY)).toEqual({ messages: { endDate: RULES_COPY.season } });
+    }
+    expect(checkSchedule(draft({ startDate: '2027-03-01', endDate: '2027-02-01', yearly: true }), TODAY)).toEqual({ messages: { endDate: NOTE_COPY.endBefore } });
+    expect(checkSchedule(draft({ startDate: '', endDate: '2027-02-01', yearly: true }), TODAY)).toEqual({ messages: { startDate: NOTE_COPY.start } });
+    // 364 days is the longest season.
+    expect('input' in checkSchedule(draft({ startDate: '2027-01-01', endDate: '2027-12-30', yearly: true }), TODAY)).toBe(true);
+    expect(RULES_COPY).toMatchObject({
+      season: 'Pick a season shorter than a year that doesn’t start or end on Feb 29.',
+      seasonEnd: 'Enter the season’s last day.',
+      everyYear: 'Closes the same days every year from Starts on, until you delete the rule.',
+    });
+  });
+
+  test('editing a yearly rule prefills Starts and Ends with its first season on or after its start', () => {
+    const fromFile = { ...WINTER, startDate: '2026-11-17' };
+    expect(draftOfSchedule(fromFile)).toEqual({ ...emptyDraft('closure'), startDate: '2027-01-01', endDate: '2027-03-31', yearly: true });
+    expect(checkSchedule(draftOfSchedule(fromFile), TODAY)).toEqual({ input: WINTER });
+    // Started inside a season crossing the new year: that season.
+    const holidays: RuleSchedule = { ...WINTER, startDate: '2027-01-02', season: { repeat: 'yearly', from: '12-20', to: '01-05' } };
+    expect(draftOfSchedule(holidays)).toMatchObject({ startDate: '2026-12-20', endDate: '2027-01-05', yearly: true });
+  });
+
+  test('the rule’s schedule keeps its season, and an API from before seasons sends none', () => {
+    const rule = {
+      id: 'r1', text: 'Closed in winter', addedVia: 'page', createdByEmail: 'owner@example.com', createdAt: '2026-03-02T15:00:00.000Z',
+      updatedAt: '2026-03-02T15:00:00.000Z', canEdit: true, schedule: WINTER, scheduleSummary: 'Closed Jan 1 to Mar 31 every year, from Jan 1, 2027',
+    };
+    expect(ruleSchema.parse(rule)).toEqual(rule);
+    expect(ruleSchema.parse({ ...rule, schedule: CLOSED_MONDAYS }).schedule).toEqual(CLOSED_MONDAYS);
+  });
+});

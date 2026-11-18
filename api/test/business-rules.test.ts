@@ -89,6 +89,45 @@ describe('readRuleSchedule', () => {
     expect(readRuleSchedule({ ...CLOSED_MONDAYS, endDate: '2028-01-06' }, TODAY)).not.toBeNull();
   });
 
+  it('takes a yearly season with no end; a schedule with no season reads as before, with no season key', () => {
+    const winter = { ...CLOSED_MONDAYS, weekdays: null, startDate: '2026-11-17', season: { repeat: 'yearly', from: '01-01', to: '03-31' } };
+    expect(readRuleSchedule(winter, TODAY)).toEqual({ ...winter, weekdays: null });
+    expect(readRuleSchedule({ ...winter, season: { repeat: 'yearly', from: '12-20', to: '01-05' } }, TODAY)?.season)
+      .toEqual({ repeat: 'yearly', from: '12-20', to: '01-05' });
+    // A season of 364 days (a non-leap year) is the longest.
+    expect(readRuleSchedule({ ...winter, season: { repeat: 'yearly', from: '01-01', to: '12-30' } }, TODAY)).not.toBeNull();
+    expect(readRuleSchedule({ ...winter, season: { repeat: 'yearly', from: '03-02', to: '03-01' } }, TODAY)).toBeNull();
+    // Null or left out: no season, and none stored.
+    expect(readRuleSchedule({ ...CLOSED_MONDAYS, season: null }, TODAY)).toEqual(CLOSED_MONDAYS);
+    expect(readRuleSchedule(CLOSED_MONDAYS, TODAY)).not.toHaveProperty('season');
+  });
+
+  it('refuses a season that is not real month-days, starts or ends on Feb 29, lasts a year or more, or has an end date', () => {
+    const winter = { ...CLOSED_MONDAYS, weekdays: null, startDate: '2026-11-17', season: { repeat: 'yearly', from: '01-01', to: '03-31' } };
+    const bad: unknown[] = [
+      { repeat: 'yearly', from: '02-29', to: '03-31' },
+      { repeat: 'yearly', from: '01-01', to: '02-29' },
+      { repeat: 'yearly', from: '02-30', to: '03-31' },
+      { repeat: 'yearly', from: '13-01', to: '03-31' },
+      { repeat: 'yearly', from: '1-1', to: '03-31' },
+      { repeat: 'yearly', from: '01-01', to: '12-31' },
+      { repeat: 'yearly', from: '06-01', to: '05-31' },
+      { repeat: 'monthly', from: '01-01', to: '03-31' },
+      { repeat: 'yearly', from: '01-01', to: '03-31', note: 'x' },
+      'winter',
+    ];
+    for (const season of bad) expect({ season, schedule: readRuleSchedule({ ...winter, season }, TODAY) }).toEqual({ season, schedule: null });
+    expect(readRuleSchedule({ ...winter, endDate: '2027-03-31' }, TODAY)).toBeNull();
+    // The start keeps its rule: 2010 to today plus two years.
+    expect(readRuleSchedule({ ...winter, startDate: '2028-11-13' }, TODAY)).toBeNull();
+  });
+
+  it('a note refuses a season', () => {
+    const note = { ...CLOSED_MONDAYS, endDate: '2027-01-05', detail: 'x' };
+    expect(readNoteContent(note, TODAY)).not.toBeNull();
+    expect(readNoteContent({ ...note, season: { repeat: 'yearly', from: '01-01', to: '03-31' } }, TODAY)).toBeNull();
+  });
+
   it('is strict: a detail or any other key is refused, and so is anything but an object', () => {
     expect(readRuleSchedule({ ...CLOSED_MONDAYS, detail: 'Smith party' }, TODAY)).toBeNull();
     expect(readRuleSchedule({ ...CLOSED_MONDAYS, summary: 'Closed' }, TODAY)).toBeNull();
@@ -126,6 +165,14 @@ describe('scheduleSummary', () => {
       'Other, effect not known every day from Jan 5, 2027',
       'Closed on Mondays and Tuesdays from Jan 5, 2027',
     ]);
+  });
+
+  it('words a yearly season with its months and days, every year, from its start', () => {
+    const yearly = { ...base, startDate: '2026-11-17', season: { repeat: 'yearly' as const, from: '01-01', to: '03-31' } };
+    expect(scheduleSummary({ ...yearly, weekdays: null })).toBe('Closed Jan 1 to Mar 31 every year, from Nov 17, 2026');
+    expect(scheduleSummary({ ...yearly, season: { repeat: 'yearly', from: '12-20', to: '01-05' } }))
+      .toBe('Closed on Mondays, Dec 20 to Jan 5 every year, from Nov 17, 2026');
+    expect(scheduleSummary({ ...yearly, weekdays: null, season: null })).toBe('Closed every day from Nov 17, 2026');
   });
 });
 

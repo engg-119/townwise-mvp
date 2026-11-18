@@ -4,7 +4,7 @@ import type { ApiClient } from '../api/client';
 import { withOrgId } from '../portal/api';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
-import { ruleScheduleSchema, ruleSchema, type Rule } from '../portal/rules/api';
+import { knownRuleSuggestions, ruleScheduleSchema, ruleSchema, type Rule, type RuleSuggestion } from '../portal/rules/api';
 import type { SseEvent } from '../api/sse';
 import type { SourceLink } from './tools';
 import type { TreeNode } from './tree';
@@ -553,15 +553,9 @@ export function addNote(api: ApiClient, locationId: string, note: NoteProposal):
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 // The shapes api/README.md (Tuning chat) and docs/portal/tuning-chat.md section 8 document.
+// D46: the weekday question became a suggested closure rule (`ruleSuggestions`), so a weekday question from an older
+// API is a kind this client no longer reads, and is left out.
 const questionSchema = z.discriminatedUnion('kind', [
-  /**
-   * A weekday with no sales on most of its counted days, from `from` (the first day with sales in the window) to `to`:
-   * `noSalesCount` of the `weekdayCount` days of that weekday in weeks with sales on other days.
-   */
-  z.object({
-    id: z.string(), kind: z.literal('weekday'), weekday: z.number().int().min(0).max(6), from: dateSchema, to: dateSchema,
-    noSalesCount: z.number().int(), weekdayCount: z.number().int(),
-  }),
   /**
    * A run of `dayCount` days with no sales and no note, asked only when one of its days is usually busy; the typical
    * guests (spec D32), lowest and highest, of those usually busy days. An API from before them sends neither, and the
@@ -630,7 +624,7 @@ export type WeeklySuggestions = z.infer<typeof weeklySuggestionsSchema>;
 // never shown as a placeholder. An API from before weekly suggestions sends neither of their keys.
 const panelSchema = z.object({
   questions: z.array(z.unknown()), activity: z.array(z.unknown()), suggestions: z.array(z.unknown()).optional(),
-  weeklySuggestions: z.unknown().optional(),
+  weeklySuggestions: z.unknown().optional(), ruleSuggestions: z.array(z.unknown()).optional(),
 });
 
 export interface AgentPanel {
@@ -639,6 +633,8 @@ export interface AgentPanel {
   suggestions: Suggestion[];
   /** Null from an API before weekly suggestions. */
   weeklySuggestions: WeeklySuggestions | null;
+  /** D46: the open suggested closure rules from files and the sales history; none from an API before them. */
+  ruleSuggestions: RuleSuggestion[];
 }
 
 function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
@@ -654,6 +650,7 @@ export async function loadAgentPanel(api: ApiClient, locationId: string): Promis
   return {
     questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema),
     suggestions: known(panel.suggestions ?? [], suggestionSchema), weeklySuggestions: weekly.success ? weekly.data : null,
+    ruleSuggestions: knownRuleSuggestions(panel.ruleSuggestions ?? []),
   };
 }
 

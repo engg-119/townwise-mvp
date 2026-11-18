@@ -817,7 +817,7 @@ test('one primary: only the composer’s button has the white fill', async () =>
   await openEarlierChat();
   expect(screen.getByText('Proposed note')).toBeTruthy();
   const side = await openPanel();
-  await within(side).findByRole('button', { name: 'Yes, closed Mondays' });
+  await within(side).findByRole('button', { name: 'No, we were closed' });
   fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
   const send = screen.getByRole('button', { name: 'Send' });
   expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([send]);
@@ -894,8 +894,8 @@ test('under view-as every write is disabled in place and versions still switch b
   await openPanel();
   // Beside the landing, the cards are under its chips; the panel's column leaves them out.
   const cards = await screen.findByTestId('chat-landing-questions');
-  expectReadOnly(await within(cards).findByRole('button', { name: 'Yes, closed Mondays' }));
-  fireEvent.click(within(cards).getByRole('button', { name: 'Yes, closed Mondays' }));
+  expectReadOnly(await within(cards).findByRole('button', { name: 'No, we were closed' }));
+  fireEvent.click(within(cards).getByRole('button', { name: 'No, we were closed' }));
   // Reading is allowed: the target's conversation opens, with every action in place and disabled.
   await openEarlierChat();
   // The docked composer shows no example to accept, so Tab can't fill it.
@@ -1196,7 +1196,7 @@ test('nothing goes to browser storage', async () => {
     const [notSure] = await within(side).findAllByRole('button', { name: 'Not sure' });
     if (notSure === undefined) throw new Error('no answer');
     fireEvent.click(notSure);
-    await within(side).findByText('Got it. TownwiseAI won’t ask about these days again.');
+    await within(side).findByText('Got it. TownwiseAI won’t ask about this day again.');
     expect(setItem).not.toHaveBeenCalled();
   } finally {
     setItem.mockRestore();

@@ -1,3 +1,6 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import { cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
@@ -123,6 +126,13 @@ test('the count of TownwiseAI’s questions includes its open weekly suggestions
   const agent = { questions: QUESTIONS.slice(0, 1), activity: [], suggestions: [suggestion], weeklySuggestions: { on: true, available: true, canChange: false } };
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, agent));
   expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
+});
+
+test('the count of TownwiseAI’s questions includes its open suggested rules (D46)', async () => {
+  const ruleSuggestions = (JSON.parse(readFileSync(join(__dirname, '../../chat/agent-panel.json'), 'utf8')) as { panel: { ruleSuggestions: unknown[] } }).panel.ruleSuggestions;
+  const agent = { questions: QUESTIONS, activity: [], ruleSuggestions };
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, agent));
+  expect((await screen.findByRole('link', { name: '4 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
 });
 
 test('the last week chart prints its key and scale; the history heatmap is one picture with no focusable cell', async () => {

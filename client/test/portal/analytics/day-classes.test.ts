@@ -2,7 +2,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import type { TownEvent } from '../../../src/portal/analytics/api';
-import { classOf, dayContext, dayFlags, ruleSchedules, typicalGuests, type DayClass, type RuleScheduleLike } from '../../../src/portal/analytics/days';
+import { classOf, dayContext, dayFlags, noteCovers, ruleSchedules, typicalGuests, type DayClass, type RuleScheduleLike } from '../../../src/portal/analytics/days';
 import type { Note } from '../../../src/portal/locations/api';
 import { day, note, townEvent } from './fakes';
 
@@ -86,5 +86,34 @@ describe('rule schedules', () => {
   test('ruleSchedules keeps only the rules that have a schedule', () => {
     const schedule = rule('more_guests');
     expect(ruleSchedules([{ schedule }, { schedule: null }, {}])).toEqual([schedule]);
+  });
+});
+
+describe('a yearly season (D46), as api/src/agent/questions.ts noteCovers reads it', () => {
+  const yearly = (from: string, to: string, weekdays: number[] | null = null) => ({
+    startDate: '2026-11-17', endDate: null, weekdays, season: { repeat: 'yearly' as const, from, to },
+  });
+
+  test('covers its months and days every year from its start, and no other day', () => {
+    const winter = yearly('01-01', '03-31');
+    expect(['2027-01-01', '2027-02-14', '2027-03-31', '2031-02-01'].map((date) => noteCovers(winter, date))).toEqual([true, true, true, true]);
+    expect(['2026-12-31', '2027-04-01', '2027-07-04'].map((date) => noteCovers(winter, date))).toEqual([false, false, false]);
+    // Before its start, even in season.
+    expect(noteCovers({ ...winter, startDate: '2027-02-01' }, '2027-01-15')).toBe(false);
+  });
+
+  test('a season crossing the new year, with weekdays, and Feb 29 inside one', () => {
+    const holidays = yearly('12-20', '01-05');
+    expect(['2026-12-20', '2026-12-31', '2027-01-01', '2027-01-05'].map((date) => noteCovers(holidays, date))).toEqual([true, true, true, true]);
+    expect(['2026-12-19', '2027-01-06'].map((date) => noteCovers(holidays, date))).toEqual([false, false]);
+    // 2027-01-04 is a Monday, 2027-01-05 a Tuesday.
+    expect(noteCovers(yearly('12-20', '01-05', [1]), '2027-01-04')).toBe(true);
+    expect(noteCovers(yearly('12-20', '01-05', [1]), '2027-01-05')).toBe(false);
+    expect(noteCovers(yearly('02-01', '03-01'), '2028-02-29')).toBe(true);
+  });
+
+  test('a schedule with no season reads as before', () => {
+    expect(noteCovers({ startDate: '2026-11-17', endDate: null, weekdays: null, season: null }, '2027-07-04')).toBe(true);
+    expect(noteCovers({ startDate: '2026-11-17', endDate: null, weekdays: null }, '2027-07-04')).toBe(true);
   });
 });

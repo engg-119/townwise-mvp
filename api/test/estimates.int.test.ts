@@ -19,6 +19,8 @@ import { createForecastReader, type ForecastWindow } from '../src/forecasts/read
 import { rowsOf } from '../src/handlers/forecast-runs.ts';
 import type { PeopleInTownWindow } from '../src/people-in-town/estimate.ts';
 import type { PeopleData } from '../src/people-in-town/sources.ts';
+import { createAgentSuggestionStore } from '../src/stores/agent-suggestions.ts';
+import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { Town } from '../src/towns.ts';
 import { addGrant, addLocation, addNote, addOwnerCalendar, addSalesDay, addSeat, createOrg } from './helpers/fixtures.ts';
 import { runDays } from './helpers/lab.ts';
@@ -529,6 +531,42 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         const after = await read();
         expect(dayOf(after, '2026-06-08')).toMatchObject(UNCHANGED);
         expect(after.weeks).toHaveLength(3);
+      });
+
+      it('D46: an open suggested closure rule changes nothing until a member confirms it; a confirmed yearly rule closes its season only', async () => {
+        const store = createAgentSuggestionStore(server.connection);
+        const scope = { orgId } as OrgScope;
+        const suggest = async (closureKey: string, ruleSchedule: Record<string, unknown>) => {
+          const id = new Types.ObjectId().toHexString();
+          await store.insertOne(scope, {
+            id, locationId: noted, week: '2026-06-01', source: 'file', fileId: new Types.ObjectId().toHexString(), text: 'Closed on Mondays',
+            schedule: schedule(ruleSchedule) as unknown as RuleSchedule, closureKey, now: server.clock.now(),
+          });
+          return id;
+        };
+        const mondays = await suggest('closed|w=1|ongoing', { startDate: '2026-06-01' });
+        expect(dayOf(await read(), '2026-06-08')).toMatchObject(UNCHANGED);
+        const accept = (id: string) => call(server, `/api/org/locations/${noted}/agent/rule-suggestions/${id}/accept`, { session: member, json: {} });
+        expect((await accept(mondays)).status).toBe(200);
+        expect(dayOf(await read(), '2026-06-08')).toMatchObject({ status: 'closed', mid: null });
+        await server.connection.collection('tw_business_rules').deleteMany({ locationId: new Types.ObjectId(noted) });
+        const season = await suggest('closed|w=*|yearly=06-09..06-10', {
+          weekdays: null, startDate: '2026-06-01', season: { repeat: 'yearly', from: '06-09', to: '06-10' },
+        });
+        expect(dayOf(await read(), '2026-06-09')).toMatchObject(UNCHANGED);
+        expect((await accept(season)).status).toBe(200);
+        const body = await read();
+        expect(['2026-06-08', '2026-06-09', '2026-06-10', '2026-06-11'].map((date) => dayOf(body, date)?.status)).toEqual(['open', 'closed', 'closed', 'open']);
+        expect(dayOf(body, '2026-06-09')?.reasons[0]).toMatchObject({ kind: 'rule', label: 'Your rule: closed Jun 9 to Jun 10 every year' });
+        // A season across the new year (Jun 13 to Jun 2 the next year): its two ends close, the days between stay open.
+        await server.connection.collection('tw_business_rules').deleteMany({ locationId: new Types.ObjectId(noted) });
+        const crossing = await suggest('closed|w=*|yearly=06-13..06-02', {
+          weekdays: null, startDate: '2026-06-01', season: { repeat: 'yearly', from: '06-13', to: '06-02' },
+        });
+        expect((await accept(crossing)).status).toBe(200);
+        const across = await read();
+        expect(['2026-05-31', '2026-06-01', '2026-06-02', '2026-06-03', '2026-06-12', '2026-06-13', '2026-06-14'].map((date) => dayOf(across, date)?.status))
+          .toEqual(['open', 'closed', 'closed', 'open', 'open', 'closed', 'closed']);
       });
 
       it('a rule’s party and a note’s on the same day add up; a closure from either wins; a rule without a schedule changes nothing', async () => {

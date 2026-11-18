@@ -230,7 +230,7 @@ describe('POST /api/org/locations/:locationId/data/:ref/ai', () => {
     expect(done.ai).toEqual({
       status: 'done', reason: null, partial: false, kind: 'calendar', summary: 'A list of June events.', facts: ['Three events in June'],
       daysCut: false, notes: [], notesSkipped: null, daysWritten: 0, daysAlreadyHad: 0, uploadRef: null, itemRef: null, daysReason: null,
-      itemReason: null, calibration: null, canUndo: false,
+      itemReason: null, calibration: null, canUndo: false, rulesSuggested: 0, rulesWaiting: 0,
     });
     expect(await aiOf(fileId)).toMatchObject({ status: 'done', attempts: 1, leaseUntil: null, costMicroUsd: 2500, requestedBy: team.member.userId });
     const readEvent = (await eventsOf('file.ai_read')).at(-1);
@@ -671,7 +671,7 @@ describe('the TownwiseAI reader', () => {
     }];
     await read();
     expect((await aiOf(fileId)).result).toEqual({
-      ...ANSWER, kind: 'other', facts: ['ok'], events: [], daysCut: false, eventCount: 0, dayCount: 1, daysBorneOut: [],
+      ...ANSWER, kind: 'other', facts: ['ok'], events: [], daysCut: false, eventCount: 0, dayCount: 1, daysBorneOut: [], closedPatterns: [],
     });
   });
 
@@ -698,7 +698,7 @@ describe('the TownwiseAI reader', () => {
     expect(hooked).toHaveLength(2);
     for (const each of hooked) {
       expect(each).toMatchObject({ fileId, status: 'reading', saved: true, read: { partial: false, costMicroUsd: 2500 } });
-      expect(each.read.result).toEqual({ ...ANSWER, daysCut: false, eventCount: 1, dayCount: 1, daysBorneOut: [] });
+      expect(each.read.result).toEqual({ ...ANSWER, daysCut: false, eventCount: 1, dayCount: 1, daysBorneOut: [], closedPatterns: [] });
     }
     expect(await aiOf(fileId)).toMatchObject({ status: 'done', attempts: 2, costMicroUsd: 2500 });
     expect(await usageOf()).toBe(2500);

@@ -89,7 +89,10 @@ function card(scope: HTMLElement, heading: string): HTMLElement {
 test('members see each suggestion with its why and calendar entries, and whether the switch is on, with no buttons', async () => {
   renderAt(chatApi(false), meOf(ACCESS.member));
   const panel = await side();
-  expect(within(panel).getByText('2 to decide')).toBeTruthy();
+  // The weekly section's own count: the suggested rules above it (D46) have theirs.
+  const weeklyHead = within(panel).getByRole('heading', { name: 'Suggested for the next 3 months' }).parentElement;
+  if (weeklyHead === null) throw new Error('no weekly heading');
+  expect(within(weeklyHead).getByText('2 to decide')).toBeTruthy();
   const note = card(panel, NOTE_HEADING);
   expect(within(note).getByText('Independence Day is Sat, Jul 4, and you were closed on it last year.')).toBeTruthy();
   expect(within(note).getByText('Based on Independence Day (Sat, Jul 4, 2026).')).toBeTruthy();
@@ -221,16 +224,17 @@ test('with none open, the section says so and still shows the switch', async () 
 });
 
 test('the header’s Questions and activity button counts open questions and open suggestions, as Home’s link does', async () => {
-  // The fixture asks 3 questions and has 2 suggestions open: Home's link reads "5 questions from TownwiseAI".
+  // The fixture asks 2 questions and has 2 weekly suggestions and (D46) 2 suggested rules open: Home's link reads
+  // "6 questions from TownwiseAI".
   const api = chatApi(true);
   api.respond['/api/org/locations/l1/agent/suggestions/0000000000000000000000c2/dismiss'] = () => (
     { suggestion: { id: '0000000000000000000000c2', status: 'dismissed' }, note: null, rule: null }
   );
   renderAt(api, meOf(ACCESS.admin));
   const panel = await side();
-  expect(screen.getByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Questions and activity (6)' })).toBeTruthy();
   fireEvent.click(within(card(panel, RULE_HEADING)).getByRole('button', { name: 'Dismiss' }));
-  expect(await screen.findByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
 });
 
 test('while weekly passes aren’t running, the panel says only that, never that TownwiseAI is unavailable', async () => {

@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { OrgScope } from '../src/access/policy.ts';
 import { TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import { ORDER_CHANGE_RESULT } from '../src/chat/tools/orders.ts';
+import { utcDay } from '../src/dates.ts';
 import { createItemReader } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
@@ -416,8 +417,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
       'org.notes.remove', 'org.sales.history', 'org.calendar.get', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
       'org.chat.proposal', 'org.chat.rename', 'org.chat.active', 'org.chat.feedback',
-      // Weekly suggestions (weekly-forecast-suggestions).
-      'org.agent.suggestion_accept', 'org.agent.suggestion_dismiss',
+      // Weekly suggestions (weekly-forecast-suggestions), and suggested closure rules (suggest-closure-rules).
+      'org.agent.suggestion_accept', 'org.agent.suggestion_dismiss', 'org.agent.rule_suggestion_accept', 'org.agent.rule_suggestion_dismiss',
       'org.files.create', 'org.files.chunk', 'org.files.complete', 'org.files.list', 'org.files.get', 'org.files.raw', 'org.files.clean',
       'org.files.remove_raw', 'org.files.remove', 'org.imports.current', 'org.imports.get', 'org.imports.start', 'org.imports.answer',
       // U3 stages 5 to 9.
@@ -571,6 +572,40 @@ describe('isolation, case by case', () => {
     expect(await reader.readText(scope, a.locationId, b.refFileId)).toEqual({ status: 'not_found' });
     expect(await reader.readText(scope, b.locationId, b.refFileId)).toEqual({ status: 'not_found' });
     expect(await reader.readText(scope, a.locationId, a.refFileId)).toEqual({ status: 'ok', text: `${a.name} reference text`, truncated: false });
+  });
+
+  it('A’s member cannot decide B’s suggested closure rule, B’s file’s, or sales_weekday_1 on B’s location: 404 as an unknown id, B unchanged', async () => {
+    const locationId = await addLocation(server, { orgId: b.orgId, name: `${b.name} Monday Room` });
+    const rows: Record<string, unknown>[] = [];
+    for (let day = '2026-03-02'; day <= '2026-05-31'; day = utcDay(new Date(`${day}T00:00:00.000Z`), 1)) {
+      if (new Date(`${day}T00:00:00.000Z`).getUTCDay() === 1) continue;
+      rows.push({
+        orgId: new Types.ObjectId(b.orgId), locationId: new Types.ObjectId(locationId), date: day, guests: 80, netSalesCents: null,
+        uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+      });
+    }
+    await server.connection.collection('tw_sales_days').insertMany(rows);
+    const fileRow = new Types.ObjectId();
+    await server.connection.collection('tw_agent_suggestions').insertOne({
+      _id: fileRow, orgId: new Types.ObjectId(b.orgId), locationId: new Types.ObjectId(b.locationId), week: '2026-06-01', type: 'rule',
+      content: { kind: 'closure', startDate: '2026-06-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null },
+      text: 'Closed on Tuesdays', why: null, calendarIds: [], status: 'open', decidedBy: null, decidedAt: null, source: 'file',
+      fileId: new Types.ObjectId(b.refFileId), closureKey: 'closed|w=2|ongoing', createdAt: server.clock.now(), updatedAt: server.clock.now(),
+    });
+    const before = await snapshotOf(b);
+    const decide = (location: string, id: string, action: string) => call(server, `/api/org/locations/${location}/agent/rule-suggestions/${id}/${action}`, {
+      session: a.member.session, json: {},
+    });
+    for (const action of ['accept', 'dismiss']) {
+      for (const [location, id] of [[b.locationId, fileRow.toHexString()], [a.locationId, fileRow.toHexString()], [locationId, 'sales_weekday_1'], [a.locationId, 'sales_weekday_1']] as const) {
+        const res = await decide(location, id, action);
+        expect({ location, id, action, status: res.status, body: await res.json() as unknown })
+          .toEqual({ location, id, action, status: 404, body: expect.objectContaining({ error: 'not_found' }) as unknown });
+      }
+    }
+    expect(await snapshotOf(b)).toBe(before);
+    expect(await server.connection.collection('tw_agent_suggestions').countDocuments({ locationId: new Types.ObjectId(locationId) })).toBe(0);
+    expect(await server.connection.collection('tw_agent_suggestions').findOne({ _id: fileRow })).toMatchObject({ status: 'open' });
   });
 
   it('a member route takes the organization only from the principal, never from the request', async () => {

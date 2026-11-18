@@ -90,7 +90,7 @@ function calendarById(location: LocationRecord, today: string): Map<string, Sugg
 
 function suggestionView(record: SuggestionRecord, calendar: ReadonlyMap<string, SuggestionCalendarView>): SuggestionView {
   const shared = {
-    id: record.id, why: record.why, createdAt: record.createdAt.toISOString(),
+    id: record.id, why: record.why ?? '', createdAt: record.createdAt.toISOString(),
     calendar: record.calendarIds.flatMap((id) => {
       const entry = calendar.get(id);
       return entry === undefined ? [] : [entry];
@@ -189,12 +189,15 @@ async function writtenView(
   return { note: null, rule: rule === null ? null : ruleView(rule, await authorEmail(ctx, rule.createdBy, rule.byStaff), caller) };
 }
 
-/** The suggestion named by the path, of this location; 404 for anything else. */
+/**
+ * The weekly suggestion named by the path, of this location; 404 for anything else, a file or sales suggestion (D46,
+ * handlers/rule-suggestions.ts) included.
+ */
 async function suggestionOf(ctx: TownwiseContext, caller: MemberPrincipal, req: Request): Promise<{ location: LocationRecord; record: SuggestionRecord }> {
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const id = parseInput(objectId, req.params.suggestionId);
   const record = await ctx.stores.agentSuggestions.find(caller.scope, location.id, id);
-  if (record === null) throw notFound();
+  if (record?.source !== 'weekly') throw notFound();
   return { location, record };
 }
 

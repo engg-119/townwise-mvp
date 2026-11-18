@@ -31,7 +31,7 @@ export function aiOf(extra?: Partial<AiRead>): AiRead {
   return {
     status: 'done', reason: null, partial: false, kind: 'other', summary: null, facts: null, daysCut: false, notes: [], notesSkipped: null,
     daysWritten: 0, daysAlreadyHad: 0, uploadRef: null, itemRef: null, daysReason: null, itemReason: null, calibration: null, canUndo: false,
-    ...extra,
+    rulesSuggested: 0, rulesWaiting: 0, ...extra,
   };
 }
 

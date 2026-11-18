@@ -111,7 +111,7 @@ describe('a member’s rules', () => {
       '_id', 'addedVia', 'createdAt', 'createdBy', 'key', 'locationId', 'orgId', 'text', 'updatedAt',
     ]);
     expect(stored).toMatchObject({ key: 'sentinel closed mondays', createdBy: author.session.userId });
-    expect(await listed(location)).toEqual({ rules: [rule], limit: 30 });
+    expect(await listed(location)).toEqual({ rules: [rule], limit: 30, suggested: [] });
 
     server.clock.advance(60_000);
     const res = await edit(location, rule.id, 'Sentinel closed Mondays and Tuesdays');
@@ -120,7 +120,7 @@ describe('a member’s rules', () => {
       ...rule, text: 'Sentinel closed Mondays and Tuesdays', updatedAt: server.clock.now().toISOString(),
     });
     expect((await remove(location, rule.id)).status).toBe(204);
-    expect(await listed(location)).toEqual({ rules: [], limit: 30 });
+    expect(await listed(location)).toEqual({ rules: [], limit: 30, suggested: [] });
     expect(await errorOf(await remove(location, rule.id))).toEqual({ status: 404, error: 'not_found' });
 
     const events = (await auditEvents(server)).filter((e) => (e.target as { id: string }).id === rule.id);
@@ -297,6 +297,43 @@ describe('a rule’s schedule (D31)', () => {
       .toEqual({ status: 400, error: 'invalid_request' });
     expect(await ruleCount(location)).toBe(1);
     expect(Object.keys(await stored(rule.id) ?? {})).not.toContain('schedule');
+  });
+
+  it('a yearly season (D46) is saved, listed with its words, changed alone by PATCH, and refused on Feb 29 or with an end', async () => {
+    const location = await addLocation(server, { orgId, name: 'Seasonal Room' });
+    const winter = { ...CLOSED_MONDAYS, weekdays: null, startDate: '2026-06-01', season: { repeat: 'yearly', from: '01-01', to: '03-31' } };
+    const res = await call(server, rulesPath(location), { session: author.session, json: { text: 'Closed in winter', schedule: winter } });
+    expect(res.status).toBe(201);
+    const rule = (await res.json() as { rule: RuleView }).rule;
+    expect(rule).toMatchObject({ schedule: winter, scheduleSummary: 'Closed Jan 1 to Mar 31 every year, from Jun 1, 2026' });
+    expect((await stored(rule.id))?.schedule).toEqual(winter);
+    // The same schedule writes nothing; another season is a change.
+    server.clock.advance(60_000);
+    const same = await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: { schedule: winter } });
+    expect((await same.json() as { rule: RuleView }).rule.updatedAt).toBe(rule.updatedAt);
+    const later = { ...winter, season: { repeat: 'yearly', from: '12-20', to: '01-05' } };
+    const changed = await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: { schedule: later } });
+    expect((await changed.json() as { rule: RuleView }).rule.schedule).toEqual(later);
+    // An edit from an older client sends the schedule with no season key: the stored season is kept (code review N4).
+    const older = Object.fromEntries(Object.entries(later).filter(([key]) => key !== 'season'));
+    const kept = await call(server, `${rulesPath(location)}/${rule.id}`, {
+      method: 'PATCH', session: author.session, json: { text: 'Closed over the holidays', schedule: older },
+    });
+    expect((await kept.json() as { rule: RuleView }).rule).toMatchObject({ text: 'Closed over the holidays', schedule: later });
+    expect((await stored(rule.id))?.schedule).toEqual(later);
+    // Taking the season off is a change too, and stores no season.
+    const plain = { ...winter, season: null };
+    const off = await call(server, `${rulesPath(location)}/${rule.id}`, { method: 'PATCH', session: author.session, json: { schedule: plain } });
+    expect((await off.json() as { rule: RuleView }).rule.schedule).not.toHaveProperty('season');
+    expect(Object.keys((await stored(rule.id))?.schedule as object)).not.toContain('season');
+    for (const bad of [
+      { ...winter, season: { repeat: 'yearly', from: '01-01', to: '02-29' } }, { ...winter, endDate: '2027-03-31' },
+      { ...winter, season: { repeat: 'yearly', from: '01-01', to: '12-31' } },
+    ]) {
+      expect(await errorOf(await call(server, rulesPath(location), { session: author.session, json: { text: 'Shut in winter', schedule: bad } })))
+        .toEqual({ status: 400, error: 'invalid_request' });
+    }
+    expect(await ruleCount(location)).toBe(1);
   });
 
   it('an edit of the text and an edit of the schedule racing both land: each writes only the field it changed', async () => {

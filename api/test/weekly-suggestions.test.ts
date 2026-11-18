@@ -6,8 +6,8 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  keptSuggestions, MAX_SUGGESTIONS, SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_RESERVE_MICRO_USD, suggestionsRequest, suggestionsReserveMicroUsd,
-  suggestionsWeek, type SuggestionChecks, type SuggestionsInput,
+  keptSuggestions, MAX_SUGGESTIONS, SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_SYSTEM_PROMPT, suggestionsRequest,
+  suggestionsReserveMicroUsd, suggestionsWeek, type SuggestionChecks, type SuggestionsInput,
 } from '../src/lab/suggestions.ts';
 import { ceilingCostMicroUsd } from '../src/chat/pricing.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
@@ -78,6 +78,17 @@ describe('the request', () => {
     expect(sent.rules).toEqual(input.rules);
     expect(sent.alreadySuggested).toEqual([{ type: 'note', ...NOTE, startDate: '2026-12-25', endDate: '2026-12-25', detail: null }]);
   });
+
+  it('sends a rule’s yearly season (D46), and the prompt says how to read one', () => {
+    const season = { repeat: 'yearly', from: '01-01', to: '03-31' } as const;
+    const winter = { text: 'Closed in winter', schedule: { ...SCHEDULE, startDate: '2026-11-17', endDate: null, season } };
+    const [message] = suggestionsRequest({ ...input, rules: [winter] }).messages;
+    const sent = JSON.parse(typeof message?.content === 'string' ? message.content : '') as { rules: unknown };
+    expect(sent.rules).toEqual([winter]);
+    expect(SUGGESTIONS_SYSTEM_PROMPT).toContain(
+      'A rule\'s season, when set, repeats its closure on the same months and days every year from its startDate.',
+    );
+  });
 });
 
 describe('the checks', () => {
@@ -130,6 +141,21 @@ describe('the checks', () => {
     expect(keptSuggestions(answer({ ...asRule, startDate: '2026-11-27', endDate: '2026-11-27' }), checks({ rules: [{ text: 'closed on thanksgiving', schedule: null }] }))).toEqual([]);
     expect(keptSuggestions(answer(CLOSURE), checks({ suggested: [{ type: 'note', note: NOTE }] }))).toEqual([]);
     expect(keptSuggestions(answer(CLOSURE, { ...CLOSURE, why: 'Again.' }, asRule), checks())).toHaveLength(1);
+  });
+
+  it('drop a rule whose closure key a file or sales suggestion holds (D46), even with another start', () => {
+    const standing = { ...CLOSURE, type: 'rule', ruleText: 'Shut on Thursdays', weekdays: [4], endDate: null };
+    expect(keptSuggestions(answer(standing), checks({ closureKeys: new Set(['closed|w=4|ongoing']) }))).toEqual([]);
+    expect(keptSuggestions(answer(standing), checks({ closureKeys: new Set(['closed|w=1|ongoing']) }))).toHaveLength(1);
+    // A note is never dropped by a key.
+    expect(keptSuggestions(answer(CLOSURE), checks({ closureKeys: new Set(['closed|w=*|2026-11-26..2026-11-26']) }))).toHaveLength(1);
+  });
+
+  it('a rule with a yearly season decides other days than the same schedule without one', () => {
+    const asRule = { ...CLOSURE, type: 'rule', ruleText: 'Closed from Thanksgiving', endDate: null };
+    const yearly = { ...SCHEDULE, endDate: null, season: { repeat: 'yearly', from: '11-26', to: '11-27' } } as const;
+    expect(keptSuggestions(answer(asRule), checks({ rules: [{ text: 'Thanksgiving weekend', schedule: yearly }] }))).toHaveLength(1);
+    expect(keptSuggestions(answer(asRule), checks({ rules: [{ text: 'Thanksgiving weekend', schedule: { ...yearly, season: null } }] }))).toEqual([]);
   });
 
   it('read at most 5 suggestions, and nothing from an answer that is not the schema', () => {

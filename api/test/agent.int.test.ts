@@ -29,7 +29,15 @@ const TO = '2026-05-31';
 const WEEKDAY_ID = `weekday_1_${FROM}_${TO}`;
 const GAP_ID = 'gap_2026-05-12_2026-05-13';
 const LIKELY_ID = 'likely_closed_2026-05-23';
-const WEEKDAY = { id: WEEKDAY_ID, kind: 'weekday', weekday: 1, from: FROM, to: TO, noSalesCount: 13, weekdayCount: 13 };
+/**
+ * D46: Mondays with no sales are no longer asked about; the sales history suggests the standing rule instead, from the
+ * first day with sales (the location never had a Monday with sales).
+ */
+const SALES_MONDAY = {
+  id: 'sales_weekday_1', source: 'sales', text: 'Closed on Mondays',
+  schedule: { kind: 'closure', startDate: FROM, endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+  scheduleSummary: 'Closed on Mondays from Mar 1, 2026', file: null, evidence: { noSalesCount: 13, weekdayCount: 13, lastSalesDate: null }, canDecide: true,
+};
 const GAP = { id: GAP_ID, kind: 'gap', from: '2026-05-12', to: '2026-05-13', dayCount: 2, typicalGuestsLow: 100, typicalGuestsHigh: 100 };
 const LIKELY = { id: LIKELY_ID, kind: 'likely_closed', date: '2026-05-23', guests: 1, typicalGuests: 100 };
 /** The note "Yes, it was just slow" saves on LIKELY_ID. */
@@ -59,7 +67,7 @@ async function person(): Promise<TestSession> {
 
 /**
  * A new location whose days run FROM to TO with 100 guests a day and no sales on Mondays and on Tuesday 2026-05-12 and
- * Wednesday 2026-05-13: it is asked WEEKDAY_ID and GAP_ID. With `nearEmpty`, Saturday 2026-05-23 has 1 guest, and it
+ * Wednesday 2026-05-13: it is asked GAP_ID, and suggested SALES_MONDAY. With `nearEmpty`, Saturday 2026-05-23 has 1 guest, and it
  * is asked LIKELY_ID too. `netSalesCents` is every row's net sales (none unless given).
  */
 async function askedLocation(opts: { nearEmpty?: boolean; netSalesCents?: number } = {}): Promise<string> {
@@ -94,8 +102,8 @@ async function addRules(locationId: string, schedules: readonly (Record<string, 
   })));
 }
 
-/** A member's panel at a location with no weekly suggestions (openspec change weekly-forecast-suggestions). */
-const NO_SUGGESTIONS = { suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false } };
+/** A member's panel at a location with no weekly suggestions (openspec change weekly-forecast-suggestions) and no suggested rules (D46). */
+const NO_SUGGESTIONS = { suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false }, ruleSuggestions: [] };
 
 async function panel(locationId: string, session = member): Promise<{ status: number; body: AgentPanel }> {
   const res = await call(server, `/api/org/locations/${locationId}/agent`, { session });
@@ -182,7 +190,7 @@ afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 
 describe('GET /api/org/locations/:locationId/agent', () => {
-  it('asks about the weekday and the gap with no sales, and lists only applied uploads', async () => {
+  it('asks about the gap with no sales, suggests closed Mondays as a rule (D46), and lists only applied uploads', async () => {
     const locationId = await askedLocation();
     const at = server.clock.now();
     await server.connection.collection('tw_uploads').insertMany(['applied', 'applying'].map((status) => ({
@@ -192,16 +200,18 @@ describe('GET /api/org/locations/:locationId/agent', () => {
     expect(await panel(locationId)).toEqual({
       status: 200,
       body: {
-        questions: [WEEKDAY, GAP],
+        questions: [GAP],
         activity: [{ at: at.toISOString(), kind: 'upload_applied', firstDate: FROM, lastDate: TO, dayCount: 78 }],
-        ...NO_SUGGESTIONS,
+        ...NO_SUGGESTIONS, ruleSuggestions: [SALES_MONDAY],
       },
     });
   });
 
-  it('asks about a usually busy day with almost no guests, between the weekday and the gap (newest first)', async () => {
+  it('asks about a usually busy day with almost no guests, and the gap (newest first)', async () => {
     const locationId = await askedLocation({ nearEmpty: true });
-    expect(await panel(locationId)).toEqual({ status: 200, body: { questions: [WEEKDAY, LIKELY, GAP], activity: [], ...NO_SUGGESTIONS } });
+    expect(await panel(locationId)).toEqual({
+      status: 200, body: { questions: [LIKELY, GAP], activity: [], ...NO_SUGGESTIONS, ruleSuggestions: [SALES_MONDAY] },
+    });
   });
 
   it('reads the 56 days before the window for typical guests, and never asks about a day before it', async () => {
@@ -226,27 +236,27 @@ describe('GET /api/org/locations/:locationId/agent', () => {
     const locationId = await askedLocation({ nearEmpty: true });
     await addRules(locationId, [ruleSchedule({})]);
     const { body } = await panel(locationId);
-    expect(body.questions).toEqual([WEEKDAY, LIKELY]);
+    expect(body.questions).toEqual([LIKELY]);
     expect(JSON.stringify(body)).not.toContain('Sentinel-rule-text');
     // More guests on 2026-05-12 to 2026-05-13: days with no sales under it are more suspicious, not less.
     const busy = await askedLocation({ nearEmpty: true });
     await addRules(busy, [ruleSchedule({ kind: 'other', effect: 'more_guests' })]);
-    expect((await panel(busy)).body.questions).toEqual([WEEKDAY, LIKELY, GAP]);
+    expect((await panel(busy)).body.questions).toEqual([LIKELY, GAP]);
   });
 
   it('a business rule’s schedule with fewer guests says a likely-closed day was open; a rule with no schedule changes nothing (D31)', async () => {
     const slow = await askedLocation({ nearEmpty: true });
     await addRules(slow, [ruleSchedule({ kind: 'other', effect: 'fewer_guests', startDate: '2026-05-23', endDate: '2026-05-23' })]);
-    expect((await panel(slow)).body.questions).toEqual([WEEKDAY, GAP]);
+    expect((await panel(slow)).body.questions).toEqual([GAP]);
     const plain = await askedLocation({ nearEmpty: true });
     await addRules(plain, [null]);
-    expect((await panel(plain)).body.questions).toEqual([WEEKDAY, LIKELY, GAP]);
+    expect((await panel(plain)).body.questions).toEqual([LIKELY, GAP]);
   });
 
   it('carries guest counts and never net sales', async () => {
     const locationId = await askedLocation({ nearEmpty: true, netSalesCents: 987_654 });
     const { status, body } = await panel(locationId);
-    expect({ status, questions: body.questions }).toEqual({ status: 200, questions: [WEEKDAY, LIKELY, GAP] });
+    expect({ status, questions: body.questions }).toEqual({ status: 200, questions: [LIKELY, GAP] });
     expect(JSON.stringify(body)).not.toContain('987654');
     expect(JSON.stringify(body)).not.toContain('netSales');
   });
@@ -275,20 +285,18 @@ describe('answering closed', () => {
     expect(await eventsAt(locationId, 'note.created')).toHaveLength(1);
 
     const after = await panel(locationId);
-    expect(after.body.questions.map((q) => q.id)).toEqual([WEEKDAY_ID]);
+    expect(after.body.questions.map((q) => q.id)).toEqual([]);
     expect(after.body.activity).toEqual([{
       at: server.clock.now().toISOString(), kind: 'note_saved', via: 'question', noteId: body.note?.id,
       noteKind: 'closure', startDate: '2026-05-12', endDate: '2026-05-13',
     }]);
   });
 
-  it('on a weekday saves a weekly closure note over the window', async () => {
+  it('on a weekday is 404 and writes nothing: the weekday question is no longer asked (D46)', async () => {
     const locationId = await askedLocation();
-    const { status, body } = await answer(locationId, WEEKDAY_ID, { answer: 'closed' });
-    expect(status).toBe(200);
-    expect(body.note).toMatchObject({ kind: 'closure', startDate: FROM, endDate: TO, weekdays: [1], effect: 'closed' });
-    expect(await notesOf(locationId)).toHaveLength(1);
-    expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual([GAP_ID]);
+    expect(await answer(locationId, WEEKDAY_ID, { answer: 'closed' })).toMatchObject({ status: 404, body: { error: 'not_found' } });
+    expect(await notesOf(locationId)).toHaveLength(0);
+    expect(await answerRows(locationId)).toHaveLength(0);
   });
 
   it('again, or from three tabs at once, answers the same one note; a different later answer does not change it', async () => {
@@ -310,7 +318,7 @@ describe('answering closed', () => {
       const locationId = await askedLocation();
       const noteId = await stoppedClaim(locationId, 'closed', written);
       // With its note written the gap is explained and no longer asked, and the answer still finishes.
-      expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual(written ? [WEEKDAY_ID] : [WEEKDAY_ID, GAP_ID]);
+      expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual(written ? [] : [GAP_ID]);
       const { status, body } = await answer(locationId, GAP_ID, { answer: 'closed' });
       expect({ written, status, noteId: body.note?.id }).toEqual({ written, status: 200, noteId: noteId.toHexString() });
       expect(await notesOf(locationId)).toHaveLength(1);
@@ -344,7 +352,7 @@ describe('answering closed', () => {
         orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), date, guests: 10, netSalesCents: null,
         uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
       })));
-      expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual([WEEKDAY_ID]);
+      expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual([]);
       expect({ stopped, ...(await answer(locationId, GAP_ID, { answer: 'closed' })) })
         .toMatchObject({ stopped, status: 404, body: { error: 'not_found' } });
       expect(await notesOf(locationId)).toHaveLength(0);
@@ -423,7 +431,7 @@ describe('answering closed', () => {
     })));
     expect(await answer(locationId, GAP_ID, { answer: 'closed' })).toMatchObject({ status: 409, body: { error: 'note_limit' } });
     expect(await notesOf(locationId)).toHaveLength(1000);
-    expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual([WEEKDAY_ID, GAP_ID]);
+    expect((await panel(locationId)).body.questions.map((q) => q.id)).toEqual([GAP_ID]);
     expect(await answer(locationId, GAP_ID, { answer: 'open' })).toMatchObject({
       status: 200, body: { question: { id: GAP_ID, answer: 'open' }, note: null },
     });
@@ -433,15 +441,15 @@ describe('answering closed', () => {
 
 describe('answering open or not sure', () => {
   it('saves no note, asks about those days no more, and shows in the activity', async () => {
-    const locationId = await askedLocation();
+    const locationId = await askedLocation({ nearEmpty: true });
     expect(await answer(locationId, GAP_ID, { answer: 'open' })).toEqual({ status: 200, body: { question: { id: GAP_ID, answer: 'open' }, note: null } });
     server.clock.advance(60_000);
-    expect(await answer(locationId, WEEKDAY_ID, { answer: 'not_sure' })).toMatchObject({ status: 200, body: { note: null } });
+    expect(await answer(locationId, LIKELY_ID, { answer: 'not_sure' })).toMatchObject({ status: 200, body: { note: null } });
     expect(await notesOf(locationId)).toHaveLength(0);
     const { body } = await panel(locationId);
     expect(body.questions).toEqual([]);
     expect(body.activity).toEqual([
-      { at: server.clock.now().toISOString(), kind: 'question_answered', questionId: WEEKDAY_ID, answer: 'not_sure' },
+      { at: server.clock.now().toISOString(), kind: 'question_answered', questionId: LIKELY_ID, answer: 'not_sure' },
       { at: new Date(server.clock.now().getTime() - 60_000).toISOString(), kind: 'question_answered', questionId: GAP_ID, answer: 'open' },
     ]);
   });
@@ -467,7 +475,7 @@ describe('answering a likely-closed day', () => {
       .toEqual([{ locationId, questionId: LIKELY_ID, answer: 'open' }]);
 
     const after = await panel(locationId);
-    expect(after.body.questions).toEqual([WEEKDAY, GAP]);
+    expect(after.body.questions).toEqual([GAP]);
     expect(after.body.activity).toEqual([{
       at: server.clock.now().toISOString(), kind: 'note_saved', via: 'question', noteId: body.note?.id,
       noteKind: 'other', startDate: '2026-05-23', endDate: '2026-05-23',
@@ -480,7 +488,7 @@ describe('answering a likely-closed day', () => {
     expect({ status, answer: body.question.answer }).toEqual({ status: 200, answer: 'closed' });
     expect(body.note).toMatchObject(LIKELY_CLOSURE);
     expect(await notesOf(locationId)).toEqual([expect.objectContaining(LIKELY_CLOSURE)]);
-    expect((await panel(locationId)).body.questions).toEqual([WEEKDAY, GAP]);
+    expect((await panel(locationId)).body.questions).toEqual([GAP]);
   });
 
   it('closed and open at once end with one note, and a row and a last audit event that agree with it', async () => {
@@ -510,7 +518,7 @@ describe('answering a likely-closed day', () => {
       const locationId = await askedLocation({ nearEmpty: true });
       const noteId = await stoppedClaim(locationId, 'open', true, { questionId: LIKELY_ID, note: OPEN_DAY });
       // The note explains the day, so it is no longer asked, and the answer still finishes.
-      expect((await panel(locationId)).body.questions).toEqual([WEEKDAY, GAP]);
+      expect((await panel(locationId)).body.questions).toEqual([GAP]);
       const { status, body } = await answer(locationId, LIKELY_ID, { answer: next }, colleague);
       expect({ next, status, answer: body.question.answer, noteId: body.note?.id })
         .toEqual({ next, status: 200, answer: 'open', noteId: noteId.toHexString() });
@@ -541,7 +549,7 @@ describe('answering something else', () => {
     expect(Object.keys(lines[0] ?? {})).not.toContain('questionId');
 
     const { body } = await panel(locationId);
-    expect(body.questions).toEqual([WEEKDAY]);
+    expect(body.questions).toEqual([]);
     expect(body.activity).toEqual([{ at: server.clock.now().toISOString(), kind: 'question_answered', questionId: GAP_ID, answer: 'other' }]);
   });
 
@@ -601,7 +609,7 @@ describe('answering something else', () => {
       server.connection.collection(name).countDocuments(filter)));
     expect(await written({ locationId: new Types.ObjectId(locationId) })).toEqual([0, 0]);
     expect(await written({ orgId: new Types.ObjectId(otherOrg) })).toEqual([0, 0]);
-    expect((await panel(locationId)).body.questions).toEqual([WEEKDAY, LIKELY, GAP]);
+    expect((await panel(locationId)).body.questions).toEqual([LIKELY, GAP]);
   });
 });
 
@@ -627,7 +635,11 @@ describe('what an answer may name', () => {
     const staff = await signInStaff(server);
     try {
       await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: member.userId, orgId });
-      expect(await panel(locationId, staff)).toEqual(await panel(locationId));
+      // The same panel, but the suggested rules are not theirs to decide (D46).
+      const own = await panel(locationId);
+      expect(await panel(locationId, staff)).toEqual({
+        ...own, body: { ...own.body, ruleSuggestions: own.body.ruleSuggestions.map((each) => ({ ...each, canDecide: false })) },
+      });
       for (const json of [{ answer: 'closed' }, { answer: 'other' }]) {
         expect({ json, ...(await answer(locationId, GAP_ID, json, staff)) })
           .toMatchObject({ json, status: 403, body: { error: 'view_as_read_only' } });
@@ -816,6 +828,13 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
         },
       }),
     ]);
+
+    // A suggested closure rule a read of that file stored (openspec change suggest-closure-rules).
+    await server.connection.collection('tw_agent_suggestions').insertOne(suggestion('0000000000000000000000d1', {
+      type: 'rule', text: 'Closed on Tuesdays', why: null, calendarIds: [], source: 'file', fileId: new Types.ObjectId('0000000000000000000000f1'),
+      closureKey: 'closed|w=2|ongoing',
+      content: { kind: 'closure', startDate: '2026-06-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null },
+    }));
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
     expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });
