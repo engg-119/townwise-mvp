@@ -80,8 +80,8 @@ export function ThisMonth(props: {
             metric={metric}
             footer={(
               <>
-                {monthLine === null ? null : <Small>{monthLine}</Small>}
                 <View style={styles.open}><LinkButton href={calendarHref(locationId)} label="Open the calendar" /></View>
+                {monthLine === null ? null : <Small>{monthLine}</Small>}
               </>
             )}
             selected={selected}

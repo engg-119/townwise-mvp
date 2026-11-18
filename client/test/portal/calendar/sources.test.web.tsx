@@ -87,7 +87,7 @@ async function renderAt(path: string): Promise<HTMLElement> {
 
 test('a note shows its event name, then its kind words and its detail; Why follows the note reason with its name', async () => {
   const panel = await renderAt(`/locations/l1/calendar?day=${DAY}`);
-  expect(await within(panel).findByText('Your note: Holiday party.')).toBeTruthy();
+  expect(await within(panel).findByText('Your note: Holiday party')).toBeTruthy();
   expect(within(panel).getByText('Private event, more guests than usual')).toBeTruthy();
   expect(within(panel).getByText('Upstairs room.')).toBeTruthy();
   expect(within(panel).getByText('Your private event, 70 guests: Holiday party')).toBeTruthy();

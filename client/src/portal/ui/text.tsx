@@ -50,8 +50,8 @@ export function Title(props: TextProps & { lines?: number }): React.JSX.Element 
   );
 }
 
-/** A section heading (h2 or h3), styled `tw-h3` unless `big`. */
-export function Heading(props: TextProps & { level?: 2 | 3; big?: boolean }): React.JSX.Element {
+/** A section heading (h2, h3, or h4 under an h3), styled `tw-h3` unless `big`. */
+export function Heading(props: TextProps & { level?: 2 | 3 | 4; big?: boolean }): React.JSX.Element {
   const { phone, desktop } = useBreakpoint();
   const size = props.big === true
     ? (phone ? theme.type.h2Phone : desktop ? theme.type.h2 : theme.type.h2Tablet)

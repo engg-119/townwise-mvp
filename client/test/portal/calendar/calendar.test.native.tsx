@@ -266,7 +266,7 @@ test('a closed-by-rule day with a named event: its label names both, its panel s
   const { router } = await renderApp(`/locations/l1/calendar?day=${tuesday}`, api);
   const day = await screen.findByLabelText(/^Tue, Nov 24, 2026\./);
   expect(day.props.accessibilityLabel).toContain('Holiday party. Closed Tuesdays in winter. From your calendar: Wine dinner.');
-  expect(within(panel()).getByText('Your note: Holiday party.')).toBeTruthy();
+  expect(within(panel()).getByText('Your note: Holiday party')).toBeTruthy();
   expect(within(panel()).getByText('Your rule: Closed Tuesdays in winter')).toBeTruthy();
   await fireEvent.press(within(panel()).getByRole('link', { name: 'US holidays. Opens this calendar in Your data' }));
   await waitFor(() => { expect(router.getPathname()).toBe(`/locations/l1/data/c_${id}`); });

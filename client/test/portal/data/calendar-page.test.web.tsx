@@ -72,6 +72,9 @@ test('a linked calendar’s page: its name, kind and host as text, counts and re
   expect(screen.getByText('1 repeating event wasn’t imported. Add it as a note with weekdays.')).toBeTruthy();
   expect(screen.getByText(/^Updated Nov 16, 2026/)).toBeTruthy();
   const november = await screen.findByRole('list', { name: 'US holidays events, November 2026' });
+  // The month heads its list under Events (UI review nit 6).
+  expect(screen.getByRole('heading', { name: 'Events' }).getAttribute('aria-level')).toBe('3');
+  expect(screen.getByRole('heading', { name: 'November 2026' }).getAttribute('aria-level')).toBe('4');
   expect(within(november).getAllByRole('link').map((link) => [link.getAttribute('aria-label'), link.getAttribute('href')])).toEqual([
     ['Veterans Day, Wed, Nov 11, 2026. Opens the day on the Calendar.', '/locations/l1/calendar?day=2026-11-11'],
     ['Thanksgiving Day, Thu, Nov 26, 2026. Opens the day on the Calendar.', '/locations/l1/calendar?day=2026-11-26'],

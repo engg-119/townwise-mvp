@@ -16,7 +16,8 @@ test('a calendar’s events group by month in date order, each with its day, hou
     ['December 2026', ['Rehearsal dinner']],
   ]);
   const [veterans, fair] = months[0]?.items ?? [];
-  expect(veterans).toMatchObject({ when: 'Wed, Nov 11, 2026', hours: null, href: '/locations/l1/calendar?day=2026-11-11', status: null });
+  // No “Your calendar” line: the page is that calendar's (UI review nit 5).
+  expect(veterans).toMatchObject({ when: 'Wed, Nov 11, 2026', hours: null, href: '/locations/l1/calendar?day=2026-11-11', status: null, sub: null });
   expect(veterans?.label).toBe('Veterans Day, Wed, Nov 11, 2026. Opens the day on the Calendar.');
   expect(fair?.when).toBe('Nov 20 to 22, 2026');
   expect(months[1]?.items[0]).toMatchObject({ hours: '6 pm to 9 pm', kind: 'imported' });
@@ -36,8 +37,8 @@ test('a file’s read: an event that became a note links to its day, marked Note
     ['Staff party', 'Other', 'No note made', null],
     ['Rehearsal dinner', 'Private buyout, 60 guests', 'Note made', '/locations/l1/calendar?day=2026-12-12'],
   ]]);
-  // Under view-as a title is null: the event shows its kind words in its place.
-  expect(fileEventItem('l1', { ...made, title: null }, 0).title).toBe('Private buyout, 60 guests');
+  // Under view-as a title is null: the event shows its kind words in its place, once (UI review nit 8).
+  expect(fileEventItem('l1', { ...made, title: null }, 0)).toMatchObject({ title: 'Private buyout, 60 guests', sub: null });
 });
 
 test('an empty month says so', () => {

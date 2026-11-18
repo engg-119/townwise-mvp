@@ -394,7 +394,7 @@ const READ_EVENTS = [
 test('a calendar read lists its events by month, each that made a note linked to its day (D49)', async () => {
   setup([stored({ ai: aiOf({ kind: 'calendar', events: [...READ_EVENTS] }) })], REF);
   const panel = await section();
-  expect(within(panel).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual(expect.arrayContaining(['December 2026', 'January 2027']));
+  expect(within(panel).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual(expect.arrayContaining(['December 2026', 'January 2027']));
   const december = within(panel).getByRole('list', { name: 'Events TownwiseAI read, December 2026' });
   expect(within(december).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
     'Staff partyThu, Dec 3, 2026OtherNo note made', 'Rehearsal dinnerSat, Dec 12, 2026Private buyout, 60 guestsNote made',

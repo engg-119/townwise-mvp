@@ -21,8 +21,11 @@ export interface AgendaItem {
   /** “Wed, Nov 11, 2026” or “Nov 20 to 22, 2026”. */
   when: string;
   hours: string | null;
-  /** The kind words under the title: “Your calendar”, or a file's event's kind (“Private buyout, 60 guests”). */
-  sub: string;
+  /**
+   * The kind words under the title, a file's event's kind (“Private buyout, 60 guests”); null for a calendar's event,
+   * on a page that is that calendar's, and for a file's event whose title is withheld, which shows them as its title.
+   */
+  sub: string | null;
   /** The card's mark (calendar/grid.ts CARD_MARK). */
   kind: WeekCardKind;
   /** The day on the Calendar; null for a file's event that made no note. */
@@ -48,7 +51,7 @@ export function calendarEventItem(locationId: string, event: ImportedEvent): Age
   const when = whenOf(event.startDate, event.endDate);
   const href = calendarHref(locationId, event.startDate);
   return {
-    key: `${event.calendarId}:${event.uid}`, title: event.title, startDate: event.startDate, when, hours: hoursLine(event), sub: 'Your calendar',
+    key: `${event.calendarId}:${event.uid}`, title: event.title, startDate: event.startDate, when, hours: hoursLine(event), sub: null,
     kind: 'imported', href, status: null, label: labelOf(event.title, when, href),
   };
 }
@@ -77,7 +80,7 @@ export function fileEventItem(locationId: string, event: FileEvent, index: numbe
   const sub = fileEventWords(event);
   const title = event.title ?? sub;
   return {
-    key: `event:${String(index)}`, title, startDate: event.startDate, when, hours: null, sub, kind: 'note', href,
+    key: `event:${String(index)}`, title, startDate: event.startDate, when, hours: null, sub: event.title === null ? null : sub, kind: 'note', href,
     status: made ? 'Note made' : 'No note made', label: `${labelOf(title, when, href)} ${made ? 'Note made.' : 'No note made.'}`,
   };
 }

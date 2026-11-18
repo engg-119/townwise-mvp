@@ -150,7 +150,8 @@ export function DayDetail(props: {
         ))}
         {view.notes.map((note) => (
           <View key={note.id} style={styles.item}>
-            <Small white>{`Your note: ${note.title ?? noteWords(note)}.`}</Small>
+            {/* A person's own title ends with no full stop of ours (UI review nit 11); kind words do. */}
+            <Small white>{note.title === null || note.title === undefined ? `Your note: ${noteWords(note)}.` : `Your note: ${note.title}`}</Small>
             {note.title === null || note.title === undefined ? null : <Small>{noteWords(note)}</Small>}
             {note.detail === null ? null : <Small>{note.detail}</Small>}
             {note.source?.ref ? (

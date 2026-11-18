@@ -685,7 +685,7 @@ test('the day detail lists a day’s imported event with its calendar’s chip, 
   expect(await within(detail).findByText('From your calendar: Wine dinner')).toBeTruthy();
   const chip = within(detail).getByRole('link', { name: 'US holidays. Opens this calendar in Your data' });
   expect(chip.getAttribute('href')).toBe(`/locations/l1/data/c_${WINE_DINNER.calendarId}`);
-  expect(within(detail).getByText('Your note: Holiday party.')).toBeTruthy();
+  expect(within(detail).getByText('Your note: Holiday party')).toBeTruthy();
   expect(within(detail).getByText('A rehearsal dinner.')).toBeTruthy();
   // The cell names both, and Home's This week shows the note's name.
   expect(grid.querySelector('[data-date="2026-11-06"]')?.getAttribute('aria-label')).toContain('Holiday party. From your calendar: Wine dinner.');
@@ -720,7 +720,9 @@ test('This month marks a forecast and an actual apart, keys both, and says how t
   expect(figure('2026-11-04')?.style.color).not.toBe(figure('2026-11-05')?.style.color);
   expect(cellOf('2026-11-04').getAttribute('aria-label')).toBe('Wed, Nov 4, 2026. 110 guests, actual.');
   expect(screen.getByTestId('month-key').textContent).toMatch(/^94Actual guests~82Forecast/);
-  expect(screen.getByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  const monthLine = screen.getByText('So far this month: 1 of 1 day inside the forecast range.');
+  // “Open the calendar” sits directly under the key, and the month line under it (UI review nit 3).
+  expect(screen.getByRole('link', { name: 'Open the calendar' }).compareDocumentPosition(monthLine) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   // The past day's detail and tooltip say how its forecast did, in the Calendar's words.
   fireEvent(cellOf('2026-11-04'), pointer('pointerover', 'mouse'));
   const detail = screen.getByRole('region', { name: 'Selected day' });

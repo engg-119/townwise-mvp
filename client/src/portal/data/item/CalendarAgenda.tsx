@@ -14,7 +14,7 @@ function Row(props: { item: AgendaItem }): React.JSX.Element {
   const { item } = props;
   const card = (
     <AgendaCard card={{ kind: item.kind, hours: item.hours, title: item.title, sub: item.when }}>
-      <Text style={styles.sub}>{item.sub}</Text>
+      {item.sub === null ? null : <Text style={styles.sub}>{item.sub}</Text>}
       {item.status === null ? null : <Text style={styles.status}>{item.status}</Text>}
     </AgendaCard>
   );
@@ -36,7 +36,7 @@ export function CalendarAgenda(props: { months: readonly AgendaMonth[]; label: s
     <View aria-label={props.label} style={styles.root}>
       {props.months.map((month) => (
         <View key={month.month} style={styles.month}>
-          <Heading level={3}>{month.label}</Heading>
+          <Heading level={4}>{month.label}</Heading>
           <View role="list" aria-label={`${props.label}, ${month.label}`} style={styles.list}>
             {month.items.map((item) => <Row key={item.key} item={item} />)}
           </View>
