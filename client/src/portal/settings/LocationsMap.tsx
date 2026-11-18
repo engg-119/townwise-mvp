@@ -4,7 +4,7 @@ import { Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-nati
 import { plural } from '../format';
 import { usePortal } from '../PortalProvider';
 import { PlaceMap } from '../places/PlaceMap';
-import { usePlacesMap } from '../places/usePlacesMap';
+import { useLocationsMap, type LocationsMapAnswer } from '../places/useLocationsMap';
 import { shownLocationName } from '../locations/naming';
 import { locationHref } from '../routing';
 import type { LocationSummary, OrgResponse } from '../schemas';
@@ -25,6 +25,12 @@ import { theme } from '../../theme';
 // location also the location's own name), the town, its days of sales and notes, whether it is linked, and links to
 // its Location settings (org admins) and to the place on Google Maps, a maps URL from the place id with the town as
 // the query Google requires (never the name, and no street address, which Townwise doesn't keep).
+// Hover (2026-11-18, owner: “there should be a hover effect on the map”): the map comes from GET /api/org/locations/map,
+// which sets the view itself and answers where each pin sits, so a transparent target sits over each pin once the
+// image has loaded. Hovering, focusing or pressing a pin rings it, names it in a label above it and lights its rows;
+// hovering or pressing a row, or focusing its Google Maps link, does the same for its pin. Pins are buttons in the tab
+// order, so the keyboard reaches them. Nothing moves the layout: the targets, ring and label sit over the image. With
+// no image (the map off, Google refusing it, a failed load) or no pins in the answer, there are no targets.
 
 export const LOCATIONS_MAP_COPY = {
   kicker: 'Locations',
@@ -76,27 +82,38 @@ export function LocationsMap(props: { org: OrgResponse; admin: boolean; readOnly
   const { org, admin } = props;
   const { api } = usePortal();
   const { rows: pinned, placeIds } = lettered(org.locations);
-  const map = usePlacesMap(api, placeIds, { labeled: true });
-  /** The map image that failed to load, if any: its letters would point at nothing. */
+  const answer = useLocationsMap(api, placeIds.join(','));
+  const { map } = answer;
+  /** The map image that failed to load, and the one that loaded: targets and letters only beside a loaded image. */
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  const [loadedUrl, setLoadedUrl] = useState<string | null>(null);
+  /** The place whose pin and rows are lit. */
+  const [active, setActive] = useState<string | null>(null);
   if (org.locations.length === 0) return null;
   const pinnedIds = new Set(pinned.map((entry) => entry.location.id));
   const unpinned = org.locations.filter((location) => !pinnedIds.has(location.id));
   const requested = org.requestedLocationCount;
   const letters = map !== null && map.url !== failedUrl;
+  const targets = letters && map.url === loadedUrl ? answer.pins : [];
+  const hover = { active, setActive };
 
   return (
     <Section kicker={LOCATIONS_MAP_COPY.kicker} title={LOCATIONS_MAP_COPY.title}>
       <Stack gap={16}>
         {pinned.length === 0 ? null : (
-          <PlaceMap map={map} label={`Map of ${org.org.name}’s locations`} frame={styles.frame} onFailed={setFailedUrl} />
+          <View style={styles.frame}>
+            <PlaceMap map={map} label={`Map of ${org.org.name}’s locations`} onFailed={setFailedUrl} onLoaded={setLoadedUrl} />
+            {targets.length === 0 ? null : (
+              <PinTargets pins={targets} names={namesByPlace(pinned, org)} hover={hover} />
+            )}
+          </View>
         )}
         <View role="list" style={styles.legend}>
           {pinned.map(({ location, letter }) => (
-            <LocationRow key={location.id} org={org} location={location} admin={admin} readOnly={props.readOnly} pin={letters ? letter : null} />
+            <LocationRow key={location.id} org={org} location={location} admin={admin} readOnly={props.readOnly} pin={letters ? letter : null} hover={targets.length === 0 ? null : hover} />
           ))}
           {unpinned.map((location) => (
-            <LocationRow key={location.id} org={org} location={location} admin={admin} readOnly={props.readOnly} pin={letters ? '' : null} />
+            <LocationRow key={location.id} org={org} location={location} admin={admin} readOnly={props.readOnly} pin={letters ? '' : null} hover={null} />
           ))}
         </View>
         {admin && requested !== null && requested > org.locations.length ? <Small>{mentionedLine(requested)}</Small> : null}
@@ -105,20 +122,67 @@ export function LocationsMap(props: { org: OrgResponse; admin: boolean; readOnly
   );
 }
 
+interface Hover { active: string | null; setActive: (placeId: string | null) => void }
+
+/** Each place's shown names, joined: two locations on one place share its pin. */
+function namesByPlace(pinned: readonly { location: LocationSummary }[], org: OrgResponse): Map<string, string> {
+  const names = new Map<string, string[]>();
+  for (const { location } of pinned) {
+    if (location.placeId == null) continue;
+    names.set(location.placeId, [...(names.get(location.placeId) ?? []), shownLocationName(location, org)]);
+  }
+  return new Map([...names].map(([id, list]) => [id, list.join(', ')]));
+}
+
+/** The transparent targets over the image's pins, the ring on the lit one, and its name above it. */
+function PinTargets(props: { pins: LocationsMapAnswer['pins']; names: Map<string, string>; hover: Hover }): React.JSX.Element {
+  const { pins, names, hover } = props;
+  return (
+    <View style={StyleSheet.absoluteFill} pointerEvents="box-none">
+      {pins.map((pin) => {
+        const lit = hover.active === pin.placeId;
+        const name = names.get(pin.placeId) ?? pin.letter;
+        return (
+          <View key={pin.placeId} style={[styles.anchor, { left: `${String(pin.x * 100)}%`, top: `${String(pin.y * 100)}%` }]} pointerEvents="box-none">
+            {lit ? (
+              <View style={styles.label} pointerEvents="none">
+                <Text style={styles.labelText} numberOfLines={1}>{name}</Text>
+              </View>
+            ) : null}
+            <Pressable
+              role="button"
+              accessibilityLabel={`${pin.letter}: ${name}`}
+              accessibilityState={{ selected: lit }}
+              onHoverIn={() => { hover.setActive(pin.placeId); }}
+              onHoverOut={() => { hover.setActive(null); }}
+              onFocus={() => { hover.setActive(pin.placeId); }}
+              onBlur={() => { hover.setActive(null); }}
+              onPress={() => { hover.setActive(lit ? null : pin.placeId); }}
+              style={[styles.target, lit ? styles.targetLit : null]}
+            />
+          </View>
+        );
+      })}
+    </View>
+  );
+}
+
 /** One row: `pin` is the letter, '' for an empty ring beside a map, or null with no map. */
 function LocationRow(props: {
-  org: OrgResponse; location: LocationSummary; admin: boolean; readOnly: boolean; pin: string | null;
+  org: OrgResponse; location: LocationSummary; admin: boolean; readOnly: boolean; pin: string | null; hover: Hover | null;
 }): React.JSX.Element {
-  const { org, location, admin, readOnly, pin } = props;
+  const { org, location, admin, readOnly, pin, hover } = props;
   const shown = shownLocationName(location, org);
   const town = `${location.town.name}, ${location.town.state}`;
   const placeId = location.placeId ?? null;
   // With one location the shown name is the organization's, so the location's own name is said once here.
   const where = org.locations.length === 1 && location.name.trim().toLowerCase() !== shown.trim().toLowerCase() ? `${location.name}, ${town}` : town;
   const disabled = readOnly ? { disabled: true, describedBy: SETTINGS_READ_ONLY_ID } : {};
-  return (
-    <View role="listitem" style={styles.row}>
-      {pin === null ? null : pin === '' ? <View style={[styles.pin, styles.noPin]} /> : <View style={styles.pin}><Mono style={styles.letter}>{pin}</Mono></View>}
+  const lit = hover !== null && placeId !== null && hover.active === placeId;
+  const light = hover === null || placeId === null ? null : (on: boolean): void => { hover.setActive(on ? placeId : null); };
+  const body = (
+    <>
+      {pin === null ? null : pin === '' ? <View style={[styles.pin, styles.noPin]} /> : <View style={[styles.pin, lit ? styles.pinLit : null]}><Mono style={styles.letter}>{pin}</Mono></View>}
       <View style={styles.text}>
         <Body>{shown}</Body>
         <Small>{where}</Small>
@@ -130,20 +194,42 @@ function LocationRow(props: {
           ) : admin ? (
             <LinkButton variant="link" href={locationHref(location.id, 'settings')} label={LOCATIONS_MAP_COPY.settings} accessibilityLabel={`${LOCATIONS_MAP_COPY.settings} for ${shown}`} {...disabled} />
           ) : null}
-          {placeId === null ? null : <MapsLink url={googleMapsUrl(placeId, location.town)} label={`${LOCATIONS_MAP_COPY.openInMaps}: ${shown}`} />}
+          {placeId === null ? null : <MapsLink url={googleMapsUrl(placeId, location.town)} label={`${LOCATIONS_MAP_COPY.openInMaps}: ${shown}`} {...(light === null ? {} : { onLight: light })} />}
         </Actions>
       </View>
-    </View>
+    </>
+  );
+  if (light === null) return <View role="listitem" style={styles.row}>{body}</View>;
+  // The row itself takes no focus (its links do); a pointer over it, or a press on it, lights its pin.
+  return (
+    <Pressable
+      role="listitem"
+      accessible={false}
+      focusable={false}
+      onHoverIn={() => { light(true); }}
+      onHoverOut={() => { light(false); }}
+      onPress={() => { light(!lit); }}
+      style={[styles.row, lit ? styles.rowLit : null]}
+    >
+      {body}
+    </Pressable>
   );
 }
 
 /** A link out to Google Maps: an <a href> in a new tab on web, Linking on native (as SourceChip opens a source). */
-function MapsLink(props: { url: string; label: string }): React.JSX.Element {
+function MapsLink(props: { url: string; label: string; onLight?: (on: boolean) => void }): React.JSX.Element {
   const open = Platform.OS === 'web'
     ? { href: props.url, hrefAttrs: { target: '_blank', rel: 'noopener noreferrer' } }
     : { onPress: () => { void Linking.openURL(props.url).catch(() => undefined); } };
   return (
-    <Pressable role="link" accessibilityLabel={props.label} {...open} style={styles.mapsLink}>
+    <Pressable
+      role="link"
+      accessibilityLabel={props.label}
+      {...open}
+      onFocus={() => { props.onLight?.(true); }}
+      onBlur={() => { props.onLight?.(false); }}
+      style={styles.mapsLink}
+    >
       {({ hovered }: { hovered?: boolean }) => (
         <Text style={[styles.mapsText, hovered === true ? styles.mapsHover : null]}>{LOCATIONS_MAP_COPY.openInMaps}</Text>
       )}
@@ -154,7 +240,20 @@ function MapsLink(props: { url: string; label: string }): React.JSX.Element {
 const PIN = 24;
 
 const styles = StyleSheet.create({
-  frame: { width: '100%', maxWidth: 640 },
+  frame: { width: '100%', maxWidth: 640, position: 'relative' },
+  /** A pin's tip sits on its point; the target covers its head above. */
+  anchor: { position: 'absolute', width: 0, height: 0 },
+  target: { position: 'absolute', left: -16, top: -42, width: 32, height: 42, borderRadius: 16 },
+  targetLit: { borderWidth: 2, borderColor: theme.color.white, backgroundColor: theme.color.mintRing },
+  label: {
+    position: 'absolute', bottom: 46, left: -120, width: 240, alignItems: 'center',
+  },
+  labelText: {
+    ...theme.type.small, color: theme.color.white, backgroundColor: theme.color.panel,
+    borderWidth: 1, borderColor: theme.color.border, paddingHorizontal: theme.space[2], paddingVertical: theme.space[1], overflow: 'hidden',
+  },
+  rowLit: { backgroundColor: theme.color.raised },
+  pinLit: { borderWidth: 2, borderColor: theme.color.white },
   legend: { maxWidth: 640, gap: theme.space[3] },
   row: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[3] },
   pin: {

@@ -13,6 +13,8 @@ import type { PlaceMap as PlaceMapData } from './map';
 
 export function PlaceMap(props: {
   map: PlaceMapData; label: string; frame?: StyleProp<ViewStyle>; onFailed?: (url: string) => void;
+  /** D47: the image loaded; Settings draws its hover targets over the map only then. */
+  onLoaded?: (url: string) => void;
 }): React.JSX.Element | null {
   const { map } = props;
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -26,6 +28,7 @@ export function PlaceMap(props: {
       role="img"
       aria-label={props.label}
       onError={() => { setFailedUrl(map.url); props.onFailed?.(map.url); }}
+      onLoad={() => { props.onLoaded?.(map.url); }}
     />
   );
   return props.frame === undefined ? image : <View style={props.frame}>{image}</View>;
