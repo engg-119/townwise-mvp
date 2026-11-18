@@ -22,6 +22,7 @@ import {
   checkDraft, draftOf, fieldId, newItem, newSupplier, normalizeName, SETUP_LIMITS, type ItemDraft, type SetupDraft, type SetupProblems,
   type SupplierDraft,
 } from './setupDraft';
+import { SetupProposal } from './SetupProposal';
 import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 
 // P31 Ordering setup (/locations/[id]/orders/setup, members; design Decisions 3, 4 and 8; the order-setup and
@@ -33,7 +34,8 @@ import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 // Removing an item with history (item sales, counts, saved edits or rules, as the GET's `itemsWithHistory` names them)
 // asks first, in the page. Under view-as every field and write is disabled in place, described by the read-only line. A read's marks
 // (an estimated servings value, a name not in the file) replace their field's helper until the field changes or a
-// save goes through.
+// save goes through. Opened from a TownwiseAI card (`?proposal=`, D56), the card's suggestions merge into the draft
+// once (SetupProposal.tsx), again after "Load their changes", and no more once a save goes through.
 
 const READ_ONLY_ID = 'setup-ro';
 
@@ -120,6 +122,9 @@ function Editor(props: {
   const [confirmError, setConfirmError] = useState<unknown>(null);
   /** The key of an item with history that Remove this item asked about. */
   const [removing, setRemoving] = useState<string | null>(null);
+  /** For SetupProposal (D56): how often their changes replaced the draft, and how many saves went through. */
+  const [loads, setLoads] = useState(0);
+  const [saves, setSaves] = useState(0);
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const locked = readOnly || saving;
   const lock = { locked, readOnlyId };
@@ -179,6 +184,7 @@ function Editor(props: {
       setMarks({});
       setConflict(false);
       setNotice('Saved the ordering setup.');
+      setSaves((count) => count + 1);
     } catch (caught) {
       if (hasCode(caught, 409, 'setup_changed')) setConflict(true);
       else setSaveError(caught);
@@ -210,6 +216,7 @@ function Editor(props: {
         setProblemCount(0);
         setConflict(false);
         setNotice('Loaded the setup as it was last saved.');
+        setLoads((count) => count + 1);
       } else {
         const { removed } = await deleteItemSales(api, location.id);
         await refreshStatus();
@@ -257,6 +264,7 @@ function Editor(props: {
       {status.canReadWithAi && props.read !== undefined
         ? props.read({ draft, apply: applyRead, locked, readOnlyId })
         : null}
+      <SetupProposal draft={draft} apply={applyRead} readOnly={readOnly} loads={loads} saves={saves} />
 
       <Section title="Suppliers">
         {draft.suppliers.length === 0 ? <Small>No suppliers yet. Add each one you order from, with its delivery days.</Small> : null}
