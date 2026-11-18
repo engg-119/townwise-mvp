@@ -228,7 +228,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         { kind: 'weekday', label: 'Friday', effectPct: null, effect: null, sources: [], note: null, rule: null },
         { kind: 'term', label: 'Spring term classes', effectPct: null, effect: null, sources: expect.any(Array) as unknown, note: null, rule: null },
       ],
-      runId: first, madeAt: '2026-05-01', madeAfterDay: false, actual: 100, inRange: true, scored: true, outlook: false,
+      runId: first, madeAt: '2026-05-01', madeAfterDay: false, laterNote: false, actual: 100, inRange: true, scored: true, outlook: false,
       model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0, moreRules: 0,
     });
     expect(body.days.find((day) => day.date === '2026-05-06')).toMatchObject({ actual: 130, inRange: false, madeAfterDay: false });
@@ -276,7 +276,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect((await about()).forecast).toMatchObject({ run: { id: first }, live: { days: 6, inRange: 5 } });
   });
 
-  it('compares a past day only with a run made by that day (D49): a later run fills a day, never scores it', async () => {
+  it('compares a past day with any run whose data ends before it (D49 as amended), unless the run may have read a note written once the day began', async () => {
     async function room(name: string): Promise<{ id: string; read: () => Promise<ForecastWindow> }> {
       const id = await addLocation(server, { orgId, name });
       for (const [date, guests] of [['2026-05-01', 100], ['2026-05-02', 100], ['2026-05-03', 100], ['2026-05-05', 100], ['2026-05-06', 130], ['2026-05-07', 100]] as const) {
@@ -285,19 +285,56 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
       const read = async (): Promise<ForecastWindow> => await (await call(server, `/api/org/locations/${id}/forecast?from=2026-05-01&to=2026-05-14`, { session: member })).json() as ForecastWindow;
       return { id, read };
     }
-    // Made May 10 on the same data (through April 30), so it never saw May 1 to 9 but came after them.
+    // Made May 10 on the same data (through April 30): it came after May 1 to 9 but never saw their sales, as a
+    // restaurant that uploads in arrears gets every week.
     const late = { ...structuredClone(RUN), madeAt: '2026-05-10', days: structuredClone(RUN.days).map((day) => (day.mid === null ? day : { ...day, low: 90, mid: 110, high: 130 })) };
-    // Alone, the later run fills every day, but no day before May 10 is scored or said to be in its range.
     const only = await room('Late Room');
     const lateOnly = await staffImport(late, only.id);
     await staffChange(lateOnly, 'publish');
     const alone = await only.read();
-    expect(alone.days.find((day) => day.date === '2026-05-06')).toMatchObject({ runId: lateOnly, mid: 110, actual: 130, inRange: null, scored: false, madeAfterDay: true });
-    // A run made on the day counts as made by it, as the Calendar reads madeAt (TownwiseAI and the Calendar agree).
+    expect(alone.days.find((day) => day.date === '2026-05-06')).toMatchObject({
+      runId: lateOnly, mid: 110, actual: 130, inRange: true, scored: true, madeAfterDay: true, laterNote: false,
+    });
+    // A run made on the day is not made after it.
     expect(alone.days.find((day) => day.date === '2026-05-10')).toMatchObject({ madeAfterDay: false });
-    expect(alone.days.filter((day) => day.scored)).toEqual([]);
-    expect([alone.accuracy, alone.runs[0]?.live]).toEqual([null, null]);
-    expect(alone.weeks.find((week) => week.from === '2026-05-01')).toMatchObject({ runId: lateOnly, actual: 300, inRange: null });
+    // 10 off on five days and 20 on one: 70 over 630 guests.
+    const accuracy = { days: 6, inRange: 6, typicalErrorPct: 11.1, from: '2026-05-01', to: '2026-05-07' };
+    expect([alone.accuracy, alone.runs[0]?.live]).toEqual([accuracy, accuracy]);
+    expect(alone.weeks.find((week) => week.from === '2026-05-01')).toMatchObject({ runId: lateOnly, actual: 300, inRange: true });
+
+    // The lab input flags a private event the read doesn't apply itself on a day after the run's data (lab/input.ts),
+    // so one written on or after a day, by the time the run was made, may have told the run how the day went.
+    const at = (iso: string): Date => new Date(iso);
+    const note = (date: string, fields: Record<string, unknown>) => ({
+      _id: new Types.ObjectId(), orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(only.id), kind: 'private_event',
+      startDate: date, endDate: date, weekdays: null, effect: 'more_guests', expectedGuests: null, detail: null, startTime: null, endTime: null,
+      createdBy: 'fixture', createdAt: at('2026-04-20T15:00:00.000Z'), ...fields,
+    });
+    await server.connection.collection('tw_notes').insertMany([
+      // Written May 8, about May 2, before the run was made May 10: never compared.
+      note('2026-05-02', { updatedAt: at('2026-05-08T15:00:00.000Z') }),
+      // Written May 12, once the run was made: it can't have read it.
+      note('2026-05-03', { updatedAt: at('2026-05-12T15:00:00.000Z') }),
+      // Written before the day: a note about a coming day is a fair input.
+      note('2026-05-07', { updatedAt: at('2026-05-06T15:00:00.000Z') }),
+      // An other note sets no flag in the lab input, whenever it was written.
+      note('2026-05-05', { kind: 'other', updatedAt: at('2026-05-08T15:00:00.000Z') }),
+    ]);
+    // A business rule's private event, edited the day after May 6 to cover it, counts the same.
+    await server.connection.collection('tw_business_rules').insertOne({
+      _id: new Types.ObjectId(), orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(only.id), text: 'Rehearsal dinners',
+      key: `rehearsal dinners ${new Types.ObjectId().toHexString()}`, addedVia: 'page', createdBy: 'fixture',
+      schedule: { kind: 'private_event', startDate: '2026-05-06', endDate: '2026-05-06', weekdays: null, effect: 'fewer_guests', expectedGuests: null, startTime: null, endTime: null },
+      createdAt: at('2026-04-20T15:00:00.000Z'), updatedAt: at('2026-05-07T15:00:00.000Z'),
+    });
+    const noted = await only.read();
+    const dayOn = (date: string) => noted.days.find((day) => day.date === date);
+    for (const date of ['2026-05-02', '2026-05-06']) expect(dayOn(date)).toMatchObject({ inRange: null, scored: false, laterNote: true, madeAfterDay: true });
+    for (const date of ['2026-05-03', '2026-05-05', '2026-05-07']) expect(dayOn(date)).toMatchObject({ inRange: true, scored: true, laterNote: false });
+    expect(noted.days.filter((day) => day.scored).map((day) => day.date)).toEqual(['2026-05-01', '2026-05-03', '2026-05-05', '2026-05-07']);
+    expect([noted.accuracy, noted.runs[0]?.live]).toEqual([null, null]);
+    // A week holding such a day is not compared either.
+    expect(noted.weeks.find((week) => week.from === '2026-05-01')).toMatchObject({ actual: 300, inRange: null });
     // With a run made by each day published first, the later one, though newer, leaves it the days before May 10.
     const two = await room('Two Runs Room');
     const early = await staffImport(RUN, two.id);

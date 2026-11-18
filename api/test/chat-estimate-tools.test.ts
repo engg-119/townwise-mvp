@@ -316,12 +316,16 @@ describe('get_forecast (U13B)', () => {
     expect(days[0]).toEqual({
       date: '2026-11-02', weekday: 'Mon', status: 'open', low: 80, mid: 100, high: 120, vsBaselinePct: null,
       reasons: [{ label: 'Monday', effectPct: null, effect: null, sources: [], note: null, rule: null }], modelRange: null, noteGuests: 0,
-      moreNotes: 0, moreRules: 0, madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false, outlook: false,
+      moreNotes: 0, moreRules: 0, madeAt: '2026-11-01', madeAfterDay: false, laterNote: false, actual: 140, inRange: false, outlook: false,
     });
     expect(days[1]).toMatchObject({ status: 'closed', low: null, mid: null, high: null, reasons: [{ label: 'Closed' }] });
     expect(resultViewOf('get_forecast', ok(content))).toEqual({
       available: true, modelVersion: 'v9', madeAt: '2026-11-01', dataThrough: '2026-10-31', days: 2, notCovered: 1,
     });
+    // D49 as amended: a run made after a day is still compared with it, and a day it may have learned about is not.
+    const description = toolNamed('get_forecast')?.definition.description ?? '';
+    expect(description).toContain('madeAfterDay is true when the day\'s model was made after the day: its data still ends before the day, so it never saw that day\'s sales and its inRange stands; say the forecast came from sales through that model\'s dataThrough.');
+    expect(description).toContain('laterNote is true when that model may have read a private event note or rule about the day written once the day had begun, so the day is not compared (inRange is null); say so plainly.');
   });
 
   it('names the engine of each run: a seasonal_baseline run is the baseline, with its label (D42)', async () => {

@@ -5,7 +5,7 @@
 // note reasons come at most six, the ones that changed the day first. Synthetic notes.
 import { describe, expect, it } from 'vitest';
 
-import { adjustDay, MAX_NOTE_REASONS, MAX_RULE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
+import { adjustDay, flagsAfterData, MAX_NOTE_REASONS, MAX_RULE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { NoteContent, NoteRecord } from '../src/stores/notes.ts';
 
@@ -302,5 +302,16 @@ describe('adjustDay with business rules (D31)', () => {
     expect(orderedReasons(few, ['run:weekday'], words)).toEqual({
       reasons: ['rule added:40', 'run:weekday', 'rule not_counted:null', 'rule not_counted:null'], moreNotes: 0, moreRules: 0,
     });
+  });
+});
+
+describe('flagsAfterData (D49 as amended)', () => {
+  it('is the one way a note reaches a run after its data ends: a private event the read does not apply itself', () => {
+    // The lab input's privateEvent flag on a day after dataThrough (lab/input.ts): a private event with no count, or fewer guests.
+    expect(flagsAfterData(party(null))).toBe(true);
+    expect(flagsAfterData(note({ effect: 'fewer_guests', expectedGuests: null }))).toBe(true);
+    // The read applies a counted party and a buyout itself, from today on; a closure and any other kind set no flag there.
+    expect([flagsAfterData(party(70)), flagsAfterData(buyout(40)), flagsAfterData(closure())]).toEqual([false, false, false]);
+    expect(flagsAfterData(note({ kind: 'opening', effect: 'more_guests', expectedGuests: null }))).toBe(false);
   });
 });

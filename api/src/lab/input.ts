@@ -12,7 +12,7 @@ import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-days.ts';
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
-import { scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
+import { flagsAfterData, scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
 import { canonicalSha256, eachDay } from '../forecasts/file.ts';
 import { engineOf } from '../forecasts/reader.ts';
 import { termEntries } from '../people-in-town/term.ts';
@@ -221,11 +221,6 @@ function isParty(note: Flagged): boolean {
   return note.kind === 'private_event' && note.effect === 'more_guests' && note.expectedGuests !== null;
 }
 
-/** A private event the forecast read applies itself (adjust.ts): a buyout books the day, a counted party adds its guests. */
-function countedOnRead(note: Flagged): boolean {
-  return note.effect === 'closed' || isParty(note);
-}
-
 /**
  * The input for `calibration`, or null when the location has no day with guests by `today`. Days run from the first day
  * with guests to the last one on or before today (dataThrough) plus 182 days, with no gaps; guests are null after
@@ -284,7 +279,8 @@ export function labInputOf(args: {
     const holding = closingRules(rules, notes, row, typicalOn, past);
     const covering = [...notes, ...rules.filter((rule) => !isClosure(rule) || holding.includes(rule))];
     const privates = covering.filter((entry) => entry.kind === 'private_event');
-    const lifted = privates.filter((entry) => (history ? !isParty(entry) : !countedOnRead(entry)));
+    // After dataThrough, flagsAfterData (adjust.ts) is the one rule, which the forecast read also asks of a past day (D49).
+    const lifted = privates.filter((entry) => (history ? !isParty(entry) : flagsAfterData(entry)));
     const party = history ? privates.filter(isParty).reduce((sum, entry) => sum + (entry.expectedGuests ?? 0), 0) : 0;
     const likelyClosed = history && closureOf(row, typicalOn, notes, { rules, past }) === 'likely_closed';
     const guests = history && !likelyClosed ? row?.guests ?? null : null;

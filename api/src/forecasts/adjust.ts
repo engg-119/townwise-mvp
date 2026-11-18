@@ -72,6 +72,15 @@ type Effect = Pick<NoteContent, 'kind' | 'effect' | 'expectedGuests'>;
 
 const isParty = (entry: Effect): boolean => entry.kind === 'private_event' && entry.effect === 'more_guests' && entry.expectedGuests !== null;
 const closes = (entry: Effect): boolean => isClosure(entry) && !isBuyout(entry);
+
+/**
+ * A note or a rule's schedule the lab input flags on a day after its run's data ends (../lab/input.ts, privateEvent): a
+ * private event this read doesn't apply itself, so neither a buyout nor a counted party. It is the only way a note or a
+ * rule reaches a run's figure for such a day, which is why the reader asks it of a past day (D49 as amended, 2026-11-18).
+ */
+export function flagsAfterData(entry: Effect): boolean {
+  return entry.kind === 'private_event' && !isBuyout(entry) && !isParty(entry);
+}
 const applied = <T extends { outcome: NoteOutcome }>(entries: readonly T[]): T[] => entries.filter((entry) => APPLIED.has(entry.outcome));
 const unapplied = <T extends { outcome: NoteOutcome }>(entries: readonly T[]): T[] => entries.filter((entry) => !APPLIED.has(entry.outcome));
 

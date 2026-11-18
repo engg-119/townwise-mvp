@@ -2,7 +2,9 @@
 // run for the model card. Only published runs are read, so a draft, an unfinished import or a withdrawn run never
 // reaches an owner, view-as or TownwiseAI. For each date it uses the newest published run whose model saw no sales on
 // or after that date (dataThrough before it), so no forecast is ever shown for a day its model saw; of those, a day
-// takes the newest made by it before a newer one made after it (D49), and is compared only with a run made by it. Weeks come only
+// takes the newest made by it before a newer one made after it (D49). A past day is compared with its run, whenever the
+// run was made, unless the run may have read a private event note or rule written once the day began (D49 as amended
+// 2026-11-18: laterNote). Weeks come only
 // from a run that supplied every day of the week; they are the run's own week rows, never sums of days. Past days
 // carry the stored guests and whether they landed in the range. Live accuracy is scored per run, over the passed days
 // that run supplied, so one run is never credited with another's hits and misses; a closed or likely-closed day (spec
@@ -33,11 +35,13 @@ import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord, NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
-import { adjustDay, orderedReasons, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule } from './adjust.ts';
+import { adjustDay, flagsAfterData, orderedReasons, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule } from './adjust.ts';
 import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
 import { noteReasonView, reasonViews, ruleReasonView, townCalendarOf, townTermEntries, type ReasonView } from './reasons.ts';
-import { inRangeOf, liveAccuracy, madeAfter, scoredDay, weekActual, type LiveAccuracy, type ScoredDay } from './score.ts';
+import {
+  inRangeOf, liveAccuracy, madeAfter, sawDay, scoredDay, weekActual, writtenForRun, type LiveAccuracy, type ScoredDay,
+} from './score.ts';
 import { isOutlook } from './tiers.ts';
 
 /** A forecast read covers at most this many days, both ends included: today and the next 91 (D42), as people in town. */
@@ -97,18 +101,29 @@ export interface ForecastDayView {
   runId: string;
   /** The run's made-at date. */
   madeAt: string;
-  /** Made after the day (D49: a run made on the day, the lab's 03:00 run, counts as made by it, as score.ts madeAfter and the Calendar read it). */
+  /**
+   * Made after the day (its made-at day is later; a run made on the day, the lab's 03:00 run, is not). Such a run never
+   * saw the day's sales (its data ends before the day) and is still compared with it (D49 as amended 2026-11-18); the
+   * Calendar says it came from sales through the run's dataThrough.
+   */
   madeAfterDay: boolean;
+  /**
+   * A day before today whose run may have read a private event note or business rule covering it (adjust.ts
+   * flagsAfterData, the lab input's privateEvent flag) last written on or after the day, by the time the run was made
+   * (score.ts writtenForRun): what was learned after the day could have shaped the figure, so `inRange` is null and the
+   * day is not scored (D49 as amended).
+   */
+  laterNote: boolean;
   /** The stored guests for a day before today; null otherwise. */
   actual: number | null;
   /**
    * The actual within the model's [low, high]; null when either is missing, the model did not forecast the day open, or
-   * the run was made after the day (D49).
+   * the run could have known how the day went (score.ts late: laterNote).
    */
   inRange: boolean | null;
   /**
    * Counted in the window's accuracy (score.ts scoredDay): open in the model, not closed or likely closed, not an
-   * outlook day, with guests, from a run made by the day.
+   * outlook day, with guests, and not laterNote.
    */
   scored: boolean;
   /** After the forecast tier of the run chosen for the day (D52, tiers.ts): its outlook. Derived, never stored. */
@@ -193,9 +208,9 @@ function gapFree(run: ForecastRunRecord): boolean {
 /**
  * The run each date uses, from the published runs whose data ends before it and that supply it (runs come newest
  * first), a gap-free run by its range and a run with gaps by its day rows in `gappyRows`: the newest made by the day,
- * else the newest (D49, owner 2026-11-18: only a forecast made before a day happened is compared with it, so a run made
- * later never takes a past day from one made in time; it only fills a day no such run has). From today on every run was
- * made by the day, so this is the newest.
+ * else the newest (D49, owner 2026-11-18: a run made in time is the forecast the owner could have read, so a run made
+ * later never takes a past day from one; it fills a day no such run has, and is compared with it all the same, as it
+ * never saw the day's sales: D49 as amended). From today on every run was made by the day, so this is the newest.
  */
 function runChooser(runs: readonly ForecastRunRecord[], gappyRows: readonly ForecastRow[]): (date: string) => ForecastRunRecord | undefined {
   const supplied = new Set(gappyRows.filter((row) => row.span === 'day').map((row) => `${row.runId}|${row.from}`));
@@ -306,15 +321,23 @@ export function createForecastReader(deps: {
     const closedOn = (date: string): boolean => date < today && closureOf(
       storedOn.get(date), typical.get(date) ?? null, notesOn(date), { rules: rulesOn(date).map((rule) => rule.schedule), past: true },
     ) !== null;
+    /**
+     * A past day whose run may have read a private event note or rule, covering it and last written once the day began
+     * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData).
+     */
+    const laterNoteOn = (date: string, run: ForecastRunRecord): boolean => date < today && (
+      notesOn(date).some((note) => flagsAfterData(note) && writtenForRun(run, date, note.updatedAt))
+      || scheduled.some((rule) => rule.schedule !== null && noteCovers(rule.schedule, date) && flagsAfterData(rule.schedule)
+        && writtenForRun(run, date, rule.updatedAt)));
     const scored = (date: string, { run, row }: Chosen): ScoredDay => ({
       date, status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high, actual: actuals.get(date) ?? null, closed: closedOn(date),
-      late: madeAfter(run, date),
+      late: sawDay(run, date) || laterNoteOn(date, run),
       outlook: isOutlook(date, run),
     });
     const daysOf = new Map<string, ScoredDay[]>();
     for (const [date, pick] of chosen) daysOf.set(pick.run.id, [...(daysOf.get(pick.run.id) ?? []), scored(date, pick)]);
     const liveOf = (runId: string): LiveAccuracy | null => liveAccuracy(daysOf.get(runId) ?? []);
-    return { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn };
+    return { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn, laterNoteOn };
   }
 
   /**
@@ -381,7 +404,7 @@ export function createForecastReader(deps: {
       const history = range.to >= today ? effectHistory(today) : null;
       // One read of the notes, over the scored days, the range, a week reaching 6 days past either end and the effects' history.
       const at = (date: string, days: number): string => utcDay(new Date(`${date}T00:00:00.000Z`), days);
-      const { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn } = await load(scope, location.id, today, {
+      const { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn, laterNoteOn } = await load(scope, location.id, today, {
         ...(history === null ? {} : { historyFrom: history.readFrom }),
         notes: { from: firstOf([at(range.from, -6), history?.from]) ?? range.from, to: at(range.to, 6) },
         choose: (published) => chooseWindow(scope, location.id, published, range, today),
@@ -418,9 +441,9 @@ export function createForecastReader(deps: {
         days.push({
           date, weekday: weekdayOf(date), status: day.status, low: day.low, mid: day.mid, high: day.high,
           baseline: day.status === model.status ? row.baseline : null, reasons, model, noteGuests: day.noteGuests, moreNotes, moreRules,
-          runId: run.id, madeAt: run.madeAt, madeAfterDay: madeAfter(run, date),
-          // A run made after the day is never compared with it (D49).
-          actual, inRange: model.status === 'open' && !madeAfter(run, date) ? inRangeOf(actual, row.low, row.high) : null, scored: scoredDay(score),
+          runId: run.id, madeAt: run.madeAt, madeAfterDay: madeAfter(run, date), laterNote: laterNoteOn(date, run),
+          // A run that could have known how the day went is never compared with it (D49 as amended).
+          actual, inRange: model.status === 'open' && score.late !== true ? inRangeOf(actual, row.low, row.high) : null, scored: scoredDay(score),
           outlook: score.outlook === true,
         });
       }
@@ -430,7 +453,8 @@ export function createForecastReader(deps: {
         if (picks.some((pick) => pick?.run.id !== row.runId)) return [];
         const run = picks[0]?.run;
         if (run === undefined || row.low === null || row.mid === null || row.high === null) return [];
-        const actual = weekActual(picks.flatMap((pick, index) => (pick === undefined ? [] : [scored(weekDates[index] ?? '', pick)])));
+        const weekScored = picks.flatMap((pick, index) => (pick === undefined ? [] : [scored(weekDates[index] ?? '', pick)]));
+        const actual = weekActual(weekScored);
         // The run's own week shifts by each day's adjusted middle less the model's: a day the model closed or booked adds
         // nothing to the run's week, so only a model-open day with no middle can't be taken off, and leaves the week out.
         const changes = picks.flatMap((pick, index) => (pick === undefined ? [] : [{ model: modelOf(pick.row), day: adjusted(weekDates[index] ?? '', pick.row) }]));
@@ -444,8 +468,8 @@ export function createForecastReader(deps: {
         return [{
           from: row.from, to: row.to, openDays: Math.max(0, (row.openDays ?? 0) + opened - closed), low: shifted(row.low), mid: shifted(row.mid),
           high: shifted(row.high), runId: run.id, madeAt: run.madeAt, actual,
-          // A week is compared only with a run made by its first day (D49).
-          inRange: madeAfter(run, row.from) ? null : inRangeOf(actual, row.low, row.high), noteGuests,
+          // A week holding a day its run could have known is not compared (D49 as amended).
+          inRange: weekScored.some((day) => day.late === true) ? null : inRangeOf(actual, row.low, row.high), noteGuests,
           outlook: weekDates.some((date) => isOutlook(date, run)),
         }];
       });
