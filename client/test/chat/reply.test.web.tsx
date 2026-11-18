@@ -743,6 +743,32 @@ describe('links to the team’s own data (spec P25 build note, 2026-11-18)', () 
     expect(screen.getAllByRole('link', { name: /Dartmouth|dartmouth/ }).length).toBeGreaterThan(0);
   });
 
+  // An independent browser review, 2026-11-18: a blank line sat above each step's link, and the focus box of a wrapped
+  // Based on link covered the lines beside it.
+  it('a step’s link sits right under its words; each link’s focus ring keeps to its words, and the Based on line leaves it room', () => {
+    render(<><PortalStyles /><ReplyView {...replyProps({ message: reply([sales, day, town]), me: meOf(ACCESS.member) })} /></>);
+    const css = Array.from(document.querySelectorAll('style')).map((sheet) => sheet.textContent).join('\n');
+    expect(css).toContain('#tw-portal [data-ring="text"]:focus-visible{outline-offset:-11px}');
+    const basedOn = screen.getByText(/^Based on/);
+    // jsdom computes no line-height, so it is read from react-native-web's rule for the line's class.
+    const lineClass = Array.from(basedOn.classList).find((name) => name.startsWith('r-lineHeight-'));
+    const rules = Array.from(document.styleSheets).flatMap((sheet) => Array.from(sheet.cssRules));
+    const lineRule = rules.find((rule) => rule instanceof CSSStyleRule && lineClass !== undefined && rule.selectorText.includes(lineClass));
+    expect(lineRule instanceof CSSStyleRule ? lineRule.style.getPropertyValue('line-height') : null).toBe('24px');
+    for (const element of within(basedOn).getAllByRole('link')) {
+      expect(element.getAttribute('data-ring')).toBe('text');
+      expect(window.getComputedStyle(element).paddingTop).toBe('13px');
+    }
+    press(/^Worked/);
+    const open = link('Open Sat, May 30, 2026 in Calendar');
+    expect(open.getAttribute('data-ring')).toBe('text');
+    // Its 46px target (13 above and below its 20px line) is pulled up over the row's gap and its own padding, so its
+    // words sit under the step's as the next line would.
+    expect([window.getComputedStyle(open).paddingTop, window.getComputedStyle(open).paddingBottom]).toEqual(['13px', '13px']);
+    expect(window.getComputedStyle(open.parentElement ?? open).marginTop).toBe('-21px');
+    expect(window.getComputedStyle(open.parentElement ?? open).minHeight).not.toBe('44px');
+  });
+
   it('several uploads behind a range, or the summary, open Your data’s list', () => {
     const several = { ...sales, result: { ...sales.result, uploadRefs: [UPLOAD, 'u_89abcdef0123456789abcdef'] } };
     const overview: ToolStep = {

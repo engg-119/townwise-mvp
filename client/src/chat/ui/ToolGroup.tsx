@@ -5,7 +5,6 @@ import { Animated, Easing, Platform, Pressable, StyleSheet, Text, View } from 'r
 import { useReducedMotion } from '../../motion';
 import { DefinitionList } from '../../portal/ui/DataTable';
 import { SourceChips } from '../../portal/ui/SourceChip';
-import { inlineTarget } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { targetWords } from '../dataLinks';
 import { dataTarget, toolLine, viewRows, type DataTarget, type ToolContext, type ToolStep } from '../tools';
@@ -17,6 +16,12 @@ import { dataTarget, toolLine, viewRows, type DataTarget, type ToolContext, type
 // word ("Reading", "Read", "Couldn’t read") carries the state, in `text2`, `text3` or the error color. A step that read
 // the team's own data has a link under its words to where that data is (spec P25 build note, 2026-11-18): the Calendar's
 // day, or the Your data item or list (`dataTarget`, `hrefOf`); the words stay the button that opens what it read.
+
+/**
+ * On web, a link whose 13px padding makes its target keeps its focus ring to its words (PortalStyles' data-ring="text"),
+ * so the ring never covers the step above it or a Based on line beside it.
+ */
+export const RING = Platform.OS === 'web' ? { dataSet: { ring: 'text' } } : {};
 
 /** The path a read's data opens at, when the person may open it (ReplyView's, from dataLinks.ts); null for none. */
 export type HrefOf = (target: DataTarget | null) => string | null;
@@ -84,7 +89,7 @@ function Row(props: { step: ToolStep; ctx: ToolContext; ended: boolean; hrefOf: 
       ) : head}
       {href === null || words === null ? null : (
         <View style={styles.open}>
-          <Link href={href} accessibilityLabel={words.label} style={styles.openLink}>{words.text}</Link>
+          <Link href={href} accessibilityLabel={words.label} style={styles.openLink} {...RING}>{words.text}</Link>
         </View>
       )}
       {open ? (
@@ -113,6 +118,9 @@ export function ToolGroup(props: { steps: readonly ToolStep[]; live: boolean; ct
 
 const c = theme.color;
 
+/** A step's link's padding above and below its 20px line: a 46px target, as `inlineTarget`'s. */
+const LINK_PAD = 13;
+
 const styles = StyleSheet.create({
   group: { gap: theme.space[1], borderLeftWidth: theme.stroke.hairline, borderLeftColor: c.border, paddingLeft: theme.space[3] },
   row: { gap: theme.space[2] },
@@ -127,7 +135,8 @@ const styles = StyleSheet.create({
   objectError: { ...theme.type.small, color: c.error },
   detail: { ...theme.type.small, color: c.text2 },
   expanded: { gap: theme.space[2], paddingBottom: theme.space[2] },
-  // A 44px target on web and native, the link's own line under the step's words.
-  open: { minHeight: 44, justifyContent: 'center', alignItems: 'flex-start' },
-  openLink: { ...theme.type.small, ...inlineTarget, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
+  // The link's own line under the step's words: its 46px target (13 above and below its line) is pulled up over the
+  // row's gap and its own top padding, so its words sit where the step's next line would, with no blank line between.
+  open: { marginTop: -(theme.space[2] + LINK_PAD), alignItems: 'flex-start' },
+  openLink: { ...theme.type.small, paddingVertical: LINK_PAD, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
 });

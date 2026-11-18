@@ -20,7 +20,7 @@ import { ProposalCard } from './ProposalCard';
 import { messageMark, type RowShow } from './MessageTime';
 import { ReplyActions } from './ReplyActions';
 import { ReplySources } from './ReplySources';
-import { FadeIn, type HrefOf } from './ToolGroup';
+import { FadeIn, RING, type HrefOf } from './ToolGroup';
 import { useVersionNav, VersionNav } from './VersionNav';
 import { isProcessPart, wholeSeconds, Worked, type ProcessPart } from './Worked';
 import { useWorkedOpen, type WorkedOpen } from './workedOpen';
@@ -171,7 +171,7 @@ export function ReplyView(props: {
             {basedOnParts(stepsOf(message), props.ctx).map((part, index) => {
               if (typeof part === 'string') return part;
               const href = hrefOf(part.target);
-              return href === null ? part.text : <Link key={index} href={href} style={styles.basedOnLink}>{part.text}</Link>;
+              return href === null ? part.text : <Link key={index} href={href} style={styles.basedOnLink} {...RING}>{part.text}</Link>;
             })}
           </Text>
           <ReplySources sources={message.sources} />
@@ -195,7 +195,8 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   reply: { gap: theme.space[3], minWidth: 0 },
-  basedOn: { ...theme.type.small, color: c.text2 },
+  // Lines 24 apart, so a link's focus ring 2px outside its words (RING) clears the lines beside it.
+  basedOn: { ...theme.type.small, lineHeight: 24, color: c.text2 },
   basedOnLink: { ...inlineTarget, color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },
   note: { ...theme.type.small, color: c.text3 },
 });
