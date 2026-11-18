@@ -130,8 +130,8 @@ test('Your calendars: no file import, the line points to the web, and a link can
   expect(await screen.findByText('No calendars yet.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
   expect(writes(api)).toEqual([
-    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } },
-    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } },
+    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL, titlesNotice: 1 } },
+    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL, titlesNotice: 1 } },
     { method: 'POST', path: `${CALENDARS_PATH}/c2/refresh`, body: undefined },
     { method: 'DELETE', path: `${CALENDARS_PATH}/c2`, body: undefined },
   ]);
