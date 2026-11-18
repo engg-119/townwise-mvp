@@ -28,6 +28,7 @@ The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell 
 | P16 Location settings | `/locations/[locationId]/settings` | `(client)/locations/[locationId]/settings.tsx` | built (`src/portal/locations/`), reached from the top bar's More for org admins (`routing.ts`), with “Change this location’s place” while the Places search is on, and a static Business rules section that links to P29 |
 | P17 Team | `/team` | `(client)/team.tsx` | built (`src/portal/team/`) |
 | P18 Settings | `/settings` | `(client)/settings.tsx` | built (`src/portal/settings/`), with the link to two-step settings and (D47) `LocationsMap`, one lettered map of every location with its legend |
+| P32 Overview | `/admin/overview` | `(console)/admin/overview.tsx` | built, web only (`src/portal/console/`: `overview.ts` the words, `StatTiles`, `AttentionList`, `ActivityChart` (`.web.tsx` draws it), `OverviewOrgs`); where staff land (`HOME.staff`), first in the console's nav; a change of window holds the last answer until the next arrives |
 | P19 Requests | `/admin` | `(console)/admin/index.tsx` | built, web only (`src/portal/console/`) |
 | P20 Organizations | `/admin/orgs` | `(console)/admin/orgs/index.tsx` | built, web only (`src/portal/console/`) |
 | P21 Organization | `/admin/orgs/[orgId]` | `(console)/admin/orgs/[orgId].tsx` | built, web only (`src/portal/console/`), with the staff setup section while `org.inSetup` (`SetupPanel`, `SetupUpload`) |

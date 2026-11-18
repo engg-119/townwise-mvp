@@ -229,6 +229,14 @@ describe('P13 Upload', () => {
 });
 
 describe('the staff console', () => {
+  test('P32 Overview: the tiles, Needs attention, the chart and the table’s skeleton, under the window switch', async () => {
+    const api = consoleApi();
+    api.routes['GET /api/admin/overview?days=28'] = never;
+    renderConsole('/admin/overview', api);
+    await expectSkeleton('overview', 'Loading the overview');
+    expect(screen.getByRole('navigation', { name: 'Window' })).toBeTruthy();
+  });
+
   test('P19 Requests: the table and the request panel’s skeleton', async () => {
     const api = consoleApi();
     api.routes['GET /api/admin/requests?status=pending'] = never;

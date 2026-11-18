@@ -3,7 +3,7 @@ import { cleanup, fireEvent, screen, within } from '@testing-library/react';
 import { formatTime } from '../../../src/portal/format';
 import { STAFF_EMAIL, VERIFIED_UNTIL } from '../../helpers/portal';
 import {
-  adminRequest, consoleApi, member, orgDetail, orgRow, person, renderAt, REQUESTER_EMAIL, setWidth, type ConsoleApi,
+  adminRequest, consoleApi, member, orgDetail, orgRow, overviewAnswer, person, renderAt, REQUESTER_EMAIL, setWidth, type ConsoleApi,
 } from './helpers';
 
 // The staff console on phones and in its tables (spec 15.4, 15.7): the top bar's height, tap targets, the
@@ -150,4 +150,23 @@ test('at 320px the View as dialog sets the email in mono 14px, so it takes its o
   // A 320px screen leaves the dialog 254px of text (16px backdrop and 16px dialog padding a side, 1px borders). At
   // Geist Mono's 0.6em advance, 30 characters fit (“maya.okafor@juniperlane.test” has 28).
   expect(30 * 0.6 * size).toBeLessThanOrEqual(320 - 2 * 16 - 2 * 16 - 2);
+});
+
+test.each([320, 768, 1280])('at %ipx Overview’s tiles take one, two or three to a row, and at 320px its tables stack', async (width) => {
+  setWidth(width);
+  const api = consoleApi();
+  api.routes['GET /api/admin/overview?days=28'] = () => overviewAnswer(28);
+  renderAt('/admin/overview', api);
+  const label = await screen.findByText('Active people');
+  // The tile's panel sits in its grid cell, whose basis is its share of the row.
+  const cell = label.parentElement?.parentElement;
+  expect(cell === null || cell === undefined ? '' : style(cell).flexBasis).toBe(width === 320 ? '100%' : width === 768 ? '50%' : `${String(100 / 3)}%`);
+  const table = screen.getByRole('region', { name: 'Organizations' });
+  if (width === 320) {
+    expect(within(table).queryByRole('table')).toBeNull();
+    expect(within(table).getAllByRole('listitem')).toHaveLength(2);
+    expect(within(table).getByRole('link', { name: 'Sample Campus Pub' }).getAttribute('href')).toBe('/admin/orgs/o2');
+  } else {
+    expect(within(table).getByRole('table')).toBeTruthy();
+  }
 });

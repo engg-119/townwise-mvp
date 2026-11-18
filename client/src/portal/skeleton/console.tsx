@@ -1,11 +1,13 @@
 import { StyleSheet, View } from 'react-native';
 
 import { Split } from '../console/parts';
+import { TileGrid } from '../console/StatTiles';
 import { useBreakpoint } from '../hooks';
 import { Actions } from '../ui/Button';
 import { Section, Stack } from '../ui/layout';
 import {
-  Skeleton, SkeletonButton, SkeletonDefinitions, SkeletonField, SkeletonHeading, SkeletonPanel, SkeletonTable, SkeletonText,
+  Skeleton, SkeletonButton, SkeletonChart, SkeletonDefinitions, SkeletonField, SkeletonFigure, SkeletonHeading, SkeletonPanel, SkeletonTable,
+  SkeletonText,
 } from './kit';
 
 // The loading state of each staff console page (spec 16.4): the page's tables with their columns, the Requests
@@ -15,6 +17,43 @@ import {
 interface LabelProps { label: string }
 
 const ROW = 56;
+
+/** P32 Overview, under the window switch: the six tiles, Needs attention, the activity chart and the organizations. */
+export function OverviewSkeleton(props: LabelProps): React.JSX.Element {
+  return (
+    <Skeleton name="overview" label={props.label}>
+      <Stack gap={20}>
+        <SkeletonText width="60%" />
+        <TileGrid>
+          {Array.from({ length: 6 }, (_, index) => (
+            <SkeletonPanel key={index}>
+              <SkeletonText type="label" width={140} />
+              <SkeletonFigure width={72} />
+              <SkeletonText width="70%" />
+            </SkeletonPanel>
+          ))}
+        </TileGrid>
+      </Stack>
+      <Section>
+        <SkeletonHeading width={180} />
+        <SkeletonText lines={2} />
+      </Section>
+      <Section>
+        <SkeletonHeading width={160} />
+        <SkeletonChart height={236} />
+        <SkeletonText lines={2} />
+      </Section>
+      <Section>
+        <SkeletonHeading width={160} />
+        <SkeletonTable
+          columns={[{ flex: 1.6 }, {}, {}, { numeric: true }, { numeric: true }, { numeric: true }, {}, { flex: 2.6 }, { flex: 1.6 }, { flex: 1.2 }]}
+          rows={3}
+          rowHeight={ROW}
+        />
+      </Section>
+    </Skeleton>
+  );
+}
 
 /** P19 Requests: the table beside (from 1200px) or above the selected request's panel. */
 export function RequestsSkeleton(props: LabelProps): React.JSX.Element {

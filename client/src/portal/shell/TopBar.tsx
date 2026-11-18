@@ -283,7 +283,7 @@ export function TopBar(props: TopBarProps): React.JSX.Element {
     onToggle: () => { setOpenOn(open ? null : where); },
   };
   const wrapped = width < (consoleBar ? 1024 : sections ? 1280 : 900);
-  const home = consoleBar ? '/admin' : '/dashboard';
+  const home = consoleBar ? '/admin/overview' : '/dashboard';
   const signOut = (
     <Button
       variant="link"
