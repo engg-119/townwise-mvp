@@ -5,12 +5,13 @@ import {
 } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
+import { useBreakpoint } from '../../portal/hooks';
 import { localToday } from '../../portal/locations/dates';
 import { useOptionalPortal } from '../../portal/PortalProvider';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
-import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../portal/ui/feedback';
-import { Skeleton, SkeletonText } from '../../portal/skeleton/kit';
+import { ErrorNotice, ReadOnlyLine } from '../../portal/ui/feedback';
+import { Skeleton, SkeletonBlock, SkeletonButton, SkeletonHeading, SkeletonText } from '../../portal/skeleton/kit';
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
@@ -22,7 +23,7 @@ import type { MessageAttachment } from '../api';
 import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat, type TuningChatState } from '../useTuningChat';
 import { budgetLines } from './AgentSidePanel';
 import { ChatDrop } from './ChatDrop';
-import { ChatHeader, PanelButton } from './ChatHeader';
+import { ChatHeader, ChatHeaderSkeleton, PanelButton } from './ChatHeader';
 import { Composer, type ComposerHandle } from './Composer';
 import { useComposerFiles } from './ComposerFiles';
 import { focusLost } from './controls';
@@ -109,6 +110,39 @@ export const DROP_BLOCKED = {
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** The docked composer's last rotating example, once there are sales to tell about. */
 const SATURDAY = 'Tell me about last Saturday';
+
+/**
+ * The page while TownwiseAI loads (spec P25, owner, 2026-11-18: "fix the skeleton loader on townwise ai so there is one
+ * because it just says loading townwise ai"): the header's controls, then the landing's heading, line, composer and
+ * chips, in the header's and the landing's own rows and column, centered top to bottom as the landing is, so the
+ * landing replaces it without moving. "Loading TownwiseAI…" stays its one status line for screen readers. A turn still
+ * running opens its conversation as the page loads (useTuningChat), so a refresh mid-reply goes from this to the thread,
+ * never through the landing. Nothing here scrolls, so the thread's pin starts fresh when the thread mounts.
+ */
+function PageSkeleton(): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  return (
+    <Skeleton name="agent" label="Loading TownwiseAI…" fill>
+      <View style={styles.fill}>
+        <ChatHeaderSkeleton />
+        <View style={[styles.fill, styles.landingScroll]}>
+          <View testID="skeleton-agent-landing" style={styles.landing}>
+            <SkeletonHeading width={phone ? 240 : 420} />
+            <SkeletonText type="sub" lines={2} />
+            {/* The composer: its 56px box, then its help line. */}
+            <View testID="skeleton-agent-composer" style={styles.composerSkeleton}>
+              <SkeletonBlock outline height={56} />
+              <SkeletonText width="80%" />
+            </View>
+            <View testID="skeleton-agent-suggestions" style={[styles.chipsSkeleton, phone ? styles.chipsSkeletonPhone : null]}>
+              {[200, 230, 260].map((width) => <SkeletonButton key={width} width={width} />)}
+            </View>
+          </View>
+        </View>
+      </View>
+    </Skeleton>
+  );
+}
 
 /** An empty conversation, drawn as the landing: what to ask, the composer, the chips and TownwiseAI's questions. */
 function isLanding(state: TuningChatState): boolean {
@@ -341,7 +375,7 @@ export function AgentChat(props: {
   );
 
   // Every state of the page catches a drop of files, so the browser never opens one in its place.
-  if (state.status === 'loading') return <View style={styles.fill}><LoadingLine text="Loading TownwiseAI…" />{drop}</View>;
+  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton />{drop}</View>;
   if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
   if (state.status === 'failed') {
     return (
@@ -665,6 +699,11 @@ const styles = StyleSheet.create({
     paddingBottom: theme.space[2], marginBottom: theme.space[4],
   },
   landingScroll: { flexGrow: 1 },
+  // As Composer's own: its top padding, and the gap over its help line.
+  composerSkeleton: { gap: theme.space[2], paddingTop: theme.space[3] },
+  // As Suggestions' rows: wrapping from 641px, one row on phones (the real one scrolls sideways).
+  chipsSkeleton: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[2], rowGap: theme.space[2] },
+  chipsSkeletonPhone: { flexWrap: 'nowrap', overflow: 'hidden' },
   landing: {
     flexGrow: 1, justifyContent: 'center', width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[4],
     paddingVertical: theme.space[6],

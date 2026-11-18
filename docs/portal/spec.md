@@ -2464,7 +2464,7 @@ The location's chat with TownwiseAI (server contract: `docs/portal/tuning-chat.m
 
 | State | Shows |
 |---|---|
-| Loading | “Loading TownwiseAI…” in the chat column; the side panel loads on its own |
+| Loading | A skeleton of the page (15.7 Loading) in the chat column: the header’s History, New chat and Questions and activity, then the landing’s heading, line, composer and suggestion chips, in the header’s row and the landing’s column, centered top to bottom as the landing is, so the landing replaces it without moving; “Loading TownwiseAI…” is its one status line for screen readers. A refresh mid-reply goes from it to the thread, never through the landing. The side panel loads on its own. [Build note, 2026-11-18; owner: “fix the skeleton loader on townwise ai so there is one because it just says loading townwise ai..”] [CONFIRM: the skeleton stands for the landing (three suggestion chips, two lines under the heading), the page most loads show; a refresh mid-reply moves from it to the thread] |
 | Not found | “This location wasn’t found.” |
 | Error | The error and Try again (each of the chat and the side panel) |
 | Off | “TownwiseAI isn’t turned on yet.”; the side panel still loads |

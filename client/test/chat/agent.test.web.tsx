@@ -429,6 +429,39 @@ describe('following the reply (owner, 2026-11-18: “as the prompt goes it shoul
   });
 });
 
+describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on townwise ai so there is one because it just says loading townwise ai”)', () => {
+  test('it is a skeleton of the page: the header’s controls, the heading, line, composer and suggestions, centered as the landing is; the words are only its status line', async () => {
+    const api = fakeChatApi();
+    let answer: (() => void) | null = null;
+    // The chat's summary answers when the test says.
+    api.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(api.summary); }; });
+    renderAt('/locations/l1/agent', api);
+    const skeleton = await screen.findByTestId('skeleton-agent');
+    const status = within(skeleton).getByRole('status');
+    expect(status.textContent).toBe('Loading TownwiseAI…');
+    expect(screen.getAllByText('Loading TownwiseAI…')).toEqual([status]);
+    // The shapes are hidden from screen readers, and stand where the page's pieces will.
+    const shapes = within(skeleton).getByTestId('skeleton-shapes');
+    expect(shapes.getAttribute('aria-hidden')).toBe('true');
+    expect(within(shapes).getByTestId('skeleton-chat-header')).toBeTruthy();
+    expect(within(shapes).getByTestId('skeleton-agent-composer')).toBeTruthy();
+    expect(within(shapes).getAllByTestId('skeleton-agent-suggestions')).toHaveLength(1);
+    // Filling the chat's height, its column centered top to bottom and 760px wide, as the landing's.
+    expect(style(skeleton).flexGrow).toBe('1');
+    expect(style(shapes).flexGrow).toBe('1');
+    const column = within(shapes).getByTestId('skeleton-agent-landing');
+    expect([style(column).justifyContent, style(column).maxWidth, style(column).flexGrow]).toEqual(['center', '760px', '1']);
+    expect(screen.queryByRole('button', { name: 'History' })).toBeNull();
+
+    await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    expect(await screen.findByTestId('chat-landing')).toBeTruthy();
+    expect(screen.queryByTestId('skeleton-agent')).toBeNull();
+    const landing = screen.getByTestId('chat-landing-column');
+    expect([style(landing).justifyContent, style(landing).maxWidth, style(landing).flexGrow]).toEqual(['center', '760px', '1']);
+    expect(screen.getByRole('button', { name: 'History' })).toBeTruthy();
+  });
+});
+
 test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);
@@ -1511,6 +1544,26 @@ describe('a reply that outlives its connection', () => {
     expect(api.writes).toEqual([{ method: 'POST', path: `${TAIL}/stop`, body: {} }]);
     expect(screen.getByText('January was quiet')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  test('a refresh mid-reply goes from the page’s skeleton straight to the thread, never through the landing', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE;
+    let answer: (() => void) | null = null;
+    api.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(api.summary); }; });
+    let landed = false;
+    const watch = new MutationObserver(() => { landed ||= document.querySelector('[data-testid="chat-landing"]') !== null; });
+    watch.observe(document.body, { childList: true, subtree: true });
+    renderAt('/locations/l1/agent', api);
+    expect(await screen.findByTestId('skeleton-agent')).toBeTruthy();
+    await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+    expect(await screen.findByText('And January?')).toBeTruthy();
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    watch.disconnect();
+    expect(landed).toBe(false);
+    expect(screen.queryByTestId('skeleton-agent')).toBeNull();
+    expect(screen.getByRole('log', { name: 'Conversation with TownwiseAI' })).toBeTruthy();
   });
 
   test('a dropped network keeps the reply streaming; back online, or the tab back in view, it is read again at once, with no text twice', async () => {

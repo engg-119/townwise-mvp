@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
+import { SkeletonButton } from '../../portal/skeleton/kit';
 import { Button } from '../../portal/ui/Button';
 import { theme } from '../../theme';
 import type { ConversationSummary } from '../api';
@@ -135,6 +136,24 @@ export function ChatHeader(props: {
           />
         </View>
       ) : null}
+    </View>
+  );
+}
+
+/**
+ * The header while the page loads (AgentChat's skeleton): its three controls as text links' shapes, each about as wide
+ * as its words, in the header's own row, so nothing moves when the header comes.
+ */
+export function ChatHeaderSkeleton(): React.JSX.Element {
+  return (
+    <View testID="skeleton-chat-header" style={styles.header}>
+      <View style={styles.bar}>
+        <View style={styles.controls}>
+          <SkeletonButton link width={58} />
+          <SkeletonButton link width={70} />
+          <SkeletonButton link width={170} />
+        </View>
+      </View>
     </View>
   );
 }

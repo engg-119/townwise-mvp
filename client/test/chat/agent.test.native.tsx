@@ -576,6 +576,27 @@ describe('phones', () => {
   });
 });
 
+test('while the page loads it is a skeleton of the page, with Loading TownwiseAI… only as its status line (owner, 2026-11-18)', async () => {
+  const chat = fakeChatApi();
+  let answer: (() => void) | null = null;
+  chat.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answer = () => { resolve(chat.summary); }; });
+  await renderAgent(meOf(ACCESS.member), chat);
+  const skeleton = await screen.findByTestId('skeleton-agent');
+  expect(StyleSheet.flatten(skeleton.props.style)).toMatchObject({ flex: 1 });
+  expect(within(skeleton).getByRole('status').props.children).toBe('Loading TownwiseAI…');
+  // The shapes are hidden from screen readers: the header's controls, the landing's column, composer and suggestions.
+  for (const id of ['skeleton-chat-header', 'skeleton-agent-landing', 'skeleton-agent-composer', 'skeleton-agent-suggestions']) {
+    expect(screen.queryByTestId(id)).toBeNull();
+    expect(screen.getByTestId(id, { includeHiddenElements: true })).toBeTruthy();
+  }
+  expect(StyleSheet.flatten(screen.getByTestId('skeleton-agent-landing', { includeHiddenElements: true }).props.style))
+    .toMatchObject({ flexGrow: 1, justifyContent: 'center', maxWidth: 760 });
+  expect(screen.queryByRole('button', { name: 'History' })).toBeNull();
+  await act(async () => { answer?.(); await Promise.resolve(); });
+  expect(await screen.findByTestId('chat-landing')).toBeTruthy();
+  expect(screen.queryByTestId('skeleton-agent', { includeHiddenElements: true })).toBeNull();
+});
+
 describe('the docked composer', () => {
   // The thread runs the full height and scrolls under the composer, which is laid over its bottom edge; the room the
   // thread keeps at its end follows the dock's measured height, and the dock growing or shrinking moves the end,

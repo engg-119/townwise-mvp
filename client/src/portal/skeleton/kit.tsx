@@ -30,12 +30,14 @@ function typeOf(type: SkeletonType, phone: boolean): { fontSize: number; lineHei
 /**
  * A loading page or section: the status line screen readers hear (`label`, the page's loading words, polite), then
  * the shapes, hidden from assistive tech and pulsing in opacity unless motion is reduced. `name` marks it for tests.
+ * `fill`: it and its shapes take the parent's height, for a page laid out to fill the screen (TownwiseAI).
  */
-export function Skeleton(props: { name: string; label: string; children: React.ReactNode }): React.JSX.Element {
+export function Skeleton(props: { name: string; label: string; children: React.ReactNode; fill?: boolean }): React.JSX.Element {
+  const fill = props.fill === true;
   return (
-    <View testID={`skeleton-${props.name}`}>
+    <View testID={`skeleton-${props.name}`} style={fill ? styles.page : null}>
       <Text role="status" aria-live="polite" style={styles.unseen}>{props.label}</Text>
-      <Pulse>{props.children}</Pulse>
+      <Pulse fill={fill}>{props.children}</Pulse>
     </View>
   );
 }
@@ -220,6 +222,7 @@ export function SkeletonDefinitions(props: { rows: number }): React.JSX.Element 
 const styles = StyleSheet.create({
   // Read by screen readers, but takes no space and shows nothing (as the copy buttons' result line).
   unseen: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 },
+  page: { flex: 1, minHeight: 0 },
   fill: { backgroundColor: c.raised, borderRadius: 0 },
   outline: { borderWidth: 1, borderColor: c.line, borderRadius: 0 },
   line: { justifyContent: 'center' },
