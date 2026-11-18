@@ -31,18 +31,24 @@ function rows(region: HTMLElement): string[][] {
 
 test('the tiles with their figures and their change in words, Overview current in the nav, 28 days with no query', async () => {
   const api = consoleApi();
-  answer(api, 28, overviewAnswer(28));
+  answer(api, 28, overviewAnswer(28, { totals: { ...overviewAnswer(28).totals as object, chatTurns: { count: 1234, previous: 1234 } } }));
   renderAt('/admin/overview', api);
   expect(await screen.findByRole('heading', { level: 1, name: 'Overview' })).toBeTruthy();
-  await screen.findByText('Active organizations');
+  await screen.findByText('Organizations that used the app');
   expect(gets(api, '/api/admin/overview?days=28')).toBe(1);
-  expect(tile('Active organizations')).toBe('Active organizations4of 6Up 1 from the 28 days before');
-  expect(tile('Active people')).toBe('Active people9of 14Up 3 from the 28 days before');
-  expect(tile('TownwiseAI turns')).toBe('TownwiseAI turns12Same as the 28 days before');
+  expect(tile('Organizations that used the app')).toBe('Organizations that used the app4of 6 with people in themUp 1 from the 28 days before');
+  expect(tile('People who used the app')).toBe('People who used the app9of 14 members and org adminsUp 3 from the 28 days before');
+  expect(tile('Forecast days in range')).toBe('Forecast days in range81%In range on 34 of 42 scored days');
+  expect(tile('Locations with a published forecast')).toBe('Locations with a published forecast2of 2 locationsUsed on the last 28 days');
+  expect(tile('TownwiseAI turns')).toBe('TownwiseAI turns1,234Same as the 28 days before');
   expect(tile('Sales uploads')).toBe('Sales uploads3Down 2 from the 28 days before');
   expect(tile('Notes written')).toBe('Notes written7Up 5 from the 28 days before');
   expect(tile('Order decisions')).toBe('Order decisions1Up 1 from the 28 days before');
-  expect(screen.getByText('Active days recorded since Jun 1, 2026. Days are UTC.')).toBeTruthy();
+  expect(screen.getByText('Days of use recorded since Jun 1, 2026.')).toBeTruthy();
+  expect(screen.getByText('Used the app: a member or org admin opened Townwise that day (staff never count). Actions are recorded changes, not page views. Days are UTC.')).toBeTruthy();
+  // The mono figure's comma is in the sans face, so “1,234” does not read “1 , 234”.
+  const comma = screen.getByText(',', { selector: '*' });
+  expect(getComputedStyle(comma).fontFamily).toContain('Instrument Sans');
 
   const nav = screen.getByRole('navigation', { name: 'Main' });
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Overview', 'Requests 2', 'Organizations', 'People', 'Audit log']);
@@ -53,7 +59,7 @@ test('the tiles with their figures and their change in words, Overview current i
   ]);
 });
 
-test('with nothing recorded yet, the page says so plainly and each activity figure has no earlier days', async () => {
+test('with nothing recorded or scored yet, the page says so plainly and each use figure has no comparison', async () => {
   const api = consoleApi();
   answer(api, 7, overviewAnswer(7, {
     recordingSince: null,
@@ -61,11 +67,14 @@ test('with nothing recorded yet, the page says so plainly and each activity figu
       activeOrgs: { count: 0, previous: null, of: 2 }, activePeople: { count: 0, previous: null, of: 5 },
       chatTurns: { count: 0, previous: 0 }, salesUploads: { count: 1, previous: 0 }, notesWritten: { count: 0, previous: 0 }, orderDecisions: { count: 0, previous: 0 },
     },
+    orgs: [overviewOrg('o1', 'Sample Inn', { locations: [{ id: 'l1', name: 'Hanover', newestRun: null, accuracy: null, refresh: null, lastScheduled: null }] })],
   }));
   renderAt('/admin/overview?days=7', api);
-  expect(await screen.findByText(/^No activity is recorded yet\. Active people and organizations count from the first day/)).toBeTruthy();
-  expect(tile('Active people')).toBe('Active people0of 5No earlier days recorded');
-  expect(tile('Active organizations')).toBe('Active organizations0of 2No earlier days recorded');
+  expect(await screen.findByText(/^No use of the app is recorded yet\. Organizations and people that used the app count from the first day/)).toBeTruthy();
+  expect(tile('People who used the app')).toBe('People who used the app0of 5 members and org adminsNot enough history to compare');
+  expect(tile('Organizations that used the app')).toBe('Organizations that used the app0of 2 with people in themNot enough history to compare');
+  expect(tile('Forecast days in range')).toBe('Forecast days in rangeNo forecast days scored yet');
+  expect(tile('Locations with a published forecast')).toBe('Locations with a published forecast0of 1 locationUsed on the last 7 days');
   expect(tile('Sales uploads')).toBe('Sales uploads1Up 1 from the 7 days before');
 });
 
@@ -111,7 +120,7 @@ test('a window change keeps the last answer on screen, dimmed and inert under a 
   const next = deferred<unknown>();
   api.routes['GET /api/admin/overview?days=90'] = () => next.promise;
   renderAt('/admin/overview', api);
-  await screen.findByText('Active people');
+  await screen.findByText('People who used the app');
   expect(screen.queryByTestId('skeleton-overview')).toBeNull();
   expect(within(windowLine()).getByRole('status').textContent).toBe('The last 28 days, Oct 21, 2026 to Nov 17, 2026 (UTC).');
   // The slot's height is kept whatever it says, so nothing under it moves when it changes.
@@ -124,7 +133,7 @@ test('a window change keeps the last answer on screen, dimmed and inert under a 
   await waitFor(() => { expect(gets(api, '/api/admin/overview?days=90')).toBe(1); });
   // The 28-day figures stay, dimmed and inert, the line says what is loading and what is still shown, the tabs say
   // where the page is going, and the skeleton never shows.
-  expect(tile('Active people')).toBe('Active people9of 14Up 3 from the 28 days before');
+  expect(tile('People who used the app')).toBe('People who used the app9of 14 members and org adminsUp 3 from the 28 days before');
   expect(screen.queryByTestId('skeleton-overview')).toBeNull();
   expect(within(tabs).getByRole('link', { name: '90 days' }).getAttribute('aria-current')).toBe('page');
   expect(within(windowLine()).getByRole('status').textContent).toBe('Loading the last 90 days… Below: the last 28 days until then.');
@@ -137,7 +146,7 @@ test('a window change keeps the last answer on screen, dimmed and inert under a 
     next.resolve(overviewAnswer(90, { totals: { ...overviewAnswer(90).totals as object, activePeople: { count: 11, previous: null, of: 14 } } }));
     await next.promise;
   });
-  await waitFor(() => { expect(tile('Active people')).toBe('Active people11of 14No earlier days recorded'); });
+  await waitFor(() => { expect(tile('People who used the app')).toBe('People who used the app11of 14 members and org adminsNot enough history to compare'); });
   expect(tile('Sales uploads')).toBe('Sales uploads3Down 2 from the 90 days before');
   expect(within(windowLine()).getByRole('status').textContent).toBe('The last 90 days, Aug 20, 2026 to Nov 17, 2026 (UTC).');
   expect(figures().hasAttribute('inert')).toBe(false);
@@ -148,11 +157,11 @@ test('a failed change shows the error in place of the old figures, and Try again
   answer(api, 28, overviewAnswer(28));
   api.routes['GET /api/admin/overview?days=90'] = () => offline();
   renderAt('/admin/overview', api);
-  await screen.findByText('Active people');
+  await screen.findByText('People who used the app');
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Window' })).getByRole('link', { name: '90 days' }));
   expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
   // No 28-day figure stays under the 90-day tab as if it were current.
-  expect(screen.queryByText('Active people')).toBeNull();
+  expect(screen.queryByText('People who used the app')).toBeNull();
   expect(screen.queryByTestId('overview-figures')).toBeNull();
 
   const next = deferred<unknown>();
@@ -181,7 +190,7 @@ test('the skeleton shows only before the first answer; a failed read shows the e
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   // The button went with the error, so focus moves to the line that says what is loading, not to the page body.
   expect(document.activeElement).toBe(windowLine());
-  expect(await screen.findByText('Active people')).toBeTruthy();
+  expect(await screen.findByText('People who used the app')).toBeTruthy();
   expect(gets(api, '/api/admin/overview?days=28')).toBe(2);
 });
 
@@ -274,7 +283,7 @@ test('the console’s wordmark opens Overview, and Requests stays at /admin', as
   const api = consoleApi();
   answer(api, 28, overviewAnswer(28));
   renderAt('/admin/overview', api);
-  await screen.findByText('Active people');
+  await screen.findByText('People who used the app');
   expect(within(screen.getByRole('banner')).getByRole('link', { name: 'Townwise' }).getAttribute('href')).toBe('/admin/overview');
   expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Requests/ }).getAttribute('href')).toBe('/admin');
 });

@@ -18,26 +18,36 @@ interface LabelProps { label: string }
 
 const ROW = 56;
 
-/** P32 Overview, under the window switch: the six tiles, Needs attention, the activity chart and the organizations. */
+/**
+ * P32 Overview, under the window line: the eight tiles, Needs attention (first on phones, as the page has it), the
+ * activity chart and the organizations.
+ */
 export function OverviewSkeleton(props: LabelProps): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  const tiles = (
+    <Stack gap={20}>
+      <SkeletonText width="60%" />
+      <TileGrid>
+        {Array.from({ length: 8 }, (_, index) => (
+          <SkeletonPanel key={index}>
+            <SkeletonText type="label" width={140} />
+            <SkeletonFigure width={72} />
+            <SkeletonText width="70%" />
+          </SkeletonPanel>
+        ))}
+      </TileGrid>
+      <SkeletonText width="80%" />
+    </Stack>
+  );
+  const attention = (
+    <Section first={phone}>
+      <SkeletonHeading width={180} />
+      <SkeletonText lines={2} />
+    </Section>
+  );
   return (
     <Skeleton name="overview" label={props.label}>
-      <Stack gap={20}>
-        <SkeletonText width="60%" />
-        <TileGrid>
-          {Array.from({ length: 6 }, (_, index) => (
-            <SkeletonPanel key={index}>
-              <SkeletonText type="label" width={140} />
-              <SkeletonFigure width={72} />
-              <SkeletonText width="70%" />
-            </SkeletonPanel>
-          ))}
-        </TileGrid>
-      </Stack>
-      <Section>
-        <SkeletonHeading width={180} />
-        <SkeletonText lines={2} />
-      </Section>
+      {phone ? <>{attention}<Section>{tiles}</Section></> : <>{tiles}{attention}</>}
       <Section>
         <SkeletonHeading width={160} />
         <SkeletonChart height={236} />

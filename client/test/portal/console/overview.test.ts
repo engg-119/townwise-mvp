@@ -99,24 +99,50 @@ describe('the tiles', () => {
     expect(changeWords(9, 6, 28)).toBe('Up 3 from the 28 days before');
     expect(changeWords(12, 12, 7)).toBe('Same as the 7 days before');
     expect(changeWords(3, 5, 90)).toBe('Down 2 from the 90 days before');
-    expect(changeWords(4, null, 28)).toBe('No earlier days recorded');
+    expect(changeWords(4, null, 28)).toBe('Not enough history to compare');
     expect(changeWords(1200, 0, 28)).toBe('Up 1,200 from the 28 days before');
   });
 
-  test('are the six totals, in order, with “of” for the activity figures', () => {
-    expect(tilesOf(overview()).map((tile) => [tile.label, tile.value, tile.of, tile.change])).toEqual([
-      ['Active organizations', '4', 'of 6', 'Up 1 from the 28 days before'],
-      ['Active people', '9', 'of 14', 'Up 3 from the 28 days before'],
+  test('are who used the app, forecast health, then the four counts, never a bare “active”, each “of” saying what it is of', () => {
+    expect(tilesOf(overview()).map((tile) => [tile.label, tile.value, tile.of, tile.detail])).toEqual([
+      ['Organizations that used the app', '4', 'of 6 with people in them', 'Up 1 from the 28 days before'],
+      ['People who used the app', '9', 'of 14 members and org admins', 'Up 3 from the 28 days before'],
+      ['Forecast days in range', '81%', null, 'In range on 34 of 42 scored days'],
+      ['Locations with a published forecast', '2', 'of 2 locations', 'Used on the last 28 days'],
       ['TownwiseAI turns', '12', null, 'Same as the 28 days before'],
       ['Sales uploads', '3', null, 'Down 2 from the 28 days before'],
       ['Notes written', '7', null, 'Up 5 from the 28 days before'],
       ['Order decisions', '1', null, 'Up 1 from the 28 days before'],
     ]);
+    expect(tilesOf(overview()).some((tile) => /\bactive\b/i.test(`${tile.label} ${tile.of ?? ''} ${tile.detail}`))).toBe(false);
+  });
+
+  test('forecast health sums scored days over the locations with a scored window, and says so plainly with none', () => {
+    const location = (id: string, extra: Record<string, unknown>) => ({
+      id, name: id, newestRun: { dataThrough: '2026-11-08', madeAt: '2026-11-09T08:00:00.000Z', engine: 'model' },
+      accuracy: null, refresh: null, lastScheduled: null, ...extra,
+    });
+    const some = overview(28, { orgs: [
+      overviewOrg('o1', 'Sample Inn', { locations: [
+        location('l1', { accuracy: { days: 21, inRange: 17, typicalErrorPct: 12.4 } }),
+        location('l2', { accuracy: { days: 3, inRange: 1, typicalErrorPct: null } }),
+        location('l3', { newestRun: null }),
+      ] }),
+      overviewOrg('o2', 'Sample Pub', { locations: [location('l4', { accuracy: { days: 0, inRange: 0, typicalErrorPct: null } })] }),
+    ] });
+    const [, , inRange, published] = tilesOf(some);
+    expect([inRange?.value, inRange?.detail]).toEqual(['75%', 'In range on 18 of 24 scored days']);
+    expect([published?.value, published?.of]).toEqual(['3', 'of 4 locations']);
+
+    const none = overview(28, { orgs: [overviewOrg('o1', 'Sample Inn', { locations: [location('l1', { newestRun: null })] })] });
+    const [, , unscored, unpublished] = tilesOf(none);
+    expect([unscored?.value, unscored?.detail]).toEqual([null, 'No forecast days scored yet']);
+    expect([unpublished?.value, unpublished?.of]).toEqual(['0', 'of 1 location']);
   });
 
   test('say plainly when nothing is recorded yet, and from when days are recorded otherwise', () => {
-    expect(recordingLine(null)).toMatch(/^No activity is recorded yet\. Active people and organizations count from the first day/);
-    expect(recordingLine('2026-06-01')).toBe('Active days recorded since Jun 1, 2026. Days are UTC.');
+    expect(recordingLine(null)).toMatch(/^No use of the app is recorded yet\. Organizations and people that used the app count from the first day/);
+    expect(recordingLine('2026-06-01')).toBe('Days of use recorded since Jun 1, 2026.');
   });
 });
 

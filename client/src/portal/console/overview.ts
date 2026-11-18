@@ -28,9 +28,9 @@ export function windowLine(days: OverviewDays, shown: Overview['window'] | null,
   return shown === null ? next : `${next} Below: the last ${String(shown.days)} days until then.`;
 }
 
-/** “Up 3 from the 28 days before”, “Same as …”, “Down 2 from …”, or “No earlier days recorded” with no previous value. */
+/** “Up 3 from the 28 days before”, “Same as …”, “Down 2 from …”, or “Not enough history to compare” with no previous value. */
 export function changeWords(count: number, previous: number | null, days: number): string {
-  if (previous === null) return 'No earlier days recorded';
+  if (previous === null) return 'Not enough history to compare';
   const before = `the ${String(days)} days before`;
   const diff = count - previous;
   if (diff === 0) return `Same as ${before}`;
@@ -40,25 +40,58 @@ export function changeWords(count: number, previous: number | null, days: number
 export interface Tile {
   key: string;
   label: string;
-  value: string;
-  /** “of 14”: the active organizations someone has joined, or the active seats. */
+  /** The figure; null when there is none to show, and `detail` says why. */
+  value: string | null;
+  /** What the figure is out of, said in full: “of 6 with people in them”. */
   of: string | null;
-  change: string;
+  /** The change against the window before, in words, or for the forecast tiles what the figure counts. */
+  detail: string;
 }
 
-/** The six tiles, in the page's order. */
+/**
+ * Forecast health over the window's passed days, from the rows' locations: scored days and those in range, summed over
+ * the locations with a scored window, and the locations with a published forecast used on those days, of all.
+ */
+export function forecastHealth(orgs: readonly OverviewOrg[]): { scored: number; inRange: number; published: number; locations: number } {
+  const locations = orgs.flatMap((org) => org.locations);
+  const scored = locations.flatMap((location) => (location.accuracy === null || location.accuracy.days === 0 ? [] : [location.accuracy]));
+  return {
+    scored: scored.reduce((sum, accuracy) => sum + accuracy.days, 0),
+    inRange: scored.reduce((sum, accuracy) => sum + accuracy.inRange, 0),
+    published: locations.filter((location) => location.newestRun !== null).length,
+    locations: locations.length,
+  };
+}
+
+/** A whole percent, rounded. */
+function percent(part: number, whole: number): string {
+  return `${String(Math.round((100 * part) / whole))}%`;
+}
+
+/**
+ * The eight tiles, in the page's order: who used the app and how the forecasts did (the first row from 1024px), then
+ * what people did. Never a bare “active”: the table's Status says that of an organization that is not suspended.
+ */
 export function tilesOf(overview: Overview): Tile[] {
   const { totals, window } = overview;
   const days = window.days;
-  const activity = (key: string, label: string, total: { count: number; previous: number | null; of: number }): Tile => ({
-    key, label, value: formatCount(total.count), of: `of ${formatCount(total.of)}`, change: changeWords(total.count, total.previous, days),
-  });
-  const count = (key: string, label: string, total: { count: number; previous: number }): Tile => ({
-    key, label, value: formatCount(total.count), of: null, change: changeWords(total.count, total.previous, days),
+  const health = forecastHealth(overview.orgs);
+  const count = (key: string, label: string, total: { count: number; previous: number | null }, of: string | null = null): Tile => ({
+    key, label, value: formatCount(total.count), of, detail: changeWords(total.count, total.previous, days),
   });
   return [
-    activity('activeOrgs', 'Active organizations', totals.activeOrgs),
-    activity('activePeople', 'Active people', totals.activePeople),
+    count('activeOrgs', 'Organizations that used the app', totals.activeOrgs, `of ${formatCount(totals.activeOrgs.of)} with people in them`),
+    count('activePeople', 'People who used the app', totals.activePeople, `of ${formatCount(totals.activePeople.of)} members and org admins`),
+    health.scored === 0
+      ? { key: 'inRange', label: 'Forecast days in range', value: null, of: null, detail: 'No forecast days scored yet' }
+      : {
+        key: 'inRange', label: 'Forecast days in range', value: percent(health.inRange, health.scored), of: null,
+        detail: `In range on ${formatCount(health.inRange)} of ${plural(health.scored, 'scored day', 'scored days')}`,
+      },
+    {
+      key: 'published', label: 'Locations with a published forecast', value: formatCount(health.published),
+      of: `of ${plural(health.locations, 'location', 'locations')}`, detail: `Used on the last ${String(days)} days`,
+    },
     count('chatTurns', 'TownwiseAI turns', totals.chatTurns),
     count('salesUploads', 'Sales uploads', totals.salesUploads),
     count('notesWritten', 'Notes written', totals.notesWritten),
@@ -66,14 +99,17 @@ export function tilesOf(overview: Overview): Tile[] {
   ];
 }
 
+/** The line under the tiles: who counts, what an action is, and that days are UTC. */
+export const TILES_NOTE = 'Used the app: a member or org admin opened Townwise that day (staff never count). Actions are recorded changes, not page views. Days are UTC.';
+
 /**
- * The line above the tiles: from when active days are recorded, or, with none yet, why the activity figures read 0.
+ * The line above the tiles: from when days of use are recorded, or, with none yet, why the use figures read 0.
  */
 export function recordingLine(recordingSince: string | null): string {
   if (recordingSince === null) {
-    return 'No activity is recorded yet. Active people and organizations count from the first day a member or org admin opens the app, so they read 0 until then. The other figures come from the audit log.';
+    return 'No use of the app is recorded yet. Organizations and people that used the app count from the first day a member or org admin opens it, so they read 0 until then. The other figures come from the audit log.';
   }
-  return `Active days recorded since ${formatDate(recordingSince)}. Days are UTC.`;
+  return `Days of use recorded since ${formatDate(recordingSince)}.`;
 }
 
 /** The action groups' names, in the chart's stacking order. */

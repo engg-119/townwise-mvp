@@ -6,7 +6,7 @@ import { ActivityChart } from '../../../../../src/portal/console/ActivityChart';
 import { fetchOverview } from '../../../../../src/portal/console/api';
 import { AttentionList } from '../../../../../src/portal/console/AttentionList';
 import {
-  activitySummary, attentionLines, dayActions, GROUP_LABEL, overviewDaysOf, overviewHref, recordingLine, tilesOf, windowLine,
+  activitySummary, attentionLines, dayActions, GROUP_LABEL, overviewDaysOf, overviewHref, recordingLine, TILES_NOTE, tilesOf, windowLine,
 } from '../../../../../src/portal/console/overview';
 import { OverviewOrgs } from '../../../../../src/portal/console/OverviewOrgs';
 import { FilterTabs } from '../../../../../src/portal/console/parts';
@@ -72,15 +72,23 @@ function EachDay(props: { overview: Overview }): React.JSX.Element {
 
 function OverviewBody(props: { overview: Overview }): React.JSX.Element {
   const { overview } = props;
+  const { phone } = useBreakpoint();
+  const tiles = (
+    <Stack gap={20}>
+      <Small>{recordingLine(overview.recordingSince)}</Small>
+      <StatTiles tiles={tilesOf(overview)} />
+      <Small>{TILES_NOTE}</Small>
+    </Stack>
+  );
+  // On phones Needs attention comes first, so eight stacked tiles do not push it a screen and more down.
+  const attention = (
+    <Section title="Needs attention" first={phone}>
+      <AttentionList lines={attentionLines(overview)} />
+    </Section>
+  );
   return (
     <>
-      <Stack gap={20}>
-        <Small>{recordingLine(overview.recordingSince)}</Small>
-        <StatTiles tiles={tilesOf(overview)} />
-      </Stack>
-      <Section title="Needs attention">
-        <AttentionList lines={attentionLines(overview)} />
-      </Section>
+      {phone ? <>{attention}<Section>{tiles}</Section></> : <>{tiles}{attention}</>}
       <Section title="Activity by day">
         <ActivityChart series={overview.series} />
         <Small>{activitySummary(overview.series, overview.window.days)}</Small>

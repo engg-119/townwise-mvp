@@ -152,15 +152,18 @@ test('at 320px the View as dialog sets the email in mono 14px, so it takes its o
   expect(30 * 0.6 * size).toBeLessThanOrEqual(320 - 2 * 16 - 2 * 16 - 2);
 });
 
-test.each([320, 768, 1280])('at %ipx Overview’s tiles take one, two or three to a row, and at 320px its tables stack', async (width) => {
+test.each([320, 768, 1280])('at %ipx Overview’s tiles take one, two or four to a row, and at 320px its tables stack', async (width) => {
   setWidth(width);
   const api = consoleApi();
   api.routes['GET /api/admin/overview?days=28'] = () => overviewAnswer(28);
   renderAt('/admin/overview', api);
-  const label = await screen.findByText('Active people');
+  const label = await screen.findByText('People who used the app');
   // The tile's panel sits in its grid cell, whose basis is its share of the row.
   const cell = label.parentElement?.parentElement;
-  expect(cell === null || cell === undefined ? '' : style(cell).flexBasis).toBe(width === 320 ? '100%' : width === 768 ? '50%' : `${String(100 / 3)}%`);
+  expect(cell === null || cell === undefined ? '' : style(cell).flexBasis).toBe(width === 320 ? '100%' : width === 768 ? '50%' : '25%');
+  // On phones Needs attention comes before the tiles, so they do not push it a screen and more down.
+  const attention = screen.getByRole('heading', { name: 'Needs attention' });
+  expect(Boolean(attention.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(width === 320);
   const table = screen.getByRole('region', { name: 'Organizations' });
   if (width === 320) {
     expect(within(table).queryByRole('table')).toBeNull();
