@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { LAST_YEAR_FOOTNOTE } from '../../../src/portal/analytics/week';
 import { cellSize } from '../../../src/portal/calendar/grid';
 import { AnalyticsSkeleton } from '../../../src/portal/skeleton';
 import { readingLine, sendingLine } from '../../../src/portal/upload/copy';
@@ -133,11 +134,35 @@ describe('the location pages', () => {
     expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).not.toBe('216px');
   });
 
-  test('P11 Home: its month cells are still 52px tall', async () => {
+  // As MonthGrid.web.tsx draws a narrow cell: at least 64px from 641px, 52px on phones (a wide one is 96px).
+  test('P11 Home: its month cells are the grid’s 64px from 641px, 52px at 375', async () => {
     renderPage('/locations/l1', hangLocal());
     await screen.findByTestId('skeleton-home');
-    const cells = screen.getAllByTestId('skeleton-home-month-cell');
-    expect(new Set(cells.map((cell) => window.getComputedStyle(cell).height))).toEqual(new Set(['52px']));
+    const heights = (): Set<string> => new Set(screen.getAllByTestId('skeleton-home-month-cell').map((cell) => window.getComputedStyle(cell).height));
+    expect(heights()).toEqual(new Set(['64px']));
+    cleanup();
+    setWidth(375);
+    renderPage('/locations/l1', hangLocal());
+    await screen.findByTestId('skeleton-home');
+    expect(heights()).toEqual(new Set(['52px']));
+  });
+
+  test('P11 Home: it reaches the page’s last block, Your history, with its heatmap', async () => {
+    renderPage('/locations/l1', hangLocal());
+    const skeleton = await screen.findByTestId('skeleton-home');
+    expect(within(skeleton).getByTestId('skeleton-home-heatmap')).toBeTruthy();
+  });
+
+  // Its invisible words (SkeletonWords) are the page's fixed copy or masked placeholders: find in page and copy never
+  // meet a made-up figure or a forecast the page hasn't made.
+  test('P11 Home: its words hold no figure and no forecast wording', async () => {
+    renderPage('/locations/l1', hangLocal());
+    const skeleton = await screen.findByTestId('skeleton-home');
+    const status = within(skeleton).getByRole('status').textContent;
+    // The one fixed line with figures is true copy the page shows as it is (52 weeks, 4 weeks).
+    const words = skeleton.textContent.replace(status, '').replace(LAST_YEAR_FOOTNOTE, '');
+    expect(words).not.toMatch(/\d/);
+    expect(words).not.toMatch(/\blikely\b|\bforecast\b|\bguests\b/i);
   });
 
   test('P29 Business rules: the add form and a few rows', async () => {
