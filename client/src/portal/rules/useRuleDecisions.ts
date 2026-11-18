@@ -14,7 +14,7 @@ export interface RuleDecision {
   status: 'accepted' | 'dismissed';
   /** The rule Confirm or Edit saved; null when dismissed, or deleted since. */
   rule: Rule | null;
-  /** 409 already_decided: another request saved `rule` first. */
+  /** 409 already_decided, or a Dismiss answered accepted: another request saved `rule` first. */
   already: boolean;
 }
 
@@ -58,7 +58,8 @@ export function useRuleDecisions(
     setDeciding(suggestionId);
     setErrors((current) => without(current, suggestionId));
     decideRuleSuggestion(api, locationId, suggestionId, decision, rule).then(
-      (result) => { settle(suggestionId, { status: result.suggestion.status, rule: result.rule, already: false }); },
+      // A Dismiss answered accepted lost to a racing Confirm: the rule was already confirmed (UI review S4).
+      (result) => { settle(suggestionId, { status: result.suggestion.status, rule: result.rule, already: decision === 'dismiss' && result.suggestion.status === 'accepted' }); },
       (error: unknown) => {
         const stored = alreadyDecidedRule(error);
         if (stored !== null) {

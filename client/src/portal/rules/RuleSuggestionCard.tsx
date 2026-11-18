@@ -33,6 +33,8 @@ export function RuleSuggestionCard(props: {
   edit: { onPress: () => void } | { href: string };
   /** P29: opens the saved rule with these words for edit (409 rule_exists). The panel links to P29 instead. */
   onEditExisting?: () => void;
+  /** P29: Edit takes focus as the card mounts, back from its form's Cancel. */
+  focusEdit?: boolean;
 }): React.JSX.Element {
   const { suggestion, decisions } = props;
   const { id, text } = suggestion;
@@ -89,6 +91,7 @@ export function RuleSuggestionCard(props: {
                 label="Edit"
                 accessibilityLabel={`Edit “${text}”`}
                 {...offProps}
+                {...(props.focusEdit === true ? { focusOnMount: true } : {})}
                 onPress={() => { if ('onPress' in props.edit) props.edit.onPress(); }}
               />
             )}

@@ -16,6 +16,8 @@ export interface RulesFake extends ApiClient {
   rules: Rule[] | ApiError | Promise<Rule[] | ApiError>;
   suggested: RuleSuggestion[];
   fail: Record<string, () => ApiError>;
+  /** A decision's answer instead of the fake's own, keyed "POST /path" (a Dismiss that a racing Confirm beat). */
+  respond: Record<string, () => unknown>;
 }
 
 const PATH = /^\/api\/org\/locations\/l1\/rules(?:\/([^/]+))?$/;
@@ -57,10 +59,13 @@ export function rulesFake(rules: RulesFake['rules'] = [], suggested: RuleSuggest
     rules,
     suggested,
     fail: {},
+    respond: {},
     async json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
       const method = opts?.method ?? 'GET';
       const failure = fake.fail[`${method} ${path}`];
       if (failure !== undefined) throw failure();
+      const answer = fake.respond[`${method} ${path}`];
+      if (answer !== undefined) return schema.parse(answer());
       const decide = DECIDE.exec(path);
       if (decide !== null && method === 'POST') return schema.parse(decided(decide[1] ?? '', decide[2] === 'accept', opts?.body));
       const match = PATH.exec(path);

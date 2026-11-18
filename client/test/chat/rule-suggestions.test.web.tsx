@@ -132,7 +132,7 @@ test('refusals show on the card: the 30-rule limit, a saved rule with the same w
   expect(await within(rules).findByText('This location has 30 rules, the most it can hold. Delete one to confirm this.')).toBeTruthy();
   fireEvent.click(within(card(rules, 'Closed on Tuesdays')).getByRole('button', { name: 'Confirm “Closed on Tuesdays”' }));
   const tuesdays = card(rules, 'Closed on Tuesdays');
-  expect(await within(tuesdays).findByText('A rule with these words is saved without a schedule. Add the schedule to it on Business rules.')).toBeTruthy();
+  expect(await within(tuesdays).findByText('A rule with these words is already saved. Edit that rule, or change these words with Edit.')).toBeTruthy();
   expect(within(tuesdays).getByRole('link', { name: 'Open Business rules' }).getAttribute('href')).toBe('/locations/l1/rules');
   // The suggestion stays open: Confirm is offered again.
   const stored = {
@@ -169,4 +169,18 @@ test('under view-as the buttons stay in place, disabled and described by the rea
   }
   expect(within(sales).queryByRole('link', { name: 'Edit “Closed on Mondays”' })).toBeNull();
   expect(api.writes).toEqual([]);
+});
+
+test('a Dismiss a racing Confirm beat (answered accepted) says it was already confirmed (UI review S4)', async () => {
+  const api = chatApi();
+  const stored = {
+    id: 'n1', text: 'Closed on Mondays', addedVia: 'townwise_ai', createdByEmail: 'b@example.com',
+    createdAt: '2026-11-17T15:00:00.000Z', updatedAt: '2026-11-17T15:00:00.000Z', canEdit: true,
+  };
+  api.respond[`${BASE}/sales_weekday_1/dismiss`] = () => ({ suggestion: { id: 'n1', status: 'accepted' }, rule: stored });
+  renderAt(api);
+  const rules = await section();
+  fireEvent.click(within(card(rules, 'Closed on Mondays')).getByRole('button', { name: 'Dismiss “Closed on Mondays”' }));
+  expect(await within(rules).findByText('Already confirmed as: Closed on Mondays')).toBeTruthy();
+  expect(within(rules).queryByText('Dismissed. TownwiseAI won’t suggest it again.')).toBeNull();
 });

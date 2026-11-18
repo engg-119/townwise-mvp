@@ -65,7 +65,7 @@ export function originOf(suggestion: RuleSuggestion): { text: string; ref: strin
 export function decideErrorLine(error: unknown): string {
   if (error instanceof ApiError && error.kind === 'http') {
     if (error.code === 'rule_limit') return 'This location has 30 rules, the most it can hold. Delete one to confirm this.';
-    if (error.code === 'rule_exists') return 'A rule with these words is saved without a schedule. Add the schedule to it on Business rules.';
+    if (error.code === 'rule_exists') return 'A rule with these words is already saved. Edit that rule, or change these words with Edit.';
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t confirm or dismiss suggestions.';
     if (error.status === 429) return 'You’ve made a lot of changes. Try again later.';
   }

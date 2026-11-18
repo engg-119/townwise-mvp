@@ -555,6 +555,57 @@ describe('Suggested by TownwiseAI (D46)', () => {
     }]);
   });
 
+  test('focus moves to the notice after Confirm, Dismiss, Edit’s Save, a 409 already_decided and a 404 (UI review S1)', async () => {
+    const { api, fake } = setup(meOf(ACCESS.member), RULES, [MONDAYS, WINTER, SALES]);
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Mondays');
+    // The notice's message list takes focus: its counter, then the line.
+    const focusedOn = async (text: string): Promise<void> => {
+      await waitFor(() => { expect(document.activeElement?.textContent).toBe(`01${text}`); });
+    };
+    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
+    await focusedOn('Added the rule “Closed on Mondays”.');
+    fireEvent.click(within(cardOf('Closed on Tuesdays')).getByRole('button', { name: 'Dismiss “Closed on Tuesdays”' }));
+    await focusedOn('Dismissed. TownwiseAI won’t suggest it again.');
+    fireEvent.click(within(cardOf('Closed Jan 1 to Mar 31 every year')).getByRole('button', { name: 'Edit “Closed Jan 1 to Mar 31 every year”' }));
+    fireEvent.click(within(group()).getByRole('button', { name: 'Save' }));
+    await focusedOn('Added the rule “Closed Jan 1 to Mar 31 every year”.');
+    cleanup();
+
+    const again = setup(meOf(ACCESS.member), RULES, [MONDAYS, SALES]);
+    const stored = ruleOf('r900', 'Closed Tuesdays', { addedVia: 'townwise_ai' });
+    again.fake.fail[`POST ${DECIDE}/sales_weekday_2/accept`] = () => new ApiError('http', 'x', { status: 409, code: 'already_decided', detail: { rule: stored } });
+    again.fake.fail[`POST ${DECIDE}/0000000000000000000000d1/dismiss`] = () => refusal(404, 'not_found');
+    renderAt('/locations/l1/rules', again.api);
+    await screen.findByText('Closed on Mondays');
+    fireEvent.click(within(cardOf('Closed on Tuesdays')).getByRole('button', { name: 'Confirm “Closed on Tuesdays”' }));
+    await focusedOn('Already confirmed as: Closed Tuesdays');
+    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Dismiss “Closed on Mondays”' }));
+    await focusedOn('That suggestion was already decided, or its dates have passed.');
+    expect(fake.suggested).toHaveLength(0);
+  });
+
+  test('Edit puts focus in the Edit rule field, and Cancel puts it back on the card’s Edit (UI review S2)', async () => {
+    const { api } = setup(meOf(ACCESS.member), RULES, [MONDAYS]);
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Mondays');
+    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Edit “Closed on Mondays”' }));
+    await waitFor(() => { expect(document.activeElement).toBe(within(group()).getByRole('textbox', { name: 'Edit rule' })); });
+    fireEvent.click(within(group()).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(document.activeElement).toBe(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Edit “Closed on Mondays”' })); });
+  });
+
+  test('a Dismiss a racing Confirm beat (answered accepted) says it was already confirmed (UI review S4)', async () => {
+    const { api, fake } = setup(meOf(ACCESS.member), RULES, [MONDAYS]);
+    const stored = ruleOf('0000000000000000000000d1', 'Closed on Mondays', { addedVia: 'townwise_ai' });
+    fake.respond[`POST ${DECIDE}/0000000000000000000000d1/dismiss`] = () => ({ suggestion: { id: stored.id, status: 'accepted' }, rule: stored });
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Mondays');
+    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Dismiss “Closed on Mondays”' }));
+    expect(await screen.findByText('Already confirmed as: Closed on Mondays')).toBeTruthy();
+    expect(screen.queryByText('Added the rule “Closed on Mondays”.')).toBeNull();
+  });
+
   test('?suggestion= opens that card’s edit, as the panel’s Edit links to it', async () => {
     const { api } = setup(meOf(ACCESS.member), RULES, [MONDAYS, SALES]);
     renderAt('/locations/l1/rules?suggestion=sales_weekday_2', api);
@@ -574,7 +625,7 @@ describe('Suggested by TownwiseAI (D46)', () => {
     expect(await within(cardOf('Closed on Tuesdays')).findByText('This location has 30 rules, the most it can hold. Delete one to confirm this.')).toBeTruthy();
     fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
     const mondays = cardOf('Closed on Mondays');
-    expect(await within(mondays).findByText('A rule with these words is saved without a schedule. Add the schedule to it on Business rules.')).toBeTruthy();
+    expect(await within(mondays).findByText('A rule with these words is already saved. Edit that rule, or change these words with Edit.')).toBeTruthy();
     // Edit that rule opens the saved one's edit in the list.
     fireEvent.click(within(mondays).getByRole('button', { name: 'Edit that rule' }));
     expect(field('Edit rule').value).toBe('Closed on Mondays');

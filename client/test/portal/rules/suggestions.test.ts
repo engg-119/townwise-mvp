@@ -40,7 +40,7 @@ test('the group’s words, and each refusal’s line', () => {
   expect(toDecideLine(2)).toBe('2 to decide');
   const refusal = (status: number, code: string) => new ApiError('http', 'x', { status, code });
   expect(decideErrorLine(refusal(409, 'rule_limit'))).toBe('This location has 30 rules, the most it can hold. Delete one to confirm this.');
-  expect(decideErrorLine(refusal(409, 'rule_exists'))).toBe('A rule with these words is saved without a schedule. Add the schedule to it on Business rules.');
+  expect(decideErrorLine(refusal(409, 'rule_exists'))).toBe('A rule with these words is already saved. Edit that rule, or change these words with Edit.');
   expect(decideErrorLine(refusal(403, 'view_as_read_only'))).toBe('View-as is read-only, so you can’t confirm or dismiss suggestions.');
   expect(decideErrorLine(refusal(429, 'rate_limited'))).toBe('You’ve made a lot of changes. Try again later.');
   expect(decideErrorLine(new Error('x'))).toBe('Couldn’t save that. Try again.');

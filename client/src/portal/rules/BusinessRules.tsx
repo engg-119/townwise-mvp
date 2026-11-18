@@ -19,6 +19,7 @@ import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EmptyState, ErrorNotice, Notice, ReadOnlyLine } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
+import { useFocusMessage } from '../ui/messageFocus';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Body, Small } from '../ui/text';
 import { alreadyDecidedRule, decideRuleSuggestion, type Rule, type RuleSchedule, type RuleSuggestion, type RuleWrite } from './api';
@@ -175,6 +176,8 @@ function RuleField(props: {
   onSubmit: () => void;
   message: string | null;
   readOnlyId: string | null;
+  /** A suggestion's Edit (D46): the field takes focus as the form opens, which also brings it into view. */
+  autoFocus?: boolean;
 }): React.JSX.Element {
   const counter = counterLine(props.value);
   return (
@@ -188,6 +191,7 @@ function RuleField(props: {
         onSubmitEditing={props.onSubmit}
         autoCapitalize="sentences"
         returnKeyType="done"
+        {...(props.autoFocus === true ? { autoFocus: true } : {})}
         messages={props.message === null ? [] : [props.message]}
         {...(props.readOnlyId === null ? {} : { readOnly: true, readOnlyId: props.readOnlyId })}
       />
@@ -262,6 +266,8 @@ function EditRule(props: {
   onRefused: (error: unknown) => boolean;
   /** A refusal's words, when the caller words it (a suggestion's); else the page's write errors. */
   errorLine?: (error: unknown, text: string) => string;
+  /** The text field takes focus as the form opens (a suggestion's Edit). */
+  autoFocus?: boolean;
 }): React.JSX.Element {
   const { rule, save, onSaved, onRefused } = props;
   const [text, setText] = useState(rule.text);
@@ -287,7 +293,15 @@ function EditRule(props: {
 
   return (
     <Stack>
-      <RuleField label="Edit rule" value={text} onChange={setText} onSubmit={submit} message={problem} readOnlyId={null} />
+      <RuleField
+        label="Edit rule"
+        value={text}
+        onChange={setText}
+        onSubmit={submit}
+        message={problem}
+        readOnlyId={null}
+        {...(props.autoFocus === true ? { autoFocus: true } : {})}
+      />
       <ScheduleSection state={schedule} setState={setSchedule} idPrefix={props.idPrefix} readOnlyId={null} />
       {action.error === null ? null : <ErrorNotice message={(props.errorLine ?? writeError)(action.error, text)} />}
       <Actions>
@@ -309,6 +323,9 @@ function SuggestedGroup(props: {
   decisions: ReturnType<typeof useRuleDecisions>;
   editing: string | null;
   setEditing: (suggestionId: string | null) => void;
+  /** The card whose Edit form was just canceled: its Edit takes focus back. */
+  canceled: string | null;
+  onCancel: (suggestionId: string) => void;
   save: (suggestion: RuleSuggestion, write: RuleWrite) => Promise<void>;
   onRefused: (error: unknown) => boolean;
   onEditExisting: (suggestion: RuleSuggestion) => void;
@@ -329,8 +346,9 @@ function SuggestedGroup(props: {
                     idPrefix={`suggestion-${suggestion.id}`}
                     save={(write) => props.save(suggestion, write)}
                     onSaved={() => undefined}
-                    onCancel={() => { props.setEditing(null); }}
+                    onCancel={() => { props.onCancel(suggestion.id); }}
                     onRefused={props.onRefused}
+                    autoFocus
                     errorLine={(error, text) => (hasCode(error, 400, 'invalid_request') ? writeError(error, text) : decideErrorLine(error))}
                   />
                 </View>
@@ -342,6 +360,7 @@ function SuggestedGroup(props: {
                   readOnlyId={props.readOnlyId}
                   edit={{ onPress: () => { props.setEditing(suggestion.id); } }}
                   onEditExisting={() => { props.onEditExisting(suggestion); }}
+                  focusEdit={props.canceled === suggestion.id}
                 />
               )}
             </View>
@@ -368,22 +387,30 @@ export function BusinessRules(): React.JSX.Element {
   // D46: the suggested rule whose Edit is open; the TownwiseAI panel's Edit opens one with ?suggestion=.
   const params = useLocalSearchParams<{ suggestion?: string }>();
   const [editingSuggestion, setEditingSuggestion] = useState<string | null>(params.suggestion ?? null);
+  // The suggestion whose Edit was canceled, so its card's Edit takes focus back (UI review S2).
+  const [canceledSuggestion, setCanceledSuggestion] = useState<string | null>(null);
   const { settle } = rules;
+  // A decided card leaves the group, so its notice takes focus (UI review S1).
+  const focusMessage = useFocusMessage();
 
   /** A suggested rule decided here or by another tab (409 already_decided): its rule into the list, and a notice. */
   const decided = useCallback((suggestionId: string, decision: RuleDecision) => {
     settle(suggestionId, decision.rule);
     setEditingSuggestion((current) => (current === suggestionId ? null : current));
+    setCanceledSuggestion(null);
     if (decision.status === 'dismissed') setNotice(SUGGESTED_COPY.dismissed);
     else if (decision.already && decision.rule !== null) setNotice(alreadyLine(decision.rule.text));
     else setNotice(decision.rule === null ? 'Added the rule.' : `Added the rule “${decision.rule.text}”.`);
-  }, [settle]);
+    focusMessage();
+  }, [settle, focusMessage]);
   /** A suggested rule gone in the meantime (404): says so and loads the page again. */
   const suggestionGone = useCallback(() => {
     setEditingSuggestion(null);
+    setCanceledSuggestion(null);
     setNotice(SUGGESTED_COPY.gone);
+    focusMessage();
     reload();
-  }, [reload]);
+  }, [reload, focusMessage]);
   const decisions = useRuleDecisions(api, location.id, { onDecided: decided, onGone: suggestionGone });
 
   /** Edit's Save: confirms the suggestion as the edited rule. */
@@ -453,7 +480,9 @@ export function BusinessRules(): React.JSX.Element {
             readOnlyId={readOnlyId}
             decisions={decisions}
             editing={editingSuggestion}
-            setEditing={(suggestionId) => { setNotice(null); setEditingSuggestion(suggestionId); }}
+            setEditing={(suggestionId) => { setNotice(null); setCanceledSuggestion(null); setEditingSuggestion(suggestionId); }}
+            canceled={canceledSuggestion}
+            onCancel={(suggestionId) => { setEditingSuggestion(null); setCanceledSuggestion(suggestionId); }}
             save={saveSuggestion}
             onRefused={suggestionRefused}
             onEditExisting={editExisting}
