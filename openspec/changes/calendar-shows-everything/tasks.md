@@ -198,3 +198,11 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - Nov 11 with one Veterans Day;
   - "US holidays" opening its page;
   - Home's This month on Sawtooth showing Nov 1 to 16 as the Calendar does, with no empty space.
+
+## 9. Code review fixes (2026-11-18)
+
+- [x] 9.1 SF1: the tooltip leaves out a note or rule only by its own shown reason (`entries.ts` `notNamed`), so a second note with a shown note's title stays. Tests: `model.test.ts`, `entries.test.ts`.
+- [x] 9.2 SF2: the item page keeps a done read's `ai.events` while an action's answer (which leaves them out) shows (`ItemPage.tsx` `keepEvents`). Test: `item-ai.test.web.tsx`.
+- [x] 9.3 SF3: the boot backfill titles a note only while its detail still says the event's title (`ai-actions.ts` `detailSays`). Tests: `note-title-backfill.int.test.ts`, `event-note-title.test.ts`.
+- [x] 9.4 SF4: Home's This week forecast row reads "~90 guests, forecast, likely 68 to 112" (`week.ts` `forecastPhrase`). Tests: `week.test.ts`, `home.test.web.tsx`.
+- [x] 9.5 Nits: `madeAfterDay` is `madeAt > date` (`estimates.int.test.ts`); the Event name field allows 240 UTF-16 units for 120 code points; `mondayOf` and `weekDates` move to `analytics/cells.ts` (`import-cycle.test.ts`); a file event's cleaned title is cut to 120 code points; an edited chat proposal without `title` keeps the proposal's; Make a note's Event name is pinned empty; the `c_` page lists an event that began last month under the month shown. The rest are known limits in design.md.
