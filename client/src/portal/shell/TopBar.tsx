@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { Link, usePathname } from 'expo-router';
 import {
   Animated, Platform, Pressable, ScrollView, StyleSheet, Text, useWindowDimensions, View, type PressableStateCallbackType,
@@ -250,7 +250,18 @@ function useMenuMotion(open: boolean): { progress: Animated.Value; mounted: bool
   const [mounted, setMounted] = useState(open);
   if (open && !mounted) setMounted(true);
   const duration = reduced === false ? 280 : 0;
+  // With no motion there is no closing to wait for: closed is unmounted at once.
+  if (duration === 0 && !open && mounted) setMounted(false);
+  /** Where the value rests or is headed: it starts where `open` puts it, so the first render moves nothing. */
+  const target = useRef(open);
   useEffect(() => {
+    if (target.current === open) return undefined;
+    target.current = open;
+    // With no motion the value is set, not animated: no timing starts under Reduce Motion.
+    if (duration === 0) {
+      progress.setValue(open ? 1 : 0);
+      return undefined;
+    }
     const animation = Animated.timing(progress, { toValue: open ? 1 : 0, duration, easing: (t) => t, useNativeDriver: Platform.OS !== 'web' });
     animation.start(({ finished }) => { if (finished && !open) setMounted(false); });
     return () => { animation.stop(); };
