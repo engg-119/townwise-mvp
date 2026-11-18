@@ -178,7 +178,7 @@ export function noteView(note: NoteRecord, createdByEmail: string, caller: Membe
 }
 
 /** Audit details for a note: never the detail text, hours or guests (spec 9.2). */
-function noteDetails(locationId: string, note: NoteContent): Record<string, string> {
+export function noteDetails(locationId: string, note: NoteContent): Record<string, string> {
   return { locationId, kind: note.kind, startDate: note.startDate, endDate: note.endDate };
 }
 

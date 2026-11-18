@@ -206,13 +206,14 @@ describe('isolation (source)', () => {
       || [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
         .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'stores/owner-calendars.ts');
     // The owner-calendar spec: a stored event changes no forecast figure, so forecasts/*, lab/*, people-in-town/* and the
-    // estimates and forecast-run handlers stay off this list. Make a note's link (handlers/notes.ts) and the follow-up of
-    // linked notes (calendar/follow-up.ts) read events to write notes and suggestions, never a figure
+    // estimates and forecast-run handlers stay off this list. Make a note's link (handlers/notes.ts), the follow-up of
+    // linked notes (calendar/follow-up.ts) and the panel's owner-calendar cards and their accepts
+    // (handlers/weekly-suggestions.ts) read events to write notes and suggestions and to word the cards, never a figure
     // (calendar-event-suggestions).
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
       'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/deletion.ts',
-      'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts', 'stores/cross-tenant.ts',
-      'stores/index.ts', 'stores/owner-calendars.ts',
+      'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts', 'handlers/weekly-suggestions.ts',
+      'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
     ]);
     // Seat loss ends a person's Google calendars only through calendar/google-access.ts (connect-google-calendar).
     const imports = (file: { path: string; text: string }): string[] => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]

@@ -3,20 +3,25 @@
 // suggestions a pass stored, as GET .../agent lists them and as an org admin accepts (one note or rule however often it
 // is sent, with the suggestion's id) or dismisses them; an expired one is gone, another organization's is 404, and they
 // go with their location. Every date and number is synthetic; the test clock reads Mon, Jun 1, 2026 (Hanover).
+// The owner-calendar kinds (openspec change calendar-event-suggestions): accepting and dismissing a spotted event, a
+// move and a removal, the cards' words (no title on a follow-up; a Google event's title never to staff), and what the
+// panel hides once the note or calendar a card rests on is gone. Every event title here is made up.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import { parseIcs } from '../src/calendar/ics.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
-import type { DecideResult } from '../src/handlers/weekly-suggestions.ts';
+import type { NoteView } from '../src/handlers/notes.ts';
+import type { DecideResult, SuggestionView } from '../src/handlers/weekly-suggestions.ts';
 import { SUGGESTIONS_SEEN_MS } from '../src/lab/schedule.ts';
 import { createAgentSuggestionStore, type FollowContent, type NewSuggestion, type SuggestionRecord } from '../src/stores/agent-suggestions.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
-  call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+  call, logLines, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -453,8 +458,306 @@ describe('the owner-calendar kinds in the store (calendar-event-suggestions, des
     expect(await store().find(t.scope, t.locationId, note?.id ?? '')).toEqual(note);
     expect(note).toMatchObject({ type: 'note', why: THANKSGIVING_LIKE.why, note: THANKSGIVING_LIKE.content.type === 'note' ? THANKSGIVING_LIKE.content.note : null });
     expect(rule).toMatchObject({ type: 'rule', text: 'Private party after Commencement', why: 'Commencement is Sun, Jun 14.' });
-    // The follow-up kinds are not listed by the panel yet, and are not this pass's to avoid.
+    // A follow-up whose note and calendar are not there is not listed.
     await store().upsertFollow(t.scope, t.locationId, moveTo(new Types.ObjectId().toHexString(), ON_20), AT);
     expect((await panel(t, t.member)).suggestions.map((each) => each.type).sort()).toEqual(['note', 'rule']);
+  });
+});
+
+describe('accepting and dismissing the owner-calendar kinds (calendar-event-suggestions, design decisions 4, 5 and 10)', () => {
+  const TOWN = { today: '2026-06-01', timeZone: 'America/New_York' };
+  const PARTY_UID = 'party-0001@bookings.example.test';
+  const TITLE = 'Sentinel Pemberton rehearsal dinner';
+  const GOOGLE_LABEL = 'Sentinel Google label';
+  const ON_13 = { startDate: '2026-06-13', endDate: '2026-06-13', startTime: '18:00', endTime: '22:00' };
+  const ON_20 = { startDate: '2026-06-20', endDate: '2026-06-20', startTime: '18:00', endTime: '22:00' };
+
+  afterEach(async () => {
+    await removeStaffFactor(server);
+    await server.connection.collection('tw_view_as_grants').deleteMany({});
+  });
+
+  /** A calendar holding the party on `day` (YYYYMMDD), 6 pm to 10 pm. */
+  function parsedOn(day: string) {
+    const text = [
+      'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Townwise test//EN', 'BEGIN:VEVENT', `UID:${PARTY_UID}`, `SUMMARY:${TITLE}`,
+      `DTSTART:${day}T180000`, `DTEND:${day}T220000`, 'END:VEVENT', 'END:VCALENDAR', '',
+    ].join('\r\n');
+    const parsed = parseIcs(text, TOWN);
+    if ('error' in parsed) throw new Error(parsed.error);
+    return parsed;
+  }
+
+  async function calendarOf(t: Team, kind: 'link' | 'google' = 'link'): Promise<{ calendarId: string; connectionId: string }> {
+    const connectionId = new Types.ObjectId().toHexString();
+    const added = await server.ctx.stores.ownerCalendars.add(t.scope, t.locationId, kind === 'link'
+      ? { kind, label: 'Front desk bookings', sealedAddress: 'sealed-for-test', host: 'calendar.example.test' }
+      : { kind, label: GOOGLE_LABEL, sealedAddress: 'sealed-for-test', googleConnectionId: connectionId }, parsedOn('20260613'), {
+      createdBy: t.admin.userId, now: server.clock.now(),
+    });
+    if (added === 'calendar_limit') throw new Error('calendar_limit');
+    return { calendarId: added.id, connectionId };
+  }
+
+  /** Make a note on the party as a member: a buyout of 40, linked to the event. */
+  async function partyNote(t: Team, calendarId: string): Promise<NoteView> {
+    const res = await call(server, `/api/org/locations/${t.locationId}/notes`, {
+      session: t.member,
+      json: { kind: 'private_event', ...ON_13, effect: 'closed', expectedGuests: 40, detail: 'Upstairs room', fromEvent: { calendarId, uid: PARTY_UID } },
+    });
+    expect(res.status).toBe(201);
+    return (await res.json() as { note: NoteView }).note;
+  }
+
+  /** The follow-up the refresh would make for the note: a move to Jun 20, or a removal. */
+  async function followUp(t: Team, note: NoteView, calendarId: string, type: 'move' | 'remove'): Promise<string> {
+    const content: NoteContent = {
+      kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
+      expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
+    };
+    const base = { noteId: note.id, calendarId, from: ON_13, noteUpdatedAt: new Date(note.updatedAt) };
+    const follow: FollowContent = type === 'move'
+      ? { type, note: { ...content, ...ON_20 }, follow: { ...base, change: 'moved', to: ON_20 } }
+      : { type, note: content, follow: { ...base, change: 'gone', to: null } };
+    expect(await createAgentSuggestionStore(server.connection).upsertFollow(t.scope, t.locationId, follow, { today: '2026-06-01', now: server.clock.now() })).toBe('made');
+    const row = await server.connection.collection('tw_agent_suggestions').findOne({ openFollowFor: new Types.ObjectId(note.id) });
+    return String(row?._id);
+  }
+
+  /** The weekly pass's spot of the party: effect unknown, 40 guests from the title's digits. */
+  async function spotted(t: Team, calendarId: string): Promise<string> {
+    const [row] = await stored(t, [{
+      content: {
+        type: 'event', note: { kind: 'private_event', ...ON_13, weekdays: null, effect: 'unknown', expectedGuests: 40, detail: null },
+        event: { calendarId, uid: PARTY_UID, ...ON_13 },
+      },
+      why: null, calendarIds: [],
+    }]);
+    return row?.id ?? '';
+  }
+
+  async function noteRow(id: string): Promise<Record<string, unknown> | null> {
+    return server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(id) });
+  }
+
+  async function statusOf(id: string): Promise<unknown> {
+    return (await server.connection.collection('tw_agent_suggestions').findOne({ _id: new Types.ObjectId(id) }))?.status;
+  }
+
+  async function actions(t: Team): Promise<{ action: unknown; details: unknown }[]> {
+    return (await auditEvents(server)).filter((event) => String(event.orgId) === t.orgId && String(event.action) !== 'note.created')
+      .map((event) => ({ action: event.action, details: event.details }));
+  }
+
+  function only(view: AgentPanel, id: string): SuggestionView | undefined {
+    return view.suggestions.find((each) => each.id === id);
+  }
+
+  it('a move is listed with words from the note’s kind and dates only, and accepting it moves the note and its link once', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'move');
+    const listed = await panel(t, t.member);
+    expect(only(listed, id)).toEqual({
+      id, type: 'move', why: null, calendar: [], createdAt: expect.any(String) as unknown, noteId: note.id,
+      words: 'The private event on Sat, Jun 13 moved to Sat, Jun 20 on your calendar.',
+      from: ON_13, note: expect.objectContaining({ ...ON_20, kind: 'private_event', expectedGuests: 40 }) as unknown,
+    });
+    expect(JSON.stringify(listed)).not.toContain('Pemberton');
+
+    const res = await decide(t, t.admin, id, 'accept');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ suggestion: { id, status: 'accepted' }, rule: null, note: { id: note.id, ...ON_20, fromEvent: { ...ON_20, uid: PARTY_UID } } });
+    expect(await noteRow(note.id)).toMatchObject({ ...ON_20, kind: 'private_event', effect: 'closed', expectedGuests: 40, detail: 'Upstairs room', fromEvent: { ...ON_20, calendarId: new Types.ObjectId(calendarId) } });
+    expect((await decide(t, t.admin, id, 'accept')).status).toBe(200);
+    expect(await actions(t)).toEqual([
+      { action: 'note.updated', details: { locationId: t.locationId, kind: 'private_event', startDate: '2026-06-20', endDate: '2026-06-20' } },
+      { action: 'agent.suggestion_accepted', details: { locationId: t.locationId, suggestionId: id, type: 'move' } },
+    ]);
+    expect(only(await panel(t, t.member), id)).toBeUndefined();
+  });
+
+  it('a move whose note was moved by an accept that died before marking it is accepted with no second note.updated', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'move');
+    server.clock.advance(MINUTE);
+    expect(await server.ctx.stores.notes.moveIf(t.scope, t.locationId, note.id, { updatedAt: new Date(note.updatedAt), dates: ON_20, link: ON_20, now: server.clock.now() })).not.toBeNull();
+    expect((await decide(t, t.admin, id, 'accept')).status).toBe(200);
+    expect(await statusOf(id)).toBe('accepted');
+    expect((await actions(t)).map((each) => each.action)).toEqual(['agent.suggestion_accepted']);
+  });
+
+  it('a guest count changed since the move answers 409 note_changed, leaving the note and the suggestion as they are', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'move');
+    server.clock.advance(MINUTE);
+    const edit = await call(server, `/api/org/locations/${t.locationId}/notes/${note.id}`, {
+      method: 'PATCH', session: t.member, json: { kind: 'private_event', ...ON_13, effect: 'closed', expectedGuests: 55, detail: 'Upstairs room' },
+    });
+    expect(edit.status).toBe(200);
+    expect(await errorOf(await decide(t, t.admin, id, 'accept'))).toEqual({ status: 409, error: 'note_changed' });
+    expect(await noteRow(note.id)).toMatchObject({ ...ON_13, expectedGuests: 55 });
+    expect(await statusOf(id)).toBe('open');
+  });
+
+  it('a removal deletes the note once; a retry after its own delete is accepted, and a changed note answers 409', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'remove');
+    expect(only(await panel(t, t.member), id)).toMatchObject({
+      type: 'remove', why: null, noteId: note.id, words: 'The private event on Sat, Jun 13 is no longer on your calendar.',
+    });
+    const res = await decide(t, t.admin, id, 'accept');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ suggestion: { id, status: 'accepted' }, note: null, rule: null });
+    expect(await noteRow(note.id)).toBeNull();
+    expect((await decide(t, t.admin, id, 'accept')).status).toBe(200);
+    expect(await actions(t)).toEqual([
+      { action: 'note.deleted', details: { locationId: t.locationId, kind: 'private_event', startDate: '2026-06-13', endDate: '2026-06-13' } },
+      { action: 'agent.suggestion_accepted', details: { locationId: t.locationId, suggestionId: id, type: 'remove' } },
+    ]);
+
+    // An accept that deleted the note and died before marking it: the retry finds the note gone and accepts.
+    const second = await partyNote(t, calendarId);
+    const retried = await followUp(t, second, calendarId, 'remove');
+    expect(await server.ctx.stores.notes.removeIf(t.scope, t.locationId, second.id, new Date(second.updatedAt))).toBe(true);
+    expect((await decide(t, t.admin, retried, 'accept')).status).toBe(200);
+    expect(await statusOf(retried)).toBe('accepted');
+
+    // A note edited since: 409, and it stays.
+    const third = await partyNote(t, calendarId);
+    const changed = await followUp(t, third, calendarId, 'remove');
+    server.clock.advance(MINUTE);
+    await call(server, `/api/org/locations/${t.locationId}/notes/${third.id}`, {
+      method: 'PATCH', session: t.member, json: { kind: 'private_event', ...ON_13, effect: 'closed', expectedGuests: 41 },
+    });
+    expect(await errorOf(await decide(t, t.admin, changed, 'accept'))).toEqual({ status: 409, error: 'note_changed' });
+    expect(await noteRow(third.id)).not.toBeNull();
+  });
+
+  it('members are refused (403), staff in view-as are refused, and a dismiss records it with its type', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'remove');
+    expect(await errorOf(await decide(t, t.member, id, 'accept'))).toEqual({ status: 403, error: 'forbidden' });
+    const staff = await signInStaff(server);
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: t.admin.userId, orgId: t.orgId });
+    expect(await errorOf(await decide(t, staff, id, 'accept'))).toEqual({ status: 403, error: 'view_as_read_only' });
+    expect(await noteRow(note.id)).not.toBeNull();
+    const res = await decide(t, t.admin, id, 'dismiss');
+    expect(await res.json()).toEqual({ suggestion: { id, status: 'dismissed' }, note: null, rule: null });
+    expect(await actions(t)).toEqual([{ action: 'agent.suggestion_dismissed', details: { locationId: t.locationId, suggestionId: id, type: 'remove' } }]);
+    expect(await noteRow(note.id)).not.toBeNull();
+  });
+
+  it('a Google calendar whose access ended hides its removal, whose accept answers 404 and expires it, the note kept', async () => {
+    const t = await team();
+    const { calendarId, connectionId } = await calendarOf(t, 'google');
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'remove');
+    expect(only(await panel(t, t.admin), id)).toBeDefined();
+    expect(await server.ctx.stores.ownerCalendars.removeForConnection(t.scope, connectionId)).toBe(1);
+    expect(only(await panel(t, t.admin), id)).toBeUndefined();
+    expect(await errorOf(await decide(t, t.admin, id, 'accept'))).toEqual({ status: 404, error: 'not_found' });
+    expect(await statusOf(id)).toBe('expired');
+    expect(await noteRow(note.id)).not.toBeNull();
+  });
+
+  it('a move whose note was deleted is hidden; its accept answers 404 and expires it, and so does a dismiss of another', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'move');
+    expect((await call(server, `/api/org/locations/${t.locationId}/notes/${note.id}`, { method: 'DELETE', session: t.member })).status).toBe(204);
+    expect(only(await panel(t, t.admin), id)).toBeUndefined();
+    expect(await errorOf(await decide(t, t.admin, id, 'accept'))).toEqual({ status: 404, error: 'not_found' });
+    expect(await statusOf(id)).toBe('expired');
+
+    const other = await partyNote(t, calendarId);
+    const gone = await followUp(t, other, calendarId, 'move');
+    await server.ctx.stores.notes.remove(t.scope, t.locationId, other.id);
+    expect(await errorOf(await decide(t, t.admin, gone, 'dismiss'))).toEqual({ status: 404, error: 'not_found' });
+    expect(await statusOf(gone)).toBe('expired');
+  });
+
+  it('a spotted event names its live title to members and admins, and a link calendar’s title to staff, as the Calendar does', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const id = await spotted(t, calendarId);
+    const words = `From your calendar: ${TITLE}, Sat, Jun 13, 6 pm to 10 pm`;
+    expect(only(await panel(t, t.member), id)).toEqual({
+      id, type: 'event', why: null, calendar: [], createdAt: expect.any(String) as unknown, words,
+      note: { kind: 'private_event', ...ON_13, weekdays: null, effect: 'unknown', expectedGuests: 40, detail: null },
+      event: { calendarId, title: TITLE, titleHidden: false, ...ON_13 },
+    });
+    const staff = await signInStaff(server);
+    await addOpenAsAdminGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId: t.orgId });
+    expect(only(await panel(t, staff), id)).toMatchObject({ words, event: { title: TITLE, titleHidden: false } });
+  });
+
+  it('a Google calendar’s spotted event reads as “Google calendar event” to staff, open as admin or in view-as, never its title', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t, 'google');
+    const id = await spotted(t, calendarId);
+    expect(only(await panel(t, t.admin), id)).toMatchObject({ event: { title: TITLE, titleHidden: false } });
+    const staff = await signInStaff(server);
+    await addOpenAsAdminGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId: t.orgId });
+    const opened = await panel(t, staff);
+    expect(only(opened, id)).toMatchObject({
+      words: 'From your calendar: Google calendar event, Sat, Jun 13, 6 pm to 10 pm. Ask your client’s team what this event is.',
+      event: { title: 'Google calendar event', titleHidden: true },
+    });
+    await server.connection.collection('tw_view_as_grants').deleteMany({});
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: t.member.userId, orgId: t.orgId });
+    const viewed = await panel(t, staff);
+    expect(only(viewed, id)).toMatchObject({ event: { title: 'Google calendar event', titleHidden: true } });
+    for (const view of [opened, viewed]) {
+      expect(JSON.stringify(view)).not.toContain('Pemberton');
+      expect(JSON.stringify(view)).not.toContain(GOOGLE_LABEL);
+    }
+  });
+
+  it('accepting a spotted event writes a linked private-event note with no detail, once; alongside service needs a count', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const id = await spotted(t, calendarId);
+    expect(await errorOf(await decide(t, t.admin, id, 'accept'))).toEqual({ status: 400, error: 'invalid_request' });
+    expect(await errorOf(await decide(t, t.admin, id, 'accept', { effect: 'more_guests', expectedGuests: null }))).toEqual({ status: 400, error: 'invalid_request' });
+    expect(await errorOf(await decide(t, t.admin, id, 'accept', { effect: 'closed', expectedGuests: 40, detail: 'x' }))).toEqual({ status: 400, error: 'invalid_request' });
+    expect(await noteRow(id)).toBeNull();
+    const results = await Promise.all([
+      decide(t, t.admin, id, 'accept', { effect: 'closed', expectedGuests: 40 }), decide(t, t.admin, id, 'accept', { effect: 'closed', expectedGuests: 40 }),
+    ]);
+    for (const res of results) expect(res.status).toBe(200);
+    expect(await results[0].json()).toMatchObject({
+      suggestion: { id, status: 'accepted' },
+      note: { id, kind: 'private_event', ...ON_13, weekdays: null, effect: 'closed', expectedGuests: 40, detail: null, fromEvent: { calendarId, uid: PARTY_UID, ...ON_13 } },
+    });
+    expect(await noteRow(id)).toMatchObject({ createdBy: t.admin.userId, detail: null });
+    expect(await actions(t)).toEqual([{ action: 'agent.suggestion_accepted', details: { locationId: t.locationId, suggestionId: id, type: 'event' } }]);
+    expect(JSON.stringify(await noteRow(id))).not.toContain('Pemberton');
+  });
+
+  it('a spotted event that moved is hidden, and its accept answers 409 event_changed and expires it; its calendar gone, 404', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const id = await spotted(t, calendarId);
+    await server.ctx.stores.ownerCalendars.replaceEvents(t.scope, t.locationId, calendarId, parsedOn('20260620'), server.clock.now());
+    expect(only(await panel(t, t.admin), id)).toBeUndefined();
+    expect(await errorOf(await decide(t, t.admin, id, 'accept', { effect: 'more_guests', expectedGuests: 40 }))).toEqual({ status: 409, error: 'event_changed' });
+    expect(await statusOf(id)).toBe('expired');
+    expect(await noteRow(id)).toBeNull();
+
+    const again = await spotted(t, calendarId);
+    await server.ctx.stores.ownerCalendars.remove(t.scope, t.locationId, calendarId);
+    expect(await errorOf(await decide(t, t.admin, again, 'accept', { effect: 'closed', expectedGuests: null }))).toEqual({ status: 404, error: 'not_found' });
+    expect(await statusOf(again)).toBe('expired');
   });
 });

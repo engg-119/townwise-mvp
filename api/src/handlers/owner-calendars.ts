@@ -207,7 +207,7 @@ function recordCalendar(ctx: TownwiseContext, caller: MemberPrincipal, action: C
  * Whether the caller is Townwise staff, under view-as or with the organization open as its admin (D25, which outlasts
  * the first join): either way they read no Google calendar's name or event title (design decision 12).
  */
-function staffReads(caller: MemberPrincipal): boolean {
+export function staffReads(caller: MemberPrincipal): boolean {
   return caller.viewAs !== null || caller.openAsAdmin !== null;
 }
 
