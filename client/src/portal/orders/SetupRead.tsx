@@ -1,6 +1,6 @@
 import { getDocumentAsync } from 'expo-document-picker';
 import { File } from 'expo-file-system';
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
@@ -22,7 +22,8 @@ import { useSetupRead } from './useSetupRead';
 // as base64 and sends it once with the kind its extension names (never its name); the copy is deleted once its bytes
 // are read, whether or not that worked, and whenever the file is removed, replaced or the page closes. Under view-as
 // every control is disabled in place, described by the read-only line, and the picker never opens, so no client file
-// is read onto a staff phone. Nothing here logs the file's name, its location or what it says.
+// is read onto a staff phone. On iOS the system picker also keeps its own temporary copy in the app's sandbox, which the
+// app can't reach and iOS clears; the copy deleted here is the one in the app's cache. Nothing here logs the file's name, its location or what it says.
 
 /** What the system picker is asked to show; the name and size are still checked (readKindOf). */
 const PICK_TYPES = [
@@ -56,6 +57,7 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
   const { file, setFile, text, setText, shown, reading, choose, refuse, start, readText, cancel } = useSetupRead<Picked>(props);
   const described = props.readOnlyId === null ? {} : { describedBy: props.readOnlyId };
   const canChoose = !props.locked && !reading;
+  const picking = useRef(false);
 
   // The copy goes when the file is removed, replaced, read or sent, or the page closes.
   useEffect(() => {
@@ -65,7 +67,17 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
   }, [file]);
 
   async function pick(): Promise<void> {
-    if (!canChoose) return;
+    // A second press while the system picker is open would be refused by it, and read as a failure.
+    if (!canChoose || picking.current) return;
+    picking.current = true;
+    try {
+      await pickOne();
+    } finally {
+      picking.current = false;
+    }
+  }
+
+  async function pickOne(): Promise<void> {
     let result: Awaited<ReturnType<typeof getDocumentAsync>>;
     try {
       result = await getDocumentAsync({ multiple: false, copyToCacheDirectory: true, type: PICK_TYPES });
