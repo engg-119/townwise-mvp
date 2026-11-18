@@ -88,5 +88,38 @@ export function runTotpStoreContract(makeStores: () => Promise<AuthStores>): voi
       expect(results.filter((won) => won)).toHaveLength(1);
       expect((await totp.get('user-5'))?.recoveryCodeHashes).toEqual(['other']);
     });
+
+    test('startReset needs an enabled factor and leaves the live secret alone', async () => {
+      const { totp } = await makeStores();
+      const reset = { userId: 'user-6', pendingSecretEnc: 'next', pendingExpiresAt: LATER, sessionId: 's1' };
+      expect(await totp.startReset(reset)).toBe(false);
+      await totp.startEnrollment({ userId: 'user-6', secretEnc: 'live', pendingExpiresAt: LATER });
+      expect(await totp.startReset(reset)).toBe(false);
+      await totp.confirmEnrollment({ userId: 'user-6', step: 1, recoveryCodeHashes: ['old'], now: NOW });
+      expect(await totp.get('user-6')).toMatchObject({ pendingSecretEnc: null, pendingSessionId: null });
+      expect(await totp.startReset(reset)).toBe(true);
+      expect(await totp.get('user-6')).toMatchObject({
+        status: 'enabled', secretEnc: 'live', lastUsedStep: 1, recoveryCodeHashes: ['old'],
+        pendingSecretEnc: 'next', pendingSessionId: 's1', pendingExpiresAt: LATER,
+      });
+    });
+
+    test('confirmReset swaps once, only for the pending secret, its session and before expiry', async () => {
+      const { totp } = await makeStores();
+      await totp.startEnrollment({ userId: 'user-7', secretEnc: 'live', pendingExpiresAt: LATER });
+      await totp.confirmEnrollment({ userId: 'user-7', step: 1, recoveryCodeHashes: ['old'], now: NOW });
+      await totp.startReset({ userId: 'user-7', pendingSecretEnc: 'next', pendingExpiresAt: LATER, sessionId: 's1' });
+      const confirm = { userId: 'user-7', pendingSecretEnc: 'next', sessionId: 's1', step: 5, recoveryCodeHashes: ['new'], now: NOW };
+      expect(await totp.confirmReset({ ...confirm, sessionId: 's2' })).toBe(false);
+      expect(await totp.confirmReset({ ...confirm, pendingSecretEnc: 'other' })).toBe(false);
+      expect(await totp.confirmReset({ ...confirm, now: LATER })).toBe(false);
+      expect((await totp.get('user-7'))?.secretEnc).toBe('live');
+      const results = await Promise.all(Array.from({ length: 5 }, () => totp.confirmReset(confirm)));
+      expect(results.filter((won) => won)).toHaveLength(1);
+      expect(await totp.get('user-7')).toMatchObject({
+        status: 'enabled', secretEnc: 'next', lastUsedStep: 5, recoveryCodeHashes: ['new'],
+        pendingSecretEnc: null, pendingSessionId: null, pendingExpiresAt: null,
+      });
+    });
   });
 }

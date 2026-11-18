@@ -11,6 +11,8 @@ interface TotpFields {
   enabledAt: Date | null;
   lastUsedStep: number;
   recoveryCodeHashes: string[];
+  pendingSecretEnc?: string | null;
+  pendingSessionId?: string | null;
 }
 
 function totpSchema(): Schema<TotpFields> {
@@ -22,6 +24,8 @@ function totpSchema(): Schema<TotpFields> {
     enabledAt: { type: Date, default: null },
     lastUsedStep: { type: Number, required: true },
     recoveryCodeHashes: { type: [String], required: true },
+    pendingSecretEnc: { type: String, default: null },
+    pendingSessionId: { type: String, default: null },
   }, { strict: true, versionKey: false, read: 'primary' });
 }
 
@@ -34,6 +38,8 @@ function toFactor(doc: TotpFields): TotpFactorRecord {
     enabledAt: doc.enabledAt,
     lastUsedStep: doc.lastUsedStep,
     recoveryCodeHashes: doc.recoveryCodeHashes,
+    pendingSecretEnc: doc.pendingSecretEnc ?? null,
+    pendingSessionId: doc.pendingSessionId ?? null,
   };
 }
 
@@ -55,7 +61,7 @@ export function createTotpStore(connection: Connection): TotpStore {
           lastUsedStep: -1,
           recoveryCodeHashes: [] as string[],
         },
-        $unset: { enabledAt: '' as const },
+        $unset: { enabledAt: '' as const, pendingSecretEnc: '' as const, pendingSessionId: '' as const },
       };
       const filter = {
         _id: input.userId,
@@ -104,6 +110,41 @@ export function createTotpStore(connection: Connection): TotpStore {
       const doc = await Totp.findOneAndUpdate(
         { _id: input.userId, status: 'enabled', recoveryCodeHashes: input.codeHash },
         { $pull: { recoveryCodeHashes: input.codeHash } },
+        { returnDocument: 'after' },
+      );
+      return doc !== null;
+    },
+    async startReset(input): Promise<boolean> {
+      const doc = await Totp.findOneAndUpdate(
+        { _id: input.userId, status: 'enabled' },
+        {
+          $set: {
+            pendingSecretEnc: input.pendingSecretEnc,
+            pendingExpiresAt: input.pendingExpiresAt,
+            pendingSessionId: input.sessionId,
+          },
+        },
+        { returnDocument: 'after' },
+      );
+      return doc !== null;
+    },
+    async confirmReset(input): Promise<boolean> {
+      const doc = await Totp.findOneAndUpdate(
+        {
+          _id: input.userId,
+          status: 'enabled',
+          pendingSecretEnc: input.pendingSecretEnc,
+          pendingSessionId: input.sessionId,
+          pendingExpiresAt: trusted({ $gt: input.now }),
+        },
+        {
+          $set: {
+            secretEnc: input.pendingSecretEnc,
+            lastUsedStep: input.step,
+            recoveryCodeHashes: [...input.recoveryCodeHashes],
+          },
+          $unset: { pendingSecretEnc: '', pendingExpiresAt: '', pendingSessionId: '' },
+        },
         { returnDocument: 'after' },
       );
       return doc !== null;
