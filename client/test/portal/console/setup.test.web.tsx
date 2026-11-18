@@ -283,7 +283,11 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   renderAt('/admin/orgs/o1', api);
   fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
   const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Search Google Maps instead' }));
+  // D47: with the search on the place leads, as on P16, and the town by hand waits behind its link.
+  expect(within(dialog).getByText('Not linked to a place on Google Maps.')).toBeTruthy();
+  expect(within(dialog).getByText('Town: Hanover, NH')).toBeTruthy();
+  expect(within(dialog).queryByRole('combobox', { name: 'Town' })).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Find this location’s place' }));
   // Save waits for the place: the search is the dialog's step for now.
   expect(within(dialog).getByRole('button', { name: 'Save changes' }).getAttribute('aria-disabled')).toBe('true');
   fireEvent.change(within(dialog).getByRole('combobox', { name: 'Search Google Maps for this location' }), { target: { value: 'Lou' } });
@@ -305,6 +309,21 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   }]);
   // One check for the whole panel, as P3 makes it.
   expect(places.checks).toBe(1);
+});
+
+test('Rename of a linked location says so, and Enter the town yourself opens the Town fields with the warning (D47)', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  serve(api, () => inSetup([{ ...hanover(), hasPlace: true }]));
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  expect(within(dialog).getByText('Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.')).toBeTruthy();
+  expect(within(dialog).getByRole('button', { name: 'Change this location’s place' })).toBeTruthy();
+  expect(within(dialog).queryByText('Changing the town here takes the Google Maps place off this location.')).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Enter the town yourself' }));
+  expect(within(dialog).getByText('Changing the town here takes the Google Maps place off this location.')).toBeTruthy();
+  expect(within(dialog).queryByText('Town: Hanover, NH')).toBeNull();
 });
 
 test('Delete sales data confirms with the typed name first, then shows the counts deleted', async () => {

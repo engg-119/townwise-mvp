@@ -15,7 +15,7 @@ import { Actions, Button } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
 import { ErrorNotice, LoadingLine, Messages } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
-import { Section, Stack } from '../ui/layout';
+import { Columns, Section, Stack } from '../ui/layout';
 import { useFocusMessage } from '../ui/messageFocus';
 import { Heading, Small } from '../ui/text';
 import { checkTown, TOWN_COPY, TownFields, townValueOf, type TownMessages, type TownValue } from '../ui/TownFields';
@@ -78,6 +78,10 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
   const [placeLine, setPlaceLine] = useState<string | null>(null);
   // Google stopped answering in this dialog: the search isn't offered again.
   const [down, setDown] = useState(false);
+  /** D47: with the search on, the Town fields open only on “Enter the town yourself”, as on P16. */
+  const [townOpen, setTownOpen] = useState(false);
+  const placeFirst = placeSearch && !down;
+  const linked = location.hasPlace === true;
 
   const save = useAction(useCallback(async (patch: { name: string; town: TownInput; placeId?: string }, place: UsablePlace | null) => {
     try {
@@ -125,7 +129,7 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
           : `Using this place moves ${location.name} to ${townLabel(place.town)}.`)}
         onConfirm={(place) => { setPlaceLine(null); setMode({ kind: 'form', place }); }}
         manualLabel="Enter the town yourself"
-        onManual={() => { setPlaceLine(null); setMode({ kind: 'form', place: null }); }}
+        onManual={() => { setPlaceLine(null); setTownOpen(true); setMode({ kind: 'form', place: null }); }}
         onUnavailable={() => { setDown(true); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); setMode({ kind: 'form', place: null }); }}
       />
     );
@@ -141,15 +145,37 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
           maxLength={80}
           messages={messages.name === undefined ? [] : [messages.name]}
         />
-        {place === null ? (
+        {place === null && placeFirst ? (
+          <>
+            {/* D47: the place leads, as on P16; the town by hand is behind its link. */}
+            <Stack gap={12}>
+              <Small>{linked ? PLACE_SETTINGS_COPY.linked : PLACE_SETTINGS_COPY.unlinked}</Small>
+              <Actions>
+                <Button
+                  variant="outline"
+                  label={linked ? 'Change this location’s place' : 'Find this location’s place'}
+                  onPress={() => { setPlaceLine(null); setMode({ kind: 'search' }); }}
+                />
+              </Actions>
+            </Stack>
+            {townOpen ? (
+              <>
+                <TownFields autoFocus value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} />
+                {linked ? <Small>{PLACE_SETTINGS_COPY.byHand}</Small> : null}
+              </>
+            ) : (
+              <Stack gap={4}>
+                <Small>{`Town: ${townLabel(location.town)}`}</Small>
+                <Actions>
+                  <Button variant="link" label={PLACE_SETTINGS_COPY.townByHand} onPress={() => { setTownOpen(true); }} />
+                </Actions>
+              </Stack>
+            )}
+          </>
+        ) : place === null ? (
           <>
             <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} />
             <Small>Changing the town takes off the location’s Google Maps place, if it has one.</Small>
-            {placeSearch && !down ? (
-              <Actions>
-                <Button variant="link" label="Search Google Maps instead" onPress={() => { setPlaceLine(null); setMode({ kind: 'search' }); }} />
-              </Actions>
-            ) : null}
           </>
         ) : (
           <PlaceSummary places={[place]} source={GOOGLE_SOURCE} focusOnMount>
@@ -362,9 +388,12 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
         {locations.length === 0 ? null : <SetupTable locations={locations} onAct={(verb, location) => { setDone(null); setActing({ verb, location }); }} />}
         <Stack gap={12}>
           <Heading level={3}>Add a location</Heading>
-          {search === 'checking'
-            ? <LoadingLine text="Checking for the Google Maps search…" />
-            : <AddLocationForm key={added} target={target} />}
+          {/* P10's column, so the search, its list and the checked places line up as an org admin sees them. */}
+          <Columns
+            main={search === 'checking'
+              ? <LoadingLine text="Checking for the Google Maps search…" />
+              : <AddLocationForm key={added} target={target} />}
+          />
         </Stack>
         <SetupUpload org={org} locations={locations} settled={settle} onSaved={onChanged} />
       </Stack>
