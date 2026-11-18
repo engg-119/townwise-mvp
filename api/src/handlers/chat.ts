@@ -401,7 +401,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const model = ctx.chat;
   if (model === null) throw new AppError(503, 'chat_unavailable', 'TownwiseAI isn’t turned on yet');
   // A replica shutting down takes no new turn (resumable-chat-turns).
-  if (ctx.turnRunner.closing) throw new AppError(503, 'chat_unavailable', 'TownwiseAI is restarting. Try again in a moment.');
+  if (ctx.turnRunner.closing) throw new AppError(503, 'chat_restarting', 'TownwiseAI is restarting. Try again in a moment.');
   const owner = ownerOf(caller, location.id);
   const { timeZone } = timeZoneOf(location.town);
   // D36: a send's files are its body's; a regenerate's are those its stored message carries.

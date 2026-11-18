@@ -291,6 +291,8 @@ export function sendErrorText(error: unknown, attached = false): string {
         ? 'You’ve sent a lot of messages. Try again later.'
         : `You’ve sent a lot of messages. Try again in ${minutes(error.retryAfterSeconds)}.`;
     }
+    // resumable-chat-turns: a replica shutting down takes no new turn; TownwiseAI is still on.
+    if (error.code === 'chat_restarting') return 'TownwiseAI is restarting. Try again in a moment.';
     if (error.status === 503) return 'TownwiseAI isn’t turned on yet.';
   }
   return describeError(error);
@@ -853,6 +855,17 @@ function woken(error: unknown): boolean {
   return error instanceof ApiError && error.kind === 'aborted';
 }
 
+/** A send's stream lost on the way (not the server's refusal, not the page's own stop): the turn may run all the same. */
+function lostOnTheWay(error: unknown): boolean {
+  return error instanceof ApiError && (error.kind === 'network' || error.kind === 'timeout');
+}
+
+/** Whether a conversation's live turn is the one `request` sent: its message, or for a regenerate the message it answers. */
+function isTurnOf(turn: LiveTurnLoad, request: TurnRequest): boolean {
+  if ('replyTo' in request) return turn.message === null && turn.parentId === request.replyTo;
+  return turn.message !== null && turn.message.text === request.content;
+}
+
 function isClaimHeld(error: unknown): boolean {
   return error instanceof ApiError && error.kind === 'http' && error.code === 'chat_turn_in_progress';
 }
@@ -1083,6 +1096,22 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     }
   }
 
+  /**
+   * After a send's stream was lost before its `conversation` event: the turn the server is running for it, if the
+   * request reached the server. A new conversation's turn is found from the chat's GET; either way the conversation's
+   * GET must show it running with this send's message. Any read that fails is no turn.
+   */
+  async function sentTurn(request: TurnRequest): Promise<{ conversationId: string; turnId: string } | null> {
+    try {
+      const conversationId = request.conversationId ?? (await loadChat(api, locationId)).liveTurn?.conversationId;
+      if (conversationId === undefined) return null;
+      const turn = (await loadConversation(api, locationId, conversationId)).liveTurn;
+      return turn?.state === 'running' && isTurnOf(turn, request) ? { conversationId, turnId: turn.turnId } : null;
+    } catch {
+      return null;
+    }
+  }
+
   /** Stop: the server stops the turn and every stream of it ends with `stopped`; a turn without its id yet waits for it. */
   function askToStop(handle: TurnHandle): void {
     const { conversationId, turnId } = handle;
@@ -1132,16 +1161,31 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       if (event.type === 'error') failure = event.code === TURN_INTERRUPTED ? INTERRUPTED : streamErrorText(event.code);
       if (event.type === 'stopped') failure = STOPPED;
     });
+    // A stream lost before the turn's `conversation` event may still have started the turn on the server: if the server
+    // runs it for this send, it is followed from its first event; if not, the send failed as before.
+    const recovered = async (): Promise<boolean> => {
+      if (created !== null || handle.ended || handle.controller.signal.aborted) return false;
+      const ids = await sentTurn(request);
+      if (ids === null) return false;
+      handle.conversationId = ids.conversationId;
+      handle.turnId = ids.turnId;
+      return true;
+    };
     const follows = async (): Promise<void> => {
       // A stream that closed without the turn's last event dropped, unless a wake closed it.
       let dropped = true;
       try {
         await stream(request, connect(handle), onEvent, retries);
+        if (handle.turnId === null && (await recovered())) dropped = false;
       } catch (error: unknown) {
         // Once the turn has its id, a dropped (or woken) stream is read back from its last number; before that, the
-        // failure is the turn's.
-        if (!handle.ended && (handle.turnId === null || handle.controller.signal.aborted)) throw error;
-        dropped = !woken(error);
+        // failure is the turn's, unless the server is running it all the same.
+        if (!handle.ended && (handle.turnId === null || handle.controller.signal.aborted)) {
+          if (!lostOnTheWay(error) || !(await recovered())) throw error;
+          dropped = false;
+        } else {
+          dropped = !woken(error);
+        }
       } finally {
         handle.connection = null;
       }

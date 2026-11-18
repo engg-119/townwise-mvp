@@ -59,7 +59,7 @@ export interface TurnRunner {
   readonly closing: boolean;
   /**
    * Inserts the turn's record and starts its run. Rejects when the record cannot be inserted (the caller still holds
-   * the claims), or with 503 `chat_unavailable` once the runner is closing.
+   * the claims), or with 503 `chat_restarting` once the runner is closing.
    */
   start(input: StartTurn): Promise<RunningTurn>;
   /** Shutdown (main.ts onShutdown): no new turn, the running ones aborted with `shutdown` and settled as interrupted. */
@@ -137,7 +137,7 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
   let closing = false;
 
   async function start(input: StartTurn): Promise<RunningTurn> {
-    if (closing) throw new AppError(503, 'chat_unavailable', 'TownwiseAI is restarting. Try again in a moment.');
+    if (closing) throw new AppError(503, 'chat_restarting', 'TownwiseAI is restarting. Try again in a moment.');
     const { scope } = input;
     const { turnId } = input.turn;
     const ids = { orgId: scope.orgId, locationId: input.turn.locationId, conversationId: input.turn.conversationId };

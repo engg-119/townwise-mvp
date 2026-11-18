@@ -804,6 +804,6 @@ describe('shutdown', () => {
 
     const refused = await call(server, turnsPath(), { session, json: { content: 'After the deploy' } });
     expect(refused.status).toBe(503);
-    expect(await refused.json()).toMatchObject({ error: 'chat_unavailable' });
+    expect(await refused.json()).toMatchObject({ error: 'chat_restarting', message: 'TownwiseAI is restarting. Try again in a moment.' });
   });
 });

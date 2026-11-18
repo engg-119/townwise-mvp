@@ -336,7 +336,7 @@ describe('the turn runner', () => {
     // The settled turn's claims, the conversation's first, then the person's.
     expect(claims.calls).toEqual([`conversation ${'c'.repeat(24)} ${stuck.turnId}`, `person user-1 ${stuck.turnId}`]);
     await expect(runner.start({ scope: SCOPE, turn: newTurn(), deadline: Date.now() + 60_000, run: () => Promise.resolve(DONE) }))
-      .rejects.toMatchObject({ status: 503, code: 'chat_unavailable' });
+      .rejects.toMatchObject({ status: 503, code: 'chat_restarting' });
     const joined = logs.join('\n');
     expect(joined).not.toContain('Sentinel');
     await stuck.turn.ended;

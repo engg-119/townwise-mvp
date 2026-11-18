@@ -426,6 +426,17 @@ test('off: the GET says disabled, and a 503 re-reads it', async () => {
   expect(chat.current.state.error).toBe('TownwiseAI isn’t turned on yet.');
 });
 
+test('a replica restarting refuses the send with its own words, and TownwiseAI stays on', async () => {
+  const api = fakeChatApi();
+  const chat = await ready(api);
+  api.refuse = refusal(503, 'chat_restarting');
+  await send(chat, 'Hello');
+  await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+  expect(chat.current.state).toMatchObject({ enabled: true, messages: [], draft: 'Hello', error: 'TownwiseAI is restarting. Try again in a moment.' });
+  // A refusal is the server's answer: no turn of it is looked for.
+  expect(api.conversationReads).toEqual([]);
+});
+
 describe('proposal cards', () => {
   test('a live card waits for its turn to be stored', async () => {
     const api = fakeChatApi();
@@ -1578,6 +1589,58 @@ describe('a turn that outlives its connection', () => {
     });
     await waitFor(() => { expect(again.current.state.streaming).toBe(false); });
     expect(reply(again)).toEqual(failed);
+  });
+
+  test('a send whose stream is lost before its first event follows the turn if the server runs it, and fails as before if not', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    await opened(chat);
+    await send(chat, 'And January?');
+    expect(turn(api).body).toEqual({ conversationId: 'c1', content: 'And January?', parentId: 'a1' });
+    // The request reached the server before the network went: the turn runs there.
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE_VIEW;
+    await act(() => { turn(api).fail(new ApiError('network', 'The network request failed.')); });
+    await waitFor(() => { expect(api.turns).toHaveLength(2); });
+    expect(turn(api, 1)).toMatchObject({ method: 'GET', path: `${TAIL}?after=0` });
+    expect(chat.current.state).toMatchObject({ streaming: true, error: null, draft: '' });
+    await act(() => {
+      turn(api, 1).emit('conversation', { id: 'c1', title: 'Earlier chat', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-9' }, 1);
+      turn(api, 1).emit('text', { delta: 'January was quiet.' }, 2);
+      turn(api, 1).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a2' }, 3);
+      turn(api, 1).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(shown(chat).slice(2)).toEqual([['user', 'And January?', 'complete'], ['assistant', 'January was quiet.', 'complete']]);
+    expect(chat.current.state).toMatchObject({ leafId: 'a2', error: null });
+
+    // The turn running is not this send's (another message): the send fails as before, and nothing is followed.
+    await send(chat, 'And February?');
+    await act(() => { turn(api, 2).fail(new ApiError('network', 'The network request failed.')); });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(api.turns).toHaveLength(3);
+    expect(chat.current.state).toMatchObject({ draft: 'And February?', error: "Can't reach the server." });
+    expect(shown(chat).at(-1)).toEqual(['assistant', 'January was quiet.', 'complete']);
+
+    // A new conversation's first send whose stream closes before any event: its turn is found from the chat's GET.
+    await act(() => { chat.current.newConversation(); });
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c3', turnId: 'turn-11' } };
+    api.conversation = { ...LIVE_VIEW, id: 'c3', liveTurn: { ...LIVE_TURN, turnId: 'turn-11', parentId: null, message: { ...ASKED, text: 'Closed Monday' } } };
+    await send(chat, 'Closed Monday');
+    const reads = api.conversationReads.length;
+    await act(() => { turn(api, 3).end(); });
+    await waitFor(() => { expect(api.turns).toHaveLength(5); });
+    expect(api.conversationReads.slice(reads)).toEqual(['/api/org/locations/l1/chat/c3']);
+    expect(turn(api, 4).path).toBe('/api/org/locations/l1/chat/c3/turns/turn-11?after=0');
+    await act(() => {
+      turn(api, 4).emit('conversation', { id: 'c3', title: 'Closed Monday', userNodeId: 'u9', replyNodeId: 'a9', parentId: null, turnId: 'turn-11' }, 1);
+      turn(api, 4).emit('text', { delta: 'Noted.' }, 2);
+      turn(api, 4).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a9' }, 3);
+      turn(api, 4).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(chat.current.state).toMatchObject({ conversationId: 'c3', leafId: 'a9', error: null });
+    expect(shown(chat)).toEqual([['user', 'Closed Monday', 'complete'], ['assistant', 'Noted.', 'complete']]);
   });
 
   test('Stop before the turn has its id waits for its conversation event, then asks the server', async () => {
