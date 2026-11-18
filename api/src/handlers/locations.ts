@@ -241,7 +241,7 @@ export async function checkedUpdate(
 
 /**
  * Staff setup's DELETE check (D23): only a location with no sales day, note, stored file or item-sales day. The org
- * admin's route deletes the data with the location instead (D43). Stored files and item sales are data too (spec 11A, D35): deleting the sales data
+ * admin's route deletes the data with the location instead (D44). Stored files and item sales are data too (spec 11A, D35): deleting the sales data
  * deletes them.
  */
 export async function assertNoLocationData(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<void> {
@@ -266,7 +266,7 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   const google = googleAccessDeps(ctx);
   const connections = await markLocationForCheck(google, scope, locationId);
   if (!(await ctx.stores.locations.remove(scope, locationId))) return false;
-  // D43: an upload or a note that loaded the location before its row went can land after the org admin's delete swept
+  // D44: an upload or a note that loaded the location before its row went can land after the org admin's delete swept
   // them, so they are swept again here (a no-op for staff setup, which only deletes an empty location).
   await ctx.stores.salesDays.removeForLocation(scope, locationId);
   await ctx.stores.notes.removeForLocation(scope, locationId);
@@ -340,7 +340,7 @@ export async function updateLocation(ctx: TownwiseContext, req: Request, res: Re
 }
 
 /**
- * DELETE /api/org/locations/:locationId (P16, D43): the location with all its data (sales days, uploads, stored files,
+ * DELETE /api/org/locations/:locationId (P16, D44): the location with all its data (sales days, uploads, stored files,
  * forecasts, notes, then everything `removeLocation` takes). 409 `import_running` while one of its files is being read,
  * 503 `files_unavailable` while stored files are off but it has some; nothing is deleted then.
  */
@@ -348,7 +348,7 @@ export async function deleteLocation(ctx: TownwiseContext, req: Request, res: Re
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  // D43: one press deletes the location with all its data. The data goes first and the location row last, so a request
+  // D44: one press deletes the location with all its data. The data goes first and the location row last, so a request
   // that stops partway leaves the location in place and the same delete, sent again, finishes it.
   await assertNotReading(ctx, scope, location.id);
   const removed = await removeSalesData(ctx, scope, location.id);

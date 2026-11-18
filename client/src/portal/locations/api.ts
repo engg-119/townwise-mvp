@@ -147,7 +147,7 @@ export async function updateLocation(api: ApiClient, locationId: string, input: 
   return body.location;
 }
 
-/** 204: the location with all its data (D43); 409 import_running while a file is being read; 503 files_unavailable. */
+/** 204: the location with all its data (D44); 409 import_running while a file is being read; 503 files_unavailable. */
 export async function deleteLocation(api: ApiClient, locationId: string): Promise<void> {
   await api.request(locationPath(locationId), { method: 'DELETE' });
 }

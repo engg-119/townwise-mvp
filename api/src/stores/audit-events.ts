@@ -20,7 +20,7 @@ export const AUDIT_DETAIL_KEYS = {
   'member.left': ['email'],
   'location.created': ['name', 'townId', 'hasPlace'],
   'location.updated': ['name', 'townId', 'hasPlace'],
-  // D43: the org admin's delete also says how much data went with the location (counts only).
+  // D44: the org admin's delete also says how much data went with the location (counts only).
   'location.deleted': ['name', 'townId', 'deletedDays', 'deletedFiles', 'deletedNotes'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],

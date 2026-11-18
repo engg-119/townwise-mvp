@@ -198,7 +198,7 @@ describe('PATCH /api/org/locations/:locationId', () => {
 });
 
 describe('DELETE /api/org/locations/:locationId', () => {
-  // D43: one press deletes the location with all its data; a member still can't.
+  // D44: one press deletes the location with all its data; a member still can't.
   it('deletes a location with its sales days and notes, and no other location’s; an empty one, with its unfinished upload records', async () => {
     const t = await team('Delete Group');
     const withData = await addLocation(server, { orgId: t.orgId, name: 'With Data' });
@@ -279,7 +279,7 @@ describe('DELETE /api/org/locations/:locationId', () => {
     const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
     const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
     for (const locationId of [doomed, kept]) await addOrderRecords(server, { orgId: t.orgId, locationId });
-    // D43: item sales go with it in the same press.
+    // D44: item sales go with it in the same press.
     expect((await remove(t.admin, doomed)).status).toBe(204);
     for (const name of ORDER_COLLECTIONS) {
       const collection = server.connection.collection(name);

@@ -107,7 +107,7 @@ describe('deleting a location’s sales data', () => {
 });
 
 describe('deleting a location', () => {
-  // D43: one press deletes the location with its stored files, but never while Townwise is reading one of them.
+  // D44: one press deletes the location with its stored files, but never while Townwise is reading one of them.
   it('deletes the location with its stored files and blobs; while a file is being read it is 409 import_running and nothing goes', async () => {
     const { orgId, admin, member } = await team('Location Delete Grill');
     const locationId = await addLocation(server, { orgId, name: 'Annex' });

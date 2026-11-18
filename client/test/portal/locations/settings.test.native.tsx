@@ -144,7 +144,7 @@ describe('P16 Location settings', () => {
   });
 
 
-  // D43: one press deletes the location with all its data; the dialog counts what goes.
+  // D44: one press deletes the location with all its data; the dialog counts what goes.
   test('a location with sales and notes deletes in one press, and the dialog counts what goes with it', async () => {
     const { api, fake } = setup();
     fake.deletes['/api/org/locations/l1'] = () => {

@@ -25,7 +25,7 @@ import { deleteLocation, updateLocation } from './api';
 import { shownLocationName } from './naming';
 
 // P16 Location settings (spec 16.3, org admins; the route guard sends members to Locations): Name and Town with
-// “Save changes”, then Delete location (D43), which deletes the location with all its data behind a typed-name
+// “Save changes”, then Delete location (D44), which deletes the location with all its data behind a typed-name
 // confirmation whose body counts the days and notes that go with it. Saving reloads the organization, so the header shows the new name, and the page shows
 // “Saved.”; deleting opens Locations with “Deleted {name}.”. A 404 on either write means the location was deleted
 // in the meantime: the organization reloads, and the location layout says “This location isn’t available.” with
@@ -40,7 +40,7 @@ import { shownLocationName } from './naming';
 const READ_ONLY_ID = 'location-settings-ro';
 const PLACE_READ_ONLY_ID = 'location-place-ro';
 
-/** Delete location (D43): one press takes the location and everything in it. */
+/** Delete location (D44): one press takes the location and everything in it. */
 export const DELETE_COPY = {
   kicker: 'Can’t be undone',
   line: 'Deletes this location with everything in it: its sales data, stored files, notes, business rules, ordering setup, calendars and TownwiseAI chats.',
