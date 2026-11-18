@@ -74,6 +74,9 @@ export interface TotpFactorRecord {
   readonly enabledAt: Date | null;
   readonly lastUsedStep: number;       // -1 before first use
   readonly recoveryCodeHashes: readonly string[];
+  /** A reset in progress on an enabled factor: the new secret, until `pendingExpiresAt`, for one session. Null otherwise. */
+  readonly pendingSecretEnc: string | null;
+  readonly pendingSessionId: string | null;
 }
 
 export interface TotpStore {
@@ -82,10 +85,23 @@ export interface TotpStore {
   startEnrollment(input: { userId: string; secretEnc: string; pendingExpiresAt: Date }): Promise<boolean>;
   /** CAS pending AND pendingExpiresAt > now: enabled, lastUsedStep = step, recovery hashes set. */
   confirmEnrollment(input: { userId: string; step: number; recoveryCodeHashes: readonly string[]; now: Date }): Promise<boolean>;
-  /** CAS enabled AND lastUsedStep < step; also replaces secretEnc when given (lazy re-encryption). */
-  claimStep(input: { userId: string; step: number; secretEnc?: string }): Promise<boolean>;
+  /**
+   * CAS enabled AND secretEnc is `verifiedSecretEnc` AND lastUsedStep < step; also replaces secretEnc when given
+   * (lazy re-encryption). `verifiedSecretEnc` is the ciphertext the code was checked against, so a code checked
+   * against a secret a reset has since replaced claims nothing and writes nothing.
+   */
+  claimStep(input: { userId: string; step: number; verifiedSecretEnc: string; secretEnc?: string }): Promise<boolean>;
   /** Atomic $pull; true if the hash was present. */
   consumeRecoveryCode(input: { userId: string; codeHash: string }): Promise<boolean>;
+  /** CAS enabled: sets the pending secret, its expiry and its session, replacing any earlier one. The live secret is untouched. */
+  startReset(input: { userId: string; pendingSecretEnc: string; pendingExpiresAt: Date; sessionId: string }): Promise<boolean>;
+  /**
+   * CAS enabled AND this pending secret AND this session AND pendingExpiresAt > now: the pending secret becomes the
+   * secret, lastUsedStep = step, the recovery hashes are replaced and the pending fields cleared.
+   */
+  confirmReset(input: {
+    userId: string; pendingSecretEnc: string; sessionId: string; step: number; recoveryCodeHashes: readonly string[]; now: Date;
+  }): Promise<boolean>;
   remove(userId: string): Promise<void>;
 }
 

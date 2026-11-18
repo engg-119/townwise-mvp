@@ -33,6 +33,9 @@ const TABLE: {
   { name: 'logout', method: 'POST', path: '/auth/logout', webKeys: ['platform'], nativeKeys: ['platform', 'refreshToken'], platform: true, run: (auth) => auth.signOut() },
   { name: 'enroll', method: 'POST', path: '/auth/totp/enroll', webKeys: [], nativeKeys: [], platform: false, run: (auth) => auth.beginTotpEnrollment() },
   { name: 'confirm', method: 'POST', path: '/auth/totp/enroll/confirm', webKeys: ['code'], nativeKeys: ['code'], platform: false, run: (auth) => auth.confirmTotpEnrollment('123456') },
+  { name: 'reset with a code', method: 'POST', path: '/auth/totp/reset', webKeys: ['code'], nativeKeys: ['code'], platform: false, run: (auth) => auth.beginTotpReset({ code: '123 456' }) },
+  { name: 'reset with a recovery code', method: 'POST', path: '/auth/totp/reset', webKeys: ['recoveryCode'], nativeKeys: ['recoveryCode'], platform: false, run: (auth) => auth.beginTotpReset({ recoveryCode: 'ABCDE-12345-abcde-12345' }) },
+  { name: 'reset confirm', method: 'POST', path: '/auth/totp/reset/confirm', webKeys: ['code'], nativeKeys: ['code'], platform: false, run: (auth) => auth.confirmTotpReset('123456') },
 ];
 
 function allowedHeaders(kind: 'cookie' | 'bearer', init: RequestInit): void {
@@ -95,8 +98,8 @@ function answer(platform: 'web' | 'native', call: Call, refresh: boolean, meHits
   }
   if (path === PATHS.logout) return jsonResponse(204);
   if (path === PATHS.magicLink) return jsonResponse(202, { ok: true });
-  if (path === PATHS.totpEnrollConfirm) return jsonResponse(200, { recoveryCodes: CODES });
-  if (path === PATHS.totpEnroll) {
+  if (path === PATHS.totpEnrollConfirm || path === PATHS.totpResetConfirm) return jsonResponse(200, { recoveryCodes: CODES });
+  if (path === PATHS.totpEnroll || path === PATHS.totpReset) {
     return jsonResponse(200, { secret: 'S', otpauthUri: 'otpauth://totp/x', expiresAt: '2026-01-01T00:00:00.000Z', qrPngDataUrl: 'data:image/png;base64,AAAA' });
   }
   return jsonResponse(200, {
