@@ -286,6 +286,7 @@ describe('a rule’s schedule (D31)', () => {
     const rule = await added(location, 'Closed Mondays');
     for (const bad of [
       { ...CLOSED_MONDAYS, expectedGuests: 20 }, { ...CLOSED_MONDAYS, endDate: '2026-12-01' }, { ...CLOSED_MONDAYS, detail: 'Smith party' },
+      { ...CLOSED_MONDAYS, title: 'Holiday party' }, { ...CLOSED_MONDAYS, title: null },
       { ...CLOSED_MONDAYS, startDate: '2028-12-01' }, { ...SATURDAY_PARTY, startTime: '21:00', endTime: '18:00' }, 'closed Mondays',
     ]) {
       expect(await errorOf(await call(server, rulesPath(location), { session: author.session, json: { text: 'Shut Mondays', schedule: bad } })))

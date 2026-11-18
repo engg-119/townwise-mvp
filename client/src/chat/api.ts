@@ -24,6 +24,8 @@ const noteProposalSchema = z.object({
   effect: z.enum(['closed', 'more_guests', 'fewer_guests', 'unknown']),
   expectedGuests: z.number().int().nullish(),
   detail: z.string().nullish(),
+  /** The event's name (D49); an API from before it sends none. */
+  title: z.string().nullish(),
 });
 
 export interface NoteProposal {
@@ -34,6 +36,8 @@ export interface NoteProposal {
   effect: 'closed' | 'more_guests' | 'fewer_guests' | 'unknown';
   expectedGuests: number | null;
   detail: string | null;
+  /** The event's name (D49), never a person's; null with none, and missing from a card made before it. */
+  title?: string | null | undefined;
 }
 
 function proposalOf(raw: z.infer<typeof noteProposalSchema>): NoteProposal {
@@ -45,6 +49,7 @@ function proposalOf(raw: z.infer<typeof noteProposalSchema>): NoteProposal {
     effect: raw.effect,
     expectedGuests: raw.expectedGuests ?? null,
     detail: raw.detail ?? null,
+    title: raw.title ?? null,
   };
 }
 
@@ -594,6 +599,8 @@ const suggestedNoteSchema = z.object({
   kind: z.enum(NOTE_KINDS), startDate: dateSchema, endDate: dateSchema, weekdays: z.array(z.number().int()).nullable(),
   effect: z.enum(NOTE_EFFECTS), expectedGuests: z.number().int().nullable(), detail: z.string().nullable(),
   startTime: z.string().nullable(), endTime: z.string().nullable(),
+  /** The event's name (D49): always null from the weekly pass so far; an API from before it sends none. */
+  title: z.string().nullish(),
 });
 
 /** A note's dates and hours: a follow-up's `from`. */

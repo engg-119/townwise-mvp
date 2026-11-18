@@ -73,6 +73,15 @@ export function rowOf(date: string): number {
   return (weekdayOf(date) + 6) % 7;
 }
 
+export function mondayOf(date: string): string {
+  return addDays(date, -rowOf(date));
+}
+
+/** Seven days from `start`, in order: Monday to Sunday from a Monday. */
+export function weekDates(start: string): string[] {
+  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
+}
+
 function dayIndex(date: string): number {
   return Math.round((Date.parse(`${date}T00:00:00.000Z`) - Date.parse(`${date.slice(0, 4)}-01-01T00:00:00.000Z`)) / 86_400_000);
 }

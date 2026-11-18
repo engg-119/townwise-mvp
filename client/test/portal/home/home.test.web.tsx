@@ -8,6 +8,8 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import type { DayRecord } from '../../../src/portal/analytics/history';
 import { dayMonth, weekDates } from '../../../src/portal/analytics/week';
+import { daysBetween } from '../../../src/portal/locations/dates';
+import { REORDER_OVERVIEW } from '../../../src/portal/home/beside';
 import { forecastLine } from '../../../src/portal/home/Home';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
 import { theme } from '../../../src/theme';
@@ -72,9 +74,12 @@ const QUESTIONS = [
  * `rules`: GET .../rules' body; without it the read is refused (404), which Home reads as no rules. `agent`: GET
  * .../agent's body, two questions by default.
  */
+/** The last portal()'s fake, for the paths Home read. */
+let lastFake: ReturnType<typeof analyticsFake> | null = null;
+
 function portal(
   me: MeResponse, days: readonly DayRecord[] = DAYS, locations?: LocationSummary[], forecast: unknown = NO_FORECAST, rules?: unknown,
-  agent: unknown = { questions: QUESTIONS, activity: [] },
+  agent: unknown = { questions: QUESTIONS, activity: [] }, extra: Record<string, unknown> = {},
 ): FakePortalApi {
   const fake = analyticsFake({
     ...(rules === undefined ? {} : { [`${PATH}/rules`]: rules }),
@@ -86,7 +91,9 @@ function portal(
     [`${PATH}/people-in-town?from=2026-11-01&to=2026-11-30`]: NOVEMBER,
     // Stored files are off, as in production today.
     [`${PATH}/imports/current`]: refusal(503, 'files_unavailable'),
+    ...extra,
   });
+  lastFake = fake;
   return fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member', locations), fallback: fake });
 }
 
@@ -296,11 +303,11 @@ test('the month calendar: the arrow keys and a pointer preview the days beside t
   expect(within(detail).getByRole('link', { name: 'Open this day on Orders' }).getAttribute('href')).toBe('/locations/l1/orders?day=2026-11-05');
   expect(cell('2026-11-05').getAttribute('aria-selected')).toBe('true');
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-  expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. This week. Veterans Day.');
+  expect(cell('2026-11-11').getAttribute('aria-label')).toBe('Wed, Nov 11, 2026. This week. No forecast. Veterans Day.');
   // A past day says its stored figure; a later one, with no published forecast, has none.
-  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. 110 guests.');
+  expect(cell('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. 110 guests, actual.');
   expect(cell('2026-11-03').textContent).toBe('3110');
-  expect(cell('2026-11-11').textContent).toBe('11');
+  expect(cell('2026-11-11').textContent).toBe('11No forecast');
 
   // The keys move the selection, and focus with it.
   cell('2026-11-05').focus();
@@ -379,20 +386,20 @@ test('with a published forecast, This week starts with each day’s Forecast, it
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
   await waitFor(() => { expect(within(strip).getAllByRole('rowheader')[0]?.textContent).toBe('Forecast'); });
   // Thu, Nov 5 (today) to Wed, Nov 11: 212 a day, and Saturday the 7th with its private event.
-  expect(within(strip).getAllByText(sentence('About 212 guests, 180 to 240'))).toHaveLength(6);
-  expect(within(strip).getByText(sentence('About 282 guests, 250 to 310'))).toBeTruthy();
-  expect(within(strip).getAllByText('About 212 guests')).toHaveLength(6);
+  expect(within(strip).getAllByText(sentence('~212 guests, forecast, likely 180 to 240'))).toHaveLength(6);
+  expect(within(strip).getByText(sentence('~282 guests, forecast, likely 250 to 310'))).toBeTruthy();
+  expect(within(strip).getAllByText('~212 guests')).toHaveLength(6);
 });
 
 test('with a published forecast, This month shows each future day’s guests and no tagline', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5212'); });
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5~212forecast'); });
   expect(screen.queryByText(NOT_PUBLISHED)).toBeNull();
   expect(screen.queryByText('In progress')).toBeNull();
   // Saturday: the published figure with the notes' guests under it, and both in its label with the range.
-  expect(cellOf('2026-11-07').textContent).toBe('7282+70');
+  expect(cellOf('2026-11-07').textContent).toBe('7~282+70forecast');
   expect(cellOf('2026-11-07').getAttribute('aria-label'))
-    .toBe('Sat, Nov 7, 2026. This week. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Sample game.');
+    .toBe('Sat, Nov 7, 2026. This week. 282 guests, forecast, likely 250 to 310. Includes 70 guests from your notes. Sample game.');
   // Before today, the stored figure; never a forecast.
   expect(cellOf('2026-11-04').textContent).toBe('4110');
   // The day beside the grid gives the forecast and its three reasons with the largest effect, in the Calendar's order
@@ -416,20 +423,20 @@ test('a stale run on Home (D52): the days after its forecast tier read Outlook i
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf(days)), 'This month in Hanover');
   await waitFor(() => { expect(cellOf('2026-11-09').textContent).toContain('Outlook'); });
   expect(cellOf('2026-11-09').textContent).toContain('212');
-  expect(cellOf('2026-11-09').getAttribute('aria-label')).toContain('Outlook about 212 guests, 150 to 290.');
+  expect(cellOf('2026-11-09').getAttribute('aria-label')).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
   expect(cellOf('2026-11-06').textContent).not.toContain('Outlook');
   fireEvent.pointerOver(cellOf('2026-11-09'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   expect(within(detail).getByText('Outlook')).toBeTruthy();
   expect(within(detail).getByText('About 212 guests, likely 150 to 290.')).toBeTruthy();
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
-  expect(within(strip).getAllByText(sentence('Outlook: about 212 guests, 150 to 290'))).toHaveLength(3);
-  expect(within(strip).getAllByText(sentence('About 212 guests, 180 to 240'))).toHaveLength(4);
+  expect(within(strip).getAllByText(sentence('Outlook: ~212 guests, forecast, likely 150 to 290'))).toHaveLength(3);
+  expect(within(strip).getAllByText(sentence('~212 guests, forecast, likely 180 to 240'))).toHaveLength(4);
 });
 
 test('the day detail’s Why rows end in their source chips, and On the calendar leaves out what Why names, as the Calendar does', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published(true)), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
+  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7~282+70forecast'); });
   fireEvent.pointerOver(cellOf('2026-11-07'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   const source = within(detail).getByRole('link', { name: 'Dartmouth. Source: home.dartmouth.edu' });
@@ -471,7 +478,7 @@ test('the day detail keeps the three largest effects either way, in the Calendar
   });
   const days = [forecastDay({ date: '2026-11-05' }), thanksgiving];
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf(days)), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-26').textContent).toBe('26212'); });
+  await waitFor(() => { expect(cellOf('2026-11-26').textContent).toBe('26~212forecast'); });
   fireEvent.pointerOver(cellOf('2026-11-26'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   // The 70% fall is kept over the 10% rise, and shown last, after the rises; its ▼ is the ramp's reddest step.
@@ -487,7 +494,7 @@ test('the day detail keeps the three largest effects either way, in the Calendar
 
 test('a note’s row in the day detail is its label alone, with no mark; the run reasons beside it keep theirs', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7282+70'); });
+  await waitFor(() => { expect(cellOf('2026-11-07').textContent).toBe('7~282+70forecast'); });
   fireEvent.pointerOver(cellOf('2026-11-07'));
   expect(whyRowsOf(screen.getByRole('region', { name: 'Selected day' }))).toEqual([
     ['Your private event, 70 guests, 6 pm to 9 pm', null],
@@ -498,14 +505,14 @@ test('a note’s row in the day detail is its label alone, with no mark; the run
 
 test('hovering a day shows its top reasons; touch does not', async () => {
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, published()), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5212'); });
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5~212forecast'); });
   fireEvent(cellOf('2026-11-07'), pointer('pointerover', 'touch'));
   expect(screen.queryByTestId('calendar-tooltip')).toBeNull();
   fireEvent(cellOf('2026-11-07'), pointer('pointerover', 'mouse'));
   const tip = screen.getByTestId('calendar-tooltip');
   expect(tip.getAttribute('aria-hidden')).toBe('true');
   expect(Array.from(tip.children, (line) => line.textContent)).toEqual([
-    'Sat, Nov 7, 2026', 'About 282 guests (250 to 310)', 'Includes 70 guests from your notes',
+    'Sat, Nov 7, 2026', '282 guests, forecast (likely 250 to 310)', 'Includes 70 guests from your notes',
     'Your private event, 70 guests, 6 pm to 9 pm', 'Saturday: usually more guests', 'Sample game: more guests in Townwise’s model',
   ]);
   fireEvent.pointerLeave(screen.getByRole('grid', { name: 'November 2026' }));
@@ -521,15 +528,15 @@ test('a business rule’s reason (D31) shows in the day detail and the tooltip, 
     ],
   })]);
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, ruled), 'This month in Hanover');
-  await waitFor(() => { expect(cellOf('2026-11-06').textContent).toBe('6252+40'); });
+  await waitFor(() => { expect(cellOf('2026-11-06').textContent).toBe('6~252+40forecast'); });
   expect(cellOf('2026-11-06').getAttribute('aria-label'))
-    .toBe('Fri, Nov 6, 2026. This week. Forecast about 252 guests, 220 to 280. Includes 40 guests from your rules. 1 note.');
+    .toBe('Fri, Nov 6, 2026. This week. 252 guests, forecast, likely 220 to 280. Includes 40 guests from your rules. Private event.');
   fireEvent(cellOf('2026-11-06'), pointer('pointerover', 'mouse'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   expect(within(detail).getByText('About 252 guests, likely 220 to 280. Includes 40 guests from your rules.')).toBeTruthy();
   expect(within(detail).getByText('Your rule: adds 40 guests on Fridays')).toBeTruthy();
   expect(Array.from(screen.getByTestId('calendar-tooltip').children, (line) => line.textContent)).toEqual([
-    'Fri, Nov 6, 2026', 'About 252 guests (220 to 280)', 'Includes 40 guests from your rules', 'Your rule: adds 40 guests on Fridays', 'Friday',
+    'Fri, Nov 6, 2026', '252 guests, forecast (likely 220 to 280)', 'Includes 40 guests from your rules', 'Your rule: adds 40 guests on Fridays', 'Friday', 'Private event',
   ]);
 });
 
@@ -660,4 +667,87 @@ test('while needsHistory is true the history step shows in place of the cards th
   expect((await within(step).findByRole('link', { name: 'Upload sales history' })).getAttribute('href')).toBe('/locations/l1/sales/upload');
   expect(document.getElementById('home-history')).toBeNull();
   expect(screen.getByText('Sample game')).toBeTruthy();
+});
+
+// D49 (calendar-sources "Home's events read"): Home reads the location's own calendars' events over its forecast range,
+// this month and This week's days past it, under the events route's 92 days; a failed read leaves Home showing.
+const OWNER_EVENTS = `${PATH}/owner-calendars/events?from=2026-11-01&to=2026-11-30`;
+const WINE_DINNER = {
+  calendarId: 'fedcba9876543210fedcba98', calendar: 'US holidays', uid: 'w1', title: 'Wine dinner', startDate: '2026-11-06', endDate: '2026-11-06',
+  startTime: null, endTime: null,
+};
+
+test('Home reads its calendars’ events for Nov 1 to 30, under 92 days, and This week lists them', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, undefined, { [OWNER_EVENTS]: { events: [WINE_DINNER] } }));
+  expect(lastFake?.paths).toContain(OWNER_EVENTS);
+  expect(daysBetween('2026-11-01', '2026-11-30')).toBeLessThan(92);
+  const week = screen.getByRole('region', { name: 'This week in Hanover' });
+  expect(await within(week).findByText('Wine dinner')).toBeTruthy();
+});
+
+test('a refused events read leaves Home showing, with no imported events', async () => {
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, undefined, { [OWNER_EVENTS]: refusal(400, 'bad_range') }));
+  expect(screen.getByRole('heading', { name: 'This month in Hanover' })).toBeTruthy();
+  expect(screen.queryByText('Wine dinner')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+});
+
+// D49: the day detail lists every entry with its source, as the Calendar's panel does; "Open the calendar" sits under
+// the grid's key; the Reorder part's explanation is behind a disclosure, closed by default.
+test('the day detail lists a day’s imported event with its calendar’s chip, and a titled note by its name', async () => {
+  const titled = { notes: [note({ startDate: '2026-11-06', title: 'Holiday party', detail: 'A rehearsal dinner.' })] };
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, undefined, {
+    [OWNER_EVENTS]: { events: [WINE_DINNER] }, [`${PATH}/notes`]: titled,
+  }));
+  const grid = screen.getByRole('grid', { name: 'November 2026' });
+  const today = grid.querySelector('[data-date="2026-11-05"]');
+  if (today === null) throw new Error('no today');
+  fireEvent.keyDown(today, { key: 'ArrowRight' });
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  expect(await within(detail).findByText('From your calendar: Wine dinner')).toBeTruthy();
+  const chip = within(detail).getByRole('link', { name: 'US holidays. Opens this calendar in Your data' });
+  expect(chip.getAttribute('href')).toBe(`/locations/l1/data/c_${WINE_DINNER.calendarId}`);
+  expect(within(detail).getByText('Your note: Holiday party')).toBeTruthy();
+  expect(within(detail).getByText('A rehearsal dinner.')).toBeTruthy();
+  // The cell names both, and Home's This week shows the note's name.
+  expect(grid.querySelector('[data-date="2026-11-06"]')?.getAttribute('aria-label')).toContain('Holiday party. From your calendar: Wine dinner.');
+});
+
+test('“Open the calendar” sits under the grid’s key, and the Reorder explanation opens from its disclosure', async () => {
+  await renderAt(portal(meOf(ACCESS.member)));
+  const open = screen.getByRole('link', { name: 'Open the calendar' });
+  const key = screen.getByText('Town event or holiday');
+  expect(key.compareDocumentPosition(open) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  expect(open.compareDocumentPosition(detail) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  const how = within(detail).getByRole('button', { name: 'How Townwise builds an order' });
+  expect(how.getAttribute('aria-expanded')).toBe('false');
+  expect(within(detail).queryByText(REORDER_OVERVIEW)).toBeNull();
+  // The one-line status and the link stay in view.
+  expect(within(detail).getByRole('link', { name: 'Open this day on Orders' })).toBeTruthy();
+  fireEvent.click(how);
+  expect(how.getAttribute('aria-expanded')).toBe('true');
+  expect(within(detail).getByText(REORDER_OVERVIEW)).toBeTruthy();
+});
+
+test('This month marks a forecast and an actual apart, keys both, and says how the month’s forecast did (D49, 2026-11-18)', async () => {
+  // Wed, Nov 4: 110 stored guests against a run made Nov 2 that said 90 to 120.
+  const window = published() as { days: Parameters<typeof forecastOf>[0] };
+  const past = forecastDay({ date: '2026-11-04', low: 90, mid: 100, high: 120, actual: 110, inRange: true, scored: true, madeAt: '2026-11-02' });
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf([past, ...window.days])), 'This month in Hanover');
+  await waitFor(() => { expect(cellOf('2026-11-05').textContent).toBe('5~212forecast'); });
+  const figure = (date: string): HTMLElement | null => cellOf(date).querySelector<HTMLElement>('[data-figure]');
+  expect([figure('2026-11-04')?.getAttribute('data-figure'), figure('2026-11-04')?.textContent]).toEqual(['actual', '110']);
+  expect([figure('2026-11-05')?.getAttribute('data-figure'), figure('2026-11-05')?.textContent]).toEqual(['forecast', '~212']);
+  expect(figure('2026-11-04')?.style.color).not.toBe(figure('2026-11-05')?.style.color);
+  expect(cellOf('2026-11-04').getAttribute('aria-label')).toBe('Wed, Nov 4, 2026. 110 guests, actual.');
+  expect(screen.getByTestId('month-key').textContent).toMatch(/^94Actual guests~82Forecast/);
+  const monthLine = screen.getByText('So far this month: 1 of 1 day inside the forecast range.');
+  // “Open the calendar” sits directly under the key, and the month line under it (UI review nit 3).
+  expect(screen.getByRole('link', { name: 'Open the calendar' }).compareDocumentPosition(monthLine) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // The past day's detail and tooltip say how its forecast did, in the Calendar's words.
+  fireEvent(cellOf('2026-11-04'), pointer('pointerover', 'mouse'));
+  const detail = screen.getByRole('region', { name: 'Selected day' });
+  expect(within(detail).getByText('Forecast was about 100 (likely 90 to 120); 110 guests came: inside the range.')).toBeTruthy();
+  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('110 guests, actualForecast was about 100 (likely 90 to 120); 110 guests came: inside the range');
 });

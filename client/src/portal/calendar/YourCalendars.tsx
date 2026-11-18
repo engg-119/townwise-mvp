@@ -8,7 +8,8 @@ import { shownLocationName } from '../locations/naming';
 import { usePortal, useReadOnly } from '../PortalProvider';
 import { useLocation } from '../shell/LocationShell';
 import { ids } from '../ui/aria';
-import { Actions, Button } from '../ui/Button';
+import { itemHref } from '../routing';
+import { Actions, Button, LinkButton } from '../ui/Button';
 import { Checkbox } from '../ui/Checkbox';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, Messages, ReadOnlyLine } from '../ui/feedback';
@@ -203,9 +204,12 @@ function useFocusFirstControl(enabled: boolean): RefObject<React.ComponentRef<ty
  * now" (a link or a Google calendar; "Refreshing…" while it runs, and every row's disabled meanwhile), "Reconnect" when
  * the popover offers it (`onReconnect`), and "Remove" (disabled while its own row refreshes, so the refresh can't answer
  * 404 for a calendar the popover has just removed).
+ * "Open" goes to the calendar's page in Your data (D49), which only reads, so it stays on under view-as.
  */
 function CalendarRow(props: {
   calendar: OwnerCalendar;
+  /** The calendar's page in Your data (`c_<calendarId>`). */
+  href: string;
   /** Who can mend it if Google no longer lets Townwise read it. */
   reconnect: Reconnect;
   /** This row's refresh runs. */
@@ -234,6 +238,7 @@ function CalendarRow(props: {
       {status === null ? null : <Small white>{status}</Small>}
       {row.updated === null ? null : <Mono>{row.updated}</Mono>}
       <Actions>
+        <LinkButton href={props.href} label="Open" accessibilityLabel={`Open ${calendar.label}`} />
         {read ? (
           <Button
             variant="link"
@@ -731,6 +736,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
               <CalendarRow
                 key={calendar.id}
                 calendar={calendar}
+                href={itemHref(location.id, `c_${calendar.id}`)}
                 reconnect={reconnectOf(calendar, googleOn)}
                 refreshing={refresh.pending && refreshingId === calendar.id}
                 refreshBusy={refresh.pending}

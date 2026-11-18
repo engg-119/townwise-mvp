@@ -363,7 +363,7 @@ test('About says what stages 2 and 3 do today: the model and the baseline, refit
 test('Privacy says notes hold optional hours and change the published forecast (spec 17, D30)', () => {
   renderAt('/privacy');
   const text = screen.getByRole('main').textContent;
-  expect(text).toContain('Notes. Notes about unusual days: the kind, the dates and weekdays, the hours if you give them, the expected effect and number of guests, a detail of up to 280 characters, and who wrote it. Everyone on your organization’s team can see them. Home, the Calendar and Analytics show them beside your days, and TownwiseAI reads them. From today on, a private event with a number of guests, a buyout or a closure changes your location’s published forecast for its days; a note’s detail never goes into the forecast.');
+  expect(text).toContain('Notes. Notes about unusual days: the kind, the dates and weekdays, the hours if you give them, the expected effect and number of guests, an optional event name of up to 120 characters, a detail of up to 280 characters, and who wrote it. Everyone on your organization’s team can see them. Home, the Calendar and Analytics show them beside your days, and TownwiseAI reads them. From today on, a private event with a number of guests, a buyout or a closure changes your location’s published forecast for its days; a note’s detail never goes into the forecast.');
 });
 
 test('Privacy makes the three commitments and no longer says the app has no upload', () => {

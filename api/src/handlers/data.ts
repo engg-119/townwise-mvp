@@ -20,7 +20,8 @@ import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_T
 import { AI_READS_IN_FLIGHT } from '../files/limits.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type {
-  AiActionsOutcome, AiCalibration, AiDaysReason, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord, FileStatus,
+  AiActionsOutcome, AiCalibration, AiDaysReason, AiEventEffect, AiEventKind, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord,
+  FileStatus,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
@@ -109,6 +110,18 @@ export interface DataItemAiView {
   canUndo: boolean;
   rulesSuggested: number;
   rulesWaiting: number;
+  /**
+   * D49: on one item's view only (GET .../data/:ref), never the list's, the events the read found, in its order, as it
+   * read them; `noteId` is the note the read made from the event while that note exists, else null; `title` is null
+   * under view-as; [] before the read is done and once the original is deleted.
+   */
+  events?: DataItemAiEvent[];
+}
+
+/** An event a read found (DataItemAiView.events). */
+export interface DataItemAiEvent {
+  title: string | null; startDate: string; endDate: string; kind: AiEventKind; effect: AiEventEffect; expectedGuests: number | null;
+  noteId: string | null;
 }
 
 /**
@@ -222,7 +235,7 @@ function undoable(file: FileRecord): boolean {
     || (outcome.rulesSuggested?.length ?? 0) > 0;
 }
 
-function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks): DataItemAiView | null {
+function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks, withEvents: boolean): DataItemAiView | null {
   const ai = file?.ai ?? null;
   if (file === null || ai === null) return null;
   const result = ai.status === 'done' ? ai.result : null;
@@ -238,6 +251,15 @@ function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks
   });
   const uploadId = outcome?.uploadId ?? null;
   const itemId = outcome?.itemId ?? null;
+  const events = !withEvents ? {} : {
+    events: (result?.events ?? []).map((event, index): DataItemAiEvent => {
+      const noteId = actions?.plan.noteIds[index];
+      return {
+        title: hidden ? null : event.title, startDate: event.startDate, endDate: event.endDate, kind: event.kind, effect: event.effect,
+        expectedGuests: event.expectedGuests, noteId: noteId !== undefined && links.notes.has(noteId) ? noteId : null,
+      };
+    }),
+  };
   return {
     status: ai.status,
     reason: ai.reason,
@@ -258,6 +280,7 @@ function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks
     canUndo: undoable(file) && mayUndo(member, file),
     rulesSuggested: outcome?.rulesSuggested?.length ?? 0,
     rulesWaiting: outcome === null ? 0 : links.waiting.get(file.id) ?? 0,
+    ...events,
   };
 }
 
@@ -299,6 +322,7 @@ async function aiLinksFor(ctx: TownwiseContext, scope: OrgScope, items: readonly
 
 function dataItemView(
   member: MemberPrincipal, item: DataItemRecord, emails: ItemEmails, filesOn: boolean, aiOn: boolean, now: Date, links: AiLinks,
+  withEvents = false,
 ): DataItemView {
   const viewAs = member.viewAs !== null;
   const file = filesOn ? item.file : null;
@@ -327,7 +351,7 @@ function dataItemView(
     editedAt: edited === null ? null : edited.toISOString(),
     editedByEmail: edited === null ? null : emails.edited,
     canAiRead: aiReadable(member, item, file, aiOn),
-    ai: aiView(member, file, links),
+    ai: aiView(member, file, links, withEvents),
     fromAiRead: links.sources.get(aiSourceOf(item) ?? '') ?? null,
   };
 }
@@ -353,10 +377,15 @@ async function itemViews(ctx: TownwiseContext, member: MemberPrincipal, items: r
   return items.map((item) => dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, now, links));
 }
 
-/** One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts). */
-export async function itemView(ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord): Promise<DataItemView> {
+/**
+ * One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts);
+ * with `events`, its read's events too (DataItemAiView.events, D49).
+ */
+export async function itemView(
+  ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord, opts: { events?: boolean } = {},
+): Promise<DataItemView> {
   const [emails, links] = await Promise.all([emailsFor(ctx, [item]), aiLinksFor(ctx, member.scope, [item])]);
-  return dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links);
+  return dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links, opts.events === true);
 }
 
 const listQuery = z.object({ locationId: objectId.optional(), after: z.string().max(64).optional() });
@@ -389,10 +418,10 @@ export async function listData(ctx: TownwiseContext, req: Request, res: Response
 }
 
 /**
- * GET /locations/:locationId/data/:ref: one item exactly as the list shows it (P26's item page). An item the list leaves
- * out answers 404 like an unknown one: every stored file while files are off, a stored file that wrote days (its
- * upload is the item), a file being deleted and someone else's unfinished upload. A read: it logs nothing and records
- * nothing.
+ * GET /locations/:locationId/data/:ref: one item exactly as the list shows it, plus its read's `ai.events` (D49) (P26's
+ * item page). An item the list leaves out answers 404 like an unknown one: every stored file while files are off, a
+ * stored file that wrote days (its upload is the item), a file being deleted and someone else's unfinished upload. A
+ * read: it logs nothing and records nothing.
  */
 export async function getDataItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -400,7 +429,7 @@ export async function getDataItem(ctx: TownwiseContext, req: Request, res: Respo
   const location = await loadLocation(ctx, member.scope, req.params.locationId);
   const item = await loadDataItem(ctx, member.scope, location.id, ref, member.userId);
   if (item === null) throw notFound();
-  res.status(200).json({ item: await itemView(ctx, member, item) });
+  res.status(200).json({ item: await itemView(ctx, member, item, { events: true }) });
 }
 
 /** The location, then the item by its ref; a stored file answers 503 files_unavailable while files are off. */

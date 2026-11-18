@@ -16,6 +16,8 @@ import {
   undidLine, undoBody,
 } from '../aiCopy';
 import { readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
+import { agendaMonths, fileEventItem } from './agenda';
+import { CalendarAgenda } from './CalendarAgenda';
 
 // The TownwiseAI section of an item's page (P27, D34, spec 11A.9), on web and native, for an item with a stored file
 // (an `f_` item, or an upload read from one). Before a read, or after one that failed, was skipped or was undone, the
@@ -165,6 +167,10 @@ function Done(props: { ai: AiRead; locationId: string; onUndo: () => void }): Re
       {ai.partial ? <Small>{AI.partial}</Small> : null}
       {ai.daysCut ? <Small>{AI.daysCut}</Small> : null}
       <Small white>{AI.added}</Small>
+      {ai.kind === 'calendar' && ai.events !== undefined && ai.events.length > 0 ? (
+        // What the read found in a calendar file (D49): its events by month, each one that made a note linked to its day.
+        <CalendarAgenda months={agendaMonths(ai.events.map((event, at) => fileEventItem(locationId, event, at)))} label="Events TownwiseAI read" />
+      ) : null}
       {ai.notes.length === 0 ? <Small>{AI.noNotes}</Small> : (
         <Stack gap={theme.space[2]}>
           <Small>{notesLine(ai.notes.length)}</Small>

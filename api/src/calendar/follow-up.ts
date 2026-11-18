@@ -62,8 +62,16 @@ function sameDates(a: NoteDates, b: NoteDates): boolean {
 function contentOf(note: NoteRecord): NoteContent {
   return {
     kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
-    expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
+    expectedGuests: note.expectedGuests, detail: note.detail, title: note.title, startTime: note.startTime, endTime: note.endTime,
   };
+}
+
+/**
+ * A follow-up's snapshot of the note: never its title (D49). A suggestion carries none, the accept never writes the
+ * snapshot back (moveIf sets dates only), and the card's words come from the kind and dates.
+ */
+function snapshot(content: NoteContent): NoteContent {
+  return { ...content, title: null };
 }
 
 /** One linked note's follow-up, or null when there is nothing to suggest. */
@@ -77,15 +85,16 @@ function followUpOf(note: NoteRecord, event: StoredEvent | undefined, guards: Fo
   if (event !== undefined) {
     const to = datesOf(event);
     if (sameDates(to, from)) return null;
-    // The event's exact new dates and hours, by Section 12's rules, starting after the town's today.
+    // The event's exact new dates and hours, by Section 12's rules (checked with the note's own title, which an `other`
+    // note may rest on), starting after the town's today.
     const moved = readNoteContent({ ...contentOf(note), ...asNote(to) }, guards.today);
     if (moved === null || moved.startDate <= guards.today) return null;
-    return { type: 'move', note: moved, follow: { ...base, change: 'moved', to } };
+    return { type: 'move', note: snapshot(moved), follow: { ...base, change: 'moved', to } };
   }
   const gone = link.endDate >= guards.today && note.startDate > guards.today && guards.eventCount < MAX_EVENTS
     // A refresh that kept none of the keys the calendar had: the feed rewrote them, so nothing went.
     && (guards.hadKeys === 0 || guards.keptKeys > 0);
-  return gone ? { type: 'remove', note: contentOf(note), follow: { ...base, change: 'gone', to: null } } : null;
+  return gone ? { type: 'remove', note: snapshot(contentOf(note)), follow: { ...base, change: 'gone', to: null } } : null;
 }
 
 /**

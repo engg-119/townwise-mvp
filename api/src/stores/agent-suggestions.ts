@@ -473,7 +473,9 @@ function contentOf(doc: SuggestionDoc): SuggestionContent {
   const c = doc.content;
   const shared = { kind: c.kind, startDate: c.startDate, weekdays: c.weekdays, effect: c.effect, expectedGuests: c.expectedGuests, startTime: c.startTime, endTime: c.endTime };
   if (doc.type === 'rule') return { type: 'rule', text: doc.text ?? '', schedule: { ...shared, endDate: c.endDate, ...seasonOf(c.season) } };
-  const note: NoteContent = { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail };
+  // No suggestion carries a title (D49; openspec change calendar-event-suggestions, design decision 10): the weekly
+  // pass proposes none, a spotted event's title is never stored, and a follow-up's snapshot leaves the note's to the note.
+  const note: NoteContent = { ...shared, endDate: c.endDate ?? c.startDate, detail: c.detail, title: null };
   if (doc.type === 'event' && doc.event !== undefined) {
     const { event } = doc;
     return { type: 'event', note, event: { calendarId: event.calendarId.toHexString(), uid: event.uid, ...datesOf(event) } };

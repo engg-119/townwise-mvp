@@ -241,6 +241,7 @@ export function SuggestionCard(props: {
   const based = basedOn(suggestion);
   const facts = suggestionFacts(suggestion);
   const detail = suggestion.type === 'rule' || suggestion.type === 'event' ? null : suggestion.note.detail;
+  const title = suggestion.type === 'note' ? suggestion.note.title ?? null : null;
   const describedBy = [props.readOnlyId, helpId].filter((value): value is string => value !== null).join(' ');
   // A spotted event's choice and guest count, kept by the panel, the count prefilled from the event's title when it gave
   // a number.
@@ -273,6 +274,7 @@ export function SuggestionCard(props: {
       <Heading level={3}>{suggestionHeading(suggestion)}</Heading>
       <Text style={styles.context}>{sentenceOf(suggestion)}</Text>
       {suggestion.type === 'rule' ? <Text style={styles.context}>{suggestion.scheduleSummary}</Text> : null}
+      {title === null ? null : <Text style={styles.context}>{`Event name: ${title}`}</Text>}
       {facts === null ? null : <Text style={styles.context}>{facts}</Text>}
       {detail === null ? null : <Text style={styles.context}>{detail}</Text>}
       {based === null ? null : <Text style={styles.help}>{based}</Text>}

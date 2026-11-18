@@ -54,7 +54,7 @@ function closureOn(date: string): NewSuggestion {
       type: 'note',
       note: {
         kind: 'closure', startDate: date, endDate: date, weekdays: null, effect: 'closed', expectedGuests: null,
-        detail: null, startTime: null, endTime: null,
+        detail: null, title: null, startTime: null, endTime: null,
       },
     },
     why: 'Independence Day is Sat, Jul 4, and you were closed on it last year.',
@@ -398,7 +398,7 @@ describe('suggestions', () => {
 describe('the owner-calendar kinds in the store (calendar-event-suggestions, design decisions 3 and 4)', () => {
   const PARTY: NoteContent = {
     kind: 'private_event', startDate: '2026-06-13', endDate: '2026-06-13', weekdays: null, effect: 'closed', expectedGuests: 40,
-    detail: null, startTime: '18:00', endTime: '22:00',
+    detail: null, title: null, startTime: '18:00', endTime: '22:00',
   };
   const ON_13 = { startDate: '2026-06-13', endDate: '2026-06-13', startTime: '18:00', endTime: '22:00' };
   const ON_20 = { startDate: '2026-06-20', endDate: '2026-06-20', startTime: '18:00', endTime: '22:00' };
@@ -582,7 +582,7 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
   async function movedAgain(t: Team, note: NoteView, calendarId: string): Promise<void> {
     const content: NoteContent = {
       kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
-      expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
+      expectedGuests: note.expectedGuests, detail: note.detail, title: null, startTime: note.startTime, endTime: note.endTime,
     };
     server.clock.advance(MINUTE);
     const follow: FollowContent = {
@@ -615,10 +615,10 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
   }
 
   /** Make a note on the party as a member: a buyout of 40, linked to the event. */
-  async function partyNote(t: Team, calendarId: string): Promise<NoteView> {
+  async function partyNote(t: Team, calendarId: string, extra: Record<string, unknown> = {}): Promise<NoteView> {
     const res = await call(server, `/api/org/locations/${t.locationId}/notes`, {
       session: t.member,
-      json: { kind: 'private_event', ...ON_13, effect: 'closed', expectedGuests: 40, detail: 'Upstairs room', fromEvent: { calendarId, uid: PARTY_UID } },
+      json: { kind: 'private_event', ...ON_13, effect: 'closed', expectedGuests: 40, detail: 'Upstairs room', fromEvent: { calendarId, uid: PARTY_UID }, ...extra },
     });
     expect(res.status).toBe(201);
     return (await res.json() as { note: NoteView }).note;
@@ -628,7 +628,7 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
   async function followUp(t: Team, note: NoteView, calendarId: string, type: 'move' | 'remove'): Promise<string> {
     const content: NoteContent = {
       kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
-      expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
+      expectedGuests: note.expectedGuests, detail: note.detail, title: null, startTime: note.startTime, endTime: note.endTime,
     };
     const base = { noteId: note.id, calendarId, from: ON_13, noteUpdatedAt: new Date(note.updatedAt) };
     const follow: FollowContent = type === 'move'
@@ -643,7 +643,7 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
   async function spotted(t: Team, calendarId: string): Promise<string> {
     const [row] = await stored(t, [{
       content: {
-        type: 'event', note: { kind: 'private_event', ...ON_13, weekdays: null, effect: 'unknown', expectedGuests: 40, detail: null },
+        type: 'event', note: { kind: 'private_event', ...ON_13, weekdays: null, effect: 'unknown', expectedGuests: 40, detail: null, title: null },
         event: { calendarId, uid: PARTY_UID, ...ON_13 },
       },
       why: null, calendarIds: [],
@@ -807,6 +807,65 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
     expect(await noteRow(third.id)).not.toBeNull();
   });
 
+  it('a titled note (D49) moved by accepting a move keeps its title; the card and the stored follow-up hold none', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId, { title: 'Sentinel Holiday party' });
+    expect(note.title).toBe('Sentinel Holiday party');
+    const id = await followUp(t, note, calendarId, 'move');
+    const listed = only(await panel(t, t.member), id);
+    expect(listed).toMatchObject({ type: 'move', words: 'The private event on Sat, Jun 13 moved to Sat, Jun 20 on your calendar.', note: { title: null } });
+    expect(JSON.stringify(listed)).not.toContain('Sentinel Holiday party');
+    const row = await server.connection.collection('tw_agent_suggestions').findOne({ _id: new Types.ObjectId(id) });
+    expect(JSON.stringify(row)).not.toContain('Sentinel Holiday party');
+
+    const res = await decide(t, t.admin, id, 'accept');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ note: { id: note.id, ...ON_20, title: 'Sentinel Holiday party', detail: 'Upstairs room' } });
+    expect(await noteRow(note.id)).toMatchObject({ ...ON_20, title: 'Sentinel Holiday party', detail: 'Upstairs room', expectedGuests: 40 });
+  });
+
+  it('a removal of a titled note (D49) deletes it with no other write to any note', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId, { title: 'Sentinel Holiday party' });
+    const id = await followUp(t, note, calendarId, 'remove');
+    expect(JSON.stringify(only(await panel(t, t.member), id))).not.toContain('Sentinel Holiday party');
+    const model = server.connection.models.TwNote as unknown as Record<string, (...args: unknown[]) => unknown>;
+    const writesSpied = ['updateOne', 'updateMany', 'findOneAndUpdate', 'replaceOne', 'findOneAndReplace', 'bulkWrite', 'insertMany', 'create']
+      .map((method) => vi.spyOn(model, method));
+    const res = await decide(t, t.admin, id, 'accept');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ suggestion: { id, status: 'accepted' }, note: null, rule: null });
+    for (const spy of writesSpied) expect(spy).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    expect(await noteRow(note.id)).toBeNull();
+    expect(await actions(t)).toEqual([
+      { action: 'note.deleted', details: { locationId: t.locationId, kind: 'private_event', startDate: '2026-06-13', endDate: '2026-06-13' } },
+      { action: 'agent.suggestion_accepted', details: { locationId: t.locationId, suggestionId: id, type: 'remove' } },
+    ]);
+  });
+
+  it('a spotted event’s accepted note has no title, even when its stored snapshot was handed one', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const [row] = await stored(t, [{
+      content: {
+        type: 'event', note: { kind: 'private_event', ...ON_13, weekdays: null, effect: 'unknown', expectedGuests: 40, detail: null, title: 'Sentinel model title' },
+        event: { calendarId, uid: PARTY_UID, ...ON_13 },
+      },
+      why: null, calendarIds: [],
+    }]);
+    const id = row?.id ?? '';
+    expect(JSON.stringify(await server.connection.collection('tw_agent_suggestions').findOne({ _id: new Types.ObjectId(id) }))).not.toContain('Sentinel model title');
+    expect(only(await panel(t, t.member), id)).toMatchObject({ type: 'event', note: { title: null } });
+    const res = await decide(t, t.admin, id, 'accept', { effect: 'closed', expectedGuests: 40 });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ note: { id, title: null, detail: null } });
+    expect(await noteRow(id)).toMatchObject({ title: null, detail: null });
+    expect(JSON.stringify(await noteRow(id))).not.toMatch(/Sentinel model title|Pemberton/u);
+  });
+
   it('members are refused (403), staff in view-as are refused, and a dismiss records it with its type', async () => {
     const t = await team();
     const { calendarId } = await calendarOf(t);
@@ -860,7 +919,7 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
     const words = `From your calendar: ${TITLE}, Sat, Jun 13, 6 pm to 10 pm`;
     expect(only(await panel(t, t.member), id)).toEqual({
       id, type: 'event', why: null, calendar: [], createdAt: expect.any(String) as unknown, words,
-      note: { kind: 'private_event', ...ON_13, weekdays: null, effect: 'unknown', expectedGuests: 40, detail: null },
+      note: { kind: 'private_event', ...ON_13, weekdays: null, effect: 'unknown', expectedGuests: 40, detail: null, title: null },
       event: { calendarId, title: TITLE, titleHidden: false, ...ON_13 },
     });
     const staff = await signInStaff(server);

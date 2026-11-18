@@ -3,6 +3,7 @@ import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { shortDate } from '../analytics/words';
+import { INSIDE_RANGE } from '../calendar/model';
 import { formatDate } from '../format';
 import { useLoad } from '../hooks';
 import { shownLocationName } from '../locations/naming';
@@ -71,7 +72,7 @@ export function runLines(run: ForecastRun): string[] {
 export function liveLine(live: LiveAccuracy | null): string {
   if (live === null) return 'Not scored yet: Townwise scores it once 5 of its days have sales.';
   const miss = live.typicalErrorPct === null ? '' : `; typical miss ${pct(live.typicalErrorPct)}`;
-  return `So far: ${String(live.inRange)} of ${String(live.days)} days inside the range${miss}, from ${formatDate(live.from)} to ${formatDate(live.to)}.`;
+  return `So far: ${String(live.inRange)} of ${String(live.days)} days ${INSIDE_RANGE}${miss}, from ${formatDate(live.from)} to ${formatDate(live.to)}.`;
 }
 
 /**

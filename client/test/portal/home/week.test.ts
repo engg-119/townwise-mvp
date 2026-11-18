@@ -4,13 +4,19 @@ import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
   calendarCoverageLine, calendarWeekLine, dayMonthRange, eventLine, forecastPhrase, forecastRange, homeCalendarRange, lastWeekComparison, lastWeekLine,
   lastWeekForecastCell, lastWeekForecastOnly, lastWeekLines, lastWeekPhrase, lastWeekPhrases, lastWeekRange, lastYearDayPhrase,
-  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, monthStatusWord, nextEvent,
-  nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, type HomeInput,
+  lateWeekLine, lateWeekShare, leadLine, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, monthItems, monthMove, nextEvent,
+  nextEventWhen, pastDay, periodLine, sameWeekdayYearsAgo, summaryLabel, thisDayLine, thisWeek, vsUsualLine, weekDates, weekEntries, type HomeInput,
+  monthEntryLines, narrowCaption, WIDE_CELL_HEIGHT, WIDE_LINES, WIDE_ROWS, wideCell, type MonthCell,
 } from '../../../src/portal/analytics/week';
 import type { ForecastDay, ForecastWindow, LiveAccuracy } from '../../../src/portal/estimates/api';
 import { addDays } from '../../../src/portal/locations/dates';
 import { calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
+import { ALL_FILTERS, statusWord, type CalendarInput } from '../../../src/portal/calendar/model';
+import type { Note } from '../../../src/portal/locations/api';
+import type { TownEvent } from '../../../src/portal/analytics/api';
 import { forecastDay } from '../calendar/fakes';
+import { PARITY_DAY, PARITY_ORDER, parityInput } from '../calendar/parity-fixture';
+import { ruleOf } from '../rules/fakes';
 
 // Home's computations (home.md 2, 5.6), on synthetic days only. Explainability: every comparison says how many days
 // it is over, and "last year" is the same weekday 52 weeks earlier. Honesty: no figure for a day after the last day
@@ -20,6 +26,13 @@ const TODAY = '2026-11-05'; // a Thursday
 
 function input(days: readonly DayRecord[], context: DayContext = EMPTY_CONTEXT, today = TODAY): HomeInput {
   return { today, byDate: byDate(days), context, metric: 'guests', lastDate: days.at(-1)?.date ?? null };
+}
+
+/** Home's one CalendarInput (D49) over `notes` and `events`, with `fields` on top; no forecast read yet. */
+function calendarOf(notes: readonly Note[], events: readonly TownEvent[], fields: Partial<CalendarInput> = {}): CalendarInput {
+  return {
+    today: TODAY, covered: forecastRange(TODAY), forecast: null, salesDays: [], events, notes, rules: [], imported: [], filters: ALL_FILTERS, ...fields,
+  };
 }
 
 describe('weeks', () => {
@@ -53,32 +66,34 @@ describe('weeks', () => {
     expect(forecastPhrase(undefined)).toBeNull();
     const open = forecastPhrase(forecastDay({ date: '2026-11-05', low: 67.6, mid: 90.4, high: 112.2 }));
     if (open === null) throw new Error('no phrase');
-    expect(plainOf(open)).toBe('About 90 guests, 67 to 113');
-    expect(open[0]).toEqual({ strong: 'About 90 guests' });
+    // A forecast's mark (D49, decision 10): the leading "~" and the word "forecast".
+    expect(plainOf(open)).toBe('~90 guests, forecast, likely 67 to 113');
+    expect(open[0]).toEqual({ strong: '~90 guests' });
     expect(forecastPhrase(forecastDay({ date: '2026-11-15', status: 'closed', low: null, mid: null, high: null }))).toEqual(['Closed']);
     const yours = forecastDay({
       date: '2026-11-16', status: 'booked', low: null, mid: null, high: null, noteGuests: 40,
       reasons: [{ kind: 'note', label: 'Your buyout', effectPct: null, sources: [], note: { id: 'n1', guests: 40, outcome: 'booked' } }],
     });
-    expect(forecastPhrase(yours)).toEqual(['Booked: a private buyout, ', { strong: '40 guests' }]);
+    // A buyout's party is an expected count, a forecast too.
+    expect(forecastPhrase(yours)).toEqual(['Booked: a private buyout, ', { strong: '~40 guests' }, ', forecast']);
     expect(forecastPhrase({ ...yours, reasons: [] })).toEqual(['Booked for a private event']);
     expect(forecastPhrase(forecastDay({ date: '2026-11-17', low: null, mid: null, high: null }))).toBeNull();
   });
 
-  test('an outlook day (D52) in This week and This month: “Outlook: about 90 guests, 67 to 113”, its cell marked Outlook with its figure', () => {
+  test('an outlook day (D52) in This week and This month: “Outlook: ~90 guests, forecast, likely 67 to 113”, its cell marked Outlook with its figure', () => {
     const outlook = forecastDay({ date: '2026-11-12', low: 67.6, mid: 90.4, high: 112.2, outlook: true });
     const phrase = forecastPhrase(outlook);
     if (phrase === null) throw new Error('no phrase');
-    expect(plainOf(phrase)).toBe('Outlook: about 90 guests, 67 to 113');
-    // A forecast day reads as before.
+    expect(plainOf(phrase)).toBe('Outlook: ~90 guests, forecast, likely 67 to 113');
+    // A forecast day reads as before (D49's mark).
     const plain = forecastPhrase({ ...outlook, outlook: false });
-    expect(plain === null ? null : plainOf(plain)).toBe('About 90 guests, 67 to 113');
-    const home = input([]);
-    const cells = monthGrid(TODAY, home.context, { input: home, forecast: new Map([[outlook.date, outlook]]) }).flat();
+    expect(plain === null ? null : plainOf(plain)).toBe('~90 guests, forecast, likely 67 to 113');
+    const window: ForecastWindow = { available: true, reason: null, runs: [], days: [outlook], weeks: [] };
+    const cells = monthGrid(TODAY, calendarOf([], [], { forecast: window })).flat();
     const cell = cells.find((each) => each?.date === outlook.date);
-    expect(cell).toMatchObject({ status: 'outlook', figure: { value: 90, kind: 'forecast', text: '90' } });
-    expect(cell?.label).toContain('Outlook about 90 guests, 67 to 113.');
-    expect(cell === undefined || cell === null ? null : monthStatusWord(cell)).toBe('Outlook');
+    expect(cell).toMatchObject({ status: 'outlook', figure: { value: 90, kind: 'forecast' }, figureText: '~90' });
+    expect(cell?.label).toContain('Outlook: 90 guests, forecast, likely 67 to 113.');
+    expect(cell === undefined || cell === null ? null : statusWord(cell.status)).toBe('Outlook');
   });
 
   test('ranges without a year', () => {
@@ -282,9 +297,9 @@ describe('last week with the published forecast', () => {
     const comparison = lastWeekComparison(at(HISTORY), window(days, { days: 6, inRange: 5, typicalErrorPct: 11.6, from: '2026-11-16', to: '2026-11-21' }));
     expect(comparison).toMatchObject({ state: 'compared', comparedDays: 7, total: 770, lastYearTotal: 700 });
     const [error] = lastWeekPhrases(comparison, 'guests');
-    expect(error).toEqual(['Townwise’s forecast was off by ', { strong: '12%' }, ' over ', { strong: '6 days' }, '. ', { strong: '5 of 6 days' }, ' landed in its range.']);
+    expect(error).toEqual(['Townwise’s forecast was off by ', { strong: '12%' }, ' over ', { strong: '6 days' }, '. ', { strong: '5 of 6 days' }, ' inside the forecast range.']);
     expect(lastWeekLines(comparison, 'guests')).toEqual([
-      'Townwise’s forecast was off by 12% over 6 days. 5 of 6 days landed in its range.',
+      'Townwise’s forecast was off by 12% over 6 days. 5 of 6 days inside the forecast range.',
       'Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.',
     ]);
     // The read's own day, scored or not; no day is a forecast in place of sales.
@@ -297,11 +312,11 @@ describe('last week with the published forecast', () => {
     const days = [scoredDay('2026-11-16', true), scoredDay('2026-11-17', false), scoredDay('2026-11-18', true)];
     const comparison = lastWeekComparison(at(HISTORY), window(days, null));
     const [first] = lastWeekPhrases(comparison, 'guests');
-    expect(first).toEqual([{ strong: '2 of 3 days' }, ' landed in Townwise’s range.']);
-    expect(lastWeekLines(comparison, 'guests')[0]).toBe('2 of 3 days landed in Townwise’s range.');
+    expect(first).toEqual([{ strong: '2 of 3 days' }, ' inside the forecast range.']);
+    expect(lastWeekLines(comparison, 'guests')[0]).toBe('2 of 3 days inside the forecast range.');
     expect(lastWeekLines(comparison, 'guests').join(' ')).not.toMatch(/off by/);
     const one = lastWeekComparison(at(HISTORY), window([scoredDay('2026-11-16', false)], null));
-    expect(lastWeekLines(one, 'guests')[0]).toBe('0 of 1 day landed in Townwise’s range.');
+    expect(lastWeekLines(one, 'guests')[0]).toBe('0 of 1 day inside the forecast range.');
   });
 
   test('no uploads since last Sunday: the forecast for these days, no total, and the sentence replaces “Your history ends”', () => {
@@ -328,7 +343,7 @@ describe('last week with the published forecast', () => {
     // The comparison is over the five stored days only: nothing is added for Saturday and Sunday.
     expect(comparison).toMatchObject({ state: 'compared', comparedDays: 5, total: 550, lastYearTotal: 500 });
     expect(lastWeekLines(comparison, 'guests')).toEqual([
-      'Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.',
+      'Townwise’s forecast was off by 10% over 5 days. 4 of 5 days inside the forecast range.',
       'No guest count uploaded for Sat and Sun yet; this is Townwise’s forecast.',
       'Last week: 550 guests on the 5 days both weeks have, 10% more than the same days last year (500).',
     ]);
@@ -336,7 +351,7 @@ describe('last week with the published forecast', () => {
     expect(rows.map((day) => day.forecastOnly)).toEqual([false, false, false, false, false, true, true]);
     const saturday = rows[5];
     if (saturday?.forecast == null) throw new Error('no Saturday');
-    expect(lastWeekForecastOnly(saturday.forecast)).toBe('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245');
+    expect(lastWeekForecastOnly(saturday.forecast)).toBe('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245');
     // Scored rows keep their guests, with the forecast beside them.
     expect(rows[0]).toMatchObject({ value: 110, lastYear: 100 });
     expect(lastWeekForecastCell(rows[0]?.forecast ?? forecastDay({ date: 'x' }))).toBe('About 105, 90 to 120');
@@ -370,7 +385,7 @@ describe('last week with the published forecast', () => {
     expect(wednesday).toMatchObject({ date: '2026-11-18', value: 110, forecastOnly: false });
     expect(wednesday?.forecast?.scored).toBe(false);
     expect(lastWeekForecastCell(wednesday?.forecast ?? forecastDay({ date: 'x' }))).toBe('About 105, 90 to 120');
-    expect(lastWeekLines(comparison, 'guests')[0]).toBe('Townwise’s forecast was off by 5% over 6 days. 6 of 6 days landed in its range.');
+    expect(lastWeekLines(comparison, 'guests')[0]).toBe('Townwise’s forecast was off by 5% over 6 days. 6 of 6 days inside the forecast range.');
   });
 });
 
@@ -418,20 +433,20 @@ describe('this month', () => {
   });
 
   test('the month grid marks events, notes, this week and today; the list is in date order', () => {
-    const context = dayContext(
+    const calendar = calendarOf(
       [note({ startDate: '2026-11-20', endDate: '2026-11-22', kind: 'private_event' })],
       [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), holiday('2026-11-26', 'Thanksgiving Day', 'us:thanksgiving', 'Thanksgiving')],
     );
-    const grid = monthGrid(TODAY, context);
+    const grid = monthGrid(TODAY, calendar);
     expect(grid[0]?.[0]).toBeNull(); // Oct 26 is not in November
     const cells = grid.flat().filter((cell) => cell !== null);
     expect(cells).toHaveLength(30);
-    expect(cells.find((cell) => cell.date === '2026-11-11')?.event).toBe(true);
-    expect(cells.find((cell) => cell.date === '2026-11-21')?.note).toBe(true);
+    expect(cells.find((cell) => cell.date === '2026-11-11')?.marks.event).toBe(true);
+    expect(cells.find((cell) => cell.date === '2026-11-21')?.marks.note).toBe(true);
     // This week is the seven days from today, as the This week card shows them.
     expect(cells.filter((cell) => cell.inWeek).map((cell) => cell.date)).toEqual(weekDates(TODAY));
     expect(cells.find((cell) => cell.isToday)?.date).toBe(TODAY);
-    const items = monthItems(TODAY, context);
+    const items = monthItems(TODAY, calendar);
     expect(items.map((item) => [item.kind, item.dates])).toEqual([['event', 'Nov 11'], ['note', 'Nov 20 to 22'], ['event', 'Nov 26']]);
     expect(eventLine({ title: 'Veterans Day', kind: 'holiday', scope: 'national' })).toBe('Veterans Day. Federal holiday.');
     expect(eventLine({ title: 'Sample game', kind: 'event', scope: 'town' })).toBe('Sample game. Town event.');
@@ -439,16 +454,42 @@ describe('this month', () => {
 });
 
 describe('the month card', () => {
-  const context = dayContext(
-    [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })],
-    [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })],
-  );
+  const NOTES = [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })];
+  const EVENTS = [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })];
+  const context = dayContext(NOTES, EVENTS);
 
-  test('each day of the grid says its marks in words', () => {
-    const cells = monthGrid(TODAY, context).flat().filter((cell) => cell !== null);
+  test('each day of the grid says its marks in words, every entry named (D49)', () => {
+    const cells = monthGrid(TODAY, calendarOf(NOTES, EVENTS)).flat().filter((cell) => cell !== null);
     expect(cells.find((cell) => cell.date === TODAY)?.label).toBe('Thu, Nov 5, 2026. Today. This week.');
-    expect(cells.find((cell) => cell.date === '2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. 1 note.');
+    expect(cells.find((cell) => cell.date === '2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. Private event.');
     expect(cells.find((cell) => cell.date === '2026-11-11')?.label).toBe('Wed, Nov 11, 2026. This week. Veterans Day.');
+  });
+
+  test('the month list adds rules, imported events and note names, a title once a day across sources (D49)', () => {
+    const rule = ruleOf('r1', 'Closed Mondays in winter', {
+      schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+      scheduleSummary: 'Closed on Mondays from Nov 1, 2026',
+    });
+    const imported = (uid: string, title: string, date: string) => ({
+      calendarId: 'c1', calendar: 'US holidays', uid, title, startDate: date, endDate: date, startTime: null, endTime: null,
+    });
+    const items = monthItems(TODAY, calendarOf([note({ startDate: '2026-11-06', title: 'Holiday party' })], EVENTS, {
+      rules: [rule], imported: [imported('v1', 'Veterans day', '2026-11-11'), imported('w1', 'Wine dinner', '2026-11-13')],
+    }));
+    expect(items.map((item) => [item.kind, item.dates])).toEqual([
+      ['rule', 'Nov 2'], ['note', 'Nov 6'], ['event', 'Nov 7'], ['event', 'Nov 11'], ['imported', 'Nov 13'],
+    ]);
+  });
+
+  test('This week’s days list the same entries in the same order as the Calendar’s week cards (D49 parity)', () => {
+    const fixture = parityInput();
+    const home = weekEntries(PARITY_DAY, fixture);
+    expect(home.lines.map((entry) => entry.words)).toEqual(PARITY_ORDER.slice(0, 2));
+    expect(home.more).toBe(`+${String(PARITY_ORDER.length - 2)} more`);
+    // Three or fewer show whole.
+    const few = weekEntries(PARITY_DAY, { ...fixture, imported: [], rules: [] });
+    expect(few).toEqual({ lines: expect.any(Array) as unknown, more: null });
+    expect(few.lines.map((entry) => entry.words)).toEqual(['Holiday party', 'Made-up Day', 'Craft fair']);
   });
 
   test('the keys move a day or a week and never leave the month', () => {
@@ -490,13 +531,13 @@ describe('the month card', () => {
     // 100 guests a day, but 1 on Tue, Nov 3, 2026 and on Tue, Nov 4, 2025; decoded, so each day has its typical guests.
     const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', (date) => (date === '2026-11-03' || date === '2025-11-04' ? 1 : 100))));
     const home = input(days, context);
-    const cellOn = (on: HomeInput, date: string) => monthGrid(TODAY, on.context, { input: on, forecast: new Map() }).flat().find((each) => each?.date === date);
+    // Home's cells are the Calendar's (D49): the same likely-closed rule, over the stored days.
+    const cellOn = (on: HomeInput, date: string, notes: readonly Note[] = NOTES) => monthGrid(TODAY, calendarOf(notes, EVENTS, {
+      salesDays: [...on.byDate.values()], forecast: { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] },
+    })).flat().find((each) => each?.date === date);
     const cell = cellOn(home, '2026-11-03');
-    expect(cell).toMatchObject({ status: 'closed', likelyClosed: true, figure: null, label: 'Tue, Nov 3, 2026. Likely closed (1 guest recorded).' });
-    expect(cell === undefined || cell === null ? null : monthStatusWord(cell)).toBe('Likely closed');
-    expect(monthStatusWord({ status: 'closed', likelyClosed: false })).toBe('Closed');
-    expect(monthStatusWord({ status: 'booked', likelyClosed: false })).toBe('Booked');
-    expect(cellOn(home, '2026-11-02')).toMatchObject({ status: null, likelyClosed: false, figure: { value: 100, kind: 'actual' } });
+    expect(cell).toMatchObject({ status: 'likely_closed', figure: null, label: 'Tue, Nov 3, 2026. Likely closed (1 guest recorded).' });
+    expect(cellOn(home, '2026-11-02')).toMatchObject({ status: null, figure: { value: 100, kind: 'actual' }, figureText: '100', caption: null });
     const past = monthDay('2026-11-03', home);
     expect(past).toMatchObject({ value: 1, likelyClosed: true });
     expect(thisDayLine(past, 'guests')).toBe('Likely closed (1 guest recorded)');
@@ -504,8 +545,9 @@ describe('the month card', () => {
     expect(thisDayLine({ value: null, likelyClosed: false }, 'guests')).toBe('No sales stored for this day.');
     expect(past.lastYear).toMatchObject({ date: '2025-11-04', value: 1, closed: true, likelyClosed: true });
     // A note with fewer guests says the day was open: a real slow day.
-    const slow = input(days, dayContext([note({ startDate: '2026-11-03', kind: 'other', effect: 'fewer_guests' })], []));
-    expect(cellOn(slow, '2026-11-03')).toMatchObject({ status: null, likelyClosed: false, figure: { value: 1, kind: 'actual' } });
+    const slowNote = note({ startDate: '2026-11-03', kind: 'other', effect: 'fewer_guests' });
+    const slow = input(days, dayContext([slowNote], []));
+    expect(cellOn(slow, '2026-11-03', [slowNote])).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
     expect(monthDay('2026-11-03', slow)).toMatchObject({ likelyClosed: false });
   });
 
@@ -555,4 +597,63 @@ describe('the month card', () => {
     const term = townEvent({ start: '2026-09-14', end: '2026-11-17', title: 'Fall term classes', kind: 'term' });
     expect(nextEvent(TODAY, dayContext([], [term]))).toBeNull();
   });
+});
+
+// UI review B1 (D49): a wide Home cell has a line budget that fits its 96px. As in the Calendar's cell, the status or
+// the caption sits in the top row beside the day and "+40" beside the figure, so the entry lines get what is left.
+describe('a wide Home cell’s rows', () => {
+  function cellOf(fields: Partial<MonthCell>): MonthCell {
+    return {
+      date: '2026-11-25', isToday: false, inWeek: false, status: null, figure: null, figureText: null, caption: null, noteGuests: 0, chips: [], more: 0,
+      marks: { event: false, note: false, imported: false }, label: 'Day', ...fields,
+    };
+  }
+
+  test('the top row, the figure row and the entry lines fit inside the cell, its padding and border', () => {
+    expect(WIDE_ROWS.inner).toBe(WIDE_CELL_HEIGHT - 10);
+    const used = WIDE_ROWS.top + WIDE_ROWS.gap + WIDE_ROWS.figure + WIDE_ROWS.gap + WIDE_LINES * WIDE_ROWS.entry + (WIDE_LINES - 1) * WIDE_ROWS.entryGap;
+    expect(used).toBeLessThanOrEqual(WIDE_ROWS.inner);
+    // One more line would not fit.
+    expect(used + WIDE_ROWS.entryGap + WIDE_ROWS.entry).toBeGreaterThan(WIDE_ROWS.inner);
+    expect(WIDE_LINES).toBe(2);
+  });
+
+  test('a booked buyout on a closed day: Booked beside the day, its party in the figure row, both entries', () => {
+    const parts = wideCell(cellOf({
+      status: 'booked', figure: { value: 70, kind: 'booked' }, figureText: '~70', caption: 'forecast', chips: ['Holiday party', 'Closed Wednesdays in December'],
+    }));
+    expect(parts).toEqual({ topRight: 'Booked', middle: 'figure', lines: ['Holiday party', 'Closed Wednesdays in December'], more: null });
+  });
+
+  test('a busy forecast day: its caption beside the day, one entry and “+N more” when they outrun the budget', () => {
+    const parts = wideCell(cellOf({
+      figure: { value: 334, kind: 'forecast' }, figureText: '~334', caption: 'forecast', noteGuests: 40,
+      chips: ['Alumni reception', 'Home football game', 'Veterans Day'], more: 1,
+    }));
+    expect(parts).toEqual({ topRight: 'forecast', middle: 'figure', lines: ['Alumni reception'], more: '+3 more' });
+  });
+
+  test('a closed or likely-closed day says so in the figure row; a day with neither leaves it empty', () => {
+    expect(wideCell(cellOf({ status: 'closed' }))).toMatchObject({ topRight: null, middle: 'status' });
+    expect(wideCell(cellOf({ status: 'likely_closed' }))).toMatchObject({ topRight: null, middle: 'status' });
+    expect(wideCell(cellOf({ status: 'outlook', figure: { value: 212, kind: 'forecast' }, caption: 'forecast' }))).toMatchObject({ topRight: 'Outlook', middle: 'figure' });
+    expect(wideCell(cellOf({ status: 'booked' }))).toMatchObject({ topRight: 'Booked', middle: null });
+    expect(wideCell(cellOf({ figure: { value: 94, kind: 'actual' }, caption: 'sales' }))).toMatchObject({ topRight: 'sales', middle: 'figure' });
+  });
+
+  test('monthEntryLines keeps to its budget, “+N more” counting as a line', () => {
+    const chips = { chips: ['A', 'B', 'C'], more: 2 };
+    expect(monthEntryLines({ chips: ['A', 'B'], more: 0 }, 2)).toEqual({ lines: ['A', 'B'], more: null });
+    expect(monthEntryLines(chips, 2)).toEqual({ lines: ['A'], more: '+4 more' });
+    expect(monthEntryLines(chips, 1)).toEqual({ lines: [], more: '+5 more' });
+    expect(monthEntryLines({ chips: ['A'], more: 0 }, 1)).toEqual({ lines: ['A'], more: null });
+  });
+});
+
+// UI review S4: on a phone a narrow cell drops "forecast", which is wider than the cell; the "~" marks the forecast.
+test('a narrow cell’s caption: none for a forecast on a phone; “sales” stays', () => {
+  expect(narrowCaption({ caption: 'forecast' }, true)).toBeNull();
+  expect(narrowCaption({ caption: 'forecast' }, false)).toBe('forecast');
+  expect(narrowCaption({ caption: 'sales' }, true)).toBe('sales');
+  expect(narrowCaption({ caption: null }, false)).toBeNull();
 });

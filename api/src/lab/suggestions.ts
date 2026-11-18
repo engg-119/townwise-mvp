@@ -233,6 +233,14 @@ export interface SuggestionsInput {
   readonly ownerEvents?: readonly OwnerEventEntry[];
 }
 
+/** A note as the request sends it: never its title (D49), since the pass proposes none and needs no new words. */
+function sentNote(note: NoteContent): Omit<NoteContent, 'title'> {
+  return {
+    kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
+    expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
+  };
+}
+
 /** The request one pass sends, exactly. */
 export function suggestionsRequest(input: SuggestionsInput): BetaMessageStreamParams {
   const events = input.ownerEvents;
@@ -246,13 +254,10 @@ export function suggestionsRequest(input: SuggestionsInput): BetaMessageStreamPa
     system: events === undefined ? SUGGESTIONS_SYSTEM_PROMPT : `${SUGGESTIONS_SYSTEM_PROMPT}\n\n${SUGGESTIONS_OWNER_EVENTS_PROMPT}`,
     messages: [{ role: 'user', content: JSON.stringify({
       today: input.today, from: input.from, to: input.to, town: input.town, calendar: input.calendar,
-      notes: input.notes.map((note) => ({
-        kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
-        expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
-      })),
+      notes: input.notes.map(sentNote),
       rules: input.rules.map((rule) => ({ text: rule.text, schedule: rule.schedule })),
       alreadySuggested: input.suggested.map((content) => (content.type === 'note'
-        ? { type: 'note', ...content.note }
+        ? { type: 'note', ...sentNote(content.note) }
         : { type: 'rule', ruleText: content.text, ...content.schedule })),
       ...(events === undefined ? {} : {
         ownerEvents: events.map((event) => ({
@@ -506,7 +511,8 @@ function spottedOf(raw: unknown, checks: SuggestionChecks, used: Set<string>): N
   if (checks.notes.some((note) => coversEvent(note, sent))) return null;
   const base = {
     kind: 'private_event', startDate: sent.startDate, endDate: sent.endDate, weekdays: null, effect: 'unknown',
-    expectedGuests: countFromTitle(item.data.expectedGuests, sent.title), detail: null,
+    // No title (D49): a model's answer has no title field to keep, and the event's title is never stored.
+    expectedGuests: countFromTitle(item.data.expectedGuests, sent.title), detail: null, title: null,
   };
   const note = readNoteContent({ ...base, ...asNoteDates(sent) }, checks.today) ?? readNoteContent({ ...base, startTime: null, endTime: null }, checks.today);
   if (note === null) return null;

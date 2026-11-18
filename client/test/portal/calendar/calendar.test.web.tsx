@@ -4,6 +4,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { COPY } from '../../../src/portal/errors';
+import type { ForecastDay } from '../../../src/portal/estimates/api';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
@@ -206,8 +207,8 @@ test('opens at ?day= with that day selected and in the sidebar', async () => {
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
   expect(cell('2026-11-21').getAttribute('tabindex')).toBe('0');
   // Each cell's label says everything it shows; a past day shows its stored guests, never a forecast.
-  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.');
-  expect(cell('2026-11-07').getAttribute('aria-label')).toBe('Sat, Nov 7, 2026. 138 guests.');
+  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. 212 guests, forecast, likely 180 to 240. Dartmouth home football.');
+  expect(cell('2026-11-07').getAttribute('aria-label')).toBe('Sat, Nov 7, 2026. 138 guests, actual.');
   expect(cell('2026-11-07').textContent).toContain('138');
   const day = panel();
   expect(within(day).getByRole('heading', { name: 'Sat, Nov 21, 2026' })).toBeTruthy();
@@ -337,7 +338,7 @@ test('adding a private event of 70 posts the note, reloads the forecast and the 
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
-      startTime: null, endTime: null,
+      title: null, startTime: null, endTime: null,
     },
   }]);
   await waitFor(() => { expect(cell('2026-11-21').getAttribute('aria-label')).toContain('Includes 70 guests from your notes.'); });
@@ -414,7 +415,7 @@ test('turning off Town events hides their chips but not the figures', async () =
   expect(filter.getAttribute('aria-pressed')).toBe('false');
   expect(cell('2026-11-21').textContent).not.toContain('Dartmouth home football');
   expect(cell('2026-11-21').textContent).toContain('212');
-  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240.');
+  expect(cell('2026-11-21').getAttribute('aria-label')).toBe('Sat, Nov 21, 2026. 212 guests, forecast, likely 180 to 240.');
   // The panel's calendar list follows the filter; the forecast's own reasons stay.
   expect(within(panel()).queryByText('Dartmouth home football. Town event.')).toBeNull();
   expect(within(panel()).getByText('Dartmouth home football')).toBeTruthy();
@@ -495,7 +496,8 @@ test('a calendar file is posted and kept, its events show once read again, and M
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
-      startTime: '18:00', endTime: '21:00', fromEvent: { calendarId: 'c1', uid: 'i1' },
+      // Make a note never copies the event's title (D33, D49): the Event name stays empty.
+      title: null, startTime: '18:00', endTime: '21:00', fromEvent: { calendarId: 'c1', uid: 'i1' },
     },
   }]);
   // The file's own POST carries its text; no other write carries a title.
@@ -556,7 +558,7 @@ test('a file over 1 MB is refused unread, and a file that isn’t a calendar say
   expect(writes(api)).toHaveLength(3);
 });
 
-test('stored events show on load: the cells, the tooltip, the day panel and the week view’s cards, with Your calendar on; the same uid in two calendars shows twice', async () => {
+test('stored events show on load: the cells, the tooltip, the day panel and the week view’s cards, with Your calendar on; the same uid in two calendars shows once in a cell and twice in the panel (D49)', async () => {
   const errors = jest.spyOn(console, 'error');
   try {
     // The same export imported twice is two calendars, each with the event's uid.
@@ -569,7 +571,7 @@ test('stored events show on load: the cells, the tooltip, the day panel and the 
     expect(writes(api)).toEqual([]);
     expect(screen.getByRole('button', { name: 'Your calendar' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Your calendars (2)' })).toBeTruthy();
-    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(3);
+    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(2);
     expect(cell('2026-11-24').textContent).toContain('Owner away');
     expect(cell('2026-11-25').textContent).toContain('Owner away');
     expect(cell('2026-11-21').textContent).toContain('212');
@@ -581,7 +583,7 @@ test('stored events show on load: the cells, the tooltip, the day panel and the 
     expect(within(panel()).getAllByRole('button', { name: 'Make a note from Smith rehearsal dinner' })).toHaveLength(2);
     fireEvent.click(within(screen.getByRole('group', { name: 'Calendar view' })).getByRole('button', { name: 'Week' }));
     expect(await screen.findByRole('grid', { name: 'Nov 18 to 24, 2026' })).toBeTruthy();
-    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(3);
+    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(2);
     // Each item keeps its own key: {calendarId}:{uid}.
     expect(errors.mock.calls.filter((call) => String(call[0]).includes('same key'))).toEqual([]);
   } finally {
@@ -721,7 +723,7 @@ test('hovering a day shows the tooltip with its range and top reasons; touch doe
   const tip = screen.getByTestId('calendar-tooltip');
   expect(tip.getAttribute('aria-hidden')).toBe('true');
   expect(tip.textContent).toContain('Sat, Nov 21, 2026');
-  expect(tip.textContent).toContain('About 212 guests (180 to 240)');
+  expect(tip.textContent).toContain('212 guests, forecast (likely 180 to 240)');
   expect(tip.textContent).toContain('Dartmouth home football');
   // Hovering never selects.
   expect(cell('2026-11-11').getAttribute('aria-selected')).toBe('true');
@@ -850,6 +852,82 @@ test('from 1024px the panel is beside the grid, so a clicked day scrolls nothing
   }
 });
 
+// D49 (day-entries): a day's status shows beside its entries and never hides one, and a note shows its event name.
+const WINTER_RULE = ruleOf('r1', 'Closed Tuesdays in winter', {
+  schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+  scheduleSummary: 'Closed on Tuesdays from Nov 1, 2026',
+});
+const HOLIDAY_PARTY = noteOf('n1', { kind: 'private_event', startDate: '2026-11-24', endDate: '2026-11-24', effect: 'more_guests', expectedGuests: 40, title: 'Holiday party' });
+const REHEARSAL = noteOf('n2', { kind: 'private_event', startDate: '2026-11-11', endDate: '2026-11-11', effect: 'closed', expectedGuests: 60, title: 'Rehearsal dinner' });
+
+/** November from today on, with Nov 24 closed by the rule and today booked by the buyout note. */
+function statusNovember(): unknown {
+  const days = [];
+  for (let day = 11; day <= 30; day += 1) {
+    const date = `2026-11-${String(day)}`;
+    if (date === '2026-11-24') days.push(forecastDay({ date, status: 'closed', low: null, mid: null, high: null, reasons: [] }));
+    else if (date === '2026-11-11') {
+      days.push(forecastDay({
+        date, status: 'booked', low: null, mid: null, high: null, noteGuests: 60,
+        reasons: [{ kind: 'note', label: 'Your private buyout, 60 guests', effectPct: null, sources: [], note: { id: 'n2', guests: 60, outcome: 'booked' } }],
+      }));
+    } else days.push(forecastDay({ date }));
+  }
+  return forecastOf(days);
+}
+
+test('a closed day with a named event shows its status word and both entries; a booked day its party’s name before Veterans Day (D49)', async () => {
+  const { api } = setup(meOf(ACCESS.member), { notes: [HOLIDAY_PARTY, REHEARSAL], rules: [WINTER_RULE], forecasts: { '2026-11': statusNovember() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-24', api);
+  const closed = cell('2026-11-24');
+  expect(closed.textContent).toBe('24ClosedHoliday partyClosed Tuesdays in winter');
+  expect(closed.getAttribute('aria-label')).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
+  const booked = cell('2026-11-11');
+  expect(booked.textContent).toBe('11Booked~60Rehearsal dinnerVeterans Day');
+  // The tooltip: the status line, the buyout's reason with its note's name, then the holiday no reason names.
+  fireEvent(booked, pointer('pointerover', 'mouse'));
+  expect(within(screen.getByTestId('calendar-tooltip')).getAllByText(/./).map((line) => line.textContent)).toEqual(expect.arrayContaining([
+    'Booked: a private buyout, 60 guests, forecast', 'Your private buyout, 60 guests: Rehearsal dinner', 'Veterans Day',
+  ]));
+});
+
+test('at phone width a cell shows corner marks and no entry lines, and its label still names every entry (D49)', async () => {
+  setWidth(375);
+  const { api } = setup(meOf(ACCESS.member), { notes: [HOLIDAY_PARTY], rules: [WINTER_RULE], forecasts: { '2026-11': statusNovember() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-24', api);
+  const closed = cell('2026-11-24');
+  expect(closed.textContent).toBe('24Closed');
+  expect(closed.getAttribute('aria-label')).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
+});
+
+test('the key names an actual and a forecast, a past day says how its forecast did, and the month how many landed (D49)', async () => {
+  // Nov 7: 138 stored guests against a run made Nov 2 that said 120 to 150.
+  const past = forecastDay({ date: '2026-11-07', low: 120, mid: 135, high: 150, actual: 138, inRange: true, scored: true, madeAt: '2026-11-02' });
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': forecastOf([past, ...(november() as { days: ForecastDay[] }).days]) } });
+  await renderAt('/locations/l1/calendar?day=2026-11-07', api);
+  const key = screen.getByTestId('figure-key');
+  expect(key.textContent).toBe('94Actual guests~82Forecast');
+  expect(await screen.findByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  expect(cell('2026-11-07').getAttribute('aria-label')).toBe('Sat, Nov 7, 2026. 138 guests, actual.');
+  expect(cell('2026-11-21').querySelector('[data-figure]')?.textContent).toBe('~212');
+  const day = panel();
+  // Its part is headed by what it is, once: never “Forecast” over an actual (UI review S2).
+  expect(within(day).getAllByText('Actual guests')).toHaveLength(1);
+  expect(within(day).queryByText('Forecast')).toBeNull();
+  expect(within(day).getByText('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.')).toBeTruthy();
+  // The tooltip says it too.
+  fireEvent.pointerOver(cell('2026-11-07'), { pointerType: 'mouse' });
+  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('138 guests, actualForecast was about 135 (likely 120 to 150); 138 guests came: inside the range');
+});
+
+test('a forecast day’s panel says “Forecast” once, over “About 82 guests” (UI review S2)', async () => {
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': november() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const day = panel();
+  expect(await within(day).findAllByText('Forecast')).toHaveLength(1);
+  expect(within(day).queryByText('Actual guests')).toBeNull();
+});
+
 /** November with a stale run: days from the 20th are its outlook (D52), the 20th with mid 212, low 150, high 290. */
 function novemberWithOutlook(): unknown {
   const days = [];
@@ -865,11 +943,11 @@ const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s forecast was mad
 test('an outlook day (D52): its cell shows its figure marked Outlook, its tooltip and panel say outlook with no 8 in 10, and the key line shows', async () => {
   const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': novemberWithOutlook() } });
   await renderAt('/locations/l1/calendar?day=2026-11-20', api);
-  expect(cell('2026-11-20').getAttribute('aria-label')).toBe('Fri, Nov 20, 2026. Outlook about 212 guests, 150 to 290.');
+  expect(cell('2026-11-20').getAttribute('aria-label')).toBe('Fri, Nov 20, 2026. Outlook: 212 guests, forecast, likely 150 to 290.');
   expect(cell('2026-11-20').textContent).toContain('Outlook');
   expect(cell('2026-11-20').textContent).toContain('212');
   // A forecast day is unchanged, with its 8 in 10.
-  expect(cell('2026-11-19').getAttribute('aria-label')).toBe('Thu, Nov 19, 2026. Forecast about 212 guests, 180 to 240.');
+  expect(cell('2026-11-19').getAttribute('aria-label')).toBe('Thu, Nov 19, 2026. 212 guests, forecast, likely 180 to 240.');
   expect(cell('2026-11-19').textContent).not.toContain('Outlook');
   const day = panel();
   expect(within(day).getByText('Outlook')).toBeTruthy();
@@ -878,7 +956,7 @@ test('an outlook day (D52): its cell shows its figure marked Outlook, its toolti
   expect(day.textContent).not.toContain('8 in 10');
   expect(screen.getByText(OUTLOOK_KEY)).toBeTruthy();
   fireEvent(cell('2026-11-21'), pointer('pointerover', 'mouse'));
-  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('Outlook: about 212 guests (150 to 290)');
+  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('Outlook: 212 guests, forecast (likely 150 to 290)');
   // At phone width the cell keeps its figure.
   setWidth(375);
   expect(cell('2026-11-20').textContent).toContain('212');

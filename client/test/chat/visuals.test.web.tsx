@@ -53,14 +53,15 @@ test('sales before today and the forecast from today on draw the line, the band 
   expect(container.querySelector('[data-series="line"]')?.getAttribute('d')).toMatch(/^M0 /);
   expect(container.querySelectorAll('[data-series="band"]')).toHaveLength(1);
   expect(container.querySelectorAll('[data-series="middle"]')).toHaveLength(1);
-  for (const label of ['Daily guests', 'Forecast range', 'Forecast middle']) expect(screen.getByText(label)).toBeTruthy();
+  // Beside a forecast the line is named the actual (D49).
+  for (const label of ['Actual guests', 'Forecast range', 'Forecast middle']) expect(screen.getByText(label)).toBeTruthy();
 });
 
 test('a daily visual stored before the forecast’s middle was sent still draws, with its band and no middle', () => {
   const { container } = render(<VisualView visual={visualSchema.parse(storedBeforeMid)} />);
   expect(container.querySelectorAll('[data-series="band"]')).toHaveLength(1);
   expect(container.querySelector('[data-series="middle"]')).toBeNull();
-  expect(screen.getByText('Daily guests')).toBeTruthy();
+  expect(screen.getByText('Actual guests')).toBeTruthy();
   expect(screen.getByText(/^2 days with data\./)).toBeTruthy();
 });
 

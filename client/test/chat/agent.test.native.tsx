@@ -260,6 +260,26 @@ describe('a proposed note', () => {
     expect(chat.writes.at(-1)).toMatchObject({ body: { action: 'save', note: { ...PROPOSAL, detail: 'Closed for the holidays, back on the 27th.' } } });
   });
 
+  test('a proposal’s event name (D49) shows on the card, fills Edit first’s Event name, and its save sends it', async () => {
+    const { chat } = await renderAgent(meOf(ACCESS.member));
+    await send('Alumni weekend');
+    const named = { ...PROPOSAL, kind: 'private_event', effect: 'more_guests', expectedGuests: 120, detail: null, title: 'Alumni weekend dinner' };
+    await act(() => {
+      turn(chat).emit('conversation', { id: 'c2', title: 'Alumni weekend' });
+      turn(chat).emit('proposal', { id: PROPOSAL_ID, proposal: named });
+      turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(chat).end();
+    });
+    expect(await screen.findByText('Event name')).toBeTruthy();
+    expect(screen.getByText('Alumni weekend dinner')).toBeTruthy();
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Edit first' }).props.accessibilityState).not.toMatchObject({ disabled: true }); });
+    await fireEvent.press(screen.getByRole('button', { name: 'Edit first' }));
+    expect(screen.getByLabelText('Event name (optional)').props.value).toBe('Alumni weekend dinner');
+    await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+    expect(await screen.findByText('Saved to Notes, with your changes.')).toBeTruthy();
+    expect(chat.writes.at(-1)).toMatchObject({ body: { action: 'save', note: { title: 'Alumni weekend dinner' } } });
+  });
+
   test('Not now folds the card to one line, recorded; Show the note opens it again', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await proposedCard(chat);

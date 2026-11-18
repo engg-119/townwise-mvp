@@ -382,3 +382,51 @@ test('an upload TownwiseAI made links to the file it was read from, with no sect
   expect(screen.getByText('Daily totals · No file kept · Saved from TownwiseAI')).toBeTruthy();
   expect(screen.queryByRole('region', { name: 'TownwiseAI' })).toBeNull();
 });
+
+// D49 (calendar-detail): a calendar file's read shows its events by month in date order; one that made a note links to
+// its day on the Calendar, marked Note made; any other reads No note made. Under view-as titles are null.
+const READ_EVENTS = [
+  { title: 'Rehearsal dinner', startDate: '2026-12-12', endDate: '2026-12-12', kind: 'private_event', effect: 'closed', expectedGuests: 60, noteId: 'n1' },
+  { title: 'Staff party', startDate: '2026-12-03', endDate: '2026-12-03', kind: 'other', effect: 'unknown', expectedGuests: null, noteId: null },
+  { title: 'Wine dinner', startDate: '2027-01-15', endDate: '2027-01-15', kind: 'private_event', effect: 'more', expectedGuests: 40, noteId: 'n2' },
+] as const;
+
+test('a calendar read lists its events by month, each that made a note linked to its day (D49)', async () => {
+  setup([stored({ ai: aiOf({ kind: 'calendar', events: [...READ_EVENTS] }) })], REF);
+  const panel = await section();
+  expect(within(panel).getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent)).toEqual(expect.arrayContaining(['December 2026', 'January 2027']));
+  const december = within(panel).getByRole('list', { name: 'Events TownwiseAI read, December 2026' });
+  expect(within(december).getAllByRole('listitem').map((item) => item.textContent)).toEqual([
+    'Staff partyThu, Dec 3, 2026OtherNo note made', 'Rehearsal dinnerSat, Dec 12, 2026Private buyout, 60 guestsNote made',
+  ]);
+  expect(within(panel).getByRole('link', { name: 'Rehearsal dinner, Sat, Dec 12, 2026. Opens the day on the Calendar. Note made.' }).getAttribute('href'))
+    .toBe('/locations/l1/calendar?day=2026-12-12');
+  expect(within(panel).queryByRole('link', { name: /^Staff party/ })).toBeNull();
+});
+
+test('an action’s answer, which leaves the events out, keeps the read’s agenda while the item is read again (D49)', async () => {
+  const item = stored({ ai: aiOf({ kind: 'calendar', events: [...READ_EVENTS] }) });
+  const fake = setup([item], REF);
+  await section();
+  const agenda = { name: 'Events TownwiseAI read, December 2026' };
+  expect(within(await section()).getByRole('list', agenda)).toBeTruthy();
+  // As the API's PATCH answers: no ai.events. The read after it waits.
+  fake.answers[`PATCH ${REF}`] = () => ({ item: { ...item, enabled: false, ai: { ...item.ai, events: undefined } } });
+  fake.answers[`GET ${REF}`] = () => new Promise(() => undefined);
+  fireEvent.click(screen.getByRole('button', { name: 'Turn off: june-events.txt' }));
+  await screen.findByText(/^Turned off june-events\.txt\./);
+  expect(within(await section()).getByRole('list', agenda)).toBeTruthy();
+});
+
+test('under view-as a calendar read’s events show their dates and kinds, with no titles (D49)', async () => {
+  setup([stored({ ai: aiOf({ kind: 'calendar', events: READ_EVENTS.map((event) => ({ ...event, title: null })) }) })], REF, viewAsMe(ACCESS.admin));
+  const panel = await section();
+  expect(within(panel).queryByText('Rehearsal dinner')).toBeNull();
+  expect(within(panel).getAllByText('Private buyout, 60 guests').length).toBeGreaterThan(0);
+});
+
+test('with no events (the original deleted) no agenda shows (D49)', async () => {
+  setup([stored({ ai: aiOf({ kind: 'calendar', events: [] }) })], REF);
+  const panel = await section();
+  expect(within(panel).queryByRole('list', { name: /^Events TownwiseAI read/ })).toBeNull();
+});

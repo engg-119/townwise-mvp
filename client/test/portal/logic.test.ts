@@ -19,9 +19,11 @@ const GATE = ['/request-access', '/waiting', '/no-access', '/joining'];
 /** An upload's and a stored file's item page (P27). */
 const UPLOAD_ITEM = '/locations/l1/data/u_0123456789abcdef01234567';
 const FILE_ITEM = '/locations/l1/data/f_89abcdef0123456789abcdef';
+/** A calendar's page (D49): a client-only ref on P27's route. */
+const CALENDAR_ITEM = '/locations/l1/data/c_fedcba9876543210fedcba98';
 const MEMBER = [
   '/dashboard', '/settings', '/locations/l1', '/locations/l1/calendar', '/locations/l1/analytics', '/locations/l1/sales', '/locations/l1/sales/upload',
-  '/locations/l1/data', UPLOAD_ITEM, FILE_ITEM, '/locations/l1/notes', '/locations/l1/town', '/locations/l1/orders', '/locations/l1/orders/setup',
+  '/locations/l1/data', UPLOAD_ITEM, FILE_ITEM, CALENDAR_ITEM, '/locations/l1/notes', '/locations/l1/town', '/locations/l1/orders', '/locations/l1/orders/setup',
   '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
@@ -110,13 +112,15 @@ describe('access routing (spec 4.3)', () => {
     expect(isAllowed(meOf(ACCESS.member), '/locations/l1/rules/r1')).toBe(false);
   });
 
-  test('an item’s page needs u_ or f_ and exactly 24 lower-case hex digits (P27); anything looser redirects', () => {
+  test('an item’s page needs u_, f_ or c_ and exactly 24 lower-case hex digits (P27, D49); anything looser redirects', () => {
     const hex = '0123456789abcdef01234567';
     expect(isAllowed(meOf(ACCESS.member), `/locations/l1/data/u_${hex}/`)).toBe(true);
+    expect(isAllowed(meOf(ACCESS.member), `/locations/l1/data/c_${hex}`)).toBe(true);
+    expect(isAllowed(viewAsMe(ACCESS.member), `/locations/l1/data/c_${hex}`)).toBe(true);
     for (const path of [
       `/locations/l1/data/x_${hex}`, `/locations/l1/data/F_${hex}`, `/locations/l1/data/f_${hex.toUpperCase()}`, `/locations/l1/data/f_${hex.slice(1)}`,
       `/locations/l1/data/f_${hex}0`, `/locations/l1/data/${hex}`, `/locations/l1/data/f_${hex}/edit`, '/locations/l1/data/text', '/locations/l1/data/u_',
-      `/locations/l1/data/f_${hex.slice(0, 23)}g`, `/locations/l1/data//f_${hex}`,
+      `/locations/l1/data/f_${hex.slice(0, 23)}g`, `/locations/l1/data//f_${hex}`, `/locations/l1/data/C_${hex}`, `/locations/l1/data/c_${hex}/events`,
     ]) {
       expect({ path, allowed: isAllowed(meOf(ACCESS.admin), path) }).toEqual({ path, allowed: false });
     }
@@ -197,6 +201,7 @@ describe('navigation per role (spec 15.3)', () => {
     expect(current('/locations/l1/data')).toEqual([['Your data', 'page']]);
     expect(current(FILE_ITEM)).toEqual([['Your data', 'true']]);
     expect(current(UPLOAD_ITEM)).toEqual([['Your data', 'true']]);
+    expect(current(CALENDAR_ITEM)).toEqual([['Your data', 'true']]);
     // Another location's item marks nothing here.
     expect(current('/locations/l2/data/f_89abcdef0123456789abcdef')).toEqual([]);
     expect(current('/locations/l1/agent')).toEqual([['TownwiseAI', 'page']]);
@@ -277,6 +282,7 @@ describe('navigation per role (spec 15.3)', () => {
     expect(tabOf('/locations/l1/chat')).toBe('agent');
     expect(tabOf(FILE_ITEM)).toBe('data');
     expect(tabOf(UPLOAD_ITEM)).toBe('data');
+    expect(tabOf(CALENDAR_ITEM)).toBe('data');
     expect(itemHref('l1', 'f_89abcdef0123456789abcdef')).toBe(FILE_ITEM);
     expect(locationHref('a b')).toBe('/locations/a%20b');
     // Home's days open the Calendar at a day (?day=).

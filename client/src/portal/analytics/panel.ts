@@ -169,7 +169,8 @@ export function dayPanel(date: string, input: PanelInput): DayPanelData {
 
   const notes = notesOf(input.context, date).map((note) => ({
     id: note.id,
-    words: noteWords(note),
+    // A named note (D49): its kind words, then the person's own name for it.
+    words: note.title ? `${noteWords(note)}: ${note.title}` : noteWords(note),
     dates: note.startDate === note.endDate ? null : datesLine(note),
     weekdays: weekdaysLine(note.weekdays),
     expected: note.expectedGuests === null ? null : `Expected guests: ${formatCount(note.expectedGuests)}`,

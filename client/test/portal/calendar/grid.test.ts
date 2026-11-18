@@ -404,7 +404,7 @@ describe('buildWeek', () => {
     expect(week(input, TODAY).map((slot) => slot.date)).toEqual(weekDays(TODAY));
   });
 
-  test('all-day cards first in their kinds’ order, then timed ones by start time; each with its hours and sub-line', () => {
+  test('cards in the entries’ order (D49): notes by start, holidays, town events, imported by start, periods last', () => {
     const input = reads({
       events: [
         townEvent({ start: SATURDAY, title: 'Fall term', kind: 'term', end: '2026-11-24' }),
@@ -418,12 +418,27 @@ describe('buildWeek', () => {
       imported: [imported({ title: 'Wine delivery', startTime: '09:00', endTime: '10:00' })],
     });
     expect(cards(input).map((card) => [card.kind, card.hours, card.title, card.sub])).toEqual([
+      ['note', null, 'Other', 'Your note'],
+      ['note', '6 pm to 9 pm', 'Private event, 70', 'Your note'],
       ['holiday', null, 'Made-up Day', 'Federal holiday'],
       ['event', null, 'Dartmouth home football', 'Town event'],
-      ['note', null, 'Other', 'Your note'],
-      ['term', null, 'Fall term', 'Term, Nov 21 to 24'],
       ['imported', '9 am to 10 am', 'Wine delivery', 'Your calendar'],
-      ['note', '6 pm to 9 pm', 'Private event, 70', 'Your note'],
+      ['term', null, 'Fall term', 'Term, Nov 21 to 24'],
+    ]);
+  });
+
+  test('a title shows once across sources, but two events of one calendar keep two cards (D49)', () => {
+    const input = reads({
+      events: [holiday(SATURDAY, 'Veterans Day', 'us:veterans', 'Veterans Day')],
+      notes: [note({ startDate: SATURDAY, title: 'Holiday party' })],
+      imported: [
+        imported({ title: 'Veterans day ', uid: 'v1' }),
+        imported({ title: 'Private party', uid: 'p1', startTime: '12:00', endTime: '14:00' }),
+        imported({ title: 'Private party', uid: 'p2', startTime: '18:00', endTime: '21:00' }),
+      ],
+    });
+    expect(cards(input).map((card) => [card.title, card.hours])).toEqual([
+      ['Holiday party', null], ['Veterans Day', null], ['Private party', 'noon to 2 pm'], ['Private party', '6 pm to 9 pm'],
     ]);
   });
 
@@ -458,14 +473,15 @@ describe('buildWeek', () => {
       notes: [note({ startDate: '2026-11-21', endDate: '2026-11-23', kind: 'other' })],
       imported: [imported({ title: 'Owner away', startDate: '2026-11-21', endDate: '2026-11-25' })],
     });
-    expect(cards(input).map((card) => card.sub)).toEqual(['Town event, Nov 20 to 22', 'Your note, Nov 21 to 23', 'Your calendar, Nov 21 to 25']);
+    expect(cards(input).map((card) => card.sub)).toEqual(['Your note, Nov 21 to 23', 'Town event, Nov 20 to 22', 'Your calendar, Nov 21 to 25']);
   });
 
   test('the head’s range equals the tooltip’s parenthesis, and “No forecast” only once the read answered without the day', () => {
     const input = reads({ forecast: windowOf([forecastDay({ date: SATURDAY, low: 180.4, mid: 212, high: 239.2 })]) });
     const saturday = dayIn(week(input), SATURDAY);
     expect(saturday.range).toBe('180 to 240');
-    expect(tooltipLines(SATURDAY, input)?.lines[0]).toBe(`About 212 guests (${saturday.range ?? ''})`);
+    expect(tooltipLines(SATURDAY, input)?.lines[0]).toBe(`212 guests, forecast (likely ${saturday.range ?? ''})`);
+    expect(headLine(saturday)).toBe('forecast, 180 to 240');
     expect(saturday.status).toBeNull();
     // The read answered, but not for Sunday: the status word says so, and the head's last line stays empty.
     const sunday = dayIn(week(input), '2026-11-22');
@@ -479,7 +495,7 @@ describe('buildWeek', () => {
     const past = reads({ salesDays: [{ date: '2026-11-10', guests: 138, netSalesCents: 276_000 }], forecast: windowOf([]) });
     const tuesday = dayIn(week(past, '2026-11-10'), '2026-11-10');
     expect(tuesday).toMatchObject({ range: null, status: null, figure: { value: 138, kind: 'actual' } });
-    expect(headLine(tuesday)).toBe('guests');
+    expect(headLine(tuesday)).toBeNull();
     // A past day with no stored guests shows the forecast made for it, captioned “forecast”.
     const missed = reads({ salesDays: [], forecast: windowOf([forecastDay({ date: '2026-11-10', low: 80, mid: 90.4, high: 110 })]) });
     const unstored = dayIn(week(missed, '2026-11-10'), '2026-11-10');
@@ -498,8 +514,8 @@ describe('buildWeek', () => {
     expect(friday).toMatchObject({ status: null, figure: { value: 212, kind: 'forecast' }, range: '180 to 240' });
     const saturday = dayIn(week(input), SATURDAY);
     expect(saturday).toMatchObject({ status: 'outlook', figure: { value: 212, kind: 'forecast' }, range: '150 to 290' });
-    expect(headLine(saturday)).toBe('150 to 290');
-    expect(saturday.label).toContain('Outlook about 212 guests, 150 to 290.');
+    expect(headLine(saturday)).toBe('forecast, 150 to 290');
+    expect(saturday.label).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
   });
 
   test('a block at the 25 months’ ends has inert days with no cards', () => {
@@ -525,7 +541,7 @@ describe('buildWeek', () => {
       imported: [imported({ title: 'Open mic!', startTime: '09:00', endTime: '10:00' })],
     });
     expect(cardWords(cards(input))).toBe(
-      'Dartmouth home football. Town event. Fall term. Term, Nov 21 to 24. 9 am to 10 am, Open mic! Your calendar. 6 pm to 9 pm, Private event, 70. Your note.',
+      '6 pm to 9 pm, Private event, 70. Your note. Dartmouth home football. Town event. 9 am to 10 am, Open mic! Your calendar. Fall term. Term, Nov 21 to 24.',
     );
     expect(cardWords(cards(reads()))).toBeNull();
     expect(cardWords([])).toBeNull();

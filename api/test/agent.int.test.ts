@@ -466,7 +466,7 @@ describe('answering a likely-closed day', () => {
       question: { id: LIKELY_ID, answer: 'open' },
       note: {
         ...OPEN_DAY, id: expect.any(String) as string, createdByEmail: expect.any(String) as string,
-        createdAt: server.clock.now().toISOString(), updatedAt: server.clock.now().toISOString(), canEdit: true, source: null, fromEvent: null,
+        title: null, createdAt: server.clock.now().toISOString(), updatedAt: server.clock.now().toISOString(), canEdit: true, source: null, fromEvent: null,
       },
     });
     const notes = await notesOf(locationId);

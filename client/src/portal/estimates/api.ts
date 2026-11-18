@@ -186,6 +186,8 @@ const forecastDaySchema = z.object({
   inRange: z.boolean().nullable(),
   /** Counted in the window's `accuracy` (open in the model, not closed, likely closed or booked, with guests); missing from an API before it. */
   scored: z.boolean().optional(),
+  /** The run's made-at day; a run made after the day is never compared with it (D49). */
+  madeAt: z.string().optional(),
   /** After its run's forecast tier (D52): Townwise's outlook, with a wider range and no 8 in 10 claim; false from an API before it. */
   outlook: z.boolean().default(false),
 });

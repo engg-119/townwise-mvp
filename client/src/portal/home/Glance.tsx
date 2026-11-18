@@ -2,6 +2,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
+import { FORECAST_TAG, markedFigure } from '../calendar/model';
 import { plainOf, strong, type Phrase } from '../analytics/phrase';
 import {
   EVENT_WORDS, everyDayForecastOnly, forecastDayPhrase, lastYearBesidePhrase, lastYearDayPhrase, nextEventWhen, summaryLabel, todayForecastPhrase,
@@ -35,10 +36,10 @@ function Tile(props: { eyebrow: string; children: React.ReactNode }): React.JSX.
   );
 }
 
-function Figure(props: { value: string; unit: string }): React.JSX.Element {
+function Figure(props: { value: string; unit: string; forecast?: boolean }): React.JSX.Element {
   return (
     <View style={styles.figure}>
-      <Text style={styles.value}>{props.value}</Text>
+      <Text style={props.forecast === true ? [styles.value, styles.forecastValue] : styles.value}>{props.value}</Text>
       {props.unit === '' ? null : <Text style={styles.unit}>{props.unit}</Text>}
     </View>
   );
@@ -51,7 +52,7 @@ function ForecastWeekTile(props: { found: WeekForecast; week: ThisWeek; metric: 
   const { summary } = props.week;
   return (
     <Tile eyebrow="This week’s forecast">
-      <Figure value={formatCount(found.total)} unit="guests" />
+      <Figure value={markedFigure(formatCount(found.total), { kind: 'forecast' })} unit={`guests, ${FORECAST_TAG}`} forecast />
       <View style={styles.lines}>
         {found.range === null ? null : <Small white><PhraseParts phrase={weekRangePhrase(found.range)} /></Small>}
         <Small white>{weekForecastLabel(found)}</Small>
@@ -199,6 +200,7 @@ const styles = StyleSheet.create({
   tile: { flexGrow: 1, gap: theme.space[3] },
   figure: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', columnGap: theme.space[2] },
   value: { ...theme.type.valuePhone, color: c.white, fontVariant: ['tabular-nums'] },
+  forecastValue: { color: c.text2 },
   unit: { ...theme.type.mono, color: c.text2 },
   title: { ...theme.type.h3, color: c.white },
   lines: { gap: 2 },

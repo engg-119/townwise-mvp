@@ -285,12 +285,12 @@ describe('the history view', () => {
       { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null, attachments: [], sources: [] },
       {
         nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), endedAt: later.toISOString(), text: 'You have two notes.\n\nI proposed it.',
-        proposals: [{ ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null }],
+        proposals: [{ ...note, title: null, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null }],
         parts: [
           { type: 'thinking', text: 'Let me look. ' },
           { type: 'tool', id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 2 } },
           { type: 'text', text: 'You have two notes.' },
-          { type: 'proposal', proposal: { ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null } },
+          { type: 'proposal', proposal: { ...note, title: null, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null } },
           { type: 'text', text: 'I proposed it.' },
         ],
         feedback: null, next: null, attachments: [], sources: [],

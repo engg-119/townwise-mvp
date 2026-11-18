@@ -2,10 +2,11 @@ import { dayContext } from '../../../src/portal/analytics/days';
 import { byDate, type DayRecord } from '../../../src/portal/analytics/history';
 import {
   calendarCoverageLine, calendarWeekLine, lastWeekComparison, lastWeekLine, LAST_YEAR_FOOTNOTE, lateWeekLine, lateWeekShare, leadLine,
-  mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, nextEvent, nextEventWhen, pastDay, sameWeekdayYearsAgo, summaryLabel, thisWeek,
+  forecastRange, mondayOf, monthDay, monthFactLine, monthFacts, monthGrid, nextEvent, nextEventWhen, pastDay, sameWeekdayYearsAgo, summaryLabel, thisWeek,
   vsUsualLine, weekDates, type HomeInput,
 } from '../../../src/portal/analytics/week';
-import type { ForecastDay } from '../../../src/portal/estimates/api';
+import { ALL_FILTERS, type CalendarInput } from '../../../src/portal/calendar/model';
+import type { ForecastDay, ForecastWindow } from '../../../src/portal/estimates/api';
 import { addDays, monthRange } from '../../../src/portal/locations/dates';
 import { orderCoverSentence, REORDER_OVERVIEW } from '../../../src/portal/home/beside';
 import { barOrderWords } from '../../../src/portal/home/BarOrder';
@@ -24,15 +25,22 @@ import { forecastDay } from '../calendar/fakes';
 
 const TODAY = '2026-11-05';
 const FORECAST_WORDING = /\blikely\b|\branges?\b|forecast:\s*\d|\bpredict|\bexpect(ed|s)?\b/i;
-const CONTEXT = dayContext(
-  [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })],
-  [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })],
-);
+const NOTES = [note({ startDate: '2026-11-06', detail: 'A rehearsal dinner.' })];
+const EVENTS = [holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day'), townEvent({ start: '2026-11-07', title: 'Sample game' })];
+const CONTEXT = dayContext(NOTES, EVENTS);
 const ALL = run('2023-01-01', '2026-11-04', (date) => 100 + (new Date(`${date}T00:00:00Z`).getUTCDay() === 6 ? 40 : 0));
 
 function input(lastDate: string): HomeInput {
   const days: DayRecord[] = ALL.filter((day) => day.date <= lastDate);
   return { today: TODAY, byDate: byDate(days), context: CONTEXT, metric: 'guests', lastDate: days.at(-1)?.date ?? null };
+}
+
+/** Home's one CalendarInput (D49) over `home`'s stored days; `forecast` null is a read that hasn't answered. */
+function calendarOf(home: HomeInput, forecast: ForecastWindow | null = null): CalendarInput {
+  return {
+    today: TODAY, covered: forecastRange(TODAY), forecast, salesDays: [...home.byDate.values()], events: EVENTS, notes: NOTES, rules: [], imported: [],
+    filters: ALL_FILTERS,
+  };
 }
 
 const ENDINGS = ['2026-11-04', '2026-11-02', '2026-10-28', '2026-10-20', '2025-12-31', '2025-06-30'];
@@ -77,8 +85,10 @@ describe.each(ENDINGS)('history ending %s', (end) => {
     }
   });
 
+  // D49 (design decision 9): Home's grid is the Calendar's, so with a forecast read a past day with no stored data shows
+  // the run's own figure captioned "forecast" (month-figure-parity.test.ts); while it hasn't answered, nothing.
   test('monthGrid gives no figure after today without a forecast, and none after the last day of data', () => {
-    for (const cell of monthGrid(TODAY, CONTEXT, { input: home, forecast: new Map() }).flat()) {
+    for (const cell of monthGrid(TODAY, calendarOf(home)).flat()) {
       if (cell === null) continue;
       if (cell.date >= TODAY || cell.date > end) expect(cell.figure).toBeNull();
       else expect(cell.figure?.kind).toBe('actual');
@@ -123,33 +133,36 @@ test('a future day’s figure is only ever the published forecast’s mid', () =
     ['2026-11-07', forecastDay({ date: '2026-11-07', status: 'booked', low: null, mid: null, high: null, noteGuests: 70, reasons: [booked] })],
     ['2026-11-08', forecastDay({ date: '2026-11-08', status: 'closed', low: null, mid: null, high: null })],
   ]);
-  const cells = new Map(monthGrid(TODAY, CONTEXT, { input: home, forecast }).flat().flatMap((cell) => (cell === null ? [] : [[cell.date, cell]])));
+  const window: ForecastWindow = { available: true, reason: null, runs: [], days: [...forecast.values()], weeks: [] };
+  const cells = new Map(monthGrid(TODAY, calendarOf(home, window)).flat().flatMap((cell) => (cell === null ? [] : [[cell.date, cell]])));
   const at = (date: string) => cells.get(date);
-  expect(at('2026-11-04')?.figure).toEqual({ value: 100, kind: 'actual', text: '100' });
-  expect(at('2026-11-05')?.figure).toEqual({ value: 212, kind: 'forecast', text: '212' });
+  expect([at('2026-11-04')?.figure, at('2026-11-04')?.figureText]).toEqual([{ value: 100, kind: 'actual' }, '100']);
+  expect([at('2026-11-05')?.figure, at('2026-11-05')?.figureText]).toEqual([{ value: 212, kind: 'forecast' }, '~212']);
   // The range rounds low down and high up, as the Calendar, spec 14.4 and TownwiseAI's get_forecast do.
-  expect(at('2026-11-05')?.label).toBe('Thu, Nov 5, 2026. Today. This week. Forecast about 212 guests, 180 to 241.');
+  expect(at('2026-11-05')?.label).toBe('Thu, Nov 5, 2026. Today. This week. 212 guests, forecast, likely 180 to 241.');
   expect(forecastDayLines(forecast.get('2026-11-05') ?? forecastDay({ date: '' }))).toEqual(['About 212 guests, likely 180 to 241.']);
-  expect(at('2026-11-06')?.figure).toEqual({ value: 220, kind: 'forecast', text: '220' });
+  expect(at('2026-11-06')?.figure).toEqual({ value: 220, kind: 'forecast' });
   expect(at('2026-11-06')?.noteGuests).toBe(70);
-  expect(at('2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. Forecast about 220 guests, 180 to 260. Includes 70 guests from your notes. 1 note.');
-  expect(at('2026-11-07')?.figure).toEqual({ value: 70, kind: 'booked', text: '70' });
+  // The label names every entry (D49): the note by its kind words.
+  expect(at('2026-11-06')?.label).toBe('Fri, Nov 6, 2026. This week. 220 guests, forecast, likely 180 to 260. Includes 70 guests from your notes. Private event.');
+  expect([at('2026-11-07')?.figure, at('2026-11-07')?.figureText]).toEqual([{ value: 70, kind: 'booked' }, '~70']);
   expect(at('2026-11-07')?.status).toBe('booked');
-  expect(at('2026-11-07')?.label).toBe('Sat, Nov 7, 2026. This week. Booked: a private buyout, 70 guests. Sample game.');
+  expect(at('2026-11-07')?.label).toBe('Sat, Nov 7, 2026. This week. Booked: a private buyout, 70 guests, forecast. Sample game.');
   expect([at('2026-11-08')?.figure, at('2026-11-08')?.status]).toEqual([null, 'closed']);
   expect(at('2026-11-08')?.label).toBe('Sun, Nov 8, 2026. This week. Closed.');
-  // No forecast day: nothing, even with a stored row.
-  expect(at('2026-11-09')?.figure).toBeNull();
+  // No forecast day: no figure, even with a stored row; the Calendar's word says so.
+  expect([at('2026-11-09')?.figure, at('2026-11-09')?.status]).toEqual([null, 'no_forecast']);
   for (const cell of cells.values()) expect(cell.figure?.value).not.toBe(999);
 });
 
 test('an outlook day’s figures are the published run’s own too (D52): Home never computes, sums or adjusts them', () => {
   const home: HomeInput = { today: TODAY, byDate: byDate(ALL), context: CONTEXT, metric: 'guests', lastDate: '2026-11-04' };
   const outlook = forecastDay({ date: '2026-11-09', low: 150.4, mid: 211.6, high: 289.2, model: { status: 'open', low: 150.4, mid: 211.6, high: 289.2 }, outlook: true });
-  const cell = monthGrid(TODAY, CONTEXT, { input: home, forecast: new Map([[outlook.date, outlook]]) }).flat().find((each) => each?.date === outlook.date);
-  expect(cell?.figure).toEqual({ value: 212, kind: 'forecast', text: '212' });
+  const window: ForecastWindow = { available: true, reason: null, runs: [], days: [outlook], weeks: [] };
+  const cell = monthGrid(TODAY, calendarOf(home, window)).flat().find((each) => each?.date === outlook.date);
+  expect([cell?.figure, cell?.figureText]).toEqual([{ value: 212, kind: 'forecast' }, '~212']);
   expect(cell?.status).toBe('outlook');
-  expect(cell?.label).toBe('Mon, Nov 9, 2026. This week. Outlook about 212 guests, 150 to 290.');
+  expect(cell?.label).toBe('Mon, Nov 9, 2026. This week. Outlook: 212 guests, forecast, likely 150 to 290.');
   expect(forecastDayLines(outlook)).toEqual(['About 212 guests, likely 150 to 290.']);
 });
 

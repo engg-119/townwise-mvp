@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh and the TownwiseAI turn sweep import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh, the TownwiseAI turn sweep and the title backfill import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -31,8 +31,9 @@ describe('isolation (source)', () => {
     // invitations, chat spend and the Organizations page's counts across organizations.
     // chat/turn-sweeper.ts (resumable-chat-turns) finds the running turns whose lease passed, and the records past their
     // keep, in any organization.
+    // files/note-titles.ts, the boot-time title backfill (D49), finds the notes from before titles in every organization.
     expect(importers).toEqual([
-      'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/turn-sweeper.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts',
+      'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/turn-sweeper.ts', 'files/ai-reader.ts', 'files/note-titles.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
       'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts',
     ]);
@@ -100,6 +101,11 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the weekly refresh’s scope, and only lab/schedule.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForWeeklyRefresh(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'lab/schedule.ts']);
+  });
+
+  it('only access/policy.ts mints the title backfill’s scope, and only files/note-titles.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForNoteTitleBackfill(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'files/note-titles.ts']);
   });
 
   it('only access/policy.ts mints the reader’s scope, and only files/worker.ts asks for it', () => {

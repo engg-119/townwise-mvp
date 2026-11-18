@@ -65,6 +65,15 @@ describe('live accuracy', () => {
     expect(three.map(scoredDay)).toEqual([true, true, true]);
   });
 
+  it('never scores a day against a run made after it (D49): only a forecast made by the day is compared with it', () => {
+    const days = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100), open('2026-05-04', 100), open('2026-05-05', 100)];
+    const late: ScoredDay = { ...open('2026-05-06', 100), late: true };
+    expect(scoredDay(late)).toBe(false);
+    expect(scoredDay({ ...late, late: false })).toBe(true);
+    expect(liveAccuracy([...days, late])).toMatchObject({ days: 5, to: '2026-05-05' });
+    expect(liveAccuracy([...days.slice(1), late])).toBeNull();
+  });
+
   it('outlook days are not scored (D52): a stale run’s outlook day keeps its actual but no accuracy counts it', () => {
     const days = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100), open('2026-05-04', 100), open('2026-05-05', 110)];
     const outlook: ScoredDay = { ...open('2026-05-06', 300), outlook: true };

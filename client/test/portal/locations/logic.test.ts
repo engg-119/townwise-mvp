@@ -16,7 +16,7 @@ describe('the note form checks the API’s rules (api/src/handlers/notes.ts read
     expect(checkNote(draft({}), TODAY)).toEqual({
       input: {
         kind: 'closure', startDate: '2026-12-24', endDate: '2026-12-24', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
-        startTime: null, endTime: null,
+        title: null, startTime: null, endTime: null,
       },
     });
   });
@@ -28,7 +28,7 @@ describe('the note form checks the API’s rules (api/src/handlers/notes.ts read
     expect(checked).toEqual({
       input: {
         kind: 'private_event', startDate: '2026-12-24', endDate: '2027-03-29', weekdays: [0, 1, 6], effect: 'more_guests', expectedGuests: 1200,
-        detail: 'A dinner.', startTime: null, endTime: null,
+        detail: 'A dinner.', title: null, startTime: null, endTime: null,
       },
     });
   });
@@ -64,21 +64,21 @@ describe('the note form checks the API’s rules (api/src/handlers/notes.ts read
   });
 
   test('details: required for Other, at most 280 characters', () => {
-    expect(checkNote(draft({ kind: 'other', effect: 'unknown', detail: '   ' }), TODAY)).toEqual({ messages: { detail: 'Add details for an Other note.' } });
+    expect(checkNote(draft({ kind: 'other', effect: 'unknown', detail: '   ' }), TODAY)).toEqual({ messages: { detail: 'Add an event name or details for an Other note.' } });
     expect(checkNote(draft({ detail: 'x'.repeat(281) }), TODAY)).toEqual({ messages: { detail: NOTE_COPY.detailLong } });
     expect('input' in checkNote(draft({ detail: 'x'.repeat(280) }), TODAY)).toBe(true);
   });
 
   test('several messages at once', () => {
     expect(checkNote(draft({ startDate: '', kind: 'other', effect: 'fewer_guests', expectedGuests: '0', detail: '' }), TODAY)).toEqual({
-      messages: { startDate: NOTE_COPY.start, expectedGuests: NOTE_COPY.guests, detail: 'Add details for an Other note.' },
+      messages: { startDate: NOTE_COPY.start, expectedGuests: NOTE_COPY.guests, detail: 'Add an event name or details for an Other note.' },
     });
   });
 
   test('an existing note reads back into the form, and the form gives the same note', () => {
     const note = noteOf('n1', { kind: 'private_event', startDate: '2027-03-01', endDate: '2027-03-29', weekdays: [1], effect: 'more_guests', expectedGuests: 40, detail: 'A dinner.' });
     const checked = checkNote(draftOf(note), TODAY);
-    expect(checked).toEqual({ input: { kind: 'private_event', startDate: '2027-03-01', endDate: '2027-03-29', weekdays: [1], effect: 'more_guests', expectedGuests: 40, detail: 'A dinner.', startTime: null, endTime: null } });
+    expect(checked).toEqual({ input: { kind: 'private_event', startDate: '2027-03-01', endDate: '2027-03-29', weekdays: [1], effect: 'more_guests', expectedGuests: 40, detail: 'A dinner.', title: null, startTime: null, endTime: null } });
     expect(draftOf(noteOf('n2')).endDate).toBe('');
   });
 });

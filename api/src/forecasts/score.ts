@@ -2,6 +2,7 @@
 // misses included. A day counts when it was forecast open, has a stored guest count and is before today; booked days
 // are left out (the booking rule: a private buyout has no walk-in forecast), and so are days that were closed or likely
 // closed (spec D32: a closure, not a forecast miss). [CONFIRM: live accuracy leaves out closed and likely-closed days]
+// A day is compared only with a forecast made by it (D49): a run made after a day is never scored against it.
 // The measure is the notebook's, WAPE: the sum of |actual - mid| over the sum of actuals. Under 5 scored days there is
 // no figure. Pure.
 
@@ -18,6 +19,11 @@ export interface ScoredDay {
   readonly actual: number | null;
   /** The day was closed or likely closed (spec D32, closed-days.ts): left out of live accuracy. */
   readonly closed?: boolean;
+  /**
+   * Its run was made after the day (madeAt later than it, D49): the model never saw the day's sales, but the forecast
+   * came after the day happened, so it is never compared with it and is left out of live accuracy.
+   */
+  readonly late?: boolean;
   /**
    * The day is in its run's outlook (D52, tiers.ts): left out of live accuracy, which keeps scoring the forecast tier
    * only. [CONFIRM: outlook days are left out of live accuracy, so it keeps scoring only the forecast tier]
@@ -46,12 +52,18 @@ export function inRangeOf(actual: number | null, low: number | null, high: numbe
   return actual >= low && actual <= high;
 }
 
+/** A run made after `date` (D49): its made-at day is later. A run made on the day itself (03:00, before service) is not. */
+export function madeAfter(run: { readonly madeAt: string }, date: string): boolean {
+  return run.madeAt > date;
+}
+
 /**
- * Whether live accuracy counts the day: forecast open with a middle and stored guests, not closed or likely closed, and
- * not an outlook day.
+ * Whether live accuracy counts the day: forecast open with a middle and stored guests, not closed or likely closed,
+ * made by the day (D49), and not an outlook day (D52).
  */
 export function scoredDay(day: ScoredDay): day is ScoredDay & { mid: number; actual: number } {
-  return day.status === 'open' && day.closed !== true && day.outlook !== true && day.mid !== null && day.actual !== null;
+  return day.status === 'open' && day.closed !== true && day.late !== true && day.outlook !== true && day.mid !== null
+    && day.actual !== null;
 }
 
 /**

@@ -7,10 +7,11 @@ import { Pair, Stack } from '../ui/layout';
 import { Small } from '../ui/text';
 import { NOTE_EFFECTS, NOTE_KINDS, type NoteKind } from './api';
 import { DateField } from './DateField';
-import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, SEASON_COPY, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
+import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, MAX_TITLE_UNITS, NOTE_COPY, SEASON_COPY, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
 import { ToggleGroup } from './parts';
 
-// The fields a note (C6, spec 12) and a business rule's schedule (D31, P29) share: Kind, Starts, Ends (optional),
+// The fields a note (C6, spec 12) and a business rule's schedule (D31, P29) share: Kind, then on a note only its
+// optional Event name (D49; a rule's schedule has none), Starts, Ends (optional),
 // Starts at and Ends at (optional hours, hidden for a closure), Only on these days, Effect (defaulted by the kind) and
 // Expected guests (hidden when the effect is Closed, except on a private event, where Closed is a buyout and the field
 // takes the party's size; on a private event with more guests its helper says Townwise forecasts whole days, so the
@@ -63,6 +64,18 @@ export function NoteFields(props: {
         isPressed={(kind) => draft.kind === kind}
         onPress={(kind) => { set({ kind, effect: DEFAULT_EFFECT[kind] }); }}
       />
+      {props.noun === 'note' ? (
+        <FormField
+          label="Event name (optional)"
+          helper={NOTE_COPY.titleHelp}
+          placeholder="Holiday party"
+          value={draft.title}
+          onChangeText={(title) => { set({ title }); }}
+          maxLength={MAX_TITLE_UNITS}
+          autoCapitalize="sentences"
+          messages={list(messages.title)}
+        />
+      ) : null}
       <Pair>
         <DateField label="Starts" value={draft.startDate} onChange={(startDate) => { set({ startDate }); }} messages={list(messages.startDate)} />
         <DateField

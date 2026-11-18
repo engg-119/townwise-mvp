@@ -72,6 +72,11 @@ export interface NoteInput {
   effect: NoteEffect;
   expectedGuests: number | null;
   detail: string | null;
+  /**
+   * The event's name (D49): 1 to 120 characters, or null. Left out, an edit keeps the stored one (an older app's
+   * save never erases it); null clears it.
+   */
+  title?: string | null | undefined;
   /** Local 'HH:MM', 24-hour, before endTime on the same day; both null (all day), and always null on a closure. */
   startTime?: string | null | undefined;
   endTime?: string | null | undefined;
@@ -96,6 +101,8 @@ export const noteSchema = z.object({
   effect: z.enum(NOTE_EFFECTS),
   expectedGuests: z.number().nullable(),
   detail: z.string().nullable(),
+  /** The event's name (D49, spec 12), never a person's; optional: an API from before it sends none (read it with `?? null`). */
+  title: z.string().nullish(),
   // Optional: an API from before hours sends neither, which reads as all day (read them with `?? null`).
   startTime: z.string().nullish(),
   endTime: z.string().nullish(),
@@ -105,9 +112,10 @@ export const noteSchema = z.object({
   canEdit: z.boolean(),
   /**
    * A note TownwiseAI made from a file someone let it read (D34, 11A.9); undoing that read deletes it, even after an
-   * edit. Optional: an API from before it sends none.
+   * edit. Optional: an API from before it sends none. `ref` is the file's item in Your data (P27: `f_<fileId>`, or
+   * `u_<uploadId>` for a file that wrote days of its own), null once the file is gone or while stored files are off.
    */
-  source: z.object({ via: z.literal('ai_file'), fileId: z.string() }).nullish(),
+  source: z.object({ via: z.literal('ai_file'), fileId: z.string(), ref: z.string().nullish() }).nullish(),
   /**
    * The owner-calendar event the note was made from (Make a note, or an accepted spotted event), with its dates and
    * hours when linked or last followed; no title. Optional: an API from before it sends none.

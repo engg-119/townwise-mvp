@@ -18,12 +18,12 @@ const DEC_5: NoteDates = { startDate: '2026-12-05', endDate: '2026-12-05', start
 const DEC_12: NoteDates = { startDate: '2026-12-12', endDate: '2026-12-12', startTime: '18:00', endTime: '22:00' };
 
 /** A private-event note on `dates`, linked to the event when it was on `link` (null for an unlinked note). */
-function note(id: string, dates: NoteDates, link: NoteDates | null = dates): NoteRecord {
+function note(id: string, dates: NoteDates, link: NoteDates | null = dates, fields: Partial<NoteRecord> = {}): NoteRecord {
   return {
-    id, kind: 'private_event', ...dates, weekdays: null, effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs',
+    id, kind: 'private_event', ...dates, weekdays: null, effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs', title: null,
     createdBy: 'user-0001', byStaff: false, source: null,
     fromEvent: link === null ? null : { calendarId: CALENDAR, uid: UID, ...link, linkedAt: new Date('2026-11-01T12:00:00.000Z') },
-    createdAt: new Date('2026-11-01T12:00:00.000Z'), updatedAt: EDITED,
+    createdAt: new Date('2026-11-01T12:00:00.000Z'), updatedAt: EDITED, ...fields,
   };
 }
 
@@ -36,7 +36,7 @@ describe('followUpsFor', () => {
     expect(followUpsFor([note('n1', DEC_5)], [event(DEC_12)], GUARDS)).toEqual({
       follows: [{
         type: 'move',
-        note: { kind: 'private_event', ...DEC_12, weekdays: null, effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs' },
+        note: { kind: 'private_event', ...DEC_12, weekdays: null, effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs', title: null },
         follow: { noteId: 'n1', calendarId: CALENDAR, change: 'moved', from: DEC_5, to: DEC_12, noteUpdatedAt: EDITED },
       }],
       expire: [],
@@ -74,7 +74,7 @@ describe('followUpsFor', () => {
     expect(followUpsFor([linked], [event(DEC_12, 'another@bookings.example.test')], GUARDS)).toEqual({
       follows: [{
         type: 'remove',
-        note: { kind: 'private_event', ...DEC_5, weekdays: null, effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs' },
+        note: { kind: 'private_event', ...DEC_5, weekdays: null, effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs', title: null },
         follow: { noteId: 'n1', calendarId: CALENDAR, change: 'gone', from: DEC_5, to: null, noteUpdatedAt: EDITED },
       }],
       expire: [],
@@ -121,5 +121,19 @@ describe('followUpsFor', () => {
     const decided = followUpsFor([note('n0', DEC_5, null), note('n1', DEC_5), other], [event(DEC_12), event(lunch, 'lunch@bookings.example.test')], GUARDS);
     expect(decided.follows.map((each) => [each.type, each.follow.noteId])).toEqual([['move', 'n1']]);
     expect(decided.expire).toEqual(['n2']);
+  });
+
+  it('a titled note (D49): its move and removal snapshots carry no title, and an other note named only by its title still follows', () => {
+    const named = note('n1', DEC_5, DEC_5, { title: 'Holiday party' });
+    const moved = followUpsFor([named], [event(DEC_12)], GUARDS).follows;
+    expect(moved.map((each) => [each.type, each.note.title])).toEqual([['move', null]]);
+    const gone = followUpsFor([named], [event(DEC_12, 'another@bookings.example.test')], GUARDS).follows;
+    expect(gone.map((each) => [each.type, each.note.title])).toEqual([['remove', null]]);
+    // An `other` note needs a title or a detail; checked with its own title, it moves, and the snapshot still holds none.
+    const other = note('n2', DEC_5, DEC_5, { kind: 'other', effect: 'unknown', expectedGuests: null, detail: null, title: 'Wine dinner' });
+    expect(followUpsFor([other], [event(DEC_12)], GUARDS).follows).toEqual([expect.objectContaining({
+      type: 'move', note: expect.objectContaining({ kind: 'other', ...DEC_12, detail: null, title: null }) as unknown,
+    })]);
+    expect(JSON.stringify(followUpsFor([named, other], [event(DEC_12)], GUARDS))).not.toMatch(/Holiday party|Wine dinner/u);
   });
 });

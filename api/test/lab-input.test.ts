@@ -37,7 +37,7 @@ function history(from: string, to: string, skip: readonly string[] = []): SalesD
 function note(overrides: Partial<NoteRecord> & Pick<NoteRecord, 'kind' | 'startDate'>): NoteRecord {
   return {
     id: 'b2'.repeat(12), endDate: overrides.startDate, weekdays: null, effect: 'unknown', expectedGuests: null,
-    detail: 'sentinel-note-detail', startTime: null, endTime: null, createdBy: 'c3'.repeat(12), byStaff: false, source: null, fromEvent: null, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
+    detail: 'sentinel-note-detail', title: null, startTime: null, endTime: null, createdBy: 'c3'.repeat(12), byStaff: false, source: null, fromEvent: null, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
   };
 }
 

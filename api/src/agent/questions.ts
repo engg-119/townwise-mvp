@@ -213,7 +213,7 @@ export function closureNoteOf(asked: AskedQuestion): NoteContent {
   const [startDate, endDate] = asked.kind === 'likely_closed' ? [asked.date, asked.date] : [asked.from, asked.to];
   return {
     kind: 'closure', startDate, endDate, weekdays: asked.kind === 'weekday' ? [asked.weekday] : null,
-    effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null,
+    effect: 'closed', expectedGuests: null, detail: null, title: null, startTime: null, endTime: null,
   };
 }
 
@@ -226,7 +226,7 @@ export function noteFor(asked: AskedQuestion, answer: QuestionAnswer): NoteConte
   if (answer !== 'open' || asked.kind !== 'likely_closed') return null;
   return {
     kind: 'other', startDate: asked.date, endDate: asked.date, weekdays: null, effect: 'fewer_guests', expectedGuests: null,
-    detail: OPEN_DAY_DETAIL, startTime: null, endTime: null,
+    detail: OPEN_DAY_DETAIL, title: null, startTime: null, endTime: null,
   };
 }
 

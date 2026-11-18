@@ -41,7 +41,7 @@ const dayResult = z.object({
 export const dayTool: ChatTool<DayInput> = {
   definition: {
     name: 'get_day',
-    description: 'Everything Townwise has for one day of this location: its weekday, its stored guests and net sales in US dollars (sales is null when the day has no stored row; a null value was not recorded), whether it was closed (a covering note says closed; a business rule\'s schedule closes it, unless a note on the day says it was open, and before today only when it had no guests or guests under the likely-closed line; every recorded value is zero; or it was likely closed), likelyClosed (true when the day is before today, its guests were under a tenth of the typical guests of the same weekday over the 8 weeks before and no note or business rule schedule says more or fewer guests: the restaurant was most likely shut, so treat it as closed, never as a slow day, and say it was likely closed; today and later days never are, since their uploads may be partial), the day\'s class (closed, noted, holiday, event or regular), the notes that cover it, the town calendar entries on it with their sources (covered is false when Townwise\'s researched calendar for the town doesn\'t reach the day, so only holidays are known), and the date in the town when the upload that last wrote the day was made, and whether it finished.',
+    description: 'Everything Townwise has for one day of this location: its weekday, its stored guests and net sales in US dollars (sales is null when the day has no stored row; a null value was not recorded), whether it was closed (a covering note says closed; a business rule\'s schedule closes it, unless a note on the day says it was open, and before today only when it had no guests or guests under the likely-closed line; every recorded value is zero; or it was likely closed), likelyClosed (true when the day is before today, its guests were under a tenth of the typical guests of the same weekday over the 8 weeks before and no note or business rule schedule says more or fewer guests: the restaurant was most likely shut, so treat it as closed, never as a slow day, and say it was likely closed; today and later days never are, since their uploads may be partial), the day\'s class (closed, noted, holiday, event or regular), the notes that cover it (each with its title, the event’s name, or null), the town calendar entries on it with their sources (covered is false when Townwise\'s researched calendar for the town doesn\'t reach the day, so only holidays are known), and the date in the town when the upload that last wrote the day was made, and whether it finished.',
     input_schema: {
       type: 'object',
       properties: { date: DATE },
@@ -86,7 +86,7 @@ export const dayTool: ChatTool<DayInput> = {
         dayClass,
         notes: notes.map((note) => ({
           kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, startTime: note.startTime,
-          endTime: note.endTime, effect: note.effect, expectedGuests: note.expectedGuests, detail: note.detail,
+          endTime: note.endTime, effect: note.effect, expectedGuests: note.expectedGuests, title: note.title, detail: note.detail,
         })),
         town: { name: town.name, state: town.state },
         covered: range !== null && range.from <= date && date <= range.to,

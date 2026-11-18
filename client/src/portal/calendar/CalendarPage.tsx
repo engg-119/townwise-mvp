@@ -24,8 +24,8 @@ import { useLocation } from '../shell/LocationShell';
 import { CalendarSkeleton } from '../skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { ErrorNotice, InlineNotice } from '../ui/feedback';
-import { Small } from '../ui/text';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
+import { Small } from '../ui/text';
 import { Popover, type PopoverAnchor, type PopoverProps } from '../ui/Popover';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
@@ -36,10 +36,11 @@ import {
 } from './grid';
 import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
-  ALL_FILTERS, dayView, monthBounds, monthLabel, outlookKey, savedNotice, selectedDay, stepMonth, tooltipLines,
+  ALL_FILTERS, dayView, monthBounds, monthCheckLine, monthLabel, outlookKey, savedNotice, selectedDay, stepMonth, tooltipLines,
   type CalendarInput, type FilterKey, type Filters, type ImportedEvent,
 } from './model';
 import { YourCalendars } from './YourCalendars';
+import { FigureKey } from './FigureKey';
 
 // P28 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): a month grid of 6 weeks (grid.ts), each
 // day with the published forecast's guests, what drives each day, and the location's notes, which a member adds,
@@ -361,6 +362,8 @@ function CalendarView(): React.JSX.Element {
   const toggle = useCallback((key: FilterKey) => { setFilters((current) => ({ ...current, [key]: !current[key] })); }, []);
   // None over a pending day: the kept reads would word it from reads that don't cover it.
   const tooltip = useCallback((date: string) => (input === null || !covers(date) ? null : tooltipLines(date, input)), [input, covers]);
+  // How the month's forecast did (D49, design decision 11): the month view only, from the forecast read it already has.
+  const monthLine = useMemo(() => (input === null || view === 'week' ? null : monthCheckLine(month, input)), [input, view, month]);
 
   const failure = notes.error ?? monthData.error;
   if (failure !== null) {
@@ -422,6 +425,7 @@ function CalendarView(): React.JSX.Element {
         view={dayPanel}
         locationName={locationName}
         rulesHref={locationHref(location.id, 'rules')}
+        locationId={location.id}
         notice={noticeText}
         noticeResult={notice}
         noticeStays={notice !== null && 'stays' in notice}
@@ -516,6 +520,8 @@ function CalendarView(): React.JSX.Element {
               />
             )}
           </View>
+          <FigureKey />
+          {monthLine === null ? null : <Small>{monthLine}</Small>}
           {outlook === null ? null : <Small>{outlook}</Small>}
         </View>
         {phone ? filtersNode : null}

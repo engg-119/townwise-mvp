@@ -436,7 +436,8 @@ async function expired(ctx: TownwiseContext, caller: MemberPrincipal, location: 
 function eventNote(event: NoteDates, choice: z.infer<typeof eventBody>, today: string): NoteContent | null {
   const base = {
     kind: 'private_event', startDate: event.startDate, endDate: event.endDate, weekdays: null, effect: choice.effect,
-    expectedGuests: choice.expectedGuests, detail: null,
+    // Never the event's title, as the note's detail or its name (D49): no title is stored on a note by the link.
+    expectedGuests: choice.expectedGuests, detail: null, title: null,
   };
   return readNoteContent({ ...base, startTime: event.startTime, endTime: event.endTime }, today)
     ?? readNoteContent({ ...base, startTime: null, endTime: null }, today);

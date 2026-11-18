@@ -756,6 +756,9 @@ describe('the day panel', () => {
     const weekly = note({ startDate: '2026-11-01', endDate: '2026-11-30', weekdays: [6], kind: 'other', effect: 'fewer_guests', detail: 'Road work' });
     const panel = dayPanel('2026-11-07', { ...input, context: dayContext([weekly], []) });
     expect(panel.notes[0]).toMatchObject({ dates: 'Nov 1, 2026 to Nov 30, 2026', weekdays: 'Saturdays only', detail: 'Road work' });
+    // A named note (D49): its kind words, then its name.
+    const named = dayPanel('2026-11-07', { ...input, context: dayContext([{ ...weekly, title: 'Road crew lunch' }], []) });
+    expect(named.notes[0]?.words).toBe('Other, fewer guests than usual: Road crew lunch');
   });
 });
 

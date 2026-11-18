@@ -6,7 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { townEvent } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 import { calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake } from './fakes';
@@ -237,8 +237,33 @@ test('Make a note opens a dialog “Make a note” from the event, without its t
   expect(within(card).getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Make a note']);
   expect(within(card).getByLabelText<HTMLInputElement>('Starts at').value).toBe('18:00');
   expect(within(card).getByLabelText<HTMLInputElement>('Details (optional)').value).toBe('');
+  // Nor as its event name (D33, D49): the dialog never copies an imported event's title.
+  expect(within(card).getByLabelText<HTMLInputElement>('Event name (optional)').value).toBe('');
   escape();
   expect(document.activeElement).toBe(make);
+});
+
+test('staff open as admin: Make a note on a Google event leaves Event name empty and never saves “Google calendar event” as its title', async () => {
+  // To staff the API names a Google calendar's events "Google calendar event" (D39); D49's event name and D53's link
+  // must not turn that placeholder, or the real title, into the note's title.
+  const google = ownerCalendar({ id: 'g1', label: 'Google calendar', kind: 'google', eventCount: 1 });
+  const placeholder = ownerEvent({
+    calendarId: 'g1', calendar: 'Google calendar', uid: 'gid1', title: 'Google calendar event', startDate: SATURDAY, startTime: '18:00', endTime: '21:00',
+  });
+  const { api } = setup({ calendars: [google], ownerEvents: [placeholder] }, openAsAdminMe());
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  api.answers[NOTES_PATH] = (body) => savedNote('n9', body);
+  press('Make a note from Google calendar event');
+  const card = dialog('Make a note');
+  expect(within(card).getByLabelText<HTMLInputElement>('Event name (optional)').value).toBe('');
+  fireEvent.click(within(card).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  const sent = writes(api);
+  expect(sent.map((call) => `${call.method} ${call.path}`)).toEqual([`POST ${NOTES_PATH}`]);
+  const body = sent[0]?.body as { title?: unknown; fromEvent?: unknown };
+  expect(body.title ?? null).toBeNull();
+  expect(body.fromEvent).toEqual({ calendarId: 'g1', uid: 'gid1' });
+  expect(JSON.stringify(body)).not.toContain('Google calendar event');
 });
 
 test('a note made from an event sends the event’s calendar id and uid; Add an event and an edit send none', async () => {

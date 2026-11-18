@@ -855,7 +855,7 @@ describe('weekly suggestions', () => {
     const closure = (date: string) => ({
       content: { type: 'note' as const, note: {
         kind: 'closure' as const, startDate: date, endDate: date, weekdays: null, effect: 'closed' as const, expectedGuests: null,
-        detail: null, startTime: null, endTime: null,
+        detail: null, title: null, startTime: null, endTime: null,
       } },
       why: `Synthetic why for ${date}.`, calendarIds: [],
     });
@@ -931,7 +931,7 @@ describe('weekly suggestions', () => {
         { uid: 'sentinel-uid-0004@bookings.sentinel-host.test', title: 'Past the 91 days', day: '20260905' },
       ], { label: 'Sentinel Front Desk' });
       await server.ctx.stores.notes.create(p.scope, p.locationId, {
-        kind: 'private_event', startDate: '2026-06-11', endDate: '2026-06-11', weekdays: null, effect: 'more_guests', expectedGuests: 20, detail: null,
+        kind: 'private_event', startDate: '2026-06-11', endDate: '2026-06-11', weekdays: null, effect: 'more_guests', expectedGuests: 20, detail: null, title: null,
         startTime: '18:00', endTime: '22:00',
       }, {
         createdBy: 'user-sentinel', now: server.clock.now(),
@@ -940,7 +940,7 @@ describe('weekly suggestions', () => {
       await server.ctx.stores.agentSuggestions.insert(p.scope, { locationId: p.locationId, week: '2026-05-25', now: server.clock.now(), suggestions: [{
         content: {
           type: 'event',
-          note: { kind: 'private_event', startDate: '2026-06-12', endDate: '2026-06-12', weekdays: null, effect: 'unknown', expectedGuests: null, detail: null, startTime: '18:00', endTime: '22:00' },
+          note: { kind: 'private_event', startDate: '2026-06-12', endDate: '2026-06-12', weekdays: null, effect: 'unknown', expectedGuests: null, detail: null, title: null, startTime: '18:00', endTime: '22:00' },
           event: { calendarId: link, uid: 'sentinel-uid-0003@bookings.sentinel-host.test', startDate: '2026-06-12', endDate: '2026-06-12', startTime: '18:00', endTime: '22:00' },
         },
         why: null, calendarIds: [],
