@@ -24,29 +24,37 @@ Every surface that shows a day's guest figure SHALL mark a forecast and leave an
 - **THEN** every day's figure carries the same mark and its label the same "forecast" or "actual" on both
 
 ### Requirement: A past day says how its forecast did
-When a past day has stored guests and the forecast read's day for it is scored (open in the model, not closed or likely closed, from a run made by the day), the Calendar's tooltip and day panel and Home's tooltip and day detail SHALL say "Forecast was about N (likely L to H); X guests came: inside the range", or "above the range" or "below the range", from the model's own figures. A day with no such forecast SHALL make no comparison.
+When a past day has stored guests and the forecast read's day for it is scored (open in the model, not closed or likely closed, not `laterNote`), the Calendar's tooltip and day panel and Home's tooltip and day detail SHALL say "Forecast was about N (likely L to H); X guests came: inside the range", or "above the range" or "below the range", from the model's own figures. When the day's run was made after the day, they SHALL say "Forecast from sales through {its dataThrough}: about N (likely L to H); X guests came: ..." instead. A day with no such forecast SHALL make no comparison, and a `laterNote` day's panel SHALL say "Townwise's model forecast L to H, but it may have used a note or rule written on or after this day, so it isn't scored."
 
 #### Scenario: Inside the range
 - **WHEN** Nov 6 had 94 guests and a run made Nov 2 forecast 82, 70 to 95
 - **THEN** its tooltip and panel say "Forecast was about 82 (likely 70 to 95); 94 guests came: inside the range"
 
 #### Scenario: A run made after the day
-- **WHEN** Nov 6 had 94 guests and its only forecast came from a run made Nov 16
-- **THEN** no surface compares them, and the panel says that a forecast made after the day isn't scored
+- **WHEN** Nov 6 had 94 guests and its only forecast, 82 (70 to 95), came from a run made Nov 16 with sales through Oct 21
+- **THEN** its tooltip and panel say "Forecast from sales through Oct 21, 2026: about 82 (likely 70 to 95); 94 guests came: inside the range"
+
+#### Scenario: A note written after the day
+- **WHEN** Nov 6's only run, made Nov 16, may have read a private event note about Nov 6 written Nov 10
+- **THEN** no surface compares them, and the panel says "Townwise's model forecast 70 to 95, but it may have used a note or rule written on or after this day, so it isn't scored."
 
 ### Requirement: A month says how many days landed inside the forecast range
-The Calendar's month view and Home's This month SHALL show "So far this month: n of m days inside the forecast range." for today's month (the Calendar: "In {Month}: ..." for an earlier month), counting the forecast read's days of that month that a past day's comparison would show. With none in a month that has begun, they SHALL say "No day this month has both its guests and a forecast made before it yet."; for a later month, or while the read loads or failed, nothing. The model card's live line and Home's Last week SHALL use the same words, "inside the forecast range".
+The Calendar's month view and Home's This month SHALL show "So far this month: n of m days inside the forecast range." for today's month (the Calendar: "In {Month}: ..." for an earlier month), counting the forecast read's days of that month that a past day's comparison would show. With none in a month that has begun, they SHALL say "No day this month can be compared with its forecast yet."; for a later month, or while the read loads or failed, nothing. The model card's live line and Home's Last week SHALL use the same words, "inside the forecast range".
 
 #### Scenario: Five of six
 - **WHEN** today is Nov 18 and six days of November have a comparison, five inside
 - **THEN** the Calendar's November and Home's This month say "So far this month: 5 of 6 days inside the forecast range."
 
-### Requirement: Only a forecast made by a day is compared with it
-The forecast read SHALL take each day from the newest published run whose data ends before the day and whose `madeAt` is on or before it, and only with none from the newest whose data ends before it. A day taken from a run made after it SHALL answer `inRange: null` and `scored: false` and SHALL count in no run's `live` and no window's `accuracy`; a week from a run made after its first day SHALL answer `inRange: null`. A run made on the day counts as made by it.
+### Requirement: Only a forecast that never saw a day's outcome is compared with it
+The forecast read SHALL take each day from the newest published run whose data ends before the day and whose `madeAt` is on or before it, and only with none from the newest whose data ends before it. A past day SHALL be compared with its run however late the run was made, since the run's data ends before the day. A day before today SHALL answer `laterNote: true`, `inRange: null` and `scored: false`, and SHALL count in no run's `live` and no window's `accuracy`, when a private event note or rule covering it that the lab input flags after a run's data was last written on or after the day and by the day after its run's `madeAt` (UTC), from a run made on or after the day; a week holding such a day SHALL answer `inRange: null`.
 
 #### Scenario: A late run alone
-- **WHEN** the only published run, made May 10 with data through April 30, covers May 6, which had 130 guests
-- **THEN** the read's May 6 shows that run's figures with `inRange: null` and `scored: false`, and `accuracy` is null
+- **WHEN** the only published run, made May 10 with data through April 30, covers May 6, which had 130 guests, and no note was written about it
+- **THEN** the read's May 6 shows that run's figures with `inRange: true`, `scored: true` and `madeAfterDay: true`, and counts in `accuracy`
+
+#### Scenario: A note written after the day, before the run
+- **WHEN** that run covers May 2, and a private event note about May 2 with no guest count was written May 8
+- **THEN** the read's May 2 answers `laterNote: true`, `inRange: null` and `scored: false`, and the week of May 1 answers `inRange: null`
 
 #### Scenario: A run made in time and a later one
 - **WHEN** a run made May 1 and a newer run made May 10, both with data through April 30, cover May 1 to 14

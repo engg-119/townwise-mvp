@@ -208,6 +208,12 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 - [x] 9.4 SF4: Home's This week forecast row reads "~90 guests, forecast, likely 68 to 112" (`week.ts` `forecastPhrase`). Tests: `week.test.ts`, `home.test.web.tsx`.
 - [x] 9.5 Nits: `madeAfterDay` is `madeAt > date` (`estimates.int.test.ts`); the Event name field allows 240 UTF-16 units for 120 code points; `mondayOf` and `weekDates` move to `analytics/cells.ts` (`import-cycle.test.ts`); a file event's cleaned title is cut to 120 code points; an edited chat proposal without `title` keeps the proposal's; Make a note's Event name is pinned empty; the `c_` page lists an event that began last month under the month shown. The rest are known limits in design.md.
 
+## 9A. Compared by the run's data, not its made-at day (release coordinator, 2026-11-18)
+
+- [x] 9A.1 API, tests first: `forecast-score.test.ts` (`sawDay`, `writtenForRun`), `forecast-adjust.test.ts` (`flagsAfterData`) and `estimates.int.test.ts` (a run made after a day is compared with it; a private event note or rule written after the day and by the run's making is not, nor its week). Then `score.ts`, `adjust.ts` (shared with `lab/input.ts`), `reader.ts` (`laterNote`), TownwiseAI's `get_forecast`, `api/README.md`. `lab-publish.int.test.ts` passes unchanged.
+- [x] 9A.2 Client, tests first in `calendar/model.test.ts`: `forecastCheck` compares every scored day and carries the run's `dataThrough` for a run made after it; `checkWords` says "Forecast from sales through {date}: about ..."; a `laterNote` day's panel line; the month line's empty wording. `estimates/api.ts` keeps `runs[].dataThrough` and `laterNote`.
+- [x] 9A.3 Docs: design decision 11's amendment and its [CONFIRM], the spec deltas, the proposal, and `docs/portal/spec.md` (the D49 row, 14.4's build note, P28, the CONFIRM index item 115, the change log).
+
 ## 10. UI review fixes (2026-11-18)
 
 - [x] 10.1 B1: a wide Home cell lays out as the Calendar's, its status or caption beside the day and "+40" beside the figure, each row at a fixed height (`week.ts` `WIDE_ROWS`, `wideCell`), and `monthEntryLines` takes a line budget. Tests: `week.test.ts`, `month-grid-status.test.web.tsx`, `month-grid.test.native.tsx`.

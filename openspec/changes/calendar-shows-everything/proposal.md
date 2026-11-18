@@ -32,8 +32,8 @@ The causes, read from develop at 85563ceb: notes have no name, only kind words a
 
 - **Actual or forecast, at a glance, and how the forecast did** (owner, 2026-11-18, relayed: "make sure one of the agents fills in the missing dates with forecasts or real data. real data should take precendence and we should have some place to show how the forecasts have performed relative to what actually happened", and "make sure the agent working on the dashboard calendar view includes either the forecast data or the real data and there should be an easy way to tell the difference for this and in general on the calendar page and anywhere else").
   - Every surface that shows a day's guest figure marks a forecast the same way, past or future, and leaves an actual plain, from one rule beside `figureOf` in `calendar/model.ts`; each grid's key names both, and each cell's label says "forecast" or "actual".
-  - A past day with stored guests and a forecast made before it says how the forecast did; the Calendar's month and Home's This month say how many of the month's days landed inside the forecast range, in the model card's words.
-  - The forecast read compares a past day only with a run made by that day: a run made after it only fills a day no earlier run covers, and is never scored (`api/src/forecasts/reader.ts`, `score.ts`).
+  - A past day with stored guests and a scored forecast says how the forecast did (from a run made after the day, "Forecast from sales through {date}: ..."); the Calendar's month and Home's This month say how many of the month's days landed inside the forecast range, in the model card's words.
+  - The forecast read prefers a run made by a day, and compares a past day with its run however late it was made, since its data ends before the day, unless the run may have read a private event note or rule written on or after the day (`api/src/forecasts/reader.ts`, `score.ts`; amended 2026-11-18).
 
 ## Capabilities
 
@@ -42,7 +42,7 @@ The causes, read from develop at 85563ceb: notes have no name, only kind words a
 - `note-titles`: the note's optional event name in the API, the form, the file reader, TownwiseAI's tools and cards, and its privacy rules; the D30 amendment.
 - `calendar-sources`: links from an imported event to its calendar's page and from a TownwiseAI-made note to its file, and what a source link may never hold.
 - `calendar-detail`: the Calendars group in Your data, the `c_` calendar page, and the agenda of a calendar file's events on its P27.
-- `forecast-vs-actual`: one mark for a forecast figure against an actual on every surface, the per-day and per-month comparison with what happened, and the read's rule that only a forecast made by a day is compared with it.
+- `forecast-vs-actual`: one mark for a forecast figure against an actual on every surface, the per-day and per-month comparison with what happened, and the read's rule that only a forecast that never saw a day's outcome is compared with it.
 
 ### Modified Capabilities
 None under `openspec/specs/`. The Calendar's and owner calendars' requirements live in the unarchived `calendar-views`, `connect-owner-calendar`, `connect-google-calendar` and `refine-calendar-and-home` changes. This change adds to them without restating them. The design lists which of their requirements it narrows.
@@ -57,7 +57,7 @@ None under `openspec/specs/`. The Calendar's and owner calendars' requirements l
   - `files/ai-actions.ts` (title from the event, detail its own, the duplicate check);
   - `handlers/data.ts` (`ai.events` on the single item only);
   - `chat/tools/notes.ts`, `day.ts`, `propose-note.ts` and their descriptions (a frozen-prefix change: one prompt cache miss per conversation);
-  - `forecasts/reader.ts` and `score.ts` (2026-11-18: a past day takes the newest run made by it, and a run made after a day is never compared with it).
+  - `forecasts/reader.ts` and `score.ts` (2026-11-18: a past day takes the newest run made by it; amended the same day: it is compared with its run however late the run was made, unless the run may have read a private event note or rule written on or after the day, `laterNote`), and `adjust.ts` `flagsAfterData`, shared with `lab/input.ts`.
   - No new route, collection or env var.
 - Client:
   - `client/src/portal/calendar/` (new `entries.ts`, `model.ts`, `grid.ts`, `CalendarGrid*.tsx`, `CalendarWeek*.tsx`, `DayTooltip.web.tsx`, `CalendarDay.tsx`, `YourCalendars.tsx`);
