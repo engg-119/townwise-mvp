@@ -219,6 +219,15 @@ export function fakeAuth(state: AuthState, overrides?: Partial<Auth>): Auth {
     confirmTotpEnrollment: () => Promise.resolve({
       recoveryCodes: Array.from({ length: 10 }, (_, index) => String(index).padStart(20, '0')),
     }),
+    beginTotpReset: () => Promise.resolve({
+      secret: 'S',
+      otpauthUri: 'otpauth://totp/x',
+      expiresAt: '2026-01-01T00:00:00Z',
+      qrPngDataUrl: 'data:image/png;base64,AAAA',
+    }),
+    confirmTotpReset: () => Promise.resolve({
+      recoveryCodes: Array.from({ length: 10 }, (_, index) => String(index + 10).padStart(20, '0')),
+    }),
     signOut: () => Promise.resolve(),
   };
   return { ...base, ...overrides, store: overrides?.store ?? store };

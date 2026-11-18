@@ -32,6 +32,10 @@ export interface Auth {
   loadMe(): Promise<Me>;
   beginTotpEnrollment(): Promise<TotpEnrollment>;
   confirmTotpEnrollment(code: string): Promise<{ recoveryCodes: string[] }>;
+  /** Starts moving two-step sign-in to a new authenticator, proved by a current code or a recovery code. */
+  beginTotpReset(proof: { code: string } | { recoveryCode: string }): Promise<TotpEnrollment>;
+  /** Finishes it with a code from the new authenticator; until then the old one stays as it was. */
+  confirmTotpReset(code: string): Promise<{ recoveryCodes: string[] }>;
   signOut(notice?: string): Promise<void>;
 }
 
@@ -132,6 +136,15 @@ export function createAuth(deps: { api: ApiClient; session: Session; store: Auth
     },
     confirmTotpEnrollment(code) {
       return api.json(PATHS.totpEnrollConfirm, recoveryCodesSchema, { method: 'POST', body: { code } });
+    },
+    beginTotpReset(proof) {
+      const body = 'code' in proof
+        ? { code: normalizeTotpCode(proof.code) }
+        : { recoveryCode: normalizeRecoveryCode(proof.recoveryCode) };
+      return api.json(PATHS.totpReset, totpEnrollmentSchema, { method: 'POST', body });
+    },
+    confirmTotpReset(code) {
+      return api.json(PATHS.totpResetConfirm, recoveryCodesSchema, { method: 'POST', body: { code } });
     },
     async signOut(notice?: string) {
       await api.logout();
