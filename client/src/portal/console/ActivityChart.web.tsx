@@ -143,7 +143,7 @@ export function ActivityChart(props: ActivityChartProps): React.JSX.Element | nu
   ].join(' ');
   return (
     <div style={{ display: 'grid', gap: 8 }}>
-      <span aria-hidden="true" style={{ ...mono, color: C.text2, marginLeft: GUTTER }}>{weekly ? 'Most people on one day of each week' : 'People who used the app each day'}</span>
+      <span aria-hidden="true" style={{ ...mono, color: C.text2, marginLeft: GUTTER }}>{weekly ? 'Most people on one day' : 'People who used the app each day'}</span>
       <div style={{ position: 'relative', height: HEIGHT, marginLeft: GUTTER }}>
         <svg {...bind} ref={ref} data-chart="activity" viewBox={`0 0 ${String(WIDTH)} ${String(HEIGHT)}`} preserveAspectRatio="none" aria-hidden="true" focusable="false" style={{ width: '100%', height: HEIGHT, display: 'block' }}>
           <Patterns id={id} xScale={drawn === null ? 1 : WIDTH / drawn} />

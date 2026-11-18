@@ -334,7 +334,7 @@ test.each([[320, true], [600, false]])('at %ipx, 90 days draw as weeks: %s', asy
     expect(svg?.querySelectorAll('[data-week]')).toHaveLength(1);
     expect(svg?.querySelector('[data-week="2026-11-11"]')).toBeTruthy();
     expect(screen.getByText(caption)).toBeTruthy();
-    expect(screen.getByText('Most people on one day of each week')).toBeTruthy();
+    expect(screen.getByText('Most people on one day')).toBeTruthy();
   } else {
     expect(svg?.querySelectorAll('[data-day]')).toHaveLength(2);
     expect(screen.queryByText(caption)).toBeNull();
