@@ -113,7 +113,7 @@ export function ActivityChart(props: ActivityChartProps): React.JSX.Element | nu
         <Count value={actionsTop} top={ACTIONS_TOP + 0.5} />
         <Count value={0} top={HEIGHT - 0.5} />
         {hovered === undefined || hover.index === null ? null : (
-          <ChartTooltip tip={tipOf(hovered)} x={((hover.index + 0.5) / n) * hover.width} alignRight={hover.index + 0.5 > n / 2} />
+          <ChartTooltip tip={tipOf(hovered)} from={(hover.index / n) * hover.width} to={((hover.index + 1) / n) * hover.width} alignRight={hover.index + 0.5 > n / 2} />
         )}
       </div>
       <div aria-hidden="true" style={{ ...mono, display: 'flex', justifyContent: 'space-between', marginLeft: GUTTER }}>
