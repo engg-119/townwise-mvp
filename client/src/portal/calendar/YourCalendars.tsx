@@ -171,6 +171,13 @@ function connectionGone(error: unknown): boolean {
   return hasCode(error, 409, 'google_not_connected') || hasCode(error, 409, 'google_reconnect');
 }
 
+/** Who can mend a calendar Google no longer lets Townwise read, from this popover; no one while Google is off. */
+function reconnectOf(calendar: OwnerCalendar, googleOn: boolean): Reconnect {
+  if (!googleOn) return 'none';
+  if (!calendar.mine) return 'other';
+  return Platform.OS === 'web' ? 'here' : 'web';
+}
+
 /** A control in the tab order: react-native-web draws a pressable as a <button> or with tabindex 0. */
 const CONTROL = 'input, button, [tabindex="0"]';
 
@@ -395,6 +402,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
   const [staleError, setStaleError] = useState<unknown>(null);
   const list = props.failed ? null : props.calendars;
+  const googleOn = props.google.available;
   const count = list === null ? 0 : list.length;
   const platform = Platform.OS === 'web' ? 'web' : 'native';
   // "Add a Google calendar" shows on web while the list answers Google calendars on. The section opens only for someone
@@ -487,10 +495,10 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
       }
       return;
     }
-    const words = statusWords(saved.status, saved.kind, reconnectOf(saved));
+    const words = statusWords(saved.status, saved.kind, reconnectOf(saved, googleOn));
     setMessage(words === null ? { live: 'status', items: [refreshedLine(calendar.label)] } : { live: 'alert', items: [words] });
     onChanged(false);
-  }, [api, location.id, onChanged, onRefused, focusMessage]));
+  }, [api, location.id, googleOn, onChanged, onRefused, focusMessage]));
 
   // Any failure but a 404 shows in the dialog, which stays open.
   const remove = useAction(useCallback(async (calendar: OwnerCalendar) => {
@@ -674,13 +682,6 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     setGoogleWords(null);
   }
 
-  /** Who can mend a calendar Google no longer lets Townwise read, from this popover; no one while Google is off. */
-  function reconnectOf(calendar: OwnerCalendar): Reconnect {
-    if (!props.google.available) return 'none';
-    if (!calendar.mine) return 'other';
-    return Platform.OS === 'web' ? 'here' : 'web';
-  }
-
   // An add, an import, a refresh, or a Google choices read, wait, connect or add is out: the popover waits for its
   // answer. A list read again that says Google calendars are off hides the section, and nothing then holds the popover.
   const googleBusy = googleClientId !== null
@@ -725,7 +726,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
               <CalendarRow
                 key={calendar.id}
                 calendar={calendar}
-                reconnect={reconnectOf(calendar)}
+                reconnect={reconnectOf(calendar, googleOn)}
                 refreshing={refresh.pending && refreshingId === calendar.id}
                 refreshBusy={refresh.pending}
                 reading={props.reading}
