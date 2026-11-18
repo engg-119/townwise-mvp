@@ -434,6 +434,47 @@ describe('an answer after a search', () => {
   });
 });
 
+describe('working notes before a search (tuning-chat.md section 3, aside)', () => {
+  /** The events' kinds, a run of text deltas as one. */
+  const kindsOf = (events: TurnEvent[]): string[] => events.map((event) => event.type).filter((kind, index, all) => kind !== 'text' || all[index - 1] !== 'text');
+
+  it('the stream sends aside before the search’s card when text came ahead of it in that message, and only then', async () => {
+    const { events } = await run([
+      { kind: 'message', message: message([text('Let me look that up.'), webSearch('s1'), webResults('s1', [FAIR]), cited('The fair is on Saturday.', [FAIR])]) },
+    ]);
+    expect(kindsOf(events)).toEqual(['text', 'aside', 'tool', 'tool', 'text']);
+
+    // A search with no text before it in its message, or text from an earlier message, sends none.
+    const later = await run([
+      { kind: 'message', message: message([text('Fair is Saturday.')], { stopReason: 'pause_turn' }) },
+      { kind: 'message', message: message([webSearch('s1'), webResults('s1', [FAIR]), cited('The fair is on Saturday.', [FAIR])]) },
+    ]);
+    expect(later.model.calls).toHaveLength(2);
+    expect(kindsOf(later.events)).toEqual(['text', 'tool', 'tool', 'text']);
+    // Text between two searches is working notes too; text after the last is the answer.
+    const between = await run([
+      { kind: 'message', message: message([
+        webSearch('s1'), webResults('s1', [FAIR]), text('The fair is Saturday.'), webSearch('s2'), webResults('s2', [ROAD]), cited('And the road shuts Friday.', [ROAD]),
+      ]) },
+    ]);
+    expect(kindsOf(between.events)).toEqual(['tool', 'tool', 'text', 'aside', 'tool', 'tool', 'text']);
+  });
+
+  it('the saved view replays the text before a message’s last search as thinking, as the stream filed it, and the text after as the answer', () => {
+    const at = new Date('2026-06-01T12:00:00.000Z');
+    const views = chatMessageViews(nodesOf([
+      { role: 'user', content: 'Anything on this weekend?' },
+      { role: 'assistant', content: [
+        text('Let me look.'), webSearch('s1'), webResults('s1', [FAIR]), text('The fair is Saturday.'), webSearch('s2'), webResults('s2', [ROAD]),
+        cited('And the road shuts Friday.', [ROAD]),
+      ] },
+    ].map((param) => ({ at, param: JSON.stringify(param) }))), '2026-06-01');
+    expect(views[1]?.parts.map((part) => [part.type, 'text' in part ? part.text : (part as { id: string }).id])).toEqual([
+      ['thinking', 'Let me look.'], ['tool', 's1'], ['thinking', 'The fair is Saturday.'], ['tool', 's2'], ['text', 'And the road shuts Friday.'],
+    ]);
+  });
+});
+
 describe('a mid-reply fallback after a search', () => {
   it('drops the declined model’s searches and their results, and keeps its text without citations', () => {
     const plain = text('Partial ');
@@ -466,7 +507,8 @@ describe('the conversation view', () => {
     ])), '2026-06-01');
     expect(views[0]?.sources).toEqual([]);
     expect(views[1]?.parts).toEqual([
-      { type: 'text', text: 'Let me look.' },
+      // Text before a search is working notes, replayed as thinking as the stream's aside filed it.
+      { type: 'thinking', text: 'Let me look.' },
       {
         type: 'tool', id: 's1', name: 'web_search', state: 'done', input: null,
         result: { pages: 2, sources: [{ host: 'www.example.com', url: FAIR }, { host: 'news.example.org', url: ROAD }] },
