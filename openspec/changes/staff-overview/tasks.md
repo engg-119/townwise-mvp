@@ -3,7 +3,7 @@ Tests first in every group. Run single suites only (`npm test -w @townwise/api -
 ## 0. Before building
 
 - [x] 0.1 Owner: answer the design's Open Questions (or accept their defaults) and the proposal's sign-offs. Done 2026-11-17: approved, all three sign-offs given, 180 days kept, no delete on removal, staff setup uploads count (design.md, Owner decisions).
-- [ ] 0.2 Confirm on `develop` and in the sessions' reservation list that D48 is still this change's, that P32 is the next free page, and that 6.30 is the next free collection section (6.29 is reserved by `resumable-chat-turns`); take the next free ones and tell the other sessions if not.
+- [x] 0.2 Confirm on `develop` and in the sessions' reservation list that D48 is still this change's, that P32 is the next free page, and that 6.30 is the next free collection section (6.29 is reserved by `resumable-chat-turns`); take the next free ones and tell the other sessions if not. Confirmed 2026-11-17: D48 is this change's in the reservation list (D49 and D50 are taken after it) and unused in `docs/portal/spec.md` on `develop` and `origin/develop` (85563ceb); the highest page there is P31 and the highest collection section 6.28, and no local or remote branch or open OpenSpec change claims P32 or 6.30 (only `resumable-chat-turns` claims 6.29). P32 and 6.30 stand.
 
 ## 1. Activity days
 
