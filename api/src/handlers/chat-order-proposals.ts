@@ -7,6 +7,12 @@
 // never reads as saving what it sent. A rule save sends the situation its card showed, and is refused when the
 // item's latest edit has changed since. A labeled sample is never a shown card. Audit details carry ids and the
 // card's kind only, and only a call that changed the card's state writes one.
+//
+// A setup card (spec D56, chat/tools/order-setup.ts) shows the ordering setup suggestions TownwiseAI wrote from a file
+// attached to the conversation, checked again by the tool's own check. It is served only while the caller may still
+// read that file (kept, on, its original there, and theirs or an org admin's), so it is 404 once the file is turned
+// off or deleted. It can only be set aside: nothing saves from the chat, the owner saves on Ordering setup, and the
+// card keeps no saved mark.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -16,6 +22,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { shownToolCall } from '../chat/shown-call.ts';
+import { proposeOrderSetupTool, shownOrderSetup, type ShownOrderSetup } from '../chat/tools/order-setup.ts';
 import { ORDER_CHANGE_RESULT, ORDER_RULE_RESULT, proposeOrderChangeTool, proposeOrderRuleTool } from '../chat/tools/orders.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { DecisionRecord, OrderCardKind, OrderCardRecord, OrderCardStatus } from '../stores/orders.ts';
@@ -36,10 +43,13 @@ const ruleBody = z.union([
   z.strictObject({ action: z.literal('save'), situation: reasonSchema }),
   z.strictObject({ action: z.literal('dismiss') }),
 ]);
+/** A setup card is only set aside: nothing saves from the chat. */
+const setupBody = z.strictObject({ action: z.literal('dismiss') });
 
 type Shown =
   | { kind: 'change'; location: LocationRecord; locationId: string; conversationId: string; proposalId: string; itemId: string; delivery: string }
-  | { kind: 'rule'; location: LocationRecord; locationId: string; conversationId: string; proposalId: string; itemId: string };
+  | { kind: 'rule'; location: LocationRecord; locationId: string; conversationId: string; proposalId: string; itemId: string }
+  | { kind: 'setup'; location: LocationRecord; locationId: string; conversationId: string; proposalId: string; setup: ShownOrderSetup };
 
 async function loadShown(ctx: TownwiseContext, principal: Principal, req: Request): Promise<Shown> {
   const caller = memberOf(principal);
@@ -59,6 +69,14 @@ async function loadShown(ctx: TownwiseContext, principal: Principal, req: Reques
     const input = proposeOrderRuleTool.parse(rule.input, '');
     if (input === null) throw notFound();
     return { kind: 'rule', location, locationId: location.id, conversationId, proposalId, itemId: input.itemId };
+  }
+  const call = shownToolCall(conversation.messages, proposeOrderSetupTool.definition.name, proposalId);
+  const setup = call === null ? null : shownOrderSetup(call.input, call.content);
+  if (setup !== null) {
+    // The file again, as the caller is now: only the check, nothing is read.
+    const file = await ctx.items.readForModel(caller.scope, location.id, setup.ref.slice(2), { userId: caller.userId, role: caller.role });
+    if (file.status !== 'readable') throw notFound();
+    return { kind: 'setup', location, locationId: location.id, conversationId, proposalId, setup };
   }
   throw notFound();
 }
@@ -86,6 +104,11 @@ export async function getOrderProposal(ctx: TownwiseContext, req: Request, res: 
   const shown = await loadShown(ctx, principal, req);
   const card = await ctx.stores.orders.findCard(caller.scope, shown);
   const status = statusOf(card?.status);
+  if (shown.kind === 'setup') {
+    // Never `saved`: a setup card's only stored state is set aside.
+    res.status(200).json({ proposal: { kind: 'setup', status: status === 'dismissed' ? 'dismissed' : 'open', read: shown.setup.read, readWeb: shown.setup.readWeb } });
+    return;
+  }
   if (shown.kind === 'change') {
     const edit = status === 'saved' ? editOf(await storedEdit(ctx, caller, shown, card)) : {};
     res.status(200).json({ proposal: { kind: 'change', status, itemId: shown.itemId, delivery: shown.delivery, ...edit } });
@@ -117,10 +140,16 @@ async function dismiss(ctx: TownwiseContext, caller: MemberPrincipal, shown: Sho
   return card;
 }
 
-/** POST: save the owner's quantity, remember a rule, or set the card aside. A saved card stays saved. */
+/** POST: save the owner's quantity, remember a rule, or set the card aside. A saved card stays saved. A setup card is only set aside. */
 export async function actOnOrderProposal(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const shown = await loadShown(ctx, principal, req);
+  if (shown.kind === 'setup') {
+    parseInput(setupBody, req.body);
+    await dismiss(ctx, caller, shown, 'setup');
+    res.status(200).json({ proposal: { kind: 'setup', status: 'dismissed' } });
+    return;
+  }
   if (shown.kind === 'change') {
     const body = parseInput(changeBody, req.body);
     const view = { kind: 'change', itemId: shown.itemId, delivery: shown.delivery } as const;
