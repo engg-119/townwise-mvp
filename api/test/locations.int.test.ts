@@ -12,7 +12,7 @@ import { createLocation, type LocationSummary } from '../src/handlers/locations.
 import type { TownProfile } from '../src/handlers/towns.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
 import {
-  addLocation, addNote, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
+  addChatTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
   ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { fakePlaces, placeDetails, usAddress } from './helpers/places-fetch.ts';
@@ -244,6 +244,20 @@ describe('DELETE /api/org/locations/:locationId', () => {
     expect((await remove(t.admin, doomed)).status).toBe(204);
     expect(await proposals.countDocuments({ locationId: new Types.ObjectId(doomed) })).toBe(0);
     expect(await proposals.countDocuments({ locationId: new Types.ObjectId(kept) })).toBe(1);
+  });
+
+  it('deletes the location’s TownwiseAI turn records with it, and no other location’s (resumable-chat-turns)', async () => {
+    const t = await team('Turn Group');
+    const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    await addSalesDay(server, { orgId: t.orgId, locationId: doomed, date: '2026-05-01', guests: 80, netSalesCents: null });
+    for (const locationId of [doomed, kept]) {
+      await addChatTurn(server, { orgId: t.orgId, locationId, conversationId: new Types.ObjectId().toHexString(), userId: t.member.userId });
+    }
+    expect((await remove(t.admin, doomed)).status).toBe(204);
+    const turns = server.connection.collection('tw_chat_turns');
+    expect(await turns.countDocuments({ locationId: new Types.ObjectId(doomed) })).toBe(0);
+    expect(await turns.countDocuments({ locationId: new Types.ObjectId(kept) })).toBe(1);
   });
 
   // U9, TownwiseAI's questions.

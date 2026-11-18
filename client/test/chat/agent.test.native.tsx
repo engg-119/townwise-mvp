@@ -146,7 +146,7 @@ describe('an empty conversation', () => {
 });
 
 describe('a reply', () => {
-  test('shows Working for with no Thinking… line, then a running card, then text; folds them under Worked for when done, with a Based on line from them', async () => {
+  test('shows Working for with no Thinking… line, its timeline closed until pressed, then a running card, then text; open, it stays open as Worked for when done, with a Based on line from them', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('How was December?');
     expect(screen.getByText('How was December?')).toBeTruthy();
@@ -155,7 +155,11 @@ describe('a reply', () => {
     expect(screen.queryByText('TownwiseAI is thinking…')).toBeNull();
     expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
     await act(() => { turn(chat).emit('thinking', { delta: 'Weighing the weekend.' }); });
-    expect(await screen.findByText('Weighing the weekend.')).toBeTruthy();
+    const working = await screen.findByRole('button', { name: /^Working for \d+ seconds?$/ });
+    expect(working.props.accessibilityState).toMatchObject({ expanded: false });
+    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
+    await fireEvent.press(working);
+    expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     expect(screen.queryByText('Thinking…')).toBeNull();
     await act(() => { turn(chat).emit('tool', { id: SALES_STEP.id, name: SALES_STEP.name, state: 'running', input: SALES_STEP.input, result: null }); });
     expect(screen.getByText('Reading')).toBeTruthy();
@@ -169,12 +173,9 @@ describe('a reply', () => {
     expect(await screen.findByText('December was steady.')).toBeTruthy();
     expect(screen.queryByText(/^Working for/)).toBeNull();
     expect(screen.getByText('Based on your sales from Dec 1 to Dec 31, 2025.')).toBeTruthy();
-    // Folded under Worked for: the summary and the row show on pressing it, and the row opens to what it read.
-    expect(screen.queryByText('Weighing the weekend.')).toBeNull();
-    expect(screen.queryByText('31 days: guests on 31, net sales on 30')).toBeNull();
+    // Still open under Worked for: the summary and the row show, and the row opens to what it read.
     const worked = screen.getByRole('button', { name: /^Worked for \d+ seconds?$/ });
-    expect(worked.props.accessibilityState).toMatchObject({ expanded: false });
-    await fireEvent.press(worked);
+    expect(worked.props.accessibilityState).toMatchObject({ expanded: true });
     expect(screen.getByText('Weighing the weekend.')).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Read your sales for Dec 1 to Dec 31, 2025. 31 days: guests on 31, net sales on 30' }));
     expect(screen.getByText('Days with net sales')).toBeTruthy();
@@ -184,7 +185,10 @@ describe('a reply', () => {
   test('a stopped reply keeps what arrived, says it wasn’t saved, and Try again sends the message again', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('Hello');
-    await act(() => { turn(chat).emit('text', { delta: 'Half a rep' }); });
+    await act(() => {
+      turn(chat).emit('conversation', { id: 'c2', title: 'Hello', turnId: 'turn-1' });
+      turn(chat).emit('text', { delta: 'Half a rep' });
+    });
     await fireEvent.press(screen.getByRole('button', { name: 'Stop' }));
     expect(await screen.findByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
     expect(screen.getByText('Half a rep')).toBeTruthy();
@@ -224,8 +228,8 @@ describe('a proposed note', () => {
       turn(chat).emit('text', { delta: 'Here is a note.' });
       turn(chat).emit('proposal', { id: PROPOSAL_ID, proposal: PROPOSAL });
     });
-    // Until the turn is stored, the actions wait.
-    disabled('Save note');
+    // Held while the reply works (owner, 2026-11-18): the card shows once it ends.
+    expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
     await act(() => {
       turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(chat).end();

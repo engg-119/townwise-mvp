@@ -18,7 +18,7 @@ import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TOOLS } from '../src/chat/tools/registry.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
 import {
-  addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
+  addChatTurn, addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
 } from './helpers/fixtures.ts';
 import {
   eventsOf, message, messagesOf, scriptedModel, text, thinking, toolUse, type ScriptedModel,
@@ -162,6 +162,8 @@ describe('a plain answer', () => {
     const { userNodeId, replyNodeId } = events[0]?.data as { userNodeId: string; replyNodeId: string };
     expect(events[0]?.data).toEqual({
       id, title: 'What changed in May?', userNodeId: expect.any(String) as unknown, replyNodeId: expect.any(String) as unknown, parentId: null,
+      // resumable-chat-turns: the turn's id, for a reader that resumes it.
+      turnId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown,
     });
     expect(streamedText(events)).toBe('May was steady, with two busy Fridays.');
     // 1000 x $4 + 500 x $20 + 10,000 x $0.20 + 2000 x $5 per million tokens.
@@ -214,6 +216,7 @@ describe('a plain answer', () => {
           attachments: [], sources: [],
         },
       ],
+      liveTurn: null,
     });
   });
 
@@ -602,10 +605,12 @@ describe('provider errors', () => {
 });
 
 describe('closing the connection', () => {
-  it('aborts the provider call and saves nothing but the cost', async () => {
-    // One text delta, so what streamed before the abort is always the same 7 characters.
-    const partial = eventsOf(message([text('A long answer that keeps going and going')], { usage: { input: 1000 } })).slice(0, 3);
-    model.script({ kind: 'hang', before: partial });
+  // resumable-chat-turns: this used to abort the provider call and save nothing. Closing now only stops that listener;
+  // the turn runs on and is saved once, as any turn (chat-resume.int.test.ts covers its record and the other endings).
+  it('aborts nothing: the turn runs on and is saved once', async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    model.script({ kind: 'message', message: message([text('An answer written while nobody watched.')]), gate });
     const controller = new AbortController();
     const res = await fetch(new URL(turnsPath(), server.url), {
       method: 'POST',
@@ -618,7 +623,7 @@ describe('closing the connection', () => {
     if (reader === undefined) throw new Error('no body');
     const decoder = new TextDecoder();
     let received = '';
-    while (!received.includes('event: text')) {
+    while (!received.includes('event: conversation')) {
       const chunk = await reader.read();
       if (chunk.done) break;
       received += decoder.decode(chunk.value);
@@ -626,14 +631,14 @@ describe('closing the connection', () => {
     const id = conversationIdOf(parseSse(received));
     controller.abort();
     await reader.cancel().catch(() => undefined);
+    release();
 
-    await until(() => Promise.resolve(model.calls[0]?.signal.aborted === true));
-    await until(async () => (await conversationDoc(id)) === null);
-    // 7 streamed characters count as 3 output tokens; the test clock did not move, so time adds none.
-    expect(await usedMicroUsd()).toBe(1000 * 4 + 3 * 20);
-    await until(() => Promise.resolve(server.logs.some((line) => line.includes('townwise.chat_turn_aborted'))));
+    await until(async () => (await conversationDoc(id))?.turnCount === 1);
+    expect(model.calls[0]?.signal.aborted).toBe(false);
+    expect((await storedParams(id)).map((m) => m.role)).toEqual(['user', 'assistant']);
     await until(async () => (await server.connection.collection('tw_chat_live_turns').countDocuments({})) === 0);
-    expect(server.logs.join('\n')).not.toContain('"code":"timeout"');
+    await until(() => Promise.resolve(server.logs.some((line) => line.includes('"msg":"townwise.chat_turn"'))));
+    expect(server.logs.join('\n')).not.toContain('townwise.chat_turn_aborted');
   });
 });
 
@@ -843,9 +848,16 @@ describe('who sees what', () => {
 
   it('the author deletes a conversation: 204, recorded with ids only; a second delete is 404', async () => {
     const id = await addConversation(server, { orgId, locationId, userId: author.session.userId, text: 'Delete me' });
+    // resumable-chat-turns: the conversation's turn records go with it, and another conversation's stay.
+    const kept = await addConversation(server, { orgId, locationId, userId: author.session.userId, text: 'Keep me' });
+    await addChatTurn(server, { orgId, locationId, conversationId: id, userId: author.session.userId });
+    await addChatTurn(server, { orgId, locationId, conversationId: kept, userId: author.session.userId });
     const path = `/api/org/locations/${locationId}/chat/${id}`;
     expect((await call(server, path, { method: 'DELETE', session: author.session })).status).toBe(204);
     expect(await conversationDoc(id)).toBeNull();
+    const turns = server.connection.collection('tw_chat_turns');
+    expect(await turns.countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(0);
+    expect(await turns.countDocuments({ conversationId: new Types.ObjectId(kept) })).toBe(1);
     const event = (await auditEvents(server)).find((e) => (e.target as { id: string }).id === id);
     expect(event).toMatchObject({
       action: 'chat.conversation_deleted', actorUserId: author.session.userId, target: { type: 'conversation', id },
@@ -854,11 +866,13 @@ describe('who sees what', () => {
     expect(await errorOf(await call(server, path, { method: 'DELETE', session: author.session }))).toEqual({ status: 404, error: 'not_found' });
   });
 
-  it('deleting a location deletes its conversations', async () => {
+  it('deleting a location deletes its conversations and their turn records', async () => {
     const roomId = await addLocation(server, { orgId, name: 'Pop-up Room' });
     const id = await addConversation(server, { orgId, locationId: roomId, userId: author.session.userId, text: 'Pop-up question' });
+    await addChatTurn(server, { orgId, locationId: roomId, conversationId: id, userId: author.session.userId });
     expect((await call(server, `/api/org/locations/${roomId}`, { method: 'DELETE', session: admin.session })).status).toBe(204);
     expect(await conversationDoc(id)).toBeNull();
+    expect(await server.connection.collection('tw_chat_turns').countDocuments({ locationId: new Types.ObjectId(roomId) })).toBe(0);
   });
 });
 

@@ -31,6 +31,7 @@ import { ReplyView } from './ReplyView';
 import { Suggestions } from './Suggestions';
 import { FadeIn } from './ToolGroup';
 import { UserMessage } from './UserMessage';
+import { workedOpenStore } from './workedOpen';
 
 // The TownwiseAI chat page (spec P25, D26): the header (History,
 // New chat and Questions and activity; no title), then the landing of an empty conversation (one centered column: what to ask,
@@ -155,6 +156,8 @@ export function AgentChat(props: {
   // Words a message view gave the region ("Showing version 2 of 3."); `n` grows with each, so a repeat is news too.
   const [said, setSaid] = useState<{ words: string; n: number } | null>(null);
   const saidCount = useRef(0);
+  // Which replies' timelines the person opened (workedOpen.ts): the page's, so a reply drawn again keeps its own.
+  const [workedOpen] = useState(workedOpenStore);
   // A send from the landing, and what sent it: the composer moves under the thread, and focus follows it.
   const docking = useRef<'composer' | 'other' | null>(null);
   // What docked the composer, until another conversation shows: if the first turn is taken back (refused, or the
@@ -568,6 +571,7 @@ export function AgentChat(props: {
                   canAct={canAct}
                   onRetry={(key) => { send(() => { chat.retry(key); }); }}
                   onAnnounce={announce}
+                  workedOpen={workedOpen}
                 />
                 {newest && message.state === 'complete' ? (
                   <NextChips

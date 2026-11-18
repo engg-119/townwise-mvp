@@ -6,12 +6,14 @@
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
 // countedWeekRows (D42), the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
-// weekly-forecast-suggestions), the active days recorder's removeOldActivityDays, and the staff Overview's
-// activityDaysSince, peopleActionsSince, openInvitesBefore and chatUsageForMonth (openspec change staff-overview).
+// weekly-forecast-suggestions), the active days recorder's removeOldActivityDays, the staff Overview's
+// activityDaysSince, peopleActionsSince, openInvitesBefore and chatUsageForMonth (openspec change staff-overview), and the
+// TownwiseAI turn sweep's staleChatTurns and removeEndedChatTurns (openspec change resumable-chat-turns).
 // Only access/resolve.ts, the active days recorder (access/activity.ts), the join and decline handlers, the staff
-// handlers (admin.ts, deletion.ts, overview.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
+// handlers (admin.ts, deletion.ts, overview.ts), the TownwiseAI turn sweep (chat/turn-sweeper.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
-// (calendar/google-access.ts) and the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) import
+// (calendar/google-access.ts), the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) and the
+// TownwiseAI turn sweep (chat/turn-sweeper.ts) import
 // this file (test/isolation.test.ts enforces
 // the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
@@ -26,6 +28,7 @@ import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
+import { chatTurnModel } from './chat-turns.ts';
 import { chatUsageModel } from './chat-usage.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
@@ -284,7 +287,7 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, their tuning chat conversations, live turns, proposal records and order cards, their welcome markers
+ * removed seats, their tuning chat conversations, live turns, turn records, proposal records and order cards, their welcome markers
  * and their Google connections for calendars, in every organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab), and from the weekly suggestions switch they last set
@@ -325,6 +328,9 @@ export async function deletePersonRecords(
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
   await chatProposalModel(connection).deleteMany({ userId });
+  // resumable-chat-turns: their turns' records, in every organization, so a turn still running ends at its next write.
+  // Not counted, so the audit details are unchanged.
+  await chatTurnModel(connection).deleteMany({ userId });
   // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
   await welcomeModel(connection).deleteMany({ userId });
   // The display name (spec 6.22). Not counted, so the audit details are unchanged.
@@ -801,4 +807,37 @@ export async function staleSuggestionPasses(connection: Connection, before: Date
 /** The weekly cap's count (D42): week rows of `week` that are `starting` or `started`, across organizations. */
 export async function countedWeekRows(connection: Connection, week: string): Promise<number> {
   return forecastWeekModel(connection).countDocuments({ week, status: trusted({ $in: [...COUNTED_WEEK_STATUSES] }) });
+}
+
+/**
+ * A running TownwiseAI turn whose lease has passed (its replica died, or shut down without settling it), or one the
+ * sweep ended as interrupted whose claims it has yet to release.
+ */
+export interface StaleChatTurn {
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly conversationId: string;
+  readonly userId: string;
+  readonly turnId: string;
+}
+
+/**
+ * The TownwiseAI turn sweep (chat/turn-sweeper.ts, openspec change resumable-chat-turns): running records in any
+ * organization whose lease passed before `now`, and interrupted ones the sweep has yet to release the claims of, oldest
+ * lease first, at most `limit`. Ids only, never the events.
+ */
+export async function staleChatTurns(connection: Connection, now: Date, limit: number): Promise<StaleChatTurn[]> {
+  const stale = { $or: [{ state: 'running' as const, leaseUntil: trusted({ $lt: now }) }, { state: 'interrupted' as const, releasePending: true }] };
+  const docs = await chatTurnModel(connection)
+    .find(stale, { orgId: 1, locationId: 1, conversationId: 1, userId: 1, turnId: 1 })
+    .sort({ leaseUntil: 1 }).limit(limit).lean();
+  return docs.map((doc) => ({
+    orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), conversationId: doc.conversationId.toHexString(),
+    userId: doc.userId, turnId: doc.turnId,
+  }));
+}
+
+/** The TownwiseAI turn sweep: deletes every record, in any organization, whose turn ended at or before `before`. */
+export async function removeEndedChatTurns(connection: Connection, before: Date): Promise<number> {
+  return (await chatTurnModel(connection).deleteMany({ endedAt: trusted({ $lte: before }) })).deletedCount;
 }

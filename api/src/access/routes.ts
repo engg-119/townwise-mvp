@@ -14,6 +14,7 @@ import { getLocationCalendar } from '../handlers/calendar.ts';
 import { listCalibrations, setForecastSchedule, startCalibration, switchForecasts } from '../handlers/calibrations.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { rateReply } from '../handlers/chat-feedback.ts';
+import { getTurnEvents, stopTurn } from '../handlers/chat-turns.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnOrderProposal, getOrderProposal } from '../handlers/chat-order-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
@@ -60,7 +61,7 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a TownwiseAI turn's stop, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
    * edit, an order rule's turn-off and open as admin's start (its reason);
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
    * switch, the weekly suggestions switch, (D31) a business rule, the order decisions and rules, the item and order change cards, and connecting a
@@ -77,8 +78,8 @@ export interface TownwiseRoute {
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | '2mb' | '8mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?:
-    | 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads' | 'ai_reads'
-    | 'google_calendars';
+    | 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'chat_tail' | 'places' | 'files' | 'file_chunks' | 'downloads'
+    | 'ai_reads' | 'google_calendars';
   /**
    * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
    * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
@@ -363,6 +364,16 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.chat.turn', method: 'POST', path: '/org/locations/:locationId/chat/turns', policy: 'member', bodyLimit: '32kb',
     limiter: 'chat', openAsAdmin: true, handler: postTurn,
   },
+  // resumable-chat-turns: a running turn's events, read back from its record, for a page that lost its stream.
+  {
+    id: 'org.chat.turn_events', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId',
+    policy: 'member', bodyLimit: 'none', limiter: 'chat_tail', openAsAdmin: true, handler: getTurnEvents,
+  },
+  // resumable-chat-turns: stopping a running turn, from any replica; an empty body, the writes limiter only.
+  {
+    id: 'org.chat.turn_stop', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId/stop',
+    policy: 'member', bodyLimit: '1kb', openAsAdmin: true, handler: stopTurn,
+  },
   {
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteConversation,
@@ -640,6 +651,9 @@ export const ROUTE_LIMITS = {
   'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
   // docs/portal/tuning-chat.md section 2: every turn costs money, so a store outage denies.
   chat: { name: 'townwise:chat', limit: 60, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // resumable-chat-turns: reading a turn's events back spends nothing (two reads a second of the record's state, count
+  // and lease, and the record only once it gained events, for at most 200 seconds), so a store outage allows. 300 an hour leaves room for a page that reconnects every few seconds through an outage.
+  chat_tail: { name: 'townwise:chat-tail', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
   // Both Places routes share it. A search is 10 to 15 debounced autocompletes and one details call, so this is about
   // 20 searches an hour; every call costs money, so a store outage denies.
   places: { name: 'townwise:places', limit: 300, windowSeconds: 3600, whenStoreDown: 'deny' },

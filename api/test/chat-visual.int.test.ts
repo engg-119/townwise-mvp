@@ -22,7 +22,7 @@ const FORECAST = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', i
 const SHOWN = 'Shown to the owner under your reply. Describe it in a sentence or two; don’t repeat every figure.';
 const SHOWN_FORECAST = `${SHOWN} Give the forecast as its range.`;
 const SUGGESTED = 'Shown to the owner as three buttons.';
-const UNANSWERED = 'Shown to the owner as three buttons. The owner has not seen an answer yet: they see only text you write, never your thinking. Write your answer to the owner now, as text.';
+const UNANSWERED = 'Shown to the owner as three buttons. Your thinking is never shown, and text you wrote before your last lookups was shown as working notes, not as your answer. Write your answer to the owner now, as text, without mentioning an earlier answer or this note.';
 const THREE = ['Sentinel-next-one: how did Monday go?', 'Sentinel-next-two: any events soon?', 'Sentinel-next-three: show May'];
 
 let server: TownwiseTestServer;
@@ -312,9 +312,9 @@ describe('suggest_next', () => {
     expect(messages.at(-1)?.parts.at(-1)).toMatchObject({ type: 'text', text: 'May started strong.' });
   });
 
-  it('suggest_next alone after tools, with text only before them, still asks for the answer: an aside is no answer', async () => {
-    // Call 1: an aside and get_sales_days; call 2: the answer as thinking and suggest_next only; call 3: the answer.
-    // Opus 5.5 returns text written before a tool call in the same message as thinking, so the owner never saw it.
+  it('suggest_next alone after tools, with text only before them, still asks for the answer: working notes are no answer', async () => {
+    // Call 1: working notes and get_sales_days; call 2: the answer as thinking and suggest_next only; call 3: the answer.
+    // Text a lookup followed shows in the reply's timeline as working notes, not as its answer.
     model.script(
       { kind: 'message', message: message([text('Next week, presumably. '), toolUse('toolu_a1', 'get_sales_days', { from: '2026-05-01', to: '2026-05-05' })]) },
       { kind: 'message', message: message([thinking('May started strong.'), toolUse('toolu_n9', 'suggest_next', { prompts: THREE })]) },

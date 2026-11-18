@@ -61,10 +61,29 @@ test('field rules: one leading space is dropped, no colon means an empty value, 
   expect(parse(['data:no-space\n\n'])).toEqual([{ event: 'message', data: 'no-space' }]);
   expect(parse(['data:  two spaces\n\n'])).toEqual([{ event: 'message', data: ' two spaces' }]);
   expect(parse(['data\n\n'])).toEqual([{ event: 'message', data: '' }]);
-  expect(parse(['id: 7\nretry: 1000\nevent: text\n\ndata: x\n\n'])).toEqual([{ event: 'message', data: 'x' }]);
+  expect(parse(['retry: 1000\nevent: text\n\ndata: x\n\n'])).toEqual([{ event: 'message', data: 'x' }]);
   expect(parse([': ping\n\n: ping\n\n'])).toEqual([]);
 });
 
 test('a byte order mark at the start is ignored', () => {
   expect(parse(['﻿', 'event: text\ndata: 1\n\n'])).toEqual([{ event: 'text', data: '1' }]);
+});
+
+test('id: an event carries the last id the stream set, which outlives its event; an empty id clears it, one with NULL is ignored', () => {
+  expect(parse(['id: 1\nevent: conversation\ndata: {}\n\nid: 2\nevent: text\ndata: a\n\n'])).toEqual([
+    { event: 'conversation', data: '{}', id: '1' },
+    { event: 'text', data: 'a', id: '2' },
+  ]);
+  // A block with no data dispatches nothing but still sets the id the next event carries.
+  expect(parse(['id: 7\nretry: 1000\nevent: text\n\ndata: x\n\ndata: y\n\n'])).toEqual([
+    { event: 'message', data: 'x', id: '7' },
+    { event: 'message', data: 'y', id: '7' },
+  ]);
+  expect(parse(['id: 3\ndata: x\n\nid\ndata: y\n\n'])).toEqual([{ event: 'message', data: 'x', id: '3' }, { event: 'message', data: 'y' }]);
+  expect(parse(['id: 4\ndata: x\n\nid: 5\u0000\ndata: y\n\n'])).toEqual([
+    { event: 'message', data: 'x', id: '4' },
+    { event: 'message', data: 'y', id: '4' },
+  ]);
+  // An id split across chunks reads whole.
+  expect(parse(['id: 1', '2\nevent: done\ndata: {}\n', '\n'])).toEqual([{ event: 'done', data: '{}', id: '12' }]);
 });

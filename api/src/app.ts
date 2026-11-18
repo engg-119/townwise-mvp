@@ -12,6 +12,7 @@ import { createCalendarFetcher, type CalendarFetcher } from './calendar/fetch.ts
 import type { GoogleCalendarClient, revokeGoogleGrant } from './calendar/google.ts';
 import type { ChatModel } from './chat/model.ts';
 import { TURN_TIME_LIMIT_MS } from './chat/turn.ts';
+import { createTurnRunner, type TurnRunner } from './chat/turn-runner.ts';
 import { resolveTownwiseConfig, type ResolvedTownwiseConfig, type TownwiseConfig } from './config.ts';
 import type { FileBlobs } from './files/blobs.ts';
 import type { FileReaderModel } from './files/extract/reader.ts';
@@ -42,6 +43,11 @@ export interface TownwiseDeps {
   readonly chat?: ChatModel | undefined;
   /** A tuning chat turn's time limit in milliseconds; tests shorten it. Absent, TURN_TIME_LIMIT_MS (150 seconds). */
   readonly chatTurnTimeLimitMs?: number | undefined;
+  /**
+   * Runs TownwiseAI turns detached from their requests (chat/turn-runner.ts, resumable-chat-turns): one per process, so
+   * main.ts builds it, passes it to every context and closes it first on shutdown. Absent, the context builds its own.
+   */
+  readonly turnRunner?: TurnRunner | undefined;
   /** Google Places for the Places proxy; absent turns it off (main.ts builds it only when GOOGLE_PLACES_API_KEY is set). */
   readonly places?: PlacesClient | undefined;
   /** Townwise's emails (spec D14); absent turns email off (main.ts builds it only when EMAIL_ENDPOINT is set). */
@@ -125,6 +131,8 @@ export interface TownwiseContext {
   /** Null while the tuning chat is off. */
   readonly chat: ChatModel | null;
   readonly chatTurnTimeLimitMs: number;
+  /** The process's turn runner: a turn runs there whatever its connection does. */
+  readonly turnRunner: TurnRunner;
   /** Null while the Places proxy is off. */
   readonly places: PlacesClient | null;
   /** Always set: OFF_MAILER while email is off, so a handler calls send either way. */
@@ -177,6 +185,7 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     stores,
     chat: deps.chat ?? null,
     chatTurnTimeLimitMs: deps.chatTurnTimeLimitMs ?? TURN_TIME_LIMIT_MS,
+    turnRunner: deps.turnRunner ?? createTurnRunner({ stores, logger: deps.logger, now: deps.now }),
     places: deps.places ?? null,
     mailer: deps.mailer ?? OFF_MAILER,
     placesMap: deps.placesMap ?? null,

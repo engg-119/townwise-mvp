@@ -16,6 +16,8 @@ import { createTownwiseStores } from './stores/index.ts';
 import { createGoogleCalendarClient, revokeGoogleGrant } from './calendar/google.ts';
 import { createCalendarRefresher } from './calendar/refresher.ts';
 import { createAnthropicChatModel } from './chat/model.ts';
+import { createTurnRunner } from './chat/turn-runner.ts';
+import { createTurnSweeper } from './chat/turn-sweeper.ts';
 import {
   configSchema as townwiseSchema, filesBackendOf, googleCalendarOf, labRunnerOf, resolveTownwiseConfig, type FilesBackend,
 } from './config.ts';
@@ -156,8 +158,14 @@ function labFor(): { labRunner?: LabRunner; labCaller?: LabCaller } {
 // never stored, so it is on with stored files on or off; with the same ANTHROPIC_API_KEY, and charged to the same
 // TOWNWISE_FILES_MONTHLY_BUDGET_USD, whose 0 turns it off.
 const setupReader = ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAnthropicSetupReaderModel(ANTHROPIC_API_KEY);
+// TownwiseAI turns run detached from their requests, one runner per process (resumable-chat-turns), shared by every
+// context and closed first on shutdown.
+const turnRunner = createTurnRunner({ stores: createTownwiseStores(mongo.connection), logger, now });
+// Each replica settles the turns whose lease passed (a replica that died mid-turn) and deletes records 15 minutes after
+// their turn ended (resumable-chat-turns). On with TownwiseAI on or off: a record left from before still goes.
+const turnSweeper = createTurnSweeper({ connection: mongo.connection, stores: createTownwiseStores(mongo.connection), logger, now });
 const baseDeps = {
-  config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, places, placesMap, mailer,
+  config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now, chat, turnRunner, places, placesMap, mailer,
   files, fileWorker, setupReader, calendarKey: TOWNWISE_CALENDAR_KEY, googleCalendar, googleCalendarClientId: googleCalendarConfig?.clientId,
   revokeGoogle, ...labFor(),
 };
@@ -176,6 +184,7 @@ await ensureIndexes(mongo.connection, { logger });   // after every store has re
 fileWorker?.start();
 aiReader?.start();
 fileSweeper?.start();
+turnSweeper.start();
 calendarRefresher?.start();
 await redis.ready(3000);                             // bounded; logs and continues on false
 const ceiling = createRateLimiter({ redis: redis.client, name: 'app:api-ceiling', limit: 2000, windowSeconds: 60 });
@@ -184,12 +193,15 @@ const server = createServer({
   // /lab holds the lab job's two callback routes, the only routes outside /auth and /api (test/routes.test.ts).
   routes: [{ path: '/auth', router: auth.router }, { path: '/api', router: api }, { path: '/lab', router: labRouter }],
   middleware: [rateLimit({ limiter: ceiling, key: ipKey, whenStoreDown: 'allow', logger })],
-  // The mail drain first, after the HTTP drain: a send still in flight when its 2 seconds end is lost. The readers, the
-  // sweeper and the calendar refresh loop stop next (each waits for its work in flight, but the refresh loop drops a link
-  // fetch and aborts a Google call rather than wait out their 10 seconds), while the database is still open.
+  // The turn runner first, after the HTTP drain, while the database is still open: it takes no new turn, aborts the
+  // running ones and settles them as interrupted (resumable-chat-turns), within its 2 seconds; the sweep settles any it
+  // runs out of time for. Then the mail drain: a send still in flight when its 2 seconds end is lost. The readers, the
+  // sweeper, the TownwiseAI turn sweep and the calendar refresh loop stop next (each waits for its work in flight, but
+  // the refresh loop drops a link fetch and aborts a Google call rather than wait out their 10 seconds), while the
+  // database is still open.
   onShutdown: [
-    { name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]),
-    ...(aiReader === undefined ? [] : [aiReader]), ...(fileSweeper === undefined ? [] : [fileSweeper]),
+    turnRunner, { name: 'mail', close: () => mailer.idle() }, ...(fileWorker === undefined ? [] : [fileWorker]),
+    ...(aiReader === undefined ? [] : [aiReader]), ...(fileSweeper === undefined ? [] : [fileSweeper]), turnSweeper,
     ...(calendarRefresher === undefined ? [] : [calendarRefresher]), redis, mongo,
   ],
 });

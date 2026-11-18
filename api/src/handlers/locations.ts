@@ -274,6 +274,8 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   // which nothing could reach without the location.
   await ctx.stores.uploads.removeForLocation(scope, locationId);
   await ctx.stores.chatConversations.removeForLocation(scope, locationId);
+  // resumable-chat-turns: their turns' records, so a turn still running ends at its next write.
+  await ctx.stores.chatTurns.removeForLocation(scope, locationId);
   await ctx.stores.chatProposals.removeForLocation(scope, locationId);
   // D31: its business rules, which never block deleting it.
   await ctx.stores.businessRules.removeForLocation(scope, locationId);

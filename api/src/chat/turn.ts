@@ -260,39 +260,67 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
   };
 }
 
-/** A tool that only shows the owner something (a card, a visual, the next questions): it reads nothing for the answer. */
-function showsOnly(name: string): boolean {
-  return name === 'suggest_next' || name === 'show_visual' || name.startsWith('propose_');
-}
-
 /**
- * Whether an assistant message's text is an aside: the message also calls a tool that does work (a read, a
- * calibration), so its text came ahead of that work ("Next week, presumably.", or a remark on a window a tool
- * refused) and the answer is still to come. Text before a card or a visual stays the reply's ("Here it is."). The
- * stream marks an aside (the `aside` event) and the history view replays it as thinking, so neither shows it as the
- * reply. `ran` leaves out the calls that never ran (a reply cut off mid-call keeps its text).
+ * The tools that show the owner something in the reply: a visual or a proposal card. They are part of the answer, so
+ * text written before one is too. suggest_next is neither these nor work (it ends the reply). The one list both rules
+ * below read, so the stream's `aside` and the "has the model answered" check never disagree.
  */
-export function isAside(content: readonly { type: string; name?: string; id?: string }[], ran: (id: string) => boolean = () => true): boolean {
-  return content.some((block) => block.type === 'tool_use' && block.name !== undefined && !showsOnly(block.name) && ran(block.id ?? ''));
+export const DISPLAY_TOOLS: ReadonlySet<string> = new Set([
+  'show_visual', 'propose_note', 'propose_data_item', 'propose_order_change', 'propose_order_rule',
+]);
+
+/** Whether a call ran: it has a result, and not a NOT_RUN one (a reply cut off mid-call, or past the per-message cap). */
+export function ran(result: BetaToolResultBlockParam | undefined): boolean {
+  return result !== undefined && !(result.is_error === true && typeof result.content === 'string' && result.content.startsWith(NOT_RUN));
 }
 
 /**
- * Whether the turn wrote text the owner sees after its last tool call other than suggest_next: the answer. Text before
- * that call is an aside written ahead of the work ("Next week, presumably."), not an answer to it, and Opus 5.5
- * returns text written before a tool call in the same message as thinking, which the owner never sees as a reply.
+ * Whether a tool call is work (a lookup, a calibration) that turns the text before it into working notes
+ * (tuning-chat.md section 3, "Working notes"): a call that ran to a registered tool other than suggest_next and the
+ * display tools. A call that never ran streamed no card, so it moves nothing. `hasRun` is `ran` of its result, or, for
+ * a message whose calls are about to run, whether this one will.
+ */
+function worked(name: string, hasRun: boolean): boolean {
+  return hasRun && name !== 'suggest_next' && !DISPLAY_TOOLS.has(name) && toolNamed(name) !== undefined;
+}
+
+/** `worked` by the call's result: the rule wroteText reads. */
+export function isWork(name: string, result: BetaToolResultBlockParam | undefined): boolean {
+  return worked(name, ran(result));
+}
+
+/**
+ * Whether an assistant message's text is an aside: the message also calls a tool that does work (isWork's rule), so
+ * its text came ahead of that work ("Next week, presumably.", or a remark on a window a tool refused) and the answer
+ * is still to come. Text before a card or a visual stays the reply's ("Here it is."). The stream marks an aside (the
+ * `aside` event) and the history view replays it as thinking, so neither shows it as the reply. `willRun` names the
+ * calls that ran, or will (a reply cut off mid-call keeps its text).
+ */
+export function isAside(content: readonly { type: string; name?: string; id?: string }[], willRun: (id: string) => boolean): boolean {
+  return content.some((block) => block.type === 'tool_use' && block.name !== undefined && worked(block.name, willRun(block.id ?? '')));
+}
+
+/**
+ * Whether the turn wrote an answer: text that no lookup followed. Text that one did is working notes, shown in the
+ * reply's "Worked for" timeline, not as the answer ("Let me check your May sales."). In the order the turn streamed: a
+ * web search (D37) follows the text before its block in the same message, and a message's tool calls run after all of
+ * its text. For tool calls the stream's `aside` and the saved view (view.ts) mark working notes by the same rule (isAside,
+ * isWork); text before a web search is not marked, and stays in the reply.
  */
 function wroteText(turn: readonly BetaMessageParam[]): boolean {
-  for (let index = turn.length - 1; index >= 0; index -= 1) {
-    const param = turn[index];
-    if (param?.role !== 'assistant' || typeof param.content === 'string') continue;
-    // A message that calls a tool other than suggest_next did work after any text it holds: that text came first.
-    if (param.content.some((block) => block.type === 'tool_use' && block.name !== 'suggest_next')) return false;
-    // D37: a web search is work done inside the message, so only text after its last search block answers it.
-    const searched = param.content.findLastIndex((block) => block.type === 'server_tool_use' || block.type === 'web_search_tool_result');
-    if (param.content.some((block, at) => at > searched && block.type === 'text' && block.text.trim() !== '')) return true;
-    if (searched !== -1) return false;
+  const results = new Map(turn.flatMap((param) => (param.role === 'user' && typeof param.content !== 'string'
+    ? param.content.flatMap((block) => (block.type === 'tool_result' ? [[block.tool_use_id, block] as const] : []))
+    : [])));
+  let answered = false;
+  for (const param of turn) {
+    if (param.role !== 'assistant' || typeof param.content === 'string') continue;
+    for (const block of param.content) {
+      if (block.type === 'text' && block.text.trim() !== '') answered = true;
+      else if (block.type === 'server_tool_use' || block.type === 'web_search_tool_result') answered = false;
+    }
+    if (param.content.some((block) => block.type === 'tool_use' && isWork(block.name, results.get(block.id)))) answered = false;
   }
-  return false;
+  return answered;
 }
 
 /** A suggest_next result that also asks for the answer the turn has not written; an error result stays as it is. */
@@ -480,7 +508,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       if (stop === 'pause_turn' && toolUses.length === 0) continue;
       if (toolUses.length === 0) return done('end_turn');
       // The calls below run, so text this message wrote ahead of a working one was no answer.
-      if (isAside(content) && content.some((block) => block.type === 'text' && block.text.trim() !== '')) {
+      // A call past the per-message cap is answered NOT_RUN below, so it never runs: the saved view reads it so too.
+      const willRun = (id: string): boolean => toolUses.findIndex((block) => block.id === id) < MAX_TOOLS_PER_MESSAGE;
+      if (isAside(content, willRun) && content.some((block) => block.type === 'text' && block.text.trim() !== '')) {
         input.emit({ type: 'aside', data: {} });
       }
 
@@ -510,8 +540,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       }
       // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
       // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
-      // The model often calls it right after thinking out its answer, having written no text: the owner sees none of
-      // its thinking, so then its result asks for the answer and the loop goes on.
+      // The model often calls it right after thinking out its answer, or with only working notes written (wroteText):
+      // the owner sees none of its thinking, so then its result asks for the answer and the loop goes on.
       const onlyNext = toolUses.every((block) => block.name === 'suggest_next');
       const unanswered = onlyNext && !wroteText(turn);
       append({ role: 'user', content: unanswered ? results.map(askForAnswer) : results });
