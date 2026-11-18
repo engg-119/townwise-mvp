@@ -447,7 +447,7 @@ test('a Modal (a popover, ConfirmDialog) renders outside #tw-portal, in aria-mod
   // the ring kept to a padded link's words.
   const portal = rules('#tw-portal').filter((rule) => rule.includes('outline'));
   expect(portal).toEqual([
-    ` ${ring}`, ' :focus:not(:focus-visible){outline:none}', ' [data-ring="box"]:focus-visible{outline:none}', ' [data-ring="text"]:focus-visible{outline-offset:-11px}',
+    ` ${ring}`, ' :focus:not(:focus-visible){outline:none}', ' [data-ring="box"]:focus-visible{outline:none}', ' [data-ring="text"]:focus-visible{outline-offset:-11px;padding-left:13px;padding-right:13px;margin-left:-13px;margin-right:-13px;-webkit-box-decoration-break:clone;box-decoration-break:clone}',
   ]);
   expect(rules('[aria-modal="true"]')).toEqual(portal);
 });

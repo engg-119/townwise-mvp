@@ -748,7 +748,9 @@ describe('links to the team’s own data (spec P25 build note, 2026-11-18)', () 
   it('a step’s link sits right under its words; each link’s focus ring keeps to its words, and the Based on line leaves it room', () => {
     render(<><PortalStyles /><ReplyView {...replyProps({ message: reply([sales, day, town]), me: meOf(ACCESS.member) })} /></>);
     const css = Array.from(document.querySelectorAll('style')).map((sheet) => sheet.textContent).join('\n');
-    expect(css).toContain('#tw-portal [data-ring="text"]:focus-visible{outline-offset:-11px}');
+    // The ring 2px outside the words on every side: 13px of side padding while focused, given back by a -13px margin,
+    // and each line of a wrapped link ringed on its own (independent UI review, 2026-11-18).
+    expect(css).toContain('#tw-portal [data-ring="text"]:focus-visible{outline-offset:-11px;padding-left:13px;padding-right:13px;margin-left:-13px;margin-right:-13px;-webkit-box-decoration-break:clone;box-decoration-break:clone}');
     const basedOn = screen.getByText(/^Based on/);
     // jsdom computes no line-height, so it is read from react-native-web's rule for the line's class.
     const lineClass = Array.from(basedOn.classList).find((name) => name.startsWith('r-lineHeight-'));
