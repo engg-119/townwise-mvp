@@ -1,7 +1,7 @@
 import { formatCount, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
+import { mondayOf, weekDates } from '../analytics/cells';
 import { closureOf, likelyClosedWords, noteCovers, typicalGuests } from '../analytics/days';
-import { mondayOf, weekDates } from '../analytics/week';
 import { metricText, MONTH_NAMES, shortDate, type Metric } from '../analytics/words';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';

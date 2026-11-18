@@ -8,7 +8,7 @@ import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/da
 import { valueOf } from '../locations/sales';
 import type { Calendar, TownEvent } from './api';
 import { usual, type Usual } from './baseline';
-import { rowOf } from './cells';
+import { mondayOf, weekDates } from './cells';
 import { dayFlags, eventsOf, likelyClosedWords, notesOf, type DayContext } from './days';
 import type { DayRecord } from './history';
 import { plainOf, strong, type Phrase } from './phrase';
@@ -26,6 +26,9 @@ import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPe
 // "Last year" is the same weekday 52 weeks (364 days) earlier; "usual" is baseline.ts's, with every day allowed by
 // the filters.
 
+// The week's dates live in cells.ts, which the Calendar's model imports without importing this file back.
+export { mondayOf, weekDates };
+
 /** 52 weeks: the same weekday a year earlier. */
 export const YEAR_DAYS = 364;
 /** The fewest days of last year's week that Home sums or compares (home.md 2.2). */
@@ -37,15 +40,6 @@ const EVERY_DAY = (): boolean => true;
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export const LAST_YEAR_FOOTNOTE = 'Last year means the same weekday 52 weeks earlier. Usual is your average for that weekday in the 4 weeks either side, leaving out closed days, days with a note, and holiday and event days.';
-
-export function mondayOf(date: string): string {
-  return addDays(date, -rowOf(date));
-}
-
-/** Seven days from `start`, in order: Monday to Sunday from a Monday. */
-export function weekDates(start: string): string[] {
-  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
-}
 
 export function sameWeekdayYearsAgo(date: string, years: number): string {
   return addDays(date, -YEAR_DAYS * years);
