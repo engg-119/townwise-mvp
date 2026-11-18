@@ -11,6 +11,8 @@ import { createHmac } from 'node:crypto';
 
 import { z } from 'zod';
 
+import type { LatLng } from './view.ts';
+
 export const STATIC_MAP_ORIGIN = 'https://maps.googleapis.com';
 export const STATIC_MAP_PATH = '/maps/api/staticmap';
 /** The logical size; with scale 2 Google draws 1280 by 640 pixels. The client sizes the image by this 2:1 ratio. */
@@ -85,6 +87,11 @@ export interface StaticMapSigner {
    * One place keeps `mapOf`'s center and zoom. Throws on an empty list or more than 26 ids. Pure, as mapOf.
    */
   mapOfLabeledPlaces(placeIds: readonly string[], theme: MapTheme): PlaceMap;
+  /**
+   * D47 (hover): a lettered map at the center and zoom Townwise chose (places/view.ts), each pin drawn at its point
+   * rather than its place id, so the pins sit exactly where the page puts their hover targets. Pure, as mapOf.
+   */
+  mapOfView(view: { center: LatLng; zoom: number }, pins: readonly { at: LatLng; letter: string }[], theme: MapTheme): PlaceMap;
 }
 
 /** URL-safe base64 of 16 to 64 bytes, as Google issues it (28 characters today). Boot refuses anything else. */
@@ -174,6 +181,31 @@ export function labeledMapPathOf(placeIds: readonly string[], apiKey: string, th
   return `${STATIC_MAP_PATH}?${new URLSearchParams(pairs).toString()}`;
 }
 
+function coordinate(value: number): string {
+  return String(Math.round(value * 1e6) / 1e6);
+}
+
+/** D47: the path and query for a view Townwise chose; each pin a `markers` parameter at its point with its letter. */
+export function viewMapPath(
+  view: { center: LatLng; zoom: number }, pins: readonly { at: LatLng; letter: string }[], apiKey: string, theme: MapTheme,
+): string {
+  if (pins.length === 0) throw new Error('viewMapPath needs at least one pin');
+  const pairs: [string, string][] = [
+    ['center', `${coordinate(view.center.lat)},${coordinate(view.center.lng)}`],
+    ['zoom', String(view.zoom)],
+    ['size', `${String(STATIC_MAP_WIDTH)}x${String(STATIC_MAP_HEIGHT)}`],
+    ['scale', '2'],
+    ['format', 'jpg-baseline'],
+    ['maptype', 'roadmap'],
+    ['language', 'en'],
+    ['region', 'us'],
+    ...pins.map((pin): [string, string] => ['markers', `color:${STATIC_MAP_PIN[theme]}|label:${pin.letter}|${coordinate(pin.at.lat)},${coordinate(pin.at.lng)}`]),
+    ...STATIC_MAP_STYLES[theme].map((rule): [string, string] => ['style', rule]),
+    ['key', apiKey],
+  ];
+  return `${STATIC_MAP_PATH}?${new URLSearchParams(pairs).toString()}`;
+}
+
 /** The string signed is exactly the string sent: built once, never re-encoded. */
 export function createStaticMapSigner(apiKey: string, signingSecret: string): StaticMapSigner {
   const signed = (path: string): PlaceMap => ({
@@ -185,5 +217,6 @@ export function createStaticMapSigner(apiKey: string, signingSecret: string): St
     mapOf: (placeId, theme) => signed(staticMapPath(placeId, apiKey, theme)),
     mapOfPlaces: (placeIds, theme) => signed(staticMapPathOf(placeIds, apiKey, theme)),
     mapOfLabeledPlaces: (placeIds, theme) => signed(labeledMapPathOf(placeIds, apiKey, theme)),
+    mapOfView: (view, pins, theme) => signed(viewMapPath(view, pins, apiKey, theme)),
   };
 }

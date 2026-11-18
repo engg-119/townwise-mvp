@@ -31,6 +31,7 @@ import {
 } from '../handlers/files.ts';
 import { connectGoogle, dropGoogleConnection, listGoogleChoices } from '../handlers/google-calendars.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
+import { getLocationsMap } from '../handlers/locations-map.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
@@ -138,6 +139,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     openAsAdmin: true, handler: getStaffActivity,
   },
   { id: 'org.leave', method: 'POST', path: '/org/leave', policy: 'member', bodyLimit: '32kb', handler: leaveOrg },
+  // D47: Settings' lettered map of the caller's own locations, with where each pin sits, for its hover.
+  {
+    id: 'org.locations.map', method: 'GET', path: '/org/locations/map', policy: 'member', bodyLimit: 'none',
+    limiter: 'places', openAsAdmin: true, handler: getLocationsMap,
+  },
   {
     id: 'org.locations.create', method: 'POST', path: '/org/locations', policy: 'org_admin', bodyLimit: '32kb',
     openAsAdmin: true, handler: createLocation,
