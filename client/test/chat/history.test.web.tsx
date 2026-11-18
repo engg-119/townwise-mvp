@@ -10,8 +10,8 @@ import { historyMaxHeight } from '../../src/chat/ui/HistoryMenu';
 afterEach(() => { cleanup(); });
 
 const CONVERSATIONS: ConversationSummary[] = [
-  { id: 'c1', title: 'Earlier chat', updatedAt: '2026-11-02T15:00:00.000Z', turnCount: 2 },
-  { id: 'c2', title: 'Another chat', updatedAt: '2026-11-03T15:00:00.000Z', turnCount: 1 },
+  { id: 'c1', title: 'Earlier chat', updatedAt: '2026-11-02T15:00:00.000Z', turnCount: 2, running: false },
+  { id: 'c2', title: 'Another chat', updatedAt: '2026-11-03T15:00:00.000Z', turnCount: 1, running: false },
 ];
 
 type Props = React.ComponentProps<typeof ChatHeader>;
@@ -191,4 +191,51 @@ it('the panel button names the open questions and reports aria-expanded', () => 
   view.rerender(<ChatHeader {...props({ openQuestions: 0, panelOpen: false })} />);
   const closed = screen.getByRole('button', { name: 'Questions and activity' });
   expect(closed.getAttribute('aria-expanded')).toBe('false');
+});
+
+function reduceMotion(reduce: boolean): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      media: query, matches: query === '(prefers-reduced-motion: reduce)' && reduce, onchange: null,
+      addListener: () => undefined, removeListener: () => undefined, addEventListener: () => undefined, removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
+describe('a conversation TownwiseAI is still replying in (owner request, 2026-11-18)', () => {
+  afterEach(() => { Reflect.deleteProperty(window, 'matchMedia'); });
+
+  it('shows Replying with a turning ring, read with its row, and the list tells the page it is open; the mark goes once the list says it ended', async () => {
+    reduceMotion(false);
+    const onListOpen = jest.fn();
+    const running = CONVERSATIONS.map((item) => (item.id === 'c2' ? { ...item, running: true } : item));
+    const view = render(<ChatHeader {...props({ conversations: running, onListOpen })} />);
+    expect(onListOpen).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(onListOpen).toHaveBeenLastCalledWith(true);
+    const list = screen.getByRole('region', { name: 'History' });
+    const row = within(list).getByRole('button', { name: 'Another chat, Replying, Nov 3, 2026' });
+    expect(within(row).getByText('Replying')).toBeTruthy();
+    await waitFor(() => { expect(within(row).queryByTestId('chat-replying-spinner')).not.toBeNull(); });
+    expect(within(list).getAllByText('Replying')).toHaveLength(1);
+    view.rerender(<ChatHeader {...props({ conversations: CONVERSATIONS, onListOpen })} />);
+    expect(screen.queryByText('Replying')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Another chat, Nov 3, 2026' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onListOpen).toHaveBeenLastCalledWith(false);
+  });
+
+  it('under reduced motion the ring is a still square', async () => {
+    reduceMotion(true);
+    const running = CONVERSATIONS.map((item) => ({ ...item, running: true }));
+    render(<ChatHeader {...props({ conversations: running })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    // Once the system has answered (the spinner test waits for the same answer to turn it).
+    await act(() => new Promise((resolve) => { setTimeout(resolve, 20); }));
+    expect(screen.getAllByTestId('chat-replying-still')).toHaveLength(2);
+    expect(screen.queryByTestId('chat-replying-spinner')).toBeNull();
+  });
 });

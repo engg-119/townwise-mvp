@@ -1853,3 +1853,41 @@ describe('leaving a conversation while its reply streams', () => {
     }
   });
 });
+
+// Owner request, 2026-11-18: "if a chat is responding, there should be some spinner to see what is going and it should
+// automatically go away once the agent is done without having to refresh the page".
+test('while History is open and a conversation is replying, the list is read every 3 seconds until none is; never while History is closed or nothing replies', async () => {
+  jest.useFakeTimers();
+  try {
+    const api = fakeChatApi();
+    const replying = { ...SUMMARY, conversations: SUMMARY.conversations.map((item) => ({ ...item, running: true })) };
+    api.summary = replying;
+    const chat = await ready(api);
+    expect(chat.current.state.conversations.map((item) => item.running)).toEqual([true]);
+    let loads = api.summaryLoads;
+    // History closed: nothing is read.
+    await advance(LIST_POLL_MS * 2);
+    expect(api.summaryLoads).toBe(loads);
+
+    await act(() => { chat.current.watchList(true); });
+    await advance(LIST_POLL_MS);
+    expect(api.summaryLoads).toBe(loads + 1);
+    await advance(LIST_POLL_MS);
+    expect(api.summaryLoads).toBe(loads + 2);
+    // Closed again: the reads stop; open again, they go on.
+    await act(() => { chat.current.watchList(false); });
+    await advance(LIST_POLL_MS * 2);
+    expect(api.summaryLoads).toBe(loads + 2);
+    await act(() => { chat.current.watchList(true); });
+
+    // The turn ends: the read that sees it clears the row, and nothing more is read.
+    api.summary = SUMMARY;
+    await advance(LIST_POLL_MS);
+    expect(chat.current.state.conversations.map((item) => item.running)).toEqual([false]);
+    loads = api.summaryLoads;
+    await advance(LIST_POLL_MS * 3);
+    expect(api.summaryLoads).toBe(loads);
+  } finally {
+    jest.useRealTimers();
+  }
+});

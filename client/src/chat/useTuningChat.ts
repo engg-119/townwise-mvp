@@ -256,11 +256,16 @@ const CLAIM_RETRY_MS = 500;
 /** A dropped turn's stream is read again after these waits, then every last one, unless a wake comes first. */
 export const RESUME_MS: readonly number[] = [1000, 2000, 4000];
 
-/** While a send waits on a turn running in another chat, the list is read this often until that turn ends. */
+/**
+ * While a send waits on a turn running in another chat, or History is open with a conversation replying, the list is
+ * read this often until that turn ends.
+ */
 export const LIST_POLL_MS = 3000;
 
 /** The conversation of the list holding the person's running turn at this location, else null. */
 export function runningIn(summary: ChatSummary): string | null {
+  const marked = summary.conversations.find((conversation) => conversation.running)?.id;
+  if (marked !== undefined) return marked;
   const id = summary.liveTurn?.conversationId ?? null;
   return id !== null && summary.conversations.some((conversation) => conversation.id === id) ? id : null;
 }
@@ -695,7 +700,7 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       return {
         ...state,
         conversationId: event.id,
-        conversations: known ? state.conversations : [{ id: event.id, title: event.title, updatedAt: at, turnCount: 0 }, ...state.conversations],
+        conversations: known ? state.conversations : [{ id: event.id, title: event.title, updatedAt: at, turnCount: 0, running: false }, ...state.conversations],
         turn: state.turn === null ? null : { ...state.turn, nodes: { user: event.userNodeId, reply: event.replyNodeId, parentId: event.parentId } },
       };
     }
@@ -811,6 +816,8 @@ export interface TuningChat {
   setItemAside: (card: ItemCard) => Promise<ItemProposal>;
   /** Reads the page again after it failed to load. */
   reload: () => void;
+  /** History opened or closed: while it is open with a conversation replying, the list is read every 3 seconds. */
+  watchList: (open: boolean) => void;
 }
 
 /** How a question card's message goes (TuningChat.tell). */
@@ -1052,16 +1059,17 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
   }
 
-  // While a send waits on a turn running in another chat, the list is read every 3 seconds until it shows that turn
-  // ended; nothing is read while nothing waits.
-  const waitingOn = state.runningElsewhere;
+  // The list is read every 3 seconds while a send waits on a turn running in another chat, or while History is open
+  // with a conversation replying, until the list shows none; nothing is read while nothing runs.
+  const [watching, setWatching] = useState(false);
+  const polling = state.runningElsewhere !== null || (watching && state.conversations.some((conversation) => conversation.running));
   useEffect(() => {
-    if (waitingOn === null) return undefined;
+    if (!polling) return undefined;
     const timer = setInterval(() => {
       void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
     }, LIST_POLL_MS);
     return () => { clearInterval(timer); };
-  }, [api, locationId, dispatch, waitingOn]);
+  }, [api, locationId, dispatch, polling]);
 
   /** A send refused because the person's running turn holds the claim: the list says which chat it is in. */
   function held(error: string): void {
@@ -1689,5 +1697,6 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     loadItem,
     keepItem,
     setItemAside,
+    watchList: setWatching,
   };
 }

@@ -10,6 +10,7 @@ import type { ConversationSummary } from '../api';
 import { formatDay } from '../format';
 import { ChatButton, focusLost, type ChatButtonHandle } from './controls';
 import { described } from './described';
+import { Replying } from './Replying';
 
 // The History dropdown: a square `panel` under the header's History button, at most 360px and 60% of the window tall
 // and scrolling inside (on web the header floats it over the thread). Each row opens its conversation and has Rename
@@ -17,7 +18,9 @@ import { described } from './described';
 // conversation carries a mint 6px square and aria-current. Escape closes the list (the header returns focus to
 // History) unless a field or the dialog has it; on web so does a press outside it and History, which leaves focus
 // where that press put it. On web, focus never falls to the page: a closed field gives it back to its row's Rename,
-// and after a delete (its row, Delete and all, is gone) the header gives it to History.
+// and after a delete (its row, Delete and all, is gone) the header gives it to History. A conversation TownwiseAI is
+// still replying in shows Replying (a turning ring) beside its date, which goes by itself once the list read again
+// shows the turn ended (useTuningChat reads it every 3 seconds while the list is open and a row is replying).
 
 type Host = React.ComponentRef<typeof View>;
 
@@ -112,7 +115,7 @@ export function HistoryMenu(props: {
                 <>
                   <Pressable
                     role="button"
-                    accessibilityLabel={day === '' ? conversation.title : `${conversation.title}, ${day}`}
+                    accessibilityLabel={[conversation.title, conversation.running ? 'Replying' : '', day].filter((part) => part !== '').join(', ')}
                     {...webAria({ 'aria-current': current ? 'true' : undefined })}
                     onPress={() => { props.onOpen(conversation.id); }}
                     style={(press) => [styles.rowMain, press.pressed && styles.rowPressed]}
@@ -121,7 +124,10 @@ export function HistoryMenu(props: {
                       {current ? <View style={styles.mark} /> : null}
                       <Text style={styles.rowTitle} numberOfLines={1}>{conversation.title}</Text>
                     </View>
-                    <Text style={styles.rowDate}>{day}</Text>
+                    <View style={styles.dateLine}>
+                      <Text style={styles.rowDate}>{day}</Text>
+                      {conversation.running ? <Replying /> : null}
+                    </View>
                   </Pressable>
                   <ChatButton
                     variant="link"
@@ -233,5 +239,6 @@ const styles = StyleSheet.create({
   mark: { width: 6, height: 6, backgroundColor: c.mint },
   rowTitle: { ...theme.type.ui, color: c.white, flexShrink: 1 },
   rowDate: { ...theme.type.mono, color: c.text3 },
+  dateLine: { flexDirection: 'row', alignItems: 'center', flexWrap: 'wrap', columnGap: theme.space[2] },
   rename: { flex: 1, minWidth: 0, paddingVertical: theme.space[2] },
 });

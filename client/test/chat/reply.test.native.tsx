@@ -22,7 +22,7 @@ function fakeChat(): TuningChat {
     openConversation: jest.fn(), deleteConversation: jest.fn(() => Promise.resolve()), rename: jest.fn(() => Promise.resolve()),
     save: jest.fn(), saveEdited: jest.fn(() => Promise.resolve()), edit: jest.fn(), cancelEdit: jest.fn(), dismiss: jest.fn(),
     reopen: jest.fn(), editMessage: jest.fn(), regenerate: jest.fn(), showVersion: jest.fn(), rate: jest.fn(), retry: jest.fn(),
-    reload: jest.fn(),
+    reload: jest.fn(), watchList: jest.fn(),
     // D28's item card: never answered here.
     loadItem: jest.fn(() => new Promise<never>(() => undefined)), keepItem: jest.fn(() => new Promise<never>(() => undefined)),
     setItemAside: jest.fn(() => new Promise<never>(() => undefined)),

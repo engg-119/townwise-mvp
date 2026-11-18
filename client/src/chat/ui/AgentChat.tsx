@@ -429,9 +429,11 @@ export function AgentChat(props: {
     });
   }
 
+  // The conversation whose reply streams here is replying, whatever the list last read said.
+  const listed = state.conversations.map((item) => (state.streaming && item.id === state.conversationId && !item.running ? { ...item, running: true } : item));
   const header = (
     <ChatHeader
-      conversations={state.conversations}
+      conversations={listed}
       openId={state.conversationId}
       streaming={state.streaming}
       readOnlyId={props.readOnlyId}
@@ -451,6 +453,7 @@ export function AgentChat(props: {
       }}
       onRename={chat.rename}
       onTogglePanel={props.onTogglePanel}
+      onListOpen={chat.watchList}
       {...(props.panelButtonRef === undefined ? {} : { panelButtonRef: props.panelButtonRef })}
     />
   );

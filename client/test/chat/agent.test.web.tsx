@@ -598,6 +598,19 @@ test('a send while the person’s reply runs in another chat keeps the text and 
   expect(screen.queryByText('TownwiseAI is still replying in “Earlier chat”.')).toBeNull();
 });
 
+test('History marks a conversation TownwiseAI is replying in, and the mark goes by itself once the list read 3 seconds later shows the turn ended', async () => {
+  const api = fakeChatApi();
+  api.summary = { ...SUMMARY, conversations: SUMMARY.conversations.map((item) => ({ ...item, running: true })) };
+  renderAt('/locations/l1/agent', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'History' }));
+  expect(await screen.findByRole('button', { name: 'Earlier chat, Replying, Nov 2, 2026' })).toBeTruthy();
+  const loads = api.summaryLoads;
+  api.summary = SUMMARY;
+  await waitFor(() => { expect(screen.queryByText('Replying')).toBeNull(); }, { timeout: 4500 });
+  expect(api.summaryLoads).toBe(loads + 1);
+  expect(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' })).toBeTruthy();
+}, 10_000);
+
 describe('on phones, where the header stays put as the landing and the thread replace each other, so focus goes where it does on wider screens', () => {
   test('opening a conversation gives focus to History, and New chat from the thread keeps it on New chat', async () => {
     setWidth(360);

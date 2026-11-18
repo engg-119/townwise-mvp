@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { SkeletonButton } from '../../portal/skeleton/kit';
@@ -57,11 +57,18 @@ export function ChatHeader(props: {
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, title: string) => Promise<void>;
   onTogglePanel: () => void;
+  /** History opened or closed (its list is read again every 3 seconds while open and a conversation is replying). */
+  onListOpen?: (open: boolean) => void;
   /** Where the panel sheet returns focus to (web). */
   panelButtonRef?: React.RefObject<Host | null>;
 }): React.JSX.Element {
   const [open, setOpened] = useState(false);
   const button = useRef<Host>(null);
+  const { onListOpen } = props;
+  useEffect(() => {
+    onListOpen?.(open);
+  }, [open, onListOpen]);
+  useEffect(() => () => { onListOpen?.(false); }, [onListOpen]);
   const menuId = 'chat-history-menu';
 
   function close(): void {
