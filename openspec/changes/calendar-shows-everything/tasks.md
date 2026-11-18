@@ -91,7 +91,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 ## 3. Client: routing, the in-app chip and Calendar surfaces
 
 - [x] 3.1 `client/src/portal/routing.ts`: `ITEM_REF` becomes `[ufc]_[0-9a-f]{24}`, so `isAllowed` and `isItemPath` take `c_`. Test: `client/test/portal/logic.test.ts`, which holds the `isAllowed` cases (a `c_` path is allowed and marks Your data current). This is done before any task that links to a `c_` page.
-- [ ] 3.2 `client/src/portal/ui/SourceChip.tsx`: an in-app mode that takes an app path, a name and a calendar glyph, and navigates with expo-router (`Link` on web, `router.push` on native), following the `asChild` style rule. Tests: the existing `client/test/portal/ui/source-chip.test.web.tsx` and `source-chip.test.native.tsx` gain the in-app cases, and `test/portal/link-child.test.ts` still passes.
+- [x] 3.2 `client/src/portal/ui/SourceChip.tsx`: an in-app mode that takes an app path, a name and a calendar glyph, and navigates with expo-router (`Link` on web, `router.push` on native), following the `asChild` style rule. Tests: the existing `client/test/portal/ui/source-chip.test.web.tsx` and `source-chip.test.native.tsx` gain the in-app cases, and `test/portal/link-child.test.ts` still passes.
 - [ ] 3.3 `CalendarGrid.web.tsx`, `CalendarGrid.tsx`, `CalendarWeek.web.tsx`, `CalendarWeek.tsx` and `DayTooltip.web.tsx` render the helper's lines at each width, as the design's table says. Tests: `calendar.test.web.tsx` and `calendar.test.native.tsx` (the closed-with-event, booked-with-name and phone-width scenarios).
 - [ ] 3.4 `CalendarDay.tsx`:
   - a note's title, kind words and detail;

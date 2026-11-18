@@ -1,3 +1,4 @@
+import { Link, useRouter } from 'expo-router';
 import { useLayoutEffect, useRef } from 'react';
 import { Image, Linking, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import Svg, { Path } from 'react-native-svg';
@@ -15,6 +16,10 @@ import { sourceChips, type Chip, type ChipSource } from '../sources/site';
 // its name inside the pill. The logo is decoration; the link's name starts with what it shows ("Dartmouth Registrar 2.
 // Source: …"), and on web the source's label is the link's title. Logos are committed same-origin assets, so nothing
 // here loads from another site. On web the chip is an <a href>; on native a press opens the link with Linking.
+// AppChip is the in-app mode (D49, calendar-sources): the same pill to a page inside the app (a calendar's page or a
+// file's item in Your data), with a calendar or file glyph in the logo's place, navigating with expo-router (`Link` on
+// web, so the page never reloads, and `router.push` on native, where Linking cannot open an app path). It only ever
+// holds an app path, never a calendar's address.
 
 /** The DOM call the title needs; react-native-web hands the <a> itself to the ref. */
 interface AttributeTarget {
@@ -34,6 +39,28 @@ function Globe(): React.JSX.Element {
       <Path d="M12 2a10 10 0 1 0 0 20 10 10 0 1 0 0-20" />
       <Path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
       <Path d="M2 12h20" />
+    </Svg>
+  );
+}
+
+/** Lucide's calendar (ISC license, lucide.dev), in text3. */
+function CalendarGlyph(): React.JSX.Element {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={c.text3} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M8 2v4" />
+      <Path d="M16 2v4" />
+      <Path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2" />
+      <Path d="M3 10h18" />
+    </Svg>
+  );
+}
+
+/** Lucide's file (ISC license, lucide.dev), in text3. */
+function FileGlyph(): React.JSX.Element {
+  return (
+    <Svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke={c.text3} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round">
+      <Path d="M15 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7Z" />
+      <Path d="M14 2v4a2 2 0 0 0 2 2h4" />
     </Svg>
   );
 }
@@ -62,6 +89,36 @@ export function SourceChip(props: { chip: Chip } & ChipLink): React.JSX.Element 
         </View>
         <Text style={styles.name}>{chip.shown}</Text>
       </View>
+    </Pressable>
+  );
+}
+
+/**
+ * A chip to a page inside the app: `name` is what it shows, `label` its accessible name, starting with `name`.
+ */
+export function AppChip(props: { href: string; name: string; label: string; glyph: 'calendar' | 'file' }): React.JSX.Element {
+  const router = useRouter();
+  const pill = (
+    <View style={styles.pill}>
+      <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.globe}>
+        {props.glyph === 'calendar' ? <CalendarGlyph /> : <FileGlyph />}
+      </View>
+      <Text style={styles.name}>{props.name}</Text>
+    </View>
+  );
+  if (Platform.OS === 'web') {
+    return (
+      <Link href={props.href} asChild>
+        {/* A child of Link asChild takes one plain style object (ui/hover.ts). */}
+        <Pressable role="link" accessibilityLabel={props.label} style={styles.target}>
+          {pill}
+        </Pressable>
+      </Link>
+    );
+  }
+  return (
+    <Pressable role="link" accessibilityLabel={props.label} onPress={() => { router.push(props.href); }} style={styles.target}>
+      {pill}
     </Pressable>
   );
 }
