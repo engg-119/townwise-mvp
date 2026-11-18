@@ -2953,9 +2953,9 @@ Each is marked inline with “lead default”:
 100. Outlook days left out of live accuracy, which keeps scoring only the forecast tier (D52, 14.4).
 101. The outlook’s words on the Calendar, Home and TownwiseAI’s visuals: a cell’s middle figure marked “Outlook”, its range in the day panel, and no “8 in 10” claim for an outlook day (D52, P11, P25, P28).
 102. The model card’s and the public words for a year of forecast (D52; release B, for the owner’s approval before its push).
-95. The console showing a published forecast’s live accuracy as a typical error percent with its scored-day and in-range counts, never a guest or sales figure (D48, D7, P32).
-96. Townwise keeping the dates on which each signed-in person used the app, for 180 days (D48, 6.30, the privacy page).
-97. Needs attention’s thresholds: 2 days, 14 days, 7 days, 80% (D48, P32).
+103. The console showing a published forecast’s live accuracy as a typical error percent with its scored-day and in-range counts, never a guest or sales figure (D48, D7, P32).
+104. Townwise keeping the dates on which each signed-in person used the app, for 180 days (D48, 6.30, the privacy page).
+105. Needs attention’s thresholds: 2 days, 14 days, 7 days, 80% (D48, P32).
 
 ### 22.3 Decisions needed
 
