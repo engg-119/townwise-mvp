@@ -189,3 +189,12 @@ The owner approved this proposal on 2026-11-17, gave the three sign-offs in prop
 1. **Retention is 180 days, not 90**, so the 90-day window can show a change for active people and active organizations. Every mention of the retention, the privacy page's line and its `[CONFIRM]` included, says 180 days (decisions 3, 4 and 6).
 2. **A member removed from an organization keeps their activity days there until they age out.** No delete on removal; person deletion still deletes them (decision 3).
 3. **Uploads staff make in staff setup count as sales uploads.** The exact rule is in decision 4: they count in the sales uploads total, the series' uploads and the organization's actions, never in active people or organizations.
+
+## As built
+
+**The read's cost (task 2.6, 2026-11-17).** Measured on the handler, end to end:
+
+- The local `townwise` database (1 organization, 1 location, 174 audit events), read only (no index build, no collection create, a guard that stopped on any write): 21 queries, 10 to 40 ms for 7, 28 and 90 days.
+- 12 seeded organizations in the test database, 3 locations each with a published run (36 forecast reads), 48 people with 5,760 active-day rows over the 180 days kept, and 7,200 audit events: 137 commands for 7 days and 281 for 28 and 90 days, counting the sign-in check and `resolveAccess`; 64 to 104 ms through HTTP.
+
+Both are far under 2 seconds, so the per-location forecast columns stay in the one read.
