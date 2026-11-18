@@ -22,7 +22,7 @@ import { EmptyState, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
-import { Lead, Small } from '../ui/text';
+import { Heading, Lead, Small } from '../ui/text';
 import { AddFile } from './AddFile';
 import { CalendarsGroup } from './CalendarsGroup';
 import { rowAiLine } from './aiCopy';
@@ -245,6 +245,7 @@ function Data(): React.JSX.Element {
         ) : null}
         {/* The location's calendars (D49), above the list; stored files on or off. */}
         <CalendarsGroup locationId={location.id} />
+        <Heading level={3}>{DATA.uploadsHeading}</Heading>
         {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <TableSkeleton name="data" label={DATA.loading} columns={columns} rowHeight={56} /> : items.length === 0 ? (
           <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : locationName)} />
         ) : (

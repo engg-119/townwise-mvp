@@ -13,6 +13,8 @@ export const TITLE_MAX = 120;
 export const DATA = {
   kicker: 'Everything your team added',
   title: 'Your data',
+  /** The list's heading, under the Calendars group, so the list never reads as part of it (UI review S5). */
+  uploadsHeading: 'Uploads and files',
   show: 'Show',
   allLocations: 'All locations',
   uploadHistory: 'Upload sales history',

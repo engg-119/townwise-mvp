@@ -4,6 +4,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import type { DataItem } from '../../../src/portal/data/api';
+import { DATA } from '../../../src/portal/data/copy';
 import type { MeResponse, OrgResponse } from '../../../src/portal/schemas';
 import { theme } from '../../../src/theme';
 import { appRoutes, seededRoot } from '../../helpers/app';
@@ -521,6 +522,11 @@ test('the Calendars group lists the location’s calendars above the list, each 
     '/locations/l1/data/c_0123456789abcdef01234567', '/locations/l1/data/c_fedcba9876543210fedcba98',
   ]);
   expect(group.compareDocumentPosition(await table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // The list has its own heading, so it never reads as part of Calendars (UI review S5).
+  const uploads = screen.getByRole('heading', { name: DATA.uploadsHeading });
+  expect(uploads.getAttribute('aria-level')).toBe(screen.getByRole('heading', { name: 'Calendars' }).getAttribute('aria-level'));
+  expect(group.compareDocumentPosition(uploads) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(uploads.compareDocumentPosition(await table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
 test('no calendars, no group; with stored files off the group still shows', async () => {
