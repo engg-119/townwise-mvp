@@ -778,14 +778,14 @@ describe('an outlook day (D52)', () => {
     expect(forecastLabel(view.forecast)).toBe('Outlook');
     expect(forecastWords(view.forecast, 'Main Street')).toEqual({
       figure: { before: 'About', value: '212', after: 'guests' },
-      lines: ['Likely 150 to 290. Days more than 3 months away are less certain, so this range is wider.'],
+      lines: ['Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.'],
     });
     // With a note's guests, the model's range is named without the 8 in 10 claim either.
     const noted = forecastDay({ ...OUTLOOK, low: 220, mid: 282, high: 360, noteGuests: 70, reasons: NOTED.reasons });
     const words = forecastWords(dayView('2026-11-20', reads([noted])).forecast, 'Main Street');
     expect(words.lines.join(' ')).not.toContain('8 in 10');
     expect(words.lines).toEqual([
-      'Likely 220 to 360. Days more than 3 months away are less certain, so this range is wider.',
+      'Likely 220 to 360. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.',
       'Townwise’s model: 150 to 290. Your notes add 70 guests.',
     ]);
   });
@@ -793,7 +793,7 @@ describe('an outlook day (D52)', () => {
   test('the key line shows only when a shown day is an outlook day', () => {
     const rows = calendarMonth('2026-11', reads()).flat().filter((cell) => cell !== null);
     expect(outlookKey(rows)).toBe(OUTLOOK_KEY);
-    expect(OUTLOOK_KEY).toBe('Days more than 3 months after Townwise’s last refresh show its outlook: a wider range that firms up as the weeks pass and your new sales come in.');
+    expect(OUTLOOK_KEY).toBe('Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.');
     const plain = calendarMonth('2026-11', input()).flat().filter((cell) => cell !== null);
     expect(outlookKey(plain)).toBeNull();
     // A booked or closed outlook day shows no outlook, so no key line for it.

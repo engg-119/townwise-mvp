@@ -203,4 +203,5 @@ export const TOWN_CALENDAR: readonly TownCalendarEntry[] = [
   classes('spring', '2028-03-27', '2028-05-31', high(REGISTRAR_2027_28)),
   // Scheduled exams end 2028-06-05; the exam period ends 2028-06-06.
   finals('spring', '2028-06-02', '2028-06-06', high(REGISTRAR_2027_28)),
+  event('Commencement', 'commencement', 'Commencement', '2028-06-11', '2028-06-11', high(REGISTRAR_2027_28)),
 ];

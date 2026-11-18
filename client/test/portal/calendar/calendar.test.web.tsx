@@ -842,7 +842,7 @@ function novemberWithOutlook(): unknown {
   return forecastOf(days);
 }
 
-const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s last refresh show its outlook: a wider range that firms up as the weeks pass and your new sales come in.';
+const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.';
 
 test('an outlook day (D52): its cell shows its figure marked Outlook, its tooltip and panel say outlook with no 8 in 10, and the key line shows', async () => {
   const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': novemberWithOutlook() } });
@@ -856,7 +856,7 @@ test('an outlook day (D52): its cell shows its figure marked Outlook, its toolti
   const day = panel();
   expect(within(day).getByText('Outlook')).toBeTruthy();
   expect(within(day).getByText(whole('About 212 guests'))).toBeTruthy();
-  expect(within(day).getByText('Likely 150 to 290. Days more than 3 months away are less certain, so this range is wider.')).toBeTruthy();
+  expect(within(day).getByText('Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.')).toBeTruthy();
   expect(day.textContent).not.toContain('8 in 10');
   expect(screen.getByText(OUTLOOK_KEY)).toBeTruthy();
   fireEvent(cell('2026-11-21'), pointer('pointerover', 'mouse'));

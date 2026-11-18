@@ -147,8 +147,8 @@ describe('townCalendarCovers', () => {
   });
 
   it('spans the town’s researched events over all years', () => {
-    // Hanover: winter 2025 classes (the seed) to spring 2028 finals (the registrar's 2027-28 key dates, D52).
-    expect(townCalendarCovers('hanover-nh')).toEqual({ from: '2025-01-06', to: '2028-06-06' });
+    // Hanover: winter 2025 classes (the seed) to Commencement 2028 (the registrar's 2027-28 key dates, D52).
+    expect(townCalendarCovers('hanover-nh')).toEqual({ from: '2025-01-06', to: '2028-06-11' });
     // Amherst: its three key dates only.
     const amherst = townEvents('amherst-ma', EVERYTHING).filter((event) => event.scope === 'town');
     expect(townCalendarCovers('amherst-ma')).toEqual({ from: amherst[0]?.start, to: amherst.at(-1)?.end });
@@ -237,6 +237,7 @@ describe('the researched calendar data', () => {
       term('finals:winter', '2028-03-10', '2028-03-14', registrar2728),
       term('classes:spring', '2028-03-27', '2028-05-31', registrar2728),
       term('finals:spring', '2028-06-02', '2028-06-06', registrar2728),
+      { start: '2028-06-11', end: '2028-06-11', kind: 'event', group: 'hanover-nh:commencement', url: registrar2728, confidence: 'high' },
     ]);
   });
 });

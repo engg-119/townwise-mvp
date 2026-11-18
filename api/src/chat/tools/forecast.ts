@@ -31,7 +31,7 @@ export const NO_FORECAST = 'Townwise has no forecast for this location yet.';
 export const NOT_COVERED = 'Townwise has no forecast for these dates.';
 export const USE_INSTEAD = 'the location\'s history and the town calendar';
 /** How the model words an outlook day or week (D52): part of the description, so a change to it is a frozen-prefix change. */
-export const OUTLOOK_MEANING = 'A day or week with outlook true was forecast more than 91 days ahead: call it Townwise\'s outlook, give its range, and don\'t say 8 in 10 for it.';
+export const OUTLOOK_MEANING = 'A day or week with outlook true is more than 91 days after its run was made, or more than 182 days after the last sales the run learned from: call it Townwise\'s outlook, give its range, and don\'t say 8 in 10 for it.';
 /** The 80% belongs to the model's own figures (spec 14.5): a range that a note's guests moved is not an 80% range. */
 export const INTERVAL_MEANING = 'About 8 in 10 days should land inside the model\'s own range: a day\'s modelRange when a note changed it, otherwise its low to high. A range that includes guests from notes is not the model\'s.';
 

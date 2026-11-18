@@ -261,10 +261,10 @@ test('an outlook day on native (D52): its cell’s label says outlook, its panel
   await renderApp('/locations/l1/calendar', api);
   expect(await screen.findByText('Today, Wed, Nov 11')).toBeTruthy();
   const label = 'Sat, Nov 21, 2026. Outlook about 212 guests, 150 to 290.';
-  expect(screen.getByText('Days more than 3 months after Townwise’s last refresh show its outlook: a wider range that firms up as the weeks pass and your new sales come in.')).toBeTruthy();
+  expect(screen.getByText('Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.')).toBeTruthy();
   await fireEvent.press(screen.getByLabelText(label));
   expect(within(panel()).getByText('Outlook')).toBeTruthy();
   expect(within(panel()).getByText('About 212 guests')).toBeTruthy();
-  expect(within(panel()).getByText('Likely 150 to 290. Days more than 3 months away are less certain, so this range is wider.')).toBeTruthy();
+  expect(within(panel()).getByText('Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.')).toBeTruthy();
   expect(within(panel()).queryByText(/8 in 10/)).toBeNull();
 });

@@ -150,7 +150,7 @@ describe('get_town_calendar', () => {
     const { parsed } = await run('get_town_calendar', { from: '2026-11-15', to: '2026-11-30' });
     expect(parsed).toMatchObject({
       from: '2026-11-15', to: '2026-11-30', town: { name: 'Hanover', state: 'NH' }, researched: true,
-      covers: { from: '2025-01-06', to: '2028-06-06' },
+      covers: { from: '2025-01-06', to: '2028-06-11' },
     });
     const events = parsed.events as Record<string, unknown>[];
     expect(events.find((event) => event.id === 'hanover-nh:2026-11-20:fall-term-finals')).toEqual({
@@ -411,7 +411,7 @@ describe('get_forecast (U13B)', () => {
       ['2027-01-25', false], ['2027-02-01', true],
     ]);
     expect(toolNamed('get_forecast')?.definition.description).toContain(
-      'A day or week with outlook true was forecast more than 91 days ahead: call it Townwise\'s outlook, give its range, and don\'t say 8 in 10 for it.',
+      'A day or week with outlook true is more than 91 days after its run was made, or more than 182 days after the last sales the run learned from: call it Townwise\'s outlook, give its range, and don\'t say 8 in 10 for it.',
     );
   });
 

@@ -37,7 +37,7 @@ The reader SHALL choose each date's run from run metadata (`dataThrough`, `range
 - **THEN** the reader chooses around the gap from rows, and the answer equals the every-row reader's
 
 ### Requirement: TownwiseAI marks the outlook
-`get_forecast` SHALL give each day and week its `outlook`, and its description SHALL say that a day or week with `outlook` true was forecast more than 91 days ahead, to call it Townwise's outlook, give its range, and not say 8 in 10 for it, recorded in `docs/portal/tuning-chat.md` as a frozen-prefix change. A daily `show_visual` SHALL carry `outlook` on its days.
+`get_forecast` SHALL give each day and week its `outlook`, and its description SHALL say that a day or week with `outlook` true is more than 91 days after its run was made, or more than 182 days after the last sales the run learned from, to call it Townwise's outlook, give its range, and not say 8 in 10 for it, recorded in `docs/portal/tuning-chat.md` as a frozen-prefix change. A daily `show_visual` SHALL carry `outlook` on its days.
 
 #### Scenario: An outlook day in chat
 - **WHEN** TownwiseAI reads a range whose last days are outlook days

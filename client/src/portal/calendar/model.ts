@@ -30,9 +30,9 @@ import type { DateRange } from './grid';
 // never stands alone. A day before today has no sizes and keeps the read's order. On the calendar leaves out a holiday,
 // event or term Why already names. The tooltip and Home's day detail take the three largest either way, in Why's order
 // and short words (shortReasons).
-// An outlook day (D52: after its run's forecast tier, more than 3 months after Townwise's last refresh) shows its
-// middle figure marked "Outlook", says "Outlook about ..." in its label and tooltip, heads its panel part "Outlook"
-// and never claims 8 in 10, since no location's outlook has had that measured; a key line under the grid says what an
+// An outlook day (D52: after its run's forecast tier, more than 3 months after the run was made or 6 months after its
+// last sales) shows its middle figure marked "Outlook", says "Outlook about ..." in its label and tooltip, heads its
+// panel part "Outlook" and never claims 8 in 10, since no location's outlook has had that measured; a key line under the grid says what an
 // outlook is whenever a shown day is one (outlookKey). [CONFIRM: the outlook's words on the Calendar, Home and
 // TownwiseAI's visuals: a cell's middle figure marked "Outlook", its range in the day panel, and no "8 in 10" claim
 // for an outlook day]
@@ -309,7 +309,7 @@ export function topRightOf(cell: Pick<CalendarCell, 'status' | 'figure'>): strin
 }
 
 /** The key line under the grid when a shown day is an outlook day (D52). */
-export const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s last refresh show its outlook: a wider range that firms up as the weeks pass and your new sales come in.';
+export const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.';
 
 /** OUTLOOK_KEY when any of the shown cells is an outlook day; null otherwise. */
 export function outlookKey(cells: readonly Pick<CalendarCell, 'status'>[]): string | null {
@@ -649,7 +649,7 @@ export interface ForecastWords {
 }
 
 /** An outlook day's sentence in place of the 8 in 10 one (D52). */
-export const OUTLOOK_RANGE = 'Days more than 3 months away are less certain, so this range is wider.';
+export const OUTLOOK_RANGE = 'This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.';
 
 /** The Forecast part's heading: “Outlook” for an outlook day (D52), “Forecast” otherwise. */
 export function forecastLabel(part: ForecastPart): 'Forecast' | 'Outlook' {
