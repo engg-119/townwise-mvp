@@ -127,6 +127,6 @@ test('This week’s forecast adds up the seven days from today, with today besid
   const glance = within(await screen.findByLabelText('At a glance'));
   expect(await glance.findByText('This week’s forecast')).toBeTruthy();
   expect(glance.getByText('980')).toBeTruthy();
-  expect(glance.getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up. Each day’s range is in This week.')).toBeTruthy();
+  expect(glance.getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.')).toBeTruthy();
   expect(glance.queryByText('This week, last year')).toBeNull();
 });

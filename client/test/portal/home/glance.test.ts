@@ -2,7 +2,7 @@ import { EMPTY_CONTEXT } from '../../../src/portal/analytics/days';
 import { byDate, type DayRecord } from '../../../src/portal/analytics/history';
 import { plainOf } from '../../../src/portal/analytics/phrase';
 import {
-  forecastDayPhrase, lastYearBesidePhrase, lastWeekComparison, thisWeek, todayForecastPhrase, weekDates, weekForecast, weekForecastLabel, type HomeInput,
+  forecastDayPhrase, lastYearBesidePhrase, lastWeekComparison, thisWeek, todayForecastPhrase, weekDates, weekForecast, weekForecastLabel, weekRangePhrase, type HomeInput,
 } from '../../../src/portal/analytics/week';
 import type { ForecastDay, ForecastWindow, LiveAccuracy } from '../../../src/portal/estimates/api';
 import { lastWeekErrorGlancePhrase, lastWeekGlance, lastWeekGlancePhrase } from '../../../src/portal/home/Glance';
@@ -80,7 +80,7 @@ describe('weekForecast', () => {
     expect(found.busiest).toEqual({ date: '2026-11-29', value: 160, booked: false });
     expect(found.quietest).toEqual({ date: '2026-11-23', value: 100, booked: false });
     expect(plainOf(todayForecastPhrase(found.today))).toBe('Today: about 100 guests, 80 to 121.');
-    expect(weekForecastLabel(found)).toBe('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up. Each day’s range is in This week.');
+    expect(weekForecastLabel(found)).toBe('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.');
     expect(forecastDayPhrase('Busiest', { date: '2026-11-29', value: 160, booked: false })).toEqual(['Busiest: Sun, Nov 29, 2026 (', { strong: 'about 160 guests' }, ').']);
   });
 
@@ -109,26 +109,61 @@ describe('weekForecast', () => {
     expect(dates.at(-1)).toBe('2026-12-04');
     const found = weekForecast(thisWeek({ ...at(HISTORY), today }), published(dates.map((date) => open(date, 100)), null), 'guests');
     expect(found?.total).toBe(700);
-    expect(weekForecastLabel(found ?? { from: '', to: '' })).toBe('Sat, Nov 28 to Fri, Dec 4, 2026: the 7 days’ forecasts added up. Each day’s range is in This week.');
+    expect(weekForecastLabel(found ?? { from: '', to: '', missing: [] })).toBe('Sat, Nov 28 to Fri, Dec 4, 2026: the 7 days’ forecasts added up.');
   });
 
-  test('null, so the tile stays on last year: a day not covered, a buyout with no party, sales, nothing published', () => {
+  test('5 or 6 days with a figure: their total, the days left out named, and no range', () => {
     const all = NEXT.map((date) => open(date, 100));
-    expect(weekForecast(week, published(all.slice(0, 6), null), 'guests')).toBeNull();
-    const unknown = [...all];
-    unknown[3] = forecastDay({ date: NEXT[3] ?? '', status: 'booked', low: null, mid: null, high: null, noteGuests: 0 });
-    expect(weekForecast(week, published(unknown, null), 'guests')).toBeNull();
-    // Booked by the run, not your buyout: the row says "Booked for a private event" with no figure.
-    const theirs = [...all];
-    theirs[4] = forecastDay({ date: NEXT[4] ?? '', status: 'booked', low: null, mid: null, high: null, noteGuests: 0 });
-    expect(weekForecast(week, published(theirs, null), 'guests')).toBeNull();
-    // An open day without its range: the row shows no figure, so neither does the total.
+    const six = weekForecast(week, published(all.slice(0, 6), null), 'guests');
+    expect([six?.total, six?.missing, six?.range]).toEqual([600, ['2026-11-29'], null]);
+    expect(weekForecastLabel(six ?? { from: '', to: '', missing: [] })).toBe(
+      'Mon, Nov 23 to Sun, Nov 29, 2026: 6 of the 7 days’ forecasts added up. Sun, Nov 29 has no forecast figure.',
+    );
+    // Booked by the run, not your buyout ("Booked for a private event"), and your buyout with no party: no figure.
+    const two = [...all];
+    two[3] = forecastDay({ date: NEXT[3] ?? '', status: 'booked', low: null, mid: null, high: null, noteGuests: 0 });
+    two[4] = forecastDay({ date: NEXT[4] ?? '', status: 'booked', low: null, mid: null, high: null, noteGuests: 0, reasons: [booked] });
+    const five = weekForecast(week, published(two, null), 'guests');
+    expect([five?.total, five?.missing]).toEqual([500, ['2026-11-26', '2026-11-27']]);
+    expect(weekForecastLabel(five ?? { from: '', to: '', missing: [] })).toMatch(/: 5 of the 7 days’ forecasts added up\. Thu, Nov 26 and Fri, Nov 27 have no forecast figure\.$/);
+    // Today without a figure: the line says so.
+    const noToday = weekForecast(week, published(all.slice(1), null), 'guests');
+    expect(noToday?.today).toBeNull();
+    expect(todayForecastPhrase(noToday?.today ?? null)).toEqual(['Today: no forecast figure.']);
+    // An open day without its range shows no figure in the row, so it is left out too.
     const rangeless = [...all];
     rangeless[2] = forecastDay({ date: NEXT[2] ?? '', low: null, mid: 100, high: null });
-    expect(weekForecast(week, published(rangeless, null), 'guests')).toBeNull();
+    expect(weekForecast(week, published(rangeless, null), 'guests')?.missing).toEqual(['2026-11-25']);
+  });
+
+  test('null, so the tile stays on last year: under 5 days with a figure, sales, nothing published', () => {
+    const all = NEXT.map((date) => open(date, 100));
+    expect(weekForecast(week, published(all.slice(0, 4), null), 'guests')).toBeNull();
     expect(weekForecast(week, published(all, null), 'netSales')).toBeNull();
     expect(weekForecast(week, null, 'guests')).toBeNull();
     expect(weekForecast(week, { available: false, reason: 'no_published_forecast', runs: [], days: [], accuracy: null, weeks: [] }, 'guests')).toBeNull();
+  });
+
+  test('all 7 days: the run’s weekly 80% band on the estimated part, exact guests added as they are', () => {
+    const banded = (days: ForecastDay[]): ForecastWindow => ({
+      ...published(days, null),
+      runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-11-09', live: null, backtest: { weeklyRangePct: { below: 20, above: 25 } } }],
+    });
+    const all = NEXT.map((date) => open(date, 100));
+    // 700 estimated: 560 to 875.
+    expect(weekForecast(week, banded(all), 'guests')?.range).toEqual({ low: 560, high: 875 });
+    expect(plainOf(weekRangePhrase({ low: 560, high: 875 }))).toBe('Likely 560 to 875 guests: 8 in 10 of this forecast’s backtest weeks landed in a range this wide.');
+    // A day with 40 guests from your notes (mid 140) and a 60-guest buyout in place of two 100s: 700 in all, 600
+    // estimated (480 to 750) and 100 exact.
+    const withExact = [...all];
+    withExact[1] = forecastDay({ date: NEXT[1] ?? '', low: 120, mid: 140, high: 160, noteGuests: 40 });
+    withExact[2] = forecastDay({ date: NEXT[2] ?? '', status: 'booked', low: null, mid: null, high: null, noteGuests: 60, reasons: [booked] });
+    const found = weekForecast(week, banded(withExact), 'guests');
+    expect(found?.total).toBe(700);
+    expect(found?.range).toEqual({ low: 100 + 480, high: 100 + 750 });
+    // A run with no band, or a day left out: no range.
+    expect(weekForecast(week, published(all, null), 'guests')?.range).toBeNull();
+    expect(weekForecast(week, banded(all.slice(0, 6)), 'guests')?.range).toBeNull();
   });
 
   test('today closed or booked, and last year beside the total', () => {

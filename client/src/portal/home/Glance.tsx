@@ -5,7 +5,7 @@ import type { Calendar } from '../analytics/api';
 import { plainOf, strong, type Phrase } from '../analytics/phrase';
 import {
   EVENT_WORDS, everyDayForecastOnly, forecastDayPhrase, lastYearBesidePhrase, lastYearDayPhrase, nextEventWhen, summaryLabel, todayForecastPhrase,
-  vsUsualPhrase, weekForecast, weekForecastLabel, type LastWeek, type NextEvent, type ThisWeek, type WeekForecast,
+  vsUsualPhrase, weekForecast, weekForecastLabel, weekRangePhrase, type LastWeek, type NextEvent, type ThisWeek, type WeekForecast,
 } from '../analytics/week';
 import type { ForecastWindow } from '../estimates/api';
 import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from '../analytics/words';
@@ -19,8 +19,9 @@ import { BlockRow } from './Block';
 
 // At a glance (spec P11): the three answers Home leads with on a Monday, each a tile with one big figure or title.
 // This week, last year: the total of the same 7 days last year (This week's days, today first), against that year's
-// usual, and their busiest and quietest days. With a published forecast for all seven days it is This week (D43): the
-// days' forecast figures added up, today's figure and range, the busiest and quietest days, and last year beside them.
+// usual, and their busiest and quietest days. With a published forecast for at least 5 of the seven days it is This
+// week's forecast (D43): the days' figures added up with the run's weekly 80% range when all 7 count, today's figure
+// and range, the busiest and quietest days, and last year beside them.
 // Last week: its total against the same days last year, after the published forecast's error when the Last week card
 // shows one (D42). Next on the calendar: the next holiday or town event from today. Every figure is history or a
 // published run's, never an unpublished guess; the cards below carry the detail, the chart and the tables.
@@ -52,11 +53,13 @@ function ForecastWeekTile(props: { found: WeekForecast; week: ThisWeek; metric: 
     <Tile eyebrow="This week’s forecast">
       <Figure value={formatCount(found.total)} unit="guests" />
       <View style={styles.lines}>
+        {found.range === null ? null : <Small white><PhraseParts phrase={weekRangePhrase(found.range)} /></Small>}
         <Small white>{weekForecastLabel(found)}</Small>
         <Small white><PhraseParts phrase={todayForecastPhrase(found.today)} /></Small>
         {found.busiest === null ? null : <Small><PhraseParts phrase={forecastDayPhrase('Busiest', found.busiest)} /></Small>}
         {found.quietest === null ? null : <Small><PhraseParts phrase={forecastDayPhrase('Quietest', found.quietest)} /></Small>}
         {summary === null ? null : <Small><PhraseParts phrase={lastYearBesidePhrase(summary, props.metric)} /></Small>}
+        {found.range === null ? <Small>Each day’s range is in This week.</Small> : null}
       </View>
     </Tile>
   );

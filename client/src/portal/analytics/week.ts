@@ -20,7 +20,8 @@ import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPe
 // note's guests itself. Last week also carries the published forecast's own days for its seven days, with the read's
 // `scored`, `inRange` and `accuracy` (D42, home-last-week): nothing here scores or adjusts a forecast figure, so
 // every forecast figure Home shows is a published run's, never an unpublished guess. The one sum is weekForecast's
-// (D43): This week's seven figures as its Forecast row shows them, added up, with no range, since daily ranges don't add.
+// (D43): This week's figures as its Forecast row shows them, added up. Daily ranges don't add, so its range is the
+// run's own weekly 80% band from its backtest, applied to the estimated part of the total.
 // "Last year" is the same weekday 52 weeks (364 days) earlier; "usual" is baseline.ts's, with every day allowed by
 // the filters.
 
@@ -293,9 +294,18 @@ function forecastGuests(day: ForecastDay): number | null {
 export interface WeekForecast {
   from: string;
   to: string;
-  /** The seven days' figures added up, as the Forecast row rounds them, so the row adds up to it. */
+  /** The figures of the days that have one, added up as the Forecast row rounds them, so the row adds up to it. */
   total: number;
-  today: ForecastDay;
+  /** The days with no figure in the Forecast row, left out of the total; at most 7 - SUMMARY_MIN_DAYS. */
+  missing: string[];
+  /**
+   * The week's 80% range, only when all 7 days count and the run that gave today has a backtest band: the estimated
+   * part (open days' figures less the guests notes and rules add) times the band, plus those guests and buyouts' parties,
+   * which are exact. The low rounds down and the high up.
+   */
+  range: { low: number; high: number } | null;
+  /** Null when today has no figure. */
+  today: ForecastDay | null;
   /** `booked`: a buyout's party, an exact count, not an estimate. */
   busiest: { date: string; value: number; booked: boolean } | null;
   /** The quietest open day; closed and booked days are left out. */
@@ -304,38 +314,67 @@ export interface WeekForecast {
 
 /**
  * The total of This week's published forecast (D43), or null, which keeps the tile on last year: with nothing
- * published, for a metric other than guests (forecasts are guests), and when any of the seven days has no figure in the
- * Forecast row (not covered, or booked with no party), since a total of six days would read as the week's.
+ * published, for a metric other than guests (forecasts are guests), and when fewer than 5 of the seven days have a
+ * figure in the Forecast row (not covered, booked for a private event that isn't your buyout, or your buyout with no
+ * party), the same 5 of 7 the last-year summary needs. With 5 or 6, the total says which days it leaves out.
  */
 export function weekForecast(week: Pick<ThisWeek, 'from' | 'to' | 'rows'>, forecast: ForecastWindow | null, metric: Metric): WeekForecast | null {
   if (forecast === null || !forecast.available || metric !== 'guests') return null;
   const byDay = new Map(forecast.days.map((day) => [day.date, day]));
-  const days: { date: string; value: number; open: boolean; booked: boolean }[] = [];
+  const days: { date: string; value: number; open: boolean; booked: boolean; exact: number }[] = [];
+  const missing: string[] = [];
   for (const row of week.rows) {
     const day = byDay.get(row.date);
     const value = day === undefined ? null : forecastGuests(day);
-    if (day === undefined || value === null) return null;
-    days.push({ date: row.date, value, open: day.status === 'open', booked: day.status === 'booked' });
+    if (day === undefined || value === null) {
+      missing.push(row.date);
+      continue;
+    }
+    // A buyout's party and the guests notes and rules add to an open day are fixed numbers, not estimates.
+    const exact = day.status === 'booked' ? value : day.status === 'open' ? day.noteGuests : 0;
+    days.push({ date: row.date, value, open: day.status === 'open', booked: day.status === 'booked', exact });
   }
-  const today = byDay.get(week.from);
-  if (today === undefined) return null;
+  if (days.length < SUMMARY_MIN_DAYS) return null;
+  const todayDay = byDay.get(week.from);
+  const today = todayDay !== undefined && forecastGuests(todayDay) !== null ? todayDay : null;
+  const total = sum(days.map((each) => each.value));
+  const band = today === null ? null : forecast.runs.find((run) => run.id === today.runId)?.backtest?.weeklyRangePct ?? null;
+  let range: WeekForecast['range'] = null;
+  if (missing.length === 0 && band !== null) {
+    const exact = sum(days.map((each) => each.exact));
+    const estimated = Math.max(0, total - exact);
+    range = { low: exact + Math.floor(estimated * (1 - band.below / 100)), high: exact + Math.ceil(estimated * (1 + band.above / 100)) };
+  }
   const counted = days.filter((each) => each.value > 0);
   const busiest = counted.reduce<(typeof days)[number] | null>((best, each) => (best === null || each.value > best.value ? each : best), null);
   const quietest = days.filter((each) => each.open).reduce<(typeof days)[number] | null>((best, each) => (best === null || each.value < best.value ? each : best), null);
   return {
-    from: week.from, to: week.to, total: sum(days.map((each) => each.value)), today,
+    from: week.from, to: week.to, total, missing, range, today,
     busiest: busiest === null ? null : { date: busiest.date, value: busiest.value, booked: busiest.booked },
     quietest: quietest === null || quietest.date === busiest?.date ? null : { date: quietest.date, value: quietest.value, booked: false },
   };
 }
 
-/** "Tue, Nov 17 to Mon, Nov 23, 2026: the 7 days’ forecasts added up. Each day’s range is in This week." */
-export function weekForecastLabel(found: Pick<WeekForecast, 'from' | 'to'>): string {
-  return `${shortDate(found.from).replace(/, \d{4}$/, '')} to ${shortDate(found.to)}: the 7 days’ forecasts added up. Each day’s range is in This week.`;
+/**
+ * "Tue, Nov 17 to Mon, Nov 23, 2026: the 7 days’ forecasts added up.", or with days left out "…: 6 of the 7 days’
+ * forecasts added up. Sat, Nov 21 has no forecast figure." ("Sat, Nov 21 and Sun, Nov 22 have …").
+ */
+export function weekForecastLabel(found: Pick<WeekForecast, 'from' | 'to' | 'missing'>): string {
+  const span = `${shortDate(found.from).replace(/, \d{4}$/, '')} to ${shortDate(found.to)}`;
+  if (found.missing.length === 0) return `${span}: the 7 days’ forecasts added up.`;
+  const days = found.missing.map((date) => shortDate(date).replace(/, \d{4}$/, ''));
+  const named = days.length === 1 ? `${days[0] ?? ''} has` : `${days.slice(0, -1).join(', ')} and ${days.at(-1) ?? ''} have`;
+  return `${span}: ${formatCount(7 - found.missing.length)} of the 7 days’ forecasts added up. ${named} no forecast figure.`;
+}
+
+/** "Likely 600 to 900 guests: 8 in 10 of this forecast’s backtest weeks landed in a range this wide.", the range strong. */
+export function weekRangePhrase(range: { low: number; high: number }): Phrase {
+  return ['Likely ', strong(`${formatCount(range.low)} to ${formatCount(range.high)} guests`), ': 8 in 10 of this forecast’s backtest weeks landed in a range this wide.'];
 }
 
 /** "Today: about 110 guests, 90 to 130.", "Today: closed.", "Today: a private buyout, 40 guests."; the figure strong. */
-export function todayForecastPhrase(day: ForecastDay): Phrase {
+export function todayForecastPhrase(day: ForecastDay | null): Phrase {
+  if (day === null) return ['Today: no forecast figure.'];
   if (day.status === 'closed') return ['Today: closed.'];
   if (day.status === 'booked') return ['Today: a private buyout, ', strong(plural(day.noteGuests, 'guest', 'guests')), '.'];
   // weekForecast only passes an open today with all three figures; the range's low rounds down and its high up
