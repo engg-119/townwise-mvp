@@ -11,6 +11,9 @@ import { InternalServerError } from '@anthropic-ai/sdk';
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
+import { createTurnSweeper, type TurnSweeper } from '../src/chat/turn-sweeper.ts';
+import type { SettleStores } from '../src/chat/turn-runner.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
 import { addChatTurn, addConversation, addGrant, addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
 import { eventsOf, message, scriptedModel, text, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
@@ -158,6 +161,45 @@ async function lapsedTurn(): Promise<{ id: string; turnId: string }> {
   const turnId = await addChatTurn(server, { orgId, locationId, conversationId: id, userId: session.userId });
   await server.connection.collection('tw_chat_turns').updateOne({ turnId }, { $set: { leaseUntil: new Date(server.clock.now().getTime() - 1000) } });
   return { id, turnId };
+}
+
+const STAFF = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
+const orgScope = (): OrgScope => scopeForNewOrg(STAFF, orgId);
+const LEASE_MS = 30_000;
+
+/**
+ * What a replica that died mid-turn leaves: both claims held by the turn, and its running record, whose lease then
+ * passes with no one to renew it. A new conversation without `existing`; else the author's conversation, claimed.
+ */
+async function crashedTurn(existing?: string): Promise<{ id: string; turnId: string }> {
+  const scope = orgScope();
+  const { stores } = other.ctx;
+  for (const each of [server, other]) each.clock.advance(1000);
+  const now = other.clock.now();
+  const turnId = randomUUID();
+  const claim = { turnId, now, staleBefore: new Date(now.getTime() - 3 * 60_000) };
+  const owner = { locationId, userId: session.userId };
+  expect(await stores.chatLiveTurns.claim(scope, session.userId, claim)).toBe(true);
+  const id = existing === undefined
+    ? await stores.chatConversations.create(scope, owner, { title: 'Sentinel-crash question', turnId, now })
+    : (await stores.chatConversations.claim(scope, owner, existing, claim))?.id;
+  if (id === undefined) throw new Error('not claimed');
+  const leaseUntil = new Date(now.getTime() + LEASE_MS);
+  await stores.chatTurns.insert(scope, {
+    locationId, conversationId: id, userId: session.userId, turnId, userNodeId: 'user-node', replyNodeId: 'reply-node', parentId: null,
+    message: { text: 'Sentinel-crash question', attachments: [] }, startedAt: now, leaseUntil,
+  });
+  expect(await stores.chatTurns.append(scope, turnId, {
+    from: 0, leaseUntil,
+    events: [{ seq: 1, type: 'conversation', data: { id, turnId } }, { seq: 2, type: 'text', data: { delta: 'Sentinel-crash reply' } }],
+  })).toBe(true);
+  for (const each of [server, other]) each.clock.advance(LEASE_MS + 1000);
+  return { id, turnId };
+}
+
+/** The other instance's sweep, run by hand, over `stores` (its own by default). */
+function sweeperOn(stores: SettleStores = other.ctx.stores): TurnSweeper {
+  return createTurnSweeper({ connection: other.connection, stores, logger: other.ctx.logger, now: other.clock.now });
 }
 
 const liveTurns = (): Promise<number> => server.connection.collection('tw_chat_live_turns').countDocuments({ orgId: new Types.ObjectId(orgId) });
@@ -550,6 +592,109 @@ describe('stop', () => {
     } finally {
       await server.connection.collection('tw_chat_turns').deleteMany({ turnId });
     }
+  });
+});
+
+describe('the sweep', () => {
+  it('settles a first turn whose replica died: readers see interrupted, the conversation goes, and the person can send again at once', async () => {
+    const { id, turnId } = await crashedTurn();
+    // Until the sweep runs, a reader already reads it as interrupted, and the person's claim still holds.
+    expect(await tail(server, tailPath(id, turnId))).toEqual([
+      { id: 1, event: 'conversation', data: { id, turnId } }, { id: 2, event: 'text', data: { delta: 'Sentinel-crash reply' } },
+      { id: 3, event: 'error', data: { code: 'interrupted' } },
+    ]);
+    const blocked = await call(server, turnsPath(), { session, json: { content: 'Try again' } });
+    expect(blocked.status).toBe(409);
+
+    other.logs.length = 0;
+    await sweeperOn().sweep();
+    expect(await conversationDoc(id)).toBeNull();
+    expect(await liveTurns()).toBe(0);
+    const stored = await record(turnId);
+    expect(stored).toMatchObject({ state: 'interrupted', eventCount: 3 });
+    expect(stored?.events.at(-1)).toEqual({ seq: 3, type: 'error', data: { code: 'interrupted' } });
+    // The tail now reads the stored ending, the same event with the same number.
+    expect((await tail(server, tailPath(id, turnId, '2')))).toEqual([{ id: 3, event: 'error', data: { code: 'interrupted' } }]);
+    const swept = other.logs.find((line) => line.includes('townwise.chat_turns_swept')) ?? '';
+    expect(JSON.parse(swept)).toMatchObject({ found: 1, settled: 1, failed: 0 });
+    expect(other.logs.join('\n')).not.toContain('Sentinel');
+
+    model.script({ kind: 'message', message: message([text('Here it is again.')]) });
+    expect((await turn({ content: 'Try again' })).at(-1)?.event).toBe('done');
+  });
+
+  it('settles a turn in an existing conversation: its saved messages are untouched and its claim released', async () => {
+    const existing = await addConversation(server, { orgId, locationId, userId: session.userId, text: 'Earlier question' });
+    const before = await conversationDoc(existing);
+    const { turnId } = await crashedTurn(existing);
+    expect(await conversationDoc(existing)).toMatchObject({ liveTurn: { turnId } });
+    await sweeperOn().sweep();
+    const after = await conversationDoc(existing);
+    expect(after).toMatchObject({ liveTurn: null, turnCount: 1 });
+    expect(after?.messages).toEqual(before?.messages);
+    expect(await liveTurns()).toBe(0);
+    expect((await record(turnId))?.state).toBe('interrupted');
+  });
+
+  it('a sweep that stops between its steps is completed by the next one', async () => {
+    const { id, turnId } = await crashedTurn();
+    const { stores } = other.ctx;
+    let failOnce = true;
+    const failing: SettleStores = {
+      chatTurns: stores.chatTurns,
+      chatConversations: stores.chatConversations,
+      chatLiveTurns: {
+        release: (scope, userId, releasing) => {
+          if (failOnce) {
+            failOnce = false;
+            return Promise.reject(new Error('Sentinel-store down'));
+          }
+          return stores.chatLiveTurns.release(scope, userId, releasing);
+        },
+      },
+    };
+    const sweeper = sweeperOn(failing);
+    other.logs.length = 0;
+    await sweeper.sweep();
+    // The conversation's claim went (and with it the new conversation); the person's claim and the record did not.
+    expect(await conversationDoc(id)).toBeNull();
+    expect(await liveTurns()).toBe(1);
+    expect((await record(turnId))?.state).toBe('running');
+    expect(other.logs.join('\n')).toContain('townwise.chat_turn_not_settled');
+    expect(other.logs.join('\n')).not.toContain('Sentinel');
+
+    await sweeper.sweep();
+    expect(await liveTurns()).toBe(0);
+    expect(await record(turnId)).toMatchObject({ state: 'interrupted', eventCount: 3 });
+  });
+
+  it('deletes a record 15 minutes after its turn ended, and no running one', async () => {
+    const turns = server.connection.collection('tw_chat_turns');
+    const id = await addConversation(server, { orgId, locationId, userId: session.userId, text: 'Earlier question' });
+    const owner = { orgId, locationId, conversationId: id, userId: session.userId };
+    const old = await addChatTurn(server, owner);
+    const recent = await addChatTurn(server, owner);
+    const running = await addChatTurn(server, owner);
+    const now = other.clock.now().getTime();
+    await turns.updateOne({ turnId: old }, { $set: { state: 'done', endedAt: new Date(now - 15 * 60_000 - 1000) } });
+    await turns.updateOne({ turnId: recent }, { $set: { state: 'done', endedAt: new Date(now - 14 * 60_000) } });
+    await turns.updateOne({ turnId: running }, { $set: { leaseUntil: new Date(now + LEASE_MS) } });
+    try {
+      await sweeperOn().sweep();
+      expect(await record(old)).toBeNull();
+      expect((await record(recent))?.state).toBe('done');
+      expect((await record(running))?.state).toBe('running');
+    } finally {
+      await turns.deleteMany({ conversationId: new Types.ObjectId(id) });
+    }
+  });
+
+  it('main.ts starts the sweep in each replica and closes it on shutdown', () => {
+    const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+    expect(main.match(/\bcreateTurnSweeper\(/g)).toHaveLength(1);
+    expect(main).toMatch(/^turnSweeper\.start\(\);$/m);
+    const shutdown = main.slice(main.indexOf('onShutdown: ['), main.indexOf('redis, mongo,', main.indexOf('onShutdown: [')));
+    expect(shutdown).toMatch(/\bturnSweeper,/);
   });
 });
 

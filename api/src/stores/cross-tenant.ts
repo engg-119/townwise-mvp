@@ -6,12 +6,14 @@
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
 // countedWeekRows (D42), the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
-// weekly-forecast-suggestions), the active days recorder's removeOldActivityDays, and the staff Overview's
-// activityDaysSince, peopleActionsSince, openInvitesBefore and chatUsageForMonth (openspec change staff-overview).
+// weekly-forecast-suggestions), the active days recorder's removeOldActivityDays, the staff Overview's
+// activityDaysSince, peopleActionsSince, openInvitesBefore and chatUsageForMonth (openspec change staff-overview), and the
+// TownwiseAI turn sweep's staleChatTurns and removeEndedChatTurns (openspec change resumable-chat-turns).
 // Only access/resolve.ts, the active days recorder (access/activity.ts), the join and decline handlers, the staff
-// handlers (admin.ts, deletion.ts, overview.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
+// handlers (admin.ts, deletion.ts, overview.ts), the TownwiseAI turn sweep (chat/turn-sweeper.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
-// (calendar/google-access.ts) and the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) import
+// (calendar/google-access.ts), the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) and the
+// TownwiseAI turn sweep (chat/turn-sweeper.ts) import
 // this file (test/isolation.test.ts enforces
 // the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
@@ -805,4 +807,32 @@ export async function staleSuggestionPasses(connection: Connection, before: Date
 /** The weekly cap's count (D42): week rows of `week` that are `starting` or `started`, across organizations. */
 export async function countedWeekRows(connection: Connection, week: string): Promise<number> {
   return forecastWeekModel(connection).countDocuments({ week, status: trusted({ $in: [...COUNTED_WEEK_STATUSES] }) });
+}
+
+/** A running TownwiseAI turn whose lease has passed: its replica died, or shut down without settling it. */
+export interface StaleChatTurn {
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly conversationId: string;
+  readonly userId: string;
+  readonly turnId: string;
+}
+
+/**
+ * The TownwiseAI turn sweep (chat/turn-sweeper.ts, openspec change resumable-chat-turns): running records in any
+ * organization whose lease passed before `now`, oldest lease first, at most `limit`. Ids only, never the events.
+ */
+export async function staleChatTurns(connection: Connection, now: Date, limit: number): Promise<StaleChatTurn[]> {
+  const docs = await chatTurnModel(connection)
+    .find({ state: 'running', leaseUntil: trusted({ $lt: now }) }, { orgId: 1, locationId: 1, conversationId: 1, userId: 1, turnId: 1 })
+    .sort({ leaseUntil: 1 }).limit(limit).lean();
+  return docs.map((doc) => ({
+    orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), conversationId: doc.conversationId.toHexString(),
+    userId: doc.userId, turnId: doc.turnId,
+  }));
+}
+
+/** The TownwiseAI turn sweep: deletes every record, in any organization, whose turn ended at or before `before`. */
+export async function removeEndedChatTurns(connection: Connection, before: Date): Promise<number> {
+  return (await chatTurnModel(connection).deleteMany({ endedAt: trusted({ $lte: before }) })).deletedCount;
 }
