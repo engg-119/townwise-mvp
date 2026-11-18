@@ -18,7 +18,7 @@ import { nextOf } from './tools/next.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/registry.ts';
 import { visualOf, type Visual } from './tools/visual.ts';
 import type { ChatNode } from './tree.ts';
-import { isAside, NOT_RUN } from './turn.ts';
+import { isAside, NOT_RUN, ran } from './turn.ts';
 import { isContextBlock } from './user-message.ts';
 import { citedSources, searchCard, WEB_SEARCH, type SourceLink } from './web-search.ts';
 
@@ -189,10 +189,7 @@ export function chatMessageViews(
       if (param.role !== 'assistant') continue;
       written.push(...blocksOf(param));
       // Text written ahead of a tool call is replayed as thinking, as the stream's `aside` event files it (turn.ts).
-      const aside = isAside(blocksOf(param), (id) => {
-        const result = results.get(id);
-        return result !== undefined && !(result.is_error === true && typeof result.content === 'string' && result.content.startsWith(NOT_RUN));
-      });
+      const aside = isAside(blocksOf(param), (id) => ran(results.get(id)));
       let asideText: { type: 'thinking'; text: string } | null = null;
       for (const block of blocksOf(param)) {
         const last = parts.at(-1);

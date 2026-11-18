@@ -1647,6 +1647,79 @@ describe('a turn that outlives its connection', () => {
     expect(shown(chat)).toEqual([['user', 'Closed Monday', 'complete'], ['assistant', 'Noted.', 'complete']]);
   });
 
+  // An aside (api/src/chat/turn.ts) reaches the reply the same way however the turn is read: its text goes under Worked
+  // for as thinking, and the saved view replays it as a thinking part with the keys the stream drew.
+  const NOTES = 'Let me check January.';
+  const ANSWER = 'January was quiet.';
+  const ASIDE_VIEW = {
+    ...SAVED_VIEW,
+    messages: [...CONVERSATION.messages, ASKED, {
+      ...stored('a2', 'assistant', ANSWER),
+      parts: [{ type: 'thinking', text: NOTES }, { type: 'tool', id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 0 } }, { type: 'text', text: ANSWER }],
+    }],
+  };
+  const asideEvents = (live: LiveTurn, from: number): void => {
+    const events: [string, unknown][] = [
+      ['conversation', { id: 'c1', title: 'Earlier chat', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-9' }],
+      ['text', { delta: NOTES }],
+      ['aside', {}],
+      ['tool', { id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 0 } }],
+      ['text', { delta: ANSWER }],
+    ];
+    for (const [index, [event, data]] of events.entries()) if (index + 1 >= from) live.emit(event, data, index + 1);
+  };
+  const filed = (message: ChatMessage): [string, string][] => message.parts.map((part) => [part.type, part.type === 'thinking' || part.type === 'text' ? part.text : '']);
+  const FILED = [['thinking', NOTES], ['tools', ''], ['text', ANSWER]];
+
+  test('an aside read back from the first event files its text with the thinking, live and once the saved turn is read', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE_VIEW;
+    const chat = await ready(api);
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api).path).toBe(`${TAIL}?after=0`);
+    await act(() => { asideEvents(turn(api), 1); });
+    await waitFor(() => { expect(filed(reply(chat))).toEqual(FILED); });
+    expect(messageText(reply(chat))).toBe(ANSWER);
+    const streamed = reply(chat);
+    api.conversation = ASIDE_VIEW;
+    await act(() => {
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a2' }, 6);
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(filed(reply(chat))).toEqual(FILED);
+    expect(reply(chat).parts.map((part) => part.key)).toEqual(streamed.parts.map((part) => part.key));
+    expect(messageText(reply(chat))).toBe(ANSWER);
+  });
+
+  test('an aside that arrives after a drop, read from the cursor, files the text the first stream drew', async () => {
+    jest.useFakeTimers();
+    try {
+      const api = fakeChatApi();
+      const chat = await ready(api);
+      await opened(chat);
+      await send(chat, 'And January?');
+      await act(() => {
+        turn(api).emit('conversation', { id: 'c1', title: 'Earlier chat', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-9' }, 1);
+        turn(api).emit('text', { delta: NOTES }, 2);
+      });
+      await advance(FLUSH_MS);
+      expect(filed(reply(chat))).toEqual([['text', NOTES]]);
+      api.conversation = LIVE_VIEW;
+      await act(() => { turn(api).fail(DROPPED()); });
+      await advance(1000);
+      expect(turn(api, 1).path).toBe(`${TAIL}?after=2`);
+      // The tail sends from 3 on; the events it repeats are dropped by their numbers.
+      await act(() => { asideEvents(turn(api, 1), 2); });
+      await advance(FLUSH_MS);
+      expect(filed(reply(chat))).toEqual(FILED);
+      expect(messageText(reply(chat))).toBe(ANSWER);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   test('Stop before the turn has its id waits for its conversation event, then asks the server', async () => {
     const api = fakeChatApi();
     const chat = await ready(api);

@@ -254,7 +254,7 @@ describe('a turn and its record', () => {
 
     await until(async () => (await record(turnId))?.state === 'done');
     const stored = await record(turnId);
-    expect(stored?.events.map((each) => each.type)).toEqual(['conversation', 'text', 'tool', 'tool', 'text', 'done']);
+    expect(stored?.events.map((each) => each.type)).toEqual(['conversation', 'text', 'aside', 'tool', 'tool', 'text', 'done']);
     // What the closed stream had shown is the record's start, with the same numbers.
     expect(asStream(stored).slice(0, seen.length)).toEqual(seen);
     expect(model.calls.map((each) => each.signal.aborted)).toEqual([false, false]);
@@ -472,7 +472,7 @@ describe('reading a turn back', () => {
     await until(async () => {
       running = await server.connection.collection<StoredTurn & { conversationId: Types.ObjectId }>('tw_chat_turns')
         .findOne({ userId: session.userId, state: 'running' });
-      return (running?.eventCount ?? 0) >= 4;
+      return (running?.eventCount ?? 0) >= 5;
     });
     const { turnId, conversationId } = running as unknown as StoredTurn & { conversationId: Types.ObjectId };
     const id = conversationId.toHexString();
@@ -481,12 +481,15 @@ describe('reading a turn back', () => {
     await new Promise((resolve) => { setTimeout(resolve, 100); });
     release();
     const all = await posted;
-    expect(all.map((each) => each.event)).toEqual(['conversation', 'text', 'tool', 'tool', 'text', 'done']);
+    expect(all.map((each) => each.event)).toEqual(['conversation', 'text', 'aside', 'tool', 'tool', 'text', 'done']);
     expect(await tailed).toEqual(all);
+    // The aside's empty data is stored and read back exactly as the live stream sent it, never dropped.
+    expect(all[2]).toEqual({ id: 3, event: 'aside', data: {} });
+    expect(asStream(await record(turnId))).toEqual(all);
 
     const resumed = await tail(server, tailPath(id, turnId, '2'));
     expect(resumed).toEqual(all.slice(2));
-    expect(resumed[0]?.id).toBe(3);
+    expect(resumed[0]).toEqual({ id: 3, event: 'aside', data: {} });
     // No `after` is 0; a turn that ended at or before `after` sends nothing.
     expect(await tail(other, tailPath(id, turnId))).toEqual(all);
     expect(await tail(other, tailPath(id, turnId, String(all.length)))).toEqual([]);

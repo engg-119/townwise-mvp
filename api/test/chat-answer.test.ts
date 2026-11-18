@@ -5,8 +5,8 @@ import type { BetaMessageParam, BetaToolResultBlockParam } from '@anthropic-ai/s
 import { describe, expect, it } from 'vitest';
 
 import { SUGGESTIONS_RESULT, UNANSWERED_RESULT } from '../src/chat/tools/next.ts';
-import type { ToolContext } from '../src/chat/tools/registry.ts';
-import { DISPLAY_TOOLS, isWork, runTurn, type TurnEvent, type TurnResult } from '../src/chat/turn.ts';
+import { TOOLS, type ToolContext } from '../src/chat/tools/registry.ts';
+import { DISPLAY_TOOLS, isAside, isWork, runTurn, type TurnEvent, type TurnResult } from '../src/chat/turn.ts';
 import { message, messagesOf, scriptedModel, text, toolUse, type ScriptedModel, type Step } from './helpers/chat-model.ts';
 
 const NEXT = { prompts: ['Which day was slowest?', 'Show me June', 'Any notes soon?'] };
@@ -89,5 +89,27 @@ describe('isWork', () => {
     expect(isWork('suggest_next', ran)).toBe(false);
     expect(isWork('show_visual', ran)).toBe(false);
     expect(isWork('no_such_tool', ran)).toBe(false);
+  });
+});
+
+describe('one rule for asides and answers', () => {
+  const ran: BetaToolResultBlockParam = { type: 'tool_result', tool_use_id: 'x', content: '{}' };
+  const names = TOOLS.map((tool) => tool.name);
+
+  it('every registered tool that shows a card or a visual is a display tool, and every display tool is registered', () => {
+    expect(names.filter((name) => name.startsWith('propose_') || name.startsWith('show_')).sort()).toEqual([...DISPLAY_TOOLS].sort());
+  });
+
+  it.each(names)('text before %s is an aside exactly when that call is work', (name) => {
+    const content = [{ type: 'text' }, { type: 'tool_use', id: 'x', name }];
+    expect(isAside(content, () => true)).toBe(isWork(name, ran));
+    expect(isAside(content, () => false)).toBe(false);
+  });
+
+  it('a display tool is never work, and text before one never an aside, so the answer beside it is not asked for again', () => {
+    for (const name of DISPLAY_TOOLS) {
+      expect(isWork(name, ran)).toBe(false);
+      expect(isAside([{ type: 'text' }, { type: 'tool_use', id: 'x', name }], () => true)).toBe(false);
+    }
   });
 });

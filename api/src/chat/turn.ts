@@ -260,45 +260,52 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
   };
 }
 
-/** A tool that only shows the owner something (a card, a visual, the next questions): it reads nothing for the answer. */
-function showsOnly(name: string): boolean {
-  return name === 'suggest_next' || name === 'show_visual' || name.startsWith('propose_');
-}
-
-/**
- * Whether an assistant message's text is an aside: the message also calls a tool that does work (a read, a
- * calibration), so its text came ahead of that work ("Next week, presumably.", or a remark on a window a tool
- * refused) and the answer is still to come. Text before a card or a visual stays the reply's ("Here it is."). The
- * stream marks an aside (the `aside` event) and the history view replays it as thinking, so neither shows it as the
- * reply. `ran` leaves out the calls that never ran (a reply cut off mid-call keeps its text).
- */
-export function isAside(content: readonly { type: string; name?: string; id?: string }[], ran: (id: string) => boolean = () => true): boolean {
-  return content.some((block) => block.type === 'tool_use' && block.name !== undefined && !showsOnly(block.name) && ran(block.id ?? ''));
-}
-
 /**
  * The tools that show the owner something in the reply: a visual or a proposal card. They are part of the answer, so
- * text written before one is too. suggest_next is neither these nor work (it ends the reply).
+ * text written before one is too. suggest_next is neither these nor work (it ends the reply). The one list both rules
+ * below read, so the stream's `aside` and the "has the model answered" check never disagree.
  */
 export const DISPLAY_TOOLS: ReadonlySet<string> = new Set([
   'show_visual', 'propose_note', 'propose_data_item', 'propose_order_change', 'propose_order_rule',
 ]);
 
+/** Whether a call ran: it has a result, and not a NOT_RUN one (a reply cut off mid-call, or past the per-message cap). */
+export function ran(result: BetaToolResultBlockParam | undefined): boolean {
+  return result !== undefined && !(result.is_error === true && typeof result.content === 'string' && result.content.startsWith(NOT_RUN));
+}
+
 /**
- * Whether a tool call is work (a lookup) that turns the text before it into working notes (tuning-chat.md section 3,
- * "Working notes"): a registered tool other than suggest_next and the display tools, that ran. A call that never ran
- * (no result, or a NOT_RUN one) streamed no card, so it moves nothing.
+ * Whether a tool call is work (a lookup, a calibration) that turns the text before it into working notes
+ * (tuning-chat.md section 3, "Working notes"): a call that ran to a registered tool other than suggest_next and the
+ * display tools. A call that never ran streamed no card, so it moves nothing. `hasRun` is `ran` of its result, or, for
+ * a message whose calls are about to run, whether this one will.
  */
+function worked(name: string, hasRun: boolean): boolean {
+  return hasRun && name !== 'suggest_next' && !DISPLAY_TOOLS.has(name) && toolNamed(name) !== undefined;
+}
+
+/** `worked` by the call's result: the rule wroteText reads. */
 export function isWork(name: string, result: BetaToolResultBlockParam | undefined): boolean {
-  if (name === 'suggest_next' || DISPLAY_TOOLS.has(name) || toolNamed(name) === undefined || result === undefined) return false;
-  return !(result.is_error === true && typeof result.content === 'string' && result.content.startsWith(NOT_RUN));
+  return worked(name, ran(result));
+}
+
+/**
+ * Whether an assistant message's text is an aside: the message also calls a tool that does work (isWork's rule), so
+ * its text came ahead of that work ("Next week, presumably.", or a remark on a window a tool refused) and the answer
+ * is still to come. Text before a card or a visual stays the reply's ("Here it is."). The stream marks an aside (the
+ * `aside` event) and the history view replays it as thinking, so neither shows it as the reply. `willRun` names the
+ * calls that ran, or will (a reply cut off mid-call keeps its text).
+ */
+export function isAside(content: readonly { type: string; name?: string; id?: string }[], willRun: (id: string) => boolean): boolean {
+  return content.some((block) => block.type === 'tool_use' && block.name !== undefined && worked(block.name, willRun(block.id ?? '')));
 }
 
 /**
  * Whether the turn wrote an answer: text that no lookup followed. Text that one did is working notes, shown in the
  * reply's "Worked for" timeline, not as the answer ("Let me check your May sales."). In the order the turn streamed: a
  * web search (D37) follows the text before its block in the same message, and a message's tool calls run after all of
- * its text. The saved view (view.ts) and the client mark working notes by the same rule.
+ * its text. For tool calls the stream's `aside` and the saved view (view.ts) mark working notes by the same rule (isAside,
+ * isWork); text before a web search is not marked, and stays in the reply.
  */
 function wroteText(turn: readonly BetaMessageParam[]): boolean {
   const results = new Map(turn.flatMap((param) => (param.role === 'user' && typeof param.content !== 'string'
@@ -501,7 +508,9 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       if (stop === 'pause_turn' && toolUses.length === 0) continue;
       if (toolUses.length === 0) return done('end_turn');
       // The calls below run, so text this message wrote ahead of a working one was no answer.
-      if (isAside(content) && content.some((block) => block.type === 'text' && block.text.trim() !== '')) {
+      // A call past the per-message cap is answered NOT_RUN below, so it never runs: the saved view reads it so too.
+      const willRun = (id: string): boolean => toolUses.findIndex((block) => block.id === id) < MAX_TOOLS_PER_MESSAGE;
+      if (isAside(content, willRun) && content.some((block) => block.type === 'text' && block.text.trim() !== '')) {
         input.emit({ type: 'aside', data: {} });
       }
 

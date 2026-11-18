@@ -87,11 +87,12 @@ interface TurnFields {
 }
 
 function turnSchema(): Schema<TurnFields> {
+  // An event's data is kept exactly as the stream sent it: minimize would drop an empty object (aside's `{}`).
   const event = new Schema({
     seq: { type: Number, required: true },
     type: { type: String, required: true },
     data: { type: Schema.Types.Mixed },
-  }, { _id: false, strict: true });
+  }, { _id: false, strict: true, minimize: false });
   const attachment = new Schema({
     ref: { type: String, required: true },
     kind: { type: String, required: true },
