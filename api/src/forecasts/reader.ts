@@ -94,7 +94,7 @@ export interface ForecastDayView {
   runId: string;
   /** The run's made-at date. */
   madeAt: string;
-  /** Made on or after the day, still without seeing its sales (its model's data ends before it). */
+  /** Made after the day (D49: a run made on the day, the lab's 03:00 run, counts as made by it, as score.ts madeAfter and the Calendar read it). */
   madeAfterDay: boolean;
   /** The stored guests for a day before today; null otherwise. */
   actual: number | null;
@@ -332,7 +332,7 @@ export function createForecastReader(deps: {
         days.push({
           date, weekday: weekdayOf(date), status: day.status, low: day.low, mid: day.mid, high: day.high,
           baseline: day.status === model.status ? row.baseline : null, reasons, model, noteGuests: day.noteGuests, moreNotes, moreRules,
-          runId: run.id, madeAt: run.madeAt, madeAfterDay: run.madeAt >= date,
+          runId: run.id, madeAt: run.madeAt, madeAfterDay: madeAfter(run, date),
           // A run made after the day is never compared with it (D49).
           actual, inRange: model.status === 'open' && !madeAfter(run, date) ? inRangeOf(actual, row.low, row.high) : null, scored: scoredDay(score),
         });

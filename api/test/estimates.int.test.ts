@@ -226,7 +226,7 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
         { kind: 'weekday', label: 'Friday', effectPct: null, effect: null, sources: [], note: null, rule: null },
         { kind: 'term', label: 'Spring term classes', effectPct: null, effect: null, sources: expect.any(Array) as unknown, note: null, rule: null },
       ],
-      runId: first, madeAt: '2026-05-01', madeAfterDay: true, actual: 100, inRange: true, scored: true,
+      runId: first, madeAt: '2026-05-01', madeAfterDay: false, actual: 100, inRange: true, scored: true,
       model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0, moreRules: 0,
     });
     expect(body.days.find((day) => day.date === '2026-05-06')).toMatchObject({ actual: 130, inRange: false, madeAfterDay: false });
@@ -290,7 +290,9 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     const lateOnly = await staffImport(late, only.id);
     await staffChange(lateOnly, 'publish');
     const alone = await only.read();
-    expect(alone.days.find((day) => day.date === '2026-05-06')).toMatchObject({ runId: lateOnly, mid: 110, actual: 130, inRange: null, scored: false });
+    expect(alone.days.find((day) => day.date === '2026-05-06')).toMatchObject({ runId: lateOnly, mid: 110, actual: 130, inRange: null, scored: false, madeAfterDay: true });
+    // A run made on the day counts as made by it, as the Calendar reads madeAt (TownwiseAI and the Calendar agree).
+    expect(alone.days.find((day) => day.date === '2026-05-10')).toMatchObject({ madeAfterDay: false });
     expect(alone.days.filter((day) => day.scored)).toEqual([]);
     expect([alone.accuracy, alone.runs[0]?.live]).toEqual([null, null]);
     expect(alone.weeks.find((week) => week.from === '2026-05-01')).toMatchObject({ runId: lateOnly, actual: 300, inRange: null });
