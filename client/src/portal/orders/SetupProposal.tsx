@@ -9,15 +9,16 @@ import { useLocation } from '../shell/LocationShell';
 import { LoadingLine, Messages } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import { Small } from '../ui/text';
-import { fetchSetupProposal, type SetupRead } from './api';
+import { fetchSetupProposal, type OrderSetup, type SetupRead } from './api';
 import { importProposal, problemLine, proposalSummary, type ProposalImport } from './proposal';
-import { CHAT_CUT, proposalParam } from './setupCard';
+import { changeLine, CHAT_CUT, proposalParam, READ_WEB_LINE, setupCardPreview, type ItemChange } from './setupCard';
 import type { SetupDraft } from './setupDraft';
 
 // Ordering setup opened from a TownwiseAI card (spec D56, P31), on both platforms. `?proposal=` names the card by a
 // conversation's id and a tool call's id, checked by pattern before anything is asked. While the card is open its
 // suggestions merge into the unsaved draft once, through the merge a read on this page uses (proposal.ts), and the
-// section says what that did. Nothing saves: the owner sets each new item's par and presses Save. After "Load their
+// section says what that did, lists each item already in the setup that changed, field by field, as the chat's card
+// did, and says when the reply also read web pages. Nothing saves: the owner sets each new item's par and presses Save. After "Load their
 // changes" replaces the draft the suggestions merge again, into the fresh one. Once a save goes through this stops for
 // that card and drops the query in place, so neither a reload nor the same address again merges over what was saved;
 // another card named in the same page starts clean. A card set aside, or no longer served (its file was
@@ -34,11 +35,13 @@ export const PROPOSAL_COPY = {
 
 type Card =
   | { readonly kind: 'loading' }
-  | { readonly kind: 'open'; readonly read: SetupRead }
+  | { readonly kind: 'open'; readonly read: SetupRead; readonly readWeb: boolean }
   | { readonly kind: 'said'; readonly text: string };
 
 export function SetupProposal(props: {
   draft: SetupDraft;
+  /** The setup as saved, which the list of changes is told against, as on the chat's card. */
+  saved: OrderSetup | null;
   /** Puts a merge in the draft, with its marks (SetupEditor's applyRead). */
   apply: (result: ProposalImport) => void;
   readOnly: boolean;
@@ -58,7 +61,7 @@ export function SetupProposal(props: {
   /** The card the address names, or null. Everything below is kept by it, so another card starts clean. */
   const named = conversationId === null || proposalId === null ? null : `${conversationId}.${proposalId}`;
   const [loaded, setLoaded] = useState<{ readonly named: string; readonly card: Card } | null>(null);
-  const [merged, setMerged] = useState<{ readonly named: string; readonly result: ProposalImport } | null>(null);
+  const [merged, setMerged] = useState<{ readonly named: string; readonly result: ProposalImport; readonly changes: readonly ItemChange[]; readonly changesLead: string | null } | null>(null);
   /** The cards a save went through for, in this page: none of them is read or merged again. */
   const [finished, setFinished] = useState<readonly string[]>([]);
   /** The saves counted when the address last named this card: one more means a save went through with it open. */
@@ -68,7 +71,7 @@ export function SetupProposal(props: {
   if (savedNow && !finished.includes(named)) setFinished([...finished, named]);
   const stopped = named === null || savedNow || finished.includes(named);
   const card = useMemo<Card>(() => (loaded !== null && loaded.named === named ? loaded.card : { kind: 'loading' }), [loaded, named]);
-  const result = merged !== null && merged.named === named ? merged.result : null;
+  const shown = merged !== null && merged.named === named ? merged : null;
   /** The editor's draft and apply as of the last render, for the merge. */
   const latest = useRef(props);
   useEffect(() => { latest.current = props; });
@@ -80,7 +83,12 @@ export function SetupProposal(props: {
     let live = true;
     const say = (next: Card): void => { if (live) setLoaded({ named, card: next }); };
     void fetchSetupProposal(api, location.id, conversationId, proposalId).then(
-      (proposal) => { say(proposal.status === 'open' ? { kind: 'open', read: proposal.read } : { kind: 'said', text: PROPOSAL_COPY.dismissed }); },
+      (proposal) => {
+        if (proposal.status !== 'open') say({ kind: 'said', text: PROPOSAL_COPY.dismissed });
+        // Without the suggestions (a counts-only answer, as under view-as) there is nothing to merge.
+        else if (proposal.read === undefined) say({ kind: 'said', text: PROPOSAL_COPY.unavailable });
+        else say({ kind: 'open', read: proposal.read, readWeb: proposal.readWeb });
+      },
       (caught: unknown) => { say({ kind: 'said', text: hasCode(caught, 404, 'not_found') ? PROPOSAL_COPY.unavailable : PROPOSAL_COPY.failed }); },
     );
     return () => { live = false; };
@@ -91,8 +99,10 @@ export function SetupProposal(props: {
     if (named === null || card.kind !== 'open' || stopped || mergedAt.current === at) return;
     mergedAt.current = at;
     const next = importProposal(card.read, latest.current.draft);
+    // What the chat's card listed, told against the saved setup: each item already there that would change.
+    const { changes, changesLead } = setupCardPreview(card.read, latest.current.saved);
     latest.current.apply(next);
-    setMerged({ named, result: next });
+    setMerged({ named, result: next, changes, changesLead });
   }, [card, named, loads, stopped]);
 
   // A save went through with this card open: it is remembered above, and the query is dropped in place, so neither a
@@ -107,10 +117,12 @@ export function SetupProposal(props: {
       {readOnly ? <Small>{PROPOSAL_COPY.readOnly}</Small> : null}
       {!readOnly && card.kind === 'loading' ? <LoadingLine text={PROPOSAL_COPY.loading} minHeight={44} /> : null}
       {!readOnly && card.kind === 'said' ? <Messages live="status" items={[card.text]} /> : null}
-      {!readOnly && result !== null ? (
+      {!readOnly && shown !== null ? (
         <View style={styles.stack}>
-          <Messages live="status" items={proposalSummary(result, 'file', CHAT_CUT)} />
-          {result.problems.length === 0 ? null : <Messages items={result.problems.map(problemLine)} />}
+          <Messages live="status" items={proposalSummary(shown.result, 'file', CHAT_CUT)} />
+          {shown.result.problems.length === 0 ? null : <Messages items={shown.result.problems.map(problemLine)} />}
+          {shown.changesLead === null ? null : <Messages items={[shown.changesLead, ...shown.changes.map(changeLine)]} />}
+          {card.kind === 'open' && card.readWeb ? <Messages items={[READ_WEB_LINE]} /> : null}
         </View>
       ) : null}
     </Section>

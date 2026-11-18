@@ -228,8 +228,10 @@ export async function readSetupWithAi(api: ApiClient, locationId: string, source
 export const setupProposalSchema = z.object({
   kind: z.literal('setup'),
   status: z.enum(['open', 'dismissed']),
-  /** As a read on Ordering setup answers them; never a par, a never run out or a point-of-sale name. */
-  read: setupReadSchema,
+  /** As a read on Ordering setup answers them; never a par, a never run out or a point-of-sale name. Absent under view-as. */
+  read: setupReadSchema.optional(),
+  /** Under view-as, in place of `read`: how many suppliers and items were suggested, and nothing from the file. */
+  counts: z.object({ suppliers: z.number(), items: z.number() }).optional(),
   /** The conversation had read web pages when the card was shown. */
   readWeb: z.boolean(),
 });

@@ -236,13 +236,33 @@ describe('the ordering setup card', () => {
       .toEqual([{ proposalId: CALL, kind: 'setup', status: 'dismissed' }]);
   });
 
+  // Security review L1: staff in view-as see how much was suggested, never a name or a note derived from the file.
+  it('under view-as the GET answers counts only: no supplier, item or note', async () => {
+    const ref = await seed();
+    const conversationId = await conversationWith([{ id: CALL, input: input(ref), result: SHOWN }]);
+    const staff = await signInStaff(server);
+    try {
+      await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: author.userId, orgId });
+      const card = await getCard(conversationId, staff);
+      expect(card).toEqual({ status: 200, body: { proposal: { kind: 'setup', status: 'open', counts: { suppliers: 1, items: 2 }, readWeb: true } } });
+      expect(JSON.stringify(card.body)).not.toMatch(/Vorlan|Quillvane|Sentinel|order_guide|inFile/);
+      // The author still gets the suggestions, and the file's checks hold for staff as for the author.
+      expect((await getCard(conversationId)).body).toEqual({ proposal: { kind: 'setup', status: 'open', read: READ, readWeb: true } });
+      await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(ref.slice(2)) }, { $set: { disabledAt: server.clock.now() } });
+      expect(await getCard(conversationId, staff)).toEqual(NOT_FOUND);
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
+  });
+
   it('dismiss under view-as is 403 view_as_read_only', async () => {
     const ref = await seed();
     const conversationId = await conversationWith([{ id: CALL, input: input(ref), result: SHOWN }]);
     const staff = await signInStaff(server);
     try {
       await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: author.userId, orgId });
-      expect(await getCard(conversationId, staff)).toEqual(await getCard(conversationId));
+      expect((await getCard(conversationId, staff)).status).toBe(200);
       expect(await act(conversationId, { action: 'dismiss' }, staff)).toMatchObject({ status: 403, body: { error: 'view_as_read_only' } });
       expect(await cardEvents(conversationId)).toEqual([]);
       expect(await server.connection.collection('tw_order_cards').countDocuments({ conversationId: new Types.ObjectId(conversationId) })).toBe(0);

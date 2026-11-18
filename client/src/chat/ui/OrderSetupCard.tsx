@@ -3,9 +3,10 @@ import { StyleSheet, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
 import { hasCode } from '../../portal/errors';
-import { dismissSetupProposal, fetchOrderSetup, type OrderSetup, type SetupProposal } from '../../portal/orders/api';
+import { dismissSetupProposal, fetchOrderSetup, type OrderSetup, type SetupProposal, type SetupRead } from '../../portal/orders/api';
+import { plural } from '../../portal/format';
 import { problemLine } from '../../portal/orders/proposal';
-import { changeLine, setupCardPreview, setupProposalHref } from '../../portal/orders/setupCard';
+import { changeLine, READ_WEB_LINE, setupCardPreview, setupProposalHref } from '../../portal/orders/setupCard';
 import { usePortal } from '../../portal/PortalProvider';
 import { Actions, Button, LinkButton } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine } from '../../portal/ui/feedback';
@@ -17,19 +18,46 @@ import { theme } from '../../theme';
 // them against the setup as it is saved now, with the merge Ordering setup itself runs (portal/orders/setupCard.ts):
 // what is new, each item already in the setup that would change, field by field, and what is left out. It saves
 // nothing. Review opens Ordering setup with the suggestions in the unsaved draft, by the card's two ids; Not now sets
-// the card aside. Once the suggestions are in the setup the card says so and offers nothing. Under view-as it shows the
-// preview with no actions.
+// the card aside. Once the suggestions are in the setup the card says so and offers nothing. Under view-as the server
+// sends counts only, so the card says how many suppliers and items were suggested and nothing from the file.
 
 export const SETUP_CARD_COPY = {
   title: 'Ordering setup suggestions',
   review: 'Review in Ordering setup',
-  web: 'This reply also read web pages, which Townwise didn’t check. Look over each change before you save.',
+  web: READ_WEB_LINE,
   gone: 'These suggestions aren’t available any more. The file they came from may have been turned off or deleted.',
   setupFailed: 'Townwise couldn’t load your ordering setup, so it can’t show what these suggestions would change. Reload the page to try again.',
 } as const;
 
+/** What staff see under view-as: how much was suggested, never a name or a note, and no action. */
+function countsLine(counts: { suppliers: number; items: number }): string {
+  return `TownwiseAI suggested ${plural(counts.suppliers, 'supplier', 'suppliers')} and ${plural(counts.items, 'item', 'items')} from an attached file. `
+    + 'Their names aren’t shown while viewing as someone else.';
+}
+
 export function OrderSetupCard(props: {
   proposal: SetupProposal;
+  locationId: string;
+  conversationId: string;
+  proposalId: string;
+  readOnly: boolean;
+  onDismissed: () => void;
+}): React.JSX.Element {
+  const { read, counts } = props.proposal;
+  if (read === undefined) {
+    return (
+      <View style={styles.card}>
+        <Eyebrow>{SETUP_CARD_COPY.title}</Eyebrow>
+        <Small>{counts === undefined ? 'These suggestions aren’t shown here.' : countsLine(counts)}</Small>
+      </View>
+    );
+  }
+  return <Suggestions {...props} read={read} />;
+}
+
+function Suggestions(props: {
+  proposal: SetupProposal;
+  read: SetupRead;
   locationId: string;
   conversationId: string;
   proposalId: string;
@@ -58,7 +86,7 @@ export function OrderSetupCard(props: {
   if (gone) return <Small>{SETUP_CARD_COPY.gone}</Small>;
   if (failed) return <ErrorNotice message={SETUP_CARD_COPY.setupFailed} />;
   if (setup === undefined) return <LoadingLine text="Loading your ordering setup…" />;
-  const preview = setupCardPreview(props.proposal.read, setup);
+  const preview = setupCardPreview(props.read, setup);
 
   async function dismiss(): Promise<void> {
     setPending(true);

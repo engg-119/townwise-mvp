@@ -246,7 +246,8 @@ test('a card whose file was turned off or deleted says it isn’t available', as
   expect(screen.queryByRole('link', { name: 'Review in Ordering setup' })).toBeNull();
 });
 
-test('no actions under view-as', async () => {
+// Security review L1: under view-as the server sends counts only, and the card shows nothing from the file.
+test('under view-as the card shows how many suppliers and items were suggested, no name, no change and no action', async () => {
   const api = served();
   api.conversation = {
     ...CONVERSATION,
@@ -254,12 +255,19 @@ test('no actions under view-as', async () => {
       nodeId: 'a1', role: 'assistant', text: '', proposals: [], at: '2026-11-02T14:59:01.000Z', parts: [{ type: 'tool', ...TOOL }],
     }],
   };
-  api.reads['/api/org/locations/l1/chat/c1/order-proposals/' + CALL] = open;
+  let setupReads = 0;
+  api.reads[SETUP] = () => { setupReads += 1; return SETUP_ANSWER; };
+  api.reads['/api/org/locations/l1/chat/c1/order-proposals/' + CALL] = () => ({ proposal: { kind: 'setup', status: 'open', counts: { suppliers: 1, items: 2 }, readWeb: true } });
   renderAt('/locations/l1/agent', api, viewAsMe(ACCESS.member));
   fireEvent.click(await screen.findByRole('button', { name: 'History' }));
   fireEvent.click(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' }));
-  expect(await screen.findByText(HEADLINE)).toBeTruthy();
+  expect(await screen.findByText('TownwiseAI suggested 1 supplier and 2 items from an attached file. Their names aren’t shown while viewing as someone else.')).toBeTruthy();
+  expect(screen.getByText('Ordering setup suggestions')).toBeTruthy();
+  expect(screen.queryByText(HEADLINE)).toBeNull();
+  expect(screen.queryByText(/Sample Lager|Sample Stout|New Brewery|would change/)).toBeNull();
   expect(screen.queryByRole('link', { name: 'Review in Ordering setup' })).toBeNull();
   expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull();
+  // Nothing is compared, so the setup is not read for the card.
+  expect(setupReads).toBe(0);
   expect(api.writes).toEqual([]);
 });

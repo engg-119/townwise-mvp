@@ -42,11 +42,15 @@ When the content sent was text, the tool's result SHALL list the items whose nam
 - **THEN** the result says names were not checked, and the card's GET answers every item with `inFile: null`
 
 ### Requirement: The card is served only while the caller may still read its file
-`GET .../chat/:conversationId/order-proposals/:proposalId` SHALL answer `{ proposal: { kind: "setup", status, read, readWeb } }` for a stored `propose_order_setup` call that showed a card, where `status` is `open` or `dismissed` and `read` is the checked suggestions in the shape of an ordering setup read, each item's `inFile` taken from the stored result. It SHALL answer 404 for a conversation that is not the caller's, a call that showed nothing or failed, an input that does not pass the check, and an unknown id. It SHALL check the file again as the caller and answer 404 unless the file is kept, turned on, its original still there, and the caller is its uploader or an org admin. The GET SHALL store nothing.
+`GET .../chat/:conversationId/order-proposals/:proposalId` SHALL answer `{ proposal: { kind: "setup", status, read, readWeb } }` for a stored `propose_order_setup` call that showed a card, where `status` is `open` or `dismissed` and `read` is the checked suggestions in the shape of an ordering setup read, each item's `inFile` taken from the stored result. It SHALL answer 404 for a conversation that is not the caller's, a call that showed nothing or failed, an input that does not pass the check, and an unknown id. It SHALL check the file again as the caller and answer 404 unless the file is kept, turned on, its original still there, and the caller is its uploader or an org admin. The GET SHALL store nothing. Under view-as the GET SHALL answer `counts: { suppliers, items }` in place of `read`, so no supplier, item or note derived from the file reaches staff there.
 
 #### Scenario: The file is turned off after the card was shown
 - **WHEN** someone turns the file off and the author opens the conversation again
 - **THEN** the card's GET answers 404 and the client says the card isn't available
+
+#### Scenario: Staff in view-as
+- **WHEN** staff viewing as the author open a conversation with a setup card
+- **THEN** the card's GET answers how many suppliers and items were suggested and no name, and the card shows no action
 
 #### Scenario: Another member's conversation
 - **WHEN** a teammate requests the card of a conversation they did not write
@@ -68,7 +72,7 @@ When the content sent was text, the tool's result SHALL list the items whose nam
 - **THEN** the API answers 400 and nothing is written
 
 ### Requirement: The card previews the merge and hands off to Ordering setup unsaved
-The client SHALL preview a setup card against the live ordering setup with the same merge Ordering setup uses: items matched by name keep their id, par, never run out and point-of-sale names; new items have a blank par; a new supplier comes with its days; an existing supplier's days change only when it has none; nothing is removed. The preview SHALL list each item already in the setup that would change, with the field, its value now and the suggested value, a name's spelling included. It SHALL say how many servings are TownwiseAI's estimates, how many names were not in the file or that names could not be checked, when the file was cut or lists more than the 60 items a chat suggests, and what is left out and why. When nothing would be added, changed or left out it SHALL say the suggestions are in the setup. The card SHALL open Ordering setup with the suggestions merged into the unsaved draft; the owner sets each new item's par and saves there. Nothing SHALL be saved from the chat.
+The client SHALL preview a setup card against the live ordering setup with the same merge Ordering setup uses: items matched by name keep their id, par, never run out and point-of-sale names; new items have a blank par; a new supplier comes with its days; an existing supplier's days change only when it has none; nothing is removed. The preview SHALL list each item already in the setup that would change, with the field, its value now and the suggested value, a name's spelling included. It SHALL say how many servings are TownwiseAI's estimates, how many names were not in the file or that names could not be checked, when the file was cut or lists more than the 60 items a chat suggests, and what is left out and why. When nothing would be added, changed or left out it SHALL say the suggestions are in the setup. The card SHALL open Ordering setup with the suggestions merged into the unsaved draft, where the page SHALL list the same changes to existing items and say when the reply also read web pages; the owner sets each new item's par and saves there. Nothing SHALL be saved from the chat.
 
 #### Scenario: A suggestion would change an existing item's unit
 - **WHEN** the setup holds an item in cases and the suggestion gives the same name in kegs

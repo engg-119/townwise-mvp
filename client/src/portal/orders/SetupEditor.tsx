@@ -264,7 +264,7 @@ function Editor(props: {
       {status.canReadWithAi && props.read !== undefined
         ? props.read({ draft, apply: applyRead, locked, readOnlyId })
         : null}
-      <SetupProposal draft={draft} apply={applyRead} readOnly={readOnly} loads={loads} saves={saves} />
+      <SetupProposal draft={draft} saved={saved} apply={applyRead} readOnly={readOnly} loads={loads} saves={saves} />
 
       <Section title="Suppliers">
         {draft.suppliers.length === 0 ? <Small>No suppliers yet. Add each one you order from, with its delivery days.</Small> : null}

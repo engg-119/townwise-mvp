@@ -36,6 +36,9 @@ export function proposalParam(value: string | string[] | undefined): { conversat
   return match === null ? null : { conversationId: match[1] ?? '', proposalId: match[2] ?? '' };
 }
 
+/** Said on the card and on Ordering setup when the reply that made the suggestions also read web pages. */
+export const READ_WEB_LINE = 'This reply also read web pages, which Townwise didn’t check. Look over each change before you save.';
+
 export interface FieldChange {
   readonly field: 'name' | 'supplier' | 'category' | 'unit' | 'servings per unit' | 'deal size';
   /** The setup's value now, in the page's words; "none" for an empty one. */

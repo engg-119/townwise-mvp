@@ -11,8 +11,9 @@
 // A setup card (spec D56, chat/tools/order-setup.ts) shows the ordering setup suggestions TownwiseAI wrote from a file
 // attached to the conversation, checked again by the tool's own check. It is served only while the caller may still
 // read that file (kept, on, its original there, and theirs or an org admin's), so it is 404 once the file is turned
-// off or deleted. It can only be set aside: nothing saves from the chat, the owner saves on Ordering setup, and the
-// card keeps no saved mark.
+// off or deleted. Under view-as its GET answers how many suppliers and items were suggested, never a name or a note.
+// It can only be set aside: nothing saves from the chat, the owner saves on Ordering setup, and the card keeps no
+// saved mark.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -73,7 +74,8 @@ async function loadShown(ctx: TownwiseContext, principal: Principal, req: Reques
   const call = shownToolCall(conversation.messages, proposeOrderSetupTool.definition.name, proposalId);
   const setup = call === null ? null : shownOrderSetup(call.input, call.content);
   if (setup !== null) {
-    // The file again, as the caller is now: only the check, nothing is read.
+    // The file again, as the caller is now: the check only. No content is read (for a picture, its first bytes are, to
+    // tell its type).
     const file = await ctx.items.readForModel(caller.scope, location.id, setup.ref.slice(2), { userId: caller.userId, role: caller.role });
     if (file.status !== 'readable') throw notFound();
     return { kind: 'setup', location, locationId: location.id, conversationId, proposalId, setup };
@@ -106,7 +108,11 @@ export async function getOrderProposal(ctx: TownwiseContext, req: Request, res: 
   const status = statusOf(card?.status);
   if (shown.kind === 'setup') {
     // Never `saved`: a setup card's only stored state is set aside.
-    res.status(200).json({ proposal: { kind: 'setup', status: status === 'dismissed' ? 'dismissed' : 'open', read: shown.setup.read, readWeb: shown.setup.readWeb } });
+    const state = { kind: 'setup', status: status === 'dismissed' ? 'dismissed' : 'open', readWeb: shown.setup.readWeb } as const;
+    // Under view-as, counts only: the names and notes come from a file, and staff see no file-derived text there
+    // (handlers/data.ts hides a read's event titles the same way). [CONFIRM: under view-as the setup card shows counts only]
+    const { read } = shown.setup;
+    res.status(200).json({ proposal: caller.viewAs === null ? { ...state, read } : { ...state, counts: { suppliers: read.suppliers.length, items: read.items.length } } });
     return;
   }
   if (shown.kind === 'change') {

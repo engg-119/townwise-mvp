@@ -175,6 +175,33 @@ test('after a save it stops and drops the query', async () => {
   expect(fake.paths.filter((path) => path === CARD)).toHaveLength(1);
 });
 
+// Security review L2: the page where Save is pressed shows what the chat card showed.
+test('it lists each change to an item already in the setup, field by field, and says when the reply also read web pages', async () => {
+  const changed = [item('SAMPLE Lager', { unit: 'kegs', servingsPerUnit: 124 }), item('Sample Stout')];
+  const { api } = portal(card(changed, { readWeb: true }));
+  renderAt(api);
+  await screen.findByText(FOUND_TWO);
+  expect(screen.getByText('1 item already in your setup would change:')).toBeTruthy();
+  expect(screen.getByText('Sample Lager: name Sample Lager to SAMPLE Lager; unit cases to kegs; servings per unit 24 to 124')).toBeTruthy();
+  expect(screen.getByText('This reply also read web pages, which Townwise didn’t check. Look over each change before you save.')).toBeTruthy();
+  cleanup();
+
+  // With nothing changed in an existing item and no web pages read, neither is said.
+  const plain = portal(card([item('Sample Stout')]));
+  renderAt(plain.api);
+  await screen.findByText('TownwiseAI found 1 item: 1 new, 0 replaced by name. Nothing is saved yet: check them below, then save the setup.');
+  expect(screen.queryByText(/already in your setup would change/)).toBeNull();
+  expect(screen.queryByText(/web pages/)).toBeNull();
+});
+
+// Security review L1: a counts-only answer (view-as) carries nothing to merge.
+test('an answer without the suggestions merges nothing and says they aren’t available', async () => {
+  const { api } = portal({ proposal: { kind: 'setup', status: 'open', counts: { suppliers: 1, items: 2 }, readWeb: false } });
+  renderAt(api);
+  expect(await screen.findByText(PROPOSAL_COPY.unavailable)).toBeTruthy();
+  expect(screen.getByText('No unsaved changes.')).toBeTruthy();
+});
+
 // Code review: after a save, coming back to the address with the query (Back, a reload) must not merge again.
 test('after a save, the same ?proposal= again in the page, or a reload, merges nothing', async () => {
   const { api, fake } = portal(card(LAGER_CHANGE));
