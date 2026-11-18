@@ -32,6 +32,14 @@ async function askMap(api: ApiClient, placeIds: readonly string[], theme: ThemeM
  * the order given instead of being sorted, and the same set in another order is another map.
  */
 export function usePlacesMap(api: ApiClient, placeIds: readonly string[], opts: { labeled?: boolean } = {}): PlaceMap {
+  return usePlacesMapState(api, placeIds, opts).map;
+}
+
+/**
+ * The same, saying also whether the map is one `held` from the set before while this set's is asked for: its pins are
+ * the old set's, so letters drawn beside it for the new set would name the wrong pins (the places checklist, D57).
+ */
+export function usePlacesMapState(api: ApiClient, placeIds: readonly string[], opts: { labeled?: boolean } = {}): { map: PlaceMap; held: boolean } {
   const theme = useMapTheme();
   const labeled = opts.labeled === true;
   const ids = (labeled ? [...placeIds] : [...placeIds].sort()).join(',');
@@ -63,5 +71,5 @@ export function usePlacesMap(api: ApiClient, placeIds: readonly string[], opts: 
   // undefined while the set's map is still being asked for.
   const shown = key === '' ? null : answers.has(key) ? (answers.get(key) ?? null) : failed === key ? null : undefined;
   if (shown !== undefined && shown !== held) setHeld(shown);
-  return shown === undefined ? held : shown;
+  return shown === undefined ? { map: held, held: true } : { map: shown, held: false };
 }
