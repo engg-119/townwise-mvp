@@ -25,6 +25,10 @@ locals {
     admins_bootstrap_owner = { group = "admins", scope = azurerm_resource_group.bootstrap.id, role = "Owner" }
     admins_prod_owner      = { group = "admins", scope = azurerm_resource_group.prod.id, role = "Owner" }
     admins_state_data      = { group = "admins", scope = azurerm_storage_account.state.id, role = "Storage Blob Data Contributor" }
+    # Admins read the nightly database dumps, so infra/scripts/db-pull-prod.sh can restore one into a local copy
+    # (owner, 2026-11-18). Read only, on the dump container alone; the dumps stay write-once. Production creates the
+    # account and container (backup.tf), so apply this after production's first apply.
+    admins_backup_reader = { group = "admins", scope = "${azurerm_resource_group.prod.id}/providers/Microsoft.Storage/storageAccounts/sttwbackup${local.suffix}/blobServices/default/containers/mongodump", role = "Storage Blob Data Reader" }
     # Developers read configuration and logs. Reader includes no Key Vault data actions, no listSecrets on
     # the Container App and no listKeys on Communication Services, and cannot change secrets or identities.
     developers_prod_reader = { group = "developers", scope = azurerm_resource_group.prod.id, role = "Reader" }

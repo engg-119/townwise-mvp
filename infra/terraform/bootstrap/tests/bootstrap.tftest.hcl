@@ -166,6 +166,15 @@ run "rbac_scopes" {
     )
     error_message = "Developers read five secrets (the shared dev Anthropic key, the Places search's three and the calendar key), and cannot change resources."
   }
+
+  assert {
+    condition = (
+      [for key, role in local.team_roles : "${role.group} ${role.scope}" if role.role == "Storage Blob Data Reader"] == [
+        "admins /subscriptions/2d2c15bf-1b72-4e0c-a4cb-52dfc08ca999/resourceGroups/rg-townwise-prod/providers/Microsoft.Storage/storageAccounts/sttwbackup2d2c15bf/blobServices/default/containers/mongodump",
+      ]
+    )
+    error_message = "Only admins read the database dumps, on the dump container alone."
+  }
 }
 
 run "state_and_budget" {

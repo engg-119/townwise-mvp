@@ -28,6 +28,17 @@ Google calendars (Owner calendars, item 9) are off locally until `TOWNWISE_GOOGL
 
 Email (see Email, under Flows) is off locally while `EMAIL_ENDPOINT` is empty. Local sending works on macOS and Linux only: the API starts `az` without a shell, and Windows' `az.cmd` needs one. To send from your machine, run `az login` with an account that is Owner of, or holds `Townwise email sender` on, the Communication Services resource, then set `EMAIL_ENDPOINT=https://acs-townwise-2d2c15bf.unitedstates.communication.azure.com` and `EMAIL_SENDER=no-reply@townwise.tech` in `api/.env.local`. With no managed identity outside production, the API takes its token from `az account get-access-token` (`src/azure-identity.ts`). The emails really send, from the production sender to the address you sign in with, and their links go to `TOWNWISE_WEB_URL`. A failed token shows as `townwise.email_failed` with code `token`: run `az login` again.
 
+### On a copy of production's data
+
+To build against production's data without copying it by hand, restore production's newest nightly dump into a local database `townwise_prod` (your `townwise` stays as it is), then run the API on it:
+
+```sh
+infra/scripts/db-pull-prod.sh            # or --fresh: run the backup job first, so the copy is minutes old
+npm run dev:prod-copy -w @townwise/api   # stop `npm run dev` first; same port, so the web app and Google sign-in work unchanged
+```
+
+The pull needs `az login` as a `townwise-admins` member (bootstrap `admins_backup_reader`, `../infra/README.md` step 14) and Docker's Mongo. The backup account admits only the apps subnet, so the script adds this machine's public IP to its firewall for the download alone and removes it at once (reads still need Entra), and deletes the dump file when done. It leaves out sessions, retired refresh tokens, magic links and two-step secrets. `dev:prod-copy` (`scripts/dev-prod-copy.ts`) runs `api/.env.local` with the database switched to `townwise_prod` and stored files, email and calendars off (`scripts/prod-copy-env.ts`): the boot sweeper would otherwise delete your local Azurite files, and the copy holds real people's addresses, calendar links and Google tokens. Nothing you do here reaches production; pull again to refresh, which replaces `townwise_prod` whole. To see production's live data without an API of your own, `npm run start:prod -w @ckeith26/expo-shell` points the web app at production through a local proxy (`../client/MODULE.md`, Local changes).
+
 ## Check
 
 `npm run verify` from the repo root runs `npm ls`, lint, typecheck and every kit module's unit and integration tests (Docker required).
