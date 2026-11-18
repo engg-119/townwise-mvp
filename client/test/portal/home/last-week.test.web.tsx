@@ -172,7 +172,7 @@ test('no uploads since last Sunday: the forecast for these days replaces “Your
   }
   // No weekly total: 7 x 210.
   expect(card.textContent).not.toMatch(/1,470/);
-  expect(within(glance()).getByText('No guest count uploaded yet; Last week shows Townwise’s forecast.')).toBeTruthy();
+  expect(within(glance()).getByText('No guest counts for these days yet. Upload your sales to see how Townwise’s forecast did.')).toBeTruthy();
   expect(within(glance()).queryByText(/Your sales stop at/)).toBeNull();
 });
 
@@ -239,4 +239,27 @@ test('from 1024px, with a published forecast Last week takes a line of its own u
   await within(history).findByText(sentence('Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.'));
   expect(basisOf(history)).not.toBe('100%');
   expect(basisOf(screen.getByRole('region', { name: /^This month in / }))).not.toBe('100%');
+});
+
+// At a glance's This week (D43): with the month's published forecast covering all seven days from today, the first
+// tile adds up the Forecast row's figures with no range; with any day missing it stays on last year.
+test('This week adds up the forecast for the seven days from today, with today and last year beside it', async () => {
+  const next = weekDates(TODAY).map((date, index) => forecastDay({ date, low: 90 + index * 10, mid: 110.4 + index * 10, high: 130 + index * 10 }));
+  await renderHome(portal(HISTORY, offline(), published(next, null)));
+  expect(await within(glance()).findByText('This week’s forecast')).toBeTruthy();
+  const panel = glance();
+  // 110 + 120 + ... + 170, each rounded first.
+  expect(within(panel).getByText('980')).toBeTruthy();
+  expect(within(panel).getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up. Each day’s range is in This week.')).toBeTruthy();
+  expect(within(panel).getByText(sentence('Today: about 110 guests, 90 to 130.'))).toBeTruthy();
+  expect(within(panel).getByText(sentence('Busiest: Sun, Nov 29, 2026 (about 170 guests).'))).toBeTruthy();
+  expect(within(panel).getByText(/^Same 7 days last year: /)).toBeTruthy();
+  expect(within(glance()).queryByText('This week, last year')).toBeNull();
+});
+
+test('a day of the seven without a forecast: the tile stays on last year', async () => {
+  const six = weekDates(TODAY).slice(0, 6).map((date) => forecastDay({ date, low: 90, mid: 110, high: 130 }));
+  await renderHome(portal(HISTORY, offline(), published(six, null)));
+  expect(await within(glance()).findByText('This week, last year')).toBeTruthy();
+  expect(within(glance()).queryByText(/forecasts added up/)).toBeNull();
 });

@@ -18,8 +18,9 @@ import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPe
 // month grid's cells from today on, which show a published forecast day's own figures when Home passes the month's
 // forecast read (spec 16.3 P11 and 14.5), as the API leaves them after the notes: nothing here adds a
 // note's guests itself. Last week also carries the published forecast's own days for its seven days, with the read's
-// `scored`, `inRange` and `accuracy` (D42, home-last-week): nothing here scores, sums or adjusts a forecast figure, so
-// every forecast figure Home shows is a published run's, never an unpublished guess.
+// `scored`, `inRange` and `accuracy` (D42, home-last-week): nothing here scores or adjusts a forecast figure, so
+// every forecast figure Home shows is a published run's, never an unpublished guess. The one sum is weekForecast's
+// (D43): This week's seven figures as its Forecast row shows them, added up, with no range, since daily ranges don't add.
 // "Last year" is the same weekday 52 weeks (364 days) earlier; "usual" is baseline.ts's, with every day allowed by
 // the filters.
 
@@ -278,6 +279,83 @@ export function forecastPhrase(day: ForecastDay | undefined): Phrase | null {
   const mid = Math.round(day.mid);
   // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
   return [strong(`About ${plural(mid, 'guest', 'guests')}`), `, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`];
+}
+
+/** A day's guests as This week's Forecast row shows them: closed is 0, your buyout its party; null when it shows none. */
+function forecastGuests(day: ForecastDay): number | null {
+  if (day.status === 'closed') return 0;
+  if (day.status === 'booked') return yoursDid(day, 'booked') && day.noteGuests > 0 ? day.noteGuests : null;
+  // forecastPhrase's own check, so a day the row shows no figure for never counts.
+  return day.low === null || day.mid === null || day.high === null ? null : Math.round(day.mid);
+}
+
+/** This week's published forecast, added up for At a glance's first tile (D43). */
+export interface WeekForecast {
+  from: string;
+  to: string;
+  /** The seven days' figures added up, as the Forecast row rounds them, so the row adds up to it. */
+  total: number;
+  today: ForecastDay;
+  /** `booked`: a buyout's party, an exact count, not an estimate. */
+  busiest: { date: string; value: number; booked: boolean } | null;
+  /** The quietest open day; closed and booked days are left out. */
+  quietest: { date: string; value: number; booked: boolean } | null;
+}
+
+/**
+ * The total of This week's published forecast (D43), or null, which keeps the tile on last year: with nothing
+ * published, for a metric other than guests (forecasts are guests), and when any of the seven days has no figure in the
+ * Forecast row (not covered, or booked with no party), since a total of six days would read as the week's.
+ */
+export function weekForecast(week: Pick<ThisWeek, 'from' | 'to' | 'rows'>, forecast: ForecastWindow | null, metric: Metric): WeekForecast | null {
+  if (forecast === null || !forecast.available || metric !== 'guests') return null;
+  const byDay = new Map(forecast.days.map((day) => [day.date, day]));
+  const days: { date: string; value: number; open: boolean; booked: boolean }[] = [];
+  for (const row of week.rows) {
+    const day = byDay.get(row.date);
+    const value = day === undefined ? null : forecastGuests(day);
+    if (day === undefined || value === null) return null;
+    days.push({ date: row.date, value, open: day.status === 'open', booked: day.status === 'booked' });
+  }
+  const today = byDay.get(week.from);
+  if (today === undefined) return null;
+  const counted = days.filter((each) => each.value > 0);
+  const busiest = counted.reduce<(typeof days)[number] | null>((best, each) => (best === null || each.value > best.value ? each : best), null);
+  const quietest = days.filter((each) => each.open).reduce<(typeof days)[number] | null>((best, each) => (best === null || each.value < best.value ? each : best), null);
+  return {
+    from: week.from, to: week.to, total: sum(days.map((each) => each.value)), today,
+    busiest: busiest === null ? null : { date: busiest.date, value: busiest.value, booked: busiest.booked },
+    quietest: quietest === null || quietest.date === busiest?.date ? null : { date: quietest.date, value: quietest.value, booked: false },
+  };
+}
+
+/** "Tue, Nov 17 to Mon, Nov 23, 2026: the 7 days’ forecasts added up. Each day’s range is in This week." */
+export function weekForecastLabel(found: Pick<WeekForecast, 'from' | 'to'>): string {
+  return `${shortDate(found.from).replace(/, \d{4}$/, '')} to ${shortDate(found.to)}: the 7 days’ forecasts added up. Each day’s range is in This week.`;
+}
+
+/** "Today: about 110 guests, 90 to 130.", "Today: closed.", "Today: a private buyout, 40 guests."; the figure strong. */
+export function todayForecastPhrase(day: ForecastDay): Phrase {
+  if (day.status === 'closed') return ['Today: closed.'];
+  if (day.status === 'booked') return ['Today: a private buyout, ', strong(plural(day.noteGuests, 'guest', 'guests')), '.'];
+  // weekForecast only passes an open today with all three figures; the range's low rounds down and its high up
+  // (spec 14.4), as forecastPhrase gives it.
+  const { low, mid, high } = day;
+  if (low === null || mid === null || high === null) return ['Today: no forecast.'];
+  return ['Today: ', strong(`about ${plural(Math.round(mid), 'guest', 'guests')}`), `, ${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}.`];
+}
+
+/** "Busiest: Sat, Nov 21, 2026 (about 220 guests).", the figure strong; a buyout's party has no "about". */
+export function forecastDayPhrase(which: 'Busiest' | 'Quietest', found: { date: string; value: number; booked: boolean }): Phrase {
+  const guests = plural(found.value, 'guest', 'guests');
+  return [`${which}: ${shortDate(found.date)} (`, strong(found.booked ? `a private buyout, ${guests}` : `about ${guests}`), ').'];
+}
+
+/** "Same 7 days last year: 757 guests, −19% against that year’s usual.", the total strong; "From 6 of its 7 days." when short. */
+export function lastYearBesidePhrase(summary: WeekSummary, metric: Metric): Phrase {
+  const usualPart = summary.vsUsual === null ? '.' : `, ${signedPercent(summary.vsUsual.change)} against that year’s usual.`;
+  const short = summary.days === 7 ? '' : ` From ${formatCount(summary.days)} of its 7 days.`;
+  return ['Same 7 days last year: ', strong(metricText(summary.total, metric)), `${usualPart}${short}`];
 }
 
 /** "Busiest last year: Sat, Nov 22, 2025 (253 guests).", the figure strong. */
