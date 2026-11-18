@@ -4,9 +4,9 @@ import { meResponseSchema, type MeResponse, type Role } from '../schemas';
 import type { SalesDay } from '../upload/days';
 import {
   addMembersSchema, approvedSchema, auditPageSchema, createdOrgSchema, lookupSchema, memberUpdatedSchema, orgDeletedSchema,
-  orgDetailSchema, orgListSchema, orgUpdatedSchema, peopleSchema, personDeletedSchema, rejectedSchema, requestListSchema,
+  orgDetailSchema, orgListSchema, orgUpdatedSchema, overviewSchema, peopleSchema, personDeletedSchema, rejectedSchema, requestListSchema,
   setupLocationSchema, setupSalesDeletedSchema, setupUploadSchema, signedOutSchema,
-  type AddResult, type AdminRequest, type AuditPage, type Member, type OrgDetail, type OrgRow, type OrgStatus, type People,
+  type AddResult, type AdminRequest, type AuditPage, type Member, type OrgDetail, type OrgRow, type OrgStatus, type Overview, type OverviewDays, type People,
   type Person, type PersonKind, type RequestList, type RequestStatus, type SetupSalesDeleted, type SetupUpload, type StaffOrg,
 } from './schemas';
 
@@ -16,6 +16,11 @@ import {
 
 function id(value: string): string {
   return encodeURIComponent(value);
+}
+
+/** P32: the window's usage across organizations, each organization's row and Needs attention. */
+export function fetchOverview(api: ApiClient, days: OverviewDays): Promise<Overview> {
+  return api.json(`/api/admin/overview?days=${String(days)}`, overviewSchema);
 }
 
 export function fetchRequests(api: ApiClient, status: RequestStatus): Promise<RequestList> {

@@ -164,3 +164,77 @@ export const personDeletedSchema = z.object({ kitUserId: z.string().nullable() }
 
 export const auditPageSchema = z.object({ events: z.array(auditEventSchema), nextBefore: z.string().nullable() });
 export type AuditPage = z.infer<typeof auditPageSchema>;
+
+// The staff Overview (P32, GET /api/admin/overview, openspec change staff-overview, design decisions 4 to 6): counts, dates
+// and a published forecast's live accuracy only. `accuracy` keeps its typical error and day counts, a run its dates and
+// engine, and the answer's `schedule` is left out (Needs attention says what the page needs of it), so nothing else of
+// the answer can reach a screen.
+
+export const OVERVIEW_DAYS = [7, 28, 90] as const;
+export type OverviewDays = (typeof OVERVIEW_DAYS)[number];
+
+/** The groups people's actions are counted in, in the order the chart stacks them (api/src/handlers/overview.ts). */
+export const ACTION_GROUPS = ['uploads', 'notes', 'townwiseAi', 'orders', 'team'] as const;
+export type ActionGroup = (typeof ACTION_GROUPS)[number];
+
+const change = z.object({ count: z.number(), previous: z.number() });
+/** `previous` is null when the record of active days does not reach back over the window before. */
+const activityChange = z.object({ count: z.number(), previous: z.number().nullable(), of: z.number() });
+
+const overviewLocationSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  /** The newest run used in the window's passed days, not necessarily the newest published. */
+  newestRun: z.object({ dataThrough: z.string(), madeAt: z.string(), engine: z.string() }).nullable(),
+  accuracy: z.object({ days: z.number(), inRange: z.number(), typicalErrorPct: z.number().nullable() }).nullable(),
+  refresh: z.object({ week: z.string(), outcome: z.string() }).nullable(),
+  lastScheduled: z.enum(['succeeded', 'failed', 'live']).nullable(),
+});
+export type OverviewLocation = z.infer<typeof overviewLocationSchema>;
+
+const overviewOrgSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  status: orgStatusSchema,
+  inSetup: z.boolean(),
+  lastActiveDay: z.string().nullable(),
+  activePeople: z.number(),
+  actions: z.number(),
+  salesDayCount: z.number(),
+  lastUploadAt: z.string().nullable(),
+  forecastsOn: z.boolean(),
+  chat: z.object({ spentMicroUsd: z.number(), budgetMicroUsd: z.number() }),
+  locations: z.array(overviewLocationSchema),
+});
+export type OverviewOrg = z.infer<typeof overviewOrgSchema>;
+
+/** Ids, a count and a date: the page writes the words and the link. A kind this client does not know is skipped. */
+const attentionSchema = z.object({
+  kind: z.string(),
+  orgId: z.string().nullable(),
+  requestId: z.string().nullable(),
+  count: z.number().nullable(),
+  since: z.string().nullable(),
+});
+export type AttentionItem = z.infer<typeof attentionSchema>;
+
+const groupCounts = z.object({ uploads: z.number(), notes: z.number(), townwiseAi: z.number(), orders: z.number(), team: z.number() });
+
+export const overviewSchema = z.object({
+  window: z.object({ days: z.number(), from: z.string(), to: z.string(), previousFrom: z.string(), previousTo: z.string() }),
+  /** The earliest stored active day; null while nothing is recorded. */
+  recordingSince: z.string().nullable(),
+  totals: z.object({
+    activeOrgs: activityChange,
+    activePeople: activityChange,
+    chatTurns: change,
+    salesUploads: change,
+    notesWritten: change,
+    orderDecisions: change,
+  }),
+  series: z.array(z.object({ day: z.string(), activePeople: z.number(), actions: groupCounts })),
+  orgs: z.array(overviewOrgSchema),
+  attention: z.array(attentionSchema),
+});
+export type Overview = z.infer<typeof overviewSchema>;
+export type OverviewDay = Overview['series'][number];

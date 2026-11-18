@@ -25,7 +25,7 @@ Tests first in every group. Run single suites only (`npm test -w @townwise/api -
 
 ## 3. Client
 
-- [ ] 3.1 `client/src/portal/console/schemas.ts`: `overviewSchema` with `z.object` throughout, keeping only the fields of design decision 4 (`accuracy` only `days`, `inRange`, `typicalErrorPct`). `client/src/portal/console/api.ts`: `fetchOverview(api, days)`. Tests: the schema strips an unknown key, including one inside `accuracy`.
+- [x] 3.1 `client/src/portal/console/schemas.ts`: `overviewSchema` with `z.object` throughout, keeping only the fields of design decision 4 (`accuracy` only `days`, `inRange`, `typicalErrorPct`). `client/src/portal/console/api.ts`: `fetchOverview(api, days)`. Tests: the schema strips an unknown key, including one inside `accuracy`.
 - [ ] 3.2 Routing: `HOME.staff` becomes `/admin/overview` and `consoleNav` gains Overview first (`client/src/portal/routing.ts`); the console wordmark links to `/admin/overview` (`client/src/portal/shell/TopBar.tsx`). Tests: `client/test/portal/logic.test.ts` (staff home, the nav's order and current item, `/admin/overview` allowed only to `staff`, `/admin` still Requests).
 - [ ] 3.3 `client/src/portal/console/overview.ts` (pure): the change words, the attention words and links (from `links.ts`), the group labels, money and accuracy words. Unit tests.
 - [ ] 3.4 `StatTiles.tsx`, `AttentionList.tsx`, `OverviewOrgs.tsx` in `client/src/portal/console/`, and `OverviewSkeleton` in `client/src/portal/skeleton/console.tsx` (exported from `skeleton/index.ts`).
