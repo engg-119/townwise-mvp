@@ -3,7 +3,7 @@ import { useEffect, useId, useRef, useState } from 'react';
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
 import type { CalendarWeekProps } from './CalendarWeek';
-import { anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
+import { anchorBeside, anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
 import { CARD_MARK, CELL_GAP, gridHeight, gridMove, headLine, periodCard, weekHead, type InertCell, type WeekCard, type WeekDay, type WeekSlot } from './grid';
 import { statusWord } from './model';
 
@@ -16,7 +16,8 @@ import { statusWord } from './model';
 // focusable; the panel keeps the actions. The box is at least as tall as the month grid at the same width, so
 // switching views keeps the page height. Keys are grid.ts gridMove's in its 'week' layout, Home and End going to the
 // block's first and last day, and the moved-to column takes focus without scrolling. A mouse or pen over a column head
-// shows the day's tooltip; cards and touch show none. An inert day (outside the 25 months) is its head line only, with
+// shows the day's tooltip beside the column (above or below the row in the agenda), never over the day; cards and
+// touch show none. An inert day (outside the 25 months) is its head line only, with
 // no data-date; a pending day (its reads in flight) is its head line only, still the tab stop when selected, with no
 // description and no tooltip.
 // At 640px and below the week is an agenda: the same grid with 7 rows of one gridcell each, every day's head on one
@@ -218,7 +219,9 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
     if (head === null || date === null) { clearSoon(); return; }
     cancelClear();
     if (date === tip?.date || box.current === null) return;
-    setTip({ date, anchor: anchorOf(head, box.current) });
+    // Never over the day itself: beside its column, or above or below its row in the agenda.
+    const column = head.closest('[role="gridcell"]') ?? head;
+    setTip({ date, anchor: phone ? anchorOf(column, box.current) : anchorBeside(column, box.current) });
   }
 
   function onPointerLeave(event: React.PointerEvent<HTMLDivElement>): void {

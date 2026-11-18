@@ -4,8 +4,10 @@ import { theme } from '../../theme';
 import type { ChartTip } from './barTips';
 
 // The hover tooltip of the web charts (D21), shared by the chat's daily chart and the bar charts. It looks like the
-// calendar's day tooltip (panel, 1px `line` border, mono first line, sans lines) and sits at the top of the chart's
-// positioned box, beside the hovered x: left of it from the box's right half, so it stays inside. It is aria-hidden
+// calendar's day tooltip (panel, 1px `line` border, mono first line, sans lines) and never covers the hovered day
+// (owner request, 2026-11-17): it sits at the top of the chart's positioned box, beside the hovered span (a bar's whole
+// slot, or a point), on the side `alignRight` prefers (left of it from the box's right half) or else the other; when it
+// fits beside on neither side, it drops below the box, over the axis labels rather than the data. It is aria-hidden
 // and takes no pointer, since the summary and "Show the numbers" carry every number. `useChartHover` follows a
 // mouse or pen over an SVG, never a touch (a finger would hide the chart), and maps the pointer's x through the
 // svg's own box to a 0 to 1 fraction, since the viewBox's aspect ratio is not preserved.
@@ -13,33 +15,25 @@ import type { ChartTip } from './barTips';
 const C = theme.color;
 const GAP = 8;
 
-export function ChartTooltip(props: { tip: ChartTip; x: number; alignRight: boolean }): React.JSX.Element {
-  const { tip, x, alignRight } = props;
+export function ChartTooltip(props: { tip: ChartTip; from: number; to: number; alignRight: boolean }): React.JSX.Element {
+  const { tip, from, to, alignRight } = props;
   const ref = useRef<HTMLDivElement>(null);
-  // The tooltip's own width and its chart box's, measured after each render, so a narrow box can't push it out
-  // (the flip alone leaves it hanging off the left edge when the hovered x is under one tooltip's width).
+  // The tooltip's own width and its chart box's, measured after each render, to pick the side it fits on.
   const [size, setSize] = useState({ tip: 0, box: 0 });
   useLayoutEffect(() => {
     const node = ref.current;
     const next = { tip: node?.offsetWidth ?? 0, box: node?.parentElement?.clientWidth ?? 0 };
     setSize((prev) => (prev.tip === next.tip && prev.box === next.box ? prev : next));
-  }, [tip, x, alignRight]);
-  let left = x + (alignRight ? -GAP : GAP);
-  let transform: string | undefined = alignRight ? 'translateX(-100%)' : undefined;
-  if (size.tip > 0 && size.box > 0) {
-    // Placed by its left edge, kept inside 0 to the box's width (or at 0 when it is wider than the box).
-    const edge = alignRight ? x - GAP - size.tip : x + GAP;
-    left = Math.max(0, Math.min(edge, size.box - size.tip));
-    transform = undefined;
-  }
+  }, [tip, from, to, alignRight]);
+  const place = tipPlace(from, to, size.tip, size.box, alignRight);
   return (
     <div
       ref={ref}
       aria-hidden="true"
       data-testid="chart-tooltip"
       style={{
-        position: 'absolute', left, top: 0, zIndex: 2, pointerEvents: 'none',
-        ...(transform === undefined ? {} : { transform }),
+        position: 'absolute', left: place.left, top: place.below ? `calc(100% + ${String(GAP)}px)` : 0, zIndex: 2, pointerEvents: 'none',
+        ...(place.flip ? { transform: 'translateX(-100%)' } : {}),
         width: 'max-content', maxWidth: 240, boxSizing: 'border-box', padding: '10px 12px', display: 'grid', gap: 4,
         background: C.panel, border: `1px solid ${C.line}`,
       }}
@@ -50,6 +44,27 @@ export function ChartTooltip(props: { tip: ChartTip; x: number; alignRight: bool
       ))}
     </div>
   );
+}
+
+/** Where the tooltip goes: its left edge (its right edge when `flip`), and whether it drops below the box. */
+export interface TipPlace {
+  left: number;
+  flip: boolean;
+  below: boolean;
+}
+
+/**
+ * Places a tooltip `tip` wide in a box `box` wide so it never covers the hovered span `from` to `to` (box pixels):
+ * GAP beside it on the preferred side when it fits there, else on the other, else centered under the box and kept
+ * inside it. Unmeasured (a width of 0, as in jsdom) it sits beside on the preferred side, flipped by a transform.
+ */
+export function tipPlace(from: number, to: number, tip: number, box: number, alignRight: boolean): TipPlace {
+  if (tip <= 0 || box <= 0) return alignRight ? { left: from - GAP, flip: true, below: false } : { left: to + GAP, flip: false, below: false };
+  const leftFits = from - GAP - tip >= 0;
+  const rightFits = to + GAP + tip <= box;
+  if (leftFits && (alignRight || !rightFits)) return { left: from - GAP - tip, flip: false, below: false };
+  if (rightFits) return { left: to + GAP, flip: false, below: false };
+  return { left: Math.max(0, Math.min((from + to) / 2 - tip / 2, box - tip)), flip: false, below: true };
 }
 
 export interface ChartHover {
