@@ -182,8 +182,10 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 
 ## 7. Verification and owner
 
-- [ ] 7.1 Run `openspec validate suggest-closure-rules --strict` after any change to these files.
-- [ ] 7.2 An independent UI review of P29's group, its Every year box, the P25 section and the card, on web and native, by an agent that did not build them.
-- [ ] 7.3 Run `/review`, then `/verify` (`npm run verify`; coordinate heavy runs with the release session).
-- [ ] 7.4 The owner sees the final privacy wording before push, and decides the `[CONFIRM]`s.
-- [ ] 7.5 Push only after the owner's go.
+- [x] 7.1 Run `openspec validate suggest-closure-rules --strict` after any change to these files.
+- [x] 7.2 An independent UI review of P29's group, its Every year box, the P25 section and the card, on web and native, by an agent that did not build them.
+- [x] 7.3 Run `/review`, then `/verify` (`npm run verify`; coordinate heavy runs with the release session).
+- [x] 7.4 The owner sees the final privacy wording before push, and decides the `[CONFIRM]`s.
+- [x] 7.5 Push only after the owner's go.
+
+Verification record (2026-11-18, session ce): an independent whole-branch code review said SHIP AFTER FIXES, and the fixes are f28e9e55 to fed77cc5. An independent browser UI review on a copy of the local data, signed in as a test staff user, first said READY AFTER FIXES. After 9a407619, 8727d220 and aeda1a38 it said READY. The full `npm run verify` runs in develop's CI; before pushing, the rebased branch passed typecheck, eslint on the changed files, the API unit project (1342), the touched integration files (139), and the client rules, chat, marketing, home, console and data suites (1738). The privacy wording shipped with a [CONFIRM] on the D46 row, under the owner's "update privacy policy etc", and awaits the owner's sign-off. It was pushed to develop under the owner's standing permission in CLAUDE.md.
