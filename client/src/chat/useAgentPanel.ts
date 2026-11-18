@@ -4,7 +4,9 @@ import { ApiError, type ApiClient } from '../api/client';
 import { useLoad, type LoadState } from '../portal/hooks';
 import type { Note } from '../portal/locations/api';
 import type { Rule } from '../portal/rules/api';
-import { answerQuestion, decideSuggestion, loadAgentPanel, setWeeklySuggestions, type AgentPanel, type QuestionAnswer } from './api';
+import {
+  answerQuestion, decideSuggestion, loadAgentPanel, setCalendarTitles, setWeeklySuggestions, type AgentPanel, type EventChoice, type QuestionAnswer,
+} from './api';
 
 // The side panel's data (spec P25): the questions TownwiseAI has for the person and what it has been
 // doing, both read at once from GET .../agent. An answered question stays on the panel with what the answer did
@@ -23,6 +25,12 @@ import { answerQuestion, decideSuggestion, loadAgentPanel, setWeeklySuggestions,
 // a time; a decided suggestion stays on the panel with what it did until the panel is read again, and one the server no
 // longer has open (a 404: dismissed or decided elsewhere, or its date has come) reads the panel again. The switch keeps
 // what the person last set here over what was read.
+//
+// The location's calendars (openspec change calendar-event-suggestions): a spotted event's accept carries the admin's
+// choice. A follow-up whose note was edited since it was made (409 note_changed) stays open: the panel reads again
+// and the card says why nothing changed. A spotted event that moved or went (409 event_changed) is gone: the panel
+// reads again and the section's notice says why its card went. The titles switch keeps what was last set here, as the
+// weekly switch does. A removal's accept deletes a note, so it marks the notes stale as a saved note does.
 
 export interface Answered {
   answer: QuestionAnswer;
@@ -87,13 +95,22 @@ export interface AgentPanelState {
   deciding: string | null;
   /** A failed decision's words, by suggestion id. */
   suggestionErrors: Readonly<Record<string, string>>;
-  decide: (suggestionId: string, decision: 'accept' | 'dismiss') => void;
+  /** `choice` on a spotted event's accept only. */
+  decide: (suggestionId: string, decision: 'accept' | 'dismiss', choice?: EventChoice) => void;
+  /** Why a card the person decided on went instead (its event changed), until the panel is read again or another decision. */
+  suggestionsNotice: string | null;
   /** The organization's weekly suggestions switch as last set here; null when it was not set here since the read. */
   weeklyOn: boolean | null;
   switching: boolean;
   switchError: string | null;
   /** Turns weekly suggestions on or off (`orgId` from openAsAdminOrgId). */
   setWeekly: (on: boolean, orgId: string | null) => void;
+  /** The calendar titles switch as last set here; null when it was not set here since the read. */
+  titlesOn: boolean | null;
+  switchingTitles: boolean;
+  titlesError: string | null;
+  /** Turns reading the calendars' event titles on or off (`orgId` from openAsAdminOrgId). */
+  setTitles: (on: boolean, orgId: string | null) => void;
 }
 
 export function answerErrorText(error: unknown): string {
@@ -110,6 +127,8 @@ export function decideErrorText(error: unknown): string {
     if (error.code === 'note_limit') return 'This location has 1,000 notes. Delete old ones to add more.';
     if (error.code === 'rule_limit') return 'This location has 30 business rules. Delete one to add this.';
     if (error.code === 'rule_exists') return 'That rule is already saved.';
+    if (error.code === 'note_changed') return 'Someone changed this note since, so nothing was changed. Check the note, or wait for your calendar’s next refresh.';
+    if (error.code === 'invalid_request') return 'Enter the guests to accept it alongside regular service.';
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t accept or dismiss suggestions.';
     if (error.status === 429) return 'You’ve made a lot of changes. Try again later.';
   }
@@ -159,33 +178,64 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
   const [weeklyOn, setWeeklyOn] = useState<boolean | null>(null);
   const [switching, setSwitching] = useState(false);
   const [switchError, setSwitchError] = useState<string | null>(null);
+  const [suggestionsNotice, setSuggestionsNotice] = useState<string | null>(null);
+  const [titlesOn, setTitlesOn] = useState<boolean | null>(null);
+  const [switchingTitles, setSwitchingTitles] = useState(false);
+  const [titlesError, setTitlesError] = useState<string | null>(null);
 
   const reload = useCallback(() => {
     setAnswered({});
     setErrors({});
     setDecided({});
     setSuggestionErrors({});
+    setSuggestionsNotice(null);
     setWeeklyOn(null);
+    setTitlesOn(null);
     read();
   }, [read]);
 
-  function decide(suggestionId: string, decision: 'accept' | 'dismiss'): void {
+  function decide(suggestionId: string, decision: 'accept' | 'dismiss', choice?: EventChoice): void {
     if (deciding !== null || decided[suggestionId] !== undefined) return;
+    const removal = state.status === 'ready' && state.data.suggestions.some((each) => each.id === suggestionId && each.type === 'remove');
     setDeciding(suggestionId);
+    setSuggestionsNotice(null);
     setSuggestionErrors((current) => without(current, suggestionId));
-    decideSuggestion(api, locationId, suggestionId, decision).then(
+    decideSuggestion(api, locationId, suggestionId, decision, choice ?? null).then(
       (result) => {
         setDecided((current) => ({ ...current, [suggestionId]: { status: result.suggestion.status, note: result.note, rule: result.rule } }));
-        if (result.note !== null) onNoteAdded?.();
+        if (result.note !== null || (removal && result.suggestion.status === 'accepted')) onNoteAdded?.();
       },
       (error: unknown) => {
+        const code = error instanceof ApiError && error.kind === 'http' ? error.code : null;
         if (error instanceof ApiError && error.kind === 'http' && error.status === 404) {
           reload();
           return;
         }
+        if (code === 'event_changed') {
+          reload();
+          setSuggestionsNotice('That event moved or is no longer on your calendar, so nothing was saved.');
+          return;
+        }
         setSuggestionErrors((current) => ({ ...current, [suggestionId]: decideErrorText(error) }));
+        // The note changed: read the panel again for the note as it is now, keeping the card's word on why.
+        if (code === 'note_changed') read();
       },
     ).finally(() => { setDeciding(null); });
+  }
+
+  function setTitles(on: boolean, orgId: string | null): void {
+    if (switchingTitles) return;
+    setSwitchingTitles(true);
+    setTitlesError(null);
+    setCalendarTitles(api, on, orgId).then(
+      (now) => { setTitlesOn(now); },
+      (error: unknown) => {
+        const code = error instanceof ApiError && error.kind === 'http' ? error.code : null;
+        setTitlesError(code === 'view_as_read_only' ? 'View-as is read-only, so you can’t change this.'
+          : code === 'open_as_admin_refused' ? 'Only an admin of this organization can turn this on. You can turn it off.'
+            : 'Couldn’t change reading event titles. Try again.');
+      },
+    ).finally(() => { setSwitchingTitles(false); });
   }
 
   function setWeekly(on: boolean, orgId: string | null): void {
@@ -265,7 +315,8 @@ export function useAgentPanel(api: ApiClient, locationId: string, onNoteAdded?: 
 
   return {
     state, reload, answered, answering, errors, answer, actedIn, others, telling, tell,
-    decided, deciding, suggestionErrors, decide, weeklyOn, switching, switchError, setWeekly,
+    decided, deciding, suggestionErrors, decide, suggestionsNotice, weeklyOn, switching, switchError, setWeekly,
+    titlesOn, switchingTitles, titlesError, setTitles,
     openOther: (questionId) => { patchOther(questionId, { open: true }); },
     foldOther: (questionId) => { patchOther(questionId, { open: false }); },
     closeOther: (questionId) => { setOthers((current) => without(current, questionId)); },

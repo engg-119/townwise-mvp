@@ -99,6 +99,8 @@ export const AUDIT_ACTIONS: readonly { value: string; label: string }[] = [
   { value: 'agent.suggestion_accepted', label: 'TownwiseAI suggestion accepted' },
   { value: 'agent.suggestion_dismissed', label: 'TownwiseAI suggestion dismissed' },
   { value: 'org.weekly_suggestions_changed', label: 'Weekly suggestions switched' },
+  // Sending the calendars' event titles to TownwiseAI's weekly call (calendar-event-suggestions).
+  { value: 'org.calendar_titles_ai_changed', label: 'Calendar event titles to TownwiseAI switched' },
   // Orders: the ordering setup, item sales, counts, a line's edit, rules, and TownwiseAI's order cards.
   { value: 'order.setup_saved', label: 'Ordering setup saved' },
   { value: 'order.item_sales_uploaded', label: 'Item sales uploaded' },
@@ -148,6 +150,12 @@ const LIKELY_CLOSED_ANSWER: Readonly<Record<string, string>> = {
 function questionAnswer(questionId: string, answer: string): string {
   return (questionId.startsWith('likely_closed_') ? LIKELY_CLOSED_ANSWER : QUESTION_ANSWER)[answer] ?? '';
 }
+
+/** A decided suggestion's type: a note or rule from the weekly pass, and the three from the location's calendars. */
+const SUGGESTION_TYPE: Readonly<Record<string, string>> = {
+  note: 'Note', rule: 'Business rule', event: 'Private event spotted on a calendar', move: 'Moving a note with its calendar event',
+  remove: 'Deleting a note whose calendar event went',
+};
 
 const END_REASON: Readonly<Record<string, string>> = {
   ended: 'Ended by staff', expired: 'Ran out', replaced: 'Replaced by a new view-as',
@@ -205,8 +213,9 @@ export function auditDetails(event: Pick<AuditEvent, 'action' | 'details'>): str
       return questionAnswer(text(d.questionId), text(d.answer));
     case 'agent.suggestion_accepted':
     case 'agent.suggestion_dismissed':
-      return d.type === 'rule' ? 'Business rule' : d.type === 'note' ? 'Note' : '';
+      return SUGGESTION_TYPE[text(d.type)] ?? '';
     case 'org.weekly_suggestions_changed':
+    case 'org.calendar_titles_ai_changed':
       return d.on === true ? 'On' : d.on === false ? 'Off' : '';
     // U13B: the model version, the dates and the day count, never a figure.
     case 'forecast.imported':

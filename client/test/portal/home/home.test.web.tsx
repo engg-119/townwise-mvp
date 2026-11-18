@@ -125,6 +125,28 @@ test('the count of TownwiseAI’s questions includes its open weekly suggestions
   expect((await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).getAttribute('href')).toBe('/locations/l1/agent?panel=questions');
 });
 
+test('the count includes a spotted calendar event and the follow-ups of notes whose event moved or went', async () => {
+  const note = {
+    kind: 'private_event', startDate: '2026-11-28', endDate: '2026-11-28', weekdays: null, effect: 'closed', expectedGuests: 40, detail: null,
+    startTime: null, endTime: null,
+  };
+  const dates = { startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null };
+  const shared = { why: null, calendar: [], createdAt: '2026-11-02T08:00:00.000Z', note };
+  const suggestions = [
+    {
+      ...shared, id: 's1', type: 'event', words: 'From your calendar: Private party, Sat, Nov 28', note: { ...note, effect: 'unknown' },
+      event: { calendarId: 'c1', title: 'Private party', titleHidden: false, ...dates },
+    },
+    { ...shared, id: 's2', type: 'move', words: 'The private event on Sat, Nov 21 moved to Sat, Nov 28 on your calendar.', noteId: 'n1', from: dates },
+    { ...shared, id: 's3', type: 'remove', words: 'The private event on Sat, Nov 28 is no longer on your calendar.', noteId: 'n2' },
+  ];
+  const agent = {
+    questions: QUESTIONS.slice(0, 1), activity: [], suggestions, weeklySuggestions: { on: true, available: true, canChange: false, calendarTitles: true },
+  };
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, agent));
+  expect(await screen.findByRole('link', { name: '4 questions from TownwiseAI' })).toBeTruthy();
+});
+
 test('the last week chart prints its key and scale; the history heatmap is one picture with no focusable cell', async () => {
   await renderAt(portal(meOf(ACCESS.member)));
   expect(screen.getByText('Scale 0 to 200 guests. Scale fitted to this location.')).toBeTruthy();

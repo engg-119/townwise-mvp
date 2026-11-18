@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { answerQuestion, decideSuggestion, loadAgentPanel, setWeeklySuggestions, type QuestionAnswer } from '../../src/chat/api';
+import { answerQuestion, decideSuggestion, loadAgentPanel, setCalendarTitles, setWeeklySuggestions, type QuestionAnswer } from '../../src/chat/api';
 import { fakeChatApi } from '../helpers/chat';
 
 // The side panel's answers exactly as the API sends them: agent-panel.json is a byte-for-byte copy of
@@ -49,9 +49,15 @@ test('Something else… answers `other` with that one key and reads it back', as
   expect(api.writes).toEqual([{ method: 'POST', path, body: { answer: 'other' } }]);
 });
 
-test('the fixture holds a weekly suggestion of each type and the organization’s switch', () => {
-  expect(fixture.panel.suggestions.map((s) => (s as { type: string }).type)).toEqual(['rule', 'note']);
-  expect(fixture.panel.weeklySuggestions).toEqual({ on: true, available: false, canChange: false });
+test('the fixture holds a weekly suggestion of each type and the organization’s switches', () => {
+  expect(fixture.panel.suggestions.map((s) => (s as { type: string }).type)).toEqual(['rule', 'note', 'event', 'move', 'remove']);
+  expect(fixture.panel.weeklySuggestions).toEqual({ on: true, available: false, canChange: false, calendarTitles: true });
+});
+
+test('an API from before calendar titles reads the switch without them', async () => {
+  const api = fakeChatApi();
+  api.panel = { ...fixture.panel, weeklySuggestions: { on: true, available: true, canChange: true } };
+  expect((await loadAgentPanel(api, 'l1')).weeklySuggestions).toEqual({ on: true, available: true, canChange: true });
 });
 
 test('an API from before weekly suggestions reads as none, and a suggestion this client does not know is left out', async () => {
@@ -69,6 +75,39 @@ test('accepting or dismissing a suggestion sends an empty body to its route', as
   expect(await decideSuggestion(api, 'l1', 's1', 'accept')).toEqual({ suggestion: { id: 's1', status: 'accepted' }, note: null, rule: null });
   expect(await decideSuggestion(api, 'l1', 's2', 'dismiss')).toEqual({ suggestion: { id: 's2', status: 'dismissed' }, note: null, rule: null });
   expect(api.writes).toEqual([{ method: 'POST', path: accept, body: {} }, { method: 'POST', path: dismiss, body: {} }]);
+});
+
+test('accepting a spotted event sends the admin’s choice and count; its dismiss and every other accept send {}', async () => {
+  const api = fakeChatApi();
+  const accept = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c4/accept';
+  const dismiss = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c4/dismiss';
+  const move = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c5/accept';
+  const answer = (id: string, status: string) => () => ({ suggestion: { id, status }, note: null, rule: null });
+  api.respond[accept] = answer('0000000000000000000000c4', 'accepted');
+  api.respond[dismiss] = answer('0000000000000000000000c4', 'dismissed');
+  api.respond[move] = answer('0000000000000000000000c5', 'accepted');
+  await decideSuggestion(api, 'l1', '0000000000000000000000c4', 'accept', { effect: 'closed', expectedGuests: null });
+  await decideSuggestion(api, 'l1', '0000000000000000000000c4', 'accept', { effect: 'more_guests', expectedGuests: 40 });
+  await decideSuggestion(api, 'l1', '0000000000000000000000c4', 'dismiss');
+  await decideSuggestion(api, 'l1', '0000000000000000000000c5', 'accept');
+  expect(api.writes).toEqual([
+    { method: 'POST', path: accept, body: { effect: 'closed', expectedGuests: null } },
+    { method: 'POST', path: accept, body: { effect: 'more_guests', expectedGuests: 40 } },
+    { method: 'POST', path: dismiss, body: {} },
+    { method: 'POST', path: move, body: {} },
+  ]);
+});
+
+test('the titles switch sends { on }, and the tab’s orgId in open as admin', async () => {
+  const api = fakeChatApi();
+  const path = '/api/org/weekly-suggestions/calendar-titles';
+  api.respond[path] = (body) => ({ calendarTitles: { on: (body as { on: boolean }).on } });
+  expect(await setCalendarTitles(api, false, null)).toBe(false);
+  expect(await setCalendarTitles(api, false, 'o1')).toBe(false);
+  expect(api.writes).toEqual([
+    { method: 'PATCH', path, body: { on: false } },
+    { method: 'PATCH', path, body: { on: false, orgId: 'o1' } },
+  ]);
 });
 
 test('the switch sends { on }, and the tab’s orgId in open as admin', async () => {

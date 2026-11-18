@@ -59,10 +59,15 @@ export function nativeLine(google: boolean): string {
     : 'To add events from your own calendar file, open Townwise on the web.';
 }
 
-/** The explainer's paragraphs: what Townwise reads, who sees it, and how its access ends. */
+/**
+ * The explainer's paragraphs: what Townwise reads, who sees it, and how its access ends. The second also says the
+ * weekly suggestions read the titles (calendar-event-suggestions design decision 11: a Google calendar's titles go
+ * into the weekly call only when its connection agreed to these words). [CONFIRM: the Google connect explainer's words
+ * on the weekly reading of titles]
+ */
 const EXPLAINER_PARAGRAPHS = [
   'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included.',
-  'Everyone on your team can see these events, and TownwiseAI reads their titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one.',
+  'Everyone on your team can see these events. TownwiseAI reads their titles when you ask about your bookings, and each Monday it reads the titles, dates and hours of the next 3 months of events, with email addresses and phone numbers removed, to suggest notes for private events. Either way, the titles reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the Monday reading on the TownwiseAI page. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one.',
   'Removing your last Google calendar, or leaving your organization, ends Townwise’s access to your Google account. Google may warn that Townwise isn’t verified yet while Google reviews it.',
 ] as const;
 

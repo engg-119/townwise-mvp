@@ -25,6 +25,23 @@
         "calendar": [{ "id": "us:independence-day:2026", "title": "Independence Day", "start": "2026-07-04", "end": "2026-07-04" }],
         "createdAt": "2026-06-01T06:00:00.000Z", "type": "note",
         "note": { "kind": "closure", "startDate": "2026-07-04", "weekdays": null, "effect": "closed", "expectedGuests": null, "startTime": null, "endTime": null, "endDate": "2026-07-04", "detail": null }
+      },
+      {
+        "id": "0000000000000000000000c4", "why": null, "calendar": [], "createdAt": "2026-06-01T06:00:00.000Z", "type": "event",
+        "words": "From your calendar: Private party, 40 guests, Sat, Jul 11, 6 pm to 10 pm",
+        "note": { "kind": "private_event", "startDate": "2026-07-11", "weekdays": null, "effect": "unknown", "expectedGuests": 40, "startTime": "18:00", "endTime": "22:00", "endDate": "2026-07-11", "detail": null },
+        "event": { "calendarId": "0000000000000000000000d1", "title": "Private party, 40 guests", "titleHidden": false, "startDate": "2026-07-11", "endDate": "2026-07-11", "startTime": "18:00", "endTime": "22:00" }
+      },
+      {
+        "id": "0000000000000000000000c5", "why": null, "calendar": [], "createdAt": "2026-06-01T06:00:00.000Z", "type": "move",
+        "words": "The private event on Sat, Jul 18 moved to Sat, Jul 25 on your calendar.", "noteId": "0000000000000000000000a2",
+        "note": { "kind": "private_event", "startDate": "2026-07-25", "weekdays": null, "effect": "closed", "expectedGuests": 60, "startTime": "18:00", "endTime": "22:00", "endDate": "2026-07-25", "detail": null },
+        "from": { "startDate": "2026-07-18", "endDate": "2026-07-18", "startTime": "18:00", "endTime": "22:00" }
+      },
+      {
+        "id": "0000000000000000000000c6", "why": null, "calendar": [], "createdAt": "2026-06-01T06:00:00.000Z", "type": "remove",
+        "words": "The private event on Sat, Aug 1 is no longer on your calendar.", "noteId": "0000000000000000000000a3",
+        "note": { "kind": "private_event", "startDate": "2026-08-01", "weekdays": null, "effect": "more_guests", "expectedGuests": 30, "startTime": null, "endTime": null, "endDate": "2026-08-01", "detail": null }
       }
     ],
     "weeklySuggestions": { "on": true, "available": false, "canChange": false, "calendarTitles": true }

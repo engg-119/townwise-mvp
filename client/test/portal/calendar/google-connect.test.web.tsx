@@ -198,6 +198,9 @@ test('no script from accounts.google.com is in the document until “Add a Googl
   expect(go.getAttribute('aria-disabled')).toBeNull();
   expect(document.activeElement).toBe(go);
   expect(explainer(go)).toBe(GOOGLE_COPY.explainerShown);
+  // Agreeing covers the weekly suggestions' reading of titles too (calendar-event-suggestions), and who can turn it off.
+  expect(explainer(go)).toContain('each Monday it reads the titles, dates and hours of the next 3 months of events, with email addresses and phone numbers removed');
+  expect(explainer(go)).toContain('An admin of your organization can turn off the Monday reading on the TownwiseAI page.');
 });
 
 test('the press sets up the code client with exactly the three scopes, a popup, include_granted_scopes false, the person’s email and a fresh state, and calls requestCode inside the press', async () => {

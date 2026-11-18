@@ -817,6 +817,60 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
       }),
     ]);
 
+    // The owner-calendar kinds (openspec change calendar-event-suggestions): a spotted event on a link calendar, and a
+    // move and a removal of two notes linked to it. Their words are written at read time from the live event row and
+    // the notes, so the calendar, its event and the notes are stored too.
+    const calendarId = new Types.ObjectId('0000000000000000000000d1');
+    const at = new Date('2026-06-01T06:00:00.000Z');
+    await server.connection.collection('tw_calendar_sources').insertOne({
+      _id: calendarId, orgId: org, locationId: location, slot: 0, kind: 'link', label: 'Front desk bookings', sealedAddress: 'sealed-for-test',
+      host: 'calendar.example.test', googleConnectionId: null, generation: 1, reservedGeneration: 1, eventCount: 1, skippedRepeating: 0,
+      status: 'ok', lastSuccessAt: at, lastAttemptAt: at, nextRefreshAt: null, leaseUntil: null, consecutiveFailures: 0,
+      lastManualRefreshAt: null, createdBy: member.userId, createdAt: at,
+    });
+    const ON_11 = { startDate: '2026-07-11', endDate: '2026-07-11', startTime: '18:00', endTime: '22:00' };
+    const ON_18 = { startDate: '2026-07-18', endDate: '2026-07-18', startTime: '18:00', endTime: '22:00' };
+    const ON_25 = { startDate: '2026-07-25', endDate: '2026-07-25', startTime: '18:00', endTime: '22:00' };
+    const AUG_1 = { startDate: '2026-08-01', endDate: '2026-08-01', startTime: null, endTime: null };
+    await server.connection.collection('tw_calendar_events').insertOne({
+      orgId: org, locationId: location, sourceId: calendarId, generation: 1, uid: 'party-0001@bookings.example.test',
+      title: 'Private party, 40 guests', ...ON_11, keyed: true,
+    });
+    const linkedNote = (id: string, over: Record<string, unknown>) => ({
+      _id: new Types.ObjectId(id), orgId: org, locationId: location, kind: 'private_event', weekdays: null, detail: null,
+      createdBy: member.userId, createdAt: at, updatedAt: at, ...over,
+    });
+    await server.connection.collection('tw_notes').insertMany([
+      linkedNote('0000000000000000000000a2', {
+        ...ON_18, effect: 'closed', expectedGuests: 60,
+        fromEvent: { calendarId, uid: 'party-0002@bookings.example.test', ...ON_18, linkedAt: at },
+      }),
+      linkedNote('0000000000000000000000a3', {
+        ...AUG_1, effect: 'more_guests', expectedGuests: 30,
+        fromEvent: { calendarId, uid: 'party-0003@bookings.example.test', ...AUG_1, linkedAt: at },
+      }),
+    ]);
+    const noteContent = (dates: object, effect: string, expectedGuests: number) => ({
+      kind: 'private_event', ...dates, weekdays: null, effect, expectedGuests, detail: null,
+    });
+    const follow = (noteId: string, change: string, from: object, to: object | null) => ({
+      noteId: new Types.ObjectId(noteId), calendarId, change, from, to, noteUpdatedAt: at,
+    });
+    await server.connection.collection('tw_agent_suggestions').insertMany([
+      suggestion('0000000000000000000000c4', {
+        type: 'event', text: null, why: null, content: noteContent(ON_11, 'unknown', 40),
+        event: { calendarId, uid: 'party-0001@bookings.example.test', ...ON_11 },
+      }),
+      suggestion('0000000000000000000000c5', {
+        type: 'move', text: null, why: null, content: noteContent(ON_25, 'closed', 60),
+        follow: follow('0000000000000000000000a2', 'moved', ON_18, ON_25), openFollowFor: new Types.ObjectId('0000000000000000000000a2'),
+      }),
+      suggestion('0000000000000000000000c6', {
+        type: 'remove', text: null, why: null, content: noteContent(AUG_1, 'more_guests', 30),
+        follow: follow('0000000000000000000000a3', 'gone', AUG_1, null), openFollowFor: new Types.ObjectId('0000000000000000000000a3'),
+      }),
+    ]);
+
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
     expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });
   });

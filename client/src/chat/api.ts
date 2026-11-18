@@ -498,10 +498,19 @@ const suggestedNoteSchema = z.object({
   startTime: z.string().nullable(), endTime: z.string().nullable(),
 });
 
+/** A note's dates and hours: a follow-up's `from`. */
+const noteDatesSchema = z.object({ startDate: dateSchema, endDate: dateSchema, startTime: z.string().nullable(), endTime: z.string().nullable() });
+
 /**
  * A weekly suggestion (openspec change weekly-forecast-suggestions): a note, or a business rule with its words and
  * schedule, with TownwiseAI's one-sentence why and the calendar entries it names. It changes nothing until an org admin
- * accepts it.
+ * accepts it. Three kinds come from the location's own calendars (openspec change calendar-event-suggestions), with no
+ * why and no town calendar entries: `words` is the card's sentence, written by the server (never by the model, and the
+ * client composes none of it). `event` is a private event the weekly pass spotted on a calendar, its `note` the note
+ * accepting writes once the admin chooses a buyout or alongside regular service (effect `unknown` until then, and the
+ * guest count to prefill), and `event` the calendar event as the caller may read it (a Google calendar's title is
+ * "Google calendar event" to staff, `titleHidden`). `move` and `remove` are follow-ups of a note made from an event that
+ * moved or went: `note` is the note as accepting leaves it (or deletes it), `from` the note's dates now.
  */
 const suggestionSchema = z.discriminatedUnion('type', [
   z.object({
@@ -512,14 +521,33 @@ const suggestionSchema = z.discriminatedUnion('type', [
     id: z.string(), why: z.string(), calendar: z.array(suggestionCalendarSchema), createdAt: z.string(),
     type: z.literal('rule'), text: z.string(), schedule: ruleScheduleSchema, scheduleSummary: z.string(),
   }),
+  z.object({
+    id: z.string(), why: z.null(), calendar: z.array(suggestionCalendarSchema), createdAt: z.string(),
+    type: z.literal('event'), words: z.string(), note: suggestedNoteSchema,
+    event: noteDatesSchema.extend({ calendarId: z.string(), title: z.string(), titleHidden: z.boolean() }),
+  }),
+  z.object({
+    id: z.string(), why: z.null(), calendar: z.array(suggestionCalendarSchema), createdAt: z.string(),
+    type: z.literal('move'), words: z.string(), noteId: z.string(), note: suggestedNoteSchema, from: noteDatesSchema,
+  }),
+  z.object({
+    id: z.string(), why: z.null(), calendar: z.array(suggestionCalendarSchema), createdAt: z.string(),
+    type: z.literal('remove'), words: z.string(), noteId: z.string(), note: suggestedNoteSchema,
+  }),
 ]);
 export type Suggestion = z.infer<typeof suggestionSchema>;
 
+/** The follow-ups of a note whose calendar event moved or went: P25's "Your calendar changed". */
+export function isCalendarChange(suggestion: Suggestion): suggestion is Extract<Suggestion, { type: 'move' | 'remove' }> {
+  return suggestion.type === 'move' || suggestion.type === 'remove';
+}
+
 /**
  * The organization's switch: `on` unless an org admin turned it off, `available` while the server can run passes (its
- * switch and TownwiseAI on), `canChange` for an org admin outside view-as.
+ * switch and TownwiseAI on), `canChange` for an org admin outside view-as. `calendarTitles`: whether the weekly call
+ * also reads the location calendars' event titles (calendar-event-suggestions); absent from an API before it.
  */
-const weeklySuggestionsSchema = z.object({ on: z.boolean(), available: z.boolean(), canChange: z.boolean() });
+const weeklySuggestionsSchema = z.object({ on: z.boolean(), available: z.boolean(), canChange: z.boolean(), calendarTitles: z.boolean().optional() });
 export type WeeklySuggestions = z.infer<typeof weeklySuggestionsSchema>;
 
 // Items are read one by one: a question, an activity kind or a suggestion this client doesn't know yet is left out,
@@ -585,18 +613,40 @@ export interface DecideResult {
 }
 
 /**
- * Accept writes the suggestion's note or rule, as written by the org admin; Dismiss writes nothing. The body is empty.
- * 404 when it is gone (dismissed, accepted elsewhere as dismissed, or its first date has come).
+ * What an org admin chose on a spotted event's card: the whole restaurant (a buyout, `closed`) or alongside regular
+ * service (`more_guests`, which needs a guest count), and the guest count (1 to 20,000), null for none.
+ */
+export interface EventChoice {
+  effect: 'closed' | 'more_guests';
+  expectedGuests: number | null;
+}
+
+/**
+ * Accept writes the suggestion's note or rule, as written by the org admin, moves or deletes a follow-up's note, or
+ * writes a spotted event's note as `choice` says; Dismiss writes nothing. The body is empty but for a spotted event's
+ * accept, which is `choice`. 404 when it is gone (dismissed, accepted elsewhere as dismissed, its first date has come,
+ * or what it rests on is gone); 409 note_changed when a follow-up's note was edited since (it stays open), 409
+ * event_changed when a spotted event moved or went (it is gone).
  */
 export function decideSuggestion(
-  api: ApiClient, locationId: string, suggestionId: string, decision: 'accept' | 'dismiss',
+  api: ApiClient, locationId: string, suggestionId: string, decision: 'accept' | 'dismiss', choice: EventChoice | null = null,
 ): Promise<DecideResult> {
   return api.json(`${locationPath(locationId)}/agent/suggestions/${encodeURIComponent(suggestionId)}/${decision}`, decideResultSchema, {
-    method: 'POST', body: {},
+    method: 'POST', body: choice === null ? {} : { effect: choice.effect, expectedGuests: choice.expectedGuests },
   });
 }
 
 const switchedSchema = z.object({ weeklySuggestions: z.object({ on: z.boolean() }) });
+const titlesSwitchedSchema = z.object({ calendarTitles: z.object({ on: z.boolean() }) });
+
+/**
+ * PATCH /api/org/weekly-suggestions/calendar-titles { on, orgId? } (orgId from openAsAdminOrgId): whether the weekly
+ * call reads the location calendars' event titles. Staff open as admin may only turn it off (403 open_as_admin_refused).
+ */
+export async function setCalendarTitles(api: ApiClient, on: boolean, orgId: string | null): Promise<boolean> {
+  const body = await api.json('/api/org/weekly-suggestions/calendar-titles', titlesSwitchedSchema, { method: 'PATCH', body: withOrgId({ on }, orgId) });
+  return body.calendarTitles.on;
+}
 
 /** PATCH /api/org/weekly-suggestions { on, orgId? } (orgId from openAsAdminOrgId): the organization's switch. */
 export async function setWeeklySuggestions(api: ApiClient, on: boolean, orgId: string | null): Promise<boolean> {

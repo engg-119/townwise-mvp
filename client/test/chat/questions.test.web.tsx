@@ -106,8 +106,11 @@ function saved(api: FakeChatApi): void {
   turn(api).end();
 }
 
-/** The fixture's open weekly suggestions, which the header's button counts with the open questions. */
-const OPEN_SUGGESTIONS = 2;
+/**
+ * The fixture's open weekly suggestions (a rule, a note, a spotted event, a move and a removal), which the header's
+ * button counts with the open questions.
+ */
+const OPEN_SUGGESTIONS = 5;
 
 async function openPanel(questions: number): Promise<HTMLElement> {
   fireEvent.click(await screen.findByRole('button', { name: `Questions and activity (${String(questions + OPEN_SUGGESTIONS)})` }));
@@ -245,7 +248,7 @@ describe('Something else…', () => {
     expect(document.activeElement).toBe(within(sheet).getByLabelText(FIELD));
     fireEvent.click(within(sheet).getByRole('button', { name: 'Cancel' }));
     fireEvent.click(within(sheet).getByRole('button', { name: 'Close' }));
-    const button = screen.getByRole('button', { name: 'Questions and activity (5)' });
+    const button = screen.getByRole('button', { name: 'Questions and activity (8)' });
     await waitFor(() => { expect(document.activeElement).toBe(button); });
     // Opened from the landing next, the landing's field takes focus, not the sheet's.
     fireEvent.click(otherIn(landing));
@@ -294,7 +297,7 @@ describe('Something else…', () => {
       });
       expect(await findInCards(SENT_LINE)).toBeTruthy();
       expect(within(cards()).queryByLabelText(FIELD)).toBeNull();
-      expect(screen.getByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
+      expect(screen.getByRole('button', { name: 'Questions and activity (7)' })).toBeTruthy();
       expect(screen.getByTestId('agent-side')).toBe(column);
       // The words went once, in the turn; no write carries them, and nothing went to browser storage.
       const { writes, turns } = sent(api);
@@ -339,7 +342,7 @@ describe('Something else…', () => {
     expect(within(cards()).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
     // The words stay in the card, never put in the composer.
     expect(screen.getByLabelText<HTMLTextAreaElement>(COMPOSER_LABEL).value).toBe('');
-    expect(screen.getByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Questions and activity (8)' })).toBeTruthy();
   });
 
   test('a saved turn whose answer doesn’t save says so, and Try again answers without sending the words again', async () => {
@@ -486,7 +489,7 @@ describe('below 1024px', () => {
     setWidth(800);
     const api = chatApi();
     renderAt('/locations/l1/agent', api);
-    fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (5)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (8)' }));
     const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
     tellGap(sheet);
     await waitFor(() => { expect(api.turns).toHaveLength(1); });
@@ -505,7 +508,7 @@ describe('below 1024px', () => {
       turn(api).end();
     });
     await waitFor(() => { expect(api.writes.map((write) => write.body)).toEqual([{ answer: 'other' }]); });
-    fireEvent.click(screen.getByRole('button', { name: 'Questions and activity (4)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Questions and activity (7)' }));
     expect(await within(await screen.findByRole('dialog', { name: 'Questions and activity' })).findByText(SENT_LINE)).toBeTruthy();
   });
 
@@ -513,7 +516,7 @@ describe('below 1024px', () => {
     setWidth(800);
     const api = chatApi();
     renderAt('/locations/l1/agent', api);
-    fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (5)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (8)' }));
     let sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
     fireEvent.click(within(answers(sheet, GAP_HEADING)).getByRole('button', { name: 'Something else…' }));
     fireEvent.change(within(sheet).getByLabelText(FIELD), { target: { value: WORDS } });
@@ -523,7 +526,7 @@ describe('below 1024px', () => {
       turn(api).emit('error', { code: 'provider_unavailable' });
       turn(api).end();
     });
-    fireEvent.click(screen.getByRole('button', { name: 'Questions and activity (5)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Questions and activity (8)' }));
     sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
     expect(within(sheet).getByLabelText<HTMLTextAreaElement>(FIELD).value).toBe(WORDS);
     expect(within(sheet).getByText('Can’t reach TownwiseAI. Try again.')).toBeTruthy();
@@ -535,7 +538,7 @@ describe('below 1024px', () => {
     const api = chatApi();
     api.refuse = refusal(429, 'rate_limited');
     renderAt('/locations/l1/agent', api);
-    fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (5)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (8)' }));
     const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
     tellGap(sheet);
     expect(await within(sheet).findByText('You’ve sent a lot of messages. Try again later.')).toBeTruthy();
@@ -563,8 +566,9 @@ describe('inline on the landing', () => {
     // From 1024px the column beside the landing leaves the questions out: they're drawn once, here.
     const column = await openPanel(2);
     expect(within(column).queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
-    // The weekly suggestions, which the landing doesn't list, come first in the column.
-    expect(within(column).getAllByRole('heading')[0]?.textContent).toBe('Suggested for the next 3 months');
+    // The weekly suggestions, which the landing doesn't list, come first in the column, after what changed on the
+    // location's calendars.
+    expect(within(column).getAllByRole('heading')[0]?.textContent).toBe('Your calendar changed');
     // Below 1024px the panel is a sheet over the landing and keeps them, with the same answers and counts.
     setWidth(800);
     const side = await screen.findByRole('dialog', { name: 'Questions and activity' });
@@ -594,7 +598,7 @@ describe('inline on the landing', () => {
     await waitFor(() => { expect(document.activeElement).toBe(screen.getByLabelText(COMPOSER_LABEL)); });
     await stream(() => { saved(api); });
     await waitFor(() => { expect(api.writes.map((write) => write.body)).toEqual([{ answer: 'other' }]); });
-    expect(screen.getByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Questions and activity (7)' })).toBeTruthy();
   });
 
   test('none when there are none, or when the questions can’t be read; under view-as they are read-only', async () => {
@@ -627,14 +631,14 @@ describe('?panel=questions (Home’s link)', () => {
   test('opens the panel as a column from 1024px and drops the parameter; beside the landing the questions are under its chips', async () => {
     renderAt('/locations/l1/agent?panel=questions', chatApi());
     const side = await screen.findByTestId('agent-side');
-    expect(screen.getByRole('button', { name: 'Questions and activity (5)' }).getAttribute('aria-expanded')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Questions and activity (8)' }).getAttribute('aria-expanded')).toBe('true');
     const landing = await screen.findByTestId('chat-landing-column');
     await within(landing).findByRole('heading', { name: 'Questions for you (3)' });
-    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('Suggested for the next 3 months');
+    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('Your calendar changed');
     await waitFor(() => { expect(window.location.search).toBe(''); });
     expect(window.location.pathname).toBe('/locations/l1/agent');
     // Closed by the person, it stays closed.
-    fireEvent.click(screen.getByRole('button', { name: 'Questions and activity (5)' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Questions and activity (8)' }));
     expect(screen.queryByTestId('agent-side')).toBeNull();
   });
 

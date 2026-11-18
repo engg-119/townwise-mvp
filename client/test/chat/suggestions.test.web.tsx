@@ -7,7 +7,7 @@ import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
 import { resetDrafts } from '../../src/chat/drafts';
-import { decidedLine, suggestionFacts, suggestionHeading, weeklyWords } from '../../src/chat/ui/SuggestionCard';
+import { decidedLine, suggestionFacts, suggestionHeading, TITLES_WORDS, weeklyWords } from '../../src/chat/ui/SuggestionCard';
 import type { Suggestion } from '../../src/chat/api';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
@@ -15,13 +15,17 @@ import type { MeResponse } from '../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../helpers/app';
 import { fakeChatApi, refusal, type FakeChatApi } from '../helpers/chat';
 import { fakeAuth } from '../helpers/fakes';
-import { ACCESS, fakePortalApi, meOf, orgOf } from '../helpers/portal';
+import { ACCESS, fakePortalApi, meOf, openAsAdminMe, orgOf } from '../helpers/portal';
 import { serveAbout } from './about-fakes';
 
 // TownwiseAI's weekly suggestions in P25's panel on web (openspec change weekly-forecast-suggestions): each card asks
 // its question with TownwiseAI's why and the calendar entries it names; org admins get Accept and Dismiss and the
 // switch's button, members see the cards and whether the switch is on, with neither; what a decision did stays on the
 // card; a suggestion the server no longer has open reads the panel again. The fixture is the API's (agent-panel.json).
+// The location's calendars (openspec change calendar-event-suggestions) add a spotted private event, whose card asks a
+// buyout or alongside regular service with neither chosen and a guest count, and the follow-ups of a note whose event
+// moved or went, in their own section, "Your calendar changed", before the suggestions; and the switch for reading the
+// calendars' event titles beside the weekly one.
 
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as {
   panel: { questions: unknown[]; activity: unknown[]; suggestions: unknown[]; weeklySuggestions: Record<string, boolean> };
@@ -29,6 +33,13 @@ const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'ut
 
 const NOTE_HEADING = 'Closed on Sat, Jul 4, 2026?';
 const RULE_HEADING = 'Add the rule “Private party after Commencement”?';
+const EVENT_HEADING = 'A private event on Sat, Jul 11, 2026?';
+const MOVE_HEADING = 'Move the note to Sat, Jul 25, 2026?';
+const REMOVE_HEADING = 'Delete the note on Sat, Aug 1, 2026?';
+const BUYOUT = 'The whole restaurant (a buyout)';
+const ALONGSIDE = 'Alongside regular service';
+const EVENT_ACCEPT = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c4/accept';
+const TITLES_PATH = '/api/org/weekly-suggestions/calendar-titles';
 const SWITCH_WORDS = weeklyWords('Hanover');
 
 // The composer measures itself; jsdom has no ResizeObserver, and nothing here lays anything out.
@@ -86,10 +97,22 @@ function card(scope: HTMLElement, heading: string): HTMLElement {
   return found;
 }
 
+/** A section of the panel, by its heading: the heading's head, then the section around it. */
+function section(scope: HTMLElement, heading: string): HTMLElement {
+  const found = within(scope).getByRole('heading', { level: 2, name: heading }).parentElement?.parentElement;
+  if (found === null || found === undefined) throw new Error(`no section ${heading}`);
+  return found;
+}
+
+const SUGGESTED = 'Suggested for the next 3 months';
+const CHANGED = 'Your calendar changed';
+
 test('members see each suggestion with its why and calendar entries, and whether the switch is on, with no buttons', async () => {
   renderAt(chatApi(false), meOf(ACCESS.member));
   const panel = await side();
-  expect(within(panel).getByText('2 to decide')).toBeTruthy();
+  // The rule, the note and the spotted event; the move and the removal count in their own section.
+  expect(within(section(panel, SUGGESTED)).getByText('3 to decide')).toBeTruthy();
+  expect(within(section(panel, CHANGED)).getByText('2 to decide')).toBeTruthy();
   const note = card(panel, NOTE_HEADING);
   expect(within(note).getByText('Independence Day is Sat, Jul 4, and you were closed on it last year.')).toBeTruthy();
   expect(within(note).getByText('Based on Independence Day (Sat, Jul 4, 2026).')).toBeTruthy();
@@ -124,7 +147,8 @@ test('an org admin accepts a note and dismisses a rule; each card then says what
   expect(api.writes.filter((write) => write.path.includes('/suggestions/'))).toEqual([
     { method: 'POST', path: acceptPath, body: {} }, { method: 'POST', path: dismissPath, body: {} },
   ]);
-  expect(within(panel).getByText('0 to decide')).toBeTruthy();
+  // The spotted event is left to decide.
+  expect(within(section(panel, SUGGESTED)).getByText('1 to decide')).toBeTruthy();
   // The switch still answers after a decision.
   api.respond['/api/org/weekly-suggestions'] = () => ({ weeklySuggestions: { on: false } });
   fireEvent.click(within(panel).getByRole('button', { name: 'Turn off weekly suggestions' }));
@@ -221,16 +245,17 @@ test('with none open, the section says so and still shows the switch', async () 
 });
 
 test('the header’s Questions and activity button counts open questions and open suggestions, as Home’s link does', async () => {
-  // The fixture asks 3 questions and has 2 suggestions open: Home's link reads "5 questions from TownwiseAI".
+  // The fixture asks 3 questions and has 5 suggestions open (a rule, a note, a spotted event, a move and a removal):
+  // Home's link reads "8 questions from TownwiseAI".
   const api = chatApi(true);
   api.respond['/api/org/locations/l1/agent/suggestions/0000000000000000000000c2/dismiss'] = () => (
     { suggestion: { id: '0000000000000000000000c2', status: 'dismissed' }, note: null, rule: null }
   );
   renderAt(api, meOf(ACCESS.admin));
   const panel = await side();
-  expect(screen.getByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Questions and activity (8)' })).toBeTruthy();
   fireEvent.click(within(card(panel, RULE_HEADING)).getByRole('button', { name: 'Dismiss' }));
-  expect(await screen.findByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
+  expect(await screen.findByRole('button', { name: 'Questions and activity (7)' })).toBeTruthy();
 });
 
 test('while weekly passes aren’t running, the panel says only that, never that TownwiseAI is unavailable', async () => {
@@ -240,4 +265,166 @@ test('while weekly passes aren’t running, the panel says only that, never that
   const panel = await side();
   expect(within(panel).getByText('Weekly suggestions aren’t running right now, so none are being made.')).toBeTruthy();
   expect(within(panel).queryByText(/isn’t available here/)).toBeNull();
+});
+
+function decided(id: string, status = 'accepted'): () => unknown {
+  return () => ({ suggestion: { id, status }, note: null, rule: null });
+}
+
+test('“Your calendar changed” comes before the suggestions, with the move and the removal in the server’s words; the spotted event is a suggestion', async () => {
+  renderAt(chatApi(false), meOf(ACCESS.member));
+  const panel = await side();
+  expect(within(panel).getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent).slice(0, 2)).toEqual([CHANGED, SUGGESTED]);
+  const changed = section(panel, CHANGED);
+  expect(within(changed).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([MOVE_HEADING, REMOVE_HEADING]);
+  expect(within(card(changed, MOVE_HEADING)).getByText('The private event on Sat, Jul 18 moved to Sat, Jul 25 on your calendar.')).toBeTruthy();
+  expect(within(card(changed, MOVE_HEADING)).getByText('About 60 guests. 6 pm to 10 pm.')).toBeTruthy();
+  expect(within(card(changed, REMOVE_HEADING)).getByText('The private event on Sat, Aug 1 is no longer on your calendar.')).toBeTruthy();
+  const suggested = section(panel, SUGGESTED);
+  expect(within(suggested).getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent)).toEqual([RULE_HEADING, NOTE_HEADING, EVENT_HEADING]);
+  const spotted = card(suggested, EVENT_HEADING);
+  expect(within(spotted).getByText('From your calendar: Private party, 40 guests, Sat, Jul 11, 6 pm to 10 pm')).toBeTruthy();
+  // Members see no choice, count, Accept or Dismiss.
+  expect(within(panel).queryByRole('radiogroup')).toBeNull();
+  expect(within(panel).queryByLabelText('Guests')).toBeNull();
+  expect(within(spotted).getByText('An admin of your organization can accept or dismiss this.')).toBeTruthy();
+});
+
+test('a spotted event offers two choices with neither chosen; Accept stays disabled, saying why, until one is chosen', async () => {
+  const api = chatApi(true);
+  api.respond[EVENT_ACCEPT] = decided('0000000000000000000000c4');
+  renderAt(api, meOf(ACCESS.admin));
+  const spotted = card(await side(), EVENT_HEADING);
+  const group = within(spotted).getByRole('radiogroup', { name: 'How this event runs' });
+  const radios = within(group).getAllByRole('radio');
+  expect(radios.map((radio) => [radio.textContent, radio.getAttribute('aria-checked')])).toEqual([[BUYOUT, 'false'], [ALONGSIDE, 'false']]);
+  // One tab stop: the first choice while none is chosen.
+  expect(radios.map((radio) => radio.getAttribute('tabindex'))).toEqual(['0', '-1']);
+  const guests = within(spotted).getByLabelText<HTMLInputElement>('Guests');
+  expect(guests.value).toBe('40');
+  const accept = within(spotted).getByRole('button', { name: 'Accept' });
+  expect(accept.getAttribute('aria-disabled')).toBe('true');
+  const why = within(spotted).getByText('Choose how this event runs to accept it.');
+  expect(accept.getAttribute('aria-describedby')?.split(' ')).toContain(why.id);
+  fireEvent.click(within(group).getByRole('radio', { name: BUYOUT }));
+  expect(within(group).getByRole('radio', { name: BUYOUT }).getAttribute('aria-checked')).toBe('true');
+  expect(accept.getAttribute('aria-disabled')).toBeNull();
+  accept.focus();
+  fireEvent.click(accept);
+  const saved = await within(spotted).findByText('Saved a note: Private event, Sat, Jul 11, 2026.');
+  await waitFor(() => { expect(saved.closest('[role="status"]')?.contains(document.activeElement)).toBe(true); });
+  expect(api.writes.filter((write) => write.path.includes('/suggestions/'))).toEqual([
+    { method: 'POST', path: EVENT_ACCEPT, body: { effect: 'closed', expectedGuests: 40 } },
+  ]);
+});
+
+test('alongside regular service needs a count, a buyout none; the arrow keys move the choice; a bad count says so', async () => {
+  const api = chatApi(true);
+  api.respond[EVENT_ACCEPT] = decided('0000000000000000000000c4');
+  renderAt(api, meOf(ACCESS.admin));
+  const spotted = card(await side(), EVENT_HEADING);
+  const group = within(spotted).getByRole('radiogroup', { name: 'How this event runs' });
+  const accept = within(spotted).getByRole('button', { name: 'Accept' });
+  const guests = within(spotted).getByLabelText<HTMLInputElement>('Guests');
+  fireEvent.change(guests, { target: { value: '' } });
+  fireEvent.click(within(group).getByRole('radio', { name: BUYOUT }));
+  expect(accept.getAttribute('aria-disabled')).toBeNull();
+  fireEvent.keyDown(within(group).getByRole('radio', { name: BUYOUT }), { key: 'ArrowRight' });
+  expect(within(group).getByRole('radio', { name: ALONGSIDE }).getAttribute('aria-checked')).toBe('true');
+  expect(within(group).getByRole('radio', { name: BUYOUT }).getAttribute('aria-checked')).toBe('false');
+  expect(accept.getAttribute('aria-disabled')).toBe('true');
+  expect(within(spotted).getByText('Enter the guests to accept it alongside regular service.')).toBeTruthy();
+  fireEvent.change(guests, { target: { value: 'forty' } });
+  expect(within(spotted).getByText('Enter the guests as a whole number from 1 to 20,000 to accept it.')).toBeTruthy();
+  expect(guests.getAttribute('aria-invalid')).toBe('true');
+  fireEvent.change(guests, { target: { value: '25' } });
+  expect(accept.getAttribute('aria-disabled')).toBeNull();
+  fireEvent.click(accept);
+  expect(await within(spotted).findByText('Saved a note: Private event, Sat, Jul 11, 2026.')).toBeTruthy();
+  expect(api.writes.filter((write) => write.path.includes('/suggestions/')).map((write) => write.body)).toEqual([
+    { effect: 'more_guests', expectedGuests: 25 },
+  ]);
+});
+
+test('an org admin accepts the move and the removal with an empty body, and dismisses a follow-up', async () => {
+  const api = chatApi(true);
+  const move = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c5/accept';
+  const remove = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c6/accept';
+  api.respond[move] = decided('0000000000000000000000c5');
+  api.respond[remove] = decided('0000000000000000000000c6');
+  renderAt(api, meOf(ACCESS.admin));
+  const changed = section(await side(), CHANGED);
+  expect(within(card(changed, MOVE_HEADING)).getByText(/^Accept moves the note to the event’s new dates/)).toBeTruthy();
+  fireEvent.click(within(card(changed, MOVE_HEADING)).getByRole('button', { name: 'Accept' }));
+  expect(await within(card(changed, MOVE_HEADING)).findByText('Moved the note to Sat, Jul 25, 2026.')).toBeTruthy();
+  fireEvent.click(within(card(changed, REMOVE_HEADING)).getByRole('button', { name: 'Accept' }));
+  expect(await within(card(changed, REMOVE_HEADING)).findByText('Deleted the note.')).toBeTruthy();
+  expect(within(changed).getByText('0 to decide')).toBeTruthy();
+  expect(api.writes.filter((write) => write.path.includes('/suggestions/'))).toEqual([
+    { method: 'POST', path: move, body: {} }, { method: 'POST', path: remove, body: {} },
+  ]);
+  expect(decidedLine(fixture.panel.suggestions[3] as Suggestion, { status: 'dismissed', note: null, rule: null })).toBe('Dismissed. The note stays as it is.');
+});
+
+test('a note changed since its follow-up: the card says so and the panel reads again; a spotted event that changed goes, and the notice takes focus', async () => {
+  const api = chatApi(true);
+  const move = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c5/accept';
+  api.respond[move] = () => refusal(409, 'note_changed');
+  renderAt(api, meOf(ACCESS.admin));
+  const panel = await side();
+  const loads = api.panelLoads;
+  fireEvent.click(within(card(panel, MOVE_HEADING)).getByRole('button', { name: 'Accept' }));
+  await waitFor(() => { expect(api.panelLoads).toBeGreaterThan(loads); });
+  expect(await within(card(panel, MOVE_HEADING)).findByText(/^Someone changed this note since, so nothing was changed\./)).toBeTruthy();
+  // The spotted event moved at its source: its card goes when the panel reads again without it.
+  api.respond[EVENT_ACCEPT] = () => {
+    api.panel = { ...(api.panel as { suggestions: unknown[] }), suggestions: fixture.panel.suggestions.filter((each) => (each as { type: string }).type !== 'event') };
+    return refusal(409, 'event_changed');
+  };
+  fireEvent.click(within(card(panel, EVENT_HEADING)).getByRole('radio', { name: BUYOUT }));
+  fireEvent.click(within(card(panel, EVENT_HEADING)).getByRole('button', { name: 'Accept' }));
+  const notice = await within(panel).findByText('That event moved or is no longer on your calendar, so nothing was saved.');
+  await waitFor(() => { expect(within(panel).queryByRole('heading', { name: EVENT_HEADING })).toBeNull(); });
+  await waitFor(() => { expect(notice.closest('[role="status"]')?.contains(document.activeElement)).toBe(true); });
+});
+
+test('the titles switch: members see whether it is on; an org admin turns it off and on', async () => {
+  renderAt(chatApi(false), meOf(ACCESS.member));
+  let panel = await side();
+  expect(within(panel).getByText(TITLES_WORDS, { exact: false })).toBeTruthy();
+  expect(within(panel).getByText('Reading event titles is on.')).toBeTruthy();
+  expect(within(panel).queryByRole('button', { name: 'Turn off reading event titles' })).toBeNull();
+  cleanup();
+
+  const api = chatApi(true);
+  api.respond[TITLES_PATH] = (body) => ({ calendarTitles: { on: (body as { on: boolean }).on } });
+  renderAt(api, meOf(ACCESS.admin));
+  panel = await side();
+  fireEvent.click(within(panel).getByRole('button', { name: 'Turn off reading event titles' }));
+  expect(await within(panel).findByText('Reading event titles is off.')).toBeTruthy();
+  fireEvent.click(within(panel).getByRole('button', { name: 'Turn on reading event titles' }));
+  expect(await within(panel).findByText('Reading event titles is on.')).toBeTruthy();
+  expect(api.writes.filter((write) => write.path === TITLES_PATH).map((write) => write.body)).toEqual([{ on: false }, { on: true }]);
+});
+
+test('staff open as admin can turn titles off, with the tab’s orgId, but never on, and the panel says so', async () => {
+  const api = chatApi(true);
+  api.respond[TITLES_PATH] = (body) => ({ calendarTitles: { on: (body as { on: boolean }).on } });
+  renderAt(api, openAsAdminMe());
+  const panel = await side();
+  expect(within(panel).getByText('You can turn this off. Only an admin of this organization can turn it back on.')).toBeTruthy();
+  fireEvent.click(within(panel).getByRole('button', { name: 'Turn off reading event titles' }));
+  expect(await within(panel).findByText('Reading event titles is off.')).toBeTruthy();
+  expect(within(panel).queryByRole('button', { name: 'Turn on reading event titles' })).toBeNull();
+  expect(within(panel).getByText('Only an admin of this organization can turn this on.')).toBeTruthy();
+  expect(api.writes.filter((write) => write.path === TITLES_PATH).map((write) => write.body)).toEqual([{ on: false, orgId: 'o1' }]);
+});
+
+test('an API from before calendar titles shows no titles switch', async () => {
+  const api = chatApi(true);
+  api.panel = { ...(api.panel as object), weeklySuggestions: { on: true, available: true, canChange: true } };
+  renderAt(api, meOf(ACCESS.admin));
+  const panel = await side();
+  expect(within(panel).getByText('Weekly suggestions are on.')).toBeTruthy();
+  expect(within(panel).queryByText(/event titles is/)).toBeNull();
 });

@@ -120,7 +120,7 @@ export function draftOfImported(event: { startDate: string; endDate: string; sta
   };
 }
 
-function guestsOf(text: string): number | null | 'invalid' {
+export function guestsOf(text: string): number | null | 'invalid' {
   const cleaned = text.replace(/[,\s]/g, '');
   if (cleaned === '') return null;
   if (!/^\d+$/.test(cleaned)) return 'invalid';
