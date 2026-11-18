@@ -43,6 +43,13 @@ export interface HeatmapProps {
   focusKey?: number;
   /** Native: the Day panel, shown under the selected day's row. */
   panel?: React.ReactNode;
+  /**
+   * Web, `interactive={false}` only (Home): a mouse or pen over a day shows its label as a tooltip, and a click on a day
+   * that `opens` allows calls this (Home opens it in the Calendar). Without it the picture is inert (Reading).
+   */
+  onOpen?: (date: string) => void;
+  /** Which days `onOpen` takes; the others still show their tooltip. */
+  opens?: (date: string) => boolean;
 }
 
 function dayWords(date: string, day: DayRecord | undefined, props: HeatmapProps): string {

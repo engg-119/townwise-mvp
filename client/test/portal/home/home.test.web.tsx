@@ -133,7 +133,7 @@ test('the last week chart prints its key and scale; the history heatmap is one p
   if (history === null) throw new Error('no history card');
   const picture = within(history).getByRole('img');
   expect(picture.getAttribute('aria-label')).toMatch(/^Daily guests, Jan 1, 2026 to Nov 4, 2026\. Busiest: /);
-  expect(picture.querySelectorAll('[tabindex], [data-date]')).toHaveLength(0);
+  expect(picture.querySelectorAll('[tabindex]')).toHaveLength(0);
   expect(within(history).getByRole('link', { name: 'See it in Analytics' }).getAttribute('href')).toBe('/locations/l1/analytics');
   expect(within(history).getByRole('link', { name: 'Upload sales history' }).getAttribute('href')).toBe('/locations/l1/sales/upload');
   expect(screen.getByRole('link', { name: 'Ask TownwiseAI' }).getAttribute('href')).toBe('/locations/l1/agent');
@@ -493,6 +493,73 @@ test('clicking a day opens /locations/x/calendar?day=that day, and so does Enter
   fireEvent.keyDown(cellOf('2026-11-05'), { key: 'Enter' });
   await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/calendar'); });
   expect(window.location.search).toBe('?day=2026-11-05');
+});
+
+/** Last week's chart: its svg, with a 280px box, since jsdom lays nothing out (the viewBox is 280 wide too). */
+function lastWeekSvg(): SVGSVGElement {
+  const svg = screen.getByRole('region', { name: 'Last week' }).querySelector<SVGSVGElement>('svg[viewBox="0 0 280 120"]');
+  if (svg === null) throw new Error('no last week chart');
+  svg.getBoundingClientRect = () => ({ left: 0, width: 280, top: 0, height: 120, right: 280, bottom: 120, x: 0, y: 0, toJSON: () => ({}) });
+  return svg;
+}
+
+/** A pointer event at `clientX`, with `pointerType` set, as jsdom has no PointerEvent. */
+function pointerAt(type: string, pointerType: 'mouse' | 'touch', clientX: number): Event {
+  const event = new MouseEvent(type, { bubbles: true, clientX });
+  Object.defineProperty(event, 'pointerType', { value: pointerType });
+  return event;
+}
+
+test('last week: a mouse over a day shows its row’s words, a touch shows nothing, and a click opens the day in the Calendar', async () => {
+  await renderAt(portal(meOf(ACCESS.member)));
+  const svg = lastWeekSvg();
+  // Seven 40px slots, Thu, Oct 29 to Wed, Nov 4: x 100 is the third, Sat, Oct 31.
+  fireEvent(svg, pointerAt('pointermove', 'touch', 100));
+  expect(screen.queryByTestId('chart-tooltip')).toBeNull();
+  fireEvent(svg, pointerAt('pointermove', 'mouse', 100));
+  expect(Array.from(screen.getByTestId('chart-tooltip').children, (line) => line.textContent)).toEqual([
+    'Sat, Oct 31, 2026', 'Last week: 154 guests', 'Same day last year: 140 guests', 'Change: +10%',
+  ]);
+  expect(svg.querySelector('[data-hover="day"]')).not.toBeNull();
+  fireEvent.pointerLeave(svg);
+  expect(screen.queryByTestId('chart-tooltip')).toBeNull();
+  fireEvent.click(svg, { clientX: 100 });
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/calendar'); });
+  expect(window.location.search).toBe('?day=2026-10-31');
+});
+
+/** Home's history picture's cell for `date`. */
+function historyCell(date: string): HTMLElement {
+  const found = document.getElementById('home-history')?.querySelector<HTMLElement>(`[role="img"] [data-date="${date}"]`) ?? null;
+  if (found === null) throw new Error(`no history cell for ${date}`);
+  return found;
+}
+
+test('your history: a mouse over a day shows its words, a touch shows nothing, and a click opens the day in the Calendar', async () => {
+  await renderAt(portal(meOf(ACCESS.member)));
+  fireEvent(historyCell('2026-10-31'), pointerAt('pointerover', 'touch', 0));
+  expect(screen.queryByTestId('calendar-tooltip')).toBeNull();
+  fireEvent(historyCell('2026-10-31'), pointerAt('pointerover', 'mouse', 0));
+  expect(Array.from(screen.getByTestId('calendar-tooltip').children, (line) => line.textContent)).toEqual(['Sat, Oct 31, 2026', '154 guests, $3,080.']);
+  // Leaving the picture's grid box clears it.
+  const box = document.getElementById('home-history')?.querySelector('[role="img"] > div');
+  if (box === null || box === undefined) throw new Error('no history box');
+  fireEvent.pointerLeave(box);
+  expect(screen.queryByTestId('calendar-tooltip')).toBeNull();
+  fireEvent.click(historyCell('2026-10-31'));
+  await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/calendar'); });
+  expect(window.location.search).toBe('?day=2026-10-31');
+});
+
+test('your history: a day the Calendar can’t show (over 12 months back) hovers but opens nothing', async () => {
+  const old = DAYS.filter((record) => record.date <= '2024-12-31');
+  await renderAt(portal(meOf(ACCESS.member), old));
+  const cell = historyCell('2024-10-05');
+  expect(cell.hasAttribute('data-open')).toBe(false);
+  fireEvent(cell, pointerAt('pointerover', 'mouse', 0));
+  expect(screen.getByTestId('calendar-tooltip').textContent).toMatch(/^Sat, Oct 5, 2024/);
+  fireEvent.click(cell);
+  expect(window.location.pathname).toBe('/locations/l1');
 });
 
 test('without a published forecast, the lead says Townwise hasn’t published one yet', async () => {

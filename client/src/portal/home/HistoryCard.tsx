@@ -1,4 +1,5 @@
-import { useMemo } from 'react';
+import { useRouter } from 'expo-router';
+import { useCallback, useMemo, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import type { HistoryUpload } from '../analytics/api';
@@ -7,10 +8,12 @@ import type { DayContext } from '../analytics/days';
 import { Heatmap } from '../analytics/Heatmap';
 import type { DayRecord } from '../analytics/history';
 import type { Metric } from '../analytics/words';
+import { selectedDay } from '../calendar/model';
 import { formatDate, plural } from '../format';
+import { localToday } from '../locations/dates';
 import { UploadAction } from '../locations/parts';
 import { UPLOADS_OFF_LINE } from '../locations/sales';
-import { locationHref } from '../routing';
+import { calendarHref, locationHref } from '../routing';
 import type { Coverage } from '../schemas';
 import { Actions, LinkButton } from '../ui/Button';
 import { Small } from '../ui/text';
@@ -18,7 +21,9 @@ import { Block } from './Block';
 
 // Your history (home.md 2.6): how many days Townwise has for this location, the span, the missing days and the last
 // finished upload, then the newest year as a small heatmap that takes no focus (web only; native has the words)
-// and links to Analytics and Upload. The panel's root carries nativeID "home-history" so onboarding's Reading screen
+// and links to Analytics and Upload. On web a mouse or pen over a day shows its words, and a click opens the day in the
+// Calendar (owner request, 2026-11-17), for the days the Calendar shows (12 months either side of today's; selectedDay
+// would turn any other into today, so those only hover). The panel's root carries nativeID "home-history" so onboarding's Reading screen
 // (onboarding/HistoryStep, historyMotion.web.ts) can animate its calendar into it; Home does nothing for that
 // animation.
 
@@ -56,6 +61,10 @@ export function HistoryCard(props: {
     () => heatmapSummary({ days, metric, context, included: EVERY_DAY, years }, null) ?? '',
     [days, metric, context, years],
   );
+  const router = useRouter();
+  const [today] = useState(localToday);
+  const opens = useCallback((date: string) => selectedDay(date, today) === date, [today]);
+  const onOpen = useCallback((date: string) => { router.push(calendarHref(locationId, date)); }, [router, locationId]);
   const empty = coverage.dayCount === 0 || year === null;
   const off = empty && props.uploadsOff === true;
   return (
@@ -73,6 +82,8 @@ export function HistoryCard(props: {
               years={years}
               interactive={false}
               label={label}
+              onOpen={onOpen}
+              opens={opens}
             />
           </>
         )}
