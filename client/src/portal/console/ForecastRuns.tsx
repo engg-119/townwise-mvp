@@ -6,7 +6,7 @@ import { useAction } from '../hooks';
 import { usePortal } from '../PortalProvider';
 import { Button } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
-import { ErrorNotice, LoadingLine, Messages } from '../ui/feedback';
+import { ErrorNotice, LoadingLine, Notice } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { Heading, Small } from '../ui/text';
 import { Calibrations } from './CalibrationsPanel';
@@ -175,7 +175,7 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
         {state.status === 'loading' ? <LoadingLine text="Loading forecasts…" /> : null}
         {state.status === 'failed' ? <ErrorNotice error={state.error} onRetry={reload} /> : null}
         {refreshError === null ? null : <ErrorNotice message="The forecasts couldn’t load again, so this list may be out of date." onRetry={() => { void refresh(); }} />}
-        {done === null ? null : <Messages live="status" items={[done]} />}
+        {done === null ? null : <Notice text={done} />}
         {state.status === 'ready' ? locations.map((location) => {
           const runs = state.data.filter((run) => run.locationId === location.id);
           return (

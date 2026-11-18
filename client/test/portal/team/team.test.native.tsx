@@ -216,7 +216,8 @@ describe('P17 Team: adding addresses (F5)', () => {
     expect(writes(api)[0]?.body).toEqual({ emails: ['cook@example.com', edge], role: 'member' });
   });
 
-  test('a successful Add clears the last role change or removal line above the table', async () => {
+  // The role change and the removal are toasts, which leave by themselves (D55): an Add shows neither a second time.
+  test('a successful Add shows the last role change or removal toast no second time', async () => {
     const { api, routes } = adminApi();
     api.answers['/api/org/members/m2'] = () => ({ member: { ...MANAGER, role: 'org_admin' } });
     routes.requests['DELETE /api/org/members/m3'] = noContent;
@@ -228,13 +229,15 @@ describe('P17 Team: adding addresses (F5)', () => {
     await fireEvent.changeText(screen.getByLabelText('Email addresses'), 'cook@example.com');
     await fireEvent.press(screen.getByRole('button', { name: 'Add' }));
     expect(await screen.findByLabelText('Results of adding addresses')).toBeTruthy();
-    expect(screen.queryByText('Saved.')).toBeNull();
+    expect(screen.getAllByText('Saved.')).toHaveLength(1);
     await fireEvent.press(screen.getByRole('button', { name: 'Remove invitation, chef@example.com' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Remove invitation' }));
     expect(await screen.findByText('Removed the invitation for chef@example.com.')).toBeTruthy();
     await fireEvent.changeText(screen.getByLabelText('Email addresses'), 'cook@example.com');
     await fireEvent.press(screen.getByRole('button', { name: 'Add' }));
-    await waitFor(() => { expect(screen.queryByText('Removed the invitation for chef@example.com.')).toBeNull(); });
+    expect(await screen.findByLabelText('Results of adding addresses')).toBeTruthy();
+    expect(screen.getAllByText('Removed the invitation for chef@example.com.')).toHaveLength(1);
+    expect(screen.getAllByTestId('toast')).toHaveLength(2);
   });
 
   test('the member cap: 409 member_limit says the team is full', async () => {

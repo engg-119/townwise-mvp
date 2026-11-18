@@ -55,7 +55,8 @@ export function SalesData(): React.JSX.Element {
   const [confirming, setConfirming] = useState(false);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
   const [staleError, setStaleError] = useState<unknown>(null);
-  const [deleted, setDeleted] = useState<number | null>(null);
+  // One object per delete: the notice's `result`, so it toasts once though the page mounts it again after its reload.
+  const [deleted, setDeleted] = useState<{ days: number } | null>(null);
 
   const { state, reload } = useLoad(useCallback(async () => {
     const sales = await fetchSales(api, location.id);
@@ -74,11 +75,11 @@ export function SalesData(): React.JSX.Element {
     }
     markStale();
     setConfirming(false);
-    setDeleted(result.deletedDays);
+    setDeleted({ days: result.deletedDays });
     reload();
   }, [api, location.id, markStale, reload, reloadOrg]));
 
-  const notice = deleted === null ? null : <View style={styles.notice}><Notice text={`Deleted ${plural(deleted, 'day', 'days')}.`} /></View>;
+  const notice = deleted === null ? null : <Notice text={`Deleted ${plural(deleted.days, 'day', 'days')}.`} result={deleted} style={styles.notice} />;
   if (state.status === 'loading') return <>{notice}<SalesSkeleton label="Loading sales data" /></>;
   if (state.status === 'failed') return <>{notice}<LoadFailure error={state.error} onRetry={reload} /></>;
 

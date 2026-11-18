@@ -16,7 +16,7 @@ import { itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { ErrorNotice, LoadingLine, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
+import { ErrorNotice, InlineNotice, LoadingLine, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Small } from '../ui/text';
@@ -130,7 +130,7 @@ function ItemOfPath(): React.JSX.Element {
   if (state.status === 'failed') {
     return (
       <Section>
-        {hasCode(state.error, 404, 'not_found') ? <Notice text={ITEM.gone} /> : <ErrorNotice message={dataError(state.error)} onRetry={reload} />}
+        {hasCode(state.error, 404, 'not_found') ? <InlineNotice text={ITEM.gone} /> : <ErrorNotice message={dataError(state.error)} onRetry={reload} />}
         {back}
       </Section>
     );

@@ -72,7 +72,7 @@ export default function SettingsPage(): React.JSX.Element {
 
   return (
     <Page eyebrow={org} title="Settings">
-      {saved ? <View style={styles.top}><Notice text={SETTINGS_COPY.saved} /></View> : null}
+      {saved ? <Notice text={SETTINGS_COPY.saved} style={styles.top} /> : null}
       {readOnly ? <View style={styles.top}><ReadOnlyLine text={line} nativeID={SETTINGS_READ_ONLY_ID} /></View> : null}
       <Section first>
         <Columns

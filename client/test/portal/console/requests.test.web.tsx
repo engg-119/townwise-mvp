@@ -598,7 +598,7 @@ function expectFocusOn(text: RegExp): void {
   expect(active?.textContent).toMatch(text);
 }
 
-test('a decision takes its opener off the page, so focus moves to the notice; after a 409, to its line', async () => {
+test('a decision takes its opener off the page, so focus moves to the page’s heading as the toast says so; after a 409, to its line', async () => {
   const api = consoleApi();
   let pending: unknown[] = [TAVERN, PUB];
   api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: pending.length });
@@ -613,7 +613,9 @@ test('a decision takes its opener off the page, so focus moves to the notice; af
   fireEvent.click(approve);
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
   await screen.findByRole('region', { name: 'Request: Sample Campus Pub' });
-  expectFocusOn(/^\d+Approved\. Mountain Tavern is set up/);
+  // The approval is a toast, which never takes focus (spec 15.7, D55): the h1 has it.
+  expect((await screen.findByText(/^Approved\. Mountain Tavern is set up/)).closest('[data-testid="toast"]')).not.toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Requests' }));
 
   const reject = screen.getByRole('button', { name: 'Reject' });
   reject.focus();
@@ -621,7 +623,7 @@ test('a decision takes its opener off the page, so focus moves to the notice; af
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Reject Sample Campus Pub?' })).getByRole('button', { name: 'Reject' }));
   await screen.findByText('Someone already decided this request.');
   await screen.findByRole('region', { name: 'Pending requests' });
-  // The newer line, not the approval notice still above it.
+  // The error line in the page, not the heading again for the approval's toast.
   expectFocusOn(/^\d+Someone already decided this request\.$/);
 
   // A second late decision with the same words is a new line, and takes focus again.

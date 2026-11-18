@@ -3,6 +3,7 @@ import { Platform, StyleSheet, Text, type StyleProp, type TextStyle } from 'reac
 import { theme } from '../../theme';
 import { useBreakpoint } from '../hooks';
 import { webAria } from './aria';
+import { useFocusFallback } from './messageFocus';
 
 // The portal's type (spec 15.6): Instrument Sans for reading and UI, Geist Mono for labels and every numeral.
 // Sizes step down at 1023px and 640px as the shell's CSS does.
@@ -27,14 +28,18 @@ export function Eyebrow(props: TextProps): React.JSX.Element {
 
 /**
  * The page's one h1, styled `tw-h2`: 40/44, then 32/36 below 1024px, then 28/32 at 640px and below. `lines` caps it
- * and ends it with an ellipsis (the chat's compact header on phones).
+ * and ends it with an ellipsis (the chat's compact header on phones). Inside a MessageFocus it can take focus
+ * (`tabIndex` -1), which it does when an action took away the control that had it and said so in a toast.
  */
 export function Title(props: TextProps & { lines?: number }): React.JSX.Element {
   const { phone, desktop } = useBreakpoint();
   const size = phone ? theme.type.h2Phone : desktop ? theme.type.h2 : theme.type.h2Tablet;
+  // Inside a MessageFocus the h1 takes focus in place of a notice shown as a toast (ui/messageFocus.tsx).
+  const fallback = useFocusFallback<React.ComponentRef<typeof Text>>();
   return (
     <Text
       role="heading"
+      {...fallback}
       {...webAria({ 'aria-level': 1 })}
       nativeID={props.nativeID}
       {...(props.lines === undefined ? {} : { numberOfLines: props.lines })}

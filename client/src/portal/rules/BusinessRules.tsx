@@ -17,7 +17,7 @@ import { useLocation } from '../shell/LocationShell';
 import { RulesSkeleton } from '../skeleton';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { EmptyState, ErrorNotice, Notice, ReadOnlyLine } from '../ui/feedback';
+import { EmptyState, ErrorNotice, Notice, ReadOnlyLine, useNoticeState } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { useFocusMessage } from '../ui/messageFocus';
 import { Columns, Section, Stack } from '../ui/layout';
@@ -379,7 +379,7 @@ export function BusinessRules(): React.JSX.Element {
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const rules = useRules(api, location.id);
   const { reload, remove: removeRule } = rules;
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNoticeState();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Rule | null>(null);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
@@ -433,9 +433,10 @@ export function BusinessRules(): React.JSX.Element {
   const gone = useCallback((text: string | null) => {
     setEditingId(null);
     setDeleting(null);
-    setNotice(text);
+    // The rule is gone and the write did not happen: that stays in the page, never a toast.
+    setNotice(text, true);
     reload();
-  }, [reload]);
+  }, [reload, setNotice]);
 
   /** A rule that went in the meantime (404) closes its edit or the dialog, says so and loads the list again. */
   const ruleGone = useCallback((error: unknown): boolean => {
@@ -454,7 +455,7 @@ export function BusinessRules(): React.JSX.Element {
     setDeleting(null);
     if (editingId === rule.id) setEditingId(null);
     setNotice('Deleted the rule.');
-  }, [removeRule, ruleGone, editingId]));
+  }, [removeRule, ruleGone, editingId, setNotice]));
 
   const { state } = rules;
   /** 409 rule_exists on a suggestion: the saved rule with its words opens for edit, so it can get a schedule. */
@@ -549,7 +550,7 @@ export function BusinessRules(): React.JSX.Element {
 
   return (
     <View>
-      {notice === null ? null : <View style={styles.notice}><Notice text={notice} /></View>}
+      {notice === null ? null : <Notice text={notice.text} result={notice} stays={notice.stays} style={styles.notice} />}
       <Columns
         main={(
           <Stack>

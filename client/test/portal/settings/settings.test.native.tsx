@@ -240,9 +240,10 @@ describe('P18 Settings: an org admin', () => {
     await waitFor(() => { expect(screen.queryByText('Test Group')).toBeNull(); });
     expect(screen.getAllByText('Harbor Group').length).toBeGreaterThanOrEqual(3);
     expect(api.calls.filter((call) => call.path === '/api/me').length).toBe(reads + 1);
-    // Editing again clears the notice.
+    // Editing again shows no second notice: the one toast is still up and leaves by itself (D55).
     await fireEvent.changeText(screen.getByLabelText('Name'), 'Harbor Group 2');
-    expect(screen.queryByText('Saved.')).toBeNull();
+    expect(screen.getAllByText('Saved.')).toHaveLength(1);
+    expect(screen.getAllByTestId('toast')).toHaveLength(1);
   });
 
   test('a save Townwise refuses shows the shared copy, and Try again saves', async () => {
