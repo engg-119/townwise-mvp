@@ -313,7 +313,10 @@ export interface AgentSuggestionStore {
   insert(scope: OrgScope, input: { locationId: string; week: string; suggestions: readonly NewSuggestion[]; now: Date }): Promise<SuggestionRecord[]>;
   /** The open suggestions whose first date is after `today`, soonest first. */
   listOpen(scope: OrgScope, locationId: string, today: string): Promise<SuggestionRecord[]>;
-  /** The location's suggestions in any status, newest first (at most 500): what a pass must not suggest again. */
+  /**
+   * The location's `note` and `rule` suggestions in any status, newest first (at most 500): what a pass must not suggest
+   * again. The owner-calendar kinds are left out, so follow-ups and spotted events never crowd earlier notes out of it.
+   */
   recent(scope: OrgScope, locationId: string): Promise<SuggestionRecord[]>;
   /** One suggestion of this location, else null (another location's or organization's id included). */
   find(scope: OrgScope, locationId: string, id: string): Promise<SuggestionRecord | null>;
@@ -511,7 +514,7 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
       return docs.map(toSuggestion);
     },
     async recent(scope, locationId) {
-      const docs = await Suggestion.find(of(scope, locationId)).sort({ _id: -1 }).limit(RECENT_LIMIT).lean();
+      const docs = await Suggestion.find({ ...of(scope, locationId), type: trusted({ $in: ['note', 'rule'] }) }).sort({ _id: -1 }).limit(RECENT_LIMIT).lean();
       return docs.map(toSuggestion);
     },
     async find(scope, locationId, id) {

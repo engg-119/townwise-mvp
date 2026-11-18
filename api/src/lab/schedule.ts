@@ -122,6 +122,8 @@ export interface SuggestionsCounts {
   budget: number;
   /** Calls that failed, locations whose turn threw, and pass rows a dead pass left running with a reservation. */
   failed: number;
+  /** Owner-calendar events the calls sent, summed (calendar-event-suggestions): a count, never a title. */
+  ownerEvents: number;
 }
 
 export interface SuggestionsResult extends SuggestionsCounts { state: SuggestionsState; ms: number }
@@ -331,6 +333,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
         const week = suggestionsWeek(localDay(at, timeZone), localMinutes(at, timeZone), SCHEDULE_START_HOUR);
         if (week === null || await stores.agentSuggestions.findPass(scope, location.id, week) !== null) continue;
         const outcome = await suggestFor({ config: ctx.config, now: ctx.now, stores, chat: model }, scope, location, week);
+        counts.ownerEvents += outcome.ownerEvents ?? 0;
         if (outcome.status === 'suggested') {
           counts.passes += 1;
           counts.suggested += outcome.suggested;
@@ -350,7 +353,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       const began = performance.now();
       const deadline = ctx.now().getTime() + SCHEDULE_PASS_BUDGET_MS;
       const counts: PassCounts = { started: 0, failed: 0, skipped: 0, capped: 0 };
-      const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0 };
+      const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0, ownerEvents: 0 };
       const model = ctx.config.weeklySuggestions ? ctx.chat ?? null : null;
       const refreshOn = ctx.labRunner !== null && ctx.config.weeklyForecasts;
       let suggestionsBegan = performance.now();

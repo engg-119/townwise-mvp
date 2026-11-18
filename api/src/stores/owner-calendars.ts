@@ -33,7 +33,9 @@
 // its uid survives a refresh (calendar/ics.ts); a row written before that field reads as not keyed. findEvent and
 // eventsByUid read the current generation for a note's link and its follow-up (calendar/follow-up.ts), and a replace
 // that switched answers how many keyed uids of the generation it replaced it kept, read before it writes (the generation
-// it switches from is current until its switch, so no one deletes those rows meanwhile).
+// it switches from is current until its switch, so no one deletes those rows meanwhile). keyedEventsBetween reads a
+// range's keyed events for TownwiseAI's weekly call (lab/suggestions.ts), with each calendar's kind and Google
+// connection, never its label.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -238,6 +240,18 @@ export type ReplaceResult =
  */
 export const ADDED_REPLACE = { switched: true, generation: 1, keptKeys: 0, hadKeys: 0 } as const satisfies ReplaceResult;
 
+/**
+ * A keyed event for the weekly suggestions call (lab/suggestions.ts): with its calendar's id, kind and, for a Google
+ * calendar, the connection that reads it, so the call can leave out a Google calendar under an older agreement. Never the
+ * calendar's label.
+ */
+export interface KeyedOwnerEvent extends StoredEvent {
+  readonly calendarId: string;
+  readonly kind: CalendarKind;
+  /** The tw_google_connections row of a Google calendar; null for a file or a link. */
+  readonly connectionId: string | null;
+}
+
 /** The keyed events eventsByUid found, read at one generation. */
 export interface EventsByUid {
   readonly generation: number;
@@ -326,6 +340,8 @@ export interface OwnerCalendarStore {
   eventsByUid(scope: OrgScope, locationId: string, calendarId: string, uids: readonly string[]): Promise<EventsByUid | null>;
   /** The location's events overlapping [from, to] (inclusive dates), each calendar's current generation, by start. */
   eventsBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<OwnerCalendarEvent[]>;
+  /** As eventsBetween, the keyed events only, each with its calendar's kind and Google connection: never its label. */
+  keyedEventsBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<KeyedOwnerEvent[]>;
   /** Location deletion. Resolves the number of calendars deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number of calendars deleted. */
@@ -365,8 +381,13 @@ function storedEvent(row: EventFields): StoredEvent {
   };
 }
 
-function startKey(event: OwnerCalendarEvent): string {
+function startKey(event: Pick<OwnerCalendarEvent, 'startDate' | 'startTime'>): string {
   return `${event.startDate} ${event.startTime ?? ''}`;
+}
+
+/** By start, stable: events starting together keep their calendars' order. */
+function byStart<T extends Pick<OwnerCalendarEvent, 'startDate' | 'startTime'>>(events: T[]): T[] {
+  return events.sort((a, b) => (startKey(a) < startKey(b) ? -1 : startKey(a) > startKey(b) ? 1 : 0));
 }
 
 export function createOwnerCalendarStore(connection: Connection): OwnerCalendarStore {
@@ -430,6 +451,29 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     await Event.deleteMany({ orgId: key.orgId, sourceId: key._id, generation: trusted({ $lt: generation }) });
     const keptKeys = events.filter((event) => event.keyed && hadUids.has(event.uid)).length;
     return { switched: true, generation, keptKeys, hadKeys: hadUids.size };
+  }
+
+  /**
+   * Each calendar of the location with its current generation's events overlapping the range (keyed ones only when
+   * `keyed`). A replace that switched meanwhile may have deleted part of the generation just read: read again at its new one.
+   */
+  async function readBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }, keyed: boolean) {
+    const location = ofLocation(scope, locationId);
+    const current = () => Source.find(location, { label: 1, kind: 1, googleConnectionId: 1, generation: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
+    const read = (sources: Awaited<ReturnType<typeof current>>) => Promise.all(sources.map((source) => Event.find({
+      orgId: location.orgId, sourceId: source._id, generation: source.generation,
+      startDate: trusted({ $lte: range.to }), endDate: trusted({ $gte: range.from }), ...(keyed ? { keyed: true } : {}),
+    }).sort({ startDate: 1, _id: 1 }).lean()));
+    let sources = await current();
+    let rows = await read(sources);
+    for (let attempt = 1; attempt < 3; attempt += 1) {
+      const after = await current();
+      const unchanged = sources.every((source) => after.some((each) => each._id.equals(source._id) && each.generation === source.generation));
+      if (unchanged) break;
+      sources = after;
+      rows = await read(sources);
+    }
+    return sources.map((source, index) => ({ source, rows: rows[index] ?? [] }));
   }
 
   async function remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean> {
@@ -555,28 +599,18 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       return { generation: source.generation, eventCount: source.eventCount, events: rows.map(storedEvent) };
     },
     async eventsBetween(scope, locationId, range) {
-      const location = ofLocation(scope, locationId);
-      const current = () => Source.find(location, { label: 1, generation: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
-      const read = (sources: Awaited<ReturnType<typeof current>>) => Promise.all(sources.map((source) => Event.find({
-        orgId: location.orgId, sourceId: source._id, generation: source.generation,
-        startDate: trusted({ $lte: range.to }), endDate: trusted({ $gte: range.from }),
-      }).sort({ startDate: 1, _id: 1 }).lean()));
-      let sources = await current();
-      let rows = await read(sources);
-      // A replace that switched meanwhile may have deleted part of the generation just read: read again at its new one.
-      for (let attempt = 1; attempt < 3; attempt += 1) {
-        const after = await current();
-        const unchanged = sources.every((source) => after.some((each) => each._id.equals(source._id) && each.generation === source.generation));
-        if (unchanged) break;
-        sources = after;
-        rows = await read(sources);
-      }
-      const events = sources.flatMap((source, index) => (rows[index] ?? []).map((row): OwnerCalendarEvent => ({
+      const read = await readBetween(scope, locationId, range, false);
+      return byStart(read.flatMap(({ source, rows }) => rows.map((row): OwnerCalendarEvent => ({
         calendarId: source._id.toHexString(), calendar: source.label, uid: row.uid, title: row.title, startDate: row.startDate,
         endDate: row.endDate, startTime: row.startTime, endTime: row.endTime,
-      })));
-      // Stable: events starting together keep their calendars' order.
-      return events.sort((a, b) => (startKey(a) < startKey(b) ? -1 : startKey(a) > startKey(b) ? 1 : 0));
+      }))));
+    },
+    async keyedEventsBetween(scope, locationId, range) {
+      const read = await readBetween(scope, locationId, range, true);
+      return byStart(read.flatMap(({ source, rows }) => rows.map((row): KeyedOwnerEvent => ({
+        ...storedEvent(row), calendarId: source._id.toHexString(), kind: source.kind,
+        connectionId: source.googleConnectionId === null ? null : source.googleConnectionId.toHexString(),
+      }))));
     },
     removeForLocation(scope, locationId) {
       const location = ofLocation(scope, locationId);

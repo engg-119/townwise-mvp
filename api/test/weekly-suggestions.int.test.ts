@@ -511,6 +511,17 @@ describe('the owner-calendar kinds in the store (calendar-event-suggestions, des
     expect(await store().eventKeysSuggested(other.scope, t.locationId)).toEqual([]);
   });
 
+  it('recent reads notes and rules only, so follow-ups and spotted events never crowd them out of the pass’s duplicate check', async () => {
+    const t = await team();
+    const [note] = await stored(t, [THANKSGIVING_LIKE]);
+    for (let index = 0; index < 3; index += 1) await store().upsertFollow(t.scope, t.locationId, moveTo(new Types.ObjectId().toHexString(), ON_20), AT);
+    await stored(t, [{
+      content: { type: 'event', note: { ...PARTY, effect: 'unknown', expectedGuests: null }, event: { calendarId, uid: 'party@bookings.example.test', ...ON_13 } },
+      why: null, calendarIds: [],
+    }]);
+    expect((await store().recent(t.scope, t.locationId)).map((each) => each.id)).toEqual([note?.id]);
+  });
+
   it('reads a note or rule suggestion stored before the change as it was', async () => {
     const t = await team();
     const [note, rule] = await stored(t, [THANKSGIVING_LIKE, COMMENCEMENT_RULE]);

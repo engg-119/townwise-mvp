@@ -5,7 +5,10 @@
 // suggestions in the same pass (openspec change weekly-forecast-suggestions), over a scripted model: one call per
 // location a week by default, none when an org admin turned them off or the switch is false, with or without the lab,
 // the $0.30 reservation and its correction, the budget skip, what the request holds and what it never holds, and the
-// checks on the answer. Every number is synthetic.
+// checks on the answer. Then the owner-calendar events the call sends while the calendar titles switch is on
+// (calendar-event-suggestions): only keyed ones not linked or spotted before, a Google calendar's only under the new
+// agreement, nothing that identifies them, the reservation unchanged, and sentinel titles in no stored suggestion and no
+// staff view of the panel. Every number and title is synthetic.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -19,11 +22,18 @@ import {
 } from '../src/lab/schedule.ts';
 import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
 import { removeLocation } from '../src/handlers/locations.ts';
-import { SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_TIME_MS, suggestionsReserveMicroUsd } from '../src/lab/suggestions.ts';
+import { parseIcs } from '../src/calendar/ics.ts';
+import type { AgentPanel } from '../src/handlers/agent.ts';
+import {
+  SUGGESTIONS_MAX_OWNER_EVENTS, SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_SYSTEM_PROMPT, SUGGESTIONS_TIME_MS, suggestionsReserveMicroUsd,
+} from '../src/lab/suggestions.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { fakeLabRunner, jobCall, labFailure, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
-import { logLines, MINUTE, startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
+import { addGrant } from './helpers/fixtures.ts';
+import {
+  call, logLines, MINUTE, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 let runner: FakeLabRunner;
@@ -37,7 +47,7 @@ afterAll(async () => { await server.close(); });
 const COLLECTIONS = [
   'tw_orgs', 'tw_locations', 'tw_sales_days', 'tw_calibrations', 'tw_forecast_weeks', 'tw_forecast_schedule', 'tw_forecast_runs',
   'tw_forecasts', 'tw_audit_events', 'tw_notes', 'tw_agent_suggestions', 'tw_suggestion_passes', 'tw_chat_usage', 'tw_business_rules',
-  'tw_members',
+  'tw_members', 'tw_calendar_sources', 'tw_calendar_events', 'tw_google_connections', 'tw_view_as_grants',
 ];
 
 /** The test clock starts at Mon, Jun 1, 2026, 12:00 UTC (08:00 in Hanover); each test starts there again. */
@@ -657,7 +667,7 @@ describe('weekly suggestions', () => {
     await pass({ chat: answering([JULY_4]) });
     const line = logLines(server).filter((each) => each.msg === 'townwise.weekly_suggestions_pass').at(-1);
     const keys = Object.keys(line ?? {}).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)).sort();
-    expect(keys).toEqual(['budget', 'failed', 'ms', 'none', 'passes', 'state', 'suggested']);
+    expect(keys).toEqual(['budget', 'failed', 'ms', 'none', 'ownerEvents', 'passes', 'state', 'suggested']);
     const textOf = JSON.stringify(logLines(server));
     for (const absent of [p.orgId, p.locationId, JULY_4.why]) expect(JSON.stringify(line)).not.toContain(absent);
     expect(textOf).not.toContain(JULY_4.why);
@@ -834,5 +844,174 @@ describe('weekly suggestions', () => {
     const sent = JSON.stringify(messagesOf(model.calls[0]));
     expect(sent).toContain('2026-07-03');
     expect(sent).not.toContain('2026-01-10');
+  });
+
+  describe('owner-calendar events (calendar-event-suggestions, design decisions 6 to 8 and 11)', () => {
+    const TOWN = { today: '2026-06-01', timeZone: 'America/New_York' };
+
+    /** A calendar file of single events, each on `day` (YYYYMMDD) from 6 pm to 10 pm; one with no uid is not keyed. */
+    function parsedOf(events: readonly { uid: string | null; title: string; day: string }[]) {
+      const text = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Townwise test//EN', ...events.flatMap((event) => [
+        'BEGIN:VEVENT', ...(event.uid === null ? [] : [`UID:${event.uid}`]), `SUMMARY:${event.title}`, `DTSTART:${event.day}T180000`,
+        `DTEND:${event.day}T220000`, 'END:VEVENT',
+      ]), 'END:VCALENDAR', ''].join('\r\n');
+      const parsed = parseIcs(text, TOWN);
+      if ('error' in parsed) throw new Error(parsed.error);
+      return parsed;
+    }
+
+    async function calendarOf(
+      p: Place, events: readonly { uid: string | null; title: string; day: string }[], source: { label: string; connectionId?: string },
+    ): Promise<string> {
+      const added = await server.ctx.stores.ownerCalendars.add(p.scope, p.locationId, source.connectionId === undefined
+        ? { kind: 'link', label: source.label, sealedAddress: 'sealed-for-test', host: 'bookings.sentinel-host.test' }
+        : { kind: 'google', label: source.label, sealedAddress: 'sealed-for-test', googleConnectionId: source.connectionId }, parsedOf(events), {
+        createdBy: 'user-sentinel', now: server.clock.now(),
+      });
+      if (added === 'calendar_limit') throw new Error('calendar_limit');
+      return added.id;
+    }
+
+    /** A Google connection that agreed at `agreedAt` (the test clock reads Jun 2026, before the new explainer's day). */
+    async function connectionAgreed(p: Place, agreedAt: Date): Promise<string> {
+      const _id = new Types.ObjectId();
+      await server.connection.collection('tw_google_connections').insertOne({
+        _id, orgId: new Types.ObjectId(p.orgId), userId: `user-${randomUUID().slice(0, 8)}`, sealedRefreshToken: 'sealed-for-test', scopes: [],
+        agreedAt, connectedAt: agreedAt, updatedAt: agreedAt, revokedAt: null, checkAt: new Date('2099-01-01T00:00:00.000Z'), leaseUntil: null,
+      });
+      return _id.toHexString();
+    }
+
+    function sentOf(model: ScriptedModel): Record<string, unknown> {
+      const [first] = messagesOf(model.calls[0]);
+      return JSON.parse(typeof first?.content === 'string' ? first.content : '') as Record<string, unknown>;
+    }
+
+    function passLine(): Record<string, unknown> | undefined {
+      return logLines(server).filter((each) => each.msg === 'townwise.weekly_suggestions_pass').at(-1);
+    }
+
+    it('sends the keyed events, soonest first, as titles with no email or phone number, and nothing that names a calendar or an event', async () => {
+      const p = await place();
+      const link = await calendarOf(p, [
+        { uid: 'sentinel-uid-0001@bookings.sentinel-host.test', title: 'Private party, 40 guests, call 603-555-0100 or host@sentinel-mail.test', day: '20260613' },
+        { uid: null, title: 'Unkeyed lunch', day: '20260610' },
+        { uid: 'sentinel-uid-0002@bookings.sentinel-host.test', title: 'Linked brunch', day: '20260611' },
+        { uid: 'sentinel-uid-0003@bookings.sentinel-host.test', title: 'Spotted before', day: '20260612' },
+        { uid: 'sentinel-uid-0004@bookings.sentinel-host.test', title: 'Past the 91 days', day: '20260905' },
+      ], { label: 'Sentinel Front Desk' });
+      await server.ctx.stores.notes.create(p.scope, p.locationId, {
+        kind: 'private_event', startDate: '2026-06-11', endDate: '2026-06-11', weekdays: null, effect: 'more_guests', expectedGuests: 20, detail: null,
+        startTime: '18:00', endTime: '22:00',
+      }, {
+        createdBy: 'user-sentinel', now: server.clock.now(),
+        fromEvent: { calendarId: link, uid: 'sentinel-uid-0002@bookings.sentinel-host.test', startDate: '2026-06-11', endDate: '2026-06-11', startTime: '18:00', endTime: '22:00', linkedAt: server.clock.now() },
+      });
+      await server.ctx.stores.agentSuggestions.insert(p.scope, { locationId: p.locationId, week: '2026-05-25', now: server.clock.now(), suggestions: [{
+        content: {
+          type: 'event',
+          note: { kind: 'private_event', startDate: '2026-06-12', endDate: '2026-06-12', weekdays: null, effect: 'unknown', expectedGuests: null, detail: null, startTime: '18:00', endTime: '22:00' },
+          event: { calendarId: link, uid: 'sentinel-uid-0003@bookings.sentinel-host.test', startDate: '2026-06-12', endDate: '2026-06-12', startTime: '18:00', endTime: '22:00' },
+        },
+        why: null, calendarIds: [],
+      }] });
+      await server.ctx.stores.agentSuggestions.markDismissed(p.scope, p.locationId, (await server.ctx.stores.agentSuggestions.listOpen(p.scope, p.locationId, '2026-06-01'))[0]?.id ?? '', { by: 'user-sentinel', now: server.clock.now() });
+      const older = await connectionAgreed(p, new Date('2026-06-01T12:00:00.000Z'));
+      const newer = await connectionAgreed(p, new Date('2026-11-20T12:00:00.000Z'));
+      const oldGoogle = await calendarOf(p, [{ uid: 'sentinel-google-old', title: 'Old agreement dinner', day: '20260615' }], { label: 'Sentinel Old Google', connectionId: older });
+      const newGoogle = await calendarOf(p, [{ uid: 'sentinel-google-new', title: 'New agreement dinner', day: '20260609' }], { label: 'Sentinel New Google', connectionId: newer });
+
+      const model = answering([]);
+      await pass({ chat: model });
+      const sent = sentOf(model);
+      expect(sent.ownerEvents).toEqual([
+        { ref: 'e1', title: 'New agreement dinner', startDate: '2026-06-09', startWeekday: 'Tue', endDate: '2026-06-09', endWeekday: 'Tue', startTime: '18:00', endTime: '22:00' },
+        { ref: 'e2', title: 'Private party, 40 guests, call [removed] or [removed]', startDate: '2026-06-13', startWeekday: 'Sat', endDate: '2026-06-13', endWeekday: 'Sat', startTime: '18:00', endTime: '22:00' },
+      ]);
+      const request = JSON.stringify(model.calls[0]?.params);
+      for (const absent of [
+        'sentinel-uid', 'sentinel-google', 'Sentinel Front Desk', 'Sentinel Old Google', 'Sentinel New Google', 'sentinel-host', 'sentinel-mail', '603-555-0100',
+        'Unkeyed lunch', 'Linked brunch', 'Spotted before', 'Old agreement dinner', 'Past the 91 days', link, oldGoogle, newGoogle, older, newer, '"kind":"link"', '"kind":"google"',
+      ]) expect({ absent, found: request.includes(absent) }).toEqual({ absent, found: false });
+      expect(passLine()).toMatchObject({ ownerEvents: 2, passes: 0, none: 1 });
+      expect(JSON.stringify(logLines(server))).not.toMatch(/Private party|New agreement dinner|sentinel-uid/);
+    });
+
+    it('sends none with the organization’s calendar titles switch off, and the request is as before', async () => {
+      const p = await place();
+      await calendarOf(p, [{ uid: 'party-0001@bookings.example.test', title: 'Private party', day: '20260613' }], { label: 'Front desk' });
+      await server.ctx.stores.orgs.setCalendarTitlesToAi(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
+      const model = answering([]);
+      await pass({ chat: model });
+      expect(model.calls[0]?.params.system).toBe(SUGGESTIONS_SYSTEM_PROMPT);
+      expect(Object.keys(sentOf(model)).sort()).toEqual(['alreadySuggested', 'calendar', 'from', 'notes', 'rules', 'to', 'today', 'town']);
+      expect(JSON.stringify(model.calls[0]?.params)).not.toContain('Private party');
+      expect(passLine()).toMatchObject({ ownerEvents: 0 });
+    });
+
+    it('a typical calendar of 20 events keeps the reservation at $0.30', async () => {
+      const p = await place();
+      await calendarOf(p, Array.from({ length: 20 }, (_, index) => ({
+        uid: `booking-${String(index)}@bookings.example.test`, title: `Private booking number ${String(index)} for the back room, 30 guests`,
+        day: `202606${String(index + 2).padStart(2, '0')}`,
+      })), { label: 'Front desk' });
+      const model = answering([]);
+      await pass({ chat: model });
+      expect((sentOf(model).ownerEvents as unknown[])).toHaveLength(20);
+      const params = model.calls[0]?.params;
+      if (params === undefined) throw new Error('no call');
+      expect(suggestionsReserveMicroUsd(params)).toBe(SUGGESTIONS_RESERVE_MICRO_USD);
+    });
+
+    it('sends at most 150, soonest first: a 151st is left out', async () => {
+      const p = await place();
+      // Two a day from Jun 2, the 151st (index 150) the latest of them.
+      await calendarOf(p, Array.from({ length: 151 }, (_, index) => ({
+        uid: `booking-${String(index).padStart(3, '0')}@bookings.example.test`, title: `Booking ${String(index).padStart(3, '0')}`,
+        day: utcDay(new Date('2026-06-02T00:00:00.000Z'), Math.floor(index / 2)).replaceAll('-', ''),
+      })), { label: 'Front desk' });
+      const model = answering([]);
+      await pass({ chat: model });
+      const titles = (sentOf(model).ownerEvents as { title: string }[]).map((each) => each.title);
+      expect(titles).toHaveLength(SUGGESTIONS_MAX_OWNER_EVENTS);
+      expect(titles).not.toContain('Booking 150');
+      expect(titles.at(-1)).toBe('Booking 149');
+    });
+
+    it('keeps a spotted Google event and a closure, drops one that repeats a sentinel title, and no stored suggestion or staff view holds the title', async () => {
+      const p = await place();
+      const connectionId = await connectionAgreed(p, new Date('2026-11-20T12:00:00.000Z'));
+      await calendarOf(p, [{ uid: 'sentinel-0001@google.test', title: 'Zyxwvut rehearsal dinner, 40 guests', day: '20260613' }], { label: 'Bookings', connectionId });
+      const spot = {
+        ...JULY_4, type: 'event', kind: 'private_event', effect: 'unknown', startDate: '2026-06-13', endDate: '2026-06-13', expectedGuests: 40,
+        eventRef: 'e1', why: 'Zyxwvut rehearsal dinner', detail: 'Zyxwvut', calendarIds: [],
+      };
+      const echoed = { ...JULY_4, startDate: '2026-07-03', endDate: '2026-07-03', why: 'The Zyxwvut family closes it.', eventRef: null };
+      const model = answering([{ ...JULY_4, eventRef: null }, echoed, spot]);
+      expect((await pass({ chat: model })).suggestions).toMatchObject({ passes: 1, suggested: 2, ownerEvents: 1 });
+      const rows = await suggestions(p);
+      expect(rows.map((row) => row.type).sort()).toEqual(['event', 'note']);
+      expect(rows.find((row) => row.type === 'event')).toMatchObject({ why: null, content: { expectedGuests: 40, detail: null, effect: 'unknown' } });
+      expect(JSON.stringify(rows).toLowerCase()).not.toContain('zyxwvut');
+
+      const email = `owner-${randomUUID().slice(0, 8)}@example.test`;
+      const owner: TestSession = await signIn(server, email);
+      await addSeat(server, { orgId: p.orgId, userId: owner.userId, email, role: 'org_admin' });
+      const read = async (session: TestSession): Promise<AgentPanel> => {
+        const res = await call(server, `/api/org/locations/${p.locationId}/agent`, { session });
+        expect(res.status).toBe(200);
+        return await res.json() as AgentPanel;
+      };
+      expect(JSON.stringify(await read(owner))).toContain('Zyxwvut rehearsal dinner, 40 guests');
+      const staff = await signInStaff(server);
+      try {
+        await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: owner.userId, orgId: p.orgId });
+        const viewed = await read(staff);
+        expect(viewed.suggestions.map((each) => each.type).sort()).toEqual(['event', 'note']);
+        expect(JSON.stringify(viewed).toLowerCase()).not.toContain('zyxwvut');
+      } finally {
+        await removeStaffFactor(server);
+      }
+    });
   });
 });
