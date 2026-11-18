@@ -434,7 +434,7 @@ test('a calendar file is posted and kept, its events show once read again, and M
   chooseFile(icsFile(ICS, 'kitchen.ics'));
   expect(within(calendarsPanel()).getByText(HELP)).toBeTruthy();
   expect(await within(calendarsPanel()).findByRole('button', { name: 'Importing…' })).toBeTruthy();
-  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'kitchen', ics: ICS } }]);
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'kitchen', ics: ICS, titlesNotice: 1 } }]);
   // The API keeps the calendar and its two events.
   fake.calendars = [KITCHEN];
   fake.ownerEvents = [DINNER, AWAY];
@@ -534,7 +534,7 @@ test('a file over 1 MB is refused unread, and a file that isn’t a calendar say
   chooseFile(icsFile(csv, 'sales.csv'));
   expect(await within(calendarsPanel()).findByText(NOT_CALENDAR)).toBeTruthy();
   expect(screen.queryByText(TOO_LARGE)).toBeNull();
-  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'sales.csv', ics: csv } }]);
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'sales.csv', ics: csv, titlesNotice: 1 } }]);
   expect(fake.paths.slice(reads)).toEqual([]);
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
   api.answers[CALENDARS_PATH] = () => refusal(409, 'calendar_limit');
