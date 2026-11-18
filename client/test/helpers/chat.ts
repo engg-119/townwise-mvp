@@ -66,7 +66,7 @@ export function noteOf(content: Record<string, unknown>, id = 'n1'): Record<stri
 export const PANEL = {
   questions: [
     // The shapes api/README.md (Tuning chat) documents for GET .../agent.
-    { id: 'weekday_1_2025-11-03_2026-11-02', kind: 'weekday', weekday: 1, from: '2025-11-03', to: '2026-11-02', noSalesCount: 41, weekdayCount: 52 },
+    { id: 'likely_closed_2026-01-24', kind: 'likely_closed', date: '2026-01-24', guests: 1, typicalGuests: 100 },
     { id: 'gap_2026-02-01_2026-02-03', kind: 'gap', from: '2026-02-01', to: '2026-02-03', dayCount: 3 },
     // A kind this client doesn't know yet: left out.
     { id: 'later_0001', kind: 'something_later' },
@@ -148,10 +148,10 @@ function defaultAnswer(api: FakeChatApi, method: string, path: string, body: unk
   const question = new RegExp(`^${BASE}/agent/questions/([^/]+)$`).exec(path);
   if (question !== null) {
     const closed = input.answer === 'closed';
-    const weekday = question[1]?.startsWith('weekday_') === true;
+    const likely = question[1]?.startsWith('likely_closed_') === true;
     return {
       question: { id: question[1], answer: input.answer },
-      note: closed ? noteOf(weekday ? { startDate: '2025-11-03', endDate: '2026-11-02', weekdays: [1], detail: null } : { startDate: '2026-02-01', endDate: '2026-02-03', detail: null }, 'n2') : null,
+      note: closed ? noteOf(likely ? { startDate: '2026-01-24', endDate: '2026-01-24', detail: null } : { startDate: '2026-02-01', endDate: '2026-02-03', detail: null }, 'n2') : null,
     };
   }
   return new ApiError('http', 'The request was refused.', { status: 404, code: 'not_found' });

@@ -15,7 +15,7 @@ import { MAX_MESSAGE } from './Composer';
 import { ChatButton, type ChatButtonHandle } from './controls';
 
 // A question TownwiseAI has for the person (spec P25, 10.12): asked by rules over the location's own sales and
-// notes, never by an estimate. A heading question, one line of the evidence it saw (counts and guests, never sales),
+// notes, never by an estimate (D46: a weekday with no sales is a suggested rule now, RuleSuggestionCard). A heading question, one line of the evidence it saw (counts and guests, never sales),
 // the answers, and a line saying what an answer does. Once answered, the answers give way to what the answer did.
 //
 // The fourth answer, Something else… (shown while TownwiseAI's chat is on), opens a field of the card's own; pressed
@@ -77,20 +77,6 @@ function joined(...values: readonly (string | null | false)[]): string {
 /** The words of a card. `chat`: TownwiseAI's chat is on, so Something else… is offered. */
 export function questionCopy(question: Question, locationName: string, chat: boolean): QuestionCopy {
   const other = chat ? [{ value: 'other' as const, label: SOMETHING_ELSE }] : [];
-  if (question.kind === 'weekday') {
-    const name = weekdayName(question.weekday);
-    return {
-      heading: `Are you closed on ${name}?`,
-      context: `${locationName} has no sales on ${formatCount(question.noSalesCount)} of the ${formatCount(question.weekdayCount)} ${name} in weeks with sales on other days.`,
-      answers: [
-        { value: 'closed', label: `Yes, closed ${name}` },
-        { value: 'open', label: 'No, the data is missing' },
-        { value: 'not_sure', label: 'Not sure' },
-        ...other,
-      ],
-      help: sentences([`Yes saves a closure note for ${name} from ${rangeText(question.from, question.to)}.`, chat && ELSE_HELP, 'Any answer stops this question.']),
-    };
-  }
   if (question.kind === 'likely_closed') {
     const usual = `${weekdaysOf(question.date)} usually have about ${formatCount(question.typicalGuests)}`;
     const recorded = question.guests === 0
@@ -156,10 +142,6 @@ function savedNoteLine(note: Note): string {
 
 /** "About {subject} ({evidence}): ", what Something else… puts before the person's words. */
 function otherPrefix(question: Question): string {
-  if (question.kind === 'weekday') {
-    const name = weekdayName(question.weekday);
-    return `About ${name} from ${rangeText(question.from, question.to)} (no sales on ${formatCount(question.noSalesCount)} of the ${formatCount(question.weekdayCount)} ${name} in weeks with sales on other days): `;
-  }
   if (question.kind === 'likely_closed') {
     const recorded = question.guests === 0
       ? 'sales but no guests recorded'

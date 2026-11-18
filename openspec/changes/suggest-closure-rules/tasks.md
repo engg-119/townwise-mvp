@@ -51,7 +51,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 - [x] 2.2 The builder of 1.10 adds sales suggestions: `sales_weekday_{d}` while no row has the key, the stored id while that row is open, none otherwise.
 - [x] 2.3 `handlers/rule-suggestions.ts`: a `sales_weekday_[0-6]` id recomputes its evidence (404 when it no longer holds), then inserts the row (`source: 'sales'`, `closureKey`, `evidence`), or finds it by `closureKey` on a duplicate key, before the decision.
 - [x] 2.4 `handlers/sales.ts`: deleting a location's sales data deletes its sales rows that are not accepted.
-- [ ] 2.5 Client: the card's sales origin line ("No sales on any Monday since Sep 7", then "{n} of {m} Mondays"). The panel no longer receives weekday questions; the question card still ignores unknown kinds.
+- [x] 2.5 Client: the card's sales origin line ("No sales on any Monday since Sep 7", then "{n} of {m} Mondays"). The panel no longer receives weekday questions; the question card still ignores unknown kinds.
 - [ ] 2.6 Docs: spec 10.12 and `tuning-chat.md` section 8 (the weekday question replaced, its evidence, the start rule).
 - [x] 2.7 Tests:
   - unit, in `api/test/agent-questions.test.ts`:
@@ -82,11 +82,11 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 
 ## 4. Client (web and native)
 
-- [ ] 4.1 `client/src/chat/api.ts` and `client/src/portal/rules/api.ts`:
+- [x] 4.1 `client/src/chat/api.ts` and `client/src/portal/rules/api.ts`:
   - a `RuleSuggestion` schema (`id`, `source`, `text`, `schedule`, `scheduleSummary`, `file { ref, title } | null`, `evidence | null`, `canDecide`);
   - `ruleSuggestions` on the panel read and `suggested` on the rules read;
   - the two new routes, accept with an optional `rule`.
-- [ ] 4.2 A new shared `RuleSuggestionCard`:
+- [x] 4.2 A new shared `RuleSuggestionCard`:
   - the view's `text`, with no client wording copy;
   - what it does, and where it came from;
   - Confirm, Edit and Dismiss when `canDecide`, disabled under view-as;
@@ -96,8 +96,8 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - Edit opens the rule form prefilled, and Save sends the accept with `rule`;
   - `?suggestion={id}` opens that card's edit;
   - a confirmed card moves into the list in place (`useRules`).
-- [ ] 4.4 P25 panel (`AgentSidePanel.tsx`, `useAgentPanel.ts`): a "Suggested rules" section before Questions for you; Edit links to P29 with `?suggestion=`.
-- [ ] 4.5 Home (`Home.tsx`): the count adds `ruleSuggestions`.
+- [x] 4.4 P25 panel (`AgentSidePanel.tsx`, `useAgentPanel.ts`): a "Suggested rules" section before Questions for you; Edit links to P29 with `?suggestion=`.
+- [x] 4.5 Home (`Home.tsx`): the count adds `ruleSuggestions`.
 - [ ] 4.6 P27 `AiSection.tsx` and `aiCopy.ts`:
   - "Suggested {n} rules on Business rules";
   - the guard line counts only events still left out;
