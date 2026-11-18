@@ -8,7 +8,8 @@ import { installPlaces, mapOf, type PlacesFake } from './places-fakes';
 // The places checklist on web (usePlaceChecklist over PlaceChecklist.web): the search field is an ARIA 1.2 combobox
 // whose listbox is multiselectable. Each option's aria-selected says whether the place is checked (the active option
 // shows only by highlight and aria-activedescendant), with a drawn, aria-hidden box. Down and Up move the active
-// option; Enter, and Space while an option is active, toggle it and leave the list open; a mouse press toggles
+// option; Enter, and Space while an option is active, toggle it: checking clears the text, which closes the list, and
+// unchecking leaves both (owner, 2026-11-18), so checking several places searches again for each; a mouse press toggles
 // without taking focus from the field; a refused or full option is aria-disabled and does nothing; Remove moves
 // focus back to the field; Escape closes the list, then clears the text, and typing opens it again; focus alone never
 // opens or closes it. One map of every checked place sits above the rows (none in a row), redrawn 400 ms after the
@@ -92,11 +93,18 @@ test('a combobox whose listbox is multiselectable; each option’s aria-selected
   expect(options().every((option) => option.querySelector('[aria-hidden="true"]') !== null)).toBe(true);
   fireEvent.click(option(0));
   await settle();
+  // Checking closed the list; the next search shows the place checked.
+  await search('Lou');
   expect(options().map((option) => option.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
   expect(box.getAttribute('aria-expanded')).toBe('true');
 });
 
-test('Down and Up move the active option; Enter and Space toggle it, and the list stays open', async () => {
+/** The listbox the combobox controls, hidden or not. */
+function listboxOf(box: HTMLElement): HTMLElement | null {
+  return document.getElementById(box.getAttribute('aria-controls') ?? '');
+}
+
+test('Down and Up move the active option; Enter and Space toggle it: checking clears the text and closes the list, unchecking leaves both (owner, 2026-11-18: “it should clear whatever i\'ve typed too right and the dropdown should close”)', async () => {
   const { places } = setup();
   const box = await search('Lou');
   fireEvent.keyDown(box, { key: 'ArrowDown' });
@@ -104,15 +112,56 @@ test('Down and Up move the active option; Enter and Space toggle it, and the lis
   expect(fireEvent.keyDown(box, { key: 'Enter' })).toBe(false);
   await settle();
   expect(places.detailCalls).toHaveLength(1);
-  expect(box.getAttribute('aria-expanded')).toBe('true');
-  expect(box.getAttribute('aria-activedescendant')).toBe(options()[0]?.id);
-  expect(options()[0]?.getAttribute('aria-selected')).toBe('true');
+  expect(box.value).toBe('');
+  expect(box.getAttribute('aria-expanded')).toBe('false');
+  expect(listboxOf(box)?.hidden).toBe(true);
+  expect(box.getAttribute('aria-activedescendant')).toBeNull();
+  await search('Lou');
+  fireEvent.keyDown(box, { key: 'ArrowDown' });
   fireEvent.keyDown(box, { key: 'ArrowDown' });
   fireEvent.keyDown(box, { key: 'ArrowUp' });
   expect(box.getAttribute('aria-activedescendant')).toBe(options()[0]?.id);
+  expect(options()[0]?.getAttribute('aria-selected')).toBe('true');
   expect(fireEvent.keyDown(box, { key: ' ' })).toBe(false);
   await settle();
   expect(options()[0]?.getAttribute('aria-selected')).toBe('false');
+  expect(places.detailCalls).toHaveLength(1);
+  expect(box.value).toBe('Lou');
+  expect(box.getAttribute('aria-expanded')).toBe('true');
+  expect(box.getAttribute('aria-activedescendant')).toBe(options()[0]?.id);
+  // Space checks as Enter does: the text clears and the list closes.
+  expect(fireEvent.keyDown(box, { key: ' ' })).toBe(false);
+  await settle();
+  expect(places.detailCalls).toHaveLength(2);
+  expect(box.value).toBe('');
+  expect(box.getAttribute('aria-expanded')).toBe('false');
+});
+
+test('checking a place by mouse clears the text and closes the list; searching again shows it checked, and unchecking it there leaves the text and the list (owner, 2026-11-18)', async () => {
+  const { places } = setup();
+  const box = await search('Lou');
+  fireEvent.click(option(0));
+  await settle();
+  expect(box.value).toBe('');
+  expect(box.getAttribute('aria-expanded')).toBe('false');
+  expect(listboxOf(box)?.hidden).toBe(true);
+  expect(screen.queryAllByRole('option')).toEqual([]);
+  expect(screen.getByRole('group', { name: RESTAURANT })).toBeTruthy();
+  expect(chips().map((button) => button.getAttribute('aria-label'))).toEqual([RESTAURANT]);
+  expect(document.activeElement).toBe(box);
+  // Typing again opens the list, with the place checked.
+  await search('Lou');
+  expect(box.getAttribute('aria-expanded')).toBe('true');
+  expect(options().map((found) => found.getAttribute('aria-selected'))).toEqual(['true', 'false', 'false']);
+  // Unchecking it there keeps the text and the list.
+  fireEvent.click(option(0));
+  await settle();
+  expect(box.value).toBe('Lou');
+  expect(box.getAttribute('aria-expanded')).toBe('true');
+  expect(listboxOf(box)?.hidden).toBe(false);
+  expect(options().map((found) => found.getAttribute('aria-selected'))).toEqual(['false', 'false', 'false']);
+  expect(screen.queryByRole('group', { name: RESTAURANT })).toBeNull();
+  expect(chips()).toEqual([]);
   expect(places.detailCalls).toHaveLength(1);
 });
 
@@ -133,7 +182,15 @@ test('a mouse press toggles without blurring the field', async () => {
   expect(fireEvent.mouseDown(first)).toBe(false);
   fireEvent.click(first);
   await settle();
+  expect(document.activeElement).toBe(box);
+  expect(chips()).toHaveLength(1);
+  // Checking closed the list; unchecking from the next search's list keeps the field's focus too.
+  await search('Lou');
   expect(options()[0]?.getAttribute('aria-selected')).toBe('true');
+  expect(fireEvent.mouseDown(option(0))).toBe(false);
+  fireEvent.click(option(0));
+  await settle();
+  expect(options()[0]?.getAttribute('aria-selected')).toBe('false');
   expect(document.activeElement).toBe(box);
 });
 
@@ -143,6 +200,8 @@ test('a refused or full option is aria-disabled and does nothing', async () => {
   fireEvent.click(option(2));
   await settle();
   expect(places.detailCalls).toHaveLength(1);
+  // That check cleared the text before Google refused the place; the next search shows its option disabled.
+  await search('Lou');
   expect(options()[2]?.getAttribute('aria-disabled')).toBe('true');
   expect(options()[0]?.getAttribute('aria-disabled')).toBeNull();
   fireEvent.keyDown(box, { key: 'ArrowDown' });
@@ -150,8 +209,12 @@ test('a refused or full option is aria-disabled and does nothing', async () => {
   fireEvent.keyDown(box, { key: 'ArrowDown' });
   expect(box.getAttribute('aria-activedescendant')).toBe(options()[2]?.id);
   fireEvent.keyDown(box, { key: 'Enter' });
+  fireEvent.click(option(2));
   await settle();
   expect(places.detailCalls).toHaveLength(1);
+  // Nothing was checked, so the text and the list stay.
+  expect(box.value).toBe('Lou');
+  expect(box.getAttribute('aria-expanded')).toBe('true');
 });
 
 test('Remove moves focus back to the search field', async () => {
@@ -185,6 +248,8 @@ test('focus never opens or closes the list, so a press below it lands where it s
   const listbox = (): HTMLElement | null => document.getElementById(box.getAttribute('aria-controls') ?? '');
   fireEvent.click(option(0));
   await settle();
+  // Checking closed the list (owner, 2026-11-18); typing again opens it.
+  await search('Lou');
   fireEvent.blur(box);
   expect(listbox()?.hidden).toBe(false);
   expect(box.getAttribute('aria-expanded')).toBe('true');
@@ -217,6 +282,7 @@ test('one map above the checked places with a pin for each, and no map in any ro
   expect(mapImages()).toEqual([]);
   fireEvent.click(option(0));
   await settle();
+  await search('Lou');
   fireEvent.click(option(1));
   await settle();
   await later(400);
@@ -250,6 +316,7 @@ test('the map redraws after a place is checked or removed, not while one is load
   expect(mapNamed('Map of Lou’s Restaurant')).toBe(mapOf(['ChIJTestPlace0001']).url);
 
   // A loading row is not on the map: the map stays as it was.
+  await search('Lou');
   places.holdingDetails = true;
   fireEvent.click(option(1));
   await later(1000);
@@ -286,6 +353,7 @@ test('with the map off, or its call refused, there is no map and no error line',
   expect(places.mapCalls).toHaveLength(1);
   expect(mapImages()).toEqual([]);
   api.answers['/api/places/map'] = () => refusal(429, 'rate_limited', 60);
+  await search('Lou');
   fireEvent.click(option(1));
   await settle();
   await later(400);
@@ -328,6 +396,7 @@ test('each checked place is a chip in the field, in check order and out of the t
   expect(chips()).toEqual([]);
   fireEvent.click(option(0));
   await settle();
+  await search('Lou');
   fireEvent.click(option(1));
   await settle();
   expect(chips().map((button) => button.getAttribute('aria-label'))).toEqual([RESTAURANT, BAKERY]);
@@ -342,6 +411,7 @@ test('each checked place is a chip in the field, in check order and out of the t
   await settle();
   expect(chips()).toHaveLength(3);
   // Unchecking in the list takes its chip away.
+  await search('Lou Lebanon');
   fireEvent.click(option(0));
   await settle();
   expect(chips()).toHaveLength(2);
@@ -352,8 +422,11 @@ test('Left or Backspace at the start of the text moves to the last chip; Left an
   const box = await search('Lou');
   fireEvent.click(option(0));
   await settle();
+  await search('Lou');
   fireEvent.click(option(1));
   await settle();
+  // Checking cleared the text: type some again.
+  await search('Lou');
   // With the caret after text, Left and Backspace are the text's own.
   box.setSelectionRange(3, 3);
   expect(fireEvent.keyDown(box, { key: 'ArrowLeft' })).toBe(true);
@@ -385,8 +458,11 @@ test('a key held down never crosses from the text to the chips or removes one, s
   const box = await search('Lou');
   fireEvent.click(option(0));
   await settle();
+  await search('Lou');
   fireEvent.click(option(1));
   await settle();
+  // Checking cleared the text: type some again.
+  await search('Lou');
   box.setSelectionRange(0, 0);
   expect(fireEvent.keyDown(box, { key: 'Backspace', repeat: true })).toBe(true);
   expect(fireEvent.keyDown(box, { key: 'ArrowLeft', repeat: true })).toBe(true);
@@ -408,6 +484,7 @@ test('the chips are one line beside the text, so the box keeps its height and th
   expect(frame.style.height).toBe('44px');
   fireEvent.click(option(0));
   await settle();
+  await search('Lou');
   fireEvent.click(option(1));
   await settle();
   expect(frame.style.height).toBe('44px');
@@ -442,8 +519,11 @@ test('Delete or Backspace on a chip removes its place and moves to its neighbor,
   const box = await search('Lou');
   fireEvent.click(option(0));
   await settle();
+  await search('Lou');
   fireEvent.click(option(1));
   await settle();
+  // Checking closed the list: open it again to see the options follow the chips.
+  await search('Lou');
   chip(0).focus();
   fireEvent.keyDown(chip(0), { key: 'Delete' });
   await settle();
@@ -473,6 +553,7 @@ test('the map’s pins are lettered in check order, and each chip and row carrie
   // The bakery first, so it is A.
   fireEvent.click(option(1));
   await settle();
+  await search('Lou');
   fireEvent.click(option(0));
   await settle();
   // No letters before the map answers.

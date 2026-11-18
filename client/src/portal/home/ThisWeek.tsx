@@ -202,7 +202,7 @@ export function ThisWeek(props: {
         : <WeekTable week={week} metric={metric} history={history} forecast={forecast} />}
       <Stack gap={8}>
         {history ? <Mono tone="text3">{LAST_YEAR_FOOTNOTE}</Mono> : null}
-        {history && desktop ? <Mono tone="text3">Bars show last year’s days, scaled to the busiest of them.</Mono> : null}
+        {history && desktop ? <Mono tone="text3">{BARS_FOOTNOTE}</Mono> : null}
         <Mono tone="text3">{calendarCoverageLine(calendar)}</Mono>
       </Stack>
       {history ? (
@@ -228,6 +228,9 @@ export function ThisWeek(props: {
     </Block>
   );
 }
+
+/** The strip's footnote for its bars (from 1024px); Home's skeleton draws it in its own words. */
+export const BARS_FOOTNOTE = 'Bars show last year’s days, scaled to the busiest of them.';
 
 const c = theme.color;
 const CORNER = 124;

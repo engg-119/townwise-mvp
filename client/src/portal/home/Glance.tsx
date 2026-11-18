@@ -13,7 +13,7 @@ import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from
 import { formatCount, plural } from '../format';
 import { UploadAction } from '../locations/parts';
 import { Actions } from '../ui/Button';
-import { Skeleton, SkeletonFigure, SkeletonText } from '../skeleton';
+import { Skeleton, WeekTileShapes } from '../skeleton';
 import { Panel } from '../ui/layout';
 import { PhraseParts } from '../ui/PhraseParts';
 import { Eyebrow, Small } from '../ui/text';
@@ -76,8 +76,7 @@ function ThisWeekTile(props: { week: ThisWeek; metric: Metric; forecast: Forecas
     return (
       <Tile eyebrow="This week’s forecast">
         <Skeleton name="week-forecast" label="Loading this week’s forecast">
-          <SkeletonFigure width={120} />
-          <View style={styles.lines}><SkeletonText lines={4} lastWidth="70%" /></View>
+          <WeekTileShapes />
         </Skeleton>
       </Tile>
     );

@@ -66,21 +66,50 @@ token="$(az account get-access-token --resource https://storage.azure.com --quer
 printf 'Authorization: Bearer %s\nx-ms-version: 2023-11-03\n' "$token" > "$work/headers"
 unset token
 blobs="https://$account.blob.core.windows.net/$container"
+# Azure's error code from a refused call's body (a code and a request id; no data).
+code_of() { grep -aoE '<Code>[^<]*</Code>' "$1" 2>/dev/null | sed -E 's#</?Code>##g' | head -n 1; }
 listing=""
 for _ in $(seq 1 30); do # a new firewall rule can take a minute to apply
-  if listing="$(curl -fsS -H @"$work/headers" "$blobs?restype=container&comp=list")"; then break; fi
+  if curl -sS --fail-with-body -H @"$work/headers" -o "$work/list" "$blobs?restype=container&comp=list" 2> /dev/null; then
+    listing="$(cat "$work/list")"
+    break
+  fi
   sleep 5
 done
-[ -n "$listing" ] || die "couldn't list $container (is your account in townwise-admins, with admins_backup_reader applied?)"
+[ -n "$listing" ] || die "couldn't list $container: $(code_of "$work/list") (AuthorizationFailure is the firewall; AuthorizationPermissionMismatch is the role: is your account in townwise-admins, with admins_backup_reader applied?)"
 dump="$(printf '%s' "$listing" | grep -oE 'townwise-[0-9]{8}T[0-9]{6}Z\.archive\.gz' | sort -u | tail -n 1)"
 [ -n "$dump" ] || die "no dump in $container yet"
 echo "downloading $dump"
-curl -fsS -H @"$work/headers" -o "$work/dump.archive.gz" "$blobs/$dump"
+# A new role assignment can take minutes to reach every storage server, so a refused download is tried again.
+got=false
+for _ in $(seq 1 20); do
+  if curl -sS --fail-with-body -H @"$work/headers" -o "$work/dump.archive.gz" "$blobs/$dump" 2> /dev/null; then
+    got=true
+    break
+  fi
+  echo "download refused ($(code_of "$work/dump.archive.gz")); trying again in 15 seconds"
+  sleep 15
+done
+$got || die "the download was refused for 5 minutes: $(code_of "$work/dump.archive.gz")"
 close
 
 echo "restoring into $target (local)"
-docker exec "$mongo" mongosh --quiet "$target" --eval 'db.dropDatabase()' > /dev/null
-docker exec -i "$mongo" mongorestore --quiet --archive --gzip --nsFrom 'townwise.*' --nsTo "$target.*" \
+docker exec "$mongo" mongosh --quiet "$target" --eval 'db.dropDatabase()' > /dev/null || die "couldn't drop the local $target"
+# A failed restore keeps the dump for diagnosis, readable by you alone; delete it once the pull works.
+kept() {
+  local keep="$HOME/.townwise-ci/prod-pull"
+  mkdir -p "$keep"
+  chmod 700 "$keep"
+  mv "$work/dump.archive.gz" "$keep/$dump"
+  chmod 600 "$keep/$dump"
+  die "$1; the dump is kept at $keep/$dump"
+}
+# DocumentDB stamps each collection with options MongoDB refuses (statsEnabled), so they stay behind; the API builds
+# its indexes at boot. The dump's version warning (7.0.0 to 8.x) is expected.
+docker exec -i "$mongo" mongorestore --noOptionsRestore --archive --gzip --nsFrom 'townwise.*' --nsTo "$target.*" \
   --nsExclude 'townwise.auth_sessions' --nsExclude 'townwise.auth_refresh_retired' \
-  --nsExclude 'townwise.auth_magic_links' --nsExclude 'townwise.auth_totp' < "$work/dump.archive.gz"
-echo "done: $target holds $dump. Stop your usual API, then: npm run dev:prod-copy -w @townwise/api"
+  --nsExclude 'townwise.auth_magic_links' --nsExclude 'townwise.auth_totp' < "$work/dump.archive.gz" > "$work/restore.log" 2>&1 \
+  || { grep -v 'reading metadata' "$work/restore.log" >&2; kept "mongorestore failed (above)"; }
+collections="$(docker exec "$mongo" mongosh --quiet "$target" --eval 'db.getCollectionNames().length')"
+[ "$collections" -gt 0 ] || { grep -v 'reading metadata' "$work/restore.log" >&2; kept "mongorestore restored nothing into $target"; }
+echo "done: $target holds $dump ($collections collections). Stop your usual API, then: npm run dev:prod-copy -w @townwise/api"

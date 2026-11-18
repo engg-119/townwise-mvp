@@ -39,6 +39,9 @@ import { MonthGrid } from './MonthGrid';
 
 export const PEOPLE_HEAD = 'Who’s in town';
 
+/** The month card's first line; Home's skeleton draws it in its own words. */
+export const MONTH_INTRO = Platform.OS === 'web' ? 'Point at a day to see what’s on it. Choose one to open it in the Calendar.' : 'Tap a day to open it in the Calendar.';
+
 const monthNameOf = (today: string): string => MONTH_NAMES[Number(today.slice(5, 7)) - 1] ?? '';
 
 export function ThisMonth(props: {
@@ -71,7 +74,7 @@ export function ThisMonth(props: {
   const monthLine = useMemo(() => monthCheckLine(today.slice(0, 7), entries), [today, entries]);
   return (
     <Block label={`This month in ${town.name}`} eyebrow={label} title={`This month in ${town.name}`}>
-      <Small>{Platform.OS === 'web' ? 'Point at a day to see what’s on it. Choose one to open it in the Calendar.' : 'Tap a day to open it in the Calendar.'}</Small>
+      <Small>{MONTH_INTRO}</Small>
       <View style={styles.split}>
         <View style={styles.gridSide} onLayout={(event: LayoutChangeEvent) => { setGridWidth(event.nativeEvent.layout.width); }}>
           <MonthGrid

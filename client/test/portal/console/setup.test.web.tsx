@@ -180,6 +180,8 @@ test('Add a location with places: each checked place goes to the setup route, th
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
   await checkPlace(RESTAURANT_ROW);
+  // A check clears the search and closes the list (owner, 2026-11-18), so the second place is a new search.
+  fireEvent.change(screen.getByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
   await checkPlace(BAKERY_ROW);
   await click('Add 2 locations');
   expect(await screen.findByText('Added 2 locations.')).toBeTruthy();
@@ -203,6 +205,8 @@ test('Add a location with places: the limit stops the rest with the panel’s li
   renderAt('/admin/orgs/o1', api);
   fireEvent.change(await screen.findByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
   await checkPlace(RESTAURANT_ROW);
+  // A check clears the search and closes the list (owner, 2026-11-18), so the second place is a new search.
+  fireEvent.change(screen.getByRole('combobox', { name: 'Search Google Maps for the location' }), { target: { value: 'Lou' } });
   await checkPlace(BAKERY_ROW);
   await click('Add 2 locations');
   expect(await screen.findByText('Added Lou’s Restaurant, Hanover.')).toBeTruthy();

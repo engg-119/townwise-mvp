@@ -103,6 +103,9 @@ export function usePlaceChecklist(api: ApiClient, unavailableLine: string): Plac
     const ticket = lastTicket.current;
     tickets.current.set(key, ticket);
     commit([...rowsNow.current, { key, status: 'loading', suggestion }]);
+    // A checked place clears the text, so the list closes and the next search starts fresh (owner, 2026-11-18: “it
+    // should clear whatever i've typed too right and the dropdown should close”). Unchecking keeps both.
+    searchFor('');
     setNotice(null);
     setError(null);
     const current = (): boolean => live.current && tickets.current.get(key) === ticket;
@@ -133,7 +136,7 @@ export function usePlaceChecklist(api: ApiClient, unavailableLine: string): Plac
         else setError(caught);
       },
     );
-  }, [api, commit, drop, endSession, remove, unavailableLine]);
+  }, [api, commit, drop, endSession, remove, searchFor, unavailableLine]);
 
   const setQuery = useCallback((text: string): void => {
     setNotice(null);

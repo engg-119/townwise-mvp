@@ -76,8 +76,11 @@ export function SkeletonText(props: { lines?: number; type?: SkeletonType; width
  * its own type, they take the lines the words will take at any width, drawn as a `raised` bar along each line and never
  * as glyphs, so the page replaces them without moving. Hidden from assistive tech with the rest of the shapes.
  */
-export function SkeletonWords(props: { children: string }): React.JSX.Element {
-  return <Text selectable={false} style={styles.words}>{props.children}</Text>;
+export function SkeletonWords(props: { children: string; type?: SkeletonType }): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  // `type`: the words stand alone as a line of that type (a fixed footnote), rather than inside the text that holds them.
+  const words = <Text selectable={false} style={styles.words}>{props.children}</Text>;
+  return props.type === undefined ? words : <Text style={typeOf(props.type, phone)}>{words}</Text>;
 }
 
 /**
@@ -99,15 +102,23 @@ export function SkeletonHeading(props: { kicker?: boolean; big?: boolean; width?
   );
 }
 
-/** A figure: the value (`value`, 56; 40 on phones) over its mono label. */
-export function SkeletonFigure(props: { width?: DimensionValue }): React.JSX.Element {
+/**
+ * A figure: the value (`value`, 56; 40 on phones) over its mono label. `compact`: a tile's figure, `valuePhone` at
+ * every width with its unit on the same line (Home's At a glance), so one line of 40px.
+ */
+export function SkeletonFigure(props: { width?: DimensionValue; compact?: boolean }): React.JSX.Element {
   const { phone } = useBreakpoint();
-  const value = phone ? theme.type.valuePhone : theme.type.value;
+  const compact = props.compact === true;
+  const value = phone || compact ? theme.type.valuePhone : theme.type.value;
+  const line = (
+    <View style={[styles.line, { height: value.lineHeight }]}>
+      <View style={[styles.fill, { height: value.fontSize, width: props.width ?? 160, maxWidth: '100%' }]} />
+    </View>
+  );
+  if (compact) return line;
   return (
     <View style={styles.figure}>
-      <View style={[styles.line, { height: value.lineHeight }]}>
-        <View style={[styles.fill, { height: value.fontSize, width: props.width ?? 160, maxWidth: '100%' }]} />
-      </View>
+      {line}
       <SkeletonText type="label" width={96} />
     </View>
   );
@@ -147,6 +158,8 @@ export interface SkeletonColumn {
   flex?: number;
   /** Right-aligned, as a count or money column is. */
   numeric?: boolean;
+  /** The value's lines of mono text (1 by default), for a cell that holds several (a day's weekday, date and Today). */
+  lines?: number;
 }
 
 /**
@@ -171,10 +184,10 @@ export function SkeletonTable(props: {
       <View>
         {rows.map((row) => (
           <View key={row} style={[styles.stackedRow, row === last ? styles.lastRow : null]}>
-            {columns.map((_, index) => (
+            {columns.map((column, index) => (
               <View key={index} style={styles.pair}>
                 <View style={styles.headLine}><SkeletonText type="mono" width={72} /></View>
-                <SkeletonText type="mono" width="60%" />
+                <SkeletonText type="mono" width="60%" lines={column.lines ?? 1} lastWidth="40%" />
               </View>
             ))}
           </View>
@@ -187,9 +200,11 @@ export function SkeletonTable(props: {
   const cells = (width: DimensionValue, head: boolean) => columns.map((column, index) => (
     <View key={index} style={[styles.cell, { flex: column.flex ?? 1 }]}>
       <View style={head ? styles.headLine : null}>
-        <View style={[styles.line, styles.monoLine, column.numeric === true ? styles.numeric : null]}>
-          <View style={[styles.fill, styles.monoBar, { width }]} />
-        </View>
+        {Array.from({ length: head ? 1 : column.lines ?? 1 }, (_, line) => (
+          <View key={line} style={[styles.line, styles.monoLine, column.numeric === true ? styles.numeric : null]}>
+            <View style={[styles.fill, styles.monoBar, { width }]} />
+          </View>
+        ))}
       </View>
     </View>
   ));
