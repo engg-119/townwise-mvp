@@ -94,7 +94,7 @@ function context(fakes: Fakes = {}): ToolContext {
     role: 'member',
     actor: { actorUserId: 'user-1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
     turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
-    files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined } },
+    files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
   };
 }
 

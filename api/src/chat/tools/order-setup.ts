@@ -8,15 +8,12 @@
 // a rejected call is stored like an accepted one, so refusing an extra key would keep nothing out of the conversation.
 // `run` shows a card only for a file attached on the path whose content this turn's requests carry (`sent`), and says
 // which item names are not written in that text. Views carry the ref and counts, never a name. Nothing here logs.
-//
-// Phase A: the tool is not in the registry yet, and the turn does not fill `sent` yet. SentFile and SentFiles are
-// declared here until phase B moves them into registry.ts (TurnFiles.sent, required) and attachments.ts fills them.
 import { z } from 'zod';
 
 import { nameKey, setupResult, SETUP_CONTENT_KINDS, type SetupReadResult } from '../../orders/suggestions.ts';
 import { ORDER_CATEGORIES, ORDER_UNITS } from '../../orders/setup.ts';
 import { ATTACHMENT_REF } from '../attachments.ts';
-import type { ChatTool, ToolContext, ToolRun, TurnFiles } from './registry.ts';
+import type { ChatTool, ToolRun } from './registry.ts';
 import { viewOf } from './shared.ts';
 
 /**
@@ -25,17 +22,6 @@ import { viewOf } from './shared.ts';
  * it was skipped. [CONFIRM: 60 items a card]
  */
 export const ORDER_SETUP_ITEMS_MAX = 60;
-
-/** What a turn's requests carry of one attached file: its text as sent (and whether it was cut), or a picture. */
-export type SentFile = { readonly text: string; readonly truncated: boolean } | { readonly picture: true };
-
-/** By ref: the attached files whose content this turn handed the model, at its start or through read_data_item. */
-export interface SentFiles {
-  readonly sent: ReadonlyMap<string, SentFile>;
-}
-
-/** A tool context whose turn says what it sent. Phase B makes this ToolContext itself. */
-export type OrderSetupContext = ToolContext & { readonly files: TurnFiles & Partial<SentFiles> };
 
 /** The suggestions as checked: `posNames` always empty, and `inFile` null (the card's GET lays it over). */
 export interface OrderSetupInput extends SetupReadResult {
@@ -204,7 +190,7 @@ export const proposeOrderSetupTool: ChatTool<OrderSetupInput> = {
   run(tc, input) {
     if (!tc.files.attached.has(input.ref)) return Promise.resolve(notShown(NOT_ATTACHED));
     // No entry covers every way a file is not read (off, deleted, a scan, too large, busy, not allowed): none has one.
-    const sent = (tc.files as TurnFiles & Partial<SentFiles>).sent?.get(input.ref);
+    const sent = tc.files.sent.get(input.ref);
     if (sent === undefined) return Promise.resolve(notShown(NOT_SENT));
     if (input.suppliers.length === 0 && input.items.length === 0) return Promise.resolve(notShown(NOTHING_FOUND));
     // The same check again, now with the text: it is idempotent, and it is what says each name's inFile.

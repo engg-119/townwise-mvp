@@ -1,14 +1,15 @@
-// propose_order_setup (spec D56), without Docker and before the turn wires it (phase B appends it to the registry, so
-// these call the tool object directly): its one check of the model's input (an attached file's ref, the setup read's
-// answer, 60 items, no point-of-sale names), what it shows and refuses from the content the turn sent, that it reads no
-// file, and that its views carry a ref and counts only. Synthetic content only.
+// propose_order_setup (spec D56), without Docker: its one check of the model's input (an attached file's ref, the setup
+// read's answer, 60 items, no point-of-sale names), what it shows and refuses from the content the turn sent, that it
+// reads no file, that its views carry a ref and counts only, and its place in the registry, the prompt and a reply.
+// Synthetic content only.
 import { describe, expect, it } from 'vitest';
 
 import type { TownwiseContext } from '../src/app.ts';
 import type { OrgScope } from '../src/access/policy.ts';
-import {
-  ORDER_SETUP_ITEMS_MAX, proposeOrderSetupTool, shownOrderSetup, type OrderSetupContext, type SentFile,
-} from '../src/chat/tools/order-setup.ts';
+import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
+import { ORDER_SETUP_ITEMS_MAX, proposeOrderSetupTool, shownOrderSetup } from '../src/chat/tools/order-setup.ts';
+import { inputViewOf, TOOL_REGISTRY, toolNamed, type SentFile, type ToolContext } from '../src/chat/tools/registry.ts';
+import { DISPLAY_TOOLS, isAside } from '../src/chat/turn.ts';
 
 const TODAY = '2026-11-10';
 const REF = 'f_0000000000000000000000a1';
@@ -27,13 +28,13 @@ function answer(over: Record<string, unknown> = {}): Record<string, unknown> {
 
 interface Fakes {
   attached?: readonly string[];
-  sent?: ReadonlyMap<string, SentFile> | null;
+  sent?: Map<string, SentFile>;
   readWeb?: boolean;
   /** Every reach for the context's stores, ports or item reader, and every byte reservation. */
   touched?: string[];
 }
 
-function context(fakes: Fakes = {}): OrderSetupContext {
+function context(fakes: Fakes = {}): ToolContext {
   const touched = fakes.touched ?? [];
   const guarded = new Proxy({}, { get: (_target, key) => { touched.push(String(key)); return undefined; } });
   const files = {
@@ -52,11 +53,11 @@ function context(fakes: Fakes = {}): OrderSetupContext {
     role: 'member',
     actor: { actorUserId: 'user-1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
     turn: { readUntrusted: true, readWeb: fakes.readWeb ?? false, pictureBytes: 0 },
-    files: fakes.sent === null ? files : { ...files, sent: fakes.sent ?? new Map([[REF, { text: TEXT, truncated: false }]]) },
+    files: { ...files, sent: fakes.sent ?? new Map<string, SentFile>([[REF, { text: TEXT, truncated: false }]]) },
   };
 }
 
-async function run(input: unknown, tc: OrderSetupContext): Promise<Record<string, unknown>> {
+async function run(input: unknown, tc: ToolContext): Promise<Record<string, unknown>> {
   const parsed = proposeOrderSetupTool.parse(input, TODAY);
   if (parsed === null) throw new Error('invalid input');
   return JSON.parse((await proposeOrderSetupTool.run(tc, parsed)).content) as Record<string, unknown>;
@@ -124,12 +125,12 @@ describe('propose_order_setup’s input', () => {
 
 describe('propose_order_setup', () => {
   it('shows nothing for a ref not attached on the path', async () => {
-    const shown = await run(answer({ ref: OTHER_REF }), context({ sent: new Map([[OTHER_REF, { text: TEXT, truncated: false }]]) }));
+    const shown = await run(answer({ ref: OTHER_REF }), context({ sent: new Map<string, SentFile>([[OTHER_REF, { text: TEXT, truncated: false }]]) }));
     expect(shown).toEqual({ shown: false, reason: expect.stringMatching(/not a file attached to this conversation/) as unknown });
   });
 
   it('shows nothing, and says to call read_data_item first, for an attached file this turn’s requests don’t carry', async () => {
-    for (const sent of [new Map<string, SentFile>(), new Map<string, SentFile>([[OTHER_REF, { text: TEXT, truncated: false }]]), null]) {
+    for (const sent of [new Map<string, SentFile>(), new Map<string, SentFile>([[OTHER_REF, { text: TEXT, truncated: false }]])]) {
       const shown = await run(answer(), context({ attached: [REF, OTHER_REF], sent }));
       expect(shown).toEqual({ shown: false, reason: expect.stringMatching(/read_data_item with the ref first/) as unknown });
     }
@@ -147,12 +148,12 @@ describe('propose_order_setup', () => {
     expect(await run(answer({ items }), context())).toEqual({
       shown: true, supplierCount: 1, itemCount: 3, namesChecked: true, notInFile: ['sentinel stout'], partial: false, itemsCut: false, readWeb: false,
     });
-    const cut = await run(answer({ items }), context({ sent: new Map([[REF, { text: TEXT, truncated: true }]]) }));
+    const cut = await run(answer({ items }), context({ sent: new Map<string, SentFile>([[REF, { text: TEXT, truncated: true }]]) }));
     expect(cut).toMatchObject({ shown: true, partial: true, namesChecked: true });
   });
 
   it('leaves names unchecked for a picture', async () => {
-    expect(await run(answer({ items: [{ ...ITEM, name: 'Sentinel Stout' }] }), context({ sent: new Map([[REF, { picture: true }]]) }))).toEqual({
+    expect(await run(answer({ items: [{ ...ITEM, name: 'Sentinel Stout' }] }), context({ sent: new Map<string, SentFile>([[REF, { picture: true }]]) }))).toEqual({
       shown: true, supplierCount: 1, itemCount: 1, namesChecked: false, notInFile: [], partial: false, itemsCut: false, readWeb: false,
     });
   });
@@ -162,7 +163,7 @@ describe('propose_order_setup', () => {
     const tc = context({ touched });
     expect((await run(answer(), tc)).shown).toBe(true);
     expect((await run(answer({ ref: OTHER_REF }), tc)).shown).toBe(false);
-    expect((await run(answer(), context({ touched, sent: new Map([[REF, { picture: true }]]) }))).shown).toBe(true);
+    expect((await run(answer(), context({ touched, sent: new Map<string, SentFile>([[REF, { picture: true }]]) }))).shown).toBe(true);
     expect(touched).toEqual([]);
     expect(tc.turn.pictureBytes).toBe(0);
   });
@@ -190,12 +191,37 @@ describe('propose_order_setup', () => {
   });
 });
 
+describe('propose_order_setup in a turn', () => {
+  it('is the last tool of the registry, after propose_order_rule', () => {
+    expect(TOOL_REGISTRY.at(-1)).toBe(proposeOrderSetupTool);
+    expect(TOOL_REGISTRY.at(-2)?.definition.name).toBe('propose_order_rule');
+    expect(toolNamed('propose_order_setup')).toBe(proposeOrderSetupTool);
+    expect(inputViewOf('propose_order_setup', answer(), TODAY)).toEqual({ ref: REF, supplierCount: 1, itemCount: 1 });
+  });
+
+  it('is named in the system prompt, which no longer says the chat can’t fill the setup', () => {
+    expect(SYSTEM_PROMPT).toContain('then call propose_order_setup with the file\'s ref and at most sixty items');
+    expect(SYSTEM_PROMPT).toContain('call read_data_item with the file\'s ref first when its content is not in this reply');
+    expect(SYSTEM_PROMPT).toContain('never say anything was saved');
+    expect(SYSTEM_PROMPT).not.toMatch(/cannot fill the ordering setup/i);
+    expect(SYSTEM_PROMPT).not.toMatch(/\d/);
+  });
+
+  it('text written before the card stays the reply', () => {
+    const card = { type: 'tool_use', id: 't1', name: 'propose_order_setup' };
+    expect(isAside([{ type: 'text' }, card], () => true)).toBe(false);
+    // With a read in the same message the text came ahead of work, as for any tool.
+    expect(isAside([{ type: 'text' }, { type: 'tool_use', id: 't0', name: 'read_data_item' }, card], () => true)).toBe(true);
+    expect(DISPLAY_TOOLS.has('propose_order_setup')).toBe(true);
+  });
+});
+
 describe('a shown propose_order_setup call read back for its card', () => {
   it('is the checked input with each name’s inFile from the stored result, the cut flags and whether web pages were read', async () => {
     const input = answer({ items: [{ ...ITEM, posNames: [{ name: 'Sentinel-register-name', perSale: 1 }], par: 2 }, { ...ITEM, name: 'Sentinel  STOUT' }] });
     const parsed = proposeOrderSetupTool.parse(input, TODAY);
     if (parsed === null) throw new Error('invalid input');
-    const content = (await proposeOrderSetupTool.run(context({ readWeb: true, sent: new Map([[REF, { text: TEXT, truncated: true }]]) }), parsed)).content;
+    const content = (await proposeOrderSetupTool.run(context({ readWeb: true, sent: new Map<string, SentFile>([[REF, { text: TEXT, truncated: true }]]) }), parsed)).content;
     expect(shownOrderSetup(input, content)).toEqual({
       ref: REF, readWeb: true,
       read: {
@@ -203,7 +229,7 @@ describe('a shown propose_order_setup call read back for its card', () => {
         items: [{ ...ITEM, posNames: [], inFile: true }, { ...ITEM, name: 'Sentinel  STOUT', posNames: [], inFile: false }],
       },
     });
-    const picture = (await proposeOrderSetupTool.run(context({ sent: new Map([[REF, { picture: true }]]) }), parsed)).content;
+    const picture = (await proposeOrderSetupTool.run(context({ sent: new Map<string, SentFile>([[REF, { picture: true }]]) }), parsed)).content;
     expect(shownOrderSetup(input, picture)?.read.items.map((item) => item.inFile)).toEqual([null, null]);
   });
 

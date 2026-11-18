@@ -266,7 +266,7 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
  * below read, so the stream's `aside` and the "has the model answered" check never disagree.
  */
 export const DISPLAY_TOOLS: ReadonlySet<string> = new Set([
-  'show_visual', 'propose_note', 'propose_data_item', 'propose_order_change', 'propose_order_rule',
+  'show_visual', 'propose_note', 'propose_data_item', 'propose_order_change', 'propose_order_rule', 'propose_order_setup',
 ]);
 
 /** Whether a call ran: it has a result, and not a NOT_RUN one (a reply cut off mid-call, or past the per-message cap). */

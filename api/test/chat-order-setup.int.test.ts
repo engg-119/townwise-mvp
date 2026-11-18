@@ -1,18 +1,21 @@
 // The ordering setup card of a stored propose_order_setup call (spec D56), through the API with memory blobs: what its
 // GET answers, who it answers, that it stops once the file is off, deleted or no longer the caller's to read, and that
-// it can only be set aside. The calls are seeded as a turn stores them: phase B wires the tool into the turn and adds
-// the turn-driven tests here. Synthetic content only.
+// it can only be set aside. Most calls are seeded as a turn stores them; the last two tests run real turns against a
+// scripted model (helpers/chat-model.ts), from the attached file to the card. Synthetic content only.
 import { randomUUID } from 'node:crypto';
 
+import type { BetaMessageParam, BetaToolResultBlockParam } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
 import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
+import { message, messagesOf, scriptedModel, text, toolUse } from './helpers/chat-model.ts';
 import { addConversation, addGrant, addLocation, addSeat, auditEvents, createOrg, ORDER_COLLECTIONS } from './helpers/fixtures.ts';
 import { call, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
 const blobs = createMemoryFileBlobs();
+const model = scriptedModel();
 let server: TownwiseTestServer;
 let orgId: string;
 let author: TestSession;
@@ -116,7 +119,7 @@ async function orderRowsButCards(): Promise<string> {
 const NOT_FOUND = { status: 404, body: { error: 'not_found', message: 'Not found' } };
 
 beforeAll(async () => {
-  server = await startTownwiseServer({ files: blobs });
+  server = await startTownwiseServer({ chat: model, files: blobs });
   orgId = await createOrg(server, { name: 'Setup Card Tavern' });
   const join = async (name: string, role: 'member' | 'org_admin', org = orgId): Promise<TestSession> => {
     const email = `${name}-${randomUUID().slice(0, 8)}@example.test`;
@@ -132,6 +135,7 @@ beforeAll(async () => {
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
   await server.redis.flushdb();
+  model.calls.length = 0;
   locationId = await addLocation(server, { orgId, name: `Taproom ${randomUUID().slice(0, 8)}` });
 });
 
@@ -272,4 +276,71 @@ describe('the ordering setup card', () => {
     const setup = await (await call(server, `/api/org/locations/${locationId}/orders/setup`, { session: author })).json() as { setup: { version: number } };
     expect(setup.setup.version).toBe(1);
   });
+
+  /** One turn through the API, the model answering with the scripted steps. Resolves the conversation's id. */
+  async function turn(json: Record<string, unknown>): Promise<string> {
+    const res = await call(server, `/api/org/locations/${locationId}/chat/turns`, { session: author, json });
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain('event: done');
+    expect(model.remaining()).toBe(0);
+    // Each event is its lines, in any order: an id line, the event's name and its data.
+    const event = body.split('\n\n').map((chunk) => chunk.split('\n')).find((lines) => lines.includes('event: conversation'));
+    const data = event?.find((line) => line.startsWith('data: '))?.slice(6);
+    if (data === undefined) throw new Error('the turn sent no conversation event');
+    return (JSON.parse(data) as { id: string }).id;
+  }
+
+  /** The tool results the model was sent in its last call's last message, parsed. */
+  function lastResults(): unknown[] {
+    const last: BetaMessageParam | undefined = messagesOf(model.calls.at(-1)).at(-1);
+    const blocks = last === undefined || typeof last.content === 'string' ? [] : last.content ?? [];
+    return blocks.filter((block): block is BetaToolResultBlockParam => block.type === 'tool_result').map((block) => JSON.parse(block.content as string) as unknown);
+  }
+
+  it('a turn that attaches an order guide and calls propose_order_setup shows a card whose GET answers the checked suggestions with each name’s inFile, never a par, a never run out or a point-of-sale name', async () => {
+    const ref = await seed();
+    const before = await orderRowsButCards();
+    model.script(
+      { kind: 'message', message: message([text('Here is what the guide lists.'), toolUse(CALL, 'propose_order_setup', input(ref))]) },
+      { kind: 'message', message: message([text('Review it on the card.')]) },
+    );
+    const conversationId = await turn({ content: 'Set up my orders from this guide', attachments: [ref] });
+    expect(lastResults()).toEqual([{
+      shown: true, supplierCount: 1, itemCount: 2, namesChecked: true, notInFile: ['sentinel stout'], partial: false, itemsCut: false, readWeb: false,
+    }]);
+    expect(await getCard(conversationId)).toEqual({ status: 200, body: { proposal: { kind: 'setup', status: 'open', read: READ, readWeb: false } } });
+    // The conversation shows the call by its ref and counts, and the text before the card is the reply's.
+    const view = await (await call(server, `/api/org/locations/${locationId}/chat/${conversationId}`, { session: author })).json() as {
+      messages: { role: string; parts: { type: string; text?: string; name?: string; input?: unknown; result?: unknown }[] }[];
+    };
+    const parts = view.messages.flatMap((each) => each.parts);
+    expect(parts.find((part) => part.type === 'tool' && part.name === 'propose_order_setup')).toMatchObject({
+      input: { ref, supplierCount: 1, itemCount: 2 }, result: { shown: true, supplierCount: 1, itemCount: 2, notInFileCount: 1, partial: false },
+    });
+    expect(parts.filter((part) => part.type === 'text').map((part) => part.text)).toContain('Here is what the guide lists.');
+    // Nothing was saved to the setup, and no order event was written.
+    expect(await orderRowsButCards()).toBe(before);
+    expect(await cardEvents(conversationId)).toEqual([]);
+  }, 60_000);
+
+  it('in a later turn nothing is shown until read_data_item read the file again', async () => {
+    const ref = await seed();
+    model.script({ kind: 'message', message: message([text('I can set that up.')]) });
+    const conversationId = await turn({ content: 'Here is my guide', attachments: [ref] });
+    model.script(
+      { kind: 'message', message: message([toolUse('toolu_too_early', 'propose_order_setup', input(ref))]) },
+      { kind: 'message', message: message([toolUse('toolu_read', 'read_data_item', { ref })]) },
+      { kind: 'message', message: message([toolUse(CALL, 'propose_order_setup', input(ref))]) },
+      { kind: 'message', message: message([text('Review it on the card.')]) },
+    );
+    expect(await turn({ conversationId, content: 'Set up my orders from it' })).toBe(conversationId);
+    const results = messagesOf(model.calls.at(-1)).flatMap((param) => (typeof param.content === 'string' ? [] : param.content ?? []))
+      .filter((block): block is BetaToolResultBlockParam => block.type === 'tool_result').map((block) => JSON.parse(block.content as string) as Record<string, unknown>);
+    expect(results[0]).toEqual({ shown: false, reason: expect.stringMatching(/read_data_item with the ref first/) as unknown });
+    expect(results[1]).toEqual({ ref, text: GUIDE, truncated: false });
+    expect(results[2]).toMatchObject({ shown: true, namesChecked: true, notInFile: ['sentinel stout'] });
+    expect(await getCard(conversationId, author, 'toolu_too_early')).toEqual(NOT_FOUND);
+    expect((await getCard(conversationId)).body).toEqual({ proposal: { kind: 'setup', status: 'open', read: READ, readWeb: false } });
+  }, 60_000);
 });

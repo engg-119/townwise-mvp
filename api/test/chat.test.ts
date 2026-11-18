@@ -520,7 +520,9 @@ describe('the system prompt, orders', () => {
       '- For what is set up or missing for orders (suppliers and their days, items, counts, item sales), call get_order_setup, and point the owner to Ordering setup on the Orders page to add or change it.',
       'Never state a quantity no tool returned.',
       'To say whether an item will last, compare what is on hand plus the order (the quantity of the owner\'s saved edit when the line has one, else the recommended quantity) with the line\'s expectedUse and withCushion',
-      'You cannot fill the ordering setup from a file attached to this chat; say so and point them there.',
+      'call read_data_item with the file\'s ref first when its content is not in this reply; call get_order_setup, and write a supplier or item that is already there exactly as the setup spells it; then call propose_order_setup with the file\'s ref and at most sixty items, never with a person\'s name, a register name, a par or whether an item may run out.',
+      'propose_order_setup only shows a card that opens Ordering setup with the suggestions unsaved, where the owner sets each par and saves; never say anything was saved.',
+      'For a longer list, a file you cannot read or text pasted into this chat, point them to Read a file with TownwiseAI. Files are attached to a message on the web, so say that when you ask for one.',
       'A remembered change applies to every later order of that item until the owner turns it off',
       'Never say an order was placed or sent, or that a change or rule was saved.',
     ]) expect(SYSTEM_PROMPT).toContain(rule);
@@ -542,7 +544,7 @@ describe('the saved turn, an item’s text (D28)', () => {
     );
     const tools = {
       ctx: { items: { on: true, readText: () => Promise.resolve(read) } }, scope: {}, location: { id: 'l1' }, today: '2026-06-01',
-      timeZone: 'America/New_York', turn: { readUntrusted: false, readWeb: false },
+      timeZone: 'America/New_York', turn: { readUntrusted: false, readWeb: false }, files: { sent: new Map() },
     } as unknown as ToolContext;
     const result = await runTurn({
       model, tools, history: [], userMessage: { role: 'user', content: 'What is on the catering list?' }, expanded: null,
