@@ -161,9 +161,14 @@ export function UserMessage(props: {
           <View testID="user-bubble" style={[styles.bubble, { maxWidth: phone ? '85%' : '70%' }]}>
             {paragraphs.map((paragraph, index) => <Text key={index} selectable style={[styles.text, wrap]}>{paragraph}</Text>)}
           </View>
-          {/* Only a saved message can be edited or have versions. */}
-          {message.nodeId === null ? null : (
-            <View style={styles.icons} {...rowMark(props.actions)}>
+          {/*
+            Only a saved message can be edited or have versions. Until it is saved its row keeps its height, empty and
+            hidden from assistive technology, so nothing under it moves when the time, Edit and Copy fill in.
+          */}
+          {message.nodeId === null ? (
+            <View testID="user-actions" style={[styles.icons, styles.reserve]} {...rowMark(props.actions)} aria-hidden />
+          ) : (
+            <View testID="user-actions" style={styles.icons} {...rowMark(props.actions)}>
               <MessageTime at={message.at} />
               <ChatButton
                 focusRef={editButton}
@@ -217,6 +222,8 @@ const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end', columnGap: theme.space[4] },
   // A compact row, as under a reply: the 44px boxes side by side.
   icons: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'flex-end' },
+  // The filled row's height: its controls are 44px boxes (ChatButton).
+  reserve: { height: 44 },
   editor: { alignSelf: 'stretch', gap: theme.space[2] },
   field: {
     ...theme.type.sub, minHeight: 88, paddingHorizontal: 12, paddingVertical: 10, color: c.white, backgroundColor: c.ground,

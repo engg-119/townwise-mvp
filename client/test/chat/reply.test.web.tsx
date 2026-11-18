@@ -662,7 +662,7 @@ it('edit moves focus into the field; Escape returns it to Edit; Save and send ca
   expect(chat.editMessage).toHaveBeenCalledTimes(2);
 });
 
-it('Edit is aria-disabled while a reply streams and under view-as, and absent before the message is saved', () => {
+it('Edit is aria-disabled while a reply streams and under view-as, and not on the page before the message is saved', () => {
   const chat = fakeChat();
   const view = render(<UserMessage {...userProps({ chat, busy: true })} />);
   expect(button('Edit').getAttribute('aria-disabled')).toBe('true');
@@ -673,6 +673,29 @@ it('Edit is aria-disabled while a reply streams and under view-as, and absent be
   expect(button('Edit').getAttribute('aria-describedby')).toBe('read-only');
   view.rerender(<UserMessage {...userProps({ chat, message: { ...ASKED, nodeId: null } })} />);
   expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+});
+
+it('an unsaved message keeps its row’s place, hidden and with nothing to reach, and the same row fills in once saved', () => {
+  const chat = fakeChat();
+  const view = render(<UserMessage {...userProps({ chat, message: { ...ASKED, nodeId: null, at: Date.now() } })} />);
+  const pending = screen.getByTestId('user-actions');
+  expect(pending.getAttribute('aria-hidden')).toBe('true');
+  expect(pending.getAttribute('data-actions')).toBe('always');
+  // The filled row's height (its 44px controls), so the reply under it does not move when the row fills in.
+  expect(window.getComputedStyle(pending).height).toBe('44px');
+  expect(pending.querySelector('button, [role="button"], [tabindex]')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Copy' })).toBeNull();
+
+  view.rerender(<UserMessage {...userProps({ chat, message: { ...ASKED, at: Date.now() } })} />);
+  const saved = screen.getByTestId('user-actions');
+  expect(saved.getAttribute('aria-hidden')).toBeNull();
+  expect(saved.getAttribute('data-actions')).toBe('always');
+  expect(within(saved).getByRole('button', { name: 'Edit' })).toBeTruthy();
+  expect(within(saved).getByRole('button', { name: 'Copy' })).toBeTruthy();
+  // The same row in the same place: one flex row, its items at the end.
+  expect(window.getComputedStyle(saved).flexDirection).toBe(window.getComputedStyle(pending).flexDirection);
+  expect(window.getComputedStyle(saved).justifyContent).toBe('flex-end');
 });
 
 const VERSIONS: TreeNode[] = [

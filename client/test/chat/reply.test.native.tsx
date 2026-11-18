@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
-import { AccessibilityInfo, Animated, Linking } from 'react-native';
+import { AccessibilityInfo, Animated, Linking, StyleSheet } from 'react-native';
 
 import type { ToolStep } from '../../src/chat/tools';
 import type { TreeNode } from '../../src/chat/tree';
@@ -77,6 +77,22 @@ it('hides Copy on native and keeps the reply text selectable', async () => {
   expect(selectableText('How was December?')).toBe(true);
   expect(screen.getByText('You said')).toBeTruthy();
   expect(screen.getByText('TownwiseAI said')).toBeTruthy();
+});
+
+it('an unsaved message keeps a 44px row hidden from screen readers, with no Edit until it is saved', async () => {
+  const chat = fakeChat();
+  const message = { ...msg('m1', 'user', 'How was December?', 'u1', null), nodeId: null, at: Date.now() };
+  const props = { tree: TREE, chat, locationId: 'l1', readOnlyId: null, busy: false, actions: 'hover' as const, onAnnounce: jest.fn() };
+  await render(<UserMessage message={message} {...props} />);
+  // Hidden from screen readers, so the query has to ask for hidden elements.
+  expect(screen.queryByTestId('user-actions')).toBeNull();
+  const pending = screen.getByTestId('user-actions', { includeHiddenElements: true });
+  expect(pending.props['aria-hidden']).toBe(true);
+  expect(StyleSheet.flatten(pending.props.style)).toMatchObject({ height: 44 });
+  expect(screen.queryByRole('button', { name: 'Edit' })).toBeNull();
+  await screen.rerender(<UserMessage message={{ ...message, nodeId: 'u1' }} {...props} />);
+  expect(screen.getByTestId('user-actions').props['aria-hidden']).toBeUndefined();
+  expect(screen.getByRole('button', { name: 'Edit' })).toBeTruthy();
 });
 
 it('shows every row on native, whatever the message’s place', async () => {
