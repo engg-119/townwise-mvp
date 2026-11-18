@@ -46,7 +46,7 @@ import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetup
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
 import { getTownProfile } from '../handlers/towns.ts';
 import { endViewAs, startViewAs } from '../handlers/view-as.ts';
-import { acceptSuggestion, dismissSuggestion, switchWeeklySuggestions } from '../handlers/weekly-suggestions.ts';
+import { acceptSuggestion, dismissSuggestion, switchCalendarTitles, switchWeeklySuggestions } from '../handlers/weekly-suggestions.ts';
 import { openAsAdminRefusal, policyRefusal, principalOf, recordResolution, viewAsRefusal, type Policy, type Principal } from './policy.ts';
 import { resolveAccess } from './resolve.ts';
 
@@ -412,6 +412,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.weekly_suggestions.switch', method: 'PATCH', path: '/org/weekly-suggestions', policy: 'org_admin', bodyLimit: '2kb',
     openAsAdmin: true, handler: switchWeeklySuggestions,
+  },
+  // Sending the calendars' event titles to the weekly call (calendar-event-suggestions): open as admin may turn it off only.
+  {
+    id: 'org.weekly_suggestions.calendar_titles', method: 'PATCH', path: '/org/weekly-suggestions/calendar-titles', policy: 'org_admin',
+    bodyLimit: '2kb', openAsAdmin: true, handler: switchCalendarTitles,
   },
   // U13A, estimates (spec 10.13): people in town and "How Townwise estimates". Reads with no limiter.
   {

@@ -1,5 +1,5 @@
 // TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions, spec 10.12, P25): the org admin's
-// switch, and accepting or dismissing a suggestion the weekly pass made (lab/suggestions.ts). Suggestions are listed by
+// switches (weekly suggestions, and sending the calendars' event titles, calendar-event-suggestions), and accepting or dismissing a suggestion the weekly pass made (lab/suggestions.ts). Suggestions are listed by
 // GET .../agent (handlers/agent.ts) through suggestionsPanel below.
 //
 // Accepting writes the note or the business rule through the notes and rules code, as written by that admin, with the
@@ -98,6 +98,11 @@ export interface WeeklySuggestionsView {
   available: boolean;
   /** An org admin outside view-as: turns the switch and accepts or dismisses suggestions. */
   canChange: boolean;
+  /**
+   * Whether the weekly call also reads the location calendars' event titles, dates and hours to spot private events
+   * (calendar-event-suggestions): on unless an org admin turned it off.
+   */
+  calendarTitles: boolean;
 }
 
 export interface DecideResult {
@@ -253,6 +258,7 @@ export async function suggestionsPanel(
       on: org?.weeklySuggestions.on ?? true,
       available: ctx.config.weeklySuggestions && seen && !worker.paused,
       canChange: decides(caller),
+      calendarTitles: org?.calendarTitlesToAi.on ?? true,
     },
   };
 }
@@ -284,6 +290,38 @@ export async function switchWeeklySuggestions(ctx: TownwiseContext, req: Request
   }
   ctx.logger.info({ orgId: scope.orgId, on }, 'townwise.weekly_suggestions_switched');
   res.status(200).json({ weeklySuggestions: { on } });
+}
+
+/**
+ * PATCH /api/org/weekly-suggestions/calendar-titles { on, orgId? } (org admin, outside view-as): 200 { calendarTitles:
+ * { on } }. A change records `org.calendar_titles_ai_changed` before it is applied; the same state again writes nothing.
+ * Turning it on is the organization's consent to sending its customers' names to Anthropic, so staff open as admin may
+ * turn it off only: `on: true` answers them 403 open_as_admin_refused (owner, 2026-11-17). In open as admin a missing or
+ * other `orgId` answers 409 open_as_admin_active.
+ */
+export async function switchCalendarTitles(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const admin = orgAdmin(principal);
+  const { scope } = admin;
+  const { on } = parseInput(switchBody, req.body);
+  assertOpenAsAdminTab(admin, req.body);
+  if (on && admin.openAsAdmin !== null) throw new AppError(403, 'open_as_admin_refused', 'Only the organization’s own admin can turn this on');
+  const org = await ctx.stores.orgs.findById(scope.orgId);
+  // Only a deletion racing this request gets here; the client re-reads /api/me.
+  if (org === null) throw new AppError(403, 'no_access', 'No access');
+  if (org.calendarTitlesToAi.on !== on) {
+    const now = ctx.now();
+    const event: AuditEventInput = {
+      ...actorOf(admin), at: now, orgId: scope.orgId, action: 'org.calendar_titles_ai_changed', target: { type: 'org', id: scope.orgId },
+      details: { on },
+    };
+    const eventId = await recordBefore(ctx, event);
+    if (!(await applyRecorded(ctx, event, eventId, () => ctx.stores.orgs.setCalendarTitlesToAi(scope, { on, at: now, by: admin.userId })))) {
+      await recordNotApplied(ctx, event, eventId, 'not_found');
+      throw new AppError(403, 'no_access', 'No access');
+    }
+  }
+  ctx.logger.info({ orgId: scope.orgId, on }, 'townwise.calendar_titles_switched');
+  res.status(200).json({ calendarTitles: { on } });
 }
 
 /** A follow-up's note is where its accepted move put it: the move's dates, the link's new ones, changed since the snapshot. */

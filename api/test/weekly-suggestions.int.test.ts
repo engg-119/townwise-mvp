@@ -109,8 +109,8 @@ describe('the switch', () => {
   it('reads as on for an organization that never set it, to members and admins alike', async () => {
     const t = await team();
     expect((await orgDoc(t.orgId))?.weeklySuggestions).toBeUndefined();
-    expect((await panel(t, t.member)).weeklySuggestions).toEqual({ on: true, available: false, canChange: false });
-    expect((await panel(t, t.admin)).weeklySuggestions).toEqual({ on: true, available: false, canChange: true });
+    expect((await panel(t, t.member)).weeklySuggestions).toEqual({ on: true, available: false, canChange: false, calendarTitles: true });
+    expect((await panel(t, t.admin)).weeklySuggestions).toEqual({ on: true, available: false, canChange: true, calendarTitles: true });
   });
 
   it('is available only while the weekly worker has run them lately and staff have not paused it', async () => {
@@ -171,6 +171,67 @@ describe('the switch', () => {
     expect(viewed.suggestions).toHaveLength(1);
     expect(viewed.weeklySuggestions.canChange).toBe(false);
     expect((await orgDoc(t.orgId))?.weeklySuggestions).toBeUndefined();
+  });
+});
+
+describe('the calendar titles switch (calendar-event-suggestions, design decision 9)', () => {
+  afterEach(async () => {
+    await removeStaffFactor(server);
+    await server.connection.collection('tw_view_as_grants').deleteMany({});
+  });
+
+  function titlesTo(session: TestSession, body: unknown): Promise<Response> {
+    return call(server, '/api/org/weekly-suggestions/calendar-titles', { method: 'PATCH', session, json: body });
+  }
+
+  async function titleEvents(t: Team): Promise<Record<string, unknown>[]> {
+    return (await auditEvents(server)).filter((event) => event.action === 'org.calendar_titles_ai_changed' && String(event.orgId) === t.orgId);
+  }
+
+  it('reads as on for an organization that never set it; an org admin turns it off and back on, each recorded once with its state only', async () => {
+    const t = await team();
+    expect((await orgDoc(t.orgId))?.calendarTitlesToAi).toBeUndefined();
+    expect((await panel(t, t.member)).weeklySuggestions.calendarTitles).toBe(true);
+    const off = await titlesTo(t.admin, { on: false });
+    expect(off.status).toBe(200);
+    expect(await off.json()).toEqual({ calendarTitles: { on: false } });
+    expect(await orgDoc(t.orgId)).toMatchObject({ calendarTitlesToAi: { on: false, by: t.admin.userId } });
+    expect((await panel(t, t.member)).weeklySuggestions).toMatchObject({ on: true, calendarTitles: false });
+    expect((await titlesTo(t.admin, { on: false })).status).toBe(200);
+    expect((await titlesTo(t.admin, { on: true })).status).toBe(200);
+    expect((await panel(t, t.member)).weeklySuggestions.calendarTitles).toBe(true);
+    const events = await titleEvents(t);
+    expect(events.map((event) => event.details)).toEqual([{ on: false }, { on: true }]);
+    expect(events[0]).toMatchObject({ actorUserId: t.admin.userId, actorRole: 'org_admin', target: { type: 'org', id: t.orgId } });
+    expect(logLines(server).filter((line) => line.msg === 'townwise.calendar_titles_switched').at(-1)).toEqual(
+      expect.objectContaining({ orgId: t.orgId, on: true }),
+    );
+    // The weekly switch is its own.
+    expect((await orgDoc(t.orgId))?.weeklySuggestions).toBeUndefined();
+  });
+
+  it('refuses a member (403), anything but { on } (400), and staff in view-as (403 view_as_read_only), changing nothing', async () => {
+    const t = await team();
+    expect(await errorOf(await titlesTo(t.member, { on: false }))).toEqual({ status: 403, error: 'forbidden' });
+    for (const body of [{}, { on: 'no' }, { on: false, titles: [] }]) expect((await titlesTo(t.admin, body)).status).toBe(400);
+    const staff = await signInStaff(server);
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: t.admin.userId, orgId: t.orgId });
+    expect(await errorOf(await titlesTo(staff, { on: false }))).toEqual({ status: 403, error: 'view_as_read_only' });
+    expect((await orgDoc(t.orgId))?.calendarTitlesToAi).toBeUndefined();
+  });
+
+  it('staff open as admin turn it off with the tab’s orgId, and are refused turning it on (403 open_as_admin_refused)', async () => {
+    const t = await team();
+    const staff = await signInStaff(server);
+    await addOpenAsAdminGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, orgId: t.orgId });
+    expect(await errorOf(await titlesTo(staff, { on: false }))).toEqual({ status: 409, error: 'open_as_admin_active' });
+    expect((await titlesTo(staff, { on: false, orgId: t.orgId })).status).toBe(200);
+    expect(await errorOf(await titlesTo(staff, { on: true, orgId: t.orgId }))).toEqual({ status: 403, error: 'open_as_admin_refused' });
+    expect(await orgDoc(t.orgId)).toMatchObject({ calendarTitlesToAi: { on: false, by: staff.userId } });
+    expect((await titleEvents(t)).map((event) => [event.actorRole, event.details])).toEqual([['superadmin', { on: false }]]);
+    // The organization's own admin turns it back on.
+    expect((await titlesTo(t.admin, { on: true })).status).toBe(200);
+    expect((await panel(t, t.admin)).weeklySuggestions.calendarTitles).toBe(true);
   });
 });
 

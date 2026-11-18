@@ -69,6 +69,15 @@ describe('route table', () => {
     expect(() => { assertRouteTable(TOWNWISE_ROUTES); }).not.toThrow();
   });
 
+  it('the calendar titles switch is an org_admin PATCH with a 2kb body, open as admin (calendar-event-suggestions)', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.weekly_suggestions.calendar_titles')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([{
+      id: 'org.weekly_suggestions.calendar_titles', method: 'PATCH', path: '/org/weekly-suggestions/calendar-titles', policy: 'org_admin',
+      bodyLimit: '2kb', limiter: undefined, openAsAdmin: true,
+    }]);
+  });
+
   it('places.map is a signed_in POST with a 32kb body and the places limiter, open as admin', () => {
     const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'places.map')
       .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));

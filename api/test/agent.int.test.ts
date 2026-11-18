@@ -95,7 +95,7 @@ async function addRules(locationId: string, schedules: readonly (Record<string, 
 }
 
 /** A member's panel at a location with no weekly suggestions (openspec change weekly-forecast-suggestions). */
-const NO_SUGGESTIONS = { suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false } };
+const NO_SUGGESTIONS = { suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false, calendarTitles: true } };
 
 async function panel(locationId: string, session = member): Promise<{ status: number; body: AgentPanel }> {
   const res = await call(server, `/api/org/locations/${locationId}/agent`, { session });

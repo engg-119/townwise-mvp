@@ -8,6 +8,7 @@ import { createSecretKey, randomBytes, randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
@@ -590,6 +591,16 @@ describe('POST /api/admin/people/delete', () => {
     } finally {
       await server.ctx.stores.forecastSchedule.setPaused(null, server.clock.now());
     }
+  });
+
+  it('clears a former org admin’s id from the organization’s calendar titles switch, which stays as it was (calendar-event-suggestions)', async () => {
+    const former = await person('former-admin');
+    const orgId = await createOrg(server, { name: `Titles Kitchen ${randomUUID().slice(0, 6)}` });
+    const at = server.clock.now();
+    expect(await server.ctx.stores.orgs.setCalendarTitlesToAi({ orgId } as OrgScope, { on: false, at, by: former.session.userId })).toBe(true);
+    expect((await deletePerson(former.email)).status).toBe(200);
+    const doc = await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(orgId) });
+    expect(doc?.calendarTitlesToAi).toEqual({ on: false, at, by: null });
   });
 
   it('deletes an address that never signed in: its invitations and the events that name it', async () => {

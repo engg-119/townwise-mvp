@@ -146,6 +146,13 @@ const QUESTION_ANSWER_WORDS: Readonly<Record<string, string>> = {
   closed: 'closed on those days', open: 'the data is missing', not_sure: 'not sure', other: 'answered in the chat',
 };
 
+/** What an org admin decided on, by the suggestion's type (a note's words for any other). */
+const SUGGESTION_WORDS: Readonly<Record<string, string>> = {
+  note: 'a note TownwiseAI suggested', rule: 'a business rule TownwiseAI suggested',
+  event: 'a private event TownwiseAI spotted on a calendar', move: 'moving a note with its calendar event',
+  remove: 'deleting a note whose calendar event went',
+};
+
 /** What an answer to TownwiseAI's question about a day with almost no guests (D32, likely closed) said. */
 const LIKELY_CLOSED_ANSWER_WORDS: Readonly<Record<string, string>> = {
   closed: 'closed that day', open: 'open, with few guests', not_sure: 'not sure', other: 'answered in the chat',
@@ -236,8 +243,10 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       }
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
     case 'org.weekly_suggestions_changed': return d.on === true ? 'Turned TownwiseAI’s weekly suggestions on' : 'Turned TownwiseAI’s weekly suggestions off';
-    case 'agent.suggestion_accepted': return d.type === 'rule' ? 'Accepted a business rule TownwiseAI suggested' : 'Accepted a note TownwiseAI suggested';
-    case 'agent.suggestion_dismissed': return d.type === 'rule' ? 'Dismissed a business rule TownwiseAI suggested' : 'Dismissed a note TownwiseAI suggested';
+    case 'org.calendar_titles_ai_changed':
+      return d.on === true ? 'Turned sending calendar event titles to TownwiseAI on' : 'Turned sending calendar event titles to TownwiseAI off';
+    case 'agent.suggestion_accepted': return `Accepted ${SUGGESTION_WORDS[text(d.type)] ?? 'a note TownwiseAI suggested'}`;
+    case 'agent.suggestion_dismissed': return `Dismissed ${SUGGESTION_WORDS[text(d.type)] ?? 'a note TownwiseAI suggested'}`;
     // Orders.
     case 'order.setup_saved': return `Saved the ordering setup: ${text(d.supplierCount)} suppliers and ${text(d.itemCount)} items`;
     case 'order.item_sales_uploaded':

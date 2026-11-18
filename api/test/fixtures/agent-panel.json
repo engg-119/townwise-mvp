@@ -27,7 +27,7 @@
         "note": { "kind": "closure", "startDate": "2026-07-04", "weekdays": null, "effect": "closed", "expectedGuests": null, "startTime": null, "endTime": null, "endDate": "2026-07-04", "detail": null }
       }
     ],
-    "weeklySuggestions": { "on": true, "available": false, "canChange": false }
+    "weeklySuggestions": { "on": true, "available": false, "canChange": false, "calendarTitles": true }
   },
   "answer": {
     "questionId": "gap_2026-05-12_2026-05-13",

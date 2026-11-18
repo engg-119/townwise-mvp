@@ -33,3 +33,17 @@ describe('the weekly suggestions’ audit events', () => {
     expect(summaryOf('agent.suggestion_dismissed', { type: 'rule' })).toBe('Dismissed a business rule TownwiseAI suggested');
   });
 });
+
+describe('the calendar titles switch and the owner-calendar kinds’ audit events (calendar-event-suggestions)', () => {
+  it('allow the switch’s state only', () => {
+    expect(AUDIT_DETAIL_KEYS['org.calendar_titles_ai_changed']).toEqual(['on']);
+  });
+
+  it('read in plain words in the console, by the suggestion’s type', () => {
+    expect(summaryOf('org.calendar_titles_ai_changed', { on: false })).toBe('Turned sending calendar event titles to TownwiseAI off');
+    expect(summaryOf('org.calendar_titles_ai_changed', { on: true })).toBe('Turned sending calendar event titles to TownwiseAI on');
+    expect(summaryOf('agent.suggestion_accepted', { type: 'event' })).toBe('Accepted a private event TownwiseAI spotted on a calendar');
+    expect(summaryOf('agent.suggestion_accepted', { type: 'move' })).toBe('Accepted moving a note with its calendar event');
+    expect(summaryOf('agent.suggestion_dismissed', { type: 'remove' })).toBe('Dismissed deleting a note whose calendar event went');
+  });
+});

@@ -33,6 +33,12 @@ export interface OrgFields {
    * that person is deleted.
    */
   weeklySuggestions?: { on: boolean; at: Date; by: string | null };
+  /**
+   * An org admin turned off or back on sending the location calendars' event titles to TownwiseAI's weekly call (openspec
+   * change calendar-event-suggestions, design decision 9). Absent until first switched, which reads as on (owner rule
+   * 2026-11-16). `by` is the admin's user id (staff open as admin may only turn it off), null once that person is deleted.
+   */
+  calendarTitlesToAi?: { on: boolean; at: Date; by: string | null };
 }
 
 function orgSchema(): Schema<OrgFields> {
@@ -47,6 +53,7 @@ function orgSchema(): Schema<OrgFields> {
     lastSuspendedAt: { type: Date },
     forecasts: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
     weeklySuggestions: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
+    calendarTitlesToAi: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ createdAt: -1 });
   return schema;
@@ -71,6 +78,8 @@ export interface OrgRecord {
   readonly forecasts: { readonly on: boolean; readonly at: Date | null };
   /** Whether weekly suggestions are on, and when an org admin last switched them; `{ on: true, at: null }` before that. */
   readonly weeklySuggestions: { readonly on: boolean; readonly at: Date | null };
+  /** Whether the weekly call reads the calendars' event titles, and when an org admin last switched it; on before that. */
+  readonly calendarTitlesToAi: { readonly on: boolean; readonly at: Date | null };
 }
 
 export interface OrgStore {
@@ -104,6 +113,8 @@ export interface OrgStore {
   setForecasts(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
   /** Turns weekly suggestions on or off, recording when and by which org admin. False when the organization is gone. */
   setWeeklySuggestions(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
+  /** Turns sending calendar event titles on or off, recording when and by whom. False when the organization is gone. */
+  setCalendarTitlesToAi(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -121,6 +132,9 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
     // Weekly suggestions: on by default (owner directive 2026-11-16) until an org admin turns them off. [CONFIRM]
     weeklySuggestions: doc.weeklySuggestions == null
       ? { on: true, at: null } : { on: doc.weeklySuggestions.on, at: doc.weeklySuggestions.at },
+    // Calendar titles to TownwiseAI: on by default (owner, 2026-11-17) until an org admin turns them off. [CONFIRM]
+    calendarTitlesToAi: doc.calendarTitlesToAi == null
+      ? { on: true, at: null } : { on: doc.calendarTitlesToAi.on, at: doc.calendarTitlesToAi.at },
   };
 }
 
@@ -202,6 +216,12 @@ export function createOrgStore(connection: Connection): OrgStore {
     async setWeeklySuggestions(scope, change) {
       const result = await Org.updateOne(
         { _id: scope.orgId }, { $set: { weeklySuggestions: { on: change.on, at: change.at, by: change.by } } },
+      );
+      return result.matchedCount === 1;
+    },
+    async setCalendarTitlesToAi(scope, change) {
+      const result = await Org.updateOne(
+        { _id: scope.orgId }, { $set: { calendarTitlesToAi: { on: change.on, at: change.at, by: change.by } } },
       );
       return result.matchedCount === 1;
     },

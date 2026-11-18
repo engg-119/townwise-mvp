@@ -335,6 +335,8 @@ export async function deletePersonRecords(
   // Weekly suggestions: the org admin who last turned them on or off, and who accepted or dismissed a suggestion. The
   // switch and the decisions stay. Not counted.
   await orgModel(connection).updateMany({ 'weeklySuggestions.by': userId }, { $set: { 'weeklySuggestions.by': null } });
+  // And who last switched sending calendar event titles to TownwiseAI (calendar-event-suggestions). Not counted.
+  await orgModel(connection).updateMany({ 'calendarTitlesToAi.by': userId }, { $set: { 'calendarTitlesToAi.by': null } });
   await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
   // D42: the staff member who paused the weekly refresh, on its one schedule document; the pause stays. Not counted.
   await forecastScheduleModel(connection).updateOne({ 'paused.by': userId }, { $set: { 'paused.by': null, 'paused.email': DELETED_PERSON } });

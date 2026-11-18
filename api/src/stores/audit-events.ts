@@ -75,6 +75,9 @@ export const AUDIT_DETAIL_KEYS = {
   'org.weekly_suggestions_changed': ['on'],
   'agent.suggestion_accepted': ['locationId', 'suggestionId', 'type'],
   'agent.suggestion_dismissed': ['locationId', 'suggestionId', 'type'],
+  // Sending the calendars' event titles to TownwiseAI's weekly call (calendar-event-suggestions): the switch's state only.
+  // A decided suggestion's `type` above is also `event`, `move` or `remove`; never a title, uid or date of an owner event.
+  'org.calendar_titles_ai_changed': ['on'],
   // Orders: ids, dates, counts and a card's kind (change or rule), never an item or supplier name, a servings figure, a
   // quantity, or the owner's reason or situation.
   'order.setup_saved': ['locationId', 'supplierCount', 'itemCount'],
