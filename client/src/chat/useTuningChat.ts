@@ -267,6 +267,13 @@ export const RESUME_MS: readonly number[] = [1000, 2000, 4000];
  */
 export const LIST_POLL_MS = 3000;
 
+/** The list, with the conversation whose reply streams marked running when the person leaves it for `to`. */
+function leftRunning(state: TuningChatState, to: string | null): TuningChatState['conversations'] {
+  const left = state.conversationId;
+  if (!state.streaming || left === null || left === to) return state.conversations;
+  return state.conversations.map((conversation) => (conversation.id === left ? { ...conversation, running: true } : conversation));
+}
+
 /** The conversation of the list holding the person's running turn at this location, else null. */
 export function runningIn(summary: ChatSummary): string | null {
   const marked = summary.conversations.find((conversation) => conversation.running)?.id;
@@ -522,15 +529,16 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
     }
     case 'draft':
       return { ...state, draft: action.text };
-    // Leaving a conversation whose reply streams only stops following it (useTuningChat letGo): the turn runs on.
+    // Leaving a conversation whose reply streams only stops following it (useTuningChat letGo): the turn runs on, so
+    // the list marks it running (the new chat page's Previous chats, History's Replying) until a read of it says not.
     case 'new':
       return {
-        ...state, conversationId: null, conversationLoading: false, messages: [], tree: [], leafId: null, switching: false, error: null,
+        ...state, conversations: leftRunning(state, null), conversationId: null, conversationLoading: false, messages: [], tree: [], leafId: null, switching: false, error: null,
         draft: action.draft, streaming: false, turn: null, runningElsewhere: null,
       };
     case 'open':
       return {
-        ...state, conversationId: action.id, conversationLoading: true, messages: [], tree: [], leafId: null, switching: false, error: null,
+        ...state, conversations: leftRunning(state, action.id), conversationId: action.id, conversationLoading: true, messages: [], tree: [], leafId: null, switching: false, error: null,
         draft: action.draft, streaming: false, turn: null, runningElsewhere: null,
       };
     case 'opened':
@@ -821,7 +829,10 @@ export interface TuningChat {
   setItemAside: (card: ItemCard) => Promise<ItemProposal>;
   /** Reads the page again after it failed to load. */
   reload: () => void;
-  /** History opened or closed: while it is open with a conversation replying, the list is read every 3 seconds. */
+  /**
+   * Whether the page watches the list (History open, or the new chat page in view): while it does and a conversation
+   * is replying, the list is read every 3 seconds.
+   */
   watchList: (open: boolean) => void;
 }
 
@@ -1088,8 +1099,9 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
   }
 
-  // The list is read every 3 seconds while a send waits on a turn running in another chat, or while History is open
-  // with a conversation replying, until the list shows none; nothing is read while nothing runs.
+  // The list is read every 3 seconds while a send waits on a turn running in another chat, or while the page watches
+  // it (History open, or the new chat page in view, for its Previous chats) with a conversation replying, until the
+  // list shows none; nothing is read while nothing runs.
   const [watching, setWatching] = useState(false);
   const polling = state.runningElsewhere !== null || (watching && state.conversations.some((conversation) => conversation.running));
   useEffect(() => {

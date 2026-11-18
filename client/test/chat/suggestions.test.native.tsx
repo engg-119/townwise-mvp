@@ -57,7 +57,8 @@ async function renderSheet(me: MeResponse, canChange: boolean): Promise<FakeChat
   serveAbout(chat);
   const role = me.access.state === 'member' ? me.access.role : 'member';
   await renderApp('/locations/l1/agent?panel=questions', fakePortalApi({ me, org: orgOf(role), fallback: chat }));
-  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
+  // At 375px ?panel=questions opens the row under the chips, the panel in place under it.
+  expect(await screen.findByTestId('agent-side')).toBeTruthy();
   return chat;
 }
 

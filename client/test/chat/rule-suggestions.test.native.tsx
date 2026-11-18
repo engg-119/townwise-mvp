@@ -45,7 +45,9 @@ test('the sheet shows Suggested rules first, with 44px Confirm, Edit and Dismiss
   chat.panel = fixture.panel;
   chat.respond['/api/org/locations/l1/agent/rule-suggestions/sales_weekday_1/accept'] = () => ({ suggestion: { id: 'n1', status: 'accepted' }, rule: null });
   serveAbout(chat);
-  await renderApp('/locations/l1/agent?panel=questions', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: chat }));
+  // Opened by the person: from Home's link (?panel=questions) the row shows the landing's Questions for you above it.
+  await renderApp('/locations/l1/agent', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: chat }));
+  await fireEvent.press(await screen.findByRole('button', { name: 'Questions and activity (9)' }));
   const side = await screen.findByTestId('agent-side');
   expect(within(side).getAllByRole('heading')[0]?.props.children).toBe('Suggested rules');
   // Its count, and the weekly section's below it.

@@ -18,7 +18,7 @@ import { suggestionDaysText } from './format';
 // Something else… (answer `other`): the person's words go to TownwiseAI as a chat message, and only once that turn is
 // saved (the first try, or Try again under its reply in the thread) is the question answered `other`, whose body is
 // the answer alone. The words are kept here, in memory, while they are being written and sent, so a card drawn again
-// (the sheet opened again, the landing back after a turn taken back) still has them; folding the field keeps them,
+// (the new chat page shown again, the landing back after a turn taken back) still has them; folding the field keeps them,
 // and they are dropped once the question is answered or the field is canceled, and never stored.
 // A card drawn in both places (the column beside the landing) announces what happens only from the copy the person
 // last used, so a screen reader hears it once.
@@ -76,7 +76,7 @@ export interface SomethingElse {
  */
 export type SendToChat = (message: string, ended: (failure: string | null) => void) => void;
 
-/** Where a card is drawn: the panel (column or sheet) or the chat's landing. */
+/** Where a card is drawn: the panel (column or phone row) or the chat's landing. */
 export type QuestionPlace = 'panel' | 'landing';
 
 export interface AgentPanelState {

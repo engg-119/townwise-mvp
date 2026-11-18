@@ -54,7 +54,8 @@ async function renderSheet(me: MeResponse, canChange: boolean): Promise<FakeChat
   serveAbout(chat);
   const role = me.access.state === 'member' ? me.access.role : 'member';
   await renderApp('/locations/l1/agent?panel=questions', fakePortalApi({ me, org: orgOf(role), fallback: chat }));
-  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
+  // On a phone Home's link opens the row under the chips (the full-screen sheet is gone); its sections are the panel's.
+  expect(await screen.findByTestId('agent-side')).toBeTruthy();
   return chat;
 }
 

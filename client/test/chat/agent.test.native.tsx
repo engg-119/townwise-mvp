@@ -78,9 +78,13 @@ function disabled(name: string | RegExp): void {
   }
 }
 
-/** Opens Questions and activity: the column from 1024px, the sheet below. */
+/**
+ * Questions and activity on the new chat page: the column, open by default from 641px; at 640px and below the row
+ * under the chips, pressed open.
+ */
 async function openPanel(): Promise<ReturnType<typeof screen.getByTestId>> {
-  await fireEvent.press(await screen.findByRole('button', { name: /^Questions and activity/ }));
+  const toggle = await screen.findByRole('button', { name: /^Questions and activity/ });
+  if ((toggle.props.accessibilityState as { expanded?: boolean } | undefined)?.expanded !== true) await fireEvent.press(toggle);
   return screen.findByTestId('agent-side');
 }
 
@@ -384,7 +388,8 @@ describe('states', () => {
     const chat = fakeChatApi();
     chat.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 17 } };
     await renderAgent(meOf(ACCESS.member), chat);
-    expect(await screen.findByText('Most of November’s budget is used. TownwiseAI pauses when it runs out.')).toBeTruthy();
+    // Above the composer, and in the panel's column's budget section beside the new chat page.
+    expect(await within(await screen.findByTestId('chat-landing')).findByText('Most of November’s budget is used. TownwiseAI pauses when it runs out.')).toBeTruthy();
     expect(screen.getByLabelText(COMPOSER_LABEL)).toBeTruthy();
   });
 
@@ -406,41 +411,46 @@ describe('states', () => {
 });
 
 describe('the side panel', () => {
-  test('is closed by default and opens as a column from 1024px and as a sheet below', async () => {
+  test('is a column beside the new chat page from 641px, open by default, a row under the chips at 640px and below, and absent in a conversation', async () => {
     at(1280);
     const { chat } = await renderAgent(meOf(ACCESS.member));
     // It reads its questions anyway, for the button's count.
     expect(chat.panelLoads).toBe(1);
     const toggle = await screen.findByRole('button', { name: 'Questions and activity (2)' });
-    expect(toggle.props.accessibilityState).toMatchObject({ expanded: false });
-    expect(screen.queryByTestId('agent-side')).toBeNull();
-    await fireEvent.press(toggle);
+    expect(toggle.props.accessibilityState).toMatchObject({ expanded: true });
     expect(await screen.findByTestId('agent-side')).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Questions and activity (2)' }).props.accessibilityState).toMatchObject({ expanded: true });
-    expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
+    await fireEvent.press(toggle);
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Questions and activity (2)' }).props.accessibilityState).toMatchObject({ expanded: false });
+    await openEarlierChat();
+    expect(screen.queryByRole('button', { name: /^Questions and activity/ })).toBeNull();
     await cleanup();
     jest.restoreAllMocks();
-    // Below 1024px, a full-screen sheet with its heading and Close.
-    at(800);
+    at(390);
     await renderAgent(meOf(ACCESS.member));
-    await fireEvent.press(await screen.findByRole('button', { name: 'Questions and activity (2)' }));
-    expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
-    expect(within(screen.getByTestId('agent-side')).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
-    await fireEvent.press(screen.getByRole('button', { name: 'Close' }));
-    expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
+    const landing = await screen.findByTestId('chat-landing');
+    const row = await within(landing).findByRole('button', { name: 'Questions and activity (2)' });
+    expect(within(screen.getByTestId('chat-header-controls')).queryByRole('button', { name: /^Questions and activity/ })).toBeNull();
+    expect(row.props.accessibilityState).toMatchObject({ expanded: false });
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    await fireEvent.press(row);
+    expect(within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side')).toBeTruthy();
   });
 
   test('questions with what each answer does; an answer saves and says what it did', async () => {
-    // The sheet below 1024px keeps the questions over the landing (from 1024px the column beside the landing leaves
-    // them to it), so the panel's own heading, count and Planned tag show here.
+    // While TownwiseAI is off the landing doesn't list the questions, so the panel's own heading, count and Planned
+    // tag show here.
     at(800);
-    const { chat } = await renderAgent(meOf(ACCESS.member));
+    const off = fakeChatApi();
+    off.summary = { ...SUMMARY, enabled: false };
+    const { chat } = await renderAgent(meOf(ACCESS.member), off);
     const side = await openPanel();
     expect(within(side).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
     expect(await within(side).findByText('2 open')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Were you open on Sat, Jan 24, 2026?' })).toBeTruthy();
     expect(within(side).getByText('Only 1 guest was recorded. Saturdays usually have about 100.')).toBeTruthy();
-    expect(within(side).getByText('Townwise treats this day as likely closed until you say. Yes saves a note that you were open with fewer guests, so the day counts. No saves a closure note for it. Something else lets you tell TownwiseAI in the chat.')).toBeTruthy();
+    // Something else… needs the chat, so with it off the help line leaves it out.
+    expect(within(side).getByText('Townwise treats this day as likely closed until you say. Yes saves a note that you were open with fewer guests, so the day counts. No saves a closure note for it.')).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'Were you closed Feb 1 to Feb 3, 2026?' })).toBeTruthy();
     expect(within(side).getByText('There are no sales for these 3 days.')).toBeTruthy();
     expect(within(side).getByText('TownwiseAI’s own research (unusual nights, town events it finds) is planned.')).toBeTruthy();
@@ -562,28 +572,41 @@ describe('the side panel', () => {
   });
 });
 
+test('Previous chats shows under the chips while a reply runs in another chat, and a row opens that chat (owner, 2026-11-18)', async () => {
+  at(390);
+  const chat = fakeChatApi();
+  chat.summary = { ...SUMMARY, conversations: SUMMARY.conversations.map((item) => ({ ...item, running: true })) };
+  await renderAgent(meOf(ACCESS.member), chat);
+  const landing = await screen.findByTestId('chat-landing');
+  const toggle = await within(landing).findByRole('button', { name: 'Previous chats' });
+  expect(toggle.props.accessibilityState).toMatchObject({ expanded: false });
+  await fireEvent.press(toggle);
+  await fireEvent.press(screen.getByRole('button', { name: 'Earlier chat, Replying' }));
+  expect(await screen.findByText('We close for the holidays.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull();
+});
+
 describe('phones', () => {
-  test('at 375px nothing scrolls above the chat header, and the panel is a sheet; the chat keeps its state', async () => {
+  test('at 375px nothing scrolls above the chat header, and the panel is a row under the chips that opens in place; the chat keeps its state', async () => {
     at(375);
     await renderAgent(meOf(ACCESS.member));
     const landing = await screen.findByTestId('chat-landing');
     expect(screen.queryByText(/^Welcome back/)).toBeNull();
     expect(screen.queryByText('Main Street Bar, Hanover, NH')).toBeNull();
-    const questions = screen.getByRole('button', { name: 'Questions and activity (2)' });
-    expect(within(landing).queryByRole('button', { name: 'Questions and activity (2)' })).toBeNull();
+    const questions = within(landing).getByRole('button', { name: 'Questions and activity (2)' });
     expect(screen.queryByRole('button', { name: 'Location' })).toBeNull();
     // The composer's label is the input's name, with nothing drawn.
     expect(screen.queryByText(COMPOSER_LABEL)).toBeNull();
     await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'Half typed');
     await fireEvent.press(questions);
-    // In the sheet (the landing shows the same question under its chips).
-    expect(await within(await screen.findByTestId('agent-side')).findByText('Were you open on Sat, Jan 24, 2026?')).toBeTruthy();
-    await fireEvent.press(screen.getByRole('button', { name: 'Close' }));
+    // In place under the row (the landing lists the questions under its chips, so the panel leaves them out).
+    expect(await within(await screen.findByTestId('agent-side')).findByText('What it’s been doing')).toBeTruthy();
+    await fireEvent.press(questions);
     expect(screen.getByLabelText(COMPOSER_LABEL).props.value).toBe('Half typed');
     // After the first send the header stays above the thread, and the composer stays under it.
     await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
     const thread = await screen.findByTestId('chat-thread');
-    expect(within(thread).queryByRole('button', { name: 'Questions and activity (2)' })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Questions and activity/ })).toBeNull();
     expect(within(thread).queryByLabelText(COMPOSER_LABEL)).toBeNull();
   });
 
@@ -611,7 +634,7 @@ test('while the page loads it is a skeleton of the page, with Loading TownwiseAI
     expect(screen.getByTestId(id, { includeHiddenElements: true })).toBeTruthy();
   }
   expect(StyleSheet.flatten(screen.getByTestId('skeleton-agent-landing', { includeHiddenElements: true }).props.style))
-    .toMatchObject({ flexGrow: 1, justifyContent: 'center', maxWidth: 760 });
+    .toMatchObject({ flexGrow: 1, justifyContent: 'flex-start', maxWidth: 760 });
   // The landing's own words, as bars in its own type, so its rows take the lines the landing's will; hidden, never drawn.
   expect(screen.queryByText(/^Ask TownwiseAI about/)).toBeNull();
   const words = screen.getByText(/^Ask TownwiseAI about/, { includeHiddenElements: true });
@@ -621,6 +644,8 @@ test('while the page loads it is a skeleton of the page, with Loading TownwiseAI
   await act(async () => { answer?.(); await Promise.resolve(); });
   expect(await screen.findByTestId('chat-landing')).toBeTruthy();
   expect(screen.queryByTestId('skeleton-agent', { includeHiddenElements: true })).toBeNull();
+  // Both start at the top (spec P25 build note, 2026-11-18), so the landing never moves while it loads.
+  expect(StyleSheet.flatten(screen.getByTestId('chat-landing-column').props.style)).toMatchObject({ flexGrow: 1, justifyContent: 'flex-start', maxWidth: 760 });
 });
 
 describe('the docked composer', () => {
