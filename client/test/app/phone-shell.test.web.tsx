@@ -56,12 +56,25 @@ describe.each([
   ['a member', meOf(ACCESS.member)],
   ['staff viewing as a member', viewAsMe(ACCESS.member)],
 ])('at 320px, for %s', (_who, me) => {
-  test('Sign out holds its width and the organization name takes the squeeze with an ellipsis', async () => {
+  test('Menu holds its width and the organization name takes the squeeze with an ellipsis', async () => {
     renderAt('/locations/l1/notes', me);
     await screen.findByRole('heading', { level: 1, name: 'Notes' });
-    const signOut = within(screen.getByRole('banner')).getByRole('button', { name: 'Sign out' });
-    // The box around Sign out never shrinks, so Sign out can't pass the 16px margin or wrap to “Sign / out”.
-    expect(style(parentOf(signOut)).flexShrink).toBe('0');
+    const menu = within(screen.getByRole('banner')).getByRole('button', { name: 'Menu' });
+    // The box around the switch and Menu never shrinks, so Menu can't pass the 16px margin.
+    expect(style(parentOf(menu)).flexShrink).toBe('0');
+    // A link in the menu opens its page, closes the menu and hands focus to Menu, as the link is about to leave.
+    fireEvent.click(menu);
+    fireEvent.click(within(within(screen.getByRole('banner')).getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Town' }));
+    await screen.findByRole('heading', { level: 1, name: 'Town' });
+    const after = within(screen.getByRole('banner')).getByRole('button', { name: 'Menu' });
+    expect(after.getAttribute('aria-expanded')).toBe('false');
+    expect(document.activeElement).toBe(after);
+    // A press on the current page's link, which moves nowhere, closes it too.
+    fireEvent.click(after);
+    expect(after.getAttribute('aria-expanded')).toBe('true');
+    fireEvent.click(within(within(screen.getByRole('banner')).getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'Town' }));
+    expect(after.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.getByRole('heading', { level: 1, name: 'Town' })).toBeTruthy();
     const org = within(screen.getByRole('banner')).getByText('Test Group');
     expect(style(org).whiteSpace).toBe('nowrap');
     expect(style(org).textOverflow).toBe('ellipsis');
@@ -120,7 +133,7 @@ describe.each([
   ['a member', meOf(ACCESS.member)],
   ['staff viewing as a member', viewAsMe(ACCESS.member)],
 ])('TownwiseAI at 320px, for %s', (_who, me) => {
-  test('there is no page header, so nothing scrolls above the chat header; the sections stay in the top bar; the composer docks under the thread', async () => {
+  test('there is no page header, so nothing scrolls above the chat header; the sections are in the top bar’s menu; the composer docks under the thread', async () => {
     renderAt('/locations/l1/agent', me);
     const landing = await screen.findByTestId('chat-landing');
     const title = screen.getByRole('heading', { level: 1, name: 'TownwiseAI' });
@@ -133,9 +146,11 @@ describe.each([
     // The chat header is outside what scrolls, so it is the first thing under the top bar.
     const history = screen.getByRole('button', { name: 'History' });
     expect(landing.contains(history)).toBe(false);
-    const sections = screen.getByRole('region', { name: 'Sections' });
-    expect(landing.contains(sections)).toBe(false);
-    expect(within(sections).getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('page');
+    const banner = screen.getByRole('banner');
+    expect(landing.contains(banner)).toBe(false);
+    fireEvent.click(within(banner).getByRole('button', { name: 'Menu' }));
+    expect(within(within(banner).getByRole('navigation', { name: 'Main' })).getByRole('link', { name: 'TownwiseAI' }).getAttribute('aria-current')).toBe('page');
+    fireEvent.click(within(banner).getByRole('button', { name: 'Menu' }));
     expect(landing.contains(screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
     // With messages, the header stays above the thread and the composer stays below it.
     fireEvent.click(history);
@@ -143,7 +158,7 @@ describe.each([
     const thread = await screen.findByTestId('chat-thread');
     await within(thread).findByText('We close for the holidays.');
     expect(thread.contains(screen.getByRole('button', { name: 'History' }))).toBe(false);
-    expect(thread.contains(screen.getByRole('region', { name: 'Sections' }))).toBe(false);
+    expect(thread.contains(screen.getByRole('banner'))).toBe(false);
     expect(thread.contains(screen.getByLabelText(COMPOSER_LABEL))).toBe(false);
     expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
   });

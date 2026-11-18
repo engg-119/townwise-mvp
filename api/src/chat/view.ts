@@ -18,7 +18,7 @@ import { nextOf } from './tools/next.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/registry.ts';
 import { visualOf, type Visual } from './tools/visual.ts';
 import type { ChatNode } from './tree.ts';
-import { NOT_RUN } from './turn.ts';
+import { isAside, NOT_RUN } from './turn.ts';
 import { isContextBlock } from './user-message.ts';
 import { citedSources, searchCard, WEB_SEARCH, type SourceLink } from './web-search.ts';
 
@@ -180,13 +180,21 @@ export function chatMessageViews(
     for (const { param } of items) {
       if (param.role !== 'assistant') continue;
       written.push(...blocksOf(param));
+      // Text written ahead of a tool call is replayed as thinking, as the stream's `aside` event files it (turn.ts).
+      const aside = isAside(blocksOf(param), (id) => {
+        const result = results.get(id);
+        return result !== undefined && !(result.is_error === true && typeof result.content === 'string' && result.content.startsWith(NOT_RUN));
+      });
+      let asideText: { type: 'thinking'; text: string } | null = null;
       for (const block of blocksOf(param)) {
         const last = parts.at(-1);
         if (block.type === 'thinking') {
           if (block.thinking !== '') parts.push({ type: 'thinking', text: block.thinking });
         } else if (block.type === 'text') {
           if (block.text === '') continue;
-          if (last?.type === 'text') last.text += block.text;
+          if (aside && last !== undefined && last === asideText) last.text += block.text;
+          else if (aside) parts.push(asideText = { type: 'thinking', text: block.text });
+          else if (last?.type === 'text') last.text += block.text;
           else parts.push({ type: 'text', text: block.text });
         } else if (block.type === 'tool_use') {
           const result = results.get(block.id);

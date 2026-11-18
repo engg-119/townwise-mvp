@@ -35,7 +35,7 @@ function linkNames(region: string, names: readonly string[]): string[] {
   return found;
 }
 
-const NAV = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings'];
+const NAV = ['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings'];
 /** The sections under More (D38), which open in a row under the bar on native. */
 const MORE = ['Notes', 'Rules', 'Town', 'Your data'];
 /** More for org admins, who also get Location settings (P16). */
@@ -60,7 +60,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
     const signOut = jest.fn(() => Promise.resolve());
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Settings']);
+    expect(navLabels()).toEqual(['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Settings']);
     // Notes, Rules, Town and Your data open in a row under the bar, and More says so.
     const more = within(screen.getByLabelText('Main')).getByRole('button', { name: 'More' });
     expect(more.props.accessibilityState).toMatchObject({ expanded: false });
@@ -118,21 +118,35 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
     expect(await screen.findByText('Couldn’t sign out. Check your connection and try again.')).toBeTruthy();
   });
 
-  test('at 320px the email hides and the nav stays, in a region that scrolls sideways', async () => {
+  test('at 320px the email hides and the nav, with Sign out, is under Menu, in a panel in the flow (D51)', async () => {
+    const signOut = jest.fn(() => Promise.resolve());
     const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...WINDOW, width: 320 });
     try {
-      await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
+      const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
       await screen.findAllByText('Main Street Bar');
       expect(screen.queryByText(EMAIL)).toBeNull();
-      expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Settings']);
-      expect(within(screen.getByLabelText('Sections')).getByLabelText('Main')).toBeTruthy();
-      // More sits in the scrolling row; its row opens under it, outside the scroller.
-      await moreLink('Notes');
-      expect(linkNames('More', NAV)).toEqual(MORE);
-      expect(within(screen.getByLabelText('Sections')).queryByLabelText('More')).toBeNull();
       // The table stacks into label and value pairs.
       const table = screen.getByLabelText('Locations');
       expect(within(table).getAllByText('Sales history')).toHaveLength(2);
+      // Closed, the bar has no nav, no More and no Sign out, only Menu.
+      expect(screen.queryByLabelText('Main')).toBeNull();
+      expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+      const menu = screen.getByRole('button', { name: 'Menu' });
+      expect(menu.props.accessibilityState).toMatchObject({ expanded: false });
+      await fireEvent.press(menu);
+      expect(screen.getByRole('button', { name: 'Menu' }).props.accessibilityState).toMatchObject({ expanded: true });
+      // Every link in one list, with no More, and Sign out after them.
+      expect(navLabels()).toEqual(['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', ...MORE, 'Settings']);
+      expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
+      // A link opens its page and closes the menu, which leaves once its motion ends.
+      await fireEvent.press(navLink('Notes'));
+      expect(router.getPathname()).toBe('/locations/l1/notes');
+      expect(screen.getByRole('button', { name: 'Menu' }).props.accessibilityState).toMatchObject({ expanded: false });
+      await waitFor(() => { expect(screen.queryByLabelText('Main')).toBeNull(); });
+      await fireEvent.press(screen.getByRole('button', { name: 'Menu' }));
+      expect(navLink('Notes').props.accessibilityState).toMatchObject({ selected: true });
+      await fireEvent.press(screen.getByRole('button', { name: 'Sign out' }));
+      expect(signOut).toHaveBeenCalledTimes(1);
     } finally {
       spy.mockRestore();
     }

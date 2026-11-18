@@ -49,6 +49,11 @@ export type TurnEvent =
   | { type: 'text'; data: { delta: string } }
   /** A piece of the reply's thinking summary: text only, never the signature. Same class as message text, never logged. */
   | { type: 'thinking'; data: { delta: string } }
+  /**
+   * The text streamed since the last tool call was written ahead of work (isAside), not as the answer: the client files
+   * it with the reply's thinking. Sent once the message is whole, before its tools' events.
+   */
+  | { type: 'aside'; data: Record<string, never> }
   | {
     type: 'tool';
     data: { id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null };
@@ -255,6 +260,22 @@ function tooMany(block: BetaToolUseBlock): BetaToolResultBlockParam {
   };
 }
 
+/** A tool that only shows the owner something (a card, a visual, the next questions): it reads nothing for the answer. */
+function showsOnly(name: string): boolean {
+  return name === 'suggest_next' || name === 'show_visual' || name.startsWith('propose_');
+}
+
+/**
+ * Whether an assistant message's text is an aside: the message also calls a tool that does work (a read, a
+ * calibration), so its text came ahead of that work ("Next week, presumably.", or a remark on a window a tool
+ * refused) and the answer is still to come. Text before a card or a visual stays the reply's ("Here it is."). The
+ * stream marks an aside (the `aside` event) and the history view replays it as thinking, so neither shows it as the
+ * reply. `ran` leaves out the calls that never ran (a reply cut off mid-call keeps its text).
+ */
+export function isAside(content: readonly { type: string; name?: string; id?: string }[], ran: (id: string) => boolean = () => true): boolean {
+  return content.some((block) => block.type === 'tool_use' && block.name !== undefined && !showsOnly(block.name) && ran(block.id ?? ''));
+}
+
 /**
  * Whether the turn wrote text the owner sees after its last tool call other than suggest_next: the answer. Text before
  * that call is an aside written ahead of the work ("Next week, presumably."), not an answer to it, and Opus 5.5
@@ -458,6 +479,10 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       // last, resumes it; that call counts toward the 8 and is made only while the budget lasts, like any other.
       if (stop === 'pause_turn' && toolUses.length === 0) continue;
       if (toolUses.length === 0) return done('end_turn');
+      // The calls below run, so text this message wrote ahead of a working one was no answer.
+      if (isAside(content) && content.some((block) => block.type === 'text' && block.text.trim() !== '')) {
+        input.emit({ type: 'aside', data: {} });
+      }
 
       const results: BetaToolResultBlockParam[] = [];
       for (const [index, block] of toolUses.entries()) {

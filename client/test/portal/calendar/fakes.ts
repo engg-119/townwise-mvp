@@ -157,7 +157,7 @@ export function ownerCalendar(fields: Partial<OwnerCalendar> = {}): OwnerCalenda
   return {
     id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 0, skippedRepeating: 0, status: 'ok',
     lastSuccessAt: '2026-11-11T15:00:00.000Z', lastAttemptAt: '2026-11-11T15:00:00.000Z', createdAt: '2026-11-01T15:00:00.000Z',
-    ...fields,
+    mine: false, ...fields,
   };
 }
 

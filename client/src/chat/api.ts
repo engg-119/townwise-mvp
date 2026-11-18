@@ -181,6 +181,8 @@ export type ChatEvent =
   | { type: 'text'; delta: string }
   /** A piece of the reply's thinking summary. */
   | { type: 'thinking'; delta: string }
+  /** The text streamed since the last tool call was written ahead of work, not as the answer: it joins the thinking. */
+  | { type: 'aside' }
   | { type: 'tool'; id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null }
   | { type: 'proposal'; id: string; proposal: NoteProposal }
   | { type: 'visual'; id: string; visual: Visual }
@@ -229,6 +231,8 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
       const parsed = eventSchemas.thinking.safeParse(data);
       return parsed.success ? { type: 'thinking', ...parsed.data } : null;
     }
+    case 'aside':
+      return { type: 'aside' };
     case 'tool': {
       const parsed = eventSchemas.tool.safeParse(data);
       return parsed.success ? { type: 'tool', ...parsed.data } : null;

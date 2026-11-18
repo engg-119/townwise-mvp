@@ -64,7 +64,8 @@ function boardLine(line: OrderLine) {
   return {
     itemId: line.itemId, name: line.name, unit: line.unit, neverRunOut: line.neverRunOut, recommended: line.recommended,
     alternative: line.alternative, par: line.par, ...(line.setupPar === line.par ? {} : { setupPar: line.setupPar }),
-    onHand: line.onHand, countAgeDays: line.countAgeDays, confidence: line.confidence,
+    onHand: line.onHand, countAgeDays: line.countAgeDays, expectedUse: rounded(line.mu), withCushion: rounded(line.orderUpTo),
+    confidence: line.confidence,
     why: line.why, edit: line.edit, rules: line.rules.map((rule) => ({ delta: rule.delta, situation: rule.situation })),
   };
 }
@@ -115,7 +116,7 @@ function shownView(content: string, shown: string): ToolView | null {
 export const orderBoardTool: ChatTool<NoOrderInput> = {
   definition: {
     name: 'get_order_board',
-    description: 'This location’s next order from each supplier, as its Orders page shows it: the order-by date and time, the delivery, the supplier’s following delivery it lasts until, and a line per item with the recommended quantity in the unit the bar orders, the other deal size, the par the line used (setupPar, the owner’s par from the setup, only when it differs: a draft item’s par is one more when the window uses more than one unit), what is on hand and how many days ago it was counted, how sure Townwise is, why, the owner’s saved edit and every rule they confirmed. Returns available false, with what the ordering setup lacks, when this location has no order.',
+    description: 'This location’s next order from each supplier, as its Orders page shows it: the order-by date and time, the delivery, the supplier’s following delivery it lasts until, and a line per item with the recommended quantity in the unit the bar orders, the other deal size, the par the line used (setupPar, the owner’s par from the setup, only when it differs: a draft item’s par is one more when the window uses more than one unit), what is on hand and how many days ago it was counted, expectedUse (what the days from the order-by day to the following delivery are expected to use, in the same unit) and withCushion (that use plus Townwise’s cushion), both null without item sales, how sure Townwise is, why, the owner’s saved edit and every rule they confirmed. Returns available false, with what the ordering setup lacks, when this location has no order.',
     input_schema: NO_INPUT,
     eager_input_streaming: true,
   },

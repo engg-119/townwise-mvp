@@ -473,7 +473,7 @@ describe('with Google calendars off and the calendar key set', () => {
       orgId: t.orgId, locationId: t.locationId, connectionId, key: KEY, googleCalendarId: SHARED_ID,
     });
     const listed = await send(calendarsPath(t.locationId), t.member.session);
-    expect(listed.body.google).toEqual({ available: false, connected: false, clientId: null });
+    expect(listed.body.google).toEqual({ available: false, connected: false, clientId: null, canConnect: false });
     expect(listed.body.calendars).toEqual([expect.objectContaining({ id: calendarId, kind: 'google', host: null })]);
     expect(await send(`${calendarsPath(t.locationId)}/${calendarId}/refresh`, t.member.session, { method: 'POST' }))
       .toMatchObject({ status: 503, body: { error: 'google_calendar_unavailable' } });

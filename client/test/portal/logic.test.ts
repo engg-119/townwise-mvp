@@ -129,18 +129,18 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('members: the location’s sections, then Settings as the right-hand group', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
-      ['Home', '/locations/l1', 'page', false], ['Calendar', '/locations/l1/calendar', null, false], ['Orders', '/locations/l1/orders', null, false],
-      ['Analytics', '/locations/l1/analytics', null, false],
-      ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
+      ['Home', '/locations/l1', 'page', false], ['TownwiseAI', '/locations/l1/agent', null, false],
+      ['Calendar', '/locations/l1/calendar', null, false], ['Orders', '/locations/l1/orders', null, false],
+      ['Analytics', '/locations/l1/analytics', null, false], ['Notes', '/locations/l1/notes', null, false],
       ['Rules', '/locations/l1/rules', null, false],
       ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
     ]);
   });
 
-  test('clientNav lists Calendar right after Home', () => {
+  test('clientNav lists TownwiseAI right after Home, then Calendar', () => {
     expect(clientNav('org_admin', '/locations/l1/calendar', 'l1').map((item) => item.label)).toEqual([
-      'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
+      'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
     ]);
   });
 
@@ -159,9 +159,9 @@ describe('navigation per role (spec 15.3)', () => {
       expect(items.filter((item) => item.more === true).map((item) => [item.label, item.current])).toEqual([
         ['Notes', null], ['Rules', null], ['Town', null], ['Your data', 'true'], ...admin,
       ]);
-      // They are the sections' last ones, so More takes Notes' place, right after TownwiseAI.
+      // They are the sections' last ones, so More takes Notes' place, right after Analytics.
       const first = items.findIndex((item) => item.more === true);
-      expect(items[first - 1]?.label).toBe('TownwiseAI');
+      expect(items[first - 1]?.label).toBe('Analytics');
       expect(items.slice(first, first + 4 + admin.length).every((item) => item.more === true)).toBe(true);
     }
     // Location settings (P16) is the org admin's alone, and opens the location's own page.
