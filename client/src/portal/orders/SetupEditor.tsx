@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
@@ -125,6 +125,8 @@ function Editor(props: {
   /** For SetupProposal (D56): how often their changes replaced the draft, and how many saves went through. */
   const [loads, setLoads] = useState(0);
   const [saves, setSaves] = useState(0);
+  /** SetupProposal keeps this true while an open card's suggestions are in play. */
+  const cardOpen = useRef(false);
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const locked = readOnly || saving;
   const lock = { locked, readOnlyId };
@@ -223,7 +225,9 @@ function Editor(props: {
         setProblems({});
         setProblemCount(0);
         setConflict(false);
-        setNotice('Loaded the setup as it was last saved.');
+        setNotice(cardOpen.current
+          ? 'Loaded the setup as it was last saved, then added TownwiseAI’s suggestions again.'
+          : 'Loaded the setup as it was last saved.');
         setLoads((count) => count + 1);
       } else {
         const { removed } = await deleteItemSales(api, location.id);
@@ -266,13 +270,13 @@ function Editor(props: {
           </Actions>
         ) : null}
       </View>
+      <SetupProposal draft={draft} saved={saved} apply={applyProposal} readOnly={readOnly} loads={loads} saves={saves} onOpen={(open) => { cardOpen.current = open; }} />
       {props.sheet === undefined
         ? <Small>Use a computer to download the template, import a sheet or upload item sales.</Small>
         : props.sheet({ draft, setDraft: edit, locked, readOnlyId })}
       {status.canReadWithAi && props.read !== undefined
         ? props.read({ draft, apply: applyRead, locked, readOnlyId })
         : null}
-      <SetupProposal draft={draft} saved={saved} apply={applyProposal} readOnly={readOnly} loads={loads} saves={saves} />
 
       <Section title="Suppliers">
         {draft.suppliers.length === 0 ? <Small>No suppliers yet. Add each one you order from, with its delivery days.</Small> : null}

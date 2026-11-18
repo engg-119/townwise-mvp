@@ -19,7 +19,7 @@ export const CHAT_SETUP_ITEMS_MAX = 60;
 export const CHAT_CUT: CutWording = {
   cap: CHAT_SETUP_ITEMS_MAX,
   limit: 'suggests in a chat',
-  rest: 'For the rest, use Read a file with TownwiseAI on Ordering setup, on the web.',
+  rest: 'For the rest, use Read a file with TownwiseAI on Ordering setup.',
 };
 
 /** `?proposal=` on Ordering setup: a conversation's id, a dot, and the tool call's id. Ids only, checked before any request. */
@@ -36,8 +36,24 @@ export function proposalParam(value: string | string[] | undefined): { conversat
   return match === null ? null : { conversationId: match[1] ?? '', proposalId: match[2] ?? '' };
 }
 
-/** Said on the card and on Ordering setup when the reply that made the suggestions also read web pages. */
+/** Said on the card when the reply that made the suggestions also read web pages. */
 export const READ_WEB_LINE = 'This reply also read web pages, which Townwise didn’t check. Look over each change before you save.';
+/** The same on Ordering setup, where no reply is in sight. */
+export const PAGE_WEB_LINE = 'The TownwiseAI reply behind these suggestions also read web pages, which Townwise didn’t check. Look over each change before you save.';
+/** Said on the card and on Ordering setup when no name could be looked for in the file's text (a picture, or a PDF with none). */
+export const NAMES_UNCHECKED_LINE = 'Townwise couldn’t check these names against the file’s text, because it was read as a picture.';
+/** How many changed items the card lists; Ordering setup lists every one. */
+export const CARD_CHANGES_MAX = 10;
+
+/** The card's line after its first changes: "and 3 more. Ordering setup lists every one." Null when all are listed. */
+export function moreChangesLine(total: number): string | null {
+  return total <= CARD_CHANGES_MAX ? null : `and ${formatCount(total - CARD_CHANGES_MAX)} more. Ordering setup lists every one.`;
+}
+
+/** The line above the changes on Ordering setup, where they are in the draft already. */
+export function pageChangesLead(count: number): string {
+  return `${plural(count, 'item', 'items')} already in your setup by name ${count === 1 ? 'changes' : 'change'} when you save:`;
+}
 
 export interface FieldChange {
   readonly field: 'name' | 'supplier' | 'category' | 'unit' | 'servings per unit' | 'deal size';
@@ -72,8 +88,12 @@ export interface SetupCardPreview {
   readonly namesUnchecked: boolean;
   /** Nothing would be added, changed or left out: the suggestions are in the setup already. */
   readonly inSetup: boolean;
+  /** Opening Ordering setup would add or change something, so the card offers its actions. */
+  readonly actionable: boolean;
   /** What the card says, in order. */
   readonly lines: readonly string[];
+  /** The card's last line, directly above its actions: nothing is saved yet. Null when there is nothing to open. */
+  readonly closing: string | null;
 }
 
 function shown(value: string): string {
@@ -100,9 +120,12 @@ function fieldsChanged(before: ItemDraft, after: ItemDraft, was: SetupDraft, now
   return pairs.filter(([, from, to]) => from !== to).map(([field, from, to]) => ({ field, from: shown(from), to: shown(to) }));
 }
 
-/** One changed item as a line: "Sample Lager: unit cases to kegs; servings per unit 24 to 124". */
+/**
+ * One changed item as a line: "Sample Lager: unit: “cases” becomes “kegs”; servings per unit: “24” becomes “124”". Both
+ * values are quoted, so a value that holds "to" or "becomes" cannot run into the other.
+ */
 export function changeLine(change: ItemChange): string {
-  return `${change.item}: ${change.fields.map((each) => `${each.field} ${each.from} to ${each.to}`).join('; ')}`;
+  return `${change.item}: ${change.fields.map((each) => `${each.field}: “${each.from}” becomes “${each.to}”`).join('; ')}`;
 }
 
 /** What `read`, a card's suggestions, would do to `setup` as it is saved now (null when the location has none). */
@@ -117,22 +140,27 @@ export function setupCardPreview(read: SetupRead, setup: OrderSetup | null): Set
   const namesUnchecked = read.items.length > 0 && read.items.every((item) => item.inFile === null);
   const base = {
     result, found: result.found, added: result.added, matched: result.replaced, changes, problems: result.problems, namesUnchecked,
-    changesLead: changes.length === 0 ? null : `${plural(changes.length, 'item', 'items')} already in your setup would change:`,
+    changesLead: changes.length === 0 ? null : `${plural(changes.length, 'item', 'items')} already in your setup by name would change:`,
     problemsLead: result.problems.length === 0 ? null : `Left out ${plural(result.problems.length, 'item', 'items')}:`,
   };
-  if (read.items.length === 0 && read.suppliers.length === 0) return { ...base, inSetup: false, lines: ['TownwiseAI found nothing to suggest.'] };
+  if (read.items.length === 0 && read.suppliers.length === 0) {
+    return { ...base, inSetup: false, actionable: false, closing: null, lines: ['TownwiseAI found nothing to suggest.'] };
+  }
   const toDo = result.added + changes.length + result.newSuppliers.length + result.deliveriesFilled.length;
   if (toDo === 0 && result.problems.length === 0 && result.suppliersLeftOut.length === 0) {
-    return { ...base, inSetup: true, lines: ['These suggestions are in your ordering setup.'] };
+    return { ...base, inSetup: true, actionable: false, closing: null, lines: ['These suggestions are in your ordering setup.'] };
   }
 
+  // The three counts add up to the items suggested: an item left out is neither new nor matched.
+  const leftOut = result.found - result.added - result.replaced;
+  const counted = `${formatCount(result.added)} new${leftOut > 0 ? ',' : ' and'} ${formatCount(result.replaced)} already in your setup by name`;
   const lines: string[] = [result.found > 0
-    ? `TownwiseAI suggests ${plural(result.found, 'item', 'items')}: ${formatCount(result.added)} new and ${formatCount(result.replaced)} already in your setup by name.`
+    ? `TownwiseAI suggests ${plural(result.found, 'item', 'items')}: ${counted}${leftOut > 0 ? ` and ${formatCount(leftOut)} left out` : ''}.`
     : 'TownwiseAI suggests no items, only suppliers.'];
   if (changes.length > 0) {
     lines.push(changes.length === 1
-      ? 'An item already in your setup keeps its par, its never run out and its register names.'
-      : 'Items already in your setup keep their par, their never run out and their register names.');
+      ? 'An item already in your setup by name keeps its par, never run out and point-of-sale names.'
+      : 'Items already in your setup by name keep their par, never run out and point-of-sale names.');
   }
   const created = result.newSuppliers.flatMap((name) => result.draft.suppliers.filter((supplier) => supplier.name === name).slice(0, 1));
   if (created.length > 0) {
@@ -148,14 +176,12 @@ export function setupCardPreview(read: SetupRead, setup: OrderSetup | null): Set
   const keepDays = before.suppliers.filter((supplier) => suggestedDays.has(normalizeName(supplier.name)) && !filledKeys.has(normalizeName(supplier.name)));
   if (keepDays.length > 0) lines.push(`${listText(keepDays.map((supplier) => supplier.name))} ${keepDays.length === 1 ? 'keeps' : 'keep'} the delivery days in your setup.`);
   if (result.estimated > 0) lines.push(`TownwiseAI estimated the servings per unit of ${plural(result.estimated, 'item', 'items')}.`);
-  if (namesUnchecked) lines.push('The file is a picture, so these names couldn’t be checked against its text.');
+  if (namesUnchecked) lines.push(NAMES_UNCHECKED_LINE);
   else if (result.notInFile > 0) lines.push(`TownwiseAI didn’t find ${formatCount(result.notInFile)} of these names in the file.`);
   if (result.itemsCut) lines.push(`The file lists more items than TownwiseAI ${CHAT_CUT.limit} (${String(CHAT_CUT.cap)}), so some were left out. ${CHAT_CUT.rest}`);
   if (result.partial) lines.push('The file was too long to read whole, so TownwiseAI read only the start of it.');
   if (result.suppliersLeftOut.length > 0) lines.push(`Left out ${listText(result.suppliersLeftOut)}: the setup holds up to 20 suppliers.`);
-  if (toDo > 0) {
-    const par = result.added === 0 ? '' : `, set the par of ${result.added === 1 ? 'the new item' : `the ${formatCount(result.added)} new items`},`;
-    lines.push(`Nothing is saved yet. Review these in Ordering setup${par} and save there.`);
-  }
-  return { ...base, inSetup: false, lines };
+  const par = result.added === 0 ? '' : `, set the par of ${result.added === 1 ? 'the new item' : `the ${formatCount(result.added)} new items`},`;
+  const closing = toDo > 0 ? `Nothing is saved yet. Review these in Ordering setup${par} and save there.` : null;
+  return { ...base, inSetup: false, actionable: toDo > 0, closing, lines };
 }

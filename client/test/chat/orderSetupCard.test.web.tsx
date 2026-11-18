@@ -140,16 +140,21 @@ test('a shown propose_order_setup call waits while it streams, then draws the ca
   expect(await screen.findByText(HEADLINE)).toBeTruthy();
   for (const line of [
     'Ordering setup suggestions',
-    'An item already in your setup keeps its par, its never run out and its register names.',
+    'An item already in your setup by name keeps its par, never run out and point-of-sale names.',
     'New supplier: New Brewery (Tuesday).',
     'TownwiseAI estimated the servings per unit of 1 item.',
     'TownwiseAI didn’t find 1 of these names in the file.',
     'Nothing is saved yet. Review these in Ordering setup, set the par of the new item, and save there.',
-    '1 item already in your setup would change:',
-    'Sample Lager: unit cases to kegs; servings per unit 24 to 124',
+    '1 item already in your setup by name would change:',
+    'Sample Lager: unit: “cases” becomes “kegs”; servings per unit: “24” becomes “124”',
   ]) expect(screen.getByText(line)).toBeTruthy();
   expect(screen.queryByText(/web pages/)).toBeNull();
   expect(api.writes).toEqual([]);
+  // UI review 4: "Nothing is saved yet" is the last line, directly above the actions.
+  const closing = screen.getByText('Nothing is saved yet. Review these in Ordering setup, set the par of the new item, and save there.');
+  const lines = [HEADLINE, '1 item already in your setup by name would change:', 'TownwiseAI didn’t find 1 of these names in the file.'].map((line) => screen.getByText(line));
+  for (const line of lines) expect(line.compareDocumentPosition(closing) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
+  expect(closing.compareDocumentPosition(screen.getByRole('link', { name: 'Review in Ordering setup' })) & Node.DOCUMENT_POSITION_FOLLOWING).not.toBe(0);
   cleanup();
 
   // On reload the stored call draws the same card.
@@ -181,15 +186,21 @@ test('Not now sets it aside', async () => {
   api.respond[CARD] = () => ({ proposal: { kind: 'setup', status: 'dismissed' } });
   await (await proposed(api)).finish();
   fireEvent.click(await screen.findByRole('button', { name: 'Not now' }));
-  expect(await screen.findByText('Not now.')).toBeTruthy();
+  // UI review 3: set aside is final, so the line says so and how to get the suggestions back; it is announced and
+  // takes the focus the pressed button gave up.
+  const aside = await screen.findByText('Set aside. Nothing was added. Ask TownwiseAI again if you want these suggestions back.');
+  const status = aside.closest('[role="status"]');
+  expect(status).not.toBeNull();
+  await waitFor(() => { expect(document.activeElement).toBe(status); });
+  expect(screen.queryByText('Not now.')).toBeNull();
   expect(screen.queryByText(HEADLINE)).toBeNull();
   expect(api.writes.filter((write) => write.path === CARD)).toEqual([{ method: 'POST', path: CARD, body: { action: 'dismiss' } }]);
   cleanup();
 
   // A card read as set aside says so, and one whose suggestions are saved already offers nothing to do.
-  const aside = served(() => open({ status: 'dismissed' }));
-  await (await proposed(aside)).finish();
-  expect(await screen.findByText('Not now.')).toBeTruthy();
+  const earlier = served(() => open({ status: 'dismissed' }));
+  await (await proposed(earlier)).finish();
+  expect(await screen.findByText('Set aside. Nothing was added. Ask TownwiseAI again if you want these suggestions back.')).toBeTruthy();
   cleanup();
   const done = served(() => open({ read: { ...READ, suppliers: [], items: [item('Sample Lager')] } }));
   await (await proposed(done)).finish();
@@ -234,8 +245,17 @@ test('says so when the conversation also read web pages', async () => {
 test('a card whose file was turned off or deleted says it isn’t available', async () => {
   const api = served(() => new ApiError('http', 'The request was refused.', { status: 404, code: 'not_found' }));
   await (await proposed(api)).finish();
-  expect(await screen.findByText('This proposal isn’t available.')).toBeTruthy();
+  // UI review 1: the common path on reopening a conversation, said with its reason and not as an error.
+  const gone = await screen.findByText('These suggestions aren’t available any more. The file they came from may have been turned off or deleted.');
+  expect(gone.closest('[role="alert"]')).toBeNull();
+  expect(screen.queryByText('This proposal isn’t available.')).toBeNull();
   expect(screen.queryByRole('link', { name: 'Review in Ordering setup' })).toBeNull();
+  cleanup();
+
+  // Any other failure of the card's own read says to reload.
+  const down = served(() => new ApiError('network', 'The request failed.'));
+  await (await proposed(down)).finish();
+  expect(await screen.findByText('Townwise couldn’t load these suggestions. Reload the page to try again.')).toBeTruthy();
   cleanup();
 
   // The setup itself failing to load says that, and offers nothing to open.
@@ -271,3 +291,33 @@ test('under view-as the card shows how many suppliers and items were suggested, 
   expect(setupReads).toBe(0);
   expect(api.writes).toEqual([]);
 });
+
+// UI review 5 and notes: a long change list is cut on the card, and a card with nothing to open offers nothing.
+test('the card lists the first ten changed items and says how many more Ordering setup lists', async () => {
+  const names = Array.from({ length: 12 }, (_, index) => `Sample Item ${String(index + 1).padStart(2, '0')}`);
+  const setup = { ...SAVED, items: names.map((name, index) => ({ ...SAVED.items[0], id: `b${String(index).padStart(23, '0')}`, name })) };
+  const api = served(() => open({ read: { ...READ, suppliers: [], items: names.map((name) => item(name, { unit: 'kegs' })) } }));
+  api.reads[SETUP] = () => ({ ...SETUP_ANSWER, setup });
+  await (await proposed(api)).finish();
+  expect(await screen.findByText('12 items already in your setup by name would change:')).toBeTruthy();
+  expect(screen.getByText('Sample Item 10: unit: “cases” becomes “kegs”')).toBeTruthy();
+  expect(screen.queryByText('Sample Item 11: unit: “cases” becomes “kegs”')).toBeNull();
+  expect(screen.getByText('and 2 more. Ordering setup lists every one.')).toBeTruthy();
+});
+
+test('a card with nothing to open offers no Review: nothing suggested, or only items left out', async () => {
+  const nothing = served(() => open({ read: { ...READ, suppliers: [], items: [] } }));
+  await (await proposed(nothing)).finish();
+  expect(await screen.findByText('TownwiseAI found nothing to suggest.')).toBeTruthy();
+  expect(screen.queryByRole('link', { name: 'Review in Ordering setup' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Not now' })).toBeNull();
+  expect(screen.queryByText(/Nothing is saved yet/)).toBeNull();
+});
+
+// UI review 6: the caveat for a picture, in the words Ordering setup uses too.
+test('says when the names couldn’t be checked against the file’s text', async () => {
+  const api = served(() => open({ read: { ...READ, items: READ.items.map((each) => ({ ...each, inFile: null })) } }));
+  await (await proposed(api)).finish();
+  expect(await screen.findByText('Townwise couldn’t check these names against the file’s text, because it was read as a picture.')).toBeTruthy();
+});
+

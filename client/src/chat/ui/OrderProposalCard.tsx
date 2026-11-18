@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { useEffect, useRef, useState } from 'react';
+import { Platform, StyleSheet, View } from 'react-native';
 import { z } from 'zod';
 
 import { ApiError } from '../../api/client';
@@ -13,7 +13,7 @@ import { FormField } from '../../portal/ui/FormField';
 import { Eyebrow, Small } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import type { OrderCard } from '../useTuningChat';
-import { OrderSetupCard } from './OrderSetupCard';
+import { OrderSetupCard, SETUP_CARD_COPY } from './OrderSetupCard';
 
 // A propose_order_change or propose_order_rule card. The item and the delivery come from the stored call,
 // which this card reads (GET .../order-proposals/:id). The owner types the quantity, a whole number from 0 to 999,
@@ -61,6 +61,12 @@ export function OrderProposalCard(props: { card: OrderCard; locationId: string; 
   const [reason, setReason] = useState('');
   const [checks, setChecks] = useState<{ quantity: string[]; reason: string[] }>({ quantity: [], reason: [] });
   const [pending, setPending] = useState(false);
+  /** A setup card the person just set aside: its line takes focus, which the pressed button gave up. */
+  const [setAsideNow, setSetAsideNow] = useState(false);
+  const asideRef = useRef<React.ComponentRef<typeof View>>(null);
+  useEffect(() => {
+    if (setAsideNow) asideRef.current?.focus();
+  }, [setAsideNow]);
   const readable = card.stored === 'kept' && card.conversationId !== null;
   const target = path(props.locationId, card);
 
@@ -69,13 +75,30 @@ export function OrderProposalCard(props: { card: OrderCard; locationId: string; 
     let live = true;
     void api.json(target, proposalSchema).then(
       (body) => { if (live) setView(body.proposal); },
-      () => { if (live) setError('This proposal isn’t available.'); },
+      (caught: unknown) => {
+        if (!live) return;
+        // A setup card is no longer served once its file is turned off or deleted (D56): say that, not an error.
+        if (card.setup !== true) setError('This proposal isn’t available.');
+        else setError(hasCode(caught, 404, 'not_found') ? SETUP_CARD_COPY.gone : SETUP_CARD_COPY.loadFailed);
+      },
     );
     return () => { live = false; };
-  }, [api, readable, target]);
+  }, [api, readable, target, card.setup]);
 
   if (card.stored === 'lost') return <Small>This reply wasn’t saved, so there’s nothing to change.</Small>;
-  if (!readable || view === null) return error === null ? <LoadingLine text={card.setup === true ? 'Loading TownwiseAI’s suggestions…' : 'Loading the order…'} /> : <ErrorNotice message={error} />;
+  if (!readable || view === null) {
+    return error === null
+      ? <LoadingLine text={card.setup === true ? 'Loading TownwiseAI’s suggestions…' : 'Loading the order…'} />
+      : error === SETUP_CARD_COPY.gone ? <Small>{error}</Small> : <ErrorNotice message={error} />;
+  }
+  if (view.status === 'dismissed' && view.kind === 'setup') {
+    // Set aside is final for this card, so the line says how to get the suggestions back.
+    return (
+      <View ref={asideRef} {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})} role="status">
+        <Small>{SETUP_CARD_COPY.setAside}</Small>
+      </View>
+    );
+  }
   if (view.status === 'dismissed') return <Small>Not now.</Small>;
   if (view.kind === 'setup') {
     return (
@@ -85,7 +108,10 @@ export function OrderProposalCard(props: { card: OrderCard; locationId: string; 
         conversationId={card.conversationId ?? ''}
         proposalId={card.id}
         readOnly={props.readOnlyId !== null}
-        onDismissed={() => { setView({ ...view, status: 'dismissed' }); }}
+        onDismissed={() => {
+          setSetAsideNow(true);
+          setView({ ...view, status: 'dismissed' });
+        }}
       />
     );
   }

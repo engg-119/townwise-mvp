@@ -6,7 +6,7 @@ import { hasCode } from '../../portal/errors';
 import { dismissSetupProposal, fetchOrderSetup, type OrderSetup, type SetupProposal, type SetupRead } from '../../portal/orders/api';
 import { plural } from '../../portal/format';
 import { problemLine } from '../../portal/orders/proposal';
-import { changeLine, READ_WEB_LINE, setupCardPreview, setupProposalHref } from '../../portal/orders/setupCard';
+import { CARD_CHANGES_MAX, changeLine, moreChangesLine, READ_WEB_LINE, setupCardPreview, setupProposalHref } from '../../portal/orders/setupCard';
 import { usePortal } from '../../portal/PortalProvider';
 import { Actions, Button, LinkButton } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine } from '../../portal/ui/feedback';
@@ -18,7 +18,8 @@ import { theme } from '../../theme';
 // them against the setup as it is saved now, with the merge Ordering setup itself runs (portal/orders/setupCard.ts):
 // what is new, each item already in the setup that would change, field by field, and what is left out. It saves
 // nothing. Review opens Ordering setup with the suggestions in the unsaved draft, by the card's two ids; Not now sets
-// the card aside. Once the suggestions are in the setup the card says so and offers nothing. Under view-as the server
+// the card aside for good (OrderProposalCard.tsx says so). The card lists the first ten changed items and says how many
+// more Ordering setup lists. With nothing to open (the suggestions are in the setup, or none can be added) it offers nothing. Under view-as the server
 // sends counts only, so the card says how many suppliers and items were suggested and nothing from the file.
 
 export const SETUP_CARD_COPY = {
@@ -26,6 +27,8 @@ export const SETUP_CARD_COPY = {
   review: 'Review in Ordering setup',
   web: READ_WEB_LINE,
   gone: 'These suggestions aren’t available any more. The file they came from may have been turned off or deleted.',
+  loadFailed: 'Townwise couldn’t load these suggestions. Reload the page to try again.',
+  setAside: 'Set aside. Nothing was added. Ask TownwiseAI again if you want these suggestions back.',
   setupFailed: 'Townwise couldn’t load your ordering setup, so it can’t show what these suggestions would change. Reload the page to try again.',
 } as const;
 
@@ -114,7 +117,8 @@ function Suggestions(props: {
       {preview.changesLead === null ? null : (
         <View style={styles.list}>
           <Small>{preview.changesLead}</Small>
-          {preview.changes.map((change) => <Small key={change.item}>{changeLine(change)}</Small>)}
+          {preview.changes.slice(0, CARD_CHANGES_MAX).map((change) => <Small key={change.item}>{changeLine(change)}</Small>)}
+          {moreChangesLine(preview.changes.length) === null ? null : <Small>{moreChangesLine(preview.changes.length)}</Small>}
         </View>
       )}
       {preview.problemsLead === null ? null : (
@@ -124,8 +128,9 @@ function Suggestions(props: {
         </View>
       )}
       {props.proposal.readWeb && !preview.inSetup ? <Small>{SETUP_CARD_COPY.web}</Small> : null}
+      {preview.closing === null ? null : <Small>{preview.closing}</Small>}
       {error === null ? null : <ErrorNotice message={error} />}
-      {preview.inSetup || props.readOnly ? null : (
+      {!preview.actionable || props.readOnly ? null : (
         <Actions>
           <LinkButton variant="primary" href={setupProposalHref(locationId, conversationId, proposalId)} label={SETUP_CARD_COPY.review} />
           <Button variant="outline" label="Not now" disabled={pending} onPress={() => { void dismiss(); }} />

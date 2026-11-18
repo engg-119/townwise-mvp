@@ -115,7 +115,7 @@ test('with ?proposal= it merges the card into the unsaved draft and says what it
   expect(screen.getByText(PROPOSAL_COPY.heading)).toBeTruthy();
   expect(screen.getByText('Set the par of the new item.')).toBeTruthy();
   // The chat's own cut line, never the read's 150.
-  expect(screen.getByText('The file lists more items than TownwiseAI suggests in a chat (60), so some were left out. For the rest, use Read a file with TownwiseAI on Ordering setup, on the web.')).toBeTruthy();
+  expect(screen.getByText('The file lists more items than TownwiseAI suggests in a chat (60), so some were left out. For the rest, use Read a file with TownwiseAI on Ordering setup.')).toBeTruthy();
   expect(screen.queryByText(/\(150\)/)).toBeNull();
   // The matched item took the suggestion and kept its par; the new one has a blank par.
   expect(field('Item 1', 'Servings per unit').value).toBe('30');
@@ -151,8 +151,8 @@ test('after Load their changes the suggestions are merged into the reloaded draf
   await waitFor(() => { expect(field('Item 1', 'Servings per unit').value).toBe('30'); });
   expect(screen.getByText('Unsaved changes.')).toBeTruthy();
   expect(screen.getByText(FOUND_ONE)).toBeTruthy();
-  // The merge does not take away what the load just said (a toast, D55).
-  expect(screen.getByText('Loaded the setup as it was last saved.')).toBeTruthy();
+  // UI review 7: the toast says the suggestions were added again.
+  expect(screen.getByText('Loaded the setup as it was last saved, then added TownwiseAI’s suggestions again.')).toBeTruthy();
   api.answers[`${PATH}/setup`] = () => stored(6, 30);
   await click('Save the setup');
   await waitFor(() => { expect(puts(api)).toHaveLength(2); });
@@ -183,17 +183,49 @@ test('it lists each change to an item already in the setup, field by field, and 
   const { api } = portal(card(changed, { readWeb: true }));
   renderAt(api);
   await screen.findByText(FOUND_TWO);
-  expect(screen.getByText('1 item already in your setup would change:')).toBeTruthy();
-  expect(screen.getByText('Sample Lager: name Sample Lager to SAMPLE Lager; unit cases to kegs; servings per unit 24 to 124')).toBeTruthy();
-  expect(screen.getByText('This reply also read web pages, which Townwise didn’t check. Look over each change before you save.')).toBeTruthy();
+  expect(screen.getByText('1 item already in your setup by name changes when you save:')).toBeTruthy();
+  expect(screen.getByText('Sample Lager: name: “Sample Lager” becomes “SAMPLE Lager”; unit: “cases” becomes “kegs”; servings per unit: “24” becomes “124”')).toBeTruthy();
+  // UI review 8: on this page no reply is in sight, so the line says which one.
+  expect(screen.getByText('The TownwiseAI reply behind these suggestions also read web pages, which Townwise didn’t check. Look over each change before you save.')).toBeTruthy();
+  // One list for the summary and its cautions; the changes are rows under their own lead.
+  const summary = screen.getByText(FOUND_TWO).closest('[role="status"]')?.parentElement?.parentElement;
+  expect(summary?.textContent).toContain('also read web pages');
+  expect(summary?.textContent).not.toContain('becomes');
   cleanup();
 
   // With nothing changed in an existing item and no web pages read, neither is said.
   const plain = portal(card([item('Sample Stout')]));
   renderAt(plain.api);
   await screen.findByText('TownwiseAI found 1 item: 1 new, 0 replaced by name. Nothing is saved yet: check them below, then save the setup.');
-  expect(screen.queryByText(/already in your setup would change/)).toBeNull();
+  expect(screen.queryByText(/already in your setup by name change/)).toBeNull();
   expect(screen.queryByText(/web pages/)).toBeNull();
+});
+
+// UI review 2: Review lands on the suggestions, not on a page whose top says nothing about them.
+test('the section comes first on the page, above the sheet tools, and takes focus once its suggestions are merged', async () => {
+  const { api } = portal(card(WITH_NEW));
+  renderAt(api);
+  const summary = await screen.findByText(FOUND_TWO);
+  const heading = screen.getByRole('heading', { name: PROPOSAL_COPY.heading });
+  const before = (a: Element, b: Element): boolean => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING) !== 0;
+  expect(before(heading, screen.getByRole('button', { name: 'Download the template' }))).toBe(true);
+  expect(before(heading, screen.getByRole('heading', { name: 'Suppliers' }))).toBe(true);
+  await waitFor(() => { expect(document.activeElement?.contains(heading)).toBe(true); });
+  expect(document.activeElement?.contains(summary)).toBe(true);
+  expect(document.activeElement).not.toBe(document.body);
+  // Once: an edit afterwards keeps the focus where the person put it.
+  const par = field('Item 2', 'Par');
+  par.focus();
+  fireEvent.change(par, { target: { value: '3' } });
+  await act(() => new Promise((resolve) => { setTimeout(resolve, 20); }));
+  expect(document.activeElement).toBe(par);
+});
+
+// UI review 6: the picture caveat reaches the page where Save is pressed.
+test('it says when the names couldn’t be checked against the file’s text', async () => {
+  const { api } = portal(card([item('Sample Stout', { inFile: null })]));
+  renderAt(api);
+  expect(await screen.findByText('Townwise couldn’t check these names against the file’s text, because it was read as a picture.')).toBeTruthy();
 });
 
 // Security review L1: a counts-only answer (view-as) carries nothing to merge.
