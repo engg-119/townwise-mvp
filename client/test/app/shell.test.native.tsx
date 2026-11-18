@@ -35,9 +35,11 @@ function linkNames(region: string, names: readonly string[]): string[] {
   return found;
 }
 
-const NAV = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings'];
+const NAV = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings'];
 /** The sections under More (D38), which open in a row under the bar on native. */
 const MORE = ['Notes', 'Rules', 'Town', 'Your data'];
+/** More for org admins, who also get Location settings (P16). */
+const ADMIN_MORE = [...MORE, 'Location settings'];
 
 function navLabels(): string[] {
   return linkNames('Main', NAV);
@@ -86,9 +88,9 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
   test('org admins add Team', async () => {
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(NAV.filter((name) => !MORE.includes(name)));
+    expect(navLabels()).toEqual(NAV.filter((name) => !ADMIN_MORE.includes(name)));
     await moreLink('Town');
-    expect(linkNames('More', NAV)).toEqual(MORE);
+    expect(linkNames('More', NAV)).toEqual(ADMIN_MORE);
     await fireEvent.press(navLink('Team'));
     expect(router.getPathname()).toBe('/team');
   });
@@ -207,14 +209,15 @@ describe('location pages (spec 15.2)', () => {
     expect(navLink('Analytics').props.accessibilityState).toMatchObject({ selected: true });
   });
 
-  test('org admins get Location settings in the header; the switcher opens the same page of another location', async () => {
+  test('org admins get Location settings under More, never in the header; the switcher opens the same page of another location', async () => {
     const { router } = await renderApp('/locations/l1/notes', fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }));
     await screen.findByText('Main Street Bar, Hanover, NH');
-    await fireEvent.press(screen.getByRole('link', { name: 'Location settings' }));
+    // With More closed no page shows the link.
+    expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+    await fireEvent.press(await moreLink('Location settings'));
     expect(router.getPathname()).toBe('/locations/l1/settings');
     expect(await screen.findByRole('heading', { name: 'Location settings' })).toBeTruthy();
-    // On its own page the link is not repeated.
-    expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
+    expect((await moreLink('Location settings')).props.accessibilityState).toMatchObject({ selected: true });
     await fireEvent.press(await moreLink('Notes'));
     await fireEvent.press(screen.getByRole('button', { name: 'Location' }));
     await fireEvent.press(screen.getByRole('radio', { name: 'River Grill' }));

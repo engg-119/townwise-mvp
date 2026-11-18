@@ -106,7 +106,7 @@ export default function SettingsPage(): React.JSX.Element {
             main={<OrgNameForm name={org} onSaved={onSaved} onEdit={onEdit} />}
             side={(
               <Stack>
-                <Small>Locations have their own pages. Rename one or change its town from Location settings on that location’s page.</Small>
+                <Small>Locations have their own pages. Rename one or change its town from Location settings, under More.</Small>
                 {/* Straight to Add location: with one location, Locations opens that location's Home (P9). */}
                 <Actions>
                   <LinkButton

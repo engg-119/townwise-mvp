@@ -250,7 +250,7 @@ describe('Home’s title and TownwiseAI’s missing header', () => {
     // Top left: the eyebrow over the title, in the header's left column, before the location's links.
     const eyebrow = screen.getByText('Main Street Bar, Hanover, NH');
     expect(title.parent).toBe(eyebrow.parent);
-    expect(screen.getByRole('link', { name: 'Location settings' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'All locations' })).toBeTruthy();
     // Every other tab keeps its own title.
     await fireEvent.press(await townLink());
     expect(await screen.findByRole('heading', { name: 'Town' })).toBeTruthy();

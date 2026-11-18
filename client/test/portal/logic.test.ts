@@ -140,7 +140,7 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('clientNav lists Calendar right after Home', () => {
     expect(clientNav('org_admin', '/locations/l1/calendar', 'l1').map((item) => item.label)).toEqual([
-      'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+      'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
     ]);
   });
 
@@ -152,17 +152,21 @@ describe('navigation per role (spec 15.3)', () => {
     expect(clientNav('member', '/locations/l1', 'l1').find((item) => item.label === 'Rules')?.href).toBe('/locations/l1/rules');
   });
 
-  test('Notes, Rules, Town and Your data sit under More (D38); no other item does', () => {
+  test('Notes, Rules, Town and Your data sit under More (D38), then Location settings for org admins; no other item does', () => {
     for (const role of ['member', 'org_admin'] as const) {
       const items = clientNav(role, '/locations/l1/sales/upload', 'l1');
+      const admin: [string, string | null][] = role === 'org_admin' ? [['Location settings', null]] : [];
       expect(items.filter((item) => item.more === true).map((item) => [item.label, item.current])).toEqual([
-        ['Notes', null], ['Rules', null], ['Town', null], ['Your data', 'true'],
+        ['Notes', null], ['Rules', null], ['Town', null], ['Your data', 'true'], ...admin,
       ]);
-      // They are the sections' last four, so More takes Notes' place, right after TownwiseAI.
+      // They are the sections' last ones, so More takes Notes' place, right after TownwiseAI.
       const first = items.findIndex((item) => item.more === true);
       expect(items[first - 1]?.label).toBe('TownwiseAI');
-      expect(items.slice(first, first + 4).every((item) => item.more === true)).toBe(true);
+      expect(items.slice(first, first + 4 + admin.length).every((item) => item.more === true)).toBe(true);
     }
+    // Location settings (P16) is the org admin's alone, and opens the location's own page.
+    expect(clientNav('member', '/locations/l1', 'l1').map((item) => item.label)).not.toContain('Location settings');
+    expect(clientNav('org_admin', '/locations/l1', 'l1').find((item) => item.label === 'Location settings')?.href).toBe('/locations/l1/settings');
     expect(clientNav('org_admin', '/dashboard', null).some((item) => item.more === true)).toBe(false);
   });
 
@@ -201,8 +205,8 @@ describe('navigation per role (spec 15.3)', () => {
     expect(current('/locations/l1/calendar')).toEqual([['Calendar', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
-    // Location settings is the header's link, not a top bar item; Settings is the account page.
-    expect(current('/locations/l1/settings')).toEqual([]);
+    // Location settings is under More; Settings is the account page.
+    expect(current('/locations/l1/settings')).toEqual([['Location settings', 'page']]);
     expect(current('/settings')).toEqual([['Settings', 'page']]);
     // Off a location the sections open another location, so none of them is current.
     expect(current('/dashboard')).toEqual([]);

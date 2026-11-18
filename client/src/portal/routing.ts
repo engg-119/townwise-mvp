@@ -108,18 +108,18 @@ const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
   upload: '/sales/upload', data: '/data', notes: '/notes', town: '/town', agent: '/agent', rules: '/rules', settings: '/settings',
 };
 
-/** The location's sections in the top bar, in order (15.3). Sales data and Location settings are reached from pages. */
+/** The location's sections in the top bar, in order (15.3). Sales data is reached from pages; Location settings is for org admins. */
 const SECTIONS: readonly (readonly [TabKey, string])[] = [
   ['home', 'Home'], ['calendar', 'Calendar'], ['orders', 'Orders'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'],
-  ['rules', 'Rules'], ['town', 'Town'], ['data', 'Your data'],
+  ['rules', 'Rules'], ['town', 'Town'], ['data', 'Your data'], ['settings', 'Location settings'],
 ];
 
 /** The sections under More (D38): what the forecast reads, set up once or now and then. */
-const MORE: ReadonlySet<TabKey> = new Set(['notes', 'rules', 'town', 'data']);
+const MORE: ReadonlySet<TabKey> = new Set(['notes', 'rules', 'town', 'data', 'settings']);
 
 /**
  * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Orders, Analytics, TownwiseAI, Notes, Rules,
- * Town, Your data, the last four under More), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
+ * Town, Your data, and Location settings for org admins, all from Notes on under More), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
  * Analytics also marks Sales data, which lives under it, and Orders its Ordering setup. Rules opens Business rules (P29), for every member.
  */
 export function clientNav(role: Role, pathname: string, locationId: string | null, openAsAdmin = false): NavItem[] {
@@ -127,6 +127,7 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
   const items: NavItem[] = [];
   if (locationId !== null) {
     for (const [key, label] of SECTIONS) {
+      if (key === 'settings' && role !== 'org_admin') continue;
       const href = locationHref(locationId, key);
       // Analytics also marks Sales data, which lives under it; Orders its Ordering setup; Your data also marks Upload,
       // which is reached from it, and an item's page, which lives under it.

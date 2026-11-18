@@ -70,7 +70,9 @@ test('the client app marks where you are in the top bar; the header names the lo
   expect(within(main).getByRole('link', { name: 'Home' }).getAttribute('aria-current')).toBeNull();
   expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Notes']);
   expect(screen.getByRole('link', { name: 'All locations' }).getAttribute('href')).toBe('/dashboard');
-  expect(screen.getByRole('link', { name: 'Location settings' }).getAttribute('href')).toBe('/locations/l1/settings');
+  // Location settings is under More for org admins, and nowhere else on the page.
+  expect(screen.getAllByRole('link', { name: 'Location settings' })).toHaveLength(1);
+  expect(within(openMore()).getByRole('link', { name: 'Location settings' }).getAttribute('href')).toBe('/locations/l1/settings');
   // The location switcher is a real select, labeled “Location”; the sections then open the other location.
   const switcher = screen.getByRole('combobox', { name: 'Location' });
   choose(switcher, 'River Grill');
