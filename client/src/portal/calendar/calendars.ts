@@ -90,8 +90,14 @@ export const GOOGLE_COPY = {
   reconnect: 'Connect your Google account again to add calendars.',
   /** A Google calendar's row action, for the person who added it, while Google refuses Townwise's access. */
   reconnectAction: 'Reconnect',
-  /** A connect started from Reconnect worked: no picker, and the refresh loop reads the healed calendars soon. */
-  reconnected: 'Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.',
+  /**
+   * A connect started from Reconnect worked, and Refresh now ran on each of the person's Google calendars here: alone
+   * when one still couldn't be read (its row's words say why), with `reconnectedFresh` when every one was read, and
+   * with `reconnectedLater` when a refresh was refused (too soon, Google busy), so the refresh loop reads it.
+   */
+  reconnected: 'Reconnected to Google.',
+  reconnectedFresh: 'Reconnected to Google. Your Google calendars are up to date.',
+  reconnectedLater: 'Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.',
   /** Under the actions for staff, open as admin or under view-as, beside "Add a Google calendar" disabled in place. */
   staffLine: 'Members of this organization connect their own Google calendars. Staff can’t connect one.',
 } as const;

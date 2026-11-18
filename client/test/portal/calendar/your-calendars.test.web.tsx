@@ -1400,7 +1400,16 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(within(panel).getByRole('button', { name: 'Remove Bookings' })).toBeTruthy();
   });
 
-  test('Reconnect opens the explainer in place of every Reconnect and “Add a Google calendar”; a connect started there shows no picker: the section closes, the reconnected line takes focus, and the list and the stored events read again', async () => {
+  /** Continue to Google from the section Reconnect opened, and Google's code for that press, with the connect answering. */
+  function continueWith(panel: HTMLElement, api: FakePortalApi, configs: CodeClientConfig[]): void {
+    fireEvent.click(within(panel).getByRole('button', { name: 'Continue to Google' }));
+    const config = configs.at(-1);
+    if (config === undefined) throw new Error('no code client');
+    api.answers[`${GOOGLE_PATH}/connect`] = () => ({ calendars: [PRIMARY, SHARED] });
+    act(() => { config.callback({ code: CODE, state: config.state }); });
+  }
+
+  test('Reconnect opens the explainer in place of every Reconnect and “Add a Google calendar”; a connect started there shows no picker: the calendar is refreshed now while the popover waits, then the section closes, the reconnected line takes focus, and the list and the stored events read again', async () => {
     const { api, fake } = await renderGoogle({ calendars: [MINE_REVOKED] });
     const panel = openPopover();
     const configs = await reconnectFrom(panel, 'Bookings');
@@ -1413,12 +1422,25 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     const config = configs.at(-1);
     if (config === undefined) throw new Error('no code client');
     const reads = fake.paths.length;
+    const refreshed = deferred<unknown>();
+    api.answers[`${CALENDARS_PATH}/c3/refresh`] = () => refreshed.promise;
     api.answers[`${GOOGLE_PATH}/connect`] = () => ({ calendars: [PRIMARY, SHARED] });
     act(() => { config.callback({ code: CODE, state: config.state }); });
-    expect(await within(panel).findByText(GOOGLE_COPY.reconnected)).toBeTruthy();
-    expect(GOOGLE_COPY.reconnected).toBe('Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.');
-    await waitFor(() => { expect(focusOnLine(panel, GOOGLE_COPY.reconnected)).toBe(true); });
-    expect(writes(api)).toEqual([{ method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true } }]);
+    // Refresh now on the healed calendar, with no body, while the popover waits for it.
+    await waitFor(() => { expect(writes(api)).toHaveLength(2); });
+    expect(writes(api)).toEqual([
+      { method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true } },
+      { method: 'POST', path: `${CALENDARS_PATH}/c3/refresh`, body: undefined },
+    ]);
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBe('true');
+    expect(fake.paths.slice(reads).filter((path) => path === CALENDARS_PATH)).toEqual([]);
+    fake.calendars = [{ ...MINE_REVOKED, status: 'ok' }];
+    await act(async () => { refreshed.resolve({ calendar: { ...MINE_REVOKED, status: 'ok' } }); await Promise.resolve(); });
+    expect(await within(panel).findByText('Reconnected to Google. Your Google calendars are up to date.')).toBeTruthy();
+    await waitFor(() => { expect(focusOnLine(panel, GOOGLE_COPY.reconnectedFresh)).toBe(true); });
+    // The row shows its real status at once: no words, and no Reconnect.
+    await waitFor(() => { expect(within(panel).queryByRole('button', { name: 'Reconnect Bookings' })).toBeNull(); });
+    expect(within(panel).queryByText(/Couldn’t refresh/)).toBeNull();
     expect(within(panel).queryByText('Choose the calendars to add to Main Street Bar.')).toBeNull();
     expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
     await waitFor(() => { expect(fake.paths.slice(reads).filter((path) => path === CALENDARS_PATH)).toHaveLength(1); });
@@ -1426,6 +1448,36 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(fake.paths.slice(reads).filter((path) => path === GOOGLE_PATH)).toEqual([]);
     // The section is closed: "Add a Google calendar" is back, and nothing holds the popover.
     expect(within(panel).getByRole('button', { name: 'Add a Google calendar' })).toBeTruthy();
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test('after a reconnect only the person’s own Google calendars are refreshed, one at a time; one still failing leaves “Reconnected to Google.” and its row’s words', async () => {
+    const second = ownerCalendar({ id: 'c5', label: 'Private dining', kind: 'google', eventCount: 3, status: 'google_revoked', mine: true });
+    const theirs = ownerCalendar({ id: 'c4', label: 'Staff rota', kind: 'google', eventCount: 2, status: 'google_revoked' });
+    const { api, fake } = await renderGoogle({ calendars: [KITCHEN, MINE_REVOKED, theirs, second] });
+    const panel = openPopover();
+    const first = deferred<unknown>();
+    api.answers[`${CALENDARS_PATH}/c3/refresh`] = () => first.promise;
+    api.answers[`${CALENDARS_PATH}/c5/refresh`] = () => ({ calendar: { ...second, status: 'google_not_found' } });
+    continueWith(panel, api, await reconnectFrom(panel, 'Bookings'));
+    await waitFor(() => { expect(writes(api)).toHaveLength(2); });
+    // One at a time: Private dining waits for Bookings' answer.
+    expect(writes(api).map((call) => call.path)).toEqual([`${GOOGLE_PATH}/connect`, `${CALENDARS_PATH}/c3/refresh`]);
+    fake.calendars = [KITCHEN, { ...MINE_REVOKED, status: 'ok' }, theirs, { ...second, status: 'google_not_found' }];
+    await act(async () => { first.resolve({ calendar: { ...MINE_REVOKED, status: 'ok' } }); await Promise.resolve(); });
+    expect(await within(panel).findByText(GOOGLE_COPY.reconnected)).toBeTruthy();
+    expect(GOOGLE_COPY.reconnected).toBe('Reconnected to Google.');
+    expect(writes(api).map((call) => call.path)).toEqual([`${GOOGLE_PATH}/connect`, `${CALENDARS_PATH}/c3/refresh`, `${CALENDARS_PATH}/c5/refresh`]);
+    expect(await within(panel).findByText('Couldn’t refresh: this Google calendar was deleted or is no longer shared with the account that added it.')).toBeTruthy();
+  });
+
+  test('a refresh after a reconnect that is refused (refreshed minutes ago) says Townwise reads the calendars within 15 minutes', async () => {
+    const { api } = await renderGoogle({ calendars: [MINE_REVOKED] });
+    const panel = openPopover();
+    api.answers[`${CALENDARS_PATH}/c3/refresh`] = () => refusal(429, 'rate_limited', 240);
+    continueWith(panel, api, await reconnectFrom(panel, 'Bookings'));
+    expect(await within(panel).findByText('Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.')).toBeTruthy();
+    expect(GOOGLE_COPY.reconnectedLater).toBe('Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.');
     expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
   });
 

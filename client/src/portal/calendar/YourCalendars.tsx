@@ -78,9 +78,11 @@ import { IcsImport } from './IcsImport';
 // Reconnect: a Google calendar Google no longer lets Townwise read (`google_revoked`) says who can mend it. For the
 // person who added it (the list's `mine`) on web, while the list answers Google calendars on, its row offers
 // "Reconnect", which opens the same section on its explainer, in place of the row's Reconnect and of "Add a Google
-// calendar"; a connect started there shows no picker: the section closes, the messages line says Townwise reads their
-// Google calendars again (the API makes them due at once), focus moves to it, and the list and the stored events read
-// again (`onChanged(false)`). Its Cancel gives focus back to that row's Reconnect. Anyone else's row asks them to ask
+// calendar"; a connect started there shows no picker: each of the person's own Google calendars here gets a Refresh
+// now, one at a time, while the popover waits, then the section closes, the messages line says "Reconnected to
+// Google." (with "Your Google calendars are up to date." when every one was read, or that Townwise reads them within
+// 15 minutes when a refresh was refused), focus moves to it, and the list and the stored events read again
+// (`onChanged(false)`). Its Cancel gives focus back to that row's Reconnect. Anyone else's row asks them to ask
 // whoever added it, and native's, which connects nowhere, tells the person who added it to reconnect on the web. Staff
 // never get a Reconnect: the API answers them `mine` false, so they read the words for anyone else, and Reconnect needs
 // `canConnect` as the section does.
@@ -553,9 +555,11 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     pick(found, false);
   }, [api, location.id, explain, pick, focusMessage]));
 
-  // Google's code, posted with the agreement; the choices it answers open the picker, unless Reconnect started it, when
-  // the section closes with the reconnected line instead. The list reads again, so its `google.connected` (and any
-  // calendar the connect healed) is current even if nothing is added.
+  // Google's code, posted with the agreement; the choices it answers open the picker, unless Reconnect started it. Then
+  // each of the person's own Google calendars here is refreshed now, one at a time, while the section still says it is
+  // connecting and the popover waits, so the rows show their real status at once rather than when the refresh loop next
+  // looks; the section closes with the reconnected line. The list reads again either way, so its `google.connected`
+  // (and every calendar the connect healed) is current even if nothing is added.
   const connect = useAction(useCallback(async (code: string, reconnecting: boolean) => {
     let found: GoogleChoice[];
     try {
@@ -565,17 +569,28 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
       return;
     }
     if (reconnecting) {
+      let failing = false;
+      let later = false;
+      for (const calendar of (list ?? []).filter((each) => each.kind === 'google' && each.mine)) {
+        try {
+          if ((await refreshOwnerCalendar(api, location.id, calendar.id)).status !== 'ok') failing = true;
+        } catch {
+          // Refreshed in the last 5 minutes, Google busy, or gone: connect made it due, so the loop reads it.
+          later = true;
+        }
+      }
       setGoogleStep('closed');
       setGoogleFocus(null);
       setGoogleWords(null);
       setReconnectId(null);
-      setMessage({ live: 'status', items: [GOOGLE_COPY.reconnected] });
+      const words = later ? GOOGLE_COPY.reconnectedLater : failing ? GOOGLE_COPY.reconnected : GOOGLE_COPY.reconnectedFresh;
+      setMessage({ live: 'status', items: [words] });
       focusMessage();
     } else {
       pick(found, true);
     }
     onChanged(false);
-  }, [api, location.id, explain, pick, onChanged, focusMessage]));
+  }, [api, location.id, list, explain, pick, onChanged, focusMessage]));
 
   // One add at a time, each with its own line. A refusal about another thing than that one calendar (the limit, the
   // account's adds, Google, the connection) would refuse the rest too, so it ends the batch.
