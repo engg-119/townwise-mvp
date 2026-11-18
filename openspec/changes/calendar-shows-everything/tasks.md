@@ -156,7 +156,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 
 ## 7. Docs, review and ship
 
-- [ ] 7.1 Update the docs:
+- [x] 7.1 Update the docs:
   - `docs/portal/spec.md`:
     - the D49 row: the owner's requests in his words, the decisions, Claude's calls and the [CONFIRM]s;
     - the D30 amendment;
