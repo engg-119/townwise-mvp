@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ApiClient } from '../../api/client';
 import { hasCode } from '../errors';
 import type { PlaceMap } from '../places/map';
-import { usePlacesMap } from '../places/usePlacesMap';
+import { usePlacesMapState } from '../places/usePlacesMap';
 import { CHECKLIST_COPY, MAX_CHECKED_PLACES, outsideUsLine } from './checklist';
 import { placeDetails, placesUnavailable, type PlaceSuggestion, type UsablePlace } from './places';
 import { usePlaceSearch, type PlaceSearchState } from './usePlaceSearch';
@@ -15,7 +15,10 @@ import { usePlaceSearch, type PlaceSearchState } from './usePlaceSearch';
 // its own and the next autocomplete starts a new session. Each check holds a ticket: unchecking it, or checking it
 // again, retires the ticket, and a late answer whose ticket is gone is dropped. A place outside a US town, a 503 or a
 // 404 leaves the place unchecked with a line saying why; at MAX_CHECKED_PLACES checked or loading, the rest wait.
-// `map` is one map of every checked place (places/usePlacesMap.ts): a loading row is not on it.
+// `map` is one map of every checked place (places/usePlacesMap.ts): a loading row is not on it. Its pins are lettered
+// in check order, A for the first (D57, as Settings' map of every location is, D47), and `letterOf` gives a row's
+// letter while that map shows: none for a loading row, with no map, while the map on screen is still the set before's,
+// or once its image failed to load.
 
 export type ChecklistRow =
   | { readonly key: string; readonly status: 'loading'; readonly suggestion: PlaceSuggestion }
@@ -29,8 +32,12 @@ export interface PlaceChecklistState {
   rows: readonly ChecklistRow[];
   /** The checked rows' places, in order. */
   places: readonly UsablePlace[];
-  /** The signed map with a pin for each checked place; null with none, while the map is off, or after a failure. */
+  /** The signed map with a lettered pin for each checked place; null with none, while the map is off, or after a failure. */
   map: PlaceMap;
+  /** The letter on a row's pin, or null when no map shows one for it. `key` is the row's. */
+  letterOf: (key: string) => string | null;
+  /** The map's image failed to load, so its letters would point at nothing. */
+  mapFailed: (url: string) => void;
   /** A row is loading. */
   loading: boolean;
   /** `rows.length >= MAX_CHECKED_PLACES`. */
@@ -135,7 +142,15 @@ export function usePlaceChecklist(api: ApiClient, unavailableLine: string): Plac
   }, [searchFor]);
 
   const places = useMemo(() => rows.flatMap((row) => (row.status === 'checked' ? [row.place] : [])), [rows]);
-  const map = usePlacesMap(api, places.map((place) => place.placeId));
+  const { map, held } = usePlacesMapState(api, places.map((place) => place.placeId), { labeled: true });
+  const [failedUrl, setFailedUrl] = useState<string | null>(null);
+  // Not beside the last set's map, held while this set's is asked for: its pins are the old set's.
+  const lettersShow = map !== null && !held && map.url !== failedUrl;
+  const letterOf = useCallback((key: string): string | null => {
+    if (!lettersShow) return null;
+    const index = rows.filter((row) => row.status === 'checked').findIndex((row) => row.key === key);
+    return index < 0 || index > 25 ? null : String.fromCharCode(65 + index);
+  }, [rows, lettersShow]);
   const full = rows.length >= MAX_CHECKED_PLACES;
   const optionOf = useCallback((suggestion: PlaceSuggestion): { checked: boolean; disabled: boolean } => {
     const checked = rows.some((row) => row.key === suggestion.placeId);
@@ -147,6 +162,8 @@ export function usePlaceChecklist(api: ApiClient, unavailableLine: string): Plac
     rows,
     places,
     map,
+    letterOf,
+    mapFailed: setFailedUrl,
     loading: rows.some((row) => row.status === 'loading'),
     full,
     optionOf,
