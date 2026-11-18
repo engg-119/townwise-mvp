@@ -33,6 +33,7 @@ import {
 import { GoogleCalendarError, type GoogleCalendarEntry } from '../calendar/google.ts';
 import { MAX_ICS_BYTES, parseIcs, WINDOW_DAYS, type IcsTown } from '../calendar/ics.ts';
 import { open, seal } from '../calendar/secret.ts';
+import { WEEKLY_TITLES_NOTICE } from '../calendar/titles-notice.ts';
 import { daysBetween, isoDate } from '../dates.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -89,13 +90,15 @@ export const LINK_ADD_BUDGET = { name: 'townwise:calendar-links', limit: 12, win
 const linkAddBudgets = new WeakMap<TownwiseContext['redis'], RateLimiter>();
 
 const labelSchema = z.string().trim().min(1).max(MAX_LABEL_CHARS);
+/** Sent only by the add screen that says TownwiseAI reads the titles weekly (calendar-event-suggestions design decision 11). */
+const titlesNoticeSchema = z.literal(WEEKLY_TITLES_NOTICE).optional();
 /**
  * A calendar file as its text (the handler holds it to 1 MB; the route's body limit leaves room for JSON escaping), a
  * link, or a Google calendar by the id the picker answered (its label comes from Google).
  */
 const calendarBody = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('file'), label: labelSchema, ics: z.string() }),
-  z.object({ kind: z.literal('link'), label: labelSchema, url: z.string().trim().min(1).max(MAX_LINK_CHARS) }),
+  z.object({ kind: z.literal('file'), label: labelSchema, ics: z.string(), titlesNotice: titlesNoticeSchema }),
+  z.object({ kind: z.literal('link'), label: labelSchema, url: z.string().trim().min(1).max(MAX_LINK_CHARS), titlesNotice: titlesNoticeSchema }),
   z.object({ kind: z.literal('google'), googleCalendarId: z.string().min(1).max(MAX_GOOGLE_ID_CHARS) }),
 ]);
 const rangeQuery = z.strictObject({ from: isoDate, to: isoDate });
@@ -343,7 +346,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     if (Buffer.byteLength(body.ics, 'utf8') > MAX_ICS_BYTES) throw new AppError(400, 'too_large', READ_FAILURES.too_large);
     const read = parseIcs(body.ics, town);
     if ('error' in read) throw new AppError(400, read.error, READ_FAILURES[read.error]);
-    calendar = { kind: 'file', label: body.label };
+    calendar = { kind: 'file', label: body.label, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }) };
     parsed = read;
   } else if (body.kind === 'link') {
     const key = linksKey(ctx);
@@ -352,7 +355,10 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     await spendLinkAdd(ctx, caller.userId, linksUnavailable);
     const read = await readLink(ctx, body.url, town);
     if (!read.ok) throw new AppError(400, read.code, READ_FAILURES[read.code]);
-    calendar = { kind: 'link', label: body.label, sealedAddress: seal(key, body.url), host: read.host };
+    calendar = {
+      kind: 'link', label: body.label, sealedAddress: seal(key, body.url), host: read.host,
+      ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }),
+    };
     parsed = read.parsed;
   } else {
     ({ calendar, parsed } = await googleToAdd(ctx, caller, location, body.googleCalendarId, town));

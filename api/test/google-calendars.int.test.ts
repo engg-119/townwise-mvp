@@ -204,6 +204,20 @@ describe('connecting exchanges the code on the server for the person’s own acc
     });
   });
 
+  it('stores the weekly titles notice when the connect says the explainer showed it, keeps it on a reconnect without it, and refuses another value', async () => {
+    const t = await tenant('Notice Connect Diner');
+    expect(await connect(t, t.member)).toMatchObject({ status: 200 });
+    expect(await connectionRow(t, t.member)).not.toHaveProperty('titlesNotice');
+    expect(await connect(t, t.member, { code: AUTH_CODE, agreed: true, titlesNotice: 1 })).toMatchObject({ status: 200 });
+    expect(await connectionRow(t, t.member)).toMatchObject({ titlesNotice: 1 });
+    // A reconnect from a screen that did not say it does not clear what the person was shown.
+    expect(await connect(t, t.member)).toMatchObject({ status: 200 });
+    expect(await connectionRow(t, t.member)).toMatchObject({ titlesNotice: 1 });
+    for (const titlesNotice of [2, true, '1', null]) {
+      expect(await connect(t, t.member, { code: AUTH_CODE, agreed: true, titlesNotice })).toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    }
+  });
+
   it('another Google account answers 409 google_other_account and stores nothing', async () => {
     const t = await tenant('Other Account Diner');
     google.state.subject = 'someone-else';

@@ -35,12 +35,13 @@
 // that switched answers how many keyed uids of the generation it replaced it kept, read before it writes (the generation
 // it switches from is current until its switch, so no one deletes those rows meanwhile). keyedEventsBetween reads a
 // range's keyed events for TownwiseAI's weekly call (lab/suggestions.ts), with each calendar's kind, Google connection
-// and when it was added, never its label.
+// and whether a file's or link's add showed the weekly notice (`titlesNotice`), never its label.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import { MAX_EVENTS, MAX_TITLE_CHARS, type IcsEvent } from '../calendar/ics.ts';
+import { WEEKLY_TITLES_NOTICE } from '../calendar/titles-notice.ts';
 
 export const CALENDAR_SOURCES_COLLECTION = 'tw_calendar_sources';
 export const CALENDAR_EVENTS_COLLECTION = 'tw_calendar_events';
@@ -99,6 +100,11 @@ interface SourceFields {
   lastManualRefreshAt: Date | null;
   createdBy: string;
   createdAt: Date;
+  /**
+   * 1 when a file or link was added from the popover that says TownwiseAI reads its titles weekly (WEEKLY_TITLES_NOTICE,
+   * calendar-event-suggestions design decision 11); absent otherwise, and never cleared.
+   */
+  titlesNotice?: number;
 }
 
 interface EventFields {
@@ -140,6 +146,7 @@ function sourceSchema(): Schema<SourceFields> {
     lastManualRefreshAt: { type: Date, default: null },
     createdBy: { type: String, required: true },
     createdAt: { type: Date, required: true },
+    titlesNotice: { type: Number, enum: [WEEKLY_TITLES_NOTICE] },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, slot: 1 }, { unique: true });
   // The refresh loop's claim of a due link, across organizations (stores/cross-tenant.ts); a file's is null.
@@ -241,17 +248,17 @@ export type ReplaceResult =
 export const ADDED_REPLACE = { switched: true, generation: 1, keptKeys: 0, hadKeys: 0 } as const satisfies ReplaceResult;
 
 /**
- * A keyed event for the weekly suggestions call (lab/suggestions.ts): with its calendar's id, kind, when it was added
- * and, for a Google calendar, the connection that reads it, so the call can leave out a Google calendar under an older
- * agreement and a file or link added before the notice. Never the calendar's label.
+ * A keyed event for the weekly suggestions call (lab/suggestions.ts): with its calendar's id, kind, whether its add
+ * showed the weekly notice and, for a Google calendar, the connection that reads it (whose own record says whether its
+ * connect showed the notice), so the call sends only calendars whose person was told. Never the calendar's label.
  */
 export interface KeyedOwnerEvent extends StoredEvent {
   readonly calendarId: string;
   readonly kind: CalendarKind;
   /** The tw_google_connections row of a Google calendar; null for a file or a link. */
   readonly connectionId: string | null;
-  /** When the calendar was added (its `createdAt`). */
-  readonly calendarCreatedAt: Date;
+  /** A file or link added from the popover that showed the weekly notice; false for a Google calendar. */
+  readonly titlesNotice: boolean;
 }
 
 /** The keyed events eventsByUid found, read at one generation. */
@@ -264,11 +271,11 @@ export interface EventsByUid {
 
 /**
  * A calendar to add: a link carries its sealed address and its host; a Google calendar its sealed Google calendar id
- * and the connection that reads it.
+ * and the connection that reads it. A file or link carries `titlesNotice: 1` when its add showed the weekly notice.
  */
 export type NewCalendar =
-  | { readonly kind: 'file'; readonly label: string }
-  | { readonly kind: 'link'; readonly label: string; readonly sealedAddress: string; readonly host: string }
+  | { readonly kind: 'file'; readonly label: string; readonly titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
+  | { readonly kind: 'link'; readonly label: string; readonly sealedAddress: string; readonly host: string; readonly titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
   | { readonly kind: 'google'; readonly label: string; readonly sealedAddress: string; readonly googleConnectionId: string };
 
 /** A Google calendar as server code reads it: its sealed Google calendar id and its connection. Never answered. */
@@ -461,7 +468,8 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
    */
   async function readBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }, keyed: boolean) {
     const location = ofLocation(scope, locationId);
-    const current = () => Source.find(location, { label: 1, kind: 1, googleConnectionId: 1, generation: 1, createdAt: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
+    const current = () => Source.find(location, { label: 1, kind: 1, googleConnectionId: 1, generation: 1, createdAt: 1, titlesNotice: 1 })
+      .sort({ createdAt: 1, _id: 1 }).lean();
     const read = (sources: Awaited<ReturnType<typeof current>>) => Promise.all(sources.map((source) => Event.find({
       orgId: location.orgId, sourceId: source._id, generation: source.generation,
       startDate: trusted({ $lte: range.to }), endDate: trusted({ $gte: range.from }), ...(keyed ? { keyed: true } : {}),
@@ -531,6 +539,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
         lastSuccessAt: null, lastAttemptAt: input.now,
         nextRefreshAt: calendar.kind === 'file' ? null : new Date(input.now.getTime() + REFRESH_INTERVAL_MS),
         leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: input.createdBy, createdAt: input.now,
+        ...(calendar.kind !== 'google' && calendar.titlesNotice === WEEKLY_TITLES_NOTICE ? { titlesNotice: WEEKLY_TITLES_NOTICE } : {}),
       };
       let added: SourceDoc | null = null;
       for (const slot of free) {
@@ -611,7 +620,8 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       const read = await readBetween(scope, locationId, range, true);
       return byStart(read.flatMap(({ source, rows }) => rows.map((row): KeyedOwnerEvent => ({
         ...storedEvent(row), calendarId: source._id.toHexString(), kind: source.kind,
-        connectionId: source.googleConnectionId === null ? null : source.googleConnectionId.toHexString(), calendarCreatedAt: source.createdAt,
+        connectionId: source.googleConnectionId === null ? null : source.googleConnectionId.toHexString(),
+        titlesNotice: source.kind !== 'google' && source.titlesNotice === WEEKLY_TITLES_NOTICE,
       }))));
     },
     removeForLocation(scope, locationId) {

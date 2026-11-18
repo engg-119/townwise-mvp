@@ -371,7 +371,7 @@ describe('stable keys (calendar-event-suggestions, design decisions 1 and 12)', 
     expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'lunch@example.test')).toMatchObject({ startDate: '2026-11-08' });
   });
 
-  it('keyedEventsBetween answers the keyed events with their calendar’s id, kind, connection and when it was added, never its name', async () => {
+  it('keyedEventsBetween answers the keyed events with their calendar’s id, kind, connection and whether its add showed the notice, never its name', async () => {
     const t = await tenant();
     const added = await addFile(t, 'Sentinel Bookings', [
       event('party@example.test', '2026-11-05', { title: 'Private party' }), event('event-2', '2026-11-06', { keyed: false }),
@@ -379,9 +379,16 @@ describe('stable keys (calendar-event-suggestions, design decisions 1 and 12)', 
     const read = await calendars.keyedEventsBetween(t.scope, t.locationId, NOVEMBER);
     expect(read).toEqual([{
       uid: 'party@example.test', title: 'Private party', startDate: '2026-11-05', endDate: '2026-11-05', startTime: null, endTime: null, keyed: true,
-      calendarId: added.id, kind: 'file', connectionId: null, calendarCreatedAt: server.clock.now(),
+      calendarId: added.id, kind: 'file', connectionId: null, titlesNotice: false,
     }]);
     expect(JSON.stringify(read)).not.toContain('Sentinel Bookings');
+    const noticed = await calendars.add(t.scope, t.locationId, { kind: 'file', label: 'Noticed', titlesNotice: 1 }, parsed([event('lunch@example.test', '2026-11-07')]), {
+      createdBy: 'user-0001', now: server.clock.now(),
+    });
+    if (noticed === 'calendar_limit') throw new Error('calendar_limit');
+    expect((await calendars.keyedEventsBetween(t.scope, t.locationId, NOVEMBER)).map((each) => [each.uid, each.titlesNotice])).toEqual([
+      ['party@example.test', false], ['lunch@example.test', true],
+    ]);
   });
 
   it('eventsByUid answers null when a replace switched the calendar while it read', async () => {

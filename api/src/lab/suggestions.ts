@@ -27,10 +27,12 @@
 // Owner-calendar events (openspec change calendar-event-suggestions, design decisions 6 to 8 and 11). While the
 // organization's weekly suggestions and its calendar titles switch are both on, the request also sends `ownerEvents`:
 // the location's keyed events overlapping the 91 days, soonest first, at most 150, leaving out events linked to a note,
-// events an earlier `event` suggestion named in any status, a Google calendar's events unless its connection agreed on
-// or after WEEKLY_TITLES_AGREED_FROM, and a file's or link's unless it was added on or after it. Each is its title (every email address and phone number replaced by
-// `[removed]`), dates, weekdays and hours, with a ref (`e1`, `e2`, ...) that only this request knows: never the
-// calendar's name, kind or id, or the event's uid. So this file's claim that the call never sends an email stays true.
+// events an earlier `event` suggestion named in any status, a Google calendar's events unless its connection is not
+// revoked and its connect came from the explainer that says titles are read weekly, and a file's or link's unless its
+// add came from the popover that says so (`titlesNotice`, stored by the add or the connect; design decision 11). Each is
+// its title (NFKC, every email address and phone number replaced by `[removed]`), dates, weekdays and hours, with a ref
+// (`e1`, `e2`, ...) that only this request knows: never the calendar's name, kind or id, or the event's uid. So this
+// file's claim that the call never sends an email stays true.
 // With either switch off, or no such event, the request is exactly as it was before (prompt, format and message). The
 // answer may then also hold up to 5 `event` items, read apart from the 5 notes and rules: one is kept only for a ref the
 // request sent and no other item used, with no private-event or closure note over its days, its dates and hours taken
@@ -89,13 +91,6 @@ export const SUGGESTIONS_MAX_NOTES = 200;
 export const SUGGESTIONS_MAX_OWNER_EVENTS = 150;
 /** A pass keeps at most this many spotted events, read apart from its notes and rules. [CONFIRM] */
 export const MAX_EVENT_SUGGESTIONS = 5;
-/**
- * A Google calendar's events are sent only when its connection agreed (`agreedAt`) on or after this moment, and a file's
- * or link's only when the calendar was added (`createdAt`) on or after it: the day the add and connect screens first
- * said titles go to TownwiseAI weekly (design decision 11). [CONFIRM: must be the day the wording on the add and connect
- * screens ships to production; set at release]
- */
-export const WEEKLY_TITLES_AGREED_FROM = new Date('2026-11-18T00:00:00.000-05:00');
 /**
  * Generic event and food words that never mark a note or rule as repeating a sent title (design decision 7), so only a
  * distinctive word (a name, a company) does. [CONFIRM]
@@ -611,8 +606,8 @@ function monthOf(at: Date): string {
 /**
  * The owner-calendar events a pass sends, with what each ref stands for: the location's keyed events overlapping the
  * range, soonest first, at most 150, leaving out events linked to a note, events an earlier `event` suggestion named, a
- * Google calendar's events unless its connection (not revoked) agreed on or after WEEKLY_TITLES_AGREED_FROM, and a
- * file's or link's unless the calendar was added on or after it.
+ * Google calendar's events unless its connection is not revoked and its connect showed the weekly notice
+ * (`titlesNotice`), and a file's or link's unless its add showed it.
  */
 async function ownerEventsFor(
   stores: SuggestionsContext['stores'], scope: OrgScope, location: LocationRecord, range: { from: string; to: string },
@@ -628,15 +623,13 @@ async function ownerEventsFor(
     ...suggested.map((event) => keyOf(event.calendarId, event.uid)),
   ]);
   const connectionIds = [...new Set(events.flatMap((event) => (event.kind === 'google' && event.connectionId !== null ? [event.connectionId] : [])))];
-  const agreed = new Set((await Promise.all(connectionIds.map(async (id) => {
+  const noticed = new Set((await Promise.all(connectionIds.map(async (id) => {
     const connection = await stores.googleConnections.find(scope, id);
-    const ok = connection !== null && connection.revokedAt === null && connection.agreedAt.getTime() >= WEEKLY_TITLES_AGREED_FROM.getTime();
-    return ok ? [id] : [];
+    return connection !== null && connection.revokedAt === null && connection.titlesNotice ? [id] : [];
   }))).flat());
   const chosen = events.filter((event) => !skip.has(keyOf(event.calendarId, event.uid))
-    && (event.kind === 'google'
-      ? event.connectionId !== null && agreed.has(event.connectionId)
-      : event.calendarCreatedAt.getTime() >= WEEKLY_TITLES_AGREED_FROM.getTime())).slice(0, SUGGESTIONS_MAX_OWNER_EVENTS);
+    && (event.kind === 'google' ? event.connectionId !== null && noticed.has(event.connectionId) : event.titlesNotice))
+    .slice(0, SUGGESTIONS_MAX_OWNER_EVENTS);
   const entries: OwnerEventEntry[] = [];
   const sent = new Map<string, SentOwnerEvent>();
   chosen.forEach((event, index) => {

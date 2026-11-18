@@ -9,11 +9,13 @@
 // (the refresh loop's check, only while no mark came in meanwhile) push it on again, so the refresh loop looks at each
 // connection at least daily (its claim, by checkAt with leaseUntil, is in stores/cross-tenant.ts). revokedAt is set
 // when Google refuses the refresh token, so the connection's other calendars fail without calling Google, and cleared
-// by a reconnect. Nothing here logs.
+// by a reconnect. `titlesNotice` is 1 once a connect came from the explainer that says TownwiseAI reads the titles weekly
+// (calendar-event-suggestions design decision 11): set by a connect that says so, never cleared. Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { WEEKLY_TITLES_NOTICE } from '../calendar/titles-notice.ts';
 
 export const GOOGLE_CONNECTIONS_COLLECTION = 'tw_google_connections';
 
@@ -41,6 +43,8 @@ interface ConnectionFields {
   checkAt: Date;
   /** A check's claim on the connection, until this time. */
   leaseUntil: Date | null;
+  /** 1 once a connect came from the explainer that says titles are read weekly; absent otherwise. */
+  titlesNotice?: number;
 }
 
 function connectionSchema(): Schema<ConnectionFields> {
@@ -55,6 +59,7 @@ function connectionSchema(): Schema<ConnectionFields> {
     revokedAt: { type: Date, default: null },
     checkAt: { type: Date, required: true },
     leaseUntil: { type: Date, default: null },
+    titlesNotice: { type: Number, enum: [WEEKLY_TITLES_NOTICE] },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, userId: 1 }, { unique: true });
   // The refresh loop's claim of a due check, across organizations (stores/cross-tenant.ts).
@@ -79,6 +84,8 @@ export interface GoogleConnectionRecord {
   readonly revokedAt: Date | null;
   readonly checkAt: Date;
   readonly leaseUntil: Date | null;
+  /** A connect came from the explainer that says TownwiseAI reads the titles weekly. */
+  readonly titlesNotice: boolean;
 }
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
@@ -87,9 +94,12 @@ export interface GoogleConnectionStore {
    * Stores the person's connection after a connect: the sealed refresh token, the scopes, agreedAt and connectedAt
    * `now`, revokedAt cleared and the check 24 hours on, inserting it or replacing the one there. A null token keeps the
    * stored one (Google sent none, design decision 8) and only updates an existing row that is not revoked: null when
-   * there is none, or when it was revoked since the caller checked it.
+   * there is none, or when it was revoked since the caller checked it. `titlesNotice` records that this connect came
+   * from the explainer that says titles are read weekly; without it, what an earlier connect recorded stays.
    */
-  upsert(scope: OrgScope, userId: string, input: { sealedRefreshToken: string | null; scopes: readonly string[]; now: Date }): Promise<GoogleConnectionRecord | null>;
+  upsert(scope: OrgScope, userId: string, input: {
+    sealedRefreshToken: string | null; scopes: readonly string[]; now: Date; titlesNotice?: boolean;
+  }): Promise<GoogleConnectionRecord | null>;
   findForUser(scope: OrgScope, userId: string): Promise<GoogleConnectionRecord | null>;
   /** Another organization's id answers null, as an unknown one does. */
   find(scope: OrgScope, connectionId: string): Promise<GoogleConnectionRecord | null>;
@@ -130,6 +140,7 @@ function toRecord(doc: ConnectionDoc): GoogleConnectionRecord {
     revokedAt: doc.revokedAt,
     checkAt: doc.checkAt,
     leaseUntil: doc.leaseUntil,
+    titlesNotice: doc.titlesNotice === WEEKLY_TITLES_NOTICE,
   };
 }
 
@@ -145,6 +156,7 @@ export function createGoogleConnectionStore(connection: Connection): GoogleConne
       const now = input.now;
       const set = {
         scopes: [...input.scopes], agreedAt: now, connectedAt: now, updatedAt: now, revokedAt: null, checkAt: nextCheck(now),
+        ...(input.titlesNotice === true ? { titlesNotice: WEEKLY_TITLES_NOTICE } : {}),
       };
       if (input.sealedRefreshToken === null) {
         // Compare-and-set on revokedAt: a refusal recorded since connect checked the row stays, over a token that fails.

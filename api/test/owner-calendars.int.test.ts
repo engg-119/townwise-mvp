@@ -271,6 +271,24 @@ describe('with the calendar key', () => {
     expect(sent).toEqual([]);
   });
 
+  it('stores the weekly titles notice on a file or link only when the add says it showed it (titlesNotice: 1), and refuses any other value', async () => {
+    const t = await tenant('Notice Grill');
+    const shown = calendarOf(await send(base(t), t.member, { json: { kind: 'file', label: LABEL, ics: FIRST, titlesNotice: 1 } }));
+    const unshown = calendarOf(await addFile(t, LABEL));
+    const link = calendarOf(await send(base(t), t.member, { json: { kind: 'link', label: LABEL, url: ADDRESS, titlesNotice: 1 } }));
+    const raw = async (id: string) => server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(id) });
+    expect(await raw(shown.id)).toMatchObject({ titlesNotice: 1 });
+    expect(await raw(unshown.id)).not.toHaveProperty('titlesNotice');
+    expect(await raw(link.id)).toMatchObject({ kind: 'link', titlesNotice: 1 });
+    // The answer is the calendar as before: the notice is not part of it.
+    expect(Object.keys(shown)).not.toContain('titlesNotice');
+    for (const titlesNotice of [2, 0, true, '1', null]) {
+      expect(await send(base(t), t.member, { json: { kind: 'file', label: LABEL, ics: FIRST, titlesNotice } }))
+        .toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    }
+    expect(await sourceCount(t)).toBe(3);
+  });
+
   it('imports a file of exactly 1 MB, whose JSON body is larger still, and refuses one byte more with 400 too_large', async () => {
     const t = await tenant('Big File Inn');
     const atLimit = padded(MAX_ICS_BYTES);

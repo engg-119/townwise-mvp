@@ -26,7 +26,6 @@ import { parseIcs } from '../src/calendar/ics.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import {
   SUGGESTIONS_MAX_OWNER_EVENTS, SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_SYSTEM_PROMPT, SUGGESTIONS_TIME_MS, suggestionsReserveMicroUsd,
-  WEEKLY_TITLES_AGREED_FROM,
 } from '../src/lab/suggestions.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
@@ -861,30 +860,33 @@ describe('weekly suggestions', () => {
       return parsed;
     }
 
-    /** After the day the add and connect screens began to say titles go weekly (the test clock reads Jun 2026, before it). */
-    const ADDED_AFTER_NOTICE = new Date('2026-11-20T12:00:00.000Z');
-
-    /** A link calendar (a file with `file`, Google with `connectionId`) added at `addedAt`, after the notice unless it says. */
+    /**
+     * A link calendar (a file with `file`, Google with `connectionId`), added from the popover that shows the weekly
+     * notice (`titlesNotice: 1`) unless `unnoticed` says it was added from a screen that did not (an older one).
+     */
     async function calendarOf(
       p: Place, events: readonly { uid: string | null; title: string; day: string }[],
-      source: { label: string; connectionId?: string; file?: true; addedAt?: Date },
+      source: { label: string; connectionId?: string; file?: true; unnoticed?: true; addedAt?: Date },
     ): Promise<string> {
+      const notice = source.unnoticed === true ? {} : { titlesNotice: 1 as const };
       const added = await server.ctx.stores.ownerCalendars.add(p.scope, p.locationId, source.connectionId !== undefined
         ? { kind: 'google', label: source.label, sealedAddress: 'sealed-for-test', googleConnectionId: source.connectionId }
-        : source.file === true ? { kind: 'file', label: source.label }
-          : { kind: 'link', label: source.label, sealedAddress: 'sealed-for-test', host: 'bookings.sentinel-host.test' }, parsedOf(events), {
-        createdBy: 'user-sentinel', now: source.addedAt ?? ADDED_AFTER_NOTICE,
+        : source.file === true ? { kind: 'file', label: source.label, ...notice }
+          : { kind: 'link', label: source.label, sealedAddress: 'sealed-for-test', host: 'bookings.sentinel-host.test', ...notice }, parsedOf(events), {
+        createdBy: 'user-sentinel', now: source.addedAt ?? server.clock.now(),
       });
       if (added === 'calendar_limit') throw new Error('calendar_limit');
       return added.id;
     }
 
-    /** A Google connection that agreed at `agreedAt` (the test clock reads Jun 2026, before the new explainer's day). */
-    async function connectionAgreed(p: Place, agreedAt: Date): Promise<string> {
+    /** A Google connection, made from the explainer that shows the weekly notice when `noticed`, revoked when `revokedAt`. */
+    async function connectionOf(p: Place, noticed: boolean, revokedAt: Date | null = null): Promise<string> {
       const _id = new Types.ObjectId();
+      const at = server.clock.now();
       await server.connection.collection('tw_google_connections').insertOne({
         _id, orgId: new Types.ObjectId(p.orgId), userId: `user-${randomUUID().slice(0, 8)}`, sealedRefreshToken: 'sealed-for-test', scopes: [],
-        agreedAt, connectedAt: agreedAt, updatedAt: agreedAt, revokedAt: null, checkAt: new Date('2099-01-01T00:00:00.000Z'), leaseUntil: null,
+        agreedAt: at, connectedAt: at, updatedAt: at, revokedAt, checkAt: new Date('2099-01-01T00:00:00.000Z'), leaseUntil: null,
+        ...(noticed ? { titlesNotice: 1 } : {}),
       });
       return _id.toHexString();
     }
@@ -923,8 +925,10 @@ describe('weekly suggestions', () => {
         why: null, calendarIds: [],
       }] });
       await server.ctx.stores.agentSuggestions.markDismissed(p.scope, p.locationId, (await server.ctx.stores.agentSuggestions.listOpen(p.scope, p.locationId, '2026-06-01'))[0]?.id ?? '', { by: 'user-sentinel', now: server.clock.now() });
-      const older = await connectionAgreed(p, new Date('2026-06-01T12:00:00.000Z'));
-      const newer = await connectionAgreed(p, new Date('2026-11-20T12:00:00.000Z'));
+      const older = await connectionOf(p, false);
+      const newer = await connectionOf(p, true);
+      const revoked = await connectionOf(p, true, server.clock.now());
+      await calendarOf(p, [{ uid: 'sentinel-google-revoked', title: 'Revoked dinner', day: '20260616' }], { label: 'Sentinel Revoked Google', connectionId: revoked });
       const oldGoogle = await calendarOf(p, [{ uid: 'sentinel-google-old', title: 'Old agreement dinner', day: '20260615' }], { label: 'Sentinel Old Google', connectionId: older });
       const newGoogle = await calendarOf(p, [{ uid: 'sentinel-google-new', title: 'New agreement dinner', day: '20260609' }], { label: 'Sentinel New Google', connectionId: newer });
 
@@ -938,19 +942,23 @@ describe('weekly suggestions', () => {
       const request = JSON.stringify(model.calls[0]?.params);
       for (const absent of [
         'sentinel-uid', 'sentinel-google', 'Sentinel Front Desk', 'Sentinel Old Google', 'Sentinel New Google', 'sentinel-host', 'sentinel-mail', '603-555-0100',
-        'Unkeyed lunch', 'Linked brunch', 'Spotted before', 'Old agreement dinner', 'Past the 91 days', link, oldGoogle, newGoogle, older, newer, '"kind":"link"', '"kind":"google"',
+        'Unkeyed lunch', 'Linked brunch', 'Spotted before', 'Old agreement dinner', 'Revoked dinner', 'Past the 91 days', link, oldGoogle, newGoogle, older, newer, revoked,
+        '"kind":"link"', '"kind":"google"',
       ]) expect({ absent, found: request.includes(absent) }).toEqual({ absent, found: false });
       expect(passLine()).toMatchObject({ ownerEvents: 2, passes: 0, none: 1 });
       expect(JSON.stringify(logLines(server))).not.toMatch(/Private party|New agreement dinner|sentinel-uid/);
     });
 
-    it('sends a file’s or link’s events only when it was added on or after the day the add screens said so', async () => {
+    it('sends a file’s or link’s events only when its add showed the weekly notice, whatever day it was added', async () => {
       const p = await place();
-      const before = new Date(WEEKLY_TITLES_AGREED_FROM.getTime() - 1);
-      await calendarOf(p, [{ uid: 'old-link-0001@bookings.example.test', title: 'Old link dinner', day: '20260609' }], { label: 'Old link', addedAt: before });
-      await calendarOf(p, [{ uid: 'old-file-0001@bookings.example.test', title: 'Old file dinner', day: '20260610' }], { label: 'Old file', file: true, addedAt: before });
-      await calendarOf(p, [{ uid: 'new-link-0001@bookings.example.test', title: 'New link dinner', day: '20260611' }], { label: 'New link', addedAt: WEEKLY_TITLES_AGREED_FROM });
+      const later = new Date('2027-01-01T12:00:00.000Z');
+      await calendarOf(p, [{ uid: 'old-link-0001@bookings.example.test', title: 'Old link dinner', day: '20260609' }], { label: 'Old link', unnoticed: true });
+      await calendarOf(p, [{ uid: 'old-file-0001@bookings.example.test', title: 'Old file dinner', day: '20260610' }], { label: 'Old file', file: true, unnoticed: true, addedAt: later });
+      await calendarOf(p, [{ uid: 'new-link-0001@bookings.example.test', title: 'New link dinner', day: '20260611' }], { label: 'New link' });
       await calendarOf(p, [{ uid: 'new-file-0001@bookings.example.test', title: 'New file dinner', day: '20260612' }], { label: 'New file', file: true });
+      // A calendar row written before the notice was stored has no such field, as one added from an older screen.
+      const raw = await server.connection.collection('tw_calendar_sources').find({ orgId: new Types.ObjectId(p.orgId) }).sort({ _id: 1 }).toArray();
+      expect(raw.map((row) => (row.titlesNotice as number | undefined) ?? null)).toEqual([null, null, 1, 1]);
       const model = answering([]);
       await pass({ chat: model });
       expect((sentOf(model).ownerEvents as { title: string }[]).map((each) => each.title)).toEqual(['New link dinner', 'New file dinner']);
@@ -1013,7 +1021,7 @@ describe('weekly suggestions', () => {
 
     it('keeps a spotted Google event and a closure, drops one that repeats a sentinel title, and no stored suggestion or staff view holds the title', async () => {
       const p = await place();
-      const connectionId = await connectionAgreed(p, new Date('2026-11-20T12:00:00.000Z'));
+      const connectionId = await connectionOf(p, true);
       await calendarOf(p, [{ uid: 'sentinel-0001@google.test', title: 'Zyxwvut rehearsal dinner, 40 guests', day: '20260613' }], { label: 'Bookings', connectionId });
       const spot = {
         ...JULY_4, type: 'event', kind: 'private_event', effect: 'unknown', startDate: '2026-06-13', endDate: '2026-06-13', expectedGuests: 40,
