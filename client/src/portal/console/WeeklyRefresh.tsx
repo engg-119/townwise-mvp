@@ -15,8 +15,8 @@ import type { OrgLocation } from './schemas';
 // the whole weekly worker, TownwiseAI's weekly suggestions included), and
 // each location's latest week, with the gate's reason when its calibration finished. Ids and codes only, never a figure.
 
-/** What a week row's outcome says. */
-const OUTCOME_WORDS: Readonly<Record<string, string>> = {
+/** What a week row's outcome says (also the Overview's Weekly refresh column, OverviewOrgs.tsx). */
+export const OUTCOME_WORDS: Readonly<Record<string, string>> = {
   starting: 'starting',
   started: 'started',
   start_failed: 'couldn’t start',

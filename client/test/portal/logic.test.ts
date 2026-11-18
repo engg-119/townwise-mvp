@@ -25,13 +25,13 @@ const MEMBER = [
   '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
-const CONSOLE = ['/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
+const CONSOLE = ['/admin/overview', '/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
 const EVERY = [...GATE, ...MEMBER, ...ADMIN_ONLY, ...CONSOLE, '/settings/security'];
 
 describe('access routing (spec 4.3)', () => {
   test('each state has its own route', () => {
     expect(HOME).toEqual({
-      staff: '/admin',
+      staff: '/admin/overview',
       staff_setup_required: '/settings/security',
       staff_reauth_required: null,
       member: '/dashboard',
@@ -228,11 +228,27 @@ describe('navigation per role (spec 15.3)', () => {
     expect(navLocationId('/locations/new', null, locations)).toBe('l1');
   });
 
-  test('staff: Requests with its count, Organizations, People, Audit log', () => {
-    expect(consoleNav('/admin/orgs/o1', 4).map((item) => [item.label, item.href, item.current, item.count ?? null])).toEqual([
-      ['Requests', '/admin', null, 4], ['Organizations', '/admin/orgs', 'true', null],
+  test('staff: Overview first, then Requests with its count, Organizations, People, Audit log', () => {
+    const nav = (path: string) => consoleNav(path, 4).map((item) => [item.label, item.href, item.current, item.count ?? null]);
+    expect(nav('/admin/orgs/o1')).toEqual([
+      ['Overview', '/admin/overview', null, null], ['Requests', '/admin', null, 4], ['Organizations', '/admin/orgs', 'true', null],
       ['People', '/admin/people', null, null], ['Audit log', '/admin/audit', null, null],
     ]);
+    // Overview is current on its own page, with any window, and Requests stays /admin, current only there.
+    expect(nav('/admin/overview?days=90').map(([label, , current]) => [label, current])).toEqual([
+      ['Overview', 'page'], ['Requests', null], ['Organizations', null], ['People', null], ['Audit log', null],
+    ]);
+    expect(nav('/admin').map(([label, , current]) => [label, current])).toEqual([
+      ['Overview', null], ['Requests', 'page'], ['Organizations', null], ['People', null], ['Audit log', null],
+    ]);
+  });
+
+  test('staff land on Overview; a member, view-as and staff in setup may not open it', () => {
+    expect(homeFor(staffMe())).toBe('/admin/overview');
+    expect(isAllowed(staffMe(), '/admin/overview')).toBe(true);
+    expect(isAllowed(meOf(ACCESS.admin), '/admin/overview')).toBe(false);
+    expect(isAllowed(viewAsMe(ACCESS.admin), '/admin/overview')).toBe(false);
+    expect(isAllowed(staffMe(ACCESS.staffSetup), '/admin/overview')).toBe(false);
   });
 
   test('every location page’s section, address and title', () => {

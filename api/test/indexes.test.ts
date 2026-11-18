@@ -45,7 +45,17 @@ describe('indexes', () => {
       'tw_calendar_sources', 'tw_calendar_events',
       // Google access for calendars (openspec change connect-google-calendar).
       'tw_google_connections',
+      // The days each person used the app (openspec change staff-overview).
+      'tw_activity_days',
     ].sort());
+  });
+
+  it('reads active days by organization and day, by day across organizations, and by person (staff-overview)', () => {
+    const connection = registered();
+    const keys = indexesOf(connection, 'TwActivityDay').map(([fields]) => fields);
+    expect(keys).toEqual([{ orgId: 1, day: 1 }, { day: 1 }, { userId: 1 }]);
+    expect(connection.models.TwActivityDay?.schema.get('strict')).toBe('throw');
+    expect(connection.models.TwActivityDay?.schema.get('versionKey')).toBe(false);
   });
 
   it('keeps one weekly refresh row per location per week (D42)', () => {
@@ -97,6 +107,8 @@ describe('indexes', () => {
       'TwBusinessRule',
       // The owner's own calendars, and Google access for them.
       'TwCalendarSource', 'TwCalendarEvent', 'TwGoogleConnection',
+      // Active days (staff-overview).
+      'TwActivityDay',
     ]) {
       for (const [fields] of indexesOf(connection, model)) {
         const keys = Object.keys(fields);

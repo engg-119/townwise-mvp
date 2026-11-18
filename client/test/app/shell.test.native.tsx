@@ -274,7 +274,7 @@ describe('the view-as banner (spec 15.5)', () => {
     const signOutButton = screen.getByRole('button', { name: 'Sign out' });
     expect(signOutButton.props.accessibilityState).toMatchObject({ disabled: true });
     await fireEvent.press(within(banner).getByRole('button', { name: 'End view-as' }));
-    await waitFor(() => { expect(router.getPathname()).toBe('/admin'); });
+    await waitFor(() => { expect(router.getPathname()).toBe('/admin/overview'); });
     expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g1' } }]);
     expect(screen.queryByLabelText('View-as')).toBeNull();
     expect(await screen.findByText(/^View-as ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
@@ -294,7 +294,7 @@ describe('the view-as banner (spec 15.5)', () => {
     await screen.findByLabelText('View-as');
     api.me = staffMe();
     await fireEvent.press(screen.getByRole('button', { name: 'Check again' }));
-    await waitFor(() => { expect(router.getPathname()).toBe('/admin'); });
+    await waitFor(() => { expect(router.getPathname()).toBe('/admin/overview'); });
     // It ran out before the re-read, so the notice gives its end time.
     expect(await screen.findByText(`View-as ended at ${formatTime('2026-11-04T17:00:00.000Z')}.`)).toBeTruthy();
   });

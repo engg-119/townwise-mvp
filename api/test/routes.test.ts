@@ -140,6 +140,14 @@ describe('route table', () => {
     ]);
   });
 
+  it('staff-overview: the Overview is one staff GET with no body and no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'admin.overview' || r.path === '/admin/overview')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'admin.overview', method: 'GET', path: '/admin/overview', policy: 'staff', bodyLimit: 'none', limiter: undefined, openAsAdmin: undefined },
+    ]);
+  });
+
   it('/lab holds the only routes outside /auth and /api', () => {
     // main.ts mounts exactly three routers.
     const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');

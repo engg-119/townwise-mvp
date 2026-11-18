@@ -15,7 +15,7 @@ import { addGoogleConnection, createFakeGoogle, GOOGLE_CLIENT_ID, linkGoogle } f
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import {
   call, limiterKey, logLines, makeStaff, MINUTE, refresh, removeStaffFactor, signIn, signInStaff, startTownwiseServer,
-  STAFF_EMAIL, type TestSession, type TownwiseTestServer,
+  STAFF_EMAIL, writesDuring as writesOf, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -29,6 +29,8 @@ beforeAll(async () => {
   server = await startTownwiseServer({
     probe: PROBE_ROUTES, files: blobs, calendarKey: CALENDAR_KEY, googleCalendar: google.client, googleCalendarClientId: GOOGLE_CLIENT_ID,
     revokeGoogle: google.revoke,
+    // Active days are recorded as in production (staff-overview), so the no-write check below sees the chain's one write.
+    activity: true,
   });
 });
 afterAll(async () => { await server.close(); });
@@ -141,6 +143,8 @@ describe('GET is side-effect free (7.3)', () => {
     await addGoogleConnection(server, { orgId, userId: member.userId, key: CALENDAR_KEY });
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
+      // staff-overview.
+      'admin.overview': '?days=28',
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
       'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
       // U13A.
@@ -155,6 +159,16 @@ describe('GET is side-effect free (7.3)', () => {
       return `/api${route.path.replace(/:([A-Za-z]+)/g, (_m, name: string) => own[name] ?? '')}${query[route.id] ?? ''}`;
     };
     const gets = getRoutes.map((route) => pathOf(route, ids));
+    // The chain's one write on a GET (staff-overview): a member's first request of a UTC day records their active day,
+    // and nothing else. Each member's day is recorded here, so every GET below writes nothing.
+    for (const session of [admin, member]) {
+      const writes = await writesOf(server, async () => {
+        expect((await call(server, '/api/me', { session })).status).toBe(200);
+        await server.ctx.activity.idle();
+      });
+      expect(writes).toContain('update tw_activity_days');
+      expect(writes.filter((write) => !write.endsWith(' tw_activity_days'))).toEqual([]);
+    }
     const answered = new Set<string>();
     for (const session of [admin, member, invited, staff, viewing]) {
       for (const path of gets) {

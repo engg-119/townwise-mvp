@@ -13,7 +13,7 @@ export const ROUTES = [
   '/locations/[locationId]/sales/upload', '/locations/[locationId]/data', '/locations/[locationId]/data/[ref]', '/locations/[locationId]/notes', '/locations/[locationId]/town',
   '/locations/[locationId]/orders', '/locations/[locationId]/orders/setup', '/locations/[locationId]/agent', '/locations/[locationId]/rules',
   '/locations/[locationId]/settings', '/locations/[locationId]/chat', '/team', '/settings',
-  '/admin', '/admin/orgs', '/admin/orgs/[orgId]', '/admin/people', '/admin/audit',
+  '/admin', '/admin/overview', '/admin/orgs', '/admin/orgs/[orgId]', '/admin/people', '/admin/audit',
 ];
 
 // The homepage sections the nav and footer link to (/#map and so on).

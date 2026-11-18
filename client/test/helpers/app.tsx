@@ -40,6 +40,7 @@ import Rules from '../../app/(gate)/(app)/(client)/locations/[locationId]/rules'
 import Chat from '../../app/(gate)/(app)/(client)/locations/[locationId]/chat';
 import ConsoleLayout from '../../app/(gate)/(app)/(console)/_layout';
 import Requests from '../../app/(gate)/(app)/(console)/admin/index';
+import Overview from '../../app/(gate)/(app)/(console)/admin/overview';
 import Orgs from '../../app/(gate)/(app)/(console)/admin/orgs/index';
 import Org from '../../app/(gate)/(app)/(console)/admin/orgs/[orgId]';
 import People from '../../app/(gate)/(app)/(console)/admin/people';
@@ -105,6 +106,7 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/[locationId]/chat': Chat,
     '(gate)/(app)/(console)/_layout': ConsoleLayout,
     '(gate)/(app)/(console)/admin/index': Requests,
+    '(gate)/(app)/(console)/admin/overview': Overview,
     '(gate)/(app)/(console)/admin/orgs/index': Orgs,
     '(gate)/(app)/(console)/admin/orgs/[orgId]': Org,
     '(gate)/(app)/(console)/admin/people': People,
