@@ -86,11 +86,11 @@ export function tilesOf(overview: Overview): Tile[] {
       ? { key: 'inRange', label: 'Forecast days in range', value: null, of: null, detail: 'No forecast days scored yet' }
       : {
         key: 'inRange', label: 'Forecast days in range', value: percent(health.inRange, health.scored), of: null,
-        detail: `In range on ${formatCount(health.inRange)} of ${plural(health.scored, 'scored day', 'scored days')}`,
+        detail: `Guests landed inside the forecast’s range on ${formatCount(health.inRange)} of ${plural(health.scored, 'scored day', 'scored days')}`,
       },
     {
       key: 'published', label: 'Locations with a published forecast', value: formatCount(health.published),
-      of: `of ${plural(health.locations, 'location', 'locations')}`, detail: `Used on the last ${String(days)} days`,
+      of: `of ${plural(health.locations, 'location', 'locations')}`, detail: `In the last ${String(days)} days`,
     },
     count('chatTurns', 'TownwiseAI turns', totals.chatTurns),
     count('salesUploads', 'Sales uploads', totals.salesUploads),
@@ -242,13 +242,13 @@ export function attentionLine(item: AttentionItem, orgs: readonly OverviewOrg[])
       return { key, text: 'The weekly refresh isn’t running on this server: the forecast lab or its switch is off.', link: null };
     case 'refresh_paused': {
       // The pause is one switch for every organization, under Forecasts on each organization's page (WeeklyRefresh.tsx),
-      // so the link opens one of them, the first not suspended, or Organizations with none.
+      // so the link opens one of them (the first not suspended, unnamed, so it never reads as that organization's fault), or Organizations with none.
       const at = orgs.find((each) => each.status === 'active') ?? orgs[0];
       const paused = since === null ? 'Staff paused the weekly refresh for every organization.' : `Staff paused the weekly refresh for every organization on ${since}.`;
       return {
         key,
         text: `${paused} Resume it under Forecasts on any organization’s page.`,
-        link: at === undefined ? { label: 'Open organizations', href: '/admin/orgs' } : { label: `Open ${at.name}`, href: orgHref(at.id) },
+        link: at === undefined ? { label: 'Open organizations', href: '/admin/orgs' } : { label: 'Open an organization', href: orgHref(at.id) },
       };
     }
     case 'refresh_failed': {

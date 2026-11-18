@@ -99,6 +99,8 @@ test('a tab change keeps the list and the Pending count on the page until the ne
   expect(screen.getByText('No requests are waiting.')).toBeTruthy();
   // The held list is dimmed and busy, so it never reads as the new tab's.
   expect(screen.getByTestId('requests-held').getAttribute('aria-busy')).toBe('true');
+  expect(screen.getByTestId('requests-held').hasAttribute('inert')).toBe(true);
+  expect(screen.getByRole('status').textContent).toBe('Loading approved requests…');
   expect(within(tabs).getAllByRole('link').map((link) => link.textContent)).toEqual(['Pending 0', 'Approved', 'Rejected', 'Withdrawn']);
   await act(async () => { answer.resolve({ requests: [], pendingCount: 0 }); await answer.promise; });
   expect(await screen.findByText('No approved requests.')).toBeTruthy();

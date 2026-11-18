@@ -107,8 +107,8 @@ describe('the tiles', () => {
     expect(tilesOf(overview()).map((tile) => [tile.label, tile.value, tile.of, tile.detail])).toEqual([
       ['Organizations that used the app', '4', 'of 6 with people in them', 'Up 1 from the 28 days before'],
       ['People who used the app', '9', 'of 14 members and org admins', 'Up 3 from the 28 days before'],
-      ['Forecast days in range', '81%', null, 'In range on 34 of 42 scored days'],
-      ['Locations with a published forecast', '2', 'of 2 locations', 'Used on the last 28 days'],
+      ['Forecast days in range', '81%', null, 'Guests landed inside the forecast’s range on 34 of 42 scored days'],
+      ['Locations with a published forecast', '2', 'of 2 locations', 'In the last 28 days'],
       ['TownwiseAI turns', '12', null, 'Same as the 28 days before'],
       ['Sales uploads', '3', null, 'Down 2 from the 28 days before'],
       ['Notes written', '7', null, 'Up 5 from the 28 days before'],
@@ -131,7 +131,7 @@ describe('the tiles', () => {
       overviewOrg('o2', 'Sample Pub', { locations: [location('l4', { accuracy: { days: 0, inRange: 0, typicalErrorPct: null } })] }),
     ] });
     const [, , inRange, published] = tilesOf(some);
-    expect([inRange?.value, inRange?.detail]).toEqual(['75%', 'In range on 18 of 24 scored days']);
+    expect([inRange?.value, inRange?.detail]).toEqual(['75%', 'Guests landed inside the forecast’s range on 18 of 24 scored days']);
     expect([published?.value, published?.of]).toEqual(['3', 'of 4 locations']);
 
     const none = overview(28, { orgs: [overviewOrg('o1', 'Sample Inn', { locations: [location('l1', { newestRun: null })] })] });
@@ -168,7 +168,7 @@ describe('Needs attention', () => {
     expect(shown.map((line) => [line.text, line.link?.label ?? null, line.link?.href ?? null])).toEqual([
       [`An access request has waited since ${day}.`, 'Open the request', '/admin?request=r%201'],
       ['The weekly refresh isn’t running on this server: the forecast lab or its switch is off.', null, null],
-      [`Staff paused the weekly refresh for every organization on ${day}. Resume it under Forecasts on any organization’s page.`, 'Open Sample Mountain Tavern', '/admin/orgs/o1'],
+      [`Staff paused the weekly refresh for every organization on ${day}. Resume it under Forecasts on any organization’s page.`, 'Open an organization', '/admin/orgs/o1'],
       [`Sample Mountain Tavern’s weekly refresh failed at 2 locations, the first on ${day}.`, 'Open Sample Mountain Tavern', '/admin/orgs/o1'],
       [`Sample Mountain Tavern has had no upload since ${day}.`, 'Open Sample Mountain Tavern', '/admin/orgs/o1'],
       ['Sample Campus Pub has never uploaded sales.', 'Open Sample Campus Pub', '/admin/orgs/o2'],

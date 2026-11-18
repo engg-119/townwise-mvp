@@ -38,8 +38,8 @@ test('the tiles with their figures and their change in words, Overview current i
   expect(gets(api, '/api/admin/overview?days=28')).toBe(1);
   expect(tile('Organizations that used the app')).toBe('Organizations that used the app4of 6 with people in themUp 1 from the 28 days before');
   expect(tile('People who used the app')).toBe('People who used the app9of 14 members and org adminsUp 3 from the 28 days before');
-  expect(tile('Forecast days in range')).toBe('Forecast days in range81%In range on 34 of 42 scored days');
-  expect(tile('Locations with a published forecast')).toBe('Locations with a published forecast2of 2 locationsUsed on the last 28 days');
+  expect(tile('Forecast days in range')).toBe('Forecast days in range81%Guests landed inside the forecast’s range on 34 of 42 scored days');
+  expect(tile('Locations with a published forecast')).toBe('Locations with a published forecast2of 2 locationsIn the last 28 days');
   expect(tile('TownwiseAI turns')).toBe('TownwiseAI turns1,234Same as the 28 days before');
   expect(tile('Sales uploads')).toBe('Sales uploads3Down 2 from the 28 days before');
   expect(tile('Notes written')).toBe('Notes written7Up 5 from the 28 days before');
@@ -74,7 +74,7 @@ test('with nothing recorded or scored yet, the page says so plainly and each use
   expect(tile('People who used the app')).toBe('People who used the app0of 5 members and org adminsNot enough history to compare');
   expect(tile('Organizations that used the app')).toBe('Organizations that used the app0of 2 with people in themNot enough history to compare');
   expect(tile('Forecast days in range')).toBe('Forecast days in rangeNo forecast days scored yet');
-  expect(tile('Locations with a published forecast')).toBe('Locations with a published forecast0of 1 locationUsed on the last 7 days');
+  expect(tile('Locations with a published forecast')).toBe('Locations with a published forecast0of 1 locationIn the last 7 days');
   expect(tile('Sales uploads')).toBe('Sales uploads1Up 1 from the 7 days before');
 });
 

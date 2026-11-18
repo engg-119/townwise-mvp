@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams } from 'expo-router';
-import { StyleSheet, View } from 'react-native';
+import { Platform, StyleSheet, Text, View } from 'react-native';
 
 import { approveRequest, fetchRequests, rejectRequest, type ApproveInput } from '../../../../../src/portal/console/api';
 import { Dialog } from '../../../../../src/portal/console/Dialog';
@@ -13,6 +13,7 @@ import { hasCode } from '../../../../../src/portal/errors';
 import { formatCount, formatDate, townLabel } from '../../../../../src/portal/format';
 import { useAction, useLoad } from '../../../../../src/portal/hooks';
 import { defaultLocationName } from '../../../../../src/portal/locations/naming';
+import { theme } from '../../../../../src/theme';
 import { usePortal } from '../../../../../src/portal/PortalProvider';
 import { useReportPendingCount } from '../../../../../src/portal/shell/Frame';
 import { Page } from '../../../../../src/portal/shell/Page';
@@ -324,6 +325,23 @@ function RequestTable(props: { status: RequestStatus; requests: readonly AdminRe
   );
 }
 
+/**
+ * Another tab's list while this tab's loads: dimmed, busy and inert (no press, no focus), under a line that says what
+ * is loading. The line sits in the gap above the list, so nothing moves when it shows.
+ */
+function Held(props: { label: string; children: React.ReactNode }): React.JSX.Element {
+  const ref = useRef<React.ComponentRef<typeof View>>(null);
+  useEffect(() => {
+    if (Platform.OS === 'web') (ref.current as unknown as HTMLElement | null)?.toggleAttribute('inert', true);
+  }, []);
+  return (
+    <View>
+      <Text role="status" aria-live="polite" style={styles.loading}>{props.label}</Text>
+      <View ref={ref} testID="requests-held" aria-busy pointerEvents="none" style={styles.busy}>{props.children}</View>
+    </View>
+  );
+}
+
 export default function RequestsPage(): React.JSX.Element {
   const { api } = usePortal();
   const params = useLocalSearchParams<{ status?: string; request?: string }>();
@@ -389,7 +407,7 @@ export default function RequestsPage(): React.JSX.Element {
         {stale === null ? null : <ErrorNotice key={stale.id} message={stale.text} />}
         {/* Another tab's list, held while this tab's loads: dimmed and busy, so it never reads as this tab's. */}
         {state.status === 'loading' && shown !== null
-          ? <View testID="requests-held" aria-busy pointerEvents="none" style={styles.busy}>{body}</View>
+          ? <Held label={`Loading ${TAB_LABEL[status].toLowerCase()} requests…`}>{body}</Held>
           : body}
       </Stack>
       {open?.kind === 'approve' ? <ApproveDialog request={open.request} onApproved={done} onStale={onStale} onRefresh={reload} onClose={close} /> : null}
@@ -401,6 +419,7 @@ export default function RequestsPage(): React.JSX.Element {
 
 const styles = StyleSheet.create({
   busy: { opacity: 0.6 },
+  loading: { ...theme.type.small, color: theme.color.text2, position: 'absolute', top: -22, left: 0 },
   head: { gap: 8 },
   place: { gap: 8 },
 });
