@@ -798,6 +798,13 @@ The town calendar (`src/town-calendar.ts`) is public data computed at request ti
 
 Townwise reads the kit’s data only through its store functions (`users.findById`, `users.findByEmail`, `totp.get`), and changes it only through `totp.remove` and the kit’s `revokeAllSessions`, for sign out everywhere and person deletion. Deleting a kit user is a runbook step (Deletion).
 
+**Moving two-step sign-in to a new authenticator app (spec D54; a local change to the kit, `api/kit/auth/MODULE.md`).** Two kit routes, for a person whose two-step sign-in is on. Both need a session whose sign-in is at most 15 minutes old (403 `reauth_required`), and both count against the per-account two-step limits that sign-in codes use (5 in 15 minutes, 20 in 24 hours; 429 `rate_limited`), which only a confirmed move clears.
+
+- `POST /auth/totp/reset { code }` or `{ recoveryCode }` (exactly one): the proof. A code is checked against the current secret and its step is claimed, so it cannot be replayed; a recovery code is used up here. 400 `invalid_code`, 409 `totp_not_enabled`. 200 `{ secret, otpauthUri, expiresAt, qrPngDataUrl }`, the same body as `/auth/totp/enroll`, for a new secret kept encrypted on the person's `auth_totp` document as `pendingSecretEnc`, with `pendingSessionId` (this session) and `pendingExpiresAt` (10 minutes). The live secret, its recovery codes and `enabledAt` are not touched, so sign-in keeps working with the current app, and so does the staff two-step window.
+- `POST /auth/totp/reset/confirm { code }`: a code from the new app, from the session that started the move and before it expires (else 400 `enrollment_expired`; a wrong code is 400 `invalid_code` and changes nothing). One compare-and-set makes the pending secret the secret and replaces the recovery codes; the person's other sessions are then revoked. 200 `{ recoveryCodes }` (ten, shown once).
+
+A move that is not confirmed needs no cleanup: the pending fields are ignored once expired and overwritten by the next start. The kit logs `auth.totp_reset_started` and `auth.totp_reset` with the user id only.
+
 ## Environment variables
 
 `src/main.ts` is the only file that reads `process.env`. It spreads each module’s schema into one `loadEnv` call, which treats an empty value as unset and never prints values in its errors.
