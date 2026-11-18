@@ -11,6 +11,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 
 import type { StaffActivityView } from '../src/audit.ts';
 import type { StaffForecastRunView } from '../src/handlers/forecast-runs.ts';
+import type { RunTrainingView } from '../src/lab/training.ts';
 import { addLocation, addSalesDay, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { call, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -239,6 +240,34 @@ describe('publish, withdraw and delete', () => {
     expect((await call(server, `/api/admin/orgs/${t.orgId}/forecast-runs/${theirs.id}`, { method: 'DELETE', session: staff })).status).toBe(404);
     const doc = await server.connection.collection('tw_forecast_runs').findOne({ _id: new Types.ObjectId(theirs.id) });
     expect(doc?.status).toBe('draft');
+  });
+
+  it('reads how one run was trained: an imported run’s commit, days and backtest summary, with no curve and no event', async () => {
+    const t = await team();
+    const run = await imported(t);
+    const before = (await auditEvents(server)).length;
+    const res = await call(server, `/api/admin/orgs/${t.orgId}/forecast-runs/${run.id}`, { session: staff });
+    expect(res.status).toBe(200);
+    const body = await res.json() as { run: StaffForecastRunView; training: RunTrainingView };
+    expect(body.run).toEqual(run);
+    expect(body.training).toMatchObject({
+      code: { commit: (FIXTURE.model as { notebookCommit: string }).notebookCommit, imageDigest: null },
+      history: { from: '2025-01-01', to: '2026-04-30', days: null },
+      method: null, validation: null, learning: null,
+    });
+    expect(body.training.backtest).toEqual(FIXTURE.backtest);
+    expect((await auditEvents(server)).length).toBe(before);
+  });
+
+  it('a run’s training is a staff read, and another organization’s run answers 404', async () => {
+    const t = await team();
+    const other = await team();
+    const run = await imported(t);
+    const path = `/api/admin/orgs/${t.orgId}/forecast-runs/${run.id}`;
+    expect((await call(server, path, { session: t.admin })).status).toBe(403);
+    expect((await call(server, path)).status).toBe(401);
+    expect((await call(server, `/api/admin/orgs/${other.orgId}/forecast-runs/${run.id}`, { session: staff })).status).toBe(404);
+    expect((await call(server, `/api/admin/orgs/${t.orgId}/forecast-runs/${new Types.ObjectId().toHexString()}`, { session: staff })).status).toBe(404);
   });
 
   it('lists the organization’s runs newest first, never another’s', async () => {

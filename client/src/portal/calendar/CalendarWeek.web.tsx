@@ -12,7 +12,7 @@ import { statusWord } from './model';
 // click target and the roving tab stop, labeled as its month cell (so both views say the same) and described by its
 // card list, which holds the hours, terms and rules the label leaves out. A column's head: the day ("Mon 16", "Tue Dec
 // 1" on a month's 1st, a Today tag under today), the status word, the figure with "+70", and one line (the range,
-// "guests" under a past figure, "No forecast"). Then every item on the day as a card (grid.ts buildWeek), not
+// "guests" or "forecast" under a past figure). Then every item on the day as a card (grid.ts buildWeek), not
 // focusable; the panel keeps the actions. The box is at least as tall as the month grid at the same width, so
 // switching views keeps the page height. Keys are grid.ts gridMove's in its 'week' layout, Home and End going to the
 // block's first and last day, and the moved-to column takes focus without scrolling. A mouse or pen over a column head

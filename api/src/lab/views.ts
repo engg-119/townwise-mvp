@@ -39,7 +39,7 @@ export interface CalibrationView {
 }
 
 /** A fraction as a percentage with one decimal. */
-function pct(value: number): number {
+export function pct(value: number): number {
   return Math.round(value * 1000) / 10;
 }
 
@@ -48,7 +48,7 @@ function isGateReason(reason: string): reason is GateReason {
 }
 
 /** The stored scorecard, or null when there is none or it no longer parses. */
-function scorecardOf(scorecardJson: string | null): Scorecard | null {
+export function scorecardOf(scorecardJson: string | null): Scorecard | null {
   if (scorecardJson === null) return null;
   let raw: unknown;
   try {

@@ -1,5 +1,5 @@
 import {
-  buildGrid, buildWeek, cardWords, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, inGrid, pastRangeFor,
+  buildGrid, buildWeek, cardWords, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, headLine, inGrid, pastRangeFor,
   readRangeFor, shownFor, stepWeek, weekDays, weekLabel, weekRange, weekStartFor, type DayCell, type GridSlot, type WeekCard, type WeekDay, type WeekSlot,
 } from '../../../src/portal/calendar/grid';
 import {
@@ -200,7 +200,7 @@ test('buildGrid: 6 rows of 7, the month’s own days as calendarMonth builds the
   expect(dayOf(rows, '2026-12-03')).toMatchObject({ chips: ['Tree lighting'], outside: true, pending: false });
   expect(dayOf(rows, '2026-12-02')).toMatchObject({ figure: { value: 198, kind: 'forecast' }, outside: true });
   expect(dayOf(rows, '2026-10-31')).toMatchObject({ figure: { value: 140, kind: 'actual' }, outside: true });
-  expect(dayOf(rows, '2026-12-03').label).toBe('Thu, Dec 3, 2026. Tree lighting.');
+  expect(dayOf(rows, '2026-12-03').label).toBe('Thu, Dec 3, 2026. No forecast. Tree lighting.');
 });
 
 test('days outside the 25 months are inert, with the number only and a label that says so', () => {
@@ -466,16 +466,25 @@ describe('buildWeek', () => {
     const saturday = dayIn(week(input), SATURDAY);
     expect(saturday.range).toBe('180 to 240');
     expect(tooltipLines(SATURDAY, input)?.lines[0]).toBe(`About 212 guests (${saturday.range ?? ''})`);
-    expect(saturday.noForecast).toBe(false);
-    // The read answered, but not for Sunday.
-    expect(dayIn(week(input), '2026-11-22')).toMatchObject({ range: null, noForecast: true });
+    expect(saturday.status).toBeNull();
+    // The read answered, but not for Sunday: the status word says so, and the head's last line stays empty.
+    const sunday = dayIn(week(input), '2026-11-22');
+    expect(sunday).toMatchObject({ range: null, status: 'no_forecast' });
+    expect(headLine(sunday)).toBeNull();
     // Loading or failed: nothing.
-    expect(dayIn(week(reads()), '2026-11-22')).toMatchObject({ range: null, noForecast: false });
-    // No published forecast at all is the banner's to say.
-    expect(dayIn(week(reads({ forecast: NO_FORECAST as ForecastWindow })), '2026-11-22')).toMatchObject({ noForecast: false });
+    expect(dayIn(week(reads()), '2026-11-22')).toMatchObject({ range: null, status: null });
+    // No published forecast at all: every day from today on says so too (owner request, 2026-11-17: always something).
+    expect(dayIn(week(reads({ forecast: NO_FORECAST as ForecastWindow })), '2026-11-22')).toMatchObject({ status: 'no_forecast' });
     // A past day has its guests, never a range.
     const past = reads({ salesDays: [{ date: '2026-11-10', guests: 138, netSalesCents: 276_000 }], forecast: windowOf([]) });
-    expect(dayIn(week(past, '2026-11-10'), '2026-11-10')).toMatchObject({ range: null, noForecast: false, figure: { value: 138, kind: 'actual' } });
+    const tuesday = dayIn(week(past, '2026-11-10'), '2026-11-10');
+    expect(tuesday).toMatchObject({ range: null, status: null, figure: { value: 138, kind: 'actual' } });
+    expect(headLine(tuesday)).toBe('guests');
+    // A past day with no stored guests shows the forecast made for it, captioned “forecast”.
+    const missed = reads({ salesDays: [], forecast: windowOf([forecastDay({ date: '2026-11-10', low: 80, mid: 90.4, high: 110 })]) });
+    const unstored = dayIn(week(missed, '2026-11-10'), '2026-11-10');
+    expect(unstored).toMatchObject({ range: null, status: null, figure: { value: 90, kind: 'past_forecast' } });
+    expect(headLine(unstored)).toBe('forecast');
   });
 
   test('a block at the 25 months’ ends has inert days with no cards', () => {
@@ -512,7 +521,7 @@ describe('buildWeek', () => {
     const input = reads({ events: [townEvent({ start: '2026-12-08', title: 'Craft fair' }), townEvent({ start: '2026-12-03', title: 'Tree lighting' })] });
     const slots = week(input, '2026-12-08');
     expect(slots.map((slot) => slot.date)).toEqual(weekDays('2026-12-02'));
-    for (const slot of slots.slice(5)) expect(slot).toMatchObject({ kind: 'day', pending: true, cards: [], range: null, noForecast: false });
+    for (const slot of slots.slice(5)) expect(slot).toMatchObject({ kind: 'day', pending: true, cards: [], range: null });
     for (const slot of slots.slice(0, 5)) expect(slot).toMatchObject({ kind: 'day', pending: false, outside: false });
     expect(dayIn(slots, '2026-12-03').cards.map((card) => card.title)).toEqual(['Tree lighting']);
     expect(dayIn(slots, '2026-12-08').label).toBe('Tue, Dec 8, 2026. Loading.');

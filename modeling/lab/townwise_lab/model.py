@@ -66,3 +66,21 @@ def hybrid_predict(fit: HybridFit, rows: pd.DataFrame) -> dict[float, pd.Series]
     """Per quantile, the baseline times the event multiplier for `rows` (any rows of the frame the fit was made on)."""
     multiplier = np.exp(fit.trees.predict(fit.X_trees.loc[rows.index]))
     return {q: pd.Series(m.predict(X.loc[rows.index]) * multiplier, index=rows.index) for q, (m, X) in fit.base.items()}
+
+
+def learning_curve(frame: pd.DataFrame, train: pd.DataFrame, valid: pd.DataFrame, base_cols: list[str],
+                   event_cols: list[str], target: str = "guests") -> tuple[list[float], list[float]]:
+    """The trees' loss after each boosting round, on the rows they were fitted to and on `valid`, rows they never saw:
+    the mean absolute error of the log residual of the median baseline (the trees' own objective), so a ratio and never
+    a guest count. The same fit as hybrid_fit's trees on `train`; watching a second set changes no tree."""
+    base, X = fit_quantile(frame, base_cols, train, 0.5, target=target)
+
+    def resid(rows: pd.DataFrame) -> pd.Series:
+        predicted = pd.Series(base.predict(X.loc[rows.index]), index=rows.index)
+        return np.log(rows[target].clip(lower=FLOOR) / predicted.clip(lower=FLOOR))
+
+    X_trees = design(frame, event_cols, train.index, drop_reference=False)
+    sets = [(X_trees.loc[rows.index], resid(rows)) for rows in (train, valid)]
+    trees = xgb.XGBRegressor(**XGB_PARAMS, eval_metric="mae").fit(*sets[0], eval_set=sets, verbose=False)
+    history = trees.evals_result()
+    return history["validation_0"]["mae"], history["validation_1"]["mae"]
