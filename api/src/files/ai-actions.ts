@@ -33,7 +33,7 @@ import type {
   AiReadResult, FileAiRead, FileRecord,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import type { NoteContent, NoteEffect, NoteRecord } from '../stores/notes.ts';
+import { MAX_NOTE_TITLE_CHARS, type NoteContent, type NoteEffect, type NoteRecord } from '../stores/notes.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { OnAiRead } from './ai-reader.ts';
 import { salesDayOf } from './ai-verify.ts';
@@ -73,11 +73,13 @@ function folded(text: string): string {
 
 /**
  * D49: an event's title as a note's title. NFC, each run of white space (a line break included) one space, and every
- * control or format character removed rather than refused, since the person did not type them; trimmed; null when
- * nothing is left. The title backfill (files/note-titles.ts) names older notes with it too.
+ * control or format character removed rather than refused, since the person did not type them; trimmed; cut to the
+ * note's 120 code points (NFC can lengthen a title the reader kept to 120), so the title is cut rather than the event
+ * refused; null when nothing is left. The title backfill (files/note-titles.ts) names older notes with it too.
  */
 export function eventNoteTitle(raw: string): string | null {
-  const title = raw.normalize('NFC').replace(/\s+/gu, ' ').replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/ {2,}/g, ' ').trim();
+  const cleaned = raw.normalize('NFC').replace(/\s+/gu, ' ').replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/ {2,}/g, ' ').trim();
+  const title = Array.from(cleaned).slice(0, MAX_NOTE_TITLE_CHARS).join('').trim();
   return title === '' ? null : title;
 }
 
