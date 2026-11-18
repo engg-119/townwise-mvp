@@ -80,6 +80,11 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
   const [town, setTown] = useState<TownValue>(() => townValueOf(location.town));
   const [messages, setMessages] = useState<RenameMessages>({});
   const [placeLine, setPlaceLine] = useState<string | null>(null);
+  /** The place leaves the dialog: a name it filled in goes back, a name staff typed stays, and so does the helper's end. */
+  const leavePlace = useCallback((): void => {
+    if (prefilled !== null) setName((current) => (current === prefilled ? location.name : current));
+    setPrefilled(null);
+  }, [prefilled, location.name]);
   // Google stopped answering in this dialog: the search isn't offered again.
   const [down, setDown] = useState(false);
   /** D47: with the search on, the Town fields open only on “Enter the town yourself”, as on P16. */
@@ -95,16 +100,17 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
       if (hasCode(error, 409, 'location_name_taken')) { setMessages({ name: LOCATION_COPY.taken }); return; }
       if (hasCode(error, 400, 'unknown_town')) { setMessages({ town: { choice: TOWN_COPY.choice } }); return; }
       if (place !== null && placesUnavailable(error)) {
+        leavePlace();
         setDown(true);
         setMode({ kind: 'form', place: null });
         setPlaceLine(PLACE_SETTINGS_COPY.unavailable);
         return;
       }
-      if (place !== null && placeChanged(error)) { setMode({ kind: 'search' }); setPlaceLine(PLACE_SETTINGS_COPY.changed); return; }
+      if (place !== null && placeChanged(error)) { leavePlace(); setMode({ kind: 'search' }); setPlaceLine(PLACE_SETTINGS_COPY.changed); return; }
       throw error;
     }
     await onDone('Saved.');
-  }, [api, org.id, location, settle, onDone]));
+  }, [api, org.id, location, settle, onDone, leavePlace]));
 
   function submit(): void {
     if (mode.kind !== 'form') return;
@@ -141,8 +147,8 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
           setMode({ kind: 'form', place });
         }}
         manualLabel="Enter the town yourself"
-        onManual={() => { setPlaceLine(null); setTownOpen(true); setMode({ kind: 'form', place: null }); }}
-        onUnavailable={() => { setDown(true); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); setMode({ kind: 'form', place: null }); }}
+        onManual={() => { leavePlace(); setPlaceLine(null); setTownOpen(true); setMode({ kind: 'form', place: null }); }}
+        onUnavailable={() => { leavePlace(); setDown(true); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); setMode({ kind: 'form', place: null }); }}
       />
     );
   } else {

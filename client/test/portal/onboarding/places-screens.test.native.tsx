@@ -837,8 +837,33 @@ describe('P16 Change this location’s place', () => {
     await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
     await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
     expect(await screen.findByText('Google Maps isn’t answering right now. Nothing changed; try again later.')).toBeTruthy();
-    // The place left the form; the location keeps its name.
+    // The place left the form: the location keeps its name and its town.
     expect(screen.getByLabelText('Name').props.value).toBe('Main Street Bar');
+    expect(screen.getByText('Hanover, NH')).toBeTruthy();
+    expect(screen.queryByText('On Google Maps')).toBeNull();
+  });
+
+  test('a place Google answers differently drops out of the form; a taken name keeps the place for another try', async () => {
+    const { api } = setup();
+    let answer: unknown = refusal(409, 'location_name_taken');
+    api.answers['/api/org/locations/l1'] = () => answer;
+    await renderApp('/locations/l1/settings', api);
+    await fireEvent.press(await screen.findByRole('button', { name: 'Find this location’s place' }));
+    await find('Search Google Maps for this location', 'Lou');
+    await pick('Lou’s Bakery, Norwich, VT, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    // A held place brings its town: no way to type one over it.
+    expect(screen.queryByRole('button', { name: 'Enter the town yourself' })).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Another location already uses that name.')).toBeTruthy();
+    expect(screen.getByText('On Google Maps')).toBeTruthy();
+    expect(screen.getByLabelText('Name').props.value).toBe('Lou’s Bakery, Norwich');
+    answer = refusal(400, 'place_town_mismatch');
+    await fireEvent.press(screen.getByRole('button', { name: 'Save changes' }));
+    expect(await screen.findByText('Google Maps answered differently this time. Nothing changed; search for the place again.')).toBeTruthy();
+    expect(screen.getByLabelText('Name').props.value).toBe('Main Street Bar');
+    expect(screen.getByText('Hanover, NH')).toBeTruthy();
+    expect(screen.queryByText('On Google Maps')).toBeNull();
   });
 
   test('under view-as the button is disabled and described by the read-only line; with the search off there is no section', async () => {

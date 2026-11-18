@@ -35,14 +35,14 @@ import { defaultLocationName, shownLocationName } from './naming';
 // the link to Locations (spec 10.9). Under view-as every write is disabled in place.
 // While the Google Places search is on (GET /api/org `placeSearch`), D47: the first section is “Name and place”, and
 // the location's place on Google Maps leads it, under Name: the map of its place (when it has one and the map is on),
-// the line that says whether it is linked, and “Change this location’s place” (or “Find …”), which finds the location
-// on Google Maps; using a place sets it and its town (PATCH with `placeId`). The town shows as text, and the Town
-// fields open only behind “Enter the town yourself”, since a town changed by hand takes the place off (api/README.md,
+// the line that says whether it is linked, and “Change this location’s place” (or “Find …”), which opens the search.
+// “Use this place” holds the place in the form (its map and summary, “Change place”, “Don’t use this place”) and fills
+// Name with D29's default for it unless the person typed in Name first; nothing is saved until “Save changes” sends
+// name, town and place in one PATCH. The town shows as text; the Town fields open only behind “Enter the town
+// yourself” (not while a place is held), since a town changed by hand takes the place off (api/README.md,
 // Organization and locations). With the search off, the section is “Name and town” with the Town fields, as before.
-// The search takes focus when it opens; when it closes (Use this place, Cancel, or Google failing) focus moves to the
-// line that says whether the location is linked.
-// After Name and town, a static Business rules section links to P29 (it reads nothing). Beside Name and town, “Add
-// another location” opens P10.
+// Focus: the search field when it opens, the place's summary after “Use this place”, and the linked line when the
+// search or the held place closes.
 
 const READ_ONLY_ID = 'location-settings-ro';
 
@@ -140,15 +140,18 @@ export function LocationSettings(): React.JSX.Element {
     setTownOpen(false);
     setPlaceLine(null);
     setFinding(false);
+    // The linked line comes back after Save or Don't use this place, and takes focus then.
+    setClosed((n) => n + 1);
   }, [org.org.name, nameTyped]);
 
   /** The picked place leaves the form: the name it filled in goes back, a name the person typed stays. */
   const dropPicked = useCallback((): void => {
-    if (picked !== null && picked.prefilled && name === picked.name) setName(location.name);
+    // Compared with the name as it is now, so an edit made while a save was pending stays.
+    if (picked?.prefilled === true) setName((current) => (current === picked.name ? location.name : current));
     setTown(townValueOf(location.town));
     setPicked(null);
     stopFinding();
-  }, [picked, name, location.name, location.town, stopFinding]);
+  }, [picked, location.name, location.town, stopFinding]);
 
   const save = useAction(useCallback(async (input: { name: string; town: TownInput; placeId?: string }) => {
     let saved;
@@ -268,9 +271,7 @@ export function LocationSettings(): React.JSX.Element {
                 onChangeText={(text) => { setName(text); setNameTyped(true); }}
                 autoCapitalize="words"
                 maxLength={80}
-                {...(picked !== null && picked.prefilled && name === picked.name
-                  ? { helper: PLACE_SETTINGS_COPY.prefilled }
-                  : several ? {} : { helper: `Shown only once ${org.org.name} has more than one location.` })}
+                {...nameHelper(picked !== null && picked.prefilled && name === picked.name, several ? null : `Shown only once ${org.org.name} has more than one location.`)}
                 messages={messages.name === undefined ? [] : [messages.name]}
                 {...ro}
               />
@@ -284,15 +285,18 @@ export function LocationSettings(): React.JSX.Element {
                 <Stack gap={4}>
                   <Text style={[theme.type.label, styles.label]}>Town</Text>
                   <Small>{townLabel(picked === null ? location.town : picked.place.town)}</Small>
-                  <Actions>
-                    <Button
-                      variant="link"
-                      label={PLACE_SETTINGS_COPY.townByHand}
-                      disabled={readOnly}
-                      {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
-                      onPress={() => { setTownOpen(true); }}
-                    />
-                  </Actions>
+                  {/* A held place brings its own town; to enter one by hand, Don't use this place first. */}
+                  {picked !== null ? null : (
+                    <Actions>
+                      <Button
+                        variant="link"
+                        label={PLACE_SETTINGS_COPY.townByHand}
+                        disabled={readOnly}
+                        {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
+                        onPress={() => { setTownOpen(true); }}
+                      />
+                    </Actions>
+                  )}
                 </Stack>
               )}
               {save.error === null ? null : <ErrorNotice error={save.error} onRetry={submit} />}
@@ -374,6 +378,12 @@ function LinkedLine(props: { text: string; focus: boolean }): React.JSX.Element 
       {props.text}
     </Text>
   );
+}
+
+/** Name's helper: the prefill line while Name holds a picked place's default, and D29's line with one location. */
+function nameHelper(prefilled: boolean, oneLocation: string | null): { helper?: string } {
+  const parts = [prefilled ? PLACE_SETTINGS_COPY.prefilled : null, oneLocation].filter((part) => part !== null);
+  return parts.length === 0 ? {} : { helper: parts.join(' ') };
 }
 
 /** The same town by name and state, as the card shows it. */
