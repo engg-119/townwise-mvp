@@ -53,6 +53,16 @@ beforeEach(() => {
 });
 
 describe('the active days recorder', () => {
+  it('writes a person who joins another organization the same day once in each', async () => {
+    const t = setup();
+    const other = scopeForNewOrg(STAFF, 'e'.repeat(24));
+    t.recorder.record(member('u1'));
+    t.recorder.record(member('u1', { scope: other }));
+    t.recorder.record(member('u1', { scope: other }));
+    await t.recorder.idle();
+    expect(t.calls.map((call) => call.orgId)).toEqual([ORG, 'e'.repeat(24)]);
+  });
+
   it('writes once per person per UTC day, and never for staff, view-as, open as admin or anyone without a seat', async () => {
     const t = setup();
     const principals: Principal[] = [

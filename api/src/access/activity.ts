@@ -1,7 +1,7 @@
 // The active days recorder (openspec change staff-overview, design decisions 2 and 3): the route chain calls it once a
 // request has passed its policy (routes.ts authorize, after recordResolution), never resolveAccess, which stays a pure
 // read. It records only a member or org admin on their own seat: not staff, not view-as (whose principal carries the
-// target's id), not open as admin, and nobody without a seat. Each replica keeps the `<userId>:<day>` keys it has
+// target's id), not open as admin, and nobody without a seat. Each replica keeps the `<orgId>:<userId>:<day>` keys it has
 // written today and writes a key at most once while its write succeeds; the write is never awaited, so it never delays
 // or fails the request, and a failure logs the organization id and the error's code, then drops its key so the next
 // request tries again. The first write of each UTC day also removes rows dated before the 180 days kept. Ids and counts
@@ -68,10 +68,11 @@ export function createActivityRecorder(deps: {
           (err: unknown) => { deps.logger.warn({ code: codeOf(err) }, 'townwise.activity_days_remove_failed'); },
         ));
       }
-      const key = `${principal.userId}:${day}`;
+      const { scope } = principal;
+      // The organization is in the key, as in the row's id: someone who joins another organization that day counts there too.
+      const key = `${scope.orgId}:${principal.userId}:${day}`;
       if (written.has(key)) return;
       written.add(key);
-      const { scope } = principal;
       track(deps.activityDays.record(scope, principal.userId, day).catch((err: unknown) => {
         written.delete(key);
         deps.logger.warn({ orgId: scope.orgId, code: codeOf(err) }, 'townwise.activity_write_failed');

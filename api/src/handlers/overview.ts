@@ -443,8 +443,9 @@ export async function getOverview(ctx: TownwiseContext, req: Request, res: Respo
     window,
     recordingSince: summary.recordingSince,
     totals: {
-      activeOrgs: { ...summary.totals.activeOrgs, of: joined.length },
-      activePeople: { ...summary.totals.activePeople, of: seats },
+      // Never under the count: an organization suspended, or a person removed, after being active in the window still counts there.
+      activeOrgs: { ...summary.totals.activeOrgs, of: Math.max(joined.length, summary.totals.activeOrgs.count) },
+      activePeople: { ...summary.totals.activePeople, of: Math.max(seats, summary.totals.activePeople.count) },
       chatTurns: summary.totals.chatTurns,
       salesUploads: summary.totals.salesUploads,
       notesWritten: summary.totals.notesWritten,
