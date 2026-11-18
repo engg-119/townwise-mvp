@@ -36,7 +36,7 @@ import {
 } from './grid';
 import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
-  ALL_FILTERS, dayView, monthBounds, monthCheckLine, monthLabel, savedNotice, selectedDay, stepMonth, tooltipLines,
+  ALL_FILTERS, dayView, monthBounds, monthCheckLine, monthLabel, outlookKey, savedNotice, selectedDay, stepMonth, tooltipLines,
   type CalendarInput, type FilterKey, type Filters, type ImportedEvent,
 } from './model';
 import { YourCalendars } from './YourCalendars';
@@ -260,6 +260,9 @@ function CalendarView(): React.JSX.Element {
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
   const week = useMemo(() => (input === null || view !== 'week' ? [] : buildWeek(selected, today, input, bounds)), [input, view, selected, today, bounds]);
+  // The key line under the grid while a shown day is an outlook day (D52).
+  const outlook = useMemo(() => outlookKey((view === 'week' ? week : rows.flat())
+    .flatMap((slot) => (slot.kind === 'day' && !slot.pending && !slot.outside ? [slot] : []))), [view, week, rows]);
   // The days the kept reads cover: their own range, which lags the shown one while a new range reads.
   const covered = input?.covered ?? null;
   const covers = useCallback((date: string) => covered !== null && date >= covered.from && date <= covered.to, [covered]);
@@ -508,6 +511,7 @@ function CalendarView(): React.JSX.Element {
           </View>
           <FigureKey />
           {monthLine === null ? null : <Small>{monthLine}</Small>}
+          {outlook === null ? null : <Small>{outlook}</Small>}
         </View>
         {phone ? filtersNode : null}
         <View style={desktop ? [styles.narrow, sticky] : null}>{panel}</View>

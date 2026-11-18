@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { ExpoRoot } from 'expo-router';
 import { getMockContext } from 'expo-router/testing-library';
 import { View } from 'react-native';
@@ -84,60 +84,108 @@ function renderBar(path: string): void {
   renderLinked(<TopBar kind="client" email="a@example.com" orgName="Test Group" nav={clientNav('org_admin', path, 'l1')} onSignOut={() => undefined} />);
 }
 
-test('on a phone the sections take one row in a focusable region that scrolls sideways, into the margins, with 44px links', () => {
+test('on a phone the bar has no nav row: Menu opens one panel over the page with every link and Sign out (D51)', async () => {
   renderBar('/locations/l1/notes');
-  const region = screen.getByRole('region', { name: 'Sections' });
-  expect(region.getAttribute('tabindex')).toBe('0');
-  // The scroller reaches the screen's edges, and its row starts again at the 16px margin, so the first and last
-  // link's focus ring is never cut off.
-  expect(style(region).marginLeft).toBe('-16px');
-  expect(style(region).marginRight).toBe('-16px');
-  const nav = within(region).getByRole('navigation', { name: 'Main' });
-  expect(style(parentOf(nav)).paddingLeft).toBe('16px');
-  expect(style(nav).flexWrap).toBe('nowrap');
+  const banner = screen.getByRole('banner');
+  // Closed: no nav, no More, no Sign out in the bar; the switch, then Menu, a 44px square naming no panel.
+  expect(screen.queryByRole('navigation')).toBeNull();
+  expect(screen.queryByRole('button', { name: 'More' })).toBeNull();
+  expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull();
+  const menu = within(banner).getByRole('button', { name: 'Menu' });
+  expect(style(menu).width).toBe('44px');
+  expect(style(menu).height).toBe('44px');
+  expect(menu.getAttribute('aria-expanded')).toBe('false');
+  expect(menu.hasAttribute('aria-controls')).toBe(false);
+  expect(within(banner).getByRole('button', { name: /^Switch to/ }).compareDocumentPosition(menu) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(style(banner).zIndex).not.toBe('1');
+  // Its two lines are one box at the icon's center, so they cross at their midpoints when they turn.
+  const lines = Array.from(parentOf(nth(Array.from(menu.querySelectorAll('div')), -1)).children);
+  expect(lines).toHaveLength(2);
+  for (const line of lines) {
+    expect(style(line).position).toBe('absolute');
+    expect([style(line).top, style(line).left, style(line).width, style(line).height]).toEqual(['9px', '0px', '20px', '2px']);
+  }
+  fireEvent.click(menu);
+  // Open: the bar is lifted and the panel hangs under it, over the page, in `panel`.
+  expect(menu.getAttribute('aria-expanded')).toBe('true');
+  expect(style(banner).zIndex).toBe('1');
+  const panel = document.getElementById(menu.getAttribute('aria-controls') ?? '');
+  if (panel === null) throw new Error('no menu');
+  expect(banner.contains(panel)).toBe(true);
+  expect(style(panel).position).toBe('absolute');
+  expect(style(panel).top).toBe('100%');
+  // Its box clips it, so the panel inside comes out from under the bar as it drops.
+  expect(style(panel).overflowX).toBe('hidden');
+  expect(style(panel).overflowY).toBe('hidden');
+  expect(style(nth(Array.from(panel.children) as HTMLElement[], 0)).backgroundColor).toBe(PANEL);
+  // Every link, one to a row: the sections, the ones the wider bar keeps under More, then Team and Settings.
+  const nav = within(panel).getByRole('navigation', { name: 'Main' });
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Team', 'Settings',
+    'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
   ]);
-  // Notes, Rules, Town and Your data sit under More (D38), right after TownwiseAI; More is white while it holds the
-  // current page.
-  const more = within(nav).getByRole('button', { name: 'More' });
-  expect(within(nav).getByRole('link', { name: 'TownwiseAI' }).compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-  expect(style(within(more).getByText('More')).color).toBe(WHITE);
-  expect(more.getAttribute('aria-expanded')).toBe('false');
-  fireEvent.click(more);
-  // On a phone its links take a row under the bar, outside the scroller, which would clip a dropdown.
-  expect(more.getAttribute('aria-expanded')).toBe('true');
-  const row = screen.getByRole('navigation', { name: 'More' });
-  expect(region.contains(row)).toBe(false);
-  expect(row.id).toBe(more.getAttribute('aria-controls'));
-  // The row is in the flow, so the bar is never lifted for it.
-  expect(style(screen.getByRole('banner')).zIndex).not.toBe('1');
-  expect(style(row).borderTopWidth).toBe('1px');
-  expect(within(row).getAllByRole('link').map((link) => link.textContent)).toEqual(['Notes', 'Rules', 'Town', 'Your data']);
-  const notes = within(row).getByRole('link', { name: 'Notes' });
+  expect(Array.from(nav.children).map((group) => group.children.length)).toEqual([5, 5, 2]);
+  expect(style(nth(Array.from(nav.children) as HTMLElement[], 0)).borderTopWidth).not.toBe('1px');
+  expect(style(nth(Array.from(nav.children) as HTMLElement[], 1)).borderTopWidth).toBe('1px');
+  const notes = within(nav).getByRole('link', { name: 'Notes' });
   expect(notes.getAttribute('aria-current')).toBe('page');
   expect(style(notes).minHeight).toBe('44px');
-  expect(within(row).getByRole('link', { name: 'Town' }).getAttribute('aria-current')).toBeNull();
-  // In the flow it covers nothing, so a press or focus elsewhere leaves it open; Tab reaches it after Settings.
-  fireEvent.pointerDown(document.body);
-  act(() => { within(nav).getByRole('link', { name: 'Settings' }).focus(); });
-  expect(screen.getByRole('navigation', { name: 'More' })).toBeTruthy();
-  // Escape from one of its links closes it and hands focus back to More.
+  expect(style(within(notes).getByText('Notes')).color).toBe(WHITE);
+  expect(style(within(nav).getByText('Town')).color).toBe(TEXT2);
+  // Sign out is the panel's last row, after the nav.
+  const signOut = within(panel).getByRole('button', { name: 'Sign out' });
+  expect(nav.compareDocumentPosition(signOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  // A press in the panel keeps it open; Escape from a link closes it and hands focus back to Menu.
+  fireEvent.pointerDown(notes);
+  expect(menu.getAttribute('aria-expanded')).toBe('true');
   act(() => { notes.focus(); });
   fireEvent.keyDown(notes, { key: 'Escape' });
-  expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
-  expect(document.activeElement).toBe(more);
-  expect(more.getAttribute('aria-expanded')).toBe('false');
+  expect(menu.getAttribute('aria-expanded')).toBe('false');
+  expect(document.activeElement).toBe(menu);
+  // Closing, the panel is hidden and takes no press at once, and is gone when its motion ends.
+  expect(screen.queryByRole('navigation', { name: 'Main' })).toBeNull();
+  await waitFor(() => { expect(document.getElementById(panel.id)).toBeNull(); });
+  expect(style(banner).zIndex).not.toBe('1');
+  // A menu left open does not open More when the window widens, nor the other way.
+  fireEvent.click(menu);
+  setWidth(768);
+  expect(within(screen.getByRole('navigation', { name: 'Main' })).getByRole('button', { name: 'More' }).getAttribute('aria-expanded')).toBe('false');
+  setWidth(375);
+  // The bar drew Menu again at this width.
+  const again = screen.getByRole('button', { name: 'Menu' });
+  expect(again.getAttribute('aria-expanded')).toBe('false');
+  // A press outside closes it, and so does Menu itself.
+  fireEvent.click(again);
+  fireEvent.pointerDown(document.body);
+  expect(again.getAttribute('aria-expanded')).toBe('false');
+  fireEvent.click(again);
+  expect(again.getAttribute('aria-expanded')).toBe('true');
+  fireEvent.click(again);
+  expect(again.getAttribute('aria-expanded')).toBe('false');
+});
+
+test('on a phone Sign out in the menu signs out, and a bar without a nav keeps Sign out in the bar', () => {
+  const onSignOut = jest.fn();
+  renderLinked(<TopBar kind="client" email="a@example.com" orgName="Test Group" nav={clientNav('member', '/settings', null)} onSignOut={onSignOut} />);
+  fireEvent.click(screen.getByRole('button', { name: 'Menu' }));
+  expect(within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Settings']);
+  fireEvent.click(screen.getByRole('button', { name: 'Sign out' }));
+  expect(onSignOut).toHaveBeenCalledTimes(1);
+  cleanup();
+  renderLinked(<TopBar kind="gate" email="a@example.com" onSignOut={onSignOut} />);
+  expect(screen.queryByRole('button', { name: 'Menu' })).toBeNull();
+  expect(within(screen.getByRole('banner')).getByRole('button', { name: 'Sign out' })).toBeTruthy();
 });
 
 test('More draws in the nav’s colors when nothing under it is current, and a press toggles it', () => {
+  setWidth(768);
   renderBar('/locations/l1/agent');
   const more = within(screen.getByRole('navigation', { name: 'Main' })).getByRole('button', { name: 'More' });
   expect(style(within(more).getByText('More')).color).toBe(TEXT2);
   fireEvent.click(more);
   expect(style(within(more).getByText('More')).color).toBe(WHITE);
+  expect(more.getAttribute('aria-expanded')).toBe('true');
   fireEvent.click(more);
-  expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
+  expect(more.getAttribute('aria-expanded')).toBe('false');
   expect(style(within(more).getByText('More')).color).toBe(TEXT2);
 });
 
@@ -153,7 +201,7 @@ test.each([768, 1279])('at %ipx the sections wrap in a second row under a rule, 
   // More drops its links down inside the nav, as from 1280px.
   fireEvent.click(within(nav).getByRole('button', { name: 'More' }));
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+    'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
   ]);
   expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
 });
@@ -169,7 +217,7 @@ test('from 1280px the nav sits in the bar, the sections then Team and Settings, 
   expect(parentOf(nav).contains(email)).toBe(true);
   expect(style(nav).flexGrow).toBe('1');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Team', 'Settings',
+    'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Team', 'Settings',
   ]);
   // The links sit `space-5` (20px) apart, not `space-6`, so at 1280px the organization name and the email keep
   // their room (D38); Team and Settings follow suit.
@@ -177,7 +225,7 @@ test('from 1280px the nav sits in the bar, the sections then Team and Settings, 
   expect(style(parentOf(within(nav).getByRole('link', { name: 'Team' }))).columnGap).toBe('20px');
 });
 
-test('from 641px More is a dropdown: a square panel box over the page, inside the nav, that closes on Escape, a press or focus outside', () => {
+test('above 640px More is a dropdown: a square panel box over the page, inside the nav, that closes on Escape, a press or focus outside', () => {
   setWidth(1280);
   renderBar('/locations/l1/sales/upload');
   const banner = screen.getByRole('banner');
@@ -201,7 +249,7 @@ test('from 641px More is a dropdown: a square panel box over the page, inside th
   expect(style(box).borderTopWidth).toBe('1px');
   expect(within(box).getAllByRole('link').map((link) => [link.textContent, link.getAttribute('href'), link.getAttribute('aria-current')])).toEqual([
     ['Notes', '/locations/l1/notes', null], ['Rules', '/locations/l1/rules', null], ['Town', '/locations/l1/town', null],
-    ['Your data', '/locations/l1/data', 'true'],
+    ['Your data', '/locations/l1/data', 'true'], ['Location settings', '/locations/l1/settings', null],
   ]);
   // Its links follow More in the tab order, and a press on More or in the box keeps it open.
   expect(more.compareDocumentPosition(within(box).getByRole('link', { name: 'Notes' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();

@@ -24,6 +24,11 @@ export interface ScoredDay {
    * came after the day happened, so it is never compared with it and is left out of live accuracy.
    */
   readonly late?: boolean;
+  /**
+   * The day is in its run's outlook (D52, tiers.ts): left out of live accuracy, which keeps scoring the forecast tier
+   * only. [CONFIRM: outlook days are left out of live accuracy, so it keeps scoring only the forecast tier]
+   */
+  readonly outlook?: boolean;
 }
 
 export interface LiveAccuracy {
@@ -53,11 +58,12 @@ export function madeAfter(run: { readonly madeAt: string }, date: string): boole
 }
 
 /**
- * Whether live accuracy counts the day: forecast open with a middle and stored guests, not closed or likely closed, and
- * made by the day (D49).
+ * Whether live accuracy counts the day: forecast open with a middle and stored guests, not closed or likely closed,
+ * made by the day (D49), and not an outlook day (D52).
  */
 export function scoredDay(day: ScoredDay): day is ScoredDay & { mid: number; actual: number } {
-  return day.status === 'open' && day.closed !== true && day.late !== true && day.mid !== null && day.actual !== null;
+  return day.status === 'open' && day.closed !== true && day.late !== true && day.outlook !== true && day.mid !== null
+    && day.actual !== null;
 }
 
 /**

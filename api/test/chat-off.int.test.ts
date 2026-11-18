@@ -27,6 +27,7 @@ describe('the tuning chat while it is off', () => {
       enabled: false,
       budget: { month: '2026-06', usedUsd: 0, limitUsd: 20, exhausted: false },
       conversations: [{ id: conversationId, title: 'Earlier question', updatedAt: server.clock.now().toISOString(), turnCount: 1 }],
+      liveTurn: null,
     });
 
     const before = await server.connection.collection('tw_chat_conversations').find({}).toArray();

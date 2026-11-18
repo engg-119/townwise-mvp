@@ -27,13 +27,13 @@ const MEMBER = [
   '/locations/l1/agent', '/locations/l1/chat', '/locations/l1/rules',
 ];
 const ADMIN_ONLY = ['/team', '/locations/new', '/locations/l1/settings'];
-const CONSOLE = ['/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
+const CONSOLE = ['/admin/overview', '/admin', '/admin/orgs', '/admin/orgs/o1', '/admin/people', '/admin/audit'];
 const EVERY = [...GATE, ...MEMBER, ...ADMIN_ONLY, ...CONSOLE, '/settings/security'];
 
 describe('access routing (spec 4.3)', () => {
   test('each state has its own route', () => {
     expect(HOME).toEqual({
-      staff: '/admin',
+      staff: '/admin/overview',
       staff_setup_required: '/settings/security',
       staff_reauth_required: null,
       member: '/dashboard',
@@ -133,18 +133,18 @@ describe('navigation per role (spec 15.3)', () => {
 
   test('members: the location’s sections, then Settings as the right-hand group', () => {
     expect(rows(clientNav('member', '/locations/l1', 'l1'))).toEqual([
-      ['Home', '/locations/l1', 'page', false], ['Calendar', '/locations/l1/calendar', null, false], ['Orders', '/locations/l1/orders', null, false],
-      ['Analytics', '/locations/l1/analytics', null, false],
-      ['TownwiseAI', '/locations/l1/agent', null, false], ['Notes', '/locations/l1/notes', null, false],
+      ['Home', '/locations/l1', 'page', false], ['TownwiseAI', '/locations/l1/agent', null, false],
+      ['Calendar', '/locations/l1/calendar', null, false], ['Orders', '/locations/l1/orders', null, false],
+      ['Analytics', '/locations/l1/analytics', null, false], ['Notes', '/locations/l1/notes', null, false],
       ['Rules', '/locations/l1/rules', null, false],
       ['Town', '/locations/l1/town', null, false], ['Your data', '/locations/l1/data', null, false],
       ['Settings', '/settings', null, true],
     ]);
   });
 
-  test('clientNav lists Calendar right after Home', () => {
+  test('clientNav lists TownwiseAI right after Home, then Calendar', () => {
     expect(clientNav('org_admin', '/locations/l1/calendar', 'l1').map((item) => item.label)).toEqual([
-      'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Team', 'Settings',
+      'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
     ]);
   });
 
@@ -156,17 +156,21 @@ describe('navigation per role (spec 15.3)', () => {
     expect(clientNav('member', '/locations/l1', 'l1').find((item) => item.label === 'Rules')?.href).toBe('/locations/l1/rules');
   });
 
-  test('Notes, Rules, Town and Your data sit under More (D38); no other item does', () => {
+  test('Notes, Rules, Town and Your data sit under More (D38), then Location settings for org admins; no other item does', () => {
     for (const role of ['member', 'org_admin'] as const) {
       const items = clientNav(role, '/locations/l1/sales/upload', 'l1');
+      const admin: [string, string | null][] = role === 'org_admin' ? [['Location settings', null]] : [];
       expect(items.filter((item) => item.more === true).map((item) => [item.label, item.current])).toEqual([
-        ['Notes', null], ['Rules', null], ['Town', null], ['Your data', 'true'],
+        ['Notes', null], ['Rules', null], ['Town', null], ['Your data', 'true'], ...admin,
       ]);
-      // They are the sections' last four, so More takes Notes' place, right after TownwiseAI.
+      // They are the sections' last ones, so More takes Notes' place, right after Analytics.
       const first = items.findIndex((item) => item.more === true);
-      expect(items[first - 1]?.label).toBe('TownwiseAI');
-      expect(items.slice(first, first + 4).every((item) => item.more === true)).toBe(true);
+      expect(items[first - 1]?.label).toBe('Analytics');
+      expect(items.slice(first, first + 4 + admin.length).every((item) => item.more === true)).toBe(true);
     }
+    // Location settings (P16) is the org admin's alone, and opens the location's own page.
+    expect(clientNav('member', '/locations/l1', 'l1').map((item) => item.label)).not.toContain('Location settings');
+    expect(clientNav('org_admin', '/locations/l1', 'l1').find((item) => item.label === 'Location settings')?.href).toBe('/locations/l1/settings');
     expect(clientNav('org_admin', '/dashboard', null).some((item) => item.more === true)).toBe(false);
   });
 
@@ -206,8 +210,8 @@ describe('navigation per role (spec 15.3)', () => {
     expect(current('/locations/l1/calendar')).toEqual([['Calendar', 'page']]);
     expect(current('/locations/l1/notes/')).toEqual([['Notes', 'page']]);
     expect(current('/locations/l1/town')).toEqual([['Town', 'page']]);
-    // Location settings is the header's link, not a top bar item; Settings is the account page.
-    expect(current('/locations/l1/settings')).toEqual([]);
+    // Location settings is under More; Settings is the account page.
+    expect(current('/locations/l1/settings')).toEqual([['Location settings', 'page']]);
     expect(current('/settings')).toEqual([['Settings', 'page']]);
     // Off a location the sections open another location, so none of them is current.
     expect(current('/dashboard')).toEqual([]);
@@ -229,11 +233,27 @@ describe('navigation per role (spec 15.3)', () => {
     expect(navLocationId('/locations/new', null, locations)).toBe('l1');
   });
 
-  test('staff: Requests with its count, Organizations, People, Audit log', () => {
-    expect(consoleNav('/admin/orgs/o1', 4).map((item) => [item.label, item.href, item.current, item.count ?? null])).toEqual([
-      ['Requests', '/admin', null, 4], ['Organizations', '/admin/orgs', 'true', null],
+  test('staff: Overview first, then Requests with its count, Organizations, People, Audit log', () => {
+    const nav = (path: string) => consoleNav(path, 4).map((item) => [item.label, item.href, item.current, item.count ?? null]);
+    expect(nav('/admin/orgs/o1')).toEqual([
+      ['Overview', '/admin/overview', null, null], ['Requests', '/admin', null, 4], ['Organizations', '/admin/orgs', 'true', null],
       ['People', '/admin/people', null, null], ['Audit log', '/admin/audit', null, null],
     ]);
+    // Overview is current on its own page, with any window, and Requests stays /admin, current only there.
+    expect(nav('/admin/overview?days=90').map(([label, , current]) => [label, current])).toEqual([
+      ['Overview', 'page'], ['Requests', null], ['Organizations', null], ['People', null], ['Audit log', null],
+    ]);
+    expect(nav('/admin').map(([label, , current]) => [label, current])).toEqual([
+      ['Overview', null], ['Requests', 'page'], ['Organizations', null], ['People', null], ['Audit log', null],
+    ]);
+  });
+
+  test('staff land on Overview; a member, view-as and staff in setup may not open it', () => {
+    expect(homeFor(staffMe())).toBe('/admin/overview');
+    expect(isAllowed(staffMe(), '/admin/overview')).toBe(true);
+    expect(isAllowed(meOf(ACCESS.admin), '/admin/overview')).toBe(false);
+    expect(isAllowed(viewAsMe(ACCESS.admin), '/admin/overview')).toBe(false);
+    expect(isAllowed(staffMe(ACCESS.staffSetup), '/admin/overview')).toBe(false);
   });
 
   test('every location page’s section, address and title', () => {

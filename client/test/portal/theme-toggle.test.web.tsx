@@ -85,11 +85,11 @@ function shown(): string | undefined {
 }
 
 describe.each([1280, 320])('at %ipx', (at) => {
-  test.each(BARS)('the %s bar has the switch just before Sign out, together at their own widths', async (_bar, path, title, api) => {
+  test.each(BARS)('the %s bar has the switch just before Sign out (the client app’s Menu on a phone, D51), together at their own widths', async (bar_, path, title, api) => {
     setWidth(at);
     renderAt(path, api());
     const bar = await barOf(title);
-    const signOut = within(bar).getByRole('button', { name: 'Sign out' });
+    const signOut = within(bar).getByRole('button', { name: at === 320 && bar_ === 'client app' ? 'Menu' : 'Sign out' });
     const toggle = within(bar).getByRole('button', { name: 'Switch to light mode' });
     expect(toggle.compareDocumentPosition(signOut) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(parentOf(toggle)).toBe(parentOf(signOut));

@@ -177,6 +177,20 @@ describe('the day columns at 1280', () => {
     expect(head('2026-11-25').textContent).toContain('Wed 25');
   });
 
+  test('across the outlook boundary (D52): an outlook day’s head says Outlook over its figure and its range line', () => {
+    const forecast = forecastOf([
+      forecastDay({ date: '2026-11-20' }),
+      forecastDay({ date: SATURDAY, low: 150, mid: 212, high: 290, outlook: true }),
+    ]) as ForecastWindow;
+    renderWeek({ reads: input({ forecast }) });
+    expect(head(SATURDAY).textContent).toContain('Outlook');
+    expect(head(SATURDAY).textContent).toContain('212');
+    expect(head(SATURDAY).textContent).toContain('150 to 290');
+    expect(cell(SATURDAY).getAttribute('aria-label')).toContain('Outlook about 212 guests, 150 to 290.');
+    expect(head('2026-11-20').textContent).not.toContain('Outlook');
+    expect(head('2026-11-20').textContent).toContain('180 to 240');
+  });
+
   test('today’s column has a Today tag', () => {
     renderWeek({ selected: TODAY });
     expect(within(head(TODAY)).getByText('Today')).toBeTruthy();

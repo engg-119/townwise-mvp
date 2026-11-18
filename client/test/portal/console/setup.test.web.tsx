@@ -283,7 +283,11 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   renderAt('/admin/orgs/o1', api);
   fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
   const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
-  fireEvent.click(within(dialog).getByRole('button', { name: 'Search Google Maps instead' }));
+  // D47: with the search on the place leads, as on P16, and the town by hand waits behind its link.
+  expect(within(dialog).getByText('Not linked to a place on Google Maps.')).toBeTruthy();
+  expect(within(dialog).getByText('Town: Hanover, NH')).toBeTruthy();
+  expect(within(dialog).queryByRole('combobox', { name: 'Town' })).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Find this location’s place' }));
   // Save waits for the place: the search is the dialog's step for now.
   expect(within(dialog).getByRole('button', { name: 'Save changes' }).getAttribute('aria-disabled')).toBe('true');
   fireEvent.change(within(dialog).getByRole('combobox', { name: 'Search Google Maps for this location' }), { target: { value: 'Lou' } });
@@ -295,6 +299,9 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   // A location keeps only the place's id and town, so the summary says so, not what a request keeps.
   expect(within(dialog).getByText(GOOGLE_SOURCE)).toBeTruthy();
   expect(within(dialog).queryByText(PLACES_SOURCE)).toBeNull();
+  // D47: Name now holds the place's default (D29), which staff can change before saving.
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Lou’s Bakery, Norwich');
+  expect(within(dialog).getByText('From Google Maps. Change it if you like; it’s saved as this location’s name when you save.')).toBeTruthy();
   fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Lou’s Bakery' } });
   await click('Save changes', dialog);
   expect(await screen.findByText('Saved.')).toBeTruthy();
@@ -305,6 +312,82 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   }]);
   // One check for the whole panel, as P3 makes it.
   expect(places.checks).toBe(1);
+});
+
+test('Rename keeps a name staff typed before picking a place, with no prefill helper', async () => {
+  const api = consoleApi();
+  installPlaces(api, { results: { Lou: [{ placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', detail: 'Norwich, VT, USA', kind: 'business' }] } });
+  serve(api, () => inSetup([hanover()]));
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  const searchFor = async (): Promise<void> => {
+    fireEvent.click(within(dialog).getByRole('button', { name: /this location’s place$/ }));
+    fireEvent.change(within(dialog).getByRole('combobox', { name: 'Search Google Maps for this location' }), { target: { value: 'Lou' } });
+    const option = await within(dialog).findByRole('option', { name: /Lou’s Bakery/ });
+    fireEvent.mouseDown(option);
+    await settle(() => { fireEvent.click(option); });
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'Looks right' }));
+  };
+  const helper = 'From Google Maps. Change it if you like; it’s saved as this location’s name when you save.';
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Hanover Inn' } });
+  await searchFor();
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Hanover Inn');
+  expect(within(dialog).queryByText(helper)).toBeNull();
+});
+
+test('Rename: Enter the town yourself after a place gives back the name it filled in and drops its helper', async () => {
+  const api = consoleApi();
+  installPlaces(api, { results: { Lou: [{ placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', detail: 'Norwich, VT, USA', kind: 'business' }] } });
+  serve(api, () => inSetup([hanover()]));
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Find this location’s place' }));
+  fireEvent.change(within(dialog).getByRole('combobox', { name: 'Search Google Maps for this location' }), { target: { value: 'Lou' } });
+  const option = await within(dialog).findByRole('option', { name: /Lou’s Bakery/ });
+  fireEvent.mouseDown(option);
+  await settle(() => { fireEvent.click(option); });
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Looks right' }));
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Lou’s Bakery, Norwich');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Change place' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Enter the town yourself' }));
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Hanover');
+  expect(within(dialog).queryByText('From Google Maps. Change it if you like; it’s saved as this location’s name when you save.')).toBeNull();
+});
+
+test('Rename: the prefill helper leaves when Name is edited', async () => {
+  const api = consoleApi();
+  installPlaces(api, { results: { Lou: [{ placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', detail: 'Norwich, VT, USA', kind: 'business' }] } });
+  serve(api, () => inSetup([hanover()]));
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Find this location’s place' }));
+  fireEvent.change(within(dialog).getByRole('combobox', { name: 'Search Google Maps for this location' }), { target: { value: 'Lou' } });
+  const option = await within(dialog).findByRole('option', { name: /Lou’s Bakery/ });
+  fireEvent.mouseDown(option);
+  await settle(() => { fireEvent.click(option); });
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Looks right' }));
+  const helper = 'From Google Maps. Change it if you like; it’s saved as this location’s name when you save.';
+  expect(within(dialog).getByText(helper)).toBeTruthy();
+  fireEvent.change(within(dialog).getByRole('textbox', { name: 'Name' }), { target: { value: 'Lou’s' } });
+  expect(within(dialog).queryByText(helper)).toBeNull();
+});
+
+test('Rename of a linked location says so, and Enter the town yourself opens the Town fields with the warning (D47)', async () => {
+  const api = consoleApi();
+  installPlaces(api);
+  serve(api, () => inSetup([{ ...hanover(), hasPlace: true }]));
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  expect(within(dialog).getByText('Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.')).toBeTruthy();
+  expect(within(dialog).getByRole('button', { name: 'Change this location’s place' })).toBeTruthy();
+  expect(within(dialog).queryByText('Changing the town here takes the Google Maps place off this location.')).toBeNull();
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Enter the town yourself' }));
+  expect(within(dialog).getByText('Changing the town here takes the Google Maps place off this location.')).toBeTruthy();
+  expect(within(dialog).queryByText('Town: Hanover, NH')).toBeNull();
 });
 
 test('Delete sales data confirms with the typed name first, then shows the counts deleted', async () => {

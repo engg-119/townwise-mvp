@@ -6,22 +6,30 @@
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
 // countedWeekRows (D42), the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
-// weekly-forecast-suggestions), and the boot-time title backfill's untitledAiNotes (D49).
-// Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
-// (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
+// weekly-forecast-suggestions), the active days recorder's removeOldActivityDays, the staff Overview's
+// activityDaysSince, peopleActionsSince, openInvitesBefore and chatUsageForMonth (openspec change staff-overview), the
+// TownwiseAI turn sweep's staleChatTurns and removeEndedChatTurns (openspec change resumable-chat-turns), and the
+// boot-time title backfill's untitledAiNotes (D49).
+// Only access/resolve.ts, the active days recorder (access/activity.ts), the join and decline handlers, the staff
+// handlers (admin.ts, deletion.ts, overview.ts), the TownwiseAI turn sweep (chat/turn-sweeper.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
-// (calendar/google-access.ts), the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) and the title
-// backfill (files/note-titles.ts) import this file (test/isolation.test.ts enforces the list).
+// (calendar/google-access.ts), the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions), the
+// TownwiseAI turn sweep (chat/turn-sweeper.ts) and the title backfill (files/note-titles.ts) import this file
+// (test/isolation.test.ts enforces the list).
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
+import { activityDayModel } from './activity-days.ts';
 import { agentSuggestionModel, suggestionPassModel } from './agent-suggestions.ts';
+import { auditEventModel, type AuditAction } from './audit-events.ts';
 import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
+import { chatTurnModel } from './chat-turns.ts';
+import { chatUsageModel } from './chat-usage.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
 import { DELETED_PERSON } from '../people.ts';
@@ -280,11 +288,11 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, their tuning chat conversations, live turns, proposal records and order cards, their welcome markers
+ * removed seats, their tuning chat conversations, live turns, turn records, proposal records and order cards, their welcome markers
  * and their Google connections for calendars, in every organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab), and from the weekly suggestions switch they last set
- * and the suggestions they decided. Never an active
+ * and the suggestions they decided. Their active days go too, in every organization (staff-overview). Never an active
  * seat: the handler refuses a person who holds one. An address with no kit user has only invitations. Deletes by
  * filter, so a retry completes the work. (U9: tw_agent_answers holds no person id, so nothing of it is the person's.)
  */
@@ -321,6 +329,9 @@ export async function deletePersonRecords(
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
   await chatProposalModel(connection).deleteMany({ userId });
+  // resumable-chat-turns: their turns' records, in every organization, so a turn still running ends at its next write.
+  // Not counted, so the audit details are unchanged.
+  await chatTurnModel(connection).deleteMany({ userId });
   // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
   await welcomeModel(connection).deleteMany({ userId });
   // The display name (spec 6.22). Not counted, so the audit details are unchanged.
@@ -341,6 +352,9 @@ export async function deletePersonRecords(
   // Google access for calendars (connect-google-calendar): the handler has already ended any still found, revoking
   // each; this is the backstop for one left by a crash. Not counted, so the audit details are unchanged.
   await googleConnectionModel(connection).deleteMany({ userId });
+  // The days they used the app, in every organization (openspec change staff-overview). Not counted, so the audit
+  // details are unchanged.
+  await activityDayModel(connection).deleteMany({ userId });
   return { requests, seats: invites + removed, conversations, liveTurns };
 }
 
@@ -527,6 +541,75 @@ export async function sweepCandidates(
 /** Daily upload counters for days before `beforeDay` (YYYY-MM-DD), every organization's. Resolves the number deleted. */
 export async function removeOldUploadDays(connection: Connection, beforeDay: string): Promise<number> {
   return (await uploadDayModel(connection).deleteMany({ day: trusted({ $lt: beforeDay }) })).deletedCount;
+}
+
+/**
+ * Active days dated before `beforeDay` (YYYY-MM-DD), every organization's (openspec change staff-overview, design
+ * decision 3): the recorder's daily removal. Resolves the number deleted.
+ */
+export async function removeOldActivityDays(connection: Connection, beforeDay: string): Promise<number> {
+  return (await activityDayModel(connection).deleteMany({ day: trusted({ $lt: beforeDay }) })).deletedCount;
+}
+
+/** An active day as the staff Overview reads it (staff-overview): ids and the date only. */
+export interface ActivityDayRow {
+  readonly orgId: string;
+  readonly userId: string;
+  readonly day: string;
+}
+
+/** Every organization's active days from `day` (YYYY-MM-DD) on, for the staff Overview. Ids and dates only. */
+export async function activityDaysSince(connection: Connection, day: string): Promise<ActivityDayRow[]> {
+  const docs = await activityDayModel(connection).find({ day: trusted({ $gte: day }) }, { orgId: 1, userId: 1, day: 1 }).lean();
+  return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), userId: doc.userId, day: doc.day }));
+}
+
+/** One of people's actions as the staff Overview counts it: its organization, action and time only. */
+export interface PeopleAction {
+  readonly orgId: string;
+  readonly action: AuditAction;
+  readonly at: Date;
+}
+
+/**
+ * People's actions since `at`, every organization's (openspec change staff-overview, design decision 4): events whose
+ * actor is a member or an org admin, and staff setup's sales uploads (`sales.uploaded` by staff with no view-as or
+ * open-as-admin grant, D23), which the owner counts as uploads. Never another staff event (staff opened as admin always
+ * carry their grant's id), a view-as or the system's.
+ */
+export async function peopleActionsSince(connection: Connection, at: Date): Promise<PeopleAction[]> {
+  const docs = await auditEventModel(connection).find(
+    {
+      at: trusted({ $gte: at }), orgId: trusted({ $ne: null }),
+      $or: [
+        { actorRole: trusted({ $in: ['member', 'org_admin'] }) },
+        { action: 'sales.uploaded', actorRole: 'superadmin', viewAsGrantId: null },
+      ],
+    },
+    { orgId: 1, action: 1, at: 1 },
+  ).lean();
+  return docs.flatMap((doc) => (doc.orgId === null ? [] : [{ orgId: doc.orgId.toHexString(), action: doc.action, at: doc.at }]));
+}
+
+/** An organization's invitations still open: how many, and when the oldest was sent. */
+export interface OpenInvites {
+  readonly count: number;
+  readonly oldest: Date;
+}
+
+/** Invitations still open that were sent before `before`, per organization, keyed by its id (the Overview's Needs attention). */
+export async function openInvitesBefore(connection: Connection, before: Date): Promise<Map<string, OpenInvites>> {
+  const rows = await memberModel(connection).aggregate<{ _id: Types.ObjectId; n: number; oldest: Date }>([
+    { $match: { status: 'invited', invitedAt: { $lt: before } } },
+    { $group: { _id: '$orgId', n: { $sum: 1 }, oldest: { $min: '$invitedAt' } } },
+  ]);
+  return new Map(rows.map((row) => [row._id.toHexString(), { count: row.n, oldest: row.oldest }]));
+}
+
+/** What the tuning chat has cost each organization in `month` (YYYY-MM, UTC), in micro-dollars, keyed by its id. */
+export async function chatUsageForMonth(connection: Connection, month: string): Promise<Map<string, number>> {
+  const docs = await chatUsageModel(connection).find({ month }, { orgId: 1, costMicroUsd: 1 }).lean();
+  return new Map(docs.map((doc) => [doc.orgId.toHexString(), doc.costMicroUsd]));
 }
 
 /** Which of `ids` (file ids) still have a row, in any organization: the orphan check for blobs. */
@@ -741,4 +824,37 @@ export async function untitledAiNotes(connection: Connection): Promise<UntitledA
 /** The weekly cap's count (D42): week rows of `week` that are `starting` or `started`, across organizations. */
 export async function countedWeekRows(connection: Connection, week: string): Promise<number> {
   return forecastWeekModel(connection).countDocuments({ week, status: trusted({ $in: [...COUNTED_WEEK_STATUSES] }) });
+}
+
+/**
+ * A running TownwiseAI turn whose lease has passed (its replica died, or shut down without settling it), or one the
+ * sweep ended as interrupted whose claims it has yet to release.
+ */
+export interface StaleChatTurn {
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly conversationId: string;
+  readonly userId: string;
+  readonly turnId: string;
+}
+
+/**
+ * The TownwiseAI turn sweep (chat/turn-sweeper.ts, openspec change resumable-chat-turns): running records in any
+ * organization whose lease passed before `now`, and interrupted ones the sweep has yet to release the claims of, oldest
+ * lease first, at most `limit`. Ids only, never the events.
+ */
+export async function staleChatTurns(connection: Connection, now: Date, limit: number): Promise<StaleChatTurn[]> {
+  const stale = { $or: [{ state: 'running' as const, leaseUntil: trusted({ $lt: now }) }, { state: 'interrupted' as const, releasePending: true }] };
+  const docs = await chatTurnModel(connection)
+    .find(stale, { orgId: 1, locationId: 1, conversationId: 1, userId: 1, turnId: 1 })
+    .sort({ leaseUntil: 1 }).limit(limit).lean();
+  return docs.map((doc) => ({
+    orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), conversationId: doc.conversationId.toHexString(),
+    userId: doc.userId, turnId: doc.turnId,
+  }));
+}
+
+/** The TownwiseAI turn sweep: deletes every record, in any organization, whose turn ended at or before `before`. */
+export async function removeEndedChatTurns(connection: Connection, before: Date): Promise<number> {
+  return (await chatTurnModel(connection).deleteMany({ endedAt: trusted({ $lte: before }) })).deletedCount;
 }

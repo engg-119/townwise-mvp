@@ -30,6 +30,7 @@ import { localDay, timeZoneOf } from '../time-zones.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { addNote, noteContent, noteView, type NoteView } from './notes.ts';
 import { actorOf } from './team.ts';
+import { ruleSuggestionViews, type RuleSuggestionView } from '../agent/rule-suggestion-views.ts';
 import { suggestionsPanel, type SuggestionView, type WeeklySuggestionsView } from './weekly-suggestions.ts';
 
 /** A question id: dates and a weekday number only, never text. */
@@ -38,11 +39,12 @@ const questionIdSchema = z.string().regex(/^(gap|weekday|likely_closed)_[0-9_-]{
 const answerBody = z.strictObject({ answer: z.enum(QUESTION_ANSWERS) });
 
 /**
- * The panel: the questions, the activity, and (openspec change weekly-forecast-suggestions) the open weekly suggestions
- * with the organization's switch.
+ * The panel: the questions, the activity, (openspec change weekly-forecast-suggestions) the open weekly suggestions
+ * with the organization's switch, and (D46) the open suggested closure rules from files and the sales history.
  */
 export interface AgentPanel {
   questions: Question[]; activity: ActivityItem[]; suggestions: SuggestionView[]; weeklySuggestions: WeeklySuggestionsView;
+  ruleSuggestions: RuleSuggestionView[];
 }
 
 export interface AnswerResult {
@@ -92,11 +94,12 @@ export async function getAgent(ctx: TownwiseContext, req: Request, res: Response
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const { questions, notes, answers } = await currentQuestions(ctx, caller, location);
-  const [activity, suggested] = await Promise.all([
+  const [activity, suggested, ruleSuggestions] = await Promise.all([
     activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, notes, answers }),
     suggestionsPanel(ctx, caller, location),
+    ruleSuggestionViews(ctx, caller, location),
   ]);
-  const body: AgentPanel = { questions, activity, ...suggested };
+  const body: AgentPanel = { questions, activity, ...suggested, ruleSuggestions };
   res.status(200).json(body);
 }
 

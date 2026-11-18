@@ -60,9 +60,9 @@ const MIXED = published([
   forecastDay({ date: '2026-11-22', low: 150, mid: 170, high: 190, scored: false }),
 ], { days: 5, inRange: 4, typicalErrorPct: 9.8, from: '2026-11-16', to: '2026-11-20' });
 
-function portal(days: readonly DayRecord[], lastWeek: unknown): FakePortalApi {
+function portal(days: readonly DayRecord[], lastWeek: unknown, month: unknown = NO_FORECAST): FakePortalApi {
   const fake = analyticsFake({
-    [MONTH]: NO_FORECAST,
+    [MONTH]: month,
     [LAST_WEEK]: lastWeek,
     [`${PATH}/sales/history`]: historyBody(days),
     [`${PATH}/notes`]: { notes: [] },
@@ -105,7 +105,7 @@ test('no uploads since last Sunday: the forecast for these days and the upload l
   await fireEvent.press(lastWeek.getByRole('button', { name: /Show the numbers/ }));
   expect(lastWeek.getAllByText('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245')).toHaveLength(7);
   expect(lastWeek.queryByText(/1,470/)).toBeNull();
-  expect(screen.getByText('No guest count uploaded yet; Last week shows Townwise’s forecast.')).toBeTruthy();
+  expect(screen.getByText('No guest counts for these days yet. Upload your sales to see how Townwise’s forecast did.')).toBeTruthy();
 });
 
 test('the read failing or nothing published: exactly today’s card, with no forecast words', async () => {
@@ -118,4 +118,15 @@ test('the read failing or nothing published: exactly today’s card, with no for
   const none = await card(portal(HISTORY, NO_FORECAST));
   expect(none.getByText('Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.')).toBeTruthy();
   expect(none.queryByText(/forecast|landed in/i)).toBeNull();
+});
+
+// At a glance's This week on native (D43): the same shared tile as on web, the forecast's seven days added up.
+test('This week’s forecast adds up the seven days from today, with today beside it', async () => {
+  const next = weekDates(TODAY).map((date, index) => forecastDay({ date, low: 90 + index * 10, mid: 110.4 + index * 10, high: 130 + index * 10 }));
+  await renderApp('/locations/l1', portal(HISTORY, offline(), published(next, null)));
+  const glance = within(await screen.findByLabelText('At a glance'));
+  expect(await glance.findByText('This week’s forecast')).toBeTruthy();
+  expect(glance.getByText('980')).toBeTruthy();
+  expect(glance.getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.')).toBeTruthy();
+  expect(glance.queryByText('This week, last year')).toBeNull();
 });

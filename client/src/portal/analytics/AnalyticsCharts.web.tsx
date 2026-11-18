@@ -113,7 +113,7 @@ export function BarChart(props: BarChartProps): React.JSX.Element | null {
           })}
         </svg>
         <Counts values={values} metric={props.metric} y={y} />
-        {hover.index !== null && tip !== null ? <ChartTooltip tip={tip} x={((hover.index + 0.5) / n) * hover.width} alignRight={hover.index + 0.5 > n / 2} /> : null}
+        {hover.index !== null && tip !== null ? <ChartTooltip tip={tip} from={(hover.index / n) * hover.width} to={((hover.index + 1) / n) * hover.width} alignRight={hover.index + 0.5 > n / 2} /> : null}
       </div>
       <div aria-hidden="true" style={{ ...mono, display: 'grid', gridTemplateColumns: `repeat(${String(n)}, minmax(0, 1fr))`, textAlign: 'center', marginLeft: GUTTER }}>
         {bars.map((each) => <span key={each.label} style={{ overflow: 'hidden', whiteSpace: 'nowrap' }}>{each.label}</span>)}
@@ -271,7 +271,7 @@ export function LineChart(props: LineChartProps): React.JSX.Element | null {
           </span>
         ))}
         <Counts values={ticked} metric={props.metric} y={y} />
-        {hover.index !== null && tip !== null ? <ChartTooltip tip={tip} x={(x(hover.index + 1) / width) * hover.width} alignRight={hover.index >= 6} /> : null}
+        {hover.index !== null && tip !== null ? <ChartTooltip tip={tip} from={(x(hover.index + 1) / width) * hover.width} to={(x(hover.index + 1) / width) * hover.width} alignRight={hover.index >= 6} /> : null}
       </div>
       <div aria-hidden="true" style={{ ...mono, position: 'relative', height: 16, ...plot }}>
         {MONTH_NAMES.map((name, index) => (

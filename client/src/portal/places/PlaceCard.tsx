@@ -83,10 +83,17 @@ export function PlaceSummary(props: { places: readonly FoundPlace[]; source?: st
  * line. No map: the checklist draws one map of every checked place above its rows. `children` follow (the row's
  * Remove, and what the page adds). It takes no focus: the search field keeps it.
  */
-export function PlaceRow(props: { label: string; place: FoundPlace | null; loadingText?: string; children?: React.ReactNode }): React.JSX.Element {
+export function PlaceRow(props: {
+  label: string; place: FoundPlace | null; loadingText?: string; children?: React.ReactNode;
+  /** The letter on this place's pin on the checklist's map (D57), drawn as Settings' legend draws it (D47). */
+  pin?: string | null;
+}): React.JSX.Element {
   const { place } = props;
   return (
     <View role="group" aria-label={props.label} style={[styles.card, styles.row]}>
+      {props.pin === undefined || props.pin === null ? null : (
+        <View style={styles.pin}><Text style={styles.letter}>{props.pin}</Text></View>
+      )}
       <View style={styles.rowBody}>
         {place === null ? <LoadingLine text={props.loadingText ?? `Getting ${props.label} from Google Maps…`} minHeight={44} /> : (
           <>
@@ -114,4 +121,7 @@ const styles = StyleSheet.create({
   fact: { ...theme.type.sub, color: c.text2 },
   row: { flexDirection: 'row', padding: theme.space[4], gap: theme.space[4] },
   rowBody: { flexGrow: 1, flexShrink: 1, gap: theme.space[1] },
+  // Settings' legend pin (settings/LocationsMap.tsx): a 24px mint disc with the letter.
+  pin: { width: 24, height: 24, borderRadius: 12, marginTop: 2, backgroundColor: c.mint, alignItems: 'center', justifyContent: 'center' },
+  letter: { ...theme.type.mono, color: c.onMint, fontWeight: 600 },
 });

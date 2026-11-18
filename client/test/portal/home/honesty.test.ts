@@ -155,6 +155,16 @@ test('a future day’s figure is only ever the published forecast’s mid', () =
   for (const cell of cells.values()) expect(cell.figure?.value).not.toBe(999);
 });
 
+test('an outlook day’s figures are the published run’s own too (D52): Home never computes, sums or adjusts them', () => {
+  const home: HomeInput = { today: TODAY, byDate: byDate(ALL), context: CONTEXT, metric: 'guests', lastDate: '2026-11-04' };
+  const outlook = forecastDay({ date: '2026-11-09', low: 150.4, mid: 211.6, high: 289.2, model: { status: 'open', low: 150.4, mid: 211.6, high: 289.2 }, outlook: true });
+  const cell = monthGrid(TODAY, CONTEXT, { input: home, forecast: new Map([[outlook.date, outlook]]) }).flat().find((each) => each?.date === outlook.date);
+  expect(cell?.figure).toEqual({ value: 212, kind: 'forecast', text: '212' });
+  expect(cell?.status).toBe('outlook');
+  expect(cell?.label).toBe('Mon, Nov 9, 2026. This week. Outlook about 212 guests, 150 to 290.');
+  expect(forecastDayLines(outlook)).toEqual(['About 212 guests, likely 150 to 290.']);
+});
+
 test('no history at all: no figure anywhere', () => {
   const home: HomeInput = { today: TODAY, byDate: new Map(), context: CONTEXT, metric: 'guests', lastDate: null };
   const week = thisWeek(home);

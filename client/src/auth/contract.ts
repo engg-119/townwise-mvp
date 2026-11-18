@@ -10,6 +10,8 @@ export const PATHS = {
   me: '/auth/me',
   totpEnroll: '/auth/totp/enroll',
   totpEnrollConfirm: '/auth/totp/enroll/confirm',
+  totpReset: '/auth/totp/reset',
+  totpResetConfirm: '/auth/totp/reset/confirm',
 } as const;
 
 export const errorBodySchema = z.object({

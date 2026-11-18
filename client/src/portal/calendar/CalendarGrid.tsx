@@ -5,7 +5,7 @@ import { WEEK_ORDER, WEEKDAY_NAMES } from '../analytics/words';
 import { useBreakpoint } from '../hooks';
 import { MARK } from '../home/MonthKey';
 import { CELL_GAP, cellSize, entryLines, slotOf, WEEKDAY_ROW, type DayCell, type GridSlot, type MonthBounds } from './grid';
-import { captionOf, figureTone, markedFigure, statusWord, type CalendarCell, type TooltipLines } from './model';
+import { figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf, type CalendarCell, type TooltipLines } from './model';
 
 // The Calendar's month grid on native (P28, spec 16.3): always 42 days in 6 rows, Monday first, a Pressable per day.
 // Every cell is a fixed height by width (grid.ts cellSize: 104, 64 or 52px), whatever it holds. A cell shows its day
@@ -55,8 +55,8 @@ function Day(props: { cell: DayCell; selected: boolean; width: number; onSelect:
   const phone = props.width <= 640;
   const muted = cell.outside;
   const status = statusWord(cell.status);
-  const statusInFigure = status !== null && (phone || cell.status !== 'booked');
-  const topRight = phone || cell.pending ? null : cell.status === 'booked' ? status : captionOf(cell);
+  const statusInFigure = status !== null && statusTakesFigure(cell.status, phone);
+  const topRight = phone || cell.pending ? null : topRightOf(cell);
   const entries = entryLines(cell);
   return (
     <Pressable

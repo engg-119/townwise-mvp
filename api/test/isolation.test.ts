@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh and the title backfill import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh, the TownwiseAI turn sweep and the title backfill import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -26,11 +26,16 @@ describe('isolation (source)', () => {
     // person's seat before reading their Google calendar, and whether they hold a Google connection in another
     // organization before revoking (connect-google-calendar). lab/schedule.ts, the weekly refresh (D42), lists its
     // candidates, its live calibrations and its week rows left starting across organizations, and counts the week's starts.
+    // access/activity.ts, the active days recorder (staff-overview), removes every organization's rows older than the
+    // 180 days kept, once a day. handlers/overview.ts, the staff Overview, reads active days, people's actions, open
+    // invitations, chat spend and the Organizations page's counts across organizations.
+    // chat/turn-sweeper.ts (resumable-chat-turns) finds the running turns whose lease passed, and the records past their
+    // keep, in any organization.
     // files/note-titles.ts, the boot-time title backfill (D49), finds the notes from before titles in every organization.
     expect(importers).toEqual([
-      'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/note-titles.ts', 'files/sweeper.ts', 'files/worker.ts',
+      'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/turn-sweeper.ts', 'files/ai-reader.ts', 'files/note-titles.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
-      'handlers/me.ts', 'lab/callback.ts', 'lab/schedule.ts',
+      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts',
     ]);
   });
 
@@ -142,6 +147,11 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'files/sweeper.ts']);
   });
 
+  it('only access/policy.ts mints the TownwiseAI turn sweep’s scope, and only chat/turn-sweeper.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForStaleChatTurn(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'chat/turn-sweeper.ts']);
+  });
+
   it('only access/policy.ts mints the calendar refresh’s scope, and only calendar/refresher.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForCalendarRefresh(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'calendar/refresher.ts']);
@@ -225,6 +235,11 @@ describe('isolation (source)', () => {
       expect({ path, reaches: file !== undefined && reaches(file), viaGoogleAccess: file !== undefined && imports(file).includes('calendar/google-access.ts') })
         .toEqual({ path, reaches: false, viaGoogleAccess: true });
     }
+  });
+
+  it('only access/policy.ts mints the listed organization’s scope, and only handlers/overview.ts asks for it (staff-overview)', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForListedOrg(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'handlers/overview.ts']);
   });
 
   it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {

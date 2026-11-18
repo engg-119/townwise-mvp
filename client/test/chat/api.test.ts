@@ -1,5 +1,8 @@
-import { chatEventOf, loadConversation, rateReply, renameConversation, sendTurn, setActiveVersion } from '../../src/chat/api';
-import { CONVERSATION, fakeChatApi } from '../helpers/chat';
+import {
+  chatEventOf, endsTurn, followTurn, loadChat, loadConversation, rateReply, renameConversation, sendTurn, seqOf, setActiveVersion, stopTurn,
+  TURN_INTERRUPTED, type ChatEvent,
+} from '../../src/chat/api';
+import { CONVERSATION, fakeChatApi, SUMMARY } from '../helpers/chat';
 import { daily } from './visuals-fixtures';
 
 // TownwiseAI's client API for conversation trees, ratings and visuals (docs/portal/tuning-chat.md 2 and 3). Every
@@ -12,11 +15,13 @@ function sse(event: string, data: unknown): { event: string; data: string } {
 }
 
 it('reads the new event fields with old-server defaults, and drops a visual that does not parse', () => {
-  expect(chatEventOf({ event: 'conversation', data: '{"id":"c","title":"t"}' })).toEqual({ type: 'conversation', id: 'c', title: 't', userNodeId: null, replyNodeId: null, parentId: null });
+  expect(chatEventOf({ event: 'conversation', data: '{"id":"c","title":"t"}' })).toEqual({
+    type: 'conversation', id: 'c', title: 't', userNodeId: null, replyNodeId: null, parentId: null, turnId: null,
+  });
   expect(chatEventOf({ event: 'visual', data: '{"id":"v","visual":{"kind":"pie"}}' })).toBeNull();
 
   expect(chatEventOf(sse('conversation', { id: 'c', title: 't', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1' })))
-    .toEqual({ type: 'conversation', id: 'c', title: 't', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1' });
+    .toEqual({ type: 'conversation', id: 'c', title: 't', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: null });
   // A regenerate has no new message of the person's.
   expect(chatEventOf(sse('conversation', { id: 'c', title: 't', userNodeId: null, replyNodeId: 'a2b', parentId: 'u2' })))
     .toMatchObject({ userNodeId: null, replyNodeId: 'a2b', parentId: 'u2' });
@@ -27,6 +32,7 @@ it('reads the new event fields with old-server defaults, and drops a visual that
   expect(chatEventOf(sse('visual', { id: 'toolu_v1' }))).toBeNull();
   expect(chatEventOf(sse('thinking', { delta: 'Weighing it.' }))).toEqual({ type: 'thinking', delta: 'Weighing it.' });
   expect(chatEventOf(sse('thinking', { text: 'wrong field' }))).toBeNull();
+  expect(chatEventOf(sse('aside', {}))).toEqual({ type: 'aside' });
   expect(chatEventOf(sse('suggestions', { id: 'toolu_n1', prompts: ['How did Monday go?', 'Any events next week?', 'Show last month'] })))
     .toEqual({ type: 'suggestions', id: 'toolu_n1', prompts: ['How did Monday go?', 'Any events next week?', 'Show last month'] });
   expect(chatEventOf(sse('suggestions', { id: 'toolu_n1', prompts: 'not a list' }))).toBeNull();
@@ -224,4 +230,73 @@ it('loads each reply’s sources and its search parts (D37); the person’s entr
   expect((await loadConversation(api, 'l1', 'c1')).messages.map((message) => message.sources)).toEqual([[], []]);
   api.conversation = CONVERSATION;
   expect((await loadConversation(api, 'l1', 'c1')).messages.map((message) => message.sources)).toEqual([[], []]);
+});
+
+// resumable-chat-turns: a turn's numbered events, its live turn on both GETs, and the calls that read it back and stop it.
+const LIVE = {
+  turnId: 'turn-0001', state: 'running', startedAt: '2026-11-02T15:00:00.000Z', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1',
+  message: { nodeId: 'u2', role: 'user', text: 'And January?', proposals: [], parts: [], at: '2026-11-02T15:00:00.000Z', attachments: [] },
+};
+
+it('reads a turn’s id on conversation, its stopped and interrupted endings, and each event’s number', () => {
+  expect(chatEventOf(sse('conversation', { id: 'c', title: 't', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-0001' })))
+    .toMatchObject({ type: 'conversation', turnId: 'turn-0001' });
+  expect(chatEventOf(sse('stopped', {}))).toEqual({ type: 'stopped' });
+  expect(chatEventOf({ event: 'stopped', data: 'not json' })).toBeNull();
+  expect(chatEventOf(sse('error', { code: 'interrupted' }))).toEqual({ type: 'error', code: TURN_INTERRUPTED });
+  const ends: ChatEvent[] = [{ type: 'stopped' }, { type: 'error', code: 'interrupted' }, { type: 'done', stopReason: 'end_turn', leafId: null, sources: [] }];
+  expect(ends.every(endsTurn)).toBe(true);
+  expect(endsTurn({ type: 'text', delta: 'x' })).toBe(false);
+  expect(seqOf({ event: 'text', data: '{}', id: '42' })).toBe(42);
+  for (const id of [undefined, '', '0', '07', '-1', '1.5', 'x']) {
+    expect(seqOf({ event: 'text', data: '{}', ...(id === undefined ? {} : { id }) })).toBeNull();
+  }
+});
+
+it('reads liveTurn on both GETs, as none from an API before it or one that does not parse', async () => {
+  const api = fakeChatApi();
+  expect((await loadChat(api, 'l1')).liveTurn).toBeNull();
+  api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-0001' } };
+  expect((await loadChat(api, 'l1')).liveTurn).toEqual({ conversationId: 'c1', turnId: 'turn-0001' });
+  api.summary = { ...SUMMARY, liveTurn: { conversationId: 7 } };
+  expect((await loadChat(api, 'l1')).liveTurn).toBeNull();
+
+  expect((await loadConversation(api, 'l1', 'c1')).liveTurn).toBeNull();
+  api.conversation = { ...CONVERSATION, liveTurn: LIVE };
+  expect((await loadConversation(api, 'l1', 'c1')).liveTurn).toEqual({
+    turnId: 'turn-0001', state: 'running', startedAt: Date.parse('2026-11-02T15:00:00.000Z'), userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1',
+    message: {
+      role: 'user', text: 'And January?', parts: [], at: Date.parse('2026-11-02T15:00:00.000Z'), endedAt: Date.parse('2026-11-02T15:00:00.000Z'),
+      nodeId: 'u2', feedback: null, next: null, attachments: [], sources: [],
+    },
+  });
+  // A regenerate has no message of the person's; POST .../active answers the same view.
+  api.conversation = { ...CONVERSATION, liveTurn: { ...LIVE, state: 'interrupted', userNodeId: null, message: null } };
+  expect((await setActiveVersion(api, 'l1', 'c1', 'a1')).liveTurn).toMatchObject({ state: 'interrupted', userNodeId: null, message: null });
+  api.conversation = { ...CONVERSATION, liveTurn: { ...LIVE, state: 'finished' } };
+  expect((await loadConversation(api, 'l1', 'c1')).liveTurn).toBeNull();
+});
+
+it('reads a turn back with a GET after a cursor, each event with its number, and stops it with an empty POST', async () => {
+  const api = fakeChatApi();
+  const seen: [ChatEvent, number | null][] = [];
+  const following = followTurn(api, 'l1', { conversationId: 'c1', turnId: 'turn-0001' }, 41, new AbortController().signal, (event, seq) => {
+    seen.push([event, seq]);
+  });
+  const [tail] = api.turns;
+  expect(tail).toMatchObject({ path: `${BASE}/c1/turns/turn-0001?after=41`, method: 'GET', body: undefined });
+  tail?.emit('text', { delta: 'more' }, 42);
+  tail?.emit('stopped', {}, 43);
+  tail?.end();
+  await following;
+  expect(seen).toEqual([[{ type: 'text', delta: 'more' }, 42], [{ type: 'stopped' }, 43]]);
+
+  api.autoStop = false;
+  expect(await stopTurn(api, 'l1', { conversationId: 'c1', turnId: 'turn-0001' })).toBe('running');
+  api.respond[`${BASE}/c1/turns/turn-0001/stop`] = () => ({ state: 'done' });
+  expect(await stopTurn(api, 'l1', { conversationId: 'c1', turnId: 'turn-0001' })).toBe('done');
+  expect(api.writes).toEqual([
+    { method: 'POST', path: `${BASE}/c1/turns/turn-0001/stop`, body: {} },
+    { method: 'POST', path: `${BASE}/c1/turns/turn-0001/stop`, body: {} },
+  ]);
 });

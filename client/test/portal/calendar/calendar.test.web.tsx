@@ -899,3 +899,43 @@ test('the key names an actual and a forecast, a past day says how its forecast d
   fireEvent.pointerOver(cell('2026-11-07'), { pointerType: 'mouse' });
   expect(screen.getByTestId('calendar-tooltip').textContent).toContain('138 guests, actualForecast was about 135 (likely 120 to 150); 138 guests came: inside the range');
 });
+
+/** November with a stale run: days from the 20th are its outlook (D52), the 20th with mid 212, low 150, high 290. */
+function novemberWithOutlook(): unknown {
+  const days = [];
+  for (let day = 11; day <= 30; day += 1) {
+    const date = `2026-11-${String(day)}`;
+    days.push(day < 20 ? forecastDay({ date }) : forecastDay({ date, low: 150, mid: 212, high: 290, model: { status: 'open', low: 150, mid: 212, high: 290 }, outlook: true }));
+  }
+  return forecastOf(days);
+}
+
+const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.';
+
+test('an outlook day (D52): its cell shows its figure marked Outlook, its tooltip and panel say outlook with no 8 in 10, and the key line shows', async () => {
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': novemberWithOutlook() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-20', api);
+  expect(cell('2026-11-20').getAttribute('aria-label')).toBe('Fri, Nov 20, 2026. Outlook about 212 guests, 150 to 290.');
+  expect(cell('2026-11-20').textContent).toContain('Outlook');
+  expect(cell('2026-11-20').textContent).toContain('212');
+  // A forecast day is unchanged, with its 8 in 10.
+  expect(cell('2026-11-19').getAttribute('aria-label')).toBe('Thu, Nov 19, 2026. Forecast about 212 guests, 180 to 240.');
+  expect(cell('2026-11-19').textContent).not.toContain('Outlook');
+  const day = panel();
+  expect(within(day).getByText('Outlook')).toBeTruthy();
+  expect(within(day).getByText(whole('About 212 guests'))).toBeTruthy();
+  expect(within(day).getByText('Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.')).toBeTruthy();
+  expect(day.textContent).not.toContain('8 in 10');
+  expect(screen.getByText(OUTLOOK_KEY)).toBeTruthy();
+  fireEvent(cell('2026-11-21'), pointer('pointerover', 'mouse'));
+  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('Outlook: about 212 guests (150 to 290)');
+  // At phone width the cell keeps its figure.
+  setWidth(375);
+  expect(cell('2026-11-20').textContent).toContain('212');
+});
+
+test('no key line while no shown day is an outlook day', async () => {
+  const { api } = setup();
+  await renderAt('/locations/l1/calendar', api);
+  expect(screen.queryByText(OUTLOOK_KEY)).toBeNull();
+});

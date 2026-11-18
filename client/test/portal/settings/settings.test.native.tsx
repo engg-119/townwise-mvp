@@ -176,7 +176,7 @@ describe('P18 Settings: an org admin', () => {
     expect(screen.getByLabelText('Name').props.value).toBe('Test Group');
     expect(screen.getByText('Your team sees this name at the top of every page. Townwise staff see it in the staff console.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Save name' })).toBeTruthy();
-    expect(screen.getByText(/Rename one or change its town from Location settings on that location’s page\./)).toBeTruthy();
+    expect(screen.getByText(/Rename one or change its town from Location settings, under More\./)).toBeTruthy();
   });
 
   test('with one location, Add location opens Add location, since Locations opens that location’s Home', async () => {

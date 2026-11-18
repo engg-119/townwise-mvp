@@ -68,6 +68,15 @@ export const NOTE_COPY = {
   fromAiFileEdit: 'Undoing that file’s read removes this note, even after an edit.',
 } as const;
 
+/** A business rule's Every year box (D46, P29): its helper and why a season is refused. */
+export const SEASON_COPY = {
+  everyYear: 'Closes the same days every year from Starts on, until you delete the rule.',
+  seasonEnd: 'Enter the season’s last day.',
+  season: 'Pick a season shorter than a year that doesn’t start or end on Feb 29.',
+} as const;
+/** A season lasts at most this many days (api/src/handlers/notes.ts validSeason): shorter than a year. */
+const MAX_SEASON_DAYS = 364;
+
 /** “Pick a start date from Jan 1, 2010 to {today plus two years}.” */
 export function startRangeCopy(today: string): string {
   return `Pick a start date from ${formatDate(EARLIEST_DATE)} to ${formatDate(plusYears(today, 2))}.`;
@@ -87,6 +96,11 @@ export interface NoteDraft {
   /** 'HH:MM' or empty; both empty means all day. */
   startTime: string;
   endTime: string;
+  /**
+   * A rule's Every year box (D46): Starts and Ends are then the first season, which repeats every year with no end.
+   * Absent on a note's draft, which never has one.
+   */
+  yearly?: boolean;
 }
 
 export interface NoteMessages {
@@ -173,6 +187,8 @@ export interface ScheduleInput extends Omit<NoteInput, 'detail' | 'title' | 'end
   endDate: string | null;
   startTime: string | null;
   endTime: string | null;
+  /** D46: the months and days it covers every year from `startDate`, with `endDate` null; left out for none. */
+  season?: { repeat: 'yearly'; from: string; to: string };
 }
 
 /**
@@ -229,8 +245,27 @@ export function checkNote(draft: NoteDraft, today: string = utcToday()): { input
  */
 export function checkSchedule(draft: NoteDraft, today: string = utcToday()): { input: ScheduleInput } | { messages: NoteMessages } {
   const messages: NoteMessages = {};
+  if (draft.yearly === true) return checkSeason(draft, today, messages);
   const fields = checkFields(draft, today, true, messages);
   return fields === null ? { messages } : { input: fields };
+}
+
+/**
+ * Every year (D46): Starts and Ends are the first season, so Ends is required, on or after Starts, and the season is
+ * shorter than a year (at most 364 days) and neither starts nor ends on Feb 29. The schedule sends the season's months
+ * and days, `startDate` as Starts and no end, as api/src/handlers/notes.ts validDays takes it.
+ */
+function checkSeason(draft: NoteDraft, today: string, messages: NoteMessages): { input: ScheduleInput } | { messages: NoteMessages } {
+  const end = draft.endDate.trim();
+  if (end === '') messages.endDate = SEASON_COPY.seasonEnd;
+  else if (!isCalendarDate(end)) messages.endDate = NOTE_COPY.date;
+  const fields = checkFields({ ...draft, endDate: '' }, today, true, messages);
+  if (fields === null) return { messages };
+  const start = fields.startDate;
+  if (end < start) messages.endDate = NOTE_COPY.endBefore;
+  else if (daysBetween(start, end) + 1 > MAX_SEASON_DAYS || start.slice(5) === '02-29' || end.slice(5) === '02-29') messages.endDate = SEASON_COPY.season;
+  if (Object.keys(messages).length > 0) return { messages };
+  return { input: { ...fields, endDate: null, season: { repeat: 'yearly', from: start.slice(5), to: end.slice(5) } } };
 }
 
 /** “Mondays only”, “Saturdays and Sundays only”, Monday first; null for every day. */

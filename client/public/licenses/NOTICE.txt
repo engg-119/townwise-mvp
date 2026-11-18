@@ -1,0 +1,15 @@
+Townwise open-source notices
+
+Reading an iPhone HEIC photo on the Ordering setup page uses, in browsers that
+cannot draw HEIC themselves, an unmodified copy of:
+
+  libheif-js 1.23.5      https://github.com/catdad-experiments/libheif-js
+  which builds libheif   https://github.com/strukturag/libheif
+  and libde265           https://github.com/strukturag/libde265
+
+Each is distributed under the GNU Lesser General Public License, version 3.
+The licence text is in libheif-js-LGPL-3.0.txt beside this file, and the
+source code is at the addresses above. Townwise serves the library as a file
+of its own, so it can be replaced with another build.
+
+The fonts in /fonts carry their SIL Open Font License texts beside them.

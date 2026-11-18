@@ -120,3 +120,16 @@ test('a footer sits under the key', () => {
   const key = screen.getByText('Your calendar');
   expect(key.compareDocumentPosition(screen.getByText('Open the calendar')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
+
+test('an outlook day (D52) says Outlook over its middle figure, at 1280 and at 375', () => {
+  const outlook: MonthCell = { ...cell('2026-11-20', 'outlook'), figure: { value: 212, kind: 'forecast', text: '212' } };
+  for (const next of [1280, 375]) {
+    setWidth(next);
+    renderRow([outlook, cell('2026-11-21', null), null, null, null, null, null]);
+    const shown = screen.getByRole('gridcell', { name: 'Day 2026-11-20' });
+    expect(shown.textContent).toContain('Outlook');
+    expect(shown.textContent).toContain('212');
+    expect(screen.getByRole('gridcell', { name: 'Day 2026-11-21' }).textContent).not.toContain('Outlook');
+    cleanup();
+  }
+});

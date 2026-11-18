@@ -150,7 +150,7 @@ describe('get_town_calendar', () => {
     const { parsed } = await run('get_town_calendar', { from: '2026-11-15', to: '2026-11-30' });
     expect(parsed).toMatchObject({
       from: '2026-11-15', to: '2026-11-30', town: { name: 'Hanover', state: 'NH' }, researched: true,
-      covers: { from: '2025-01-06', to: '2027-11-24' },
+      covers: { from: '2025-01-06', to: '2028-06-11' },
     });
     const events = parsed.events as Record<string, unknown>[];
     expect(events.find((event) => event.id === 'hanover-nh:2026-11-20:fall-term-finals')).toEqual({
@@ -316,7 +316,7 @@ describe('get_forecast (U13B)', () => {
     expect(days[0]).toEqual({
       date: '2026-11-02', weekday: 'Mon', status: 'open', low: 80, mid: 100, high: 120, vsBaselinePct: null,
       reasons: [{ label: 'Monday', effectPct: null, effect: null, sources: [], note: null, rule: null }], modelRange: null, noteGuests: 0,
-      moreNotes: 0, moreRules: 0, madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false,
+      moreNotes: 0, moreRules: 0, madeAt: '2026-11-01', madeAfterDay: false, actual: 140, inRange: false, outlook: false,
     });
     expect(days[1]).toMatchObject({ status: 'closed', low: null, mid: null, high: null, reasons: [{ label: 'Closed' }] });
     expect(resultViewOf('get_forecast', ok(content))).toEqual({
@@ -334,8 +334,12 @@ describe('get_forecast (U13B)', () => {
     const OLDER = '000000000000000000000011';
     const NEWER = '000000000000000000000012';
     const runs = [
-      publishedRun({ id: NEWER, model: { family: 'hybrid_linear_xgboost', version: 'v10', notebookCommit: '0000000' }, dataThrough: '2026-11-01', madeAt: '2026-11-02', backtest: null }),
-      publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26' }),
+      // Each run's range and dayCount are its rows' (the reader chooses by them, D52).
+      publishedRun({
+        id: NEWER, model: { family: 'hybrid_linear_xgboost', version: 'v10', notebookCommit: '0000000' }, dataThrough: '2026-11-01', madeAt: '2026-11-02',
+        backtest: null, range: { from: '2026-11-02', to: '2026-11-05' }, dayCount: 4,
+      }),
+      publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26', range: { from: '2026-10-27', to: '2026-11-01' }, dayCount: 6 }),
     ];
     const olderDays = ['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
     const rows = [
@@ -393,12 +397,31 @@ describe('get_forecast (U13B)', () => {
     expect(days.map((day) => day.vsBaselinePct)).toEqual([26, null]);
   });
 
+  it('marks a day or week after its run’s forecast tier as outlook, and says how to word it (D52)', async () => {
+    // Made 2026-11-01 with sales through 2026-10-31: its forecast tier ends 2027-01-31 (91 days after it was made).
+    const runs = [publishedRun({ range: { from: '2026-11-01', to: '2027-02-07' }, dayCount: 99 })];
+    const dates = Array.from({ length: 14 }, (_, i) => new Date(Date.parse('2027-01-25T00:00:00Z') + i * 86_400_000).toISOString().slice(0, 10));
+    const week = (from: string, to: string): ForecastRow => ({ ...dayRow(from), span: 'week', to, status: null, low: 560, mid: 700, high: 840, openDays: 7, reasons: [] });
+    const rows = [...dates.map((date) => dayRow(date)), week('2027-01-25', '2027-01-31'), week('2027-02-01', '2027-02-07')];
+    const { parsed } = await run('get_forecast', { from: '2027-01-30', to: '2027-02-02' }, withRows(rows, runs));
+    expect((parsed.days as { date: string; outlook: boolean }[]).map((day) => [day.date, day.outlook])).toEqual([
+      ['2027-01-30', false], ['2027-01-31', false], ['2027-02-01', true], ['2027-02-02', true],
+    ]);
+    expect((parsed.weeks as { from: string; outlook: boolean }[]).map((each) => [each.from, each.outlook])).toEqual([
+      ['2027-01-25', false], ['2027-02-01', true],
+    ]);
+    expect(toolNamed('get_forecast')?.definition.description).toContain(
+      'A day or week with outlook true is more than 91 days after its run was made, or more than 182 days after the last sales the run learned from: call it Townwise\'s outlook, give its range, and don\'t say 8 in 10 for it.',
+    );
+  });
+
   it('gives weeks from the run’s own week rows, never sums of days', async () => {
     const week: ForecastRow = { ...dayRow('2026-11-02'), span: 'week', to: '2026-11-08', status: null, low: 500.5, mid: 600.5, high: 700.5, openDays: 7, reasons: [] };
     const days = ['2026-11-02', '2026-11-03', '2026-11-04', '2026-11-05', '2026-11-06', '2026-11-07', '2026-11-08'].map((date) => dayRow(date));
     const { parsed } = await run('get_forecast', { from: '2026-11-02', to: '2026-11-08' }, withRows([...days, week]));
     expect(parsed.weeks).toEqual([{
       from: '2026-11-02', to: '2026-11-08', openDays: 7, low: 500, mid: 601, high: 701, noteGuests: 0, madeAt: '2026-11-01', actual: null, inRange: null,
+      outlook: false,
     }]);
     const noWeek = await run('get_forecast', { from: '2026-11-02', to: '2026-11-08' }, withRows(days));
     expect(noWeek.parsed.weeks).toEqual([]);
@@ -425,6 +448,7 @@ describe('get_forecast (U13B)', () => {
       // Friday closed by the rule (-100.4), a party of 70 on Saturday (+70): -30.4.
       expect(await weeksOf([...days(), weekRow()], [savedNote({ startDate: '2026-11-07' })], [closedFridays])).toEqual([{
         from: MONDAY, to: '2026-11-08', openDays: 5, low: 170, mid: 570, high: 671, noteGuests: 70, madeAt: '2026-11-01', actual: null, inRange: null,
+        outlook: false,
       }]);
       // A party on the Sunday the model closed opens it with its 70 guests, and they add too.
       expect(await weeksOf([...days(), weekRow()], [savedNote({ startDate: '2026-11-07' }), savedNote({ startDate: '2026-11-08' })], [closedFridays]))
@@ -457,7 +481,9 @@ describe('get_forecast (U13B)', () => {
       stored.push({ date, guests, netSalesCents });
     }
     const forecasts = {
-      published: () => Promise.resolve([publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26' })]),
+      published: () => Promise.resolve([publishedRun({
+        id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26', range: { from: '2026-10-27', to: '2026-11-04' }, dayCount: 9,
+      })]),
       rows: () => Promise.resolve(rows),
     } as unknown as ForecastStore;
     const salesDays = { days: () => Promise.resolve(stored) } as unknown as SalesDayStore;

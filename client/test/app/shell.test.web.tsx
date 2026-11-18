@@ -49,11 +49,14 @@ test('the staff console: panel bar, kind tag, Requests with its count, the verif
   expect(screen.getByText('Staff console')).toBeTruthy();
   const nav = screen.getByRole('navigation', { name: 'Main' });
   // The count is a number after the label, never a dot or badge.
-  await waitFor(() => { expect(within(nav).getAllByRole('link')[0]?.textContent).toBe('Requests 4'); });
+  await waitFor(() => { expect(within(nav).getAllByRole('link')[1]?.textContent).toBe('Requests 4'); });
   const requests = within(nav).getByRole('link', { name: /^Requests/ });
   expect(requests.getAttribute('aria-current')).toBe('page');
   expect(requests.getAttribute('href')).toBe('/admin');
-  expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Requests 4', 'Organizations', 'People', 'Audit log']);
+  expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual(['Overview', 'Requests 4', 'Organizations', 'People', 'Audit log']);
+  expect(within(nav).getByRole('link', { name: 'Overview' }).getAttribute('href')).toBe('/admin/overview');
+  // The console's wordmark opens Overview, where staff land.
+  expect(within(screen.getByRole('banner')).getByRole('link', { name: 'Townwise' }).getAttribute('href')).toBe('/admin/overview');
   expect(screen.getByText(`Verified until ${formatTime(VERIFIED_UNTIL)}`)).toBeTruthy();
   expect(screen.getByText(STAFF_EMAIL)).toBeTruthy();
   fireEvent.click(within(nav).getByRole('link', { name: 'Organizations' }));
@@ -70,7 +73,9 @@ test('the client app marks where you are in the top bar; the header names the lo
   expect(within(main).getByRole('link', { name: 'Home' }).getAttribute('aria-current')).toBeNull();
   expect(screen.getAllByRole('heading', { level: 1 }).map((heading) => heading.textContent)).toEqual(['Notes']);
   expect(screen.getByRole('link', { name: 'All locations' }).getAttribute('href')).toBe('/dashboard');
-  expect(screen.getByRole('link', { name: 'Location settings' }).getAttribute('href')).toBe('/locations/l1/settings');
+  // Location settings is under More for org admins, and nowhere else on the page.
+  expect(screen.getAllByRole('link', { name: 'Location settings' })).toHaveLength(1);
+  expect(within(openMore()).getByRole('link', { name: 'Location settings' }).getAttribute('href')).toBe('/locations/l1/settings');
   // The location switcher is a real select, labeled “Location”; the sections then open the other location.
   const switcher = screen.getByRole('combobox', { name: 'Location' });
   choose(switcher, 'River Grill');
@@ -130,7 +135,7 @@ test('view-as: the title names the target; disabled controls stay focusable; End
   expect(document.getElementById(why)?.textContent).toMatch(/^Read-only until \d{1,2}:\d{2} (AM|PM)\.$/);
   fireEvent.click(add);
   fireEvent.click(screen.getByRole('button', { name: 'End view-as' }));
-  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/overview'); });
   // End names the grant the banner shows, so a tab left on an ended view-as never ends a newer grant of the session.
   expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g1' } }]);
   expect(await screen.findByRole('status')).toBeTruthy();
@@ -153,11 +158,11 @@ test('a GET /api/me read that started before End view-as and answers after it do
   await screen.findByRole('region', { name: 'View-as' });
   await waitFor(() => { expect(api.calls.filter((call) => call.path === '/api/me')).toHaveLength(2); });
   fireEvent.click(screen.getByRole('button', { name: 'End view-as' }));
-  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/overview'); });
   await act(async () => { stale.resolve(viewAsMe(ACCESS.admin)); await stale.promise; });
   await new Promise((resolve) => { setTimeout(resolve, 0); });
   expect(screen.queryByRole('region', { name: 'View-as' })).toBeNull();
-  expect(window.location.pathname).toBe('/admin');
+  expect(window.location.pathname).toBe('/admin/overview');
 });
 
 test('open as admin: the banner is on every page; End opens the console with the notice', async () => {
@@ -181,7 +186,7 @@ test('open as admin: the banner is on every page; End opens the console with the
   expect(moreButton().getAttribute('aria-expanded')).toBe('false');
   const shown = screen.getByRole('region', { name: 'Townwise staff setup' });
   fireEvent.click(within(shown).getByRole('button', { name: 'End' }));
-  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/overview'); });
   // D25: End names the grant this tab shows, so a tab left on an earlier grant never ends a newer one.
   expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]);
   expect(await screen.findByRole('status')).toBeTruthy();
@@ -229,7 +234,7 @@ test('a GET /api/me read that finds open as admin over sends End once, and the c
   };
   api.answers['/api/admin/view-as/end'] = () => staffMe();
   renderAt('/dashboard', api);
-  await waitFor(() => { expect(window.location.pathname).toBe('/admin'); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/admin/overview'); });
   expect(await screen.findByText(/^Setting up Test Group as Townwise staff ended at \d{1,2}:\d{2} (AM|PM)\.$/)).toBeTruthy();
   await waitFor(() => { expect(writes(api)).toEqual([{ method: 'POST', path: '/api/admin/view-as/end', body: { grantId: 'g2' } }]); });
   await new Promise((resolve) => { setTimeout(resolve, 20); });

@@ -140,6 +140,14 @@ describe('route table', () => {
     ]);
   });
 
+  it('staff-overview: the Overview is one staff GET with no body and no route limiter', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'admin.overview' || r.path === '/admin/overview')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'admin.overview', method: 'GET', path: '/admin/overview', policy: 'staff', bodyLimit: 'none', limiter: undefined, openAsAdmin: undefined },
+    ]);
+  });
+
   it('/lab holds the only routes outside /auth and /api', () => {
     // main.ts mounts exactly three routers.
     const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
@@ -361,6 +369,24 @@ describe('route table', () => {
     expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'google_calendars').map((r) => r.id)).toEqual(rows.map((r) => r.id));
   });
 
+  it('resumable-chat-turns: a turn\'s events are a member GET with the chat_tail limiter, which allows when its store is down; its stop a member POST with a 1kb body and the writes limiter only', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.chat.turn'))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'org.chat.turn', method: 'POST', path: '/org/locations/:locationId/chat/turns', policy: 'member', bodyLimit: '32kb', limiter: 'chat', openAsAdmin: true },
+      {
+        id: 'org.chat.turn_events', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId', policy: 'member',
+        bodyLimit: 'none', limiter: 'chat_tail', openAsAdmin: true,
+      },
+      {
+        id: 'org.chat.turn_stop', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId/stop', policy: 'member',
+        bodyLimit: '1kb', limiter: undefined, openAsAdmin: true,
+      },
+    ]);
+    expect(ROUTE_LIMITS.chat_tail).toEqual({ name: 'townwise:chat-tail', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' });
+    expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'chat_tail').map((r) => r.id)).toEqual(['org.chat.turn_events']);
+  });
+
   it('saving or setting aside a TownwiseAI proposal is a member POST with an 8kb body and no route limiter', () => {
     const proposal = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.chat.proposal');
     expect(proposal).toMatchObject({
@@ -420,6 +446,18 @@ describe('route table', () => {
     const answer = TOWNWISE_ROUTES.find((entry) => entry.id === 'org.agent.answer');
     expect(answer).toMatchObject({ method: 'POST', path: `${base}/agent/questions/:questionId`, policy: 'member', bodyLimit: '1kb' });
     expect(answer?.limiter).toBeUndefined();
+  });
+
+  it('weekly suggestions are org admin POSTs with 1kb bodies; suggested closure rules (D46) member POSTs with 2kb bodies; all open as admin', () => {
+    const base = '/org/locations/:locationId/agent';
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.agent.') && r.id.includes('suggestion'))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'org.agent.suggestion_accept', method: 'POST', path: `${base}/suggestions/:suggestionId/accept`, policy: 'org_admin', bodyLimit: '1kb', limiter: undefined, openAsAdmin: true },
+      { id: 'org.agent.suggestion_dismiss', method: 'POST', path: `${base}/suggestions/:suggestionId/dismiss`, policy: 'org_admin', bodyLimit: '1kb', limiter: undefined, openAsAdmin: true },
+      { id: 'org.agent.rule_suggestion_accept', method: 'POST', path: `${base}/rule-suggestions/:suggestionId/accept`, policy: 'member', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+      { id: 'org.agent.rule_suggestion_dismiss', method: 'POST', path: `${base}/rule-suggestions/:suggestionId/dismiss`, policy: 'member', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+    ]);
   });
 
   it('boot refuses staff_self on any route except POST /admin/view-as/end', () => {

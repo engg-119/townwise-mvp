@@ -64,12 +64,14 @@ function turn(api: FakeChatApi): LiveTurn {
   return live;
 }
 
-test('?panel=questions opens the sheet on a phone, Questions for you first, and drops the parameter', async () => {
+test('?panel=questions opens the sheet on a phone, Suggested rules (D46) then Questions for you first, and drops the parameter', async () => {
   at(375);
   const { router } = await renderAgent('/locations/l1/agent?panel=questions');
   expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
   const side = screen.getByTestId('agent-side');
-  expect(within(side).getAllByRole('heading')[0]?.props.children).toBe('Questions for you');
+  const headings = within(side).getAllByRole('heading').map((heading) => heading.props.children as unknown);
+  expect(headings[0]).toBe('Suggested rules');
+  expect(headings.indexOf('Questions for you')).toBeGreaterThan(headings.indexOf('Closed on Mondays'));
   await waitFor(() => { expect(router.getSearchParams().panel).toBeUndefined(); });
   expect(router.getPathname()).toBe('/locations/l1/agent');
 });
@@ -79,7 +81,7 @@ test('?panel=questions opens the column from 1024px', async () => {
   await renderAgent('/locations/l1/agent?panel=questions');
   expect(await screen.findByTestId('agent-side')).toBeTruthy();
   expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Questions and activity (5)' }).props.accessibilityState).toMatchObject({ expanded: true });
+  expect(screen.getByRole('button', { name: 'Questions and activity (6)' }).props.accessibilityState).toMatchObject({ expanded: true });
 });
 
 test('Something else… from the sheet on a phone closes it once the turn starts, not before', async () => {
@@ -87,7 +89,7 @@ test('Something else… from the sheet on a phone closes it once the turn starts
   const { chat } = await renderAgent('/locations/l1/agent?panel=questions');
   expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
   const side = screen.getByTestId('agent-side');
-  const gapOther = within(side).getAllByRole('button', { name: 'Something else…' })[2];
+  const gapOther = within(side).getAllByRole('button', { name: 'Something else…' })[1];
   if (gapOther === undefined) throw new Error('no Something else… on the gap');
   await fireEvent.press(gapOther);
   await fireEvent.changeText(within(side).getByLabelText('Tell TownwiseAI in your own words'), WORDS);
@@ -110,14 +112,14 @@ test('the landing shows the questions under the chips, and Something else… sen
   at(375);
   const { chat } = await renderAgent();
   const landing = await screen.findByTestId('chat-landing');
-  expect(await within(landing).findByRole('heading', { name: 'Questions for you (3)' })).toBeTruthy();
+  expect(await within(landing).findByRole('heading', { name: 'Questions for you (2)' })).toBeTruthy();
   expect(within(landing).getByText('Only 1 guest was recorded. Saturdays usually have about 100.')).toBeTruthy();
-  // The cards in the API's order: the weekday, the likely-closed day, then the gap.
-  expect(within(landing).getAllByRole('heading').map((heading) => heading.props.children as unknown).slice(-3)).toEqual([
-    'Are you closed on Mondays?', 'Were you open on Sat, May 23, 2026?', GAP_HEADING,
+  // The cards in the API's order: the likely-closed day, then the gap.
+  expect(within(landing).getAllByRole('heading').map((heading) => heading.props.children as unknown).slice(-2)).toEqual([
+    'Were you open on Sat, May 23, 2026?', GAP_HEADING,
   ]);
   const gapOther = () => {
-    const button = within(landing).getAllByRole('button', { name: 'Something else…' })[2];
+    const button = within(landing).getAllByRole('button', { name: 'Something else…' })[1];
     if (button === undefined) throw new Error('no Something else… on the gap');
     return button;
   };
@@ -140,6 +142,6 @@ test('the landing shows the questions under the chips, and Something else… sen
   await waitFor(() => {
     expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/gap_2026-05-12_2026-05-13', body: { answer: 'other' } }]);
   });
-  expect(screen.getByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
   for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
 });

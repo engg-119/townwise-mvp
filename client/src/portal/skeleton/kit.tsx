@@ -148,14 +148,14 @@ export function SkeletonTable(props: {
   columns: readonly SkeletonColumn[];
   rows?: number;
   rowHeight?: number;
-  /** False for a table that stays one table on phones, as By month does. */
-  stack?: boolean;
+  /** False for a table that stays one table on phones, as By month does; `belowDesktop` for one that stacks below 1024px. */
+  stack?: boolean | 'belowDesktop';
 }): React.JSX.Element {
   const { phone, desktop } = useBreakpoint();
   const { columns } = props;
   const rows = Array.from({ length: props.rows ?? 3 }, (_, index) => index);
   const last = rows.length - 1;
-  if (phone && props.stack !== false) {
+  if (props.stack === 'belowDesktop' ? !desktop : phone && props.stack !== false) {
     return (
       <View>
         {rows.map((row) => (

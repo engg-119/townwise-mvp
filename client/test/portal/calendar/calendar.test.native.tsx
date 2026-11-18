@@ -292,3 +292,22 @@ test('on native too: the key names an actual and a forecast, and a past day says
   expect(within(screen.getByLabelText(LABEL)).getByText('~212')).toBeTruthy();
   expect(within(panel()).getByText('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.')).toBeTruthy();
 });
+
+test('an outlook day on native (D52): its cell’s label says outlook, its panel is headed Outlook with no 8 in 10, and the key line shows', async () => {
+  const days = [];
+  for (let day = 11; day <= 30; day += 1) {
+    const date = `2026-11-${String(day)}`;
+    days.push(day < 20 ? forecastDay({ date }) : forecastDay({ date, low: 150, mid: 212, high: 290, model: { status: 'open', low: 150, mid: 212, high: 290 }, outlook: true }));
+  }
+  const fake = calendarFake({ events: [], forecasts: { '2026-11': forecastOf(days) } });
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
+  await renderApp('/locations/l1/calendar', api);
+  expect(await screen.findByText('Today, Wed, Nov 11')).toBeTruthy();
+  const label = 'Sat, Nov 21, 2026. Outlook about 212 guests, 150 to 290.';
+  expect(screen.getByText('Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText(label));
+  expect(within(panel()).getByText('Outlook')).toBeTruthy();
+  expect(within(panel()).getByText('About 212 guests')).toBeTruthy();
+  expect(within(panel()).getByText('Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.')).toBeTruthy();
+  expect(within(panel()).queryByText(/8 in 10/)).toBeNull();
+});

@@ -1,5 +1,5 @@
 import { AccessibilityInfo, Dimensions } from 'react-native';
-import { cleanup, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
 afterEach(async () => {
   await cleanup();
@@ -186,4 +186,146 @@ test('enrollment_expired returns to the start state', async () => {
   await fireEvent.press(await screen.findByText('Confirm'));
   expect(await screen.findByText('Setup timed out. Start again.')).toBeTruthy();
   expect(screen.getByText('Set up two-step sign-in')).toBeTruthy();
+});
+
+describe('moving to a new authenticator app (D54)', () => {
+  const ON = { user: { id: 'u1', email: EMAIL }, totp: { enabled: true, recoveryCodesRemaining: 10 } };
+  const FRESH = Array.from({ length: 10 }, (_, index) => String(index + 10).padStart(20, '0'));
+  const refusal = (status: number, code: string): Promise<never> => Promise.reject(new ApiError('http', code, { status, code }));
+
+  async function renderOn(overrides?: Parameters<typeof fakeAuth>[1]): Promise<void> {
+    await renderSecurity({ loadMe: () => Promise.resolve(ON), beginTotpReset: () => Promise.resolve(ENROLLMENT), ...overrides });
+    await screen.findByText('Two-step sign-in is on. 10 recovery codes left.');
+  }
+
+  async function openProof(): Promise<void> {
+    await fireEvent.press(screen.getByRole('button', { name: 'Move to a new authenticator app' }));
+    await screen.findByRole('heading', { name: 'Confirm it’s you' });
+  }
+
+  test('with two-step sign-in on, the page offers the move and asks nothing until it is pressed', async () => {
+    const beginTotpReset = jest.fn(() => Promise.resolve(ENROLLMENT));
+    await renderOn({ beginTotpReset });
+    expect(screen.getByRole('heading', { name: 'New phone or authenticator app?' })).toBeTruthy();
+    expect(screen.getByText(/Nothing changes until you confirm a code from the new app\./)).toBeTruthy();
+    expect(screen.queryByLabelText('Current code')).toBeNull();
+    await openProof();
+    expect(screen.getByLabelText('Current code').props).toMatchObject({ inputMode: 'numeric', autoComplete: 'one-time-code' });
+    expect(beginTotpReset).not.toHaveBeenCalled();
+    // An empty field asks for the code and sends nothing.
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Enter the 6-digit code from your authenticator app.')).toBeTruthy();
+    expect(beginTotpReset).not.toHaveBeenCalled();
+  });
+
+  test('a current code, then the QR and key for the new app, then its code: new recovery codes, other devices signed out', async () => {
+    const beginTotpReset = jest.fn(() => Promise.resolve(ENROLLMENT));
+    const confirmTotpReset = jest.fn(() => Promise.resolve({ recoveryCodes: FRESH }));
+    const confirmTotpEnrollment = jest.fn(() => Promise.resolve({ recoveryCodes: CODES }));
+    await renderOn({ beginTotpReset, confirmTotpReset, confirmTotpEnrollment });
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '123 456');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Add Townwise to your new authenticator app' })).toBeTruthy();
+    expect(beginTotpReset).toHaveBeenCalledWith({ code: '123456' });
+    expect(screen.getByText('Your current authenticator app keeps working until you confirm a code from the new one.')).toBeTruthy();
+    expect(screen.getByLabelText('Authentication QR code')).toBeTruthy();
+    expect(screen.getByText('TOWN WISE TOWN WISE TOWN WISE TOWN WISE')).toBeTruthy();
+    // The proof is not carried into the new app's code field.
+    expect(screen.getByLabelText('Code').props.value).toBe('');
+    await fireEvent.changeText(screen.getByLabelText('Code'), '654321');
+    await fireEvent.press(screen.getByText('Confirm'));
+    expect(await screen.findByRole('heading', { name: 'Save your recovery codes' })).toBeTruthy();
+    expect(confirmTotpReset).toHaveBeenCalledWith('654321');
+    expect(confirmTotpEnrollment).not.toHaveBeenCalled();
+    expect(screen.getByText('Other devices were signed out.')).toBeTruthy();
+    for (const code of FRESH) expect(screen.getByText(code)).toBeTruthy();
+    await fireEvent.press(screen.getByText('I saved these'));
+    expect(await screen.findByRole('button', { name: 'Move to a new authenticator app' })).toBeTruthy();
+  });
+
+  test('a recovery code is proof too, and the page says it is used up', async () => {
+    const beginTotpReset = jest.fn(() => Promise.resolve(ENROLLMENT));
+    await renderOn({ beginTotpReset });
+    await openProof();
+    await fireEvent.press(screen.getByText('Use a recovery code instead'));
+    expect(screen.getByText('Enter one of your recovery codes. It is used up when you continue, even if you don’t finish.')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('Enter one of your recovery codes.')).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Recovery code'), 'ABCDE-12345-abcde-12345');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByRole('heading', { name: 'Add Townwise to your new authenticator app' })).toBeTruthy();
+    expect(beginTotpReset).toHaveBeenCalledWith({ recoveryCode: 'abcde12345abcde12345' });
+  });
+
+  test('a wrong proof prints under its field and shows no QR', async () => {
+    await renderOn({ beginTotpReset: () => refusal(400, 'invalid_code') });
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '000000');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.')).toBeTruthy();
+    expect(screen.queryByLabelText('Authentication QR code')).toBeNull();
+    await fireEvent.press(screen.getByText('Use a recovery code instead'));
+    await fireEvent.changeText(screen.getByLabelText('Recovery code'), 'abcde12345abcde12345');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('That recovery code didn’t work. Each one works once.')).toBeTruthy();
+  });
+
+  test('Cancel at either step returns to “on” and sends nothing more', async () => {
+    const confirmTotpReset = jest.fn(() => Promise.resolve({ recoveryCodes: FRESH }));
+    await renderOn({ confirmTotpReset });
+    await openProof();
+    await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.queryByRole('heading', { name: 'Confirm it’s you' })).toBeNull();
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '123456');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    await fireEvent.press(await screen.findByRole('button', { name: 'Cancel and keep my current app' }));
+    expect(screen.queryByLabelText('Authentication QR code')).toBeNull();
+    expect(screen.getByText('Two-step sign-in is on. 10 recovery codes left.')).toBeTruthy();
+    expect(confirmTotpReset).not.toHaveBeenCalled();
+    // The next try starts with empty fields.
+    await openProof();
+    expect(screen.getByLabelText('Current code').props.value).toBe('');
+  });
+
+  test('Cancel waits for a proof that is on its way, so its answer never shows a key after Cancel', async () => {
+    let answer: (value: typeof ENROLLMENT) => void = () => undefined;
+    await renderOn({ beginTotpReset: () => new Promise<typeof ENROLLMENT>((resolve) => { answer = resolve; }) });
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '123456');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByRole('button', { name: 'Cancel' }).props.accessibilityState).toMatchObject({ disabled: true });
+    await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('heading', { name: 'Confirm it’s you' })).toBeTruthy();
+    await act(async () => { answer(ENROLLMENT); await Promise.resolve(); });
+    expect(await screen.findByRole('button', { name: 'Cancel and keep my current app' })).toBeTruthy();
+  });
+
+  test('a wrong code from the new app prints under the code field and keeps the QR; a timeout says nothing changed', async () => {
+    let answer: 'invalid_code' | 'enrollment_expired' = 'invalid_code';
+    await renderOn({ confirmTotpReset: () => refusal(400, answer) });
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '123456');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    await fireEvent.press(await screen.findByText('Confirm'));
+    expect(await screen.findByText('That code didn’t work. Codes change every 30 seconds; wait for a new one and try again.')).toBeTruthy();
+    expect(screen.getByLabelText('Authentication QR code')).toBeTruthy();
+    answer = 'enrollment_expired';
+    await fireEvent.press(screen.getByText('Confirm'));
+    expect(await screen.findByText('That took too long, so nothing changed. Your current authenticator app still works. Start again.')).toBeTruthy();
+    expect(screen.queryByLabelText('Authentication QR code')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Move to a new authenticator app' })).toBeTruthy();
+  });
+
+  test('reauth_required on the proof offers sign-in again, in the move’s words', async () => {
+    const signOut = jest.fn(() => Promise.resolve());
+    await renderOn({ signOut, beginTotpReset: () => refusal(403, 'reauth_required') });
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '123456');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(await screen.findByText('For your security, sign in again to move two-step sign-in to a new app.')).toBeTruthy();
+    await fireEvent.press(screen.getByText('Sign in again'));
+    expect(signOut).toHaveBeenCalledWith('Sign in again to move two-step sign-in to a new app.');
+  });
 });

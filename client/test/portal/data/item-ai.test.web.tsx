@@ -82,7 +82,7 @@ describe('before a read', () => {
     const box = await section();
     expect(within(box).getByRole('heading', { name: 'TownwiseAI' })).toBeTruthy();
     expect(within(box).getByText(/The whole file is sent to Anthropic’s Claude to read \(a picture without its metadata\)\./)).toBeTruthy();
-    expect(within(box).getByText(/dated events as notes, daily totals it can check against the file as new sales days \(it never changes a day you already have\), and a summary TownwiseAI can read later\. When an org admin asks, it may also start updating the forecast\. Everything it adds can be undone\./)).toBeTruthy();
+    expect(within(box).getByText(/dated events as notes, daily totals it can check against the file as new sales days \(it never changes a day you already have\), and a summary TownwiseAI can read later\. When the file states the days you’re regularly closed, it suggests them as business rules for your team to confirm\. When an org admin asks, it may also start updating the forecast\. Everything it adds can be undone, except a suggested rule someone has confirmed\.$/)).toBeTruthy();
     expect(within(box).getByRole('link', { name: 'How Townwise handles your data' }).getAttribute('href')).toBe('/privacy');
 
     fireEvent.click(within(box).getByRole('button', { name: 'Let TownwiseAI read this file' }));
@@ -248,6 +248,22 @@ describe('a done read', () => {
     for (const line of lines) expect(within(box).getByText(line)).toBeTruthy();
     expect(within(box).queryByRole('link', { name: 'Open the days' })).toBeNull();
     expect(within(box).queryByRole('link', { name: 'Open the summary' })).toBeNull();
+  });
+
+  test('D46: says how many rules it suggested, linked to Business rules, and the undo dialog names those still waiting', async () => {
+    setup([stored({ ai: { ...DONE, rulesSuggested: 3, rulesWaiting: 2 } })], REF);
+    const box = await section();
+    expect(within(box).getByText('Suggested 3 rules on Business rules.')).toBeTruthy();
+    expect(within(box).getByRole('link', { name: 'Open Business rules' }).getAttribute('href')).toBe('/locations/l1/rules');
+    fireEvent.click(within(box).getByRole('button', { name: 'Undo what TownwiseAI added' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Undo what TownwiseAI added?' });
+    expect(within(dialog).getByText('This deletes the 2 notes it added (even if someone edited them since), the 2 suggested rules still waiting, the sales upload it added, with the days it still holds, and its summary on Your data. The forecast update it started keeps running. The file stays on Your data, and you can let TownwiseAI read it again. This can’t be undone.')).toBeTruthy();
+    cleanup();
+    setup([stored({ ai: { ...DONE, rulesSuggested: 1, rulesWaiting: 0 } })], REF);
+    expect(within(await section()).getByText('Suggested 1 rule on Business rules.')).toBeTruthy();
+    cleanup();
+    setup([stored({ ai: DONE })], REF);
+    expect(within(await section()).queryByText(/on Business rules/)).toBeNull();
   });
 
   test('says the days it left as they were beside the days it added, and one closed period left out', async () => {

@@ -32,7 +32,7 @@ test('the footer groups match the mockups', () => {
   expect(footerGroups.map((group) => [group.title, group.links.map((link) => link.label)])).toEqual([
     ['Product', ['The map', 'How it works', 'What you get', 'FAQ']],
     ['Company', ['About', 'Contact']],
-    ['Legal', ['Privacy', 'Terms', 'Security']],
+    ['Legal', ['Privacy', 'Terms', 'Security', 'Open-source notices']],
     ['Account', ['Sign in', 'Request early access']],
   ]);
 });
@@ -44,6 +44,7 @@ test('every href in links.ts resolves', () => {
 
 test('the check rejects hrefs that do not resolve', () => {
   expect(brokenHref('/nope')).toBe('no route /nope');
+  expect(brokenHref('/licenses/gone.txt')).toBe('no file /licenses/gone.txt');
   expect(brokenHref('/#nope')).toBe('no section /#nope');
   expect(brokenHref('/about#map')).toBe('no section /about#map');
   expect(brokenHref('#gone', ['here'])).toBe('no element with id #gone');

@@ -4,7 +4,7 @@ import type { ApiClient } from '../api/client';
 import { withOrgId } from '../portal/api';
 import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
-import { ruleScheduleSchema, ruleSchema, type Rule } from '../portal/rules/api';
+import { knownRuleSuggestions, ruleScheduleSchema, ruleSchema, type Rule, type RuleSuggestion } from '../portal/rules/api';
 import type { SseEvent } from '../api/sse';
 import type { SourceLink } from './tools';
 import type { TreeNode } from './tree';
@@ -109,32 +109,57 @@ function sourceLinks(raw: readonly unknown[]): SourceLink[] {
 
 const budgetSchema = z.object({ month: z.string(), usedUsd: z.number(), limitUsd: z.number(), exhausted: z.boolean() });
 const conversationSummarySchema = z.object({ id: z.string(), title: z.string(), updatedAt: z.string(), turnCount: z.number() });
+/** resumable-chat-turns: the caller's running turn at the location, which the page opens on load; null for none. */
+const runningTurnSchema = z.object({ conversationId: z.string(), turnId: z.string() });
 const chatSummarySchema = z.object({
   enabled: z.boolean(),
   budget: budgetSchema,
   conversations: z.array(conversationSummarySchema),
+  // Absent from an API before resumable turns; one that does not parse reads as none, so the chat still loads.
+  liveTurn: runningTurnSchema.nullable().catch(null).default(null),
 });
-/** GET .../chat/:conversationId, and POST .../active: the tree and the path to `activeLeafId`, the leaf shown. */
+const messageSchema = z.object({
+  nodeId: z.string().nullable().default(null),
+  role: z.enum(['user', 'assistant']),
+  text: z.string(),
+  proposals: z.array(proposalViewSchema),
+  parts: z.array(partSchema).default([]),
+  at: z.string(),
+  // Absent from a server that predates it: the entry's own `at`.
+  endedAt: z.string().optional(),
+  feedback: feedbackSchema.nullable().default(null),
+  next: z.array(z.string()).nullable().default(null),
+  attachments: z.array(z.unknown()).default([]),
+  sources: sourcesSchema,
+});
+
+/**
+ * resumable-chat-turns: the conversation's turn while it runs, or once it was interrupted, until its record goes (15
+ * minutes after it ended) or a newer turn ends. `message` is the person's message, null for a regenerate.
+ */
+const liveTurnSchema = z.object({
+  turnId: z.string(),
+  state: z.enum(['running', 'interrupted']),
+  startedAt: z.string(),
+  userNodeId: z.string().nullable(),
+  replyNodeId: z.string().nullable(),
+  parentId: z.string().nullable(),
+  message: messageSchema.nullable(),
+});
+
+/**
+ * GET .../chat/:conversationId, and POST .../active: the tree and the path to `activeLeafId`, the leaf shown. While a
+ * turn is live (and no `?node=` is asked for), the path ends at the node the turn hangs under.
+ */
 const conversationSchema = z.object({
   id: z.string(),
   title: z.string(),
   updatedAt: z.string(),
   activeLeafId: z.string().nullable().default(null),
   tree: z.array(treeNodeSchema).default([]),
-  messages: z.array(z.object({
-    nodeId: z.string().nullable().default(null),
-    role: z.enum(['user', 'assistant']),
-    text: z.string(),
-    proposals: z.array(proposalViewSchema),
-    parts: z.array(partSchema).default([]),
-    at: z.string(),
-    // Absent from a server that predates it: the entry's own `at`.
-    endedAt: z.string().optional(),
-    feedback: feedbackSchema.nullable().default(null),
-    next: z.array(z.string()).nullable().default(null),
-    attachments: z.array(z.unknown()).default([]),
-    sources: sourcesSchema,
-  })),
+  messages: z.array(messageSchema),
+  // Absent from an API before resumable turns; one that does not parse reads as none, so the conversation still loads.
+  liveTurn: liveTurnSchema.nullable().catch(null).default(null),
 });
 
 export type Budget = z.infer<typeof budgetSchema>;
@@ -174,18 +199,41 @@ export interface StoredMessage {
   sources: SourceLink[];
 }
 
-/** A conversation as the server shows it: the messages of one path, every node, and that path's leaf. */
-export interface ConversationLoad { messages: StoredMessage[]; tree: TreeNode[]; activeLeafId: string | null }
+/** A conversation's live turn (resumable-chat-turns): running, or interrupted and not yet gone. */
+export interface LiveTurnLoad {
+  turnId: string;
+  state: 'running' | 'interrupted';
+  /** When the turn started, in ms since the epoch; null when unreadable. */
+  startedAt: number | null;
+  /** The turn's new nodes and the node they hang under, as its `conversation` event names them. */
+  userNodeId: string | null;
+  replyNodeId: string | null;
+  parentId: string | null;
+  /** The person's message as they wrote it; null for a regenerate. */
+  message: StoredMessage | null;
+}
+
+/**
+ * A conversation as the server shows it: the messages of one path, every node, that path's leaf, and the turn
+ * running in it (null for none).
+ */
+export interface ConversationLoad { messages: StoredMessage[]; tree: TreeNode[]; activeLeafId: string | null; liveTurn: LiveTurnLoad | null }
 
 export type ChatEvent =
   /**
    * The turn's conversation and its new nodes: the person's message (null for a regenerate) and the reply, and the
-   * node the first of them hangs under. Null from a server without trees.
+   * node the first of them hangs under. Null from a server without trees. `turnId` (resumable-chat-turns): what its
+   * events are read back and stopped by; null from a server before it.
    */
-  | { type: 'conversation'; id: string; title: string; userNodeId: string | null; replyNodeId: string | null; parentId: string | null }
+  | {
+    type: 'conversation'; id: string; title: string; userNodeId: string | null; replyNodeId: string | null; parentId: string | null;
+    turnId: string | null;
+  }
   | { type: 'text'; delta: string }
   /** A piece of the reply's thinking summary. */
   | { type: 'thinking'; delta: string }
+  /** The text streamed since the last tool call was written ahead of work, not as the answer: it joins the thinking. */
+  | { type: 'aside' }
   | { type: 'tool'; id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null }
   | { type: 'proposal'; id: string; proposal: NoteProposal }
   | { type: 'visual'; id: string; visual: Visual }
@@ -195,12 +243,25 @@ export type ChatEvent =
    * refusal, or from a server without trees. `sources`: the pages the reply cites from its web searches (D37).
    */
   | { type: 'done'; stopReason: string; leafId: string | null; sources: SourceLink[] }
-  | { type: 'error'; code: string };
+  /** `interrupted` (TURN_INTERRUPTED): the replica running the turn stopped; nothing of it was saved. */
+  | { type: 'error'; code: string }
+  /** A stopped turn's last event (resumable-chat-turns): it saved nothing but its cost. */
+  | { type: 'stopped' };
+
+/** The error code of a turn whose replica stopped mid-turn (a crash, a deploy): it is not continued. */
+export const TURN_INTERRUPTED = 'interrupted';
+
+/** Whether a turn's stream ends after this event: `done`, `error` or `stopped`. */
+export function endsTurn(event: ChatEvent): boolean {
+  return event.type === 'done' || event.type === 'error' || event.type === 'stopped';
+}
 
 const nodeIdOrNull = z.string().nullable().default(null);
 
 const eventSchemas = {
-  conversation: z.object({ id: z.string(), title: z.string(), userNodeId: nodeIdOrNull, replyNodeId: nodeIdOrNull, parentId: nodeIdOrNull }),
+  conversation: z.object({
+    id: z.string(), title: z.string(), userNodeId: nodeIdOrNull, replyNodeId: nodeIdOrNull, parentId: nodeIdOrNull, turnId: z.string().nullable().default(null),
+  }),
   text: z.object({ delta: z.string() }),
   thinking: z.object({ delta: z.string() }),
   tool: z.object({
@@ -211,6 +272,7 @@ const eventSchemas = {
   suggestions: z.object({ id: z.string(), prompts: z.array(z.string()) }),
   done: z.object({ stopReason: z.string(), leafId: nodeIdOrNull, sources: sourcesSchema }),
   error: z.object({ code: z.string() }),
+  stopped: z.object({}),
 };
 
 /** A stream event as the chat reads it, or null for an unknown event or data that does not match. */
@@ -234,6 +296,8 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
       const parsed = eventSchemas.thinking.safeParse(data);
       return parsed.success ? { type: 'thinking', ...parsed.data } : null;
     }
+    case 'aside':
+      return { type: 'aside' };
     case 'tool': {
       const parsed = eventSchemas.tool.safeParse(data);
       return parsed.success ? { type: 'tool', ...parsed.data } : null;
@@ -258,9 +322,26 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
       const parsed = eventSchemas.error.safeParse(data);
       return parsed.success ? { type: 'error', ...parsed.data } : null;
     }
+    case 'stopped':
+      return eventSchemas.stopped.safeParse(data).success ? { type: 'stopped' } : null;
     default:
       return null;
   }
+}
+
+/** An event's number in its turn (its SSE id, from 1), or null when it has none (a server before resumable turns). */
+export function seqOf(sse: SseEvent): number | null {
+  return sse.id !== undefined && /^[1-9]\d{0,8}$/.test(sse.id) ? Number(sse.id) : null;
+}
+
+/** A turn's events as the chat reads them, each with its number; an unknown event or data that does not match is dropped. */
+export type TurnListener = (event: ChatEvent, seq: number | null) => void;
+
+function chatEvents(onEvent: TurnListener): (sse: SseEvent) => void {
+  return (sse) => {
+    const event = chatEventOf(sse);
+    if (event !== null) onEvent(event, seqOf(sse));
+  };
 }
 
 function locationPath(locationId: string): `/${string}` {
@@ -291,22 +372,31 @@ function millis(value: string): number | null {
   return Number.isNaN(time) ? null : time;
 }
 
+function storedOf(message: z.infer<typeof messageSchema>): StoredMessage {
+  return {
+    role: message.role,
+    text: message.text,
+    parts: message.parts.flatMap(partOf),
+    at: millis(message.at),
+    endedAt: millis(message.endedAt ?? message.at),
+    nodeId: message.nodeId,
+    feedback: message.feedback,
+    next: message.next,
+    attachments: message.role === 'user' ? known(message.attachments, attachmentSchema) : [],
+    sources: message.role === 'assistant' ? sourceLinks(message.sources) : [],
+  };
+}
+
 function conversationOf(conversation: z.infer<typeof conversationSchema>): ConversationLoad {
+  const live = conversation.liveTurn;
   return {
     activeLeafId: conversation.activeLeafId,
     tree: conversation.tree,
-    messages: conversation.messages.map((message) => ({
-      role: message.role,
-      text: message.text,
-      parts: message.parts.flatMap(partOf),
-      at: millis(message.at),
-      endedAt: millis(message.endedAt ?? message.at),
-      nodeId: message.nodeId,
-      feedback: message.feedback,
-      next: message.next,
-      attachments: message.role === 'user' ? known(message.attachments, attachmentSchema) : [],
-      sources: message.role === 'assistant' ? sourceLinks(message.sources) : [],
-    })),
+    messages: conversation.messages.map(storedOf),
+    liveTurn: live === null ? null : {
+      turnId: live.turnId, state: live.state, startedAt: millis(live.startedAt), userNodeId: live.userNodeId, replyNodeId: live.replyNodeId,
+      parentId: live.parentId, message: live.message === null ? null : storedOf(live.message),
+    },
   };
 }
 
@@ -367,23 +457,37 @@ function turnBody(turn: TurnRequest): Record<string, unknown> {
   return body;
 }
 
-/** One turn. Resolves when the stream ends. */
-export function sendTurn(
-  api: ApiClient,
-  locationId: string,
-  turn: TurnRequest,
-  signal: AbortSignal,
-  onEvent: (event: ChatEvent) => void,
+/** One turn. Resolves when the stream ends; closing it (`signal`) does not stop the turn on the server. */
+export function sendTurn(api: ApiClient, locationId: string, turn: TurnRequest, signal: AbortSignal, onEvent: TurnListener): Promise<void> {
+  return api.stream(`${locationPath(locationId)}/chat/turns`, { body: turnBody(turn), signal, onEvent: chatEvents(onEvent) });
+}
+
+function turnPath(locationId: string, conversationId: string, turnId: string): `/${string}` {
+  return `${conversationPath(locationId, conversationId)}/turns/${encodeURIComponent(turnId)}`;
+}
+
+/**
+ * A running turn's events numbered above `after` (0 for all of them), then each new one until its last (resumable-chat-
+ * turns). Resolves when the stream ends: after the turn's last event, at once for a turn that ended at or before
+ * `after`, or after 200 seconds without one, when the reader reconnects with its cursor. 404 for a turn that is gone.
+ */
+export function followTurn(
+  api: ApiClient, locationId: string, ids: { conversationId: string; turnId: string }, after: number, signal: AbortSignal, onEvent: TurnListener,
 ): Promise<void> {
-  const body = turnBody(turn);
-  return api.stream(`${locationPath(locationId)}/chat/turns`, {
-    body,
-    signal,
-    onEvent: (sse) => {
-      const event = chatEventOf(sse);
-      if (event !== null) onEvent(event);
-    },
+  return api.stream(`${turnPath(locationId, ids.conversationId, ids.turnId)}?after=${String(after)}`, {
+    method: 'GET', signal, onEvent: chatEvents(onEvent),
   });
+}
+
+const stoppedSchema = z.object({ state: z.string() });
+
+/**
+ * Asks the author's running turn to stop: `running` while it still runs (its streams then end with `stopped`, within
+ * about a second), or the state it already ended in. 404 for a turn that is not the caller's.
+ */
+export async function stopTurn(api: ApiClient, locationId: string, ids: { conversationId: string; turnId: string }): Promise<string> {
+  const body = await api.json(`${turnPath(locationId, ids.conversationId, ids.turnId)}/stop`, stoppedSchema, { method: 'POST', body: {} });
+  return body.state;
 }
 
 const proposalResultSchema = z.object({
@@ -454,15 +558,9 @@ export function addNote(api: ApiClient, locationId: string, note: NoteProposal):
 const dateSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 // The shapes api/README.md (Tuning chat) and docs/portal/tuning-chat.md section 8 document.
+// D46: the weekday question became a suggested closure rule (`ruleSuggestions`), so a weekday question from an older
+// API is a kind this client no longer reads, and is left out.
 const questionSchema = z.discriminatedUnion('kind', [
-  /**
-   * A weekday with no sales on most of its counted days, from `from` (the first day with sales in the window) to `to`:
-   * `noSalesCount` of the `weekdayCount` days of that weekday in weeks with sales on other days.
-   */
-  z.object({
-    id: z.string(), kind: z.literal('weekday'), weekday: z.number().int().min(0).max(6), from: dateSchema, to: dateSchema,
-    noSalesCount: z.number().int(), weekdayCount: z.number().int(),
-  }),
   /**
    * A run of `dayCount` days with no sales and no note, asked only when one of its days is usually busy; the typical
    * guests (spec D32), lowest and highest, of those usually busy days. An API from before them sends neither, and the
@@ -533,7 +631,7 @@ export type WeeklySuggestions = z.infer<typeof weeklySuggestionsSchema>;
 // never shown as a placeholder. An API from before weekly suggestions sends neither of their keys.
 const panelSchema = z.object({
   questions: z.array(z.unknown()), activity: z.array(z.unknown()), suggestions: z.array(z.unknown()).optional(),
-  weeklySuggestions: z.unknown().optional(),
+  weeklySuggestions: z.unknown().optional(), ruleSuggestions: z.array(z.unknown()).optional(),
 });
 
 export interface AgentPanel {
@@ -542,6 +640,8 @@ export interface AgentPanel {
   suggestions: Suggestion[];
   /** Null from an API before weekly suggestions. */
   weeklySuggestions: WeeklySuggestions | null;
+  /** D46: the open suggested closure rules from files and the sales history; none from an API before them. */
+  ruleSuggestions: RuleSuggestion[];
 }
 
 function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
@@ -557,6 +657,7 @@ export async function loadAgentPanel(api: ApiClient, locationId: string): Promis
   return {
     questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema),
     suggestions: known(panel.suggestions ?? [], suggestionSchema), weeklySuggestions: weekly.success ? weekly.data : null,
+    ruleSuggestions: knownRuleSuggestions(panel.ruleSuggestions ?? []),
   };
 }
 

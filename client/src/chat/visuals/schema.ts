@@ -15,9 +15,11 @@ export const visualSchema = z.discriminatedUnion('kind', [
     metric,
     from: date,
     to: date,
-    // The forecast's middle and a closed or booked day's status; a visual stored before the API sent them still parses.
+    // The forecast's middle, a closed or booked day's status and an outlook day's mark (D52); a visual stored before the
+    // API sent them still parses.
     days: z.array(z.object({
       date, value: count, low: count, mid: count.default(null), high: count, status: z.enum(['closed', 'booked']).nullable().default(null),
+      outlook: z.boolean().optional(),
     })),
     forecast: z.object({ model: z.string(), madeAt: z.string() }).nullable(),
   }),

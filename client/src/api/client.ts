@@ -51,6 +51,8 @@ export interface RequestOptions {
 }
 
 export interface StreamOptions {
+  /** POST by default; a GET (a running turn's events, read back with a cursor in the path's query) sends no body. */
+  method?: 'POST' | 'GET';
   body?: unknown;
   /** Stop: aborts the request before the headers arrive, or the read after them. */
   signal?: AbortSignal;
@@ -61,7 +63,7 @@ export interface ApiClient {
   request(path: `/${string}`, opts?: RequestOptions): Promise<Response>;
   json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T>;
   /**
-   * POSTs and reads a `text/event-stream` reply, calling `onEvent` for each event; resolves when the stream ends.
+   * POSTs (or GETs) and reads a `text/event-stream` reply, calling `onEvent` for each event; resolves when the stream ends.
    * Auth, the shared refresh and the error mapping are the same as `request`. A 401 is refreshed and retried only
    * before the stream starts. The request timeout runs until the headers arrive; the read has none.
    */
@@ -266,7 +268,8 @@ export function createApiClient(deps: {
 
   async function stream(path: `/${string}`, opts: StreamOptions): Promise<void> {
     const { signal } = opts;
-    const res = await checked(await authorized(urlFor(path), { method: 'POST', body: opts.body }, { signal }));
+    const method = opts.method ?? 'POST';
+    const res = await checked(await authorized(urlFor(path), method === 'GET' ? { method } : { method, body: opts.body }, { signal }));
     const body = res.body;
     if (body === null || !(res.headers.get('Content-Type') ?? '').startsWith('text/event-stream')) {
       void body?.cancel().catch(() => undefined);

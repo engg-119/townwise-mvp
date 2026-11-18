@@ -2,8 +2,8 @@ import type { z } from 'zod';
 
 import { ApiError, type ApiClient, type RequestOptions, type StreamOptions } from '../../src/api/client';
 
-// A fake ApiClient for TownwiseAI: GETs answer from mutable fixtures, each turn is a stream the test drives event by
-// event, and writes (proposal saves, notes, question answers, deletes, renames, version switches, ratings, the name) are
+// A fake ApiClient for TownwiseAI: GETs answer from mutable fixtures, each turn (a POST, or a GET reading a running
+// turn back) is a stream the test drives event by event, and writes (proposal saves, notes, question answers, deletes, renames, version switches, ratings, the name) are
 // recorded and answered by `respond`, which a test can replace path by path. Aborting a turn's signal rejects it as
 // the real client does. Fixtures are synthetic: low-entropy ids, example.com addresses, no real figures.
 
@@ -66,7 +66,7 @@ export function noteOf(content: Record<string, unknown>, id = 'n1'): Record<stri
 export const PANEL = {
   questions: [
     // The shapes api/README.md (Tuning chat) documents for GET .../agent.
-    { id: 'weekday_1_2025-11-03_2026-11-02', kind: 'weekday', weekday: 1, from: '2025-11-03', to: '2026-11-02', noSalesCount: 41, weekdayCount: 52 },
+    { id: 'likely_closed_2026-01-24', kind: 'likely_closed', date: '2026-01-24', guests: 1, typicalGuests: 100 },
     { id: 'gap_2026-02-01_2026-02-03', kind: 'gap', from: '2026-02-01', to: '2026-02-03', dayCount: 3 },
     // A kind this client doesn't know yet: left out.
     { id: 'later_0001', kind: 'something_later' },
@@ -81,11 +81,15 @@ export const PANEL = {
 
 export interface LiveTurn {
   path: string;
+  method: 'POST' | 'GET';
   body: unknown;
   signal: AbortSignal | undefined;
-  emit(event: string, data: unknown): void;
+  /** `id`: the event's number, sent as its SSE id (resumable-chat-turns). */
+  emit(event: string, data: unknown, id?: number): void;
   end(): void;
   fail(error: unknown): void;
+  /** Ended, failed or aborted. */
+  readonly closed: boolean;
 }
 
 export interface Write { method: string; path: string; body: unknown }
@@ -109,6 +113,11 @@ export interface FakeChatApi extends ApiClient {
   refuse: ApiError | null;
   /** Rejects one turn each, in order, before `refuse` applies (a claim the server still holds, then a stream). */
   refusals: ApiError[];
+  /**
+   * resumable-chat-turns: a stop request (answered `{ state: "running" }` unless `respond` says otherwise) ends the
+   * newest open stream with `stopped`, as the server does about a second later. Off: the test ends it.
+   */
+  autoStop: boolean;
   /** The answer to a write, by path: a body, an ApiError to throw, or a promise of either. Unlisted paths get the defaults. */
   respond: Record<string, (body: unknown) => unknown>;
   /** The answer to a GET, by path, ahead of the defaults (an item card's own GET, D28). */
@@ -134,6 +143,16 @@ function defaultAnswer(api: FakeChatApi, method: string, path: string, body: unk
   if (active !== null) return (input.nodeId === undefined ? undefined : api.versions[input.nodeId]) ?? api.conversation;
   const feedback = new RegExp(`^${BASE}/chat/[^/]+/feedback/([^/]+)$`).exec(path);
   if (feedback !== null) return { nodeId: feedback[1], rating: input.rating ?? null, reason: input.reason ?? null };
+  if (new RegExp(`^${BASE}/chat/[^/]+/turns/[^/]+/stop$`).test(path)) {
+    const open = api.turns.filter((turn) => !turn.closed).at(-1);
+    if (api.autoStop && open !== undefined) {
+      void Promise.resolve().then(() => {
+        open.emit('stopped', {}, nextId.get(open));
+        open.end();
+      });
+    }
+    return { state: 'running' };
+  }
   const renamed = new RegExp(`^${BASE}/chat/([^/]+)$`).exec(path);
   if (method === 'PATCH' && renamed !== null) return { id: renamed[1], title: input.title };
   const proposal = new RegExp(`^${BASE}/chat/[^/]+/proposals/([^/]+)$`).exec(path);
@@ -148,14 +167,17 @@ function defaultAnswer(api: FakeChatApi, method: string, path: string, body: unk
   const question = new RegExp(`^${BASE}/agent/questions/([^/]+)$`).exec(path);
   if (question !== null) {
     const closed = input.answer === 'closed';
-    const weekday = question[1]?.startsWith('weekday_') === true;
+    const likely = question[1]?.startsWith('likely_closed_') === true;
     return {
       question: { id: question[1], answer: input.answer },
-      note: closed ? noteOf(weekday ? { startDate: '2025-11-03', endDate: '2026-11-02', weekdays: [1], detail: null } : { startDate: '2026-02-01', endDate: '2026-02-03', detail: null }, 'n2') : null,
+      note: closed ? noteOf(likely ? { startDate: '2026-01-24', endDate: '2026-01-24', detail: null } : { startDate: '2026-02-01', endDate: '2026-02-03', detail: null }, 'n2') : null,
     };
   }
   return new ApiError('http', 'The request was refused.', { status: 404, code: 'not_found' });
 }
+
+/** The number the next event of a stream would take, for one that numbers its events. */
+const nextId = new WeakMap<LiveTurn, number>();
 
 async function settle<T>(value: unknown, schema: z.ZodType<T>): Promise<T> {
   const resolved: unknown = await value;
@@ -175,6 +197,7 @@ export function fakeChatApi(): FakeChatApi {
     panelError: null,
     refuse: null,
     refusals: [],
+    autoStop: true,
     respond: {},
     reads: {},
     turns: [],
@@ -220,15 +243,31 @@ export function fakeChatApi(): FakeChatApi {
       const refused = api.refusals.shift() ?? api.refuse;
       if (refused !== null) return Promise.reject(refused);
       return new Promise<void>((resolve, reject) => {
-        opts.signal?.addEventListener('abort', () => { reject(new ApiError('aborted', 'The request was stopped.')); });
-        api.turns.push({
+        let closed = false;
+        opts.signal?.addEventListener('abort', () => {
+          closed = true;
+          reject(new ApiError('aborted', 'The request was stopped.'));
+        });
+        const live: LiveTurn = {
           path,
+          method: opts.method ?? 'POST',
           body: opts.body,
           signal: opts.signal,
-          emit: (event, data) => { opts.onEvent({ event, data: JSON.stringify(data) }); },
-          end: () => { resolve(); },
-          fail: (error) => { reject(error instanceof Error ? error : new Error('failed')); },
-        });
+          emit: (event, data, id) => {
+            if (id !== undefined) nextId.set(live, id + 1);
+            opts.onEvent({ event, data: JSON.stringify(data), ...(id === undefined ? {} : { id: String(id) }) });
+          },
+          end: () => {
+            closed = true;
+            resolve();
+          },
+          fail: (error) => {
+            closed = true;
+            reject(error instanceof Error ? error : new Error('failed'));
+          },
+          get closed() { return closed; },
+        };
+        api.turns.push(live);
       });
     },
     logout: () => Promise.resolve(),

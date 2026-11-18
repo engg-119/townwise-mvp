@@ -12,7 +12,7 @@ import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library'
 
 import { ACCESS, fakePortalApi, meOf, orgOf, writes } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
-import { ruleOf, rulesFake } from './fakes';
+import { ruleOf, rulesFake, suggestionOf } from './fakes';
 
 // P29 Business rules on native (spec 16.3): the same page, with the Add rule button submitting and every touch
 // target at least 44px.
@@ -87,6 +87,31 @@ test('a rule’s schedule: Change the forecast opens the note form’s fields wi
   }]);
 });
 
+test('Every year (D46) is a 44px checkbox, and Add rule sends the season with no end', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([]) });
+  await renderApp('/locations/l1/rules', api);
+  await fireEvent.changeText(await screen.findByLabelText('New rule'), 'Closed over the holidays');
+  await fireEvent.press(screen.getByRole('button', { name: 'Change the forecast' }));
+  const box = screen.getByRole('checkbox', { name: 'Every year' });
+  expect(minHeightOf(box)).toBeGreaterThanOrEqual(44);
+  await fireEvent.press(box);
+  expect(screen.getByRole('checkbox', { name: 'Every year' }).props.accessibilityState).toMatchObject({ checked: true });
+  expect(screen.getByText('Closes the same days every year from Starts on, until you delete the rule.')).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText('Starts'), '2026-12-20');
+  await fireEvent.changeText(screen.getByLabelText('Ends'), '2027-01-05');
+  await fireEvent.press(screen.getByRole('button', { name: 'Add rule' }));
+  expect(await screen.findByText('Closed over the holidays')).toBeTruthy();
+  expect(writes(api)).toEqual([{
+    method: 'POST', path: PATH, body: {
+      text: 'Closed over the holidays',
+      schedule: {
+        kind: 'closure', startDate: '2026-12-20', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+        season: { repeat: 'yearly', from: '12-20', to: '01-05' },
+      },
+    },
+  }]);
+});
+
 test('the pressed control goes, so the screen reader moves: to the section’s heading on Change the forecast, to the line under its button on Remove', async () => {
   const send = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent');
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([ruleOf('r1', 'Closed Mondays')]) });
@@ -99,4 +124,25 @@ test('the pressed control goes, so the screen reader moves: to the section’s h
   await fireEvent.press(screen.getByRole('button', { name: 'Remove from the forecast' }));
   expect(send.mock.calls.slice(before).map((call) => call[1])).toEqual(['focus', 'focus']);
   send.mockRestore();
+});
+
+test('Suggested by TownwiseAI (D46): 44px Confirm, Edit and Dismiss; Edit opens the form filled in; Confirm moves the rule in', async () => {
+  const fake = rulesFake([ruleOf('r1', 'Kitchen closes at 9')], [suggestionOf('0000000000000000000000d1', 'Closed on Mondays')]);
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
+  await renderApp('/locations/l1/rules', api);
+  expect(await screen.findByText('Suggested by TownwiseAI')).toBeTruthy();
+  expect(screen.getByText('1 to decide')).toBeTruthy();
+  expect(screen.getByText('Changes the forecast: Closed on Mondays from Nov 17, 2026')).toBeTruthy();
+  for (const name of ['Confirm “Closed on Mondays”', 'Edit “Closed on Mondays”', 'Dismiss “Closed on Mondays”']) {
+    expect(minHeightOf(screen.getByRole('button', { name }))).toBeGreaterThanOrEqual(44);
+  }
+  await fireEvent.press(screen.getByRole('button', { name: 'Edit “Closed on Mondays”' }));
+  expect(screen.getByLabelText('Edit rule').props.value).toBe('Closed on Mondays');
+  expect(screen.getByLabelText('Starts').props.value).toBe('2026-11-17');
+  await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
+  expect(await screen.findByText('Added the rule “Closed on Mondays”.')).toBeTruthy();
+  expect(screen.queryByText('Suggested by TownwiseAI')).toBeNull();
+  expect(within(screen.getByLabelText('Business rules')).getByText('Closed on Mondays')).toBeTruthy();
+  expect(writes(api)).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/rule-suggestions/0000000000000000000000d1/accept', body: {} }]);
 });

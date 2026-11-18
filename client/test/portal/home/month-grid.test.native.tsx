@@ -48,3 +48,20 @@ test('a wide grid lists the entry lines; a narrow one shows none, and the label 
   expect(screen.queryByText('Holiday party')).toBeNull();
   expect(screen.getByLabelText('Wed, Nov 11. Holiday party. Veterans Day.')).toBeTruthy();
 });
+
+test('an outlook day (D52) shows Outlook and its middle figure', async () => {
+  const outlook: MonthCell = { ...cell('2026-11-20', 'outlook'), figure: { value: 212, kind: 'forecast', text: '212' } };
+  await render(
+    <MonthGrid
+      rows={[[outlook, null, null, null, null, null, null]]}
+      selected="2026-11-20"
+      onSelect={() => undefined}
+      onPreview={() => undefined}
+      onOpen={() => undefined}
+      tooltip={() => null}
+      label="November 2026"
+    />,
+  );
+  expect(screen.getByText('Outlook')).toBeTruthy();
+  expect(screen.getByText('212')).toBeTruthy();
+});

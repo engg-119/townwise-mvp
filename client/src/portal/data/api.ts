@@ -47,6 +47,12 @@ export const aiReadSchema = z.object({
   /** The caller may undo it: done and made something, or failed or skipped after it began adding. */
   canUndo: z.boolean(),
   /**
+   * D46: the suggested closure rules the read stored, and those still waiting (what an undo removes); 0 from an API
+   * before them.
+   */
+  rulesSuggested: z.number().default(0),
+  rulesWaiting: z.number().default(0),
+  /**
    * A calendar read's events (D49), on the single item's read only (the list leaves it out): each with the note it
    * made while that note exists, its title null under view-as; none once the original is deleted.
    */

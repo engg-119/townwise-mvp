@@ -28,10 +28,10 @@ import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 // item-sales specs): the location's suppliers with their deliveries, its items, and the item sales coverage, read with
 // GET .../orders/setup and saved whole with PUT over the version it loaded. Someone else's save in between answers
 // 409 `setup_changed`: the page says so and offers their changes, which replace the draft after a confirm. Shared by
-// both platforms; the web adds the template, the sheet import, reading a file with TownwiseAI (D41, only while the
-// GET's `canReadWithAi` holds) and the item sales upload through the slots (Setup.web.tsx). Removing an item with
-// history (item sales, counts, saved edits or rules, as the GET's `itemsWithHistory` names them) asks first, in the
-// page. Under view-as every field and write is disabled in place, described by the read-only line. A read's marks
+// both platforms; both add reading a file with TownwiseAI (D41, only while the GET's `canReadWithAi` holds) and the
+// web adds the template, the sheet import and the item sales upload, through the slots (Setup.tsx, Setup.web.tsx).
+// Removing an item with history (item sales, counts, saved edits or rules, as the GET's `itemsWithHistory` names them)
+// asks first, in the page. Under view-as every field and write is disabled in place, described by the read-only line. A read's marks
 // (an estimated servings value, a name not in the file) replace their field's helper until the field changes or a
 // save goes through.
 
@@ -47,7 +47,7 @@ export interface SheetSlot {
   readonly readOnlyId: string | null;
 }
 
-/** What reading with TownwiseAI (web, D41) works on: the draft its suggestions merge into, before anything saves. */
+/** What reading with TownwiseAI (D41) works on: the draft its suggestions merge into, before anything saves. */
 export interface ReadSlot {
   readonly draft: SetupDraft;
   /** Puts a read's merge in the draft, with its marks. */
@@ -252,13 +252,7 @@ function Editor(props: {
         ) : null}
       </View>
       {props.sheet === undefined
-        ? (
-          <Small>
-            {status.canReadWithAi
-              ? 'Use a computer to download the template, import a sheet, read a file with TownwiseAI or upload item sales.'
-              : 'Use a computer to download the template, import a sheet or upload item sales.'}
-          </Small>
-        )
+        ? <Small>Use a computer to download the template, import a sheet or upload item sales.</Small>
         : props.sheet({ draft, setDraft: edit, locked, readOnlyId })}
       {status.canReadWithAi && props.read !== undefined
         ? props.read({ draft, apply: applyRead, locked, readOnlyId })

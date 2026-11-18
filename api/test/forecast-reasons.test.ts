@@ -135,6 +135,14 @@ describe('rule reasons', () => {
     expect(ruleReasonView({ id: RULE_ID, schedule: schedule({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40 }) }, 'added').rule)
       .toEqual({ id: RULE_ID, guests: 40, outcome: 'added' });
   });
+
+  it('adds a yearly season to the label, with no start', () => {
+    const season = { repeat: 'yearly' as const, from: '01-01', to: '03-31' };
+    expect(ruleReasonView({ id: RULE_ID, schedule: schedule({ weekdays: null, season }) }, 'closed').label)
+      .toBe('Your rule: closed Jan 1 to Mar 31 every year');
+    expect(ruleReasonView({ id: RULE_ID, schedule: schedule({ season: { repeat: 'yearly', from: '12-20', to: '01-05' } }) }, 'closed').label)
+      .toBe('Your rule: closed on Mondays, Dec 20 to Jan 5 every year');
+  });
 });
 
 describe('reason effects', () => {

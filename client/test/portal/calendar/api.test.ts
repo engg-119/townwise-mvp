@@ -25,7 +25,7 @@ function api() {
 const FILE = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 12 });
 const LINK = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
 const GOOGLE = ownerCalendar({ id: 'c4', label: 'Google calendar', kind: 'google', host: null, eventCount: 40 });
-const GOOGLE_ON = { available: true, connected: true, clientId: CLIENT_ID };
+const GOOGLE_ON = { available: true, connected: true, clientId: CLIENT_ID, canConnect: true };
 
 describe('owner calendar calls (spec 10.18)', () => {
   test('GET .../owner-calendars returns the calendars and `google`, a status the client has no words for included, stripping other keys', async () => {
@@ -43,10 +43,29 @@ describe('owner calendar calls (spec 10.18)', () => {
     expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [GOOGLE, later], google: GOOGLE_OFF });
   });
 
+  test('a calendar’s `mine` parses, and a calendar without it, from an API older than Reconnect, reads as not mine', async () => {
+    const { fake, routes } = api();
+    const older: Record<string, unknown> = { ...GOOGLE };
+    delete older.mine;
+    routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: true }, { ...older, id: 'c5' }], google: GOOGLE_ON });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [{ ...GOOGLE, mine: true }, { ...GOOGLE, id: 'c5', mine: false }], google: GOOGLE_ON });
+    routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: 'yes' }] });
+    await expect(fetchOwnerCalendars(fake, 'l1')).rejects.toThrow();
+  });
+
+  test('`google.canConnect` parses, false for staff, and reads as true from an API older than it', async () => {
+    const { fake, routes } = api();
+    const staff = { available: true, connected: false, clientId: null, canConnect: false };
+    routes.gets[BASE] = () => ({ calendars: [], google: staff });
+    expect((await fetchOwnerCalendars(fake, 'l1')).google).toEqual(staff);
+    routes.gets[BASE] = () => ({ calendars: [], google: { available: true, connected: false, clientId: CLIENT_ID } });
+    expect((await fetchOwnerCalendars(fake, 'l1')).google).toEqual({ available: true, connected: false, clientId: CLIENT_ID, canConnect: true });
+  });
+
   test('an answer without `google`, from an API older than Google calendars, reads as Google calendars off', async () => {
     const { fake, routes } = api();
     routes.gets[BASE] = () => ({ calendars: [FILE] });
-    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE], google: { available: false, connected: false, clientId: null } });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE], google: { available: false, connected: false, clientId: null, canConnect: false } });
   });
 
   test('a calendar or a `google` the client can’t read is an invalid response', async () => {

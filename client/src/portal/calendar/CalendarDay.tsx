@@ -14,7 +14,7 @@ import { Notice, ReadOnlyLine } from '../ui/feedback';
 import type { PopoverAnchor } from '../ui/Popover';
 import { AppChip, SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
-import { FIGURE_KEY, forecastWords, type CalendarDayView, type EffectGrade, type EffectMark, type ImportedEvent, type ReasonLine } from './model';
+import { FIGURE_KEY, forecastLabel, forecastWords, type CalendarDayView, type EffectGrade, type EffectMark, type ImportedEvent, type ReasonLine } from './model';
 
 // The Calendar's day panel (P28, spec 16.3): a region "Selected day", beside the grid from 1024px and under it below.
 // Top to bottom: the day; its Forecast (the published figure and range, what the notes changed, a booked or closed day,
@@ -126,7 +126,7 @@ export function CalendarDay(props: {
     <View role="region" aria-label="Selected day" nativeID={PANEL_ID} style={styles.root}>
       <Heading>{view.heading}</Heading>
       {props.notice === null ? null : <Notice text={props.notice} />}
-      <Part label="Forecast">
+      <Part label={forecastLabel(view.forecast)}>
         {words.figure === null ? null : (
           <View style={styles.item}>
             {/* Actual or forecast, in words, over the figure in its tone (D49, design decision 10). */}

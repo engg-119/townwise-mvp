@@ -1,10 +1,13 @@
 import { StyleSheet, View } from 'react-native';
 
+import { theme } from '../../theme';
+import { Checkbox } from '../ui/Checkbox';
 import { FormField } from '../ui/FormField';
-import { Pair } from '../ui/layout';
+import { Pair, Stack } from '../ui/layout';
+import { Small } from '../ui/text';
 import { NOTE_EFFECTS, NOTE_KINDS, type NoteKind } from './api';
 import { DateField } from './DateField';
-import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, MAX_TITLE_UNITS, NOTE_COPY, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
+import { DEFAULT_EFFECT, EFFECT_LABEL, KIND_LABEL, MAX_TITLE_UNITS, NOTE_COPY, SEASON_COPY, WEEKDAYS, type NoteDraft, type NoteMessages } from './noteRules';
 import { ToggleGroup } from './parts';
 
 // The fields a note (C6, spec 12) and a business rule's schedule (D31, P29) share: Kind, then on a note only its
@@ -12,8 +15,10 @@ import { ToggleGroup } from './parts';
 // Starts at and Ends at (optional hours, hidden for a closure), Only on these days, Effect (defaulted by the kind) and
 // Expected guests (hidden when the effect is Closed, except on a private event, where Closed is a buyout and the field
 // takes the party's size; on a private event with more guests its helper says Townwise forecasts whole days, so the
-// guests count toward each day's total). The note form adds Details and its buttons; the rules page its own. Each
-// group's id starts with `idPrefix`, so two forms on one page never share one.
+// guests count toward each day's total). A rule's schedule (`noun` rule) also has Every year (D46) under Starts and
+// Ends: checked, the two dates are the first season, which repeats every year with no end, so Ends is required. The
+// note form adds Details and its buttons; the rules page its own. Each group's id starts with `idPrefix`, so two forms
+// on one page never share one.
 
 const KIND_OPTIONS = NOTE_KINDS.map((kind) => ({ value: kind, label: KIND_LABEL[kind] }));
 const EFFECT_OPTIONS = NOTE_EFFECTS.map((effect) => ({ value: effect, label: EFFECT_LABEL[effect] }));
@@ -49,6 +54,8 @@ export function NoteFields(props: {
 }): React.JSX.Element {
   const { draft, set, messages, idPrefix } = props;
   const buyout = draft.kind === 'private_event' && draft.effect === 'closed';
+  const yearly = props.noun === 'rule' && draft.yearly === true;
+  const yearlyHelpId = `${idPrefix}-yearly-help`;
   return (
     <>
       <ToggleGroup
@@ -72,13 +79,24 @@ export function NoteFields(props: {
       <Pair>
         <DateField label="Starts" value={draft.startDate} onChange={(startDate) => { set({ startDate }); }} messages={list(messages.startDate)} />
         <DateField
-          label="Ends (optional)"
-          helper={props.endHelper}
+          label={yearly ? 'Ends' : 'Ends (optional)'}
+          helper={yearly ? 'The first season’s last day.' : props.endHelper}
           value={draft.endDate}
           onChange={(endDate) => { set({ endDate }); }}
           messages={list(messages.endDate)}
         />
       </Pair>
+      {props.noun === 'rule' ? (
+        <Stack gap={theme.space[1]}>
+          <Checkbox
+            label="Every year"
+            checked={yearly}
+            {...(yearly ? { describedBy: yearlyHelpId } : {})}
+            onChange={(next) => { set({ yearly: next }); }}
+          />
+          {yearly ? <Small nativeID={yearlyHelpId}>{SEASON_COPY.everyYear}</Small> : null}
+        </Stack>
+      ) : null}
       {draft.kind === 'closure' ? null : (
         <Pair>
           <TimeField label="Starts at" helper={HOURS_HELP} value={draft.startTime} onChange={(startTime) => { set({ startTime }); }} messages={list(messages.startTime)} />

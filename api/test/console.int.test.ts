@@ -187,6 +187,8 @@ describe('GET /api/admin/orgs/:orgId', () => {
     const inviteId = await addInvite(server, { orgId, email: invitedEmail, invitedBy: staff.userId, addedByStaff: true });
     const main = await addLocation(server, { orgId, name: 'Main Street' });
     const second = await addLocation(server, { orgId, name: 'Second Street' });
+    // D47: a linked location says so, never with its place id.
+    await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(second) }, { $set: { placeId: 'ChIJSentinelPlace0001' } });
     await addSalesDay(server, { orgId, locationId: main, date: '2026-05-01', guests: 4321, netSalesCents: 98765432 });
     await addSalesDay(server, { orgId, locationId: main, date: '2026-05-02', guests: null, netSalesCents: 55555 });
     await addSalesDay(server, { orgId, locationId: main, date: '2026-05-04', guests: 1234, netSalesCents: null });
@@ -221,12 +223,12 @@ describe('GET /api/admin/orgs/:orgId', () => {
     const town = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
     expect(body.locations).toEqual([
       {
-        id: main, name: 'Main Street', town,
+        id: main, name: 'Main Street', town, hasPlace: false,
         coverage: { dayCount: 3, guestsDayCount: 2, netSalesDayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04', missingDays: 1 },
         notesCount: 2, lastUploadAt: at(2).toISOString(),
       },
       {
-        id: second, name: 'Second Street', town,
+        id: second, name: 'Second Street', town, hasPlace: true,
         coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
         notesCount: 0, lastUploadAt: null,
       },
@@ -238,6 +240,7 @@ describe('GET /api/admin/orgs/:orgId', () => {
     expect(body.recent[0]).toMatchObject({ orgId, orgName: 'Cedar Grill', action: 'member.invited', at: at(21).toISOString(), viewAs: null });
     for (const figure of FIGURES) expect(numbersIn(body)).not.toContain(figure);
     expect(JSON.stringify(body)).not.toContain('Sentinel note detail');
+    expect(JSON.stringify(body)).not.toContain('ChIJSentinelPlace0001');
   });
 
   it('says when the request it was approved from was sent, and null once that request is deleted', async () => {

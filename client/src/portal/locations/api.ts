@@ -150,7 +150,9 @@ export async function deleteNote(api: ApiClient, locationId: string, noteId: str
   await api.request(`${locationPath(locationId)}/notes/${encodeURIComponent(noteId)}`, { method: 'DELETE' });
 }
 
-export async function updateLocation(api: ApiClient, locationId: string, input: { name: string; town: TownInput }): Promise<LocationSummary> {
+export async function updateLocation(
+  api: ApiClient, locationId: string, input: { name: string; town: TownInput; placeId?: string },
+): Promise<LocationSummary> {
   const body = await api.json(locationPath(locationId), savedLocationSchema, { method: 'PATCH', body: input });
   return body.location;
 }

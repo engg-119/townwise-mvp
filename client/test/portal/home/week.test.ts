@@ -79,6 +79,22 @@ describe('weeks', () => {
     expect(forecastPhrase(forecastDay({ date: '2026-11-17', low: null, mid: null, high: null }))).toBeNull();
   });
 
+  test('an outlook day (D52) in This week and This month: “Outlook: about 90 guests, 67 to 113”, its cell marked Outlook with its figure', () => {
+    const outlook = forecastDay({ date: '2026-11-12', low: 67.6, mid: 90.4, high: 112.2, outlook: true });
+    const phrase = forecastPhrase(outlook);
+    if (phrase === null) throw new Error('no phrase');
+    expect(plainOf(phrase)).toBe('Outlook: about 90 guests, 67 to 113');
+    // A forecast day reads as before.
+    const plain = forecastPhrase({ ...outlook, outlook: false });
+    expect(plain === null ? null : plainOf(plain)).toBe('About 90 guests, 67 to 113');
+    const home = input([]);
+    const cells = monthGrid(TODAY, home.context, { input: home, forecast: new Map([[outlook.date, outlook]]) }).flat();
+    const cell = cells.find((each) => each?.date === outlook.date);
+    expect(cell).toMatchObject({ status: 'outlook', figure: { value: 90, kind: 'forecast', text: '90' } });
+    expect(cell?.label).toContain('Outlook about 90 guests, 67 to 113.');
+    expect(cell === undefined || cell === null ? null : monthStatusWord(cell)).toBe('Outlook');
+  });
+
   test('ranges without a year', () => {
     expect(dayMonthRange('2026-11-11', '2026-11-11')).toBe('Nov 11');
     expect(dayMonthRange('2026-11-20', '2026-11-22')).toBe('Nov 20 to 22');

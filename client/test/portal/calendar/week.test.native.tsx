@@ -93,6 +93,17 @@ test('each row is its head line over the day’s full cards, in the entries’ o
   expect(within(saturday).getByText('Your calendar')).toBeTruthy();
 });
 
+test('an outlook day’s row (D52): Outlook over its figure and its range, and its label says outlook', async () => {
+  const forecast = forecastOf([forecastDay({ date: SATURDAY, low: 150, mid: 212, high: 290, outlook: true })]) as ForecastWindow;
+  await renderWeek(375, jest.fn(), input({ forecast }));
+  const saturday = screen.getAllByRole('button')[3];
+  if (saturday === undefined) throw new Error('no Saturday');
+  expect(within(saturday).getByText('Outlook')).toBeTruthy();
+  expect(within(saturday).getByText('212')).toBeTruthy();
+  expect(within(saturday).getByText('150 to 290')).toBeTruthy();
+  expect(saturday.props.accessibilityLabel).toContain('Outlook about 212 guests, 150 to 290.');
+});
+
 test('a term card shows its whole title, wrapping: no text in the row is cut to a number of lines', async () => {
   const finals = townEvent({ id: 'hanover-nh:2026-11-19:term', start: '2026-11-19', end: '2026-11-24', title: 'Fall term finals', kind: 'term' });
   await renderWeek(375, jest.fn(), input({ events: [finals] }));

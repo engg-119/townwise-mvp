@@ -9,6 +9,9 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import * as SecureStore from 'expo-secure-store';
 import { StyleSheet } from 'react-native';
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
@@ -87,9 +90,13 @@ const BOARD = {
   ],
 };
 const QUESTIONS = [
-  { id: 'weekday_1_2026-03-01_2026-05-31', kind: 'weekday', weekday: 1, from: '2026-03-01', to: '2026-05-31', noSalesCount: 13, weekdayCount: 13 },
+  { id: 'likely_closed_2026-05-23', kind: 'likely_closed', date: '2026-05-23', guests: 1, typicalGuests: 100 },
   GAP('2026-05-12', '2026-05-13', 2),
 ];
+
+/** Two suggested closure rules (D46), in GET .../agent's shape (client/test/chat/agent-panel.json). */
+const RULE_SUGGESTIONS = (JSON.parse(readFileSync(join(__dirname, '../../chat/agent-panel.json'), 'utf8')) as { panel: { ruleSuggestions: unknown[] } })
+  .panel.ruleSuggestions;
 
 function portal(options: {
   me?: MeResponse;
@@ -280,6 +287,11 @@ test('the questions link counts what GET .../agent asks, and shows nothing with 
   // A question kind this client doesn't know is not counted.
   await renderApp('/locations/l1', portal({ agent: { questions: [...QUESTIONS, { id: 'later_1', kind: 'unusual_night' }], activity: [] } }));
   expect(await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).toBeTruthy();
+  await cleanup();
+  // D46: suggested closure rules count too, and a weekday question from an API before them is left out.
+  const weekday = { id: 'weekday_1_2026-03-01_2026-05-31', kind: 'weekday', weekday: 1, from: '2026-03-01', to: '2026-05-31', noSalesCount: 13, weekdayCount: 13 };
+  await renderApp('/locations/l1', portal({ agent: { questions: [...QUESTIONS, weekday], activity: [], ruleSuggestions: RULE_SUGGESTIONS } }));
+  expect(await screen.findByRole('link', { name: '4 questions from TownwiseAI' })).toBeTruthy();
   await cleanup();
 
   for (const agent of [{ questions: [], activity: [] }, offline()]) {

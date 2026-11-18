@@ -28,8 +28,14 @@ export type ForecastStatus = 'closed' | 'booked';
 export type Visual =
   | {
     kind: 'daily'; metric: Metric; from: string; to: string;
-    /** `low`, `mid` and `high` are the forecast's, rounded as get_forecast rounds them; `status` is set only on a closed or booked day. */
-    days: { date: string; value: number | null; low: number | null; mid: number | null; high: number | null; status?: ForecastStatus | undefined }[];
+    /**
+     * `low`, `mid` and `high` are the forecast's, rounded as get_forecast rounds them; `status` is set only on a closed or
+     * booked day, and `outlook` (true) only on a day after its run's forecast tier (D52).
+     */
+    days: {
+      date: string; value: number | null; low: number | null; mid: number | null; high: number | null; status?: ForecastStatus | undefined;
+      outlook?: boolean | undefined;
+    }[];
     forecast: { model: string; madeAt: string } | null;
   }
   | {
@@ -96,8 +102,11 @@ const value = z.number().nullable();
 export const visualSchema: z.ZodType<Visual> = z.discriminatedUnion('kind', [
   z.object({
     kind: z.literal('daily'), metric, from: isoDate, to: isoDate,
-    // A visual stored before `mid` and `status` existed still parses and replays: mid as null, no status.
-    days: z.array(z.object({ date: isoDate, value, low: value, mid: value.default(null), high: value, status: z.enum(['closed', 'booked']).optional() })),
+    // A visual stored before `mid`, `status` and `outlook` existed still parses and replays: mid as null, no status, no outlook.
+    days: z.array(z.object({
+      date: isoDate, value, low: value, mid: value.default(null), high: value, status: z.enum(['closed', 'booked']).optional(),
+      outlook: z.boolean().optional(),
+    })),
     forecast: z.object({ model: z.string(), madeAt: z.string() }).nullable(),
   }),
   z.object({
@@ -176,7 +185,7 @@ function valuesOf(days: readonly SalesDay[], of: Metric): number[] {
  * only for guests. The band is the day's range as the owner's notes leave it from the town's today on (spec 14.5), the
  * same low, mid and high get_forecast and the Calendar give, so a closed or booked day has none and says which it is in
  * `status`; it is the model's 80% range only on a day no note changed (get_forecast's modelRange is the model's own on
- * the others).
+ * the others). A day in its run's outlook (D52) says so in `outlook`.
  */
 export function dailyVisual(
   req: VisualRequest, days: readonly SalesDay[], forecast: readonly ForecastDayView[], run: { model: string; madeAt: string } | null,
@@ -196,6 +205,7 @@ export function dailyVisual(
       date, value: row === undefined ? null : shown(unitsOf(row, of), of),
       low: banded ? Math.floor(low) : null, mid: banded && mid !== null ? Math.round(mid) : null, high: banded ? Math.ceil(high) : null,
       ...(status === null ? {} : { status }),
+      ...(forecastDay?.outlook === true ? { outlook: true } : {}),
     };
   });
   const hasBand = out.some((day) => day.low !== null);
