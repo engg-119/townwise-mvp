@@ -915,11 +915,11 @@ const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s forecast was mad
 test('an outlook day (D52): its cell shows its figure marked Outlook, its tooltip and panel say outlook with no 8 in 10, and the key line shows', async () => {
   const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': novemberWithOutlook() } });
   await renderAt('/locations/l1/calendar?day=2026-11-20', api);
-  expect(cell('2026-11-20').getAttribute('aria-label')).toBe('Fri, Nov 20, 2026. Outlook about 212 guests, 150 to 290.');
+  expect(cell('2026-11-20').getAttribute('aria-label')).toBe('Fri, Nov 20, 2026. Outlook: 212 guests, forecast, likely 150 to 290.');
   expect(cell('2026-11-20').textContent).toContain('Outlook');
   expect(cell('2026-11-20').textContent).toContain('212');
   // A forecast day is unchanged, with its 8 in 10.
-  expect(cell('2026-11-19').getAttribute('aria-label')).toBe('Thu, Nov 19, 2026. Forecast about 212 guests, 180 to 240.');
+  expect(cell('2026-11-19').getAttribute('aria-label')).toBe('Thu, Nov 19, 2026. 212 guests, forecast, likely 180 to 240.');
   expect(cell('2026-11-19').textContent).not.toContain('Outlook');
   const day = panel();
   expect(within(day).getByText('Outlook')).toBeTruthy();
@@ -928,7 +928,7 @@ test('an outlook day (D52): its cell shows its figure marked Outlook, its toolti
   expect(day.textContent).not.toContain('8 in 10');
   expect(screen.getByText(OUTLOOK_KEY)).toBeTruthy();
   fireEvent(cell('2026-11-21'), pointer('pointerover', 'mouse'));
-  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('Outlook: about 212 guests (150 to 290)');
+  expect(screen.getByTestId('calendar-tooltip').textContent).toContain('Outlook: 212 guests, forecast (likely 150 to 290)');
   // At phone width the cell keeps its figure.
   setWidth(375);
   expect(cell('2026-11-20').textContent).toContain('212');

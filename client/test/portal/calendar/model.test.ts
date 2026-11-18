@@ -893,31 +893,31 @@ describe('an outlook day (D52)', () => {
   test('its cell shows its middle figure with “Outlook” as its status line, and its label says outlook', () => {
     const cell = dayCell('2026-11-20', reads());
     expect(cell).toMatchObject({ status: 'outlook', figure: { value: 212, kind: 'forecast' } });
-    expect(cell.label).toContain('Outlook about 212 guests, 150 to 290.');
-    expect(cell.label).not.toContain('Forecast about');
+    expect(cell.label).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
+    expect(cell.label).not.toMatch(/\. 212 guests, forecast/);
     expect(statusWord(cell.status)).toBe('Outlook');
     // The figure stays at every width, and from 641px the word sits in the top row, as a booked day's does.
     expect([statusTakesFigure(cell.status, true), statusTakesFigure(cell.status, false)]).toEqual([false, false]);
     expect(topRightOf(cell)).toBe('Outlook');
   });
 
-  test('a forecast cell is unchanged: no status, “Forecast about”, and its 8 in 10 sentence', () => {
+  test('a forecast cell is unchanged: no status, no “Outlook”, and its 8 in 10 sentence', () => {
     const cell = dayCell(TODAY, reads());
     expect(cell).toMatchObject({ status: null, figure: { value: 212, kind: 'forecast' } });
-    expect(cell.label).toContain('Forecast about 212 guests, 180 to 240.');
-    expect(topRightOf(cell)).toBeNull();
+    expect(cell.label).toContain('212 guests, forecast, likely 180 to 240.');
+    expect(topRightOf(cell)).toBe('forecast');
     const view = dayView(TODAY, reads());
     expect(forecastLabel(view.forecast)).toBe('Forecast');
     expect(forecastWords(view.forecast, 'Main Street').lines).toEqual(['Likely 180 to 240. About 8 in 10 days land in the range.']);
-    expect(tooltipLines(TODAY, reads())?.lines[0]).toBe('About 212 guests (180 to 240)');
+    expect(tooltipLines(TODAY, reads())?.lines[0]).toBe('212 guests, forecast (likely 180 to 240)');
   });
 
   test('its tooltip and day panel say outlook, with the range and no 8 in 10', () => {
-    expect(tooltipLines('2026-11-20', reads())?.lines[0]).toBe('Outlook: about 212 guests (150 to 290)');
+    expect(tooltipLines('2026-11-20', reads())?.lines[0]).toBe('Outlook: 212 guests, forecast (likely 150 to 290)');
     const view = dayView('2026-11-20', reads());
     expect(forecastLabel(view.forecast)).toBe('Outlook');
     expect(forecastWords(view.forecast, 'Main Street')).toEqual({
-      figure: { before: 'About', value: '212', after: 'guests' },
+      figure: { before: 'About', value: '212', after: 'guests', source: 'forecast' },
       lines: ['Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.'],
     });
     // With a note's guests, the model's range is named without the 8 in 10 claim either.

@@ -186,7 +186,7 @@ describe('the day columns at 1280', () => {
     expect(head(SATURDAY).textContent).toContain('Outlook');
     expect(head(SATURDAY).textContent).toContain('212');
     expect(head(SATURDAY).textContent).toContain('150 to 290');
-    expect(cell(SATURDAY).getAttribute('aria-label')).toContain('Outlook about 212 guests, 150 to 290.');
+    expect(cell(SATURDAY).getAttribute('aria-label')).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
     expect(head('2026-11-20').textContent).not.toContain('Outlook');
     expect(head('2026-11-20').textContent).toContain('180 to 240');
   });

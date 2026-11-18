@@ -122,7 +122,7 @@ test('a footer sits under the key', () => {
 });
 
 test('an outlook day (D52) says Outlook over its middle figure, at 1280 and at 375', () => {
-  const outlook: MonthCell = { ...cell('2026-11-20', 'outlook'), figure: { value: 212, kind: 'forecast', text: '212' } };
+  const outlook: MonthCell = { ...cell('2026-11-20', 'outlook'), figure: { value: 212, kind: 'forecast' }, figureText: '~212', caption: 'forecast' };
   for (const next of [1280, 375]) {
     setWidth(next);
     renderRow([outlook, cell('2026-11-21', null), null, null, null, null, null]);

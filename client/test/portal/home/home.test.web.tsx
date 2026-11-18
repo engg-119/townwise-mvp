@@ -401,15 +401,15 @@ test('a stale run on Home (D52): the days after its forecast tier read Outlook i
   await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, forecastOf(days)), 'This month in Hanover');
   await waitFor(() => { expect(cellOf('2026-11-09').textContent).toContain('Outlook'); });
   expect(cellOf('2026-11-09').textContent).toContain('212');
-  expect(cellOf('2026-11-09').getAttribute('aria-label')).toContain('Outlook about 212 guests, 150 to 290.');
+  expect(cellOf('2026-11-09').getAttribute('aria-label')).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
   expect(cellOf('2026-11-06').textContent).not.toContain('Outlook');
   fireEvent.pointerOver(cellOf('2026-11-09'));
   const detail = screen.getByRole('region', { name: 'Selected day' });
   expect(within(detail).getByText('Outlook')).toBeTruthy();
   expect(within(detail).getByText('About 212 guests, likely 150 to 290.')).toBeTruthy();
   const strip = screen.getByRole('table', { name: 'This week, day by day' });
-  expect(within(strip).getAllByText(sentence('Outlook: about 212 guests, 150 to 290'))).toHaveLength(3);
-  expect(within(strip).getAllByText(sentence('About 212 guests, 180 to 240'))).toHaveLength(4);
+  expect(within(strip).getAllByText(sentence('Outlook: ~212 guests, forecast, likely 150 to 290'))).toHaveLength(3);
+  expect(within(strip).getAllByText(sentence('~212 guests, forecast, likely 180 to 240'))).toHaveLength(4);
 });
 
 test('the day detail’s Why rows end in their source chips, and On the calendar leaves out what Why names, as the Calendar does', async () => {

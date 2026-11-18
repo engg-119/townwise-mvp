@@ -303,7 +303,7 @@ test('an outlook day on native (D52): its cell’s label says outlook, its panel
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
   await renderApp('/locations/l1/calendar', api);
   expect(await screen.findByText('Today, Wed, Nov 11')).toBeTruthy();
-  const label = 'Sat, Nov 21, 2026. Outlook about 212 guests, 150 to 290.';
+  const label = 'Sat, Nov 21, 2026. Outlook: 212 guests, forecast, likely 150 to 290.';
   expect(screen.getByText('Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.')).toBeTruthy();
   await fireEvent.press(screen.getByLabelText(label));
   expect(within(panel()).getByText('Outlook')).toBeTruthy();

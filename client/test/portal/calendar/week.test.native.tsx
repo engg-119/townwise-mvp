@@ -99,9 +99,9 @@ test('an outlook day’s row (D52): Outlook over its figure and its range, and i
   const saturday = screen.getAllByRole('button')[3];
   if (saturday === undefined) throw new Error('no Saturday');
   expect(within(saturday).getByText('Outlook')).toBeTruthy();
-  expect(within(saturday).getByText('212')).toBeTruthy();
-  expect(within(saturday).getByText('150 to 290')).toBeTruthy();
-  expect(saturday.props.accessibilityLabel).toContain('Outlook about 212 guests, 150 to 290.');
+  expect(within(saturday).getByText('~212')).toBeTruthy();
+  expect(within(saturday).getByText('forecast, 150 to 290')).toBeTruthy();
+  expect(saturday.props.accessibilityLabel).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
 });
 
 test('a term card shows its whole title, wrapping: no text in the row is cut to a number of lines', async () => {

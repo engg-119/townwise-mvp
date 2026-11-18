@@ -514,8 +514,8 @@ describe('buildWeek', () => {
     expect(friday).toMatchObject({ status: null, figure: { value: 212, kind: 'forecast' }, range: '180 to 240' });
     const saturday = dayIn(week(input), SATURDAY);
     expect(saturday).toMatchObject({ status: 'outlook', figure: { value: 212, kind: 'forecast' }, range: '150 to 290' });
-    expect(headLine(saturday)).toBe('150 to 290');
-    expect(saturday.label).toContain('Outlook about 212 guests, 150 to 290.');
+    expect(headLine(saturday)).toBe('forecast, 150 to 290');
+    expect(saturday.label).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
   });
 
   test('a block at the 25 months’ ends has inert days with no cards', () => {

@@ -94,7 +94,7 @@ test('a forecast’s figure is lighter after a “~” with “forecast”, ahea
   widthOf(1280);
   const day = (date: string, mid: number) => ({
     date, status: 'open' as const, low: mid - 20, mid, high: mid + 20, model: { status: 'open' as const, low: mid - 20, mid, high: mid + 20 }, noteGuests: 0,
-    moreNotes: 0, reasons: [], runId: 'r1', actual: null, inRange: null,
+    moreNotes: 0, reasons: [], runId: 'r1', actual: null, inRange: null, outlook: false,
   });
   await renderGrid(input({
     forecast: { available: true, reason: null, runs: [], days: [day('2026-11-21', 282), day('2026-11-03', 90)], weeks: [] },

@@ -50,7 +50,7 @@ test('a wide grid lists the entry lines; a narrow one shows none, and the label 
 });
 
 test('an outlook day (D52) shows Outlook and its middle figure', async () => {
-  const outlook: MonthCell = { ...cell('2026-11-20', 'outlook'), figure: { value: 212, kind: 'forecast', text: '212' } };
+  const outlook: MonthCell = { ...cell('2026-11-20', 'outlook'), figure: { value: 212, kind: 'forecast' }, figureText: '~212', caption: 'forecast' };
   await render(
     <MonthGrid
       rows={[[outlook, null, null, null, null, null, null]]}
@@ -63,5 +63,5 @@ test('an outlook day (D52) shows Outlook and its middle figure', async () => {
     />,
   );
   expect(screen.getByText('Outlook')).toBeTruthy();
-  expect(screen.getByText('212')).toBeTruthy();
+  expect(screen.getByText('~212')).toBeTruthy();
 });
