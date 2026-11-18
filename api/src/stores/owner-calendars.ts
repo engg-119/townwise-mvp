@@ -232,6 +232,12 @@ export type ReplaceResult =
   | { readonly switched: false }
   | { readonly switched: true; readonly generation: number; readonly keptKeys: number; readonly hadKeys: number };
 
+/**
+ * An add's replace: a new calendar's first generation (its reservedGeneration starts at 0, and no one else knows its id
+ * until the add answers), with no generation before it.
+ */
+export const ADDED_REPLACE = { switched: true, generation: 1, keptKeys: 0, hadKeys: 0 } as const satisfies ReplaceResult;
+
 /** The keyed events eventsByUid found, read at one generation. */
 export interface EventsByUid {
   readonly generation: number;

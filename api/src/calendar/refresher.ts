@@ -46,9 +46,10 @@ import { claimDueCalendar, claimDueGoogleConnection, type ClaimedCalendar, type 
 import { CHECK_INTERVAL_MS } from '../stores/google-connections.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import { REFRESH_INTERVAL_MS, type CalendarFailure, type ParsedCalendar } from '../stores/owner-calendars.ts';
+import { REFRESH_INTERVAL_MS, type CalendarFailure, type ParsedCalendar, type ReplaceResult } from '../stores/owner-calendars.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { createCalendarFetcher, type CalendarFetcher, type CalendarFetchResult } from './fetch.ts';
+import { followLinkedNotes } from './follow-up.ts';
 import type { GoogleCalendarClient, revokeGoogleGrant } from './google.ts';
 import { endGoogleAccess, endUnusedGoogleAccess, markCalendarForCheck, readGoogleSource, seatOf, type GoogleAccessDeps } from './google-access.ts';
 import { parseIcs, type IcsTown } from './ics.ts';
@@ -205,11 +206,14 @@ export function createCalendarRefresher(deps: CalendarRefresherDeps): CalendarRe
     }
     const at = now();
     // The store's replace switches only a calendar still there, and a failure updates one, so neither writes a new one.
-    if (result.ok) await calendars.replaceEvents(scope, locationId, calendarId, result.parsed, at);
+    let replaced: ReplaceResult | null = null;
+    if (result.ok) replaced = await calendars.replaceEvents(scope, locationId, calendarId, result.parsed, at);
     else await calendars.recordFailure(scope, locationId, calendarId, result.code, at);
     // After: a location or calendar removed meanwhile keeps nothing this refresh wrote.
     const after = await calendars.find(scope, locationId, calendarId);
     if (after === null || (await stores.locations.find(scope, locationId)) === null) return removed();
+    // Notes linked to its events follow them (calendar-event-suggestions); never fails the refresh.
+    if (replaced?.switched === true) await followLinkedNotes({ stores, logger }, scope, location, calendarId, replaced, at);
     await calendars.releaseRefresh(scope, locationId, calendarId, {
       leaseUntil, nextRefreshAt: nextRefreshAt(at, result.ok ? 0 : after.consecutiveFailures),
     });

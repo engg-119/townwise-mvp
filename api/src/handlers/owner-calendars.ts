@@ -11,6 +11,8 @@
 // (Google's rule on people reading its users' data). Every use of a Google token goes through
 // calendar/google-access.ts, which logs each Google failure; nothing else here logs, and the audit events carry ids,
 // the kind, the event count and the status only, never a label, host, address, Google calendar id or title.
+// Where Refresh now or an add switches in a calendar's events, notes linked to them follow (calendar/follow-up.ts,
+// openspec change calendar-event-suggestions), which never fails the request.
 import type { KeyObject } from 'node:crypto';
 
 import { objectId } from '@ckeith26/mongo';
@@ -23,6 +25,7 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
+import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
   readConnectedCalendar, readGoogleSource, type GoogleCalendarRead,
@@ -34,7 +37,7 @@ import { daysBetween, isoDate } from '../dates.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import {
-  MANUAL_REFRESH_INTERVAL_MS, MAX_CALENDARS, MAX_LABEL_CHARS,
+  ADDED_REPLACE, MANUAL_REFRESH_INTERVAL_MS, MAX_CALENDARS, MAX_LABEL_CHARS,
   type CalendarFailure, type CalendarKind, type CalendarStatus, type NewCalendar, type OwnerCalendarEvent, type OwnerCalendarRecord, type ParsedCalendar,
 } from '../stores/owner-calendars.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
@@ -361,6 +364,8 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     await calendars.remove(scope, location.id, added.id);
     throw googleNotConnected();
   }
+  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
+  await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
   res.status(201).json({ calendar: ownerCalendarView(added) });
 }
@@ -425,8 +430,13 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
     ? await refreshGoogle(ctx, scope, location, found.id, now)
     : await refreshLink(ctx, scope, location, found.id, key, now);
   // A replace that loses to a concurrent one leaves that one's events, which are as new.
-  if (read.ok) await calendars.replaceEvents(scope, location.id, found.id, read.parsed, now);
-  else await calendars.recordFailure(scope, location.id, found.id, read.code, now);
+  if (read.ok) {
+    const replaced = await calendars.replaceEvents(scope, location.id, found.id, read.parsed, now);
+    // Notes linked to its events follow them (calendar-event-suggestions); never fails the refresh.
+    if (replaced.switched) await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+  } else {
+    await calendars.recordFailure(scope, location.id, found.id, read.code, now);
+  }
   const refreshed = await calendars.find(scope, location.id, found.id);
   if (refreshed === null) throw notFound();
   await recordCalendar(ctx, caller, 'owner_calendar.refreshed', refreshed, now);
