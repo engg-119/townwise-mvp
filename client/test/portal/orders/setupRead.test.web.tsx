@@ -5,6 +5,7 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import { ApiError } from '../../../src/api/client';
 import type { OrderSetup, OrderSetupAnswer, SetupRead } from '../../../src/portal/orders/api';
+import { onlyLinks, readKindOf } from '../../../src/portal/orders/setupReadWords';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
@@ -203,6 +204,24 @@ test('pasted text goes as the text; while TownwiseAI reads the page says so with
   expect(screen.getByRole('textbox', { name: 'Or paste text' })).toHaveProperty('value', 'Sample IPA, 1 half-barrel, Tuesdays');
 });
 
+test('a saved email, a web page, JSON, Markdown or rich text goes as text', () => {
+  for (const name of ['rep.eml', 'prices.html', 'export.json', 'notes.md', 'guide.rtf']) {
+    expect(readKindOf({ name, size: 10 })).toEqual({ kind: 'text' });
+  }
+});
+
+test('pasted text that is only links is refused before anything is sent: TownwiseAI opens no links', async () => {
+  const api = portal();
+  renderAt(api);
+  await screen.findByRole('heading', { name: HEADING });
+  fireEvent.change(screen.getByRole('textbox', { name: 'Or paste text' }), { target: { value: ' https://docs.google.com/spreadsheets/d/sample/edit ' } });
+  await click('Read the text');
+  expect(screen.getByRole('alert').textContent).toBe('TownwiseAI can’t open links. Download the sheet or page as a file and choose it, or paste what it says.');
+  expect(reads(api)).toEqual([]);
+  // Text with a link in it is still read.
+  expect(onlyLinks('Order guide at https://example.com: Sample IPA, Tuesdays')).toBe(false);
+});
+
 test('each refusal from the API is said in plain words, as an alert', async () => {
   const api = portal();
   renderAt(api);
@@ -221,7 +240,7 @@ test('each refusal from the API is said in plain words, as an alert', async () =
     [refusal(503, 'extract_timed_out'), 'TownwiseAI took too long to read this. Try a shorter file, or paste part of it.'],
     [refusal(413, 'payload_too_large'), 'That’s more than TownwiseAI reads at once. Choose a smaller file or paste less text.'],
     [new ApiError('timeout', 'The request timed out.'), 'TownwiseAI took too long to answer. Try again, or try a shorter file or less text.'],
-    [refusal(429, 'rate_limited', 1200), 'Too many attempts. Try again in 20 minutes.'],
+    [refusal(429, 'rate_limited', 1200), 'TownwiseAI has read as much as it can for now. Try again in 20 minutes.'],
   ];
   for (const [error, words] of cases) {
     api.answers[`${PATH}/setup/read`] = () => error;
@@ -241,6 +260,10 @@ test('a file over the caps, an old Excel file or two files at once are refused i
     [sized('guide.xls', 10), 'TownwiseAI can’t read old Excel files (.xls). Save it as .xlsx and choose it again.'],
     [sized('guides.zip', 10), 'TownwiseAI reads one file at a time, not a ZIP. Choose a file from inside it.'],
     [sized('empty.csv', 0), 'That file is empty.'],
+    [sized('IMG_0412.HEIC', 10), 'TownwiseAI can’t read HEIC photos, the kind an iPhone saves. Take a screenshot of the photo, or save it as a JPEG, and choose that.'],
+    [sized('scan.tiff', 10), 'TownwiseAI can’t read TIFF pictures. Save it as a PNG or JPEG and choose it again.'],
+    [sized('guide.pages', 10), 'TownwiseAI can’t read Pages files. Export it as PDF or Word and choose it again.'],
+    [sized('clip.mov', 10), 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV, text, web page and saved email files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.'],
   ];
   for (const [file, words] of refusals) {
     await pick(file);

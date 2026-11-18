@@ -14,7 +14,7 @@ import { Small } from '../ui/text';
 import { readSetupWithAi, type SetupRead as SetupReadAnswer, type SetupReadSource } from './api';
 import { importProposal, problemLine, proposalSummary, type ProposalImport, type ReadFrom } from './proposal';
 import type { ReadSlot } from './SetupEditor';
-import { READ_ACCEPT, READ_COPY, readError, readingLine, readKindOf } from './setupReadWords';
+import { onlyLinks, READ_ACCEPT, READ_COPY, readError, readingLine, readKindOf } from './setupReadWords';
 
 // Reading the ordering setup with TownwiseAI on the web (D41, P31), drawn only while the setup's `canReadWithAi` holds.
 // The person drops or chooses one file, or pastes text, and presses Read: only then is it sent, once, as base64 with the
@@ -105,6 +105,10 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
     if (props.locked || reading) return;
     const checked = from === 'file' && file !== null ? readKindOf(file) : null;
     if (from === 'file' && (file === null || checked === null || 'problem' in checked)) return;
+    if (from === 'text' && onlyLinks(text)) {
+      setShown({ kind: 'refused', message: READ_COPY.link });
+      return;
+    }
     run.current += 1;
     const mine = run.current;
     const controller = new AbortController();

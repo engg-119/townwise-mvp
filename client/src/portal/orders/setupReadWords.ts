@@ -1,5 +1,5 @@
 import { ApiError } from '../../api/client';
-import { errorCopy } from '../errors';
+import { errorCopy, tooManyAttempts } from '../errors';
 import type { SetupReadSource } from './api';
 import type { ReadFrom } from './proposal';
 
@@ -13,6 +13,23 @@ type FileKind = Extract<SetupReadSource, { type: 'file' }>['kind'];
 const KINDS: Readonly<Record<string, FileKind>> = {
   pdf: 'pdf', xlsx: 'xlsx', docx: 'docx', csv: 'text', tsv: 'text', txt: 'text', png: 'picture', jpg: 'picture', jpeg: 'picture',
   gif: 'picture', webp: 'picture',
+  // Text under another name: the server reads each as the text it is (a saved email, a web page, an export).
+  md: 'text', json: 'text', html: 'text', htm: 'text', eml: 'text', rtf: 'text', xml: 'text',
+};
+
+/** Kinds TownwiseAI can't read, each with the way to one it can. */
+const OTHER_FORMAT: Readonly<Record<string, string>> = {
+  xls: 'TownwiseAI can’t read old Excel files (.xls). Save it as .xlsx and choose it again.',
+  doc: 'TownwiseAI can’t read old Word files (.doc). Save it as .docx and choose it again.',
+  zip: 'TownwiseAI reads one file at a time, not a ZIP. Choose a file from inside it.',
+  numbers: 'TownwiseAI can’t read Numbers files. Export it as CSV or Excel and choose it again.',
+  heic: 'TownwiseAI can’t read HEIC photos, the kind an iPhone saves. Take a screenshot of the photo, or save it as a JPEG, and choose that.',
+  heif: 'TownwiseAI can’t read HEIC photos, the kind an iPhone saves. Take a screenshot of the photo, or save it as a JPEG, and choose that.',
+  tif: 'TownwiseAI can’t read TIFF pictures. Save it as a PNG or JPEG and choose it again.',
+  tiff: 'TownwiseAI can’t read TIFF pictures. Save it as a PNG or JPEG and choose it again.',
+  pages: 'TownwiseAI can’t read Pages files. Export it as PDF or Word and choose it again.',
+  odt: 'TownwiseAI can’t read OpenDocument files. Save it as Word (.docx) or PDF and choose it again.',
+  ods: 'TownwiseAI can’t read OpenDocument files. Save it as Excel (.xlsx) or CSV and choose it again.',
 };
 
 export const READ_ACCEPT = Object.keys(KINDS).map((extension) => `.${extension}`).join(',');
@@ -31,7 +48,7 @@ export const READ_COPY = {
     + 'reads an export in your browser and never sends them.',
   privacy: 'How Townwise handles your data',
   privacyHref: '/privacy',
-  drop: 'Drop a file here, or choose one: a PDF, an Excel (.xlsx) or Word (.docx) file, a CSV or text file, or a picture.',
+  drop: 'Drop a file here, or choose one: a PDF, an Excel (.xlsx) or Word (.docx) file, a CSV or text file, a saved email or web page, or a picture.',
   dropOver: 'Drop the file to choose it.',
   choose: 'Choose a file',
   remove: 'Remove the file',
@@ -43,6 +60,7 @@ export const READ_COPY = {
   stopped: 'Stopped. Nothing was added to the setup.',
   oneFile: 'TownwiseAI reads one file at a time. Choose just one.',
   notRead: 'Townwise couldn’t open that file in your browser. Choose it again.',
+  link: 'TownwiseAI can’t open links. Download the sheet or page as a file and choose it, or paste what it says.',
 } as const;
 
 export function readingLine(from: ReadFrom): string {
@@ -59,11 +77,9 @@ export function readKindOf(file: { name: string; size: number }): { kind: FileKi
   const extension = extensionOf(file.name);
   const kind = KINDS[extension];
   if (kind === undefined) {
-    if (extension === 'xls') return { problem: 'TownwiseAI can’t read old Excel files (.xls). Save it as .xlsx and choose it again.' };
-    if (extension === 'doc') return { problem: 'TownwiseAI can’t read old Word files (.doc). Save it as .docx and choose it again.' };
-    if (extension === 'zip') return { problem: 'TownwiseAI reads one file at a time, not a ZIP. Choose a file from inside it.' };
-    if (extension === 'numbers') return { problem: 'TownwiseAI can’t read Numbers files. Export it as CSV or Excel and choose it again.' };
-    return { problem: 'TownwiseAI reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV and text files, and PNG, JPEG, GIF or WebP pictures.' };
+    const other = OTHER_FORMAT[extension];
+    if (other !== undefined) return { problem: other };
+    return { problem: 'TownwiseAI can’t read this kind of file. It reads PDFs, Excel (.xlsx) and Word (.docx) files, CSV, text, web page and saved email files, and PNG, JPEG, GIF or WebP pictures. You can also paste the text.' };
   }
   if (file.size === 0) return { problem: 'That file is empty.' };
   if (kind === 'picture' && file.size > READ_PICTURE_BYTES) {
@@ -71,6 +87,12 @@ export function readKindOf(file: { name: string; size: number }): { kind: FileKi
   }
   if (file.size > READ_FILE_BYTES) return { problem: 'That file is larger than 5 MB, the most TownwiseAI reads at once.' };
   return { kind };
+}
+
+/** True for pasted text that is only web addresses: TownwiseAI reads what is sent and opens nothing. */
+export function onlyLinks(text: string): boolean {
+  const words = text.trim().split(/\s+/);
+  return words.every((word) => /^https?:\/\/\S+$/i.test(word));
 }
 
 const REFUSED: Readonly<Record<number, Readonly<Record<string, string>>>> = {
@@ -103,6 +125,9 @@ const REFUSED: Readonly<Record<number, Readonly<Record<string, string>>>> = {
 export function readError(error: unknown): string {
   if (error instanceof ApiError) {
     if (error.kind === 'timeout') return 'TownwiseAI took too long to answer. Try again, or try a shorter file or less text.';
+    if (error.kind === 'http' && error.status === 429) {
+      return tooManyAttempts(error.retryAfterSeconds).replace('Too many attempts.', 'TownwiseAI has read as much as it can for now.');
+    }
     if (error.kind === 'http' && error.code !== null) {
       const words = REFUSED[error.status]?.[error.code];
       if (words !== undefined) return words;

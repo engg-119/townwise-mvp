@@ -266,6 +266,14 @@ describe('the input', () => {
     });
   });
 
+  it('reads a saved email, a web page or JSON posted as text as the text it is', async () => {
+    for (const body of ['Subject: Sentinel order guide\r\n\r\nVorlan IPA, Tuesdays', '<html><body><td>Vorlan IPA</td></body></html>', '{"item":"Vorlan IPA"}']) {
+      const sent = await prepared('text', Buffer.from(body));
+      if (typeof sent === 'string' || sent.kind !== 'input' || sent.input.type !== 'text') throw new Error('no text');
+      expect(sent.input.text).toBe(body);
+    }
+  });
+
   it('sends a picture without its metadata, and refuses one over 8,000 pixels a side or 3.75 MB, or whose bytes don’t parse', async () => {
     const tagged = pngOf(40, 30, [pngChunk('tEXt', Buffer.from('Author\0Sentinel-metadata')), pngChunk('eXIf', Buffer.from('Sentinel-gps'))]);
     const sent = await prepared('picture', tagged);
