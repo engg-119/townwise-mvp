@@ -228,8 +228,8 @@ describe('a proposed note', () => {
       turn(chat).emit('text', { delta: 'Here is a note.' });
       turn(chat).emit('proposal', { id: PROPOSAL_ID, proposal: PROPOSAL });
     });
-    // Until the turn is stored, the actions wait.
-    disabled('Save note');
+    // Held while the reply works (owner, 2026-11-18): the card shows once it ends.
+    expect(screen.queryByRole('button', { name: 'Save note' })).toBeNull();
     await act(() => {
       turn(chat).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(chat).end();

@@ -1083,6 +1083,13 @@ describe('a proposal to keep text (D28)', () => {
       turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'running', input: { chars: 21 }, result: null });
       turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: { shown: true } });
     });
+    // Held while the reply works (owner, 2026-11-18): the card shows once it ends.
+    expect(screen.queryByRole('group', { name: 'Proposed for Your data' })).toBeNull();
+    await stream(() => {
+      turn(api).emit('text', { delta: 'I showed it to you as a card.' });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
+      turn(api).end();
+    });
     return screen.getByRole('group', { name: 'Proposed for Your data' });
   }
 
@@ -1093,15 +1100,8 @@ describe('a proposal to keep text (D28)', () => {
       proposal: { ...VIEW, status: 'saved', item: itemOf('f_kept', { name: 'Catering list.txt', via: 'townwise_ai', state: 'kept', outcome: 'reference' }) },
     });
     const card = await proposedItem(api);
-    // Until the turn is stored, the card waits: the text is never streamed, only read from the card's own route.
-    expect(within(card).getByText('The text shows here when this reply finishes.')).toBeTruthy();
-    expect(within(card).queryByRole('button', { name: 'Keep on Your data' })).toBeNull();
+    // The text is never streamed, only read from the card's own route.
     expect(screen.queryByText(/text to keep on Your data/)).toBeNull();
-    await stream(() => {
-      turn(api).emit('text', { delta: 'I showed it to you as a card.' });
-      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
-      turn(api).end();
-    });
     expect(await within(card).findByText('Party of 40 on Dec 12')).toBeTruthy();
     expect(within(card).getByText('Catering list')).toBeTruthy();
     expect(within(card).getByRole('region', { name: 'Text of Catering list' }).getAttribute('tabindex')).toBe('0');
@@ -1122,10 +1122,6 @@ describe('a proposal to keep text (D28)', () => {
     let answer: unknown = { proposal: { ...VIEW, status: 'dismissed' } };
     api.respond[PATH] = () => answer;
     const card = await proposedItem(api);
-    await stream(() => {
-      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
-      turn(api).end();
-    });
     fireEvent.click(await within(card).findByRole('button', { name: 'Not now' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Show the text' }));
     answer = chatRefusal(409, 'storage_full');
@@ -1135,15 +1131,20 @@ describe('a proposal to keep text (D28)', () => {
     expect(within(again).getByRole('button', { name: 'Keep on Your data' }).getAttribute('aria-disabled')).not.toBe('true');
   });
 
-  test('a reply that wasn’t saved has nothing to keep, and a call that showed nothing has no card', async () => {
+  test('a reply that wasn’t saved never shows its card, and a call that showed nothing has none', async () => {
     const api = fakeChatApi();
-    const card = await proposedItem(api);
+    renderAt('/locations/l1/agent', api);
+    fireEvent.change(await screen.findByLabelText(COMPOSER_LABEL), { target: { value: 'Keep this: Party of 40 on Dec 12' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
     await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Keep this' });
+      turn(api).emit('tool', { id: ITEM_ID, name: 'propose_data_item', state: 'done', input: { chars: 21 }, result: { shown: true } });
       turn(api).emit('tool', { id: 'toolu_item_0002', name: 'propose_data_item', state: 'done', input: { chars: 3 }, result: { shown: false } });
       turn(api).fail(chatRefusal(500, 'internal'));
     });
-    expect(within(card).getByText('This reply wasn’t saved, so there’s nothing to keep from it. Paste the text on Your data to keep it.')).toBeTruthy();
-    expect(screen.getAllByRole('group', { name: 'Proposed for Your data' })).toHaveLength(1);
+    await waitFor(() => { expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy(); });
+    expect(screen.queryByRole('group', { name: 'Proposed for Your data' })).toBeNull();
     expect(api.writes.filter((write) => write.path.includes('item-proposals'))).toEqual([]);
   });
 

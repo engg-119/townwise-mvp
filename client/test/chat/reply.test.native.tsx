@@ -7,7 +7,9 @@ import { initialChatState, type ChatMessage, type TuningChat } from '../../src/c
 import { ReplyView } from '../../src/chat/ui/ReplyView';
 import { UserMessage } from '../../src/chat/ui/UserMessage';
 import { workedOpenStore } from '../../src/chat/ui/workedOpen';
-import { SALES_STEP } from '../helpers/chat';
+import { visualTitle } from '../../src/chat/visuals/words';
+import { PROPOSAL, PROPOSAL_ID, SALES_STEP } from '../helpers/chat';
+import { daily } from './visuals-fixtures';
 
 // B6 on native: no clipboard module (the plan's Copy action is web only), so a reply keeps its text selectable for
 // the system's long-press Copy, and every other action is there.
@@ -217,5 +219,70 @@ describe('the Working for / Worked for timeline (owner request, 2026-11-17)', ()
     expect(screen.queryByText('Weighing the weekend.')).toBeNull();
     await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 400); }); });
     expect(screen.queryByText('Weighing the weekend.', { includeHiddenElements: true })).toBeNull();
+  });
+});
+
+describe('charts and cards held until the reply ends (owner, 2026-11-18)', () => {
+  const card = { id: PROPOSAL_ID, proposal: PROPOSAL, status: 'open', stored: 'pending', edited: false, gone: false, error: null } as const;
+  const live: ChatMessage = {
+    ...msg('m2', 'assistant', '', 'a1', 'u1'), nodeId: null, state: 'streaming', startedAt: Date.now(),
+    parts: [
+      { type: 'text', key: 'a', text: 'December was busy.' },
+      { type: 'visual', key: 'v', id: 'v1', visual: daily },
+      { type: 'proposal', key: 'p', card },
+      { type: 'text', key: 'b', text: 'Ask me about January.' },
+      { type: 'visual', key: 'w', id: 'v2', visual: JSON.parse(JSON.stringify(daily)) as typeof daily },
+    ],
+  };
+  const ended: ChatMessage = { ...live, state: 'complete', nodeId: 'a1', endedAt: (live.startedAt ?? 0) + 4000 };
+
+  function reply(message: ChatMessage): React.JSX.Element {
+    return (
+      <ReplyView
+        message={message}
+        ctx={{ town: 'Hanover', hasTownProfile: true }}
+        tree={TREE}
+        newest
+        actions="hover"
+        chat={fakeChat()}
+        locationId="l1"
+        readOnlyId={null}
+        canAct
+        onRetry={jest.fn()}
+        onAnnounce={jest.fn()}
+        workedOpen={workedOpenStore()}
+      />
+    );
+  }
+
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  test('nothing held renders while it works; on done they fade in, the chart drawn twice once; a stopped reply never shows them', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false);
+    const timing = jest.spyOn(Animated, 'timing');
+    const view = await render(reply(live));
+    expect(screen.queryAllByText(visualTitle(daily))).toHaveLength(0);
+    expect(screen.queryByText('Proposed note')).toBeNull();
+    expect(screen.getByText('Ask me about January.')).toBeTruthy();
+    await view.rerender(reply(ended));
+    const charts = screen.getAllByText(visualTitle(daily)).length;
+    expect(charts).toBeGreaterThan(0);
+    expect(screen.getAllByText('Proposed note').length).toBeGreaterThan(0);
+    expect(timing).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ toValue: 1, useNativeDriver: true }));
+    // The chart drawn twice shows as often as a chart drawn once does.
+    await view.rerender(reply({ ...ended, key: 'm3', parts: ended.parts.slice(1, 2) }));
+    expect(screen.getAllByText(visualTitle(daily))).toHaveLength(charts);
+    await view.rerender(reply({ ...live, key: 'm5' }));
+    await view.rerender(reply({ ...live, key: 'm5', state: 'stopped', endedAt: (live.startedAt ?? 0) + 4000 }));
+    expect(screen.queryByText('Proposed note')).toBeNull();
+  });
+
+  test('under Reduce Motion they appear at once', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
+    const timing = jest.spyOn(Animated, 'timing');
+    const view = await render(reply(live));
+    await view.rerender(reply(ended));
+    expect(screen.getAllByText('Proposed note').length).toBeGreaterThan(0);
+    expect(timing).not.toHaveBeenCalled();
   });
 });

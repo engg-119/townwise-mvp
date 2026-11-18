@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
+import { Animated } from 'react-native';
 
 import type { ToolContext, ToolStep } from '../../src/chat/tools';
 import type { TreeNode } from '../../src/chat/tree';
@@ -13,8 +14,8 @@ import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { visualTitle } from '../../src/chat/visuals/words';
 import { PortalStyles } from '../../src/portal/shell/PortalStyles.web';
 import { theme } from '../../src/theme';
-import { SALES_STEP } from '../helpers/chat';
-import { daily } from './visuals-fixtures';
+import { PROPOSAL, PROPOSAL_ID, SALES_STEP } from '../helpers/chat';
+import { daily, weekdays } from './visuals-fixtures';
 
 // B6 on web: the person's message bubbles and TownwiseAI's replies (owner decisions 3 to 6): the caret and the live
 // line, Markdown and visuals in order, Copy, Regenerate, the ratings, editing a message, the version navigator and
@@ -340,6 +341,113 @@ it('renders replies as Markdown and visuals in their streamed order', () => {
   expect(before(button('Not helpful'), screen.getByText('Based on this conversation only.'))).toBe(true);
   // No label box: the speaker is only named for assistive tech.
   expect(screen.queryByText('TownwiseAI')).toBeNull();
+});
+
+describe('charts and cards held until the reply ends (owner, 2026-11-18)', () => {
+  const step: ToolStep = { id: SALES_STEP.id, name: SALES_STEP.name, state: 'done', input: { ...SALES_STEP.input }, result: { ...SALES_STEP.result } };
+  const card = { id: PROPOSAL_ID, proposal: PROPOSAL, status: 'open', stored: 'pending', edited: false, gone: false, error: null } as const;
+  const parts: MessagePart[] = [
+    { type: 'thinking', key: 'n', text: 'Let me check December.' },
+    { type: 'tools', key: 't', steps: [step] },
+    text('a', 'December was busy.'),
+    { type: 'visual', key: 'v', id: 'v1', visual: daily },
+    text('b', 'Here is a note for it.'),
+    { type: 'proposal', key: 'p', card },
+    text('c', 'Ask me about January next.'),
+  ];
+  const live = msg('m2', 'assistant', parts, { state: 'streaming', startedAt: 0 });
+  const chartTitle = (): HTMLElement | null => screen.queryAllByText(visualTitle(daily))[0] ?? null;
+
+  it('while the reply works, no chart or card renders: only its text, under the Working timeline', () => {
+    render(<ReplyView {...replyProps({ message: live })} />);
+    expect(chartTitle()).toBeNull();
+    expect(screen.queryByText('Proposed note')).toBeNull();
+    expect(document.querySelector('svg[role="img"], svg[aria-label]')).toBeNull();
+    const working = screen.getByRole('button', { name: /^Working for/ });
+    expect(before(working, screen.getByText('December was busy.'))).toBe(true);
+    expect(screen.getByText('Ask me about January next.')).toBeTruthy();
+  });
+
+  it('once it ends with done they appear in the model’s order among the answer, any stop reason', () => {
+    const view = render(<ReplyView {...replyProps({ message: live })} />);
+    view.rerender(<ReplyView {...replyProps({ message: { ...live, state: 'complete', endedAt: 4000, note: 'Stopped at this month’s TownwiseAI budget.' } })} />);
+    const title = chartTitle();
+    if (title === null) throw new Error('no chart');
+    const note = first(screen.getAllByText('Proposed note'));
+    expect(before(screen.getByText('December was busy.'), title)).toBe(true);
+    expect(before(title, screen.getByText('Here is a note for it.'))).toBe(true);
+    expect(before(screen.getByText('Here is a note for it.'), note)).toBe(true);
+    expect(before(note, screen.getByText('Ask me about January next.'))).toBe(true);
+  });
+
+  it('a stopped, failed or interrupted reply saved nothing and never shows them', () => {
+    const view = render(<ReplyView {...replyProps({ message: live })} />);
+    for (const state of ['stopped', 'failed'] as const) {
+      view.rerender(<ReplyView {...replyProps({ message: { ...live, state, endedAt: 4000 } })} />);
+      expect(chartTitle()).toBeNull();
+      expect(screen.queryByText('Proposed note')).toBeNull();
+      expect(screen.getByText('December was busy.')).toBeTruthy();
+    }
+  });
+
+  it('a chart drawn twice with the same spec shows once, where it was drawn last; a different one still shows', () => {
+    const twice = msg('m2', 'assistant', [
+      { type: 'visual', key: 'v1', id: 'v1', visual: daily },
+      text('a', 'Checking one more thing.'),
+      { type: 'visual', key: 'v2', id: 'v2', visual: weekdays },
+      text('b', 'December was busy.'),
+      { type: 'visual', key: 'v3', id: 'v3', visual: JSON.parse(JSON.stringify(daily)) as typeof daily },
+    ], { nodeId: 'a1', parentId: 'u1' });
+    const once = render(<ReplyView {...replyProps({ message: { ...twice, parts: twice.parts.slice(0, 1) } })} />);
+    const perChart = screen.getAllByText(visualTitle(daily)).length;
+    once.unmount();
+    render(<ReplyView {...replyProps({ message: twice })} />);
+    const titles = screen.getAllByText(visualTitle(daily));
+    expect(titles).toHaveLength(perChart);
+    expect(before(screen.getByText('December was busy.'), first(titles))).toBe(true);
+    expect(before(first(screen.getAllByText(visualTitle(weekdays))), screen.getByText('December was busy.'))).toBe(true);
+  });
+
+  it('a reply read back (a reload, or a reattach that reads the saved turn) reads exactly as the live one did once it ended', () => {
+    const ended = { ...live, state: 'complete', endedAt: 4000 } as const;
+    const view = render(<ReplyView {...replyProps({ message: live })} />);
+    view.rerender(<ReplyView {...replyProps({ message: ended })} />);
+    const streamed = view.container.textContent;
+    view.unmount();
+    const reloaded = render(<ReplyView {...replyProps({ message: ended })} />);
+    expect(reloaded.container.textContent).toBe(streamed);
+  });
+
+  it('fades them in when the reply ends here, under reduced motion shows them at once, and a reply read back never fades', () => {
+    const ended = { ...live, state: 'complete', endedAt: 4000 } as const;
+    const timing = jest.spyOn(Animated, 'timing');
+    try {
+      const view = render(<ReplyView {...replyProps({ message: live })} />);
+      expect(timing).not.toHaveBeenCalled();
+      view.rerender(<ReplyView {...replyProps({ message: ended })} />);
+      // The chart and the card, each over the theme's fade.
+      expect(timing.mock.calls.map(([, config]) => [config.toValue, config.duration])).toEqual([[1, theme.motion.fade], [1, theme.motion.fade]]);
+      view.unmount();
+      timing.mockClear();
+      render(<ReplyView {...replyProps({ message: ended })} />);
+      expect(timing).not.toHaveBeenCalled();
+      cleanup();
+      Object.defineProperty(window, 'matchMedia', {
+        configurable: true, writable: true,
+        value: (query: string) => ({ media: query, matches: query === '(prefers-reduced-motion: reduce)', addEventListener: () => undefined, removeEventListener: () => undefined }),
+      });
+      try {
+        const reduced = render(<ReplyView {...replyProps({ message: live })} />);
+        reduced.rerender(<ReplyView {...replyProps({ message: ended })} />);
+        expect(chartTitle()).not.toBeNull();
+        expect(timing).not.toHaveBeenCalled();
+      } finally {
+        Reflect.deleteProperty(window, 'matchMedia');
+      }
+    } finally {
+      timing.mockRestore();
+    }
+  });
 });
 
 /** A reply whose rating shows what the person pressed, as useTuningChat's optimistic rate does. */
