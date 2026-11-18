@@ -40,7 +40,7 @@ import { UserMessage } from './UserMessage';
 import { workedOpenStore } from './workedOpen';
 
 // The TownwiseAI chat page (spec P25, D26): the header (History,
-// New chat and, on the new chat page, Questions and activity; no title), then the landing of an empty conversation (one centered column: what to ask,
+// New chat and, on the new chat page, Questions and activity; no title), then the landing of an empty conversation (one column, centered across and starting at the top: what to ask,
 // what TownwiseAI reads, the composer, the quick-start chips and TownwiseAI's questions, the panel's cards sharing its
 // state) or the thread, with the composer docked over its
 // bottom edge. The thread runs the full height and scrolls under the dock: what passes shows above the box and at its
@@ -56,6 +56,11 @@ import { workedOpenStore } from './workedOpen';
 //
 // Previous chats (spec P25 build note, 2026-11-18): while a reply runs in another chat, the landing lists the recent
 // chats under its chips (PreviousChats), and the list is read every 3 seconds while the page is in view.
+//
+// The landing starts at the top (spec P25 build note, 2026-11-18): an independent browser review saw a centered
+// landing jump when TownwiseAI's questions came under its chips (176px at 1280px) and the centered skeleton give way
+// to a landing with questions 101px higher at 390px. At the top, it is in one place in every state and load order.
+// [CONFIRM: the TownwiseAI new chat page starts at the top rather than centred, so it never moves while it loads]
 //
 // Questions and activity (spec P25 build note, 2026-11-18; owner: "we should likely put the questions and activity back
 // to the right side of the screen and it should only appear on the new chat page"): shown only while no conversation is
@@ -153,7 +158,7 @@ function landingSuggestions(ctx: AgentChatContext, today: string): ReturnType<ty
 /**
  * The page while TownwiseAI loads (spec P25, owner, 2026-11-18: "fix the skeleton loader on townwise ai so there is one
  * because it just says loading townwise ai"): the header's controls, then the landing's heading, line, composer and
- * chips, in the header's and the landing's own rows and column, centered top to bottom as the landing is. The landing's
+ * chips, in the header's and the landing's own rows, column and split (Split), starting at the top as the landing does. The landing's
  * own words (`landingWords`, the chips' labels) are set in its own type and drawn as bars, and the composer and chips are
  * their own shapes, so each row takes the lines the landing's will at any width and the landing replaces it without
  * moving (an independent browser review saw it move 48px at 1280px and 64px at 390px when the skeleton guessed its
@@ -171,32 +176,51 @@ function PageSkeleton(props: { ctx: AgentChatContext; phone: boolean; beside: bo
     <Skeleton name="agent" label="Loading TownwiseAI…" fill>
       <View style={styles.fill}>
         <ChatHeaderSkeleton panel={!props.phone} />
-        <View style={styles.split}>
-          <View style={[props.beside ? styles.main : styles.fill, styles.landingScroll]}>
-            <View testID="skeleton-agent-landing" style={styles.landing}>
-              <Heading><SkeletonWords>{words.heading}</SkeletonWords></Heading>
-              {props.ctx.hasSales ? line : (
-                <View style={styles.noSales}>
-                  {line}
-                  {words.link ? <SkeletonButton link width={120} /> : null}
-                </View>
-              )}
-              <View testID="skeleton-agent-composer">
-                <ComposerSkeleton help={words.help} />
-              </View>
-              <SuggestionsSkeleton items={landingSuggestions(props.ctx, localToday())} />
-              {props.phone ? <PanelRowSkeleton /> : null}
-            </View>
-          </View>
-          {props.beside ? (
+        <Split
+          side={props.beside ? (
             <View testID="skeleton-agent-side" style={[styles.side, styles.sideContent]}>
               <SkeletonHeading width={160} />
               <SkeletonText lines={3} type="small" />
             </View>
           ) : null}
-        </View>
+        >
+          {/* The landing's ScrollView and its content box, as boxes that don't scroll. */}
+          <View style={styles.fill}>
+            <View style={styles.landingScroll}>
+              <View testID="skeleton-agent-landing" style={styles.landing}>
+                <Heading><SkeletonWords>{words.heading}</SkeletonWords></Heading>
+                {props.ctx.hasSales ? line : (
+                  <View style={styles.noSales}>
+                    {line}
+                    {words.link ? <SkeletonButton link width={120} /> : null}
+                  </View>
+                )}
+                <View testID="skeleton-agent-composer">
+                  <ComposerSkeleton help={words.help} />
+                </View>
+                <SuggestionsSkeleton items={landingSuggestions(props.ctx, localToday())} />
+                {props.phone ? <PanelRowSkeleton /> : null}
+              </View>
+            </View>
+          </View>
+        </Split>
       </View>
     </Skeleton>
+  );
+}
+
+/**
+ * What is under the header, with the panel's column (`side`) beside it from 641px, 8 and 4 of 12: the page and its
+ * skeleton both draw it, so the landing and its skeleton take the same width and place (an independent browser review,
+ * 2026-11-18, saw the skeleton's landing 224px wide at 1280px where the landing is 745px). The main box is the same
+ * whether or not the column shows, so showing it never draws the landing again.
+ */
+function Split(props: { children: React.ReactNode; side: React.JSX.Element | null }): React.JSX.Element {
+  return (
+    <View style={styles.split}>
+      <View style={props.side === null ? styles.fill : styles.main}>{props.children}</View>
+      {props.side}
+    </View>
   );
 }
 
@@ -454,17 +478,18 @@ export function AgentChat(props: {
   const readOnlyLine = <ReadOnlyLine text={props.readOnlyLine} {...(props.readOnlyId === null ? {} : { nativeID: props.readOnlyId })} />;
   // From 641px the panel's column shows beside what is under the header while no conversation is open.
   const beside = !phone && props.panelOpen;
-  /** `main` under the header, with the panel's column beside it when `column`; the same boxes either way. */
+  /** `main` under the header, with the panel's column beside it when `column`. */
   function split(main: React.ReactNode, column: boolean): React.JSX.Element {
     return (
-      <View style={styles.split}>
-        <View style={column ? styles.main : styles.fill}>{main}</View>
-        {column ? (
+      <Split
+        side={column ? (
           <ScrollView nativeID={PANEL_ID} testID="agent-side" style={styles.side} contentContainerStyle={styles.sideContent}>
             {props.panelSections}
           </ScrollView>
         ) : null}
-      </View>
+      >
+        {main}
+      </Split>
     );
   }
   const panelRow = (
@@ -820,7 +845,7 @@ const styles = StyleSheet.create({
   },
   landingScroll: { flexGrow: 1 },
   landing: {
-    flexGrow: 1, justifyContent: 'center', width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[4],
+    flexGrow: 1, justifyContent: 'flex-start', width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[4],
     paddingVertical: theme.space[6],
   },
   thread: { gap: theme.space[5] },

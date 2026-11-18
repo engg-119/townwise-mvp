@@ -614,7 +614,7 @@ test('while the page loads it is a skeleton of the page, with Loading TownwiseAI
     expect(screen.getByTestId(id, { includeHiddenElements: true })).toBeTruthy();
   }
   expect(StyleSheet.flatten(screen.getByTestId('skeleton-agent-landing', { includeHiddenElements: true }).props.style))
-    .toMatchObject({ flexGrow: 1, justifyContent: 'center', maxWidth: 760 });
+    .toMatchObject({ flexGrow: 1, justifyContent: 'flex-start', maxWidth: 760 });
   // The landing's own words, as bars in its own type, so its rows take the lines the landing's will; hidden, never drawn.
   expect(screen.queryByText(/^Ask TownwiseAI about/)).toBeNull();
   const words = screen.getByText(/^Ask TownwiseAI about/, { includeHiddenElements: true });
@@ -624,6 +624,8 @@ test('while the page loads it is a skeleton of the page, with Loading TownwiseAI
   await act(async () => { answer?.(); await Promise.resolve(); });
   expect(await screen.findByTestId('chat-landing')).toBeTruthy();
   expect(screen.queryByTestId('skeleton-agent', { includeHiddenElements: true })).toBeNull();
+  // Both start at the top (spec P25 build note, 2026-11-18), so the landing never moves while it loads.
+  expect(StyleSheet.flatten(screen.getByTestId('chat-landing-column').props.style)).toMatchObject({ flexGrow: 1, justifyContent: 'flex-start', maxWidth: 760 });
 });
 
 describe('the docked composer', () => {

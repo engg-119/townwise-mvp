@@ -22,7 +22,7 @@ import { filesFake, type FilesFake } from '../portal/files/fakes';
 import { PUBLISHED, RUN, serveAbout } from './about-fakes';
 import { daily } from './visuals-fixtures';
 
-// P25 TownwiseAI on web (spec 16.3, D26): no page header, the centered landing and the composer that docks under the
+// P25 TownwiseAI on web (spec 16.3, D26): no page header, the landing (centered across, from the top) and the composer that docks under the
 // thread, the keyboard (Enter sends, Shift+Enter and an input method's Enter don't), History's Escape, the panel as a
 // column or a sheet, the next questions, the budget line, the live line and caret, reduced motion, the polite live
 // region, the one primary, phone width, links that open in a new tab, and view-as's aria-disabled controls with the
@@ -239,7 +239,7 @@ test('never asks for a name, even when the API would: the chat header is the fir
   expect(api.writes).toEqual([]);
 });
 
-test('an empty conversation is the centered landing: heading, reads line, composer, then chips', async () => {
+test('an empty conversation is the landing, from the top: heading, reads line, composer, then chips', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
   const heading = await screen.findByRole('heading', { level: 2, name: 'Ask TownwiseAI about Main Street Bar' });
   const reads = screen.getByText('It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads. It suggests notes; you decide what’s saved.');
@@ -248,11 +248,11 @@ test('an empty conversation is the centered landing: heading, reads line, compos
   expect(before(heading, reads)).toBe(true);
   expect(before(reads, input)).toBe(true);
   expect(before(input, chips)).toBe(true);
-  // No log until the first message; one column, at most 760px wide, centered top to bottom.
+  // No log until the first message; one column, at most 760px wide, starting at the top (spec P25 build note, 2026-11-18).
   expect(screen.queryByRole('log')).toBeNull();
   const column = screen.getByTestId('chat-landing-column');
   expect(style(column).maxWidth).toBe('760px');
-  expect(style(column).justifyContent).toBe('center');
+  expect(style(column).justifyContent).toBe('flex-start');
   // The chips are pills (D26), and the landing's placeholder doesn't repeat them.
   expect(style(within(chips).getByRole('button', { name: 'Which days last month were unusual?' })).borderTopLeftRadius).toBe('22px');
   expect(input.getAttribute('placeholder')).toBe('Ask about a closure, an event or an unusual day');
@@ -475,7 +475,7 @@ describe('following the reply (owner, 2026-11-18: “as the prompt goes it shoul
 });
 
 describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on townwise ai so there is one because it just says loading townwise ai”)', () => {
-  test('it is a skeleton of the page: the header’s controls, the heading, line, composer and suggestions, centered as the landing is; the words are only its status line', async () => {
+  test('it is a skeleton of the page: the header’s controls, the heading, line, composer and suggestions, from the top as the landing is; the words are only its status line', async () => {
     const api = fakeChatApi();
     let answer: (() => void) | null = null;
     // The chat's summary answers when the test says.
@@ -491,18 +491,18 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
     expect(within(shapes).getByTestId('skeleton-chat-header')).toBeTruthy();
     expect(within(shapes).getByTestId('skeleton-agent-composer')).toBeTruthy();
     expect(within(shapes).getAllByTestId('skeleton-agent-suggestions')).toHaveLength(1);
-    // Filling the chat's height, its column centered top to bottom and 760px wide, as the landing's.
+    // Filling the chat's height, its column starting at the top and 760px wide, as the landing's.
     expect(style(skeleton).flexGrow).toBe('1');
     expect(style(shapes).flexGrow).toBe('1');
     const column = within(shapes).getByTestId('skeleton-agent-landing');
-    expect([style(column).justifyContent, style(column).maxWidth, style(column).flexGrow]).toEqual(['center', '760px', '1']);
+    expect([style(column).justifyContent, style(column).maxWidth, style(column).flexGrow]).toEqual(['flex-start', '760px', '1']);
     expect(screen.queryByRole('button', { name: 'History' })).toBeNull();
 
     await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
     expect(await screen.findByTestId('chat-landing')).toBeTruthy();
     expect(screen.queryByTestId('skeleton-agent')).toBeNull();
     const landing = screen.getByTestId('chat-landing-column');
-    expect([style(landing).justifyContent, style(landing).maxWidth, style(landing).flexGrow]).toEqual(['center', '760px', '1']);
+    expect([style(landing).justifyContent, style(landing).maxWidth, style(landing).flexGrow]).toEqual(['flex-start', '760px', '1']);
     expect(screen.getByRole('button', { name: 'History' })).toBeTruthy();
   });
 
@@ -588,6 +588,76 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
       expect(shape(chipShape)).toEqual(shape(chip));
     }
   });
+
+  // An independent browser review, 2026-11-18: at 1280px the skeleton's landing was 224px wide beside an 894px column
+  // of shapes (its box took the landing's flexGrow 1 over the main box's 8, a 1:4 split), so the landing jumped to
+  // 745px when the page loaded; and the skeleton was centered top to bottom while a landing with questions starts at
+  // the top, and a landing drawn before TownwiseAI's questions moved again when they came. The skeleton now draws the
+  // page's own split, and the landing starts at the top in every state (spec P25 build note, 2026-11-18).
+  /** From the landing's column up to the row it shares with the panel's column: each box's flex, width and top offset. */
+  function boxes(column: Element): string[][] {
+    const out: string[][] = [];
+    let node: Element | null = column;
+    while (node !== null && node.querySelector('[data-testid="skeleton-chat-header"], [data-testid="chat-header-controls"]') === null) {
+      const own = style(node);
+      out.push([
+        own.flexGrow, own.flexShrink, own.flexBasis, own.flexDirection, own.justifyContent, own.alignSelf, own.width, own.maxWidth,
+        own.minWidth, own.paddingTop, own.marginTop, own.paddingLeft, own.paddingRight, own.columnGap,
+      ]);
+      node = node.parentElement;
+    }
+    return out;
+  }
+
+  /** The panel's column, or its shapes: its flex and its place in the row. */
+  function side(id: string): string[] | null {
+    const element = screen.queryByTestId(id);
+    if (element === null) return null;
+    const own = style(element);
+    return [own.flexGrow, own.flexShrink, own.flexBasis, own.minWidth, String(element.parentElement?.children.length)];
+  }
+
+  type Order = 'no questions' | '/chat before /agent' | '/agent before /chat';
+  test.each(([1280, 390] as const).flatMap((at) => (['no questions', '/chat before /agent', '/agent before /chat'] as Order[]).map((order) => [at, order] as const)))(
+    'at %ipx with %s the landing takes the skeleton’s place and width, at the top, and never moves while it loads',
+    async (at, order) => {
+      setWidth(at);
+      const api = fakeChatApi();
+      if (order === 'no questions') api.panel = { ...(api.panel as object), questions: [] };
+      let answerChat: (() => void) | null = null;
+      let answerPanel: (() => void) | null = null;
+      api.reads['/api/org/locations/l1/chat'] = () => new Promise((resolve) => { answerChat = () => { resolve(api.summary); }; });
+      api.reads['/api/org/locations/l1/agent'] = () => new Promise((resolve) => { answerPanel = () => { resolve(api.panel); }; });
+      renderAt('/locations/l1/agent', api);
+      const skeleton = within(await screen.findByTestId('skeleton-agent')).getByTestId('skeleton-agent-landing');
+      const stood = boxes(skeleton);
+      const stoodSide = side('skeleton-agent-side');
+      // The main box takes 8 of 12 beside the column's 4, and the landing starts at the top, not centered.
+      expect(stood.some((box) => box[4] === 'center')).toBe(false);
+      expect(stoodSide === null ? null : stoodSide[0]).toBe(at > 640 ? '4' : null);
+      expect(stood.some((box) => box[0] === '8')).toBe(at > 640);
+
+      const settle = async (answer: (() => void) | null): Promise<void> => {
+        await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+      };
+      if (order === '/agent before /chat') await settle(answerPanel);
+      await settle(answerChat);
+      const landing = await screen.findByTestId('chat-landing-column');
+      expect(boxes(landing)).toEqual(stood);
+      expect(side('agent-side')).toEqual(stoodSide);
+      const heading = within(landing).getByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' });
+      if (order !== '/agent before /chat') {
+        expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
+        await settle(answerPanel);
+      }
+      // The questions come under the chips, and nothing above them is drawn again or moved.
+      expect(screen.queryByTestId('chat-landing-questions') !== null).toBe(order !== 'no questions');
+      expect(screen.getByTestId('chat-landing-column')).toBe(landing);
+      expect(within(landing).getByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBe(heading);
+      expect(boxes(landing)).toEqual(stood);
+      expect(side('agent-side')).toEqual(stoodSide);
+    },
+  );
 });
 
 test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
