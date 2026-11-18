@@ -16,7 +16,8 @@ import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake } from '../analytics/fakes';
 
 // P31 Ordering setup on native: the same editor as the web, saved over the version it loaded, without the template,
-// the sheet import or the item sales upload, which read files (web only). Synthetic supplier and item.
+// the sheet import or the item sales upload, which read files in the browser (web only). Reading a file with TownwiseAI
+// is setupRead.test.native.tsx. Synthetic supplier and item.
 
 afterEach(async () => {
   await cleanup();
@@ -82,13 +83,13 @@ test('a failed read says so with Try again; view-as disables Save', async () => 
   expect(writes(api)).toEqual([]);
 });
 
-test('with reading by TownwiseAI on, native has no control and says a file can be read with TownwiseAI on a computer (D41)', async () => {
+test('with reading by TownwiseAI on, native draws the section and still says to use a computer for the template, the import and item sales (D41)', async () => {
   const api = portal({ ...ANSWER, canReadWithAi: true });
   await renderApp('/locations/l1/orders/setup', api);
-  expect(await screen.findByText('Use a computer to download the template, import a sheet, read a file with TownwiseAI or upload item sales.')).toBeTruthy();
-  expect(screen.queryByText('Read a file with TownwiseAI')).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Choose a file' })).toBeNull();
-  expect(screen.queryByRole('button', { name: 'Read the text' })).toBeNull();
-  expect(screen.queryByLabelText('Or paste text')).toBeNull();
+  expect(await screen.findByText('Read a file with TownwiseAI')).toBeTruthy();
+  expect(screen.getByText('Use a computer to download the template, import a sheet or upload item sales.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Choose a file' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Read the text' })).toBeTruthy();
+  expect(screen.getByLabelText('Or paste text')).toBeTruthy();
   expect(writes(api)).toEqual([]);
 });

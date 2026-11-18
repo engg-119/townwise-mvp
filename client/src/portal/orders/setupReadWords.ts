@@ -3,10 +3,10 @@ import { errorCopy, tooManyAttempts } from '../errors';
 import type { SetupReadSource } from './api';
 import type { ReadFrom } from './proposal';
 
-// Reading the ordering setup with TownwiseAI on the web (D41, P31; SetupRead.web.tsx): which files it takes, the caps
-// the browser checks before anything is sent (the server's, api/src/files/limits.ts), the section's words and each
-// refusal's. The kind sent is the word for the file's extension; the server tells the real kind by the bytes. The file's
-// name never leaves the browser.
+// Reading the ordering setup with TownwiseAI (D41, P31; SetupRead.web.tsx on the web, SetupRead.tsx in the apps): which
+// files it takes, the caps the browser or app checks before anything is sent (the server's, api/src/files/limits.ts),
+// the section's words and each refusal's. The kind sent is the word for the file's extension; the server tells the real
+// kind by the bytes. The file's name never leaves the device.
 
 type FileKind = Extract<SetupReadSource, { type: 'file' }>['kind'];
 
@@ -43,18 +43,24 @@ export const READ_ACCEPT = Object.keys(KINDS).map((extension) => `.${extension}`
 export const READ_FILE_BYTES = 5 * 1024 * 1024;
 export const READ_PICTURE_BYTES = 3_750_000;
 
+const LEAD = ', such as an order guide, an invoice, a price list or a register export, or paste text, and TownwiseAI '
+  + 'suggests the suppliers and items it finds. Pressing Read sends it once to Anthropic’s Claude, with the names of the '
+  + 'suppliers and items already here; Townwise doesn’t keep it. TownwiseAI never sets a par or never run out, and '
+  + 'nothing saves until you save the setup.';
+const REGISTER = 'A register export read this way sends its item names and quantities to Anthropic.';
+
 export const READ_COPY = {
   heading: 'Read a file with TownwiseAI',
-  lead: 'Drop or choose a file, such as an order guide, an invoice, a price list or a register export, or paste text, and '
-    + 'TownwiseAI suggests the suppliers and items it finds. Pressing Read sends it once to Anthropic’s Claude, with the '
-    + 'names of the suppliers and items already here; Townwise doesn’t keep it. TownwiseAI never sets a par or never run '
-    + 'out, and nothing saves until you save the setup.',
-  register: 'A register export read this way sends its item names and quantities to Anthropic. The item sales upload below '
-    + 'reads an export in your browser and never sends them.',
+  lead: `Drop or choose a file${LEAD}`,
+  register: `${REGISTER} The item sales upload below reads an export in your browser and never sends them.`,
+  // The apps have no drop zone and no item sales upload (SetupRead.tsx).
+  leadApp: `Choose a file${LEAD}`,
+  registerApp: `${REGISTER} The item sales upload, on a computer, reads an export in your browser and never sends them.`,
   privacy: 'How Townwise handles your data',
   privacyHref: '/privacy',
   drop: 'Drop a file here, or choose one: a PDF, an Excel (.xlsx) or Word (.docx) file, a CSV or text file, or a picture.',
   dropOver: 'Drop the file to choose it.',
+  pick: 'Choose a file: a PDF, an Excel (.xlsx) or Word (.docx) file, a CSV or text file, or a picture.',
   choose: 'Choose a file',
   remove: 'Remove the file',
   readFile: 'Read the file',
@@ -65,8 +71,11 @@ export const READ_COPY = {
   stopped: 'Stopped. Nothing was added to the setup.',
   oneFile: 'TownwiseAI reads one file at a time. Choose just one.',
   notRead: 'Townwise couldn’t open that file in your browser. Choose it again.',
+  notReadApp: 'Townwise couldn’t open that file. Choose it again.',
   heicNotRead: 'Townwise couldn’t open that HEIC photo in your browser. Save it as a JPEG, or take a screenshot of it, and choose that.',
   heicLarge: 'That photo is more than TownwiseAI reads once it is a JPEG: up to 3.75 MB and 8,000 pixels a side. Save a smaller copy and choose it again.',
+  // The apps don’t turn a HEIC photo into a JPEG: the converter (heic.web.ts) is web only.
+  heicApp: 'The app can’t read HEIC photos yet. Choose a JPEG or PNG, or read it at townwise.tech on a computer.',
   link: 'TownwiseAI can’t open links. Download the sheet or page as a file and choose it, or paste what it says.',
 } as const;
 

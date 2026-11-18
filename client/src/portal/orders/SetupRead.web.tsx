@@ -1,21 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { theme } from '../../theme';
 import { formatSize } from '../files/copy';
 import { DropArea } from '../onboarding/HistoryStepDrop.web';
-import { usePortal } from '../PortalProvider';
-import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { LoadingLine, Messages } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Section } from '../ui/layout';
 import { Small } from '../ui/text';
-import { readSetupWithAi, type SetupRead as SetupReadAnswer, type SetupReadSource } from './api';
-import { importProposal, problemLine, proposalSummary, type ProposalImport, type ReadFrom } from './proposal';
+import { problemLine, proposalSummary } from './proposal';
 import type { ReadSlot } from './SetupEditor';
 import { heicToJpeg } from './heic.web';
-import { onlyLinks, READ_ACCEPT, READ_COPY, readError, readingLine, readKindOf } from './setupReadWords';
+import { READ_ACCEPT, READ_COPY, readingLine, readKindOf } from './setupReadWords';
+import { useSetupRead } from './useSetupRead';
 
 // Reading the ordering setup with TownwiseAI on the web (D41, P31), drawn only while the setup's `canReadWithAi` holds.
 // The person drops or chooses one file, or pastes text, and presses Read: only then is it sent, once, as base64 with the
@@ -25,15 +23,8 @@ import { onlyLinks, READ_ACCEPT, READ_COPY, readError, readingLine, readKindOf }
 // request and nothing is added. An answer that comes while the editor is locked (a save running) waits for the lock to
 // lift and then merges into the draft the save left, so the save never drops it. Under view-as every control is
 // disabled in place, described by the read-only line, and no file input is drawn, so no client file is read into a
-// staff browser. Nothing here logs or keeps the file or text.
-
-type Shown =
-  | { kind: 'idle' }
-  | { kind: 'refused'; message: string }
-  | { kind: 'reading'; from: ReadFrom }
-  | { kind: 'done'; from: ReadFrom; result: ProposalImport }
-  | { kind: 'failed'; message: string }
-  | { kind: 'stopped' };
+// staff browser. Nothing here logs or keeps the file or text. The read itself (one at a time, Cancel, the held answer) is
+// useSetupRead.ts, shared with the native apps' SetupRead.tsx.
 
 /** A file's bytes as standard base64, read in the browser. */
 function base64Of(file: Blob): Promise<string> {
@@ -49,115 +40,44 @@ function base64Of(file: Blob): Promise<string> {
 }
 
 export function SetupRead(props: ReadSlot): React.JSX.Element {
-  const { api } = usePortal();
-  const { location } = useLocation();
   const input = useRef<HTMLInputElement | null>(null);
-  const latest = useRef(props.draft);
-  const run = useRef(0);
-  const stop = useRef<AbortController | null>(null);
-  const locked = useRef(props.locked);
-  /** An answer that came while the editor was locked, merged once it isn't. */
-  const held = useRef<{ answer: SetupReadAnswer; from: ReadFrom } | null>(null);
-  const [file, setFile] = useState<File | null>(null);
-  const [text, setText] = useState('');
+  const { file, setFile, text, setText, shown, reading, choose: chooseOne, refuse, start, readText, cancel } = useSetupRead<File>(props);
   const [over, setOver] = useState(false);
-  const [shown, setShown] = useState<Shown>({ kind: 'idle' });
   const described = props.readOnlyId === null ? {} : { describedBy: props.readOnlyId };
-  const reading = shown.kind === 'reading';
-
-  useEffect(() => { latest.current = props.draft; }, [props.draft]);
-  // After every render, so it sees the draft a save left (the effect above runs first).
-  useEffect(() => {
-    locked.current = props.locked;
-    const waiting = held.current;
-    if (props.locked || waiting === null) return;
-    held.current = null;
-    land(waiting.answer, waiting.from);
-  });
-  useEffect(() => () => {
-    run.current += 1;
-    stop.current?.abort();
-  }, []);
 
   function choose(files: File[]): void {
     const [chosen] = files;
     if (files.length !== 1 || chosen === undefined) {
-      setShown({ kind: 'refused', message: READ_COPY.oneFile });
+      refuse(READ_COPY.oneFile);
       return;
     }
     const checked = readKindOf(chosen);
     if ('problem' in checked) {
-      setShown({ kind: 'refused', message: checked.problem });
+      refuse(checked.problem);
       return;
     }
-    setFile(chosen);
-    setShown({ kind: 'idle' });
+    chooseOne(chosen);
   }
 
-  function land(answer: SetupReadAnswer, from: ReadFrom): void {
-    const result = importProposal(answer, latest.current, from);
-    props.apply(result);
-    if (from === 'file') setFile(null);
-    else setText('');
-    setShown({ kind: 'done', from, result });
-  }
-
-  async function read(from: ReadFrom): Promise<void> {
-    if (props.locked || reading) return;
-    const checked = from === 'file' && file !== null ? readKindOf(file) : null;
-    if (from === 'file' && (file === null || checked === null || 'problem' in checked)) return;
-    if (from === 'text' && onlyLinks(text)) {
-      setShown({ kind: 'refused', message: READ_COPY.link });
-      return;
-    }
-    run.current += 1;
-    const mine = run.current;
-    const controller = new AbortController();
-    stop.current = controller;
-    setShown({ kind: 'reading', from });
-    try {
-      let source: SetupReadSource;
-      if (from === 'file') {
-        if (file === null || checked === null || 'problem' in checked) return;
-        let sent: Blob = file;
-        if (checked.heic) {
-          const converted = await heicToJpeg(file);
-          if (run.current !== mine) return;
-          if ('problem' in converted) {
-            setShown({ kind: 'failed', message: converted.problem === 'too_large' ? READ_COPY.heicLarge : READ_COPY.heicNotRead });
-            return;
-          }
-          sent = converted.jpeg;
-        }
-        let data: string;
-        try {
-          data = await base64Of(sent);
-        } catch {
-          if (run.current === mine) setShown({ kind: 'failed', message: READ_COPY.notRead });
-          return;
-        }
-        if (run.current !== mine) return;
-        source = { type: 'file', kind: checked.kind, data };
-      } else {
-        source = { type: 'text', text };
+  function readFile(): void {
+    if (file === null) return;
+    const checked = readKindOf(file);
+    if ('problem' in checked) return;
+    void start('file', async (current) => {
+      let sent: Blob = file;
+      if (checked.heic) {
+        const converted = await heicToJpeg(file);
+        // Stopped while it was drawn: what is returned is never shown, so skip the bytes.
+        if (!current()) return { problem: READ_COPY.notRead };
+        if ('problem' in converted) return { problem: converted.problem === 'too_large' ? READ_COPY.heicLarge : READ_COPY.heicNotRead };
+        sent = converted.jpeg;
       }
-      const answer = await readSetupWithAi(api, location.id, source, controller.signal);
-      if (run.current !== mine) return;
-      if (locked.current) held.current = { answer, from };
-      else land(answer, from);
-    } catch (error) {
-      if (run.current === mine) setShown({ kind: 'failed', message: readError(error) });
-    } finally {
-      if (stop.current === controller) stop.current = null;
-    }
-  }
-
-  function cancel(): void {
-    run.current += 1;
-    held.current = null;
-    stop.current?.abort();
-    stop.current = null;
-    setShown({ kind: 'stopped' });
+      try {
+        return { type: 'file', kind: checked.kind, data: await base64Of(sent) };
+      } catch {
+        return { problem: READ_COPY.notRead };
+      }
+    });
   }
 
   const canChoose = !props.locked && !reading;
@@ -191,7 +111,7 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
             <Button variant="outline" label={READ_COPY.choose} disabled={!canChoose} {...described} onPress={() => { input.current?.click(); }} />
             {file === null ? null : (
               <>
-                <Button variant="outline" label={READ_COPY.readFile} disabled={!canChoose} {...described} onPress={() => { void read('file'); }} />
+                <Button variant="outline" label={READ_COPY.readFile} disabled={!canChoose} {...described} onPress={readFile} />
                 <Button variant="link" label={READ_COPY.remove} disabled={!canChoose} {...described} onPress={() => { setFile(null); }} />
               </>
             )}
@@ -209,7 +129,7 @@ export function SetupRead(props: ReadSlot): React.JSX.Element {
         {...(props.readOnlyId === null ? {} : { readOnlyId: props.readOnlyId })}
       />
       <Actions>
-        <Button variant="outline" label={READ_COPY.readText} disabled={!canChoose || text.trim() === ''} {...described} onPress={() => { void read('text'); }} />
+        <Button variant="outline" label={READ_COPY.readText} disabled={!canChoose || text.trim() === ''} {...described} onPress={readText} />
       </Actions>
       {shown.kind === 'reading' ? (
         <View style={styles.stack}>
