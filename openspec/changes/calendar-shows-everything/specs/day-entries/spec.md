@@ -15,6 +15,10 @@ The client SHALL build a day's entries in one pure helper (`client/src/portal/ca
 - **WHEN** Home's This week shows a day with a note, a rule and an imported event
 - **THEN** it lists the same entries in the same order as the Calendar's week card for that day
 
+#### Scenario: One fixture day on every surface
+- **WHEN** one fixture day is given to the month cell, the week cards, the tooltip and Home's This week
+- **THEN** each shows its entries in the same order with the same dedupe, cut only by its own limit
+
 ### Requirement: Status never hides an entry
 A day's status (closed, booked, likely closed, no data or no forecast) SHALL be shown beside its entries and SHALL NOT remove any entry from any surface. A day booked by the forecast with no note behind it SHALL keep the words "Booked for a private event" and SHALL show its other entries.
 
@@ -33,8 +37,8 @@ Surfaces SHALL show, after the dedupe of compact surfaces:
 - the web tooltip: the status line, up to three reasons, then up to three entries no shown reason names, or the first two and "+N more" when there are four or more;
 - the week cards: every entry;
 - Home's This week: up to three entries a day, or the first two and "+N more";
-- Home's This month grid: the Calendar's cell rules at the same width;
-- Home's month list: every entry;
+- Home's This month grid: up to 2 compact entry lines (or 1 line and "+N more") in a cell at least 88px wide by the grid column's measured width, else corner marks;
+- Home's month list: each item once, by its first day, with no per-day status;
 - the Calendar's day panel and Home's day detail: every entry with its source, with no dedupe.
 
 A cell's screen reader label SHALL say its status and every entry.
@@ -52,18 +56,26 @@ A cell's screen reader label SHALL say its status and every entry.
 - **THEN** its cell shows corner marks and no entry lines, and the day panel lists all three
 
 ### Requirement: Compact surfaces show a title once
-On the month cell, the tooltip, the week cards, Home's This week and Home's month list, an entry whose title equals an earlier entry's on the same day, compared in lower case with each run of white space as one space and trimmed, SHALL NOT be shown. Kind words made in code (an untitled note) SHALL never be merged. The tooltip SHALL also leave out an entry whose folded words equal a shown reason's label or a shown note reason's title. The day panel and Home's day detail SHALL list each entry with its source.
+On the month cell, the tooltip, the week cards, Home's This week and Home's month list, an entry whose title equals an earlier entry's from a different source on the same day, compared in lower case with each run of white space as one space and trimmed, SHALL NOT be shown. The sources are the notes, the rules, the town calendar and each of the location's calendars. Two notes, two rules, or two events of one calendar SHALL never be merged, and kind words made in code (an untitled note) SHALL never be merged. The tooltip SHALL also leave out an entry whose folded words equal a shown reason's label or a shown note reason's title. The day panel and Home's day detail SHALL list each entry with its source.
 
 #### Scenario: Veterans Day from two sources
 - **WHEN** Nov 11 has the town calendar's "Veterans Day" and an imported "Veterans day " from the owner's linked calendar
 - **THEN** the cell, tooltip and week card show "Veterans Day" once, and the day panel lists it twice, once under the town calendar with its sources and once as "From your calendar" with its calendar's chip
+
+#### Scenario: Two titled notes
+- **WHEN** a day has two notes both titled "Holiday party"
+- **THEN** the cell shows "Holiday party" twice
+
+#### Scenario: Two events of one calendar
+- **WHEN** one imported calendar has "Private party" at 12:00 and "Private party" at 18:00 on one day
+- **THEN** the week view shows two cards
 
 #### Scenario: Two untitled notes
 - **WHEN** a day has two untitled private-event notes of 70 guests each
 - **THEN** the cell shows "Private event, 70" twice
 
 ### Requirement: The forecast names a label once
-The API's `reasonViews` SHALL keep one run reason per folded label on a day: the one with the larger absolute `effectPct`, else the first in the run's order. Note and rule reasons SHALL never be merged. Why, the tooltip, Home and TownwiseAI's `get_forecast` SHALL all read the deduped list.
+The API's `reasonViews` SHALL keep one run reason per folded label on a day: the one with the larger absolute `effectPct`, else the first in the run's order, carrying the union of both reasons' sources. Note and rule reasons SHALL never be merged. Why, the tooltip, Home and TownwiseAI's `get_forecast` SHALL all read the deduped list.
 
 #### Scenario: Two run reasons with one label
 - **WHEN** a run gives Nov 11 a holiday reason and an event reason that both resolve to "Veterans Day", with effects of 4% and 9%

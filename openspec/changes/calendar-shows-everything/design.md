@@ -31,7 +31,7 @@ What the code does today:
 - Naming a run-made booking. The model's `booking` reason has no note, and its words stay as they are.
 - New chat visuals, or entries in the chat's daily chart (see Open Questions).
 - Storing a calendar file imported under Your calendars as a Your data file. Its page is the `c_` page below.
-- Backfilling titles on notes TownwiseAI made before this change. Their `detail` already starts with the event's title.
+- Copying an imported event's title into a note. D33 says Make a note never copies a title, and a Google event's title is never shown to staff (D39), while notes have no view-as masking.
 - Analytics' heatmap and charts. Analytics' day panel shows a note's title (decision 2) but gains no other entries.
 
 ## Decisions
@@ -47,15 +47,21 @@ What the code does today:
 Term and season periods come last, and only for the surfaces that list them (the day panel, week cards and Home's This week periods line). Each entry is `{ key, kind, words, title, source }`:
 - `words` is what a compact surface prints: a note's title, else its kind words (`noteChip`); a rule's text; a town entry's or imported event's title.
 - `title` is the foldable name used for dedupe (null for kind words made in code).
-- `source` is a town event's sources, `{ calendarId }` for an imported event, `{ fileId }` for a note TownwiseAI made, else null.
+- `source` is a town event's sources, `{ calendarId, calendar }` for an imported event (the events read already carries the calendar's label), the note's `source.ref` for a note TownwiseAI made (decision 5), else null.
+- `group` is where the entry comes from: `notes`, `rules`, `town`, or `calendar:<calendarId>`.
 
-`compactEntries(entries)` drops a later entry whose folded `title` equals an earlier one's. Folding is lower case, with each run of white space one space, trimmed (the same as `ai-actions.ts` `folded`). Kind words are never merged, so two untitled "Private event, 70" notes stay two.
+`compactEntries(entries)` merges entries only across groups. A later entry is dropped when its folded `title` equals an earlier entry's from another group. Folding is lower case, with each run of white space one space, trimmed (the same as `ai-actions.ts` `folded`). Within one group nothing merges:
+- two notes stay two, since two notes are two facts, even with one title;
+- two rules stay two;
+- two events of one calendar stay two (a lunch and a dinner "Private party" with their own hours).
+
+Kind words are never merged, so two untitled "Private event, 70" notes stay two. Two calendars that both hold "Veterans Day" merge, as do a town holiday and an imported event.
 
 Notes come first so a booked day shows its party's name within the cell's three lines; that ordering is Claude's call. Today the cell shows town entries first. With notes first, a busy town day can push a holiday past "+N more", but the panel and the label keep it.
 
 Rules are worded by their own text, as the week card and the day panel already word them. The orchestrator's brief said "worded from their schedule". Claude's call is to keep the rule's text on every entry surface, since two wordings for one rule across surfaces is the inconsistency this change removes. D31's "never from the rule's text" governs forecast reason labels, which stay as they are. [CONFIRM: a rule's entry is its own text]
 
-`model.ts` keeps its `CalendarInput` and adapts it into the helper. Its `eventsOn`, `notesOn`, `rulesOn` and `importedOn` become the helper's inputs, and `dayCell`, `tooltipLines`, `dayView` and `grid.ts` `weekCards` read the helper's list. Home adapts its `DayContext` the same way (`analytics/days.ts` gains rules and imported events per date). It does not grow its own list. Rule coverage goes through `noteCovers`, which `suggest-closure-rules` extends with seasons, so seasonal rules appear with no change here.
+`model.ts` keeps its `CalendarInput` and adapts it into the helper. Its `eventsOn`, `notesOn`, `rulesOn` and `importedOn` become the helper's inputs, and `dayCell`, `tooltipLines`, `dayView` and `grid.ts` `weekCards` read the helper's list. Home builds every surface (This week, the month grid, the day detail, the tooltip and the month list) from `dayEntries` over the one `CalendarInput` it already builds for the tooltip (`ThisMonth.tsx` `tipInput`), with Home's imported events added. `analytics/days.ts` `dayContext` is not touched: it is pinned to the notebook's day classes (the day-classes.json parity fixture), Analytics uses it, and its rules are schedules without text or id. Rule coverage goes through `noteCovers`, which `suggest-closure-rules` extends with seasons, so seasonal rules appear with no change here.
 
 ### 2. What each surface shows
 
@@ -71,45 +77,67 @@ Rules are worded by their own text, as the week card and the day panel already w
 | Home This week | all | status word beside the day | up to 3 compact entries per day; with 4 or more, the first 2 and "+N more" |
 | Home This month grid | by the grid column's measured width (decision 9) | the Calendar's figure, status and caption (`dayCell`) | up to 2 compact entry lines when a cell is at least 88px wide, else corner marks; the shared tooltip on web, now with Home's imported events |
 | Home day detail | all | forecast lines, Why 3 | everything with sources, as the Calendar's day panel |
-| Home month list | all | status word per day | every compact entry |
+| Home month list | all | none: it lists items, not days | each item once by its first day, as today, now with note titles, rules and imported events; compact dedupe across groups |
 
 Every cell's screen reader label says the status and every entry, as today, with no dedupe.
 
 ### 3. A note's event name
 
-- **The field.** `title: string | null`, trimmed, 1 to 120 characters, with an empty string read as null. It goes in `tw_notes` (optional, no migration) and in spec 12's `NoteInput`. 120 matches the file reader's event titles and Your data's titles, so a title from a file is never cut. [CONFIRM: 120 characters]
-- **Editing.** A note edit replaces the whole note today (`readNoteContent`). An edit body without a `title` key keeps the stored title, and `title: null` clears it. An installed native build that predates the field therefore cannot erase a title by saving. This is Claude's call, and the only field with this rule.
+- **The field.** `title: string | null`, with an empty string read as null. It is cleaned as the rules page cleans one-line text (`handlers/rules.ts`, `lab/suggestions.ts` `CONTROL_OR_FORMAT`): normalized to NFC, each run of white space made one space, trimmed, and refused (400 `invalid_request`) if it holds a control or format character (`\p{Cc}`, `\p{Cf}`, which catches a newline and a bidi override), then 1 to 120 code points. Rendering is text only, so this guards layout and spoofing, not script injection. It goes in `tw_notes` (optional, no migration) and in spec 12's `NoteInput`. 120 matches the file reader's event titles and Your data's titles, so a title from a file is never cut. [CONFIRM: 120 characters]
+- **Editing.** A note edit replaces the whole note today (`readNoteContent`). An edit body without a `title` key keeps the stored title, and `title: null` clears it. An installed native build that predates the field therefore cannot erase a title by saving. This is Claude's call, and the only field with this rule. `updateNote` merges the stored title when `!Object.hasOwn(body, 'title')` before the `other` rule runs (`readNoteContent(raw, today, { keepTitle })`), so an older client editing an `other` note that has only a title is not refused.
 - **The `other` kind.** An `other` note needs a title or a detail (today, a detail). Without that, a file event of kind other with no detail of its own would be refused.
-- **Rule schedules.** A business rule's schedule stays strict and refuses `title`, as it refuses `detail`.
+- **Rule schedules.** A business rule's schedule stays strict and refuses `title`, as it refuses `detail`. `RuleSchedule` (`api/src/stores/business-rules.ts`) becomes `Omit<NoteContent, 'detail' | 'endDate' | 'title'>`.
+- **Everything else that builds or stores `NoteContent`** gains `title: null` or reads it:
+  - `api/src/agent/questions.ts` (`closureNoteOf`, `noteFor`);
+  - `api/src/lab/suggestions.ts`, and `api/src/stores/agent-suggestions.ts`, whose stored suggestions read back with no title as `title: null`;
+  - `api/src/chat/view.ts` (`ShownProposal`) and `api/src/handlers/chat-proposals.ts`, whose stored proposals with no title read as null;
+  - `api/src/handlers/agent.ts`, `api/src/handlers/chat.ts`, `api/src/handlers/weekly-suggestions.ts`, `api/src/chat/turn.ts` and `api/src/chat/tools/registry.ts`;
+  - `api/src/closed-days.ts`, `api/src/forecasts/adjust.ts` and `api/src/people-in-town/history.ts`, which read note content and ignore the title.
+  - The weekly pass's request (`lab/suggestions.ts`) does not carry `title`, and its suggestions save with `title: null` (Claude's call: no new words to the model without a need).
 - **Privacy.** The title is the person's words, under the same rules as `detail` (spec 12, section 17). It is never logged, never put in an audit event (`note.*` keep `locationId`, `kind`, `startDate`, `endDate`), never in a URL, and never sent to the lab (`api/src/lab/input.ts` sends no note words). TownwiseAI reads it as data, as it reads `detail`. Under view-as, notes show as they do today.
-- **The form (C6, `locations/NoteFields.tsx`, web and native).** "Event name" comes after Kind, optional, with placeholder "Holiday party" and the helper "Name the event, not the guests." Its limit is 120.
+- **The form (C6, `locations/NoteFields.tsx`, web and native).** "Event name" comes after Kind, optional, with placeholder "Holiday party" and the helper "Name the event, not the guests." Its limit is 120. Edit fills it from the note. Make a note leaves it empty and never copies the imported event's title, as D33 says and `client/test/portal/calendar/note-popover.test.web.tsx` pins. D33 is unchanged.
 - **Where it shows.** Cells, the tooltip, week cards, Home and the Notes page (P14) show the title in place of the kind words. The day panel and Home's day detail show the title, then the kind words line, then the detail. Analytics' day panel shows it beside the kind words.
 - **The D30 amendment** (Claude's wording for the D30 row): "each shows as a reason labeled in code, never from its detail or its title; where a reason comes from a note that has a title (12, D49), the Calendar, Home and TownwiseAI's cards may show the title after the label as the person's own words ('Your private buyout, 70 guests: Holiday party'), never in its place." The client joins the title through the reason's `note.id` against the notes it already read. The API's reason view gains nothing.
 - **A run-made booking keeps its words.** "Booked for a private event" (status) and "Private event booked" (reason) stay.
 - **TownwiseAI's file reader** (`ai-actions.ts`).
   - A note it makes gets `title` from the event's title and `detail` from the event's own detail: null when that is empty or equal to the title. Today the detail is "title: detail".
-  - The duplicate check also matches an existing note of the same kind and dates whose folded title equals the event's. The old detail match stays, for notes made before this change.
+  - The title is cleaned before it is used: NFC, white space collapsed, control and format characters removed (not refused, since the person did not type them). If nothing is left, the note gets no title and the event is still made.
+  - The duplicate check matches an existing note of the same kind and dates whose folded title equals the event's, checked before the `detail === null` early return in `duplicates()`. The old detail match stays, for notes made before this change.
+- **Backfill of notes TownwiseAI already made** (the coordinator's decision; the audit's S5). Notes made before this change have no `title` key and a detail of "Title: detail", so without a backfill the owner's existing notes would keep showing kind words.
+  - A pass at boot, after `ensureIndexes`, finds notes with `source` set and no `title` key. For each one it reads the file's stored read and takes `ai.result.events[plan.noteIds.indexOf(noteId)].title`, exactly as `aiView` reads it, cleaned as above.
+  - It writes with a compare-and-set: `updateOne({ _id, title: { $exists: false } }, { $set: { title } })`. The title is null when the event is gone (the original deleted, the file removed, or nothing left after cleaning), so every note is visited once and the pass is idempotent: a second run, or two replicas at once, find nothing to do.
+  - `detail` is left as it is.
+  - The query spans organizations, so it lives in `stores/cross-tenant.ts`, and each write takes a scope from a new `scopeForNoteTitleBackfill` in `access/policy.ts`, following `scopeForStaleChatTurn` (resumable-chat-turns). The isolation test is updated to allow it.
+  - It writes no audit event, since a title is never audited. It logs only counts (`notes_titled`, `notes_untitled`).
+  - Notes created after the change always store `title` (a string or null), so the pass never touches them.
   - This is Claude's call. The undo is unchanged: it deletes by the planned ids.
 - **TownwiseAI's tools.**
   - `list_notes` and `get_day` return `title` beside `detail`.
   - `propose_note` takes `title` (string or null, at most 120, "names the event, never a person") and lists it in `required` with the others. The proposal card shows it, and Save sends it.
   - Each of the three descriptions gains a clause, which is a frozen-prefix change: one prompt cache miss per conversation, once.
   - The weekly suggestion card shows a note's title when it has one. The weekly pass (`api/src/lab/suggestions.ts`) does not propose titles in this change.
+  - The side panel's activity line (`note_saved`) stays as it is. It is built by the API (`api/src/agent/activity.ts`) with only the kind and dates, and the panel is read under view-as, so it never names anything.
 
 ### 4. Dedupe
 
 - **Compact surfaces** use `compactEntries` (decision 1). The day panel and Home's day detail list each entry with its source, so the owner can see that "Veterans Day" came from both the town calendar and the US holidays calendar.
 - **Reasons, in the API.** `reasonViews` keeps one run reason per folded label on a day: the one with the larger absolute `effectPct`, else the first in the run's order. It applies to run reasons only. Note and rule reasons are never merged, since two notes are two facts.
+  - The kept reason takes the union of both reasons' `sources`, so no source chip is lost.
   - Doing it in the API means Why, the tooltip, Home and TownwiseAI's `get_forecast` all agree.
+  - The audit notes (its N3) that the owner's duplicate was in a cell, not in Why, and that this step could be dropped. Claude keeps it: a holiday reason and an event reason that resolve to one town entry do occur, and the fix is a few lines in one function with one caller (`forecasts/reader.ts`).
   - The run files are unchanged, and live accuracy does not read reasons.
 - **Reasons against entries.** The tooltip leaves out an entry whose folded words equal a shown reason's label or a note reason's title. The day panel already leaves out town entries that Why names (`dayView` `inWhy`), and keeps doing so.
 
 ### 5. Source links
 
 - **An imported event** in the Calendar's day panel and Home's day detail ends with a source chip naming its calendar (the calendar's `label`, which is "Google calendar" under view-as and open as admin, D39). The chip links inside the app to that calendar's page, `/locations/[id]/data/c_<calendarId>` (decision 6).
-  - It uses the shared source chip (`source-chips`) with an internal link and a calendar glyph in place of a site logo, so no new image origin is needed.
-  - Home starts reading the location's calendars and its events over Home's calendar range (at most 92 days, the route's limit), two reads it does not make today.
-- **A note TownwiseAI made from a file** shows a chip "Your file" linking to `/locations/[id]/data/f_<fileId>` (P27). The note carries only the file id, and adding the file's name would need a join on every notes read, so the chip names no file (Claude's call). A file deleted since shows P27's not-found state.
+  - The shared source chip (`client/src/portal/ui/SourceChip.tsx`) gains an internal mode, since today it opens a URL with `Linking.openURL` on native, which cannot open an app path, and renders a plain `<a href>` on web, which reloads the page. The internal mode takes an app path and a given name, renders a calendar glyph in place of a site logo, and navigates with expo-router (`Link` on web, `router.push` on native). It follows the `asChild` style rule (`test/portal/link-child.test.ts`). No new image origin is needed.
+  - The chip's name comes from the event itself: each event in the events read already carries its calendar's label (`OwnerCalendarEvent.calendar`). Neither the Calendar nor Home needs the calendar list for chips.
+  - Home starts reading the location's events over `forecastRange(today)` (this month, plus This week's days past it, at most about 37 days). Home's calendar range (`homeCalendarRange`) starts about two years back and would be refused 400 `bad_range` by the events route's 92-day limit. A test pins that Home's request is under 92 days. A failed read leaves Home showing with no imported events.
+- **A note TownwiseAI made from a file** shows a chip "Your file" linking to that file's item in Your data (P27). The chip names no file, since the name would need more than a ref (Claude's call).
+  - A file that wrote days of its own is the item `u_<uploadId>`, not `f_<fileId>` (`api/src/data/library.ts`, `handlers/data.ts`), and every `f_` item is 404 while stored files are off.
+  - So the note view's `source` gains `ref`: `f_<fileId>`, `u_<uploadId>`, or null once the file is gone or stored files are off. It comes from one `files.byIds` read per notes list.
+  - The chip shows only while `ref` is not null.
 - **Never the feed address.** The API answers no link address (D33), and a Google, Outlook or iCloud iCal address carries a private token in its path, so no chip, page or tooltip may hold one.
   - A link calendar's host (`calendar.google.com`) shows as text on its page, never as a link. A link to a host's front page tells the owner nothing.
   - The Your calendars popover's rows gain "Open" to the same page.
@@ -119,29 +147,30 @@ Every cell's screen reader label says the status and every entry, as today, with
 
 ### 6. Calendars in Your data
 
+- **The route guard first.** `client/src/portal/routing.ts` allows only `ITEM_REF = '[uf]_[0-9a-f]{24}'`, so `AccessGuard` would redirect every `/data/c_` path, and `isItemPath` marks the More menu's current page from it. It becomes `[ufc]_`, with a routing test, before any link to a `c_` page is built.
 - **The Calendars group.** Your data (P26) gains a "Calendars" group above the list, from `GET .../owner-calendars` (at most 5 rows, no paging). Each row shows the name, kind ("File", "Link, calendar.google.com", "Google calendar"), event count and last refresh, and opens `/locations/[id]/data/c_<calendarId>`. The group is hidden when the location has none, and shows with stored files off, since calendars are not stored files.
 - **The `c_` page.** `c_<calendarId>` is a client-only ref on P27's route. `ItemPage` sees the prefix and renders the calendar page instead of reading `org.data.get`, which keeps answering 400 for a malformed ref.
   - The page shows the calendar's name, kind, host as text, event count, repeating events not imported, status and last refresh, then an agenda of its events for one month at a time ("Earlier" and "Later", today's month first).
-  - It reads the existing events route over that month and keeps the events whose `calendarId` matches.
+  - It reads the existing events route over that month and keeps the events whose `calendarId` matches. A month with none reads "No events in {Month}." (stored events reach 400 days each way, so many months are empty).
   - Each event shows its dates and hours and links to `/locations/[id]/calendar?day=<startDate>`.
   - An unknown or removed calendar shows P27's not-found state.
   - The page has no Refresh or Remove, which stay in the Your calendars popover, so one place manages calendars.
 - **A calendar file's P27** (`f_` ref whose `ai.kind` is `calendar`).
   - The AI section shows the read's events with the same agenda component, grouped by month and in date order.
   - Each event shows its title, dates, kind words and guests. One that became a note links to `/locations/[id]/calendar?day=<startDate>`, marked "Note made"; one that did not reads "No note made".
-  - The API adds `ai.events: { title, startDate, endDate, kind, effect, expectedGuests, noteId }[]` to the item view.
+  - The API adds `ai.events: { title, startDate, endDate, kind, effect, expectedGuests, noteId }[]` to the single item's view (`getDataItem`) only. The list answer leaves it out, since `listData` shares `dataItemView` and each row could otherwise carry 50 events.
     - `noteId` is the planned id when the outcome made that note and it still exists, else null.
     - `title` is null under view-as, as `ai.notes[].title` is.
     - The list is empty once the original is deleted, since the events are cleared then.
 - **Why one page for every calendar** (the orchestrator asked for one option). Yes: linked and Google calendars also get the `c_` page, reachable from Your calendars and from every imported event's chip.
   - The event in the owner's screenshot ("From your calendar: Veterans Day") came from a linked calendar, so a link only to the popover would leave his request unmet for exactly the case he showed.
   - One page for every kind needs no API change, because the list and events routes already exist.
-- **Why an agenda, not a month grid.** An agenda reads well at 375px and on native. A file's read holds at most 50 events, and a month of a linked calendar is short. The Calendar's grid is built around forecasts and filters, which a calendar's page does not have. The agenda reuses the week view's agenda card (`CalendarWeek.tsx`), with its kinds and marks.
+- **Why an agenda, not a month grid.** An agenda reads well at 375px and on native. A file's read holds at most 50 events, and a month of a linked calendar is short. The Calendar's grid is built around forecasts and filters, which a calendar's page does not have. The agenda reuses the week view's agenda card, with its kinds and marks. `CalendarWeek.tsx` exports only `CalendarWeek`, so the card moves to its own file, `calendar/AgendaCard.tsx`, which the week view and the agenda both import.
 
 ### 7. Chat components (decision 6 of the brief)
 
 The minimum that meets "anywhere the calendar shows up":
-- Every chat component that shows a note (the proposal card, the weekly suggestion card, the side panel's activity) shows its title.
+- The chat components that show a note's content (the proposal card and the weekly suggestion card) show its title. The side panel's activity line stays as it is (decision 3).
 - TownwiseAI's tools carry the title, so its words can name the event.
 
 No chat visual gains per-day entries in this change:
@@ -149,7 +178,7 @@ No chat visual gains per-day entries in this change:
 - Entries in it would need the API to build them (a server twin of `entries.ts` and its dedupe) and would freeze note titles into stored conversations, where a later edit would not reach them.
 - Its tooltip already says "Forecast: closed" or "Forecast: booked for a private event".
 
-This is Claude's recommendation, and the owner decides (Open Questions).
+This is Claude's recommendation, and the owner decides (Open Questions). In plain words for him: if he does not answer, chat's charts will still not list what is on each day.
 
 ### 8. Ordering with other work
 
@@ -159,15 +188,17 @@ This is Claude's recommendation, and the owner decides (Open Questions).
   - changes `CalendarWeek.web.tsx` and `DayTooltip.web.tsx`;
   - adds the tooltip's "No data. ..." lines;
   - edits spec 16.3.
+- **Develop has also moved.** 3710fb01 ("keep hover tooltips off the hovered day", after the base 85563ceb) changed `DayTooltip.web.tsx` and `CalendarWeek.web.tsx`. Task 0.1's merge picks it up.
 - **How this change composes with d6.** It takes d6's first tooltip line and cell status as given, and only changes what follows them, so the two compose.
 - **Files shared with d6:**
   - `client/src/portal/calendar/model.ts`, `grid.ts`, `CalendarWeek.web.tsx`, `DayTooltip.web.tsx`;
   - `client/test/portal/calendar/model.test.ts`, `grid.test.ts`, `grid.test.web.tsx`, and d6's new `day-tooltip.test.web.tsx`;
   - `docs/portal/spec.md` (16.3 P28);
   - Home's This month (decision 9) depends on d6's `figureOf`, and exports it (or `dayCell`) from `model.ts`.
+  - Not shared: `CalendarWeek.tsx` (native), from which `AgendaCard.tsx` is extracted; d6 does not change it.
 - **Files shared with `suggest-closure-rules` (D46, branch `feat/suggested-closure-rules`, proposal only):**
-  - API: `api/src/forecasts/reasons.ts` (D46 adds season words; this change adds label dedupe), `api/src/files/ai-actions.ts`, `api/src/handlers/data.ts`, `api/src/handlers/notes.ts` (D46 adds season checks; this change adds `title`), `api/src/stores/files.ts` (read only here, unless the item view's types move);
-  - client: `client/src/portal/locations/NoteFields.tsx` and `noteRules.ts`, `client/src/portal/analytics/days.ts` (D46 adds seasons to `noteCovers`), `client/src/portal/home/Home.tsx`, `client/src/portal/data/item/AiSection.tsx` and `client/src/portal/data/aiCopy.ts`, `client/src/chat/api.ts`, `client/test/portal/data/item-ai.test.web.tsx`, `client/test/portal/home/home.test.web.tsx`;
+  - API: `api/src/forecasts/reasons.ts` (D46 adds season words; this change adds label dedupe), `api/src/files/ai-actions.ts`, `api/src/stores/business-rules.ts` (D46 adds `season` to `RuleSchedule`; this change omits `title` from it), `api/src/agent/questions.ts`, `api/src/lab/suggestions.ts`, `api/src/stores/agent-suggestions.ts`, `api/src/handlers/weekly-suggestions.ts`, `api/src/handlers/data.ts`, `api/src/handlers/notes.ts` (D46 adds season checks; this change adds `title`), `api/src/stores/files.ts` (read only here, unless the item view's types move);
+  - client: `client/src/portal/locations/NoteFields.tsx` and `noteRules.ts`, `client/src/portal/analytics/days.ts` (D46 adds seasons to `noteCovers`; this change only calls `noteCovers`), `client/src/portal/home/Home.tsx`, `client/src/portal/data/item/AiSection.tsx` and `client/src/portal/data/aiCopy.ts`, `client/src/chat/api.ts`, `client/test/portal/data/item-ai.test.web.tsx`, `client/test/portal/home/home.test.web.tsx`;
   - docs: `docs/portal/spec.md` (12, 14.5, 10.14, 11A.9, P11, P25, P27), `api/README.md`, `docs/portal/tuning-chat.md`.
   - Whichever lands second merges the other. Neither needs the other's fields.
 
@@ -183,7 +214,10 @@ The owner's words: "it looks like the calendar in the home page is not showing a
 - Once d6 lands, `monthGrid` builds each cell from the Calendar's `dayCell` over the same `CalendarInput` that Home already builds for the tooltip (`tipInput`, with Home's imported events from decision 5). `cellFigure` goes, keeping only Home's own "This week" outline (the 7 days from today).
 - Home's metric:
   - Home shows net sales only for a location with no stored guests (`Home.tsx` `metricsWithData`).
-  - For that case the shared `figureOf` takes an optional metric. With net sales, a past day shows its stored net sales, else the same forecast or "No data" fallbacks; from today on, the guest forecast, as today.
+  - d6's `figureOf` is private and works in guests only, and its `CellFigure` is `{ value, kind }` with no text. Home's cell today renders `figure.text` from `metricNumber` (`analytics/week.ts`).
+  - So `model.ts` exports `figureOf(date, input, metric = 'guests')`. With net sales, the stored value it reads is the day's net sales instead of its guests; the fallbacks (the run's guest figure captioned "forecast", "No data", and from today on the guest forecast or "No forecast") are unchanged.
+  - Likely closed stays guest-based. A net-sales location has no stored guests, so it is never likely closed, as today.
+  - `CellFigure` stays `{ value, kind }`. Home formats it: `kind: 'actual'` with `metricNumber(value, metric)`, and every other kind (a guest count) with `formatCount`.
   - The rule therefore still lives once (Claude's call).
 - A parity test feeds one fixture month to `calendarMonth` and to Home's `monthGrid` and asserts the same figure, caption and status for every day. The fixture covers:
   - a past day with stored guests;
@@ -192,40 +226,52 @@ The owner's words: "it looks like the calendar in the home page is not showing a
   - a past day with neither;
   - today with a forecast;
   - a future closed day, a future booked day, and a future day with no forecast.
+- The Calendar never shows net sales, so there is nothing to compare a net-sales Home grid against. That case gets a Home-only expectation test instead of a parity test: a past day shows its stored net sales in dollars, and a past day with none shows the run's guest figure captioned "forecast".
 
 **Space: each of these is Claude's call, refining the orchestrator's four proposals.**
 - (a) **Home cells list entries where they fit.** The grid column measures its width (`onLayout`). When a cell is at least 88px wide, each cell shows up to 2 compact entry lines from the shared helper, or 1 line and "+N more", under its figure, at a fixed cell height of 96px, so the grid has one height per tier. Narrower cells keep corner marks at today's height. The cell's label says everything either way.
-- (b) **The grid column is sticky on wide layouts.** On web, when grid and detail sit side by side, the grid column is `position: sticky`, `top: 16`, aligned to the top, so it stays in view while the taller detail scrolls past. Native and stacked layouts do not stick.
-- (c) **The Reorder paragraph goes behind a disclosure.** `REORDER_OVERVIEW` moves behind "How Townwise builds an order", closed by default, with `aria-expanded` on web and an expanded state on native. The one-line status ("Townwise can't build an order...", or the order's cover sentence) and "Open this day on Orders" stay visible.
+- (b) **A sticky grid column, only if still needed** (the audit's N4). On web, when grid and detail sit side by side, the grid column would be `position: sticky`, `top: 16`, aligned to the top.
+  - React Native's style types do not allow `position: 'sticky'`, so it would need a `.web` style. It breaks under any ancestor with `overflow: hidden`, and jsdom cannot test it.
+  - So (a), (c) and (d) ship first. The UI review (task 7.2) judges whether an empty area is left at 1280px and 1440px. Sticky is added (task 5.7) only if it is.
+  - Native and stacked layouts never stick.
+- (c) **The Reorder paragraph goes behind a disclosure, in `DayDetail.tsx` only.** `REORDER_OVERVIEW` stays in `home/beside.ts`, since Orders (`orders/Orders.tsx`) also shows it in full. On Home it moves behind "How Townwise builds an order", closed by default, with `aria-expanded` on web and an expanded state on native. The one-line status ("Townwise can't build an order...", or the order's cover sentence) and "Open this day on Orders" stay visible.
 - (d) **"Open the calendar" moves up.** The legend (`MonthKey`) already sits directly under the grid inside `MonthGrid`. "Open the calendar" moves from under the whole card into the grid column, directly under the legend, so the grid side reads as one unit. When stacked, it stays under the legend, above the day detail.
 - **The grid column gets more room.** Side by side, the grid column takes `flexGrow: 3` against the detail's 2, with no 420px cap and a minimum of 360px. The detail keeps a minimum of 280px.
 
 **Layout at each width.** Home's content column width, not the window, decides; the column is narrower than the window at every width:
 | Content column | Layout |
 |---|---|
-| 1100px and wider | side by side, grid about 60%: cells about 90px wide, 2 entry lines, sticky grid, then the legend and Open the calendar under it |
-| 720 to 1099px | side by side, grid at its 360px minimum or more: cells under 88px, corner marks, sticky grid |
+| 1100px and wider | side by side, grid about 60%: cells about 90px wide, 2 entry lines, then the legend and Open the calendar under it (sticky only if task 5.7 adds it) |
+| 720 to 1099px | side by side, grid at its 360px minimum or more: cells under 88px, corner marks |
 | under 720px, and every phone | stacked: grid full width (entry lines only if cells reach 88px, as on a tablet held wide), the legend, Open the calendar, then the day detail |
 | native (iOS, Android) | stacked as above at every width, with no sticky and no tooltip; entry lines by the same 88px cell rule; the Reorder disclosure works by tap |
 
 ## Risks / Trade-offs
 
 - [Notes first in a cell can push a holiday past "+N more"] → The label, tooltip and panel still list it, and the order is a [CONFIRM] in the D49 row.
-- [A sticky grid taller than the window] → Sticky applies only when the grid column fits the viewport height; otherwise it scrolls with the page (checked from its measured height).
+- [A sticky grid taller than the window, if task 5.7 adds sticky] → Sticky applies only when the grid column fits the viewport height; otherwise it scrolls with the page (checked from its measured height).
 - [Home's grid now shows past forecasts] → It is the Calendar's rule, captioned "forecast", so a run's figure is never mistaken for a stored one.
-- [Home makes two more reads] → Both are small: at most 5 calendars, and events over at most 92 days. A failure leaves Home showing without imported events and their marks, as the Calendar does.
+- [Home makes one more read] → The events over `forecastRange(today)`, at most about 37 days. A failure leaves Home showing without imported events and their marks, as the Calendar does.
+- [The title backfill visits every older TownwiseAI note once] → Notes are capped at 1,000 a location and the pass reads each file's read once per file. It writes with a compare-and-set, so a second run or a second replica finds nothing to do.
 - [Dedupe hides which source a compact entry came from] → The day panel and Home's day detail keep every source.
 - [Merging run reasons drops a smaller effect] → Only for two reasons with one label on one day, which read as a bug today. The larger effect is kept.
 - [An old native build saving a note] → It sends no `title`, and the keep-on-omit rule keeps the stored one.
 - [The `c_` ref shares P27's route] → `ItemPage` branches on the prefix before any read, and a test pins that a `c_` ref never calls `org.data.get`.
 
+## Where Claude departs from the audit
+
+The audit of 2026-11-17 was applied in full (B1, S1 to S14, the nits), with two partial exceptions:
+- **N3, the API's reason dedupe.** Kept, with the union of sources, for the reasons in decision 4.
+- **N7, a first page of the next 92 days on the `c_` page.** Not taken. The page reads one month at a time, as the Calendar does, and says "No events in {Month}." for an empty month. One paging rule is simpler than two.
+
 ## Migration Plan
 
-No migration. `title` is optional, and a note without it reads as null. `ai.events` is computed on read from the saved answer. It ships on by default with no switch, by the owner's rule. Rollback is a revert: stored titles stay in `tw_notes` unread.
+No schema migration. `title` is optional, and a note without it reads as null. The one data step is the boot-time title backfill of decision 3, which is idempotent. `ai.events` is computed on read from the saved answer. It ships on by default with no switch, by the owner's rule. Rollback is a revert: stored titles stay in `tw_notes` unread.
 
 ## Open Questions
 
 - **Chat's daily chart entries.** Should it gain per-day entries in its tooltip? Claude recommends not in this change (decision 7). If the owner says yes, it is a follow-up: an API-side twin of the entries rules, frozen with the visual.
+- **The Nov 16 example will still show no name.** Tell the owner in plain words: the day in his screenshot ("Booked for a private event / Private event booked") was booked by the forecast run itself, with no note behind it, so there is no name to show. Saving a note for that day with an Event name makes the name show.
 - **The shared [CONFIRM]s**, each in the D49 row:
   - notes first in compact lists;
   - a rule's entry is its text;

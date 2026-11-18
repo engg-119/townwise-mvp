@@ -12,10 +12,10 @@ The causes, read from develop at 85563ceb: notes have no name, only kind words a
 ## What Changes
 
 - **One "everything on a day" helper** (`client/src/portal/calendar/entries.ts`, new, pure) is the single source for the Calendar's month cell, tooltip, week cards and day panel, Home's This week, This month grid, day detail and month list, and native. Each shows the day's status (closed, booked, likely closed, and d6's no data and no forecast) together with its entries: the owner's notes, scheduled business rules, holidays and town events, and imported calendar events. Status never hides an entry. Each surface keeps a size limit with "+N more", set out per width in the design.
-- **Notes gain an optional event name.** `title`, 1 to 120 characters, trimmed, or null ([CONFIRM: 120 characters, matching the file reader's event titles]). Cells, tooltips and cards show it, falling back to today's kind words ("Private event, 70"). The note form (C6) gets "Event name", on web and native. TownwiseAI's file reader fills it from the event's title. Never logged, never in an audit event, never sent to the lab. An edit that leaves `title` out keeps the stored one, so an older app cannot erase it. An `other` note needs a title or a detail.
+- **Notes gain an optional event name.** `title`, one line of 1 to 120 characters (white space collapsed, control and format characters refused), or null ([CONFIRM: 120 characters, matching the file reader's event titles]). Cells, tooltips and cards show it, falling back to today's kind words ("Private event, 70"). The note form (C6) gets "Event name", on web and native. Make a note never copies an imported event's title (D33 unchanged). TownwiseAI's file reader fills it from the event's title, and a boot-time pass names the notes it already made, exactly from their stored reads and only once. Never logged, never in an audit event, never sent to the lab. An edit that leaves `title` out keeps the stored one, so an older app cannot erase it. An `other` note needs a title or a detail.
 - **D30 is amended, not broken.** A reason's label stays made in code. Where a note reason's note has a title, a surface may show the title after the label as the person's own words ("Your private buyout, 70 guests: Holiday party"), joined in the client by the reason's `note.id`. A model booking with no note keeps "Booked for a private event".
-- **Duplicates show once where space is short.** In cells, the tooltip, week cards, Home's This week and the month list, entries on one day whose titles match (case and spacing folded) show once. The day panel and Home's day detail keep each, with its source. The API's `reasonViews` keeps one run reason per folded label (the larger effect), so Why and the tooltip never say "Veterans Day" twice.
-- **Source links.** Each imported event in the Calendar's day panel and Home's day detail links to its calendar's page in Your data. A note TownwiseAI made from a file links to that file's page (P27). No answer, link or page ever shows a link calendar's address: D33 already keeps it out of every answer, and a Google or Outlook iCal address carries a private token. A link calendar's host shows as text, never as a link ([CONFIRM]).
+- **Duplicates show once where space is short.** In cells, the tooltip, week cards, Home's This week and the month list, entries on one day from different sources whose titles match (case and spacing folded) show once; two notes, two rules or two events of one calendar never merge. The day panel and Home's day detail keep each, with its source. The API's `reasonViews` keeps one run reason per folded label (the larger effect), so Why and the tooltip never say "Veterans Day" twice.
+- **Source links.** Each imported event in the Calendar's day panel and Home's day detail links to its calendar's page in Your data. A note TownwiseAI made from a file links to that file's item (P27, `f_` or `u_`), and only while it exists. The shared source chip gains an in-app link mode. No answer, link or page ever shows a link calendar's address: D33 already keeps it out of every answer, and a Google or Outlook iCal address carries a private token. A link calendar's host shows as text, never as a link ([CONFIRM]).
 - **Calendars get a page in Your data.**
   - Your data (P26) gains a "Calendars" group listing the location's calendars from the existing list route.
   - Each calendar opens P27 at the ref `c_<calendarId>`, a client-only ref. The page shows the calendar's name, kind, host, count and last refresh, then its events as an agenda grouped by month, one month at a time from the existing events route, each event linking to its day on the Calendar.
@@ -25,10 +25,10 @@ The causes, read from develop at 85563ceb: notes have no name, only kind words a
   - Home's grid builds its cells with the Calendar's `dayCell` and d6's `figureOf`, deleting its own copy (`analytics/week.ts` `cellFigure`). A parity test pins that both give the same figure for the same day.
   - The space fixes are Claude's calls:
     - cells list up to 2 entries where they are wide enough;
-    - the grid column is wider and sticky on wide web layouts;
+    - the grid column is wider (sticky only if the UI review still finds empty space);
     - the Reorder paragraph goes behind "How Townwise builds an order";
     - "Open the calendar" sits under the legend.
-- **TownwiseAI.** `list_notes`, `get_day` and `propose_note` carry the title. The note proposal card and the weekly suggestion card show it. No chat visual gains per-day entries in this change: chat visuals are frozen snapshots of figures, so entries would need a server twin of the helper. Kept as an open question for the owner.
+- **TownwiseAI.** `list_notes`, `get_day` and `propose_note` carry the title. The note proposal card and the weekly suggestion card show it; the side panel's activity line does not, since it is read under view-as. No chat visual gains per-day entries in this change: chat visuals are frozen snapshots of figures, so entries would need a server twin of the helper. Kept as an open question for the owner.
 
 ## Capabilities
 
@@ -44,21 +44,26 @@ None under `openspec/specs/`. The Calendar's and owner calendars' requirements l
 ## Impact
 
 - API:
-  - `stores/notes.ts`, `handlers/notes.ts` (`title`, the keep-on-omit edit, the `other` rule, rule schedules refuse it);
+  - `stores/notes.ts`, `handlers/notes.ts` (`title`, its cleaning, the keep-on-omit edit, the `other` rule, rule schedules refuse it; the note view's `source.ref`);
+  - `stores/business-rules.ts` (`RuleSchedule` omits `title`), and the other code that builds or stores note content: `agent/questions.ts`, `lab/suggestions.ts`, `stores/agent-suggestions.ts`, `chat/view.ts`, `chat/turn.ts`, `chat/tools/registry.ts`, `handlers/chat-proposals.ts`, `handlers/agent.ts`, `handlers/chat.ts`, `handlers/weekly-suggestions.ts`;
+  - the title backfill: `stores/cross-tenant.ts` (its query) and `access/policy.ts` (`scopeForNoteTitleBackfill`), run at boot from `main.ts`;
   - `forecasts/reasons.ts` (one run reason per label; note reasons unchanged, since the client joins the title by `note.id`);
   - `files/ai-actions.ts` (title from the event, detail its own, the duplicate check);
-  - `handlers/data.ts` (`ai.events`);
+  - `handlers/data.ts` (`ai.events` on the single item only);
   - `chat/tools/notes.ts`, `day.ts`, `propose-note.ts` and their descriptions (a frozen-prefix change: one prompt cache miss per conversation).
   - No new route, collection or env var.
 - Client:
   - `client/src/portal/calendar/` (new `entries.ts`, `model.ts`, `grid.ts`, `CalendarGrid*.tsx`, `CalendarWeek*.tsx`, `DayTooltip.web.tsx`, `CalendarDay.tsx`, `YourCalendars.tsx`);
-  - `client/src/portal/home/` (Home, ThisWeek, MonthGrid*, DayDetail, ThisMonth, beside) and `analytics/week.ts`, `analytics/days.ts`, `analytics/panel.ts`;
+  - `client/src/portal/home/` (Home, ThisWeek, MonthGrid*, DayDetail, ThisMonth) and `analytics/week.ts`, `analytics/panel.ts` (`analytics/days.ts` is not changed);
+  - `client/src/portal/ui/SourceChip.tsx` (an in-app link mode) and a new `calendar/AgendaCard.tsx` taken out of `CalendarWeek.tsx`;
   - `client/src/portal/locations/` (NoteFields, NoteForm, Notes, noteRules, api);
   - `client/src/portal/data/` (DataPage, ItemPage, item/AiSection, a new calendar agenda);
-  - `client/src/portal/routing.ts` if the `c_` ref needs it;
+  - `client/src/portal/routing.ts` (`c_` refs);
   - `client/src/chat/` (ProposalCard, SuggestionCard, format).
 - Docs:
-  - `docs/portal/spec.md`: D49, the D30 amendment, 10.5, 10.14, 10.18, 11A.9, 12, 14.4, 14.5, and P11, P14, P26, P27 and P28 in 16.3;
+  - `docs/portal/spec.md`: D49, the D30 amendment, 10.5, 10.14, 10.18, 11A.9, 12, 14.4, 14.5, 17, and P11, P14, P26, P27 and P28 in 16.3;
+  - `client/app/(marketing)/privacy.tsx` (a note's fields gain the event name);
+  - `client/src/portal/README.md` (page ownership: `entries.ts`, the agenda and the `c_` page);
   - `api/README.md` (notes, Your data, logs);
   - `docs/portal/tuning-chat.md` (the three tools).
 - Ordering:
