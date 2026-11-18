@@ -28,6 +28,22 @@ describe('scorecardSchema', () => {
     expect(scorecardSchema.safeParse({ ...withEngines, horizon91: { ...report, extra: 1 } }).success).toBe(false);
   });
 
+  it('accepts the outlook reports (D52), and a stored scorecard without them', () => {
+    const base = scorecardWith();
+    expect(scorecardSchema.safeParse(storedScorecard()).success).toBe(true);
+    expect(scorecardSchema.safeParse(base).success).toBe(true);
+    const outlook = [
+      { horizon: 182, weeks: 15, weeklyWape: 0.14, coverage80: { inside: 11, weeks: 15 }, ratio: 1.84, basis: 'growth_or_backtest' },
+      { horizon: 365, weeks: 0, weeklyWape: null, coverage80: { inside: 0, weeks: 0 }, ratio: 2.6, basis: 'growth' },
+    ];
+    expect(scorecardSchema.safeParse({ ...base, horizonOutlook: outlook }).success).toBe(true);
+    expect(scorecardSchema.safeParse({ ...base, horizonOutlook: [{ ...outlook[0], horizon: 273 }] }).success).toBe(false);
+    expect(scorecardSchema.safeParse({ ...base, horizonOutlook: [{ ...outlook[0], ratio: 0.9 }] }).success).toBe(false);
+    expect(scorecardSchema.safeParse({ ...base, horizonOutlook: [{ ...outlook[0], basis: 'measured' }] }).success).toBe(false);
+    expect(scorecardSchema.safeParse({ ...base, horizonOutlook: [{ ...outlook[0], extra: 1 }] }).success).toBe(false);
+    expect(scorecardSchema.safeParse({ ...base, horizonOutlook: [...outlook, outlook[0]] }).success).toBe(false);
+  });
+
   it('refuses unknown keys and NaN', () => {
     expect(scorecardSchema.safeParse({ ...scorecardWith(), extra: 1 }).success).toBe(false);
     const base = scorecardWith();
