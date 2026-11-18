@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
+import type { WEEKLY_TITLES_NOTICE } from './calendars';
 
 // The owner calendar routes (spec 10.18, api/src/handlers/owner-calendars.ts; connect-owner-calendar design decision
 // 11), through the portal ApiClient: a location's own calendars, each an imported .ics file, a subscription link or a
@@ -90,11 +91,12 @@ const choicesSchema = z.object({ calendars: z.array(googleChoiceSchema) });
 
 /**
  * A calendar file's text (at most 1 MB, parsed by the API), a link the API fetches before it stores anything, or one of
- * the person's Google calendars by its Google id, which the API checks and reads before it stores anything.
+ * the person's Google calendars by its Google id, which the API checks and reads before it stores anything. A file or
+ * link carries `titlesNotice` only when sent from the screen that says its titles are read weekly.
  */
 export type NewOwnerCalendar =
-  | { kind: 'file'; label: string; ics: string }
-  | { kind: 'link'; label: string; url: string }
+  | { kind: 'file'; label: string; ics: string; titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
+  | { kind: 'link'; label: string; url: string; titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
   | { kind: 'google'; googleCalendarId: string };
 
 /** 200: the location's calendars, oldest first, and `google`, which an older API leaves out (read as off). */
@@ -142,12 +144,15 @@ export async function removeOwnerCalendar(api: ApiClient, locationId: string, ca
 
 /**
  * Connects the person's own Google account with the code Google's window gave (connect-google-calendar design decision
- * 3), posting `{ code, agreed: true }`: pressing "Continue to Google" after the explainer is the agreement. 200 with the
+ * 3), posting `{ code, agreed: true }`: pressing "Continue to Google" after the explainer is the agreement, and
+ * `titlesNotice` says that explainer said titles are read weekly (calendar-event-suggestions). 200 with the
  * choices. 503 google_calendar_unavailable; 400 google_code_invalid or google_scope_missing; 409 google_other_account,
  * google_connect_again or google_reconnect; 503 google_unavailable; 429 rate_limited.
  */
-export async function connectGoogleCalendars(api: ApiClient, locationId: string, code: string): Promise<GoogleChoice[]> {
-  const body = await api.json(`${googleCalendarsPath(locationId)}/connect`, choicesSchema, { method: 'POST', body: { code, agreed: true } });
+export async function connectGoogleCalendars(
+  api: ApiClient, locationId: string, code: string, titlesNotice: typeof WEEKLY_TITLES_NOTICE,
+): Promise<GoogleChoice[]> {
+  const body = await api.json(`${googleCalendarsPath(locationId)}/connect`, choicesSchema, { method: 'POST', body: { code, agreed: true, titlesNotice } });
   return body.calendars;
 }
 

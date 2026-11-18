@@ -6,7 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import { ApiError } from '../../../src/api/client';
 import { GIS_SRC, resetGis, type CodeClientConfig, type CodeResponse } from '../../../src/auth/gis.web';
 import type { GoogleCalendars, GoogleChoice } from '../../../src/portal/calendar/api';
-import { GOOGLE_COPY } from '../../../src/portal/calendar/calendars';
+import { GOOGLE_COPY, WEEKLY_TITLES_NOTICE } from '../../../src/portal/calendar/calendars';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
@@ -201,6 +201,8 @@ test('no script from accounts.google.com is in the document until “Add a Googl
   // Agreeing covers the weekly suggestions' reading of titles too (calendar-event-suggestions), and who can turn it off.
   expect(explainer(go)).toContain('once a week it reads the titles, dates and hours of the next 3 months of events, with email addresses and phone numbers removed');
   expect(explainer(go)).toContain('An admin of your organization can turn off the weekly reading on the TownwiseAI page.');
+  // The connect from this explainer carries the weekly notice (calendar-event-suggestions design decision 11).
+  expect(WEEKLY_TITLES_NOTICE).toBe(1);
 });
 
 test('the press sets up the code client with exactly the three scopes, a popup, include_granted_scopes false, the person’s email and a fresh state, and calls requestCode inside the press', async () => {
@@ -254,7 +256,7 @@ test('a code for the current press is posted with the agreement; one carrying an
   api.answers[`${GOOGLE_PATH}/connect`] = () => ({ calendars: CHOICES });
   answer(second, { code: CODE, scope: SCOPES, state: second.state });
   expect(await within(popover()).findByText('Choose the calendars to add to Main Street Bar.')).toBeTruthy();
-  expect(writes(api)).toEqual([{ method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true } }]);
+  expect(writes(api)).toEqual([{ method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true, titlesNotice: WEEKLY_TITLES_NOTICE } }]);
   // A second answer for a press already answered is dropped too.
   answer(second, { code: CODE, scope: SCOPES, state: second.state });
   expect(writes(api)).toHaveLength(1);

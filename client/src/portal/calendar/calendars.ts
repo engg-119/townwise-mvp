@@ -21,6 +21,12 @@ const MAX_LABEL = 60;
 export const MAX_CALENDARS = 5;
 /** The API's `max(2048)` on a link. */
 const MAX_LINK = 2048;
+/**
+ * What an add of a file or link, and a Google connect, sends as `titlesNotice` when its screen showed the weekly words
+ * (CALENDARS_COPY.weeklyReading, the explainer's second paragraph), the API's WEEKLY_TITLES_NOTICE
+ * (api/src/calendar/titles-notice.ts): a calendar's titles go into the weekly call only when it was sent.
+ */
+export const WEEKLY_TITLES_NOTICE = 1;
 
 export const CALENDARS_COPY = {
   tooLarge: 'This file is over 1 MB. Export a shorter range of your calendar.',
@@ -39,8 +45,8 @@ export const CALENDARS_COPY = {
   alreadyRemoved: 'This calendar was already removed.',
   /**
    * Above "Import a calendar file" and "Add a link", said once for both (calendar-event-suggestions design decision 11:
-   * a file's or link's titles go into the weekly call only when it was added after these words shipped). [CONFIRM: the
-   * add screens' words on the weekly reading of titles]
+   * an add from this popover sends `titlesNotice`, and a file's or link's titles go into the weekly call only when its
+   * add did). [CONFIRM: the add screens' words on the weekly reading of titles]
    */
   weeklyReading: 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of this calendar’s events, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.',
 } as const;
@@ -67,9 +73,9 @@ export function nativeLine(google: boolean): string {
 
 /**
  * The explainer's paragraphs: what Townwise reads, who sees it, and how its access ends. The second also says the
- * weekly suggestions read the titles (calendar-event-suggestions design decision 11: a Google calendar's titles go
- * into the weekly call only when its connection agreed to these words). [CONFIRM: the Google connect explainer's words
- * on the weekly reading of titles]
+ * weekly suggestions read the titles (calendar-event-suggestions design decision 11: a connect from this explainer
+ * sends `titlesNotice`, and a Google calendar's titles go into the weekly call only when its connection's did).
+ * [CONFIRM: the Google connect explainer's words on the weekly reading of titles]
  */
 const EXPLAINER_PARAGRAPHS = [
   'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included.',

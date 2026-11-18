@@ -22,7 +22,7 @@ import {
 } from './api';
 import {
   addedLines, addGoogleLabel, addRefusal, CALENDARS_COPY, GOOGLE_COPY, googleRefusal, helpText, labelOfFile, linkProblems, MAX_CALENDARS,
-  pickerLine, refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords,
+  pickerLine, refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords, WEEKLY_TITLES_NOTICE,
 } from './calendars';
 import { GoogleConnect } from './GoogleConnect';
 import { IcsImport } from './IcsImport';
@@ -46,8 +46,9 @@ import { IcsImport } from './IcsImport';
 // calendar", which the Google section replaces while it is open; then "How importing works" with its help, mounted
 // while hidden and describing the import, and under view-as the popover's own read-only line. The help, and native's
 // line in place of the import, name Google calendars only while the list answers them on. A chosen file is posted as
-// `{ kind: 'file', label, ics }` (the label from its name, labelOfFile), with "Importing…" meanwhile, and a link as
-// `{ kind: 'link', label, url }` with "Adding…" while the API fetches it; on a 201 the page reads the list and the
+// `{ kind: 'file', label, ics, titlesNotice }` (the label from its name, labelOfFile), with "Importing…" meanwhile, and a
+// link as `{ kind: 'link', label, url, titlesNotice }` with "Adding…" while the API fetches it (`titlesNotice` since this
+// popover shows CALENDARS_COPY.weeklyReading); on a 201 the page reads the list and the
 // grid's stored events again and turns "Your calendar" on (`onChanged(true)`). "Refresh now" (a 200, whatever its
 // status) and "Remove" (after "Remove this calendar?", a 204) read them again too (`onChanged(false)`), as a 404 on
 // either does ("This calendar was already removed."); nothing else reads again but a Google connect (below), and never
@@ -60,8 +61,8 @@ import { IcsImport } from './IcsImport';
 // Google account again to add calendars.") falls back to the explainer; for anyone else it opens on the explainer, then
 // "Continue to Google", described by the explainer since its press is the agreement, and Cancel (GoogleConnect.web.tsx,
 // which loads Google's script only now and opens Google's window in the press). While Google's window is open it says
-// "Waiting for Google…" with "Stop waiting"; a code is posted as `{ code, agreed: true }` ("Connecting your Google
-// account…"), and the answer's choices open the picker while the list reads again (`onChanged(false)`), so it says the
+// "Waiting for Google…" with "Stop waiting"; a code is posted as `{ code, agreed: true, titlesNotice }` (the explainer says titles
+// are read weekly; "Connecting your Google account…"), and the answer's choices open the picker while the list reads again (`onChanged(false)`), so it says the
 // person is connected even if they add nothing; any refusal shows the explainer again with its words. The picker
 // says "Choose the calendars to add to {location}.", then a checkbox row per calendar (the primary first, with "Your
 // main calendar"; one already on the location checked, disabled and "Added"), "This location can add {k} more." with
@@ -387,7 +388,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     setMessage(null);
     let added: OwnerCalendar;
     try {
-      added = await addOwnerCalendar(api, location.id, { kind: 'file', label: labelOfFile(file.name), ics: file.text });
+      // This popover shows CALENDARS_COPY.weeklyReading, so the add records that the person was told.
+      added = await addOwnerCalendar(api, location.id, { kind: 'file', label: labelOfFile(file.name), ics: file.text, titlesNotice: WEEKLY_TITLES_NOTICE });
     } catch (error) {
       setMessage({ live: 'alert', items: [addRefusal(error, 'file', platform)] });
       return;
@@ -409,7 +411,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const add = useAction(useCallback(async (body: { label: string; url: string }) => {
     let added: OwnerCalendar;
     try {
-      added = await addOwnerCalendar(api, location.id, { kind: 'link', ...body });
+      added = await addOwnerCalendar(api, location.id, { kind: 'link', ...body, titlesNotice: WEEKLY_TITLES_NOTICE });
     } catch (error) {
       onRefused(addRefusal(error, 'link', platform));
       return;
@@ -520,7 +522,8 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   const connect = useAction(useCallback(async (code: string) => {
     let found: GoogleChoice[];
     try {
-      found = await connectGoogleCalendars(api, location.id, code);
+      // A code comes only from "Continue to Google" under the explainer, which says titles are read weekly.
+      found = await connectGoogleCalendars(api, location.id, code, WEEKLY_TITLES_NOTICE);
     } catch (error) {
       explain(googleRefusal(error));
       return;

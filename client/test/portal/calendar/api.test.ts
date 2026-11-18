@@ -2,6 +2,7 @@ import {
   addOwnerCalendar, connectGoogleCalendars, dropGoogleConnection, fetchGoogleChoices, fetchOwnerCalendarEvents, fetchOwnerCalendars,
   GOOGLE_OFF, refreshOwnerCalendar, removeOwnerCalendar,
 } from '../../../src/portal/calendar/api';
+import { WEEKLY_TITLES_NOTICE } from '../../../src/portal/calendar/calendars';
 import { ACCESS, fakePortalApi, meOf, refusal, writes } from '../../helpers/portal';
 import { noContent, withRoutes } from '../team/fixtures';
 import { calendarFake, ownerCalendar, ownerEvent } from './fakes';
@@ -139,7 +140,7 @@ describe('owner calendar calls (spec 10.18)', () => {
     await refreshOwnerCalendar(fake, 'a/b', 'c?1');
     await removeOwnerCalendar(fake, 'a/b', 'c?1');
     await fetchGoogleChoices(fake, 'a/b');
-    await connectGoogleCalendars(fake, 'a/b', CODE);
+    await connectGoogleCalendars(fake, 'a/b', CODE, WEEKLY_TITLES_NOTICE);
     expect(fake.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
       `GET ${base}`,
       `GET ${base}/events?from=2026-11-01&to=2026-11-30`,
@@ -156,15 +157,15 @@ describe('Google calendar calls (connect-google-calendar design decision 8)', ()
   const PRIMARY = { id: ['owner', 'example.com'].join('@'), name: 'Owner', primary: true, added: true };
   const SHARED = { id: 'c_fake0123@group.calendar.google.com', name: 'Bookings', primary: false, added: false };
 
-  test('connect posts the code and the agreement in the body, never the path, and returns the choices', async () => {
+  test('connect posts the code, the agreement and the weekly notice in the body, never the path, and returns the choices', async () => {
     const { fake } = api();
     fake.answers[`${GOOGLE_BASE}/connect`] = () => ({ calendars: [{ ...PRIMARY, accessRole: 'owner' }, SHARED] });
-    expect(await connectGoogleCalendars(fake, 'l1', CODE)).toEqual([PRIMARY, SHARED]);
+    expect(await connectGoogleCalendars(fake, 'l1', CODE, WEEKLY_TITLES_NOTICE)).toEqual([PRIMARY, SHARED]);
     fake.answers[`${GOOGLE_BASE}/connect`] = () => refusal(409, 'google_other_account');
-    await expect(connectGoogleCalendars(fake, 'l1', CODE)).rejects.toMatchObject({ status: 409, code: 'google_other_account' });
+    await expect(connectGoogleCalendars(fake, 'l1', CODE, WEEKLY_TITLES_NOTICE)).rejects.toMatchObject({ status: 409, code: 'google_other_account' });
     expect(writes(fake)).toEqual([
-      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true } },
-      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true } },
+      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true, titlesNotice: 1 } },
+      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true, titlesNotice: 1 } },
     ]);
     for (const call of fake.calls) expect(call.path).not.toContain(CODE);
   });

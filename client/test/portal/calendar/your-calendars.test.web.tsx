@@ -6,7 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import { ApiError } from '../../../src/api/client';
 import { GIS_SRC, resetGis, type CodeClientConfig } from '../../../src/auth/gis.web';
 import type { GoogleCalendars, GoogleChoice } from '../../../src/portal/calendar/api';
-import { CALENDARS_COPY, GOOGLE_COPY, helpText } from '../../../src/portal/calendar/calendars';
+import { CALENDARS_COPY, GOOGLE_COPY, helpText, WEEKLY_TITLES_NOTICE } from '../../../src/portal/calendar/calendars';
 import { errorCopy } from '../../../src/portal/errors';
 import { formatDate, formatTime } from '../../../src/portal/format';
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -394,7 +394,9 @@ test('a valid link is posted with “Adding…” meanwhile; then the form close
   fireEvent.click(within(panel).getByRole('button', { name: 'Add link' }));
   const adding = await within(panel).findByRole('button', { name: 'Adding…' });
   expect(adding.getAttribute('aria-disabled')).toBe('true');
-  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } }]);
+  // Posted from the popover that says titles are read weekly, so the add records that the person was told.
+  expect(screen.getAllByText(WEEKLY_READING)).toHaveLength(1);
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL, titlesNotice: WEEKLY_TITLES_NOTICE } }]);
   const added = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 3 });
   fake.calendars = [added];
   await act(async () => { answer.resolve({ calendar: added }); await Promise.resolve(); });
@@ -487,7 +489,9 @@ test('a file chosen in the popover is posted named after it, “Importing…” 
   api.answers[CALENDARS_PATH] = () => answer.promise;
   fireEvent.change(input, { target: { files: [file] } });
   expect(await within(panel).findByRole('button', { name: 'Importing…' })).toBeTruthy();
-  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'Kitchen bookings', ics } }]);
+  // Posted from the popover that says titles are read weekly, so the add records that the person was told.
+  expect(within(panel).getAllByText(WEEKLY_READING)).toHaveLength(1);
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'Kitchen bookings', ics, titlesNotice: WEEKLY_TITLES_NOTICE } }]);
   escape();
   pressOutside();
   expect(popover()).toBe(panel);
@@ -1053,7 +1057,8 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     const panel = openPopover();
     await connectWith(panel, api, () => ({ calendars: [PRIMARY, SHARED] }));
     expect(await within(panel).findByText('Choose the calendars to add to Main Street Bar.')).toBeTruthy();
-    expect(writes(api)).toEqual([{ method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true } }]);
+    // Posted from the explainer that says titles are read weekly, so the connect records that the person was told.
+    expect(writes(api)).toEqual([{ method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true, titlesNotice: WEEKLY_TITLES_NOTICE } }]);
     // The picker took the place of Google's wait, so its first control has focus.
     expect(document.activeElement).toBe(box(panel, 'Owner'));
     fireEvent.click(box(panel, 'Owner'));

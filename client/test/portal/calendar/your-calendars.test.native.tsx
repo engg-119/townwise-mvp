@@ -10,6 +10,7 @@ jest.mock('expo-splash-screen', () => ({
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
 import type { GoogleCalendars } from '../../../src/portal/calendar/api';
+import { WEEKLY_TITLES_NOTICE } from '../../../src/portal/calendar/calendars';
 import { ACCESS, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
@@ -102,7 +103,8 @@ test('Add a link works inside the popover: the link is posted and the popover sa
   expect(await within(popover()).findByText('Link, calendar.google.com, 1 event')).toBeTruthy();
   expect(within(popover()).queryByLabelText('Calendar link')).toBeNull();
   expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
-  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } }]);
+  // Posted from the popover that says titles are read weekly, so the add records that the person was told.
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL, titlesNotice: WEEKLY_TITLES_NOTICE } }]);
 });
 
 test('the back button closes it, and opened again it keeps what was typed', async () => {

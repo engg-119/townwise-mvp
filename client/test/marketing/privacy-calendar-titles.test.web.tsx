@@ -13,7 +13,7 @@ import { fakeAuth } from '../helpers/fakes';
 // change calendar-event-suggestions, task 9.1), awaiting the owner: what is sent (titles, dates and hours of the next 3
 // months, with email addresses and phone numbers removed, never a calendar's name), to whom (Anthropic, which doesn't
 // train on it), how often (weekly), who can turn it off (an org admin), that following a note's event uses no AI, that
-// a calendar added or connected before the new words sends no titles until it is added or connected again, and that the
+// a calendar added or connected on a screen without the new words sends no titles until it is added or connected again, and the
 // Limited Use statement is unchanged.
 
 class ResizeObserverPolyfill {
@@ -70,7 +70,8 @@ test('weekly suggestions: what they read from the calendars, the org admin’s s
   renderPrivacy();
   const weekly = item('Your organization and team', 'TownwiseAI’s weekly suggestions.');
   expect(weekly).toContain('It also reads the titles, dates and hours of the next 3 months of events on the location’s own calendars, with email addresses and phone numbers removed and never a calendar’s name, to spot private events, such as a party or a buyout, and ask whether each takes the whole restaurant. An org admin can turn this part off on its own on the TownwiseAI page.');
-  expect(weekly).toContain('A calendar added or connected before November 18, 2026, when the screens for adding one began to say this, sends no titles to the weekly suggestions until it is added or connected again.');
+  expect(weekly).toContain('A calendar added or connected on a screen that did not yet say this sends no titles to the weekly suggestions until it is added or connected again.');
+  expect(weekly).not.toContain('November 18, 2026');
   expect(weekly).toContain('When an event you made a note from moves or leaves your calendar, Townwise suggests moving or deleting the note. That comparison runs on our server with no AI, sends nothing to Anthropic, and runs even with weekly suggestions off.');
   expect(weekly).toContain('A suggestion from your calendars keeps the event’s ID, dates and hours, never its title, and its card reads the title from your calendar each time it shows.');
 });
