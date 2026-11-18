@@ -1393,10 +1393,11 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(within(sealedRow).getByText('Townwise can’t open this Google connection any more. Remove the calendar and add it again.')).toBeTruthy();
   });
 
-  test('with Google calendars off, a revoked Google calendar the person added offers no Reconnect', async () => {
+  test('with Google calendars off, a revoked Google calendar the person added offers no Reconnect and names none', async () => {
     await renderGoogle({ calendars: [MINE_REVOKED], google: { available: false, connected: false, clientId: null, canConnect: false } });
     const panel = openPopover();
     expect(within(panel).queryByRole('button', { name: 'Reconnect Bookings' })).toBeNull();
+    expect(within(panel).getByText(`${REVOKED} You can remove it.`)).toBeTruthy();
     expect(within(panel).getByRole('button', { name: 'Remove Bookings' })).toBeTruthy();
   });
 

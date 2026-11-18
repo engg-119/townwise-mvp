@@ -674,8 +674,9 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     setGoogleWords(null);
   }
 
-  /** Who can mend a calendar Google no longer lets Townwise read, from this popover. */
+  /** Who can mend a calendar Google no longer lets Townwise read, from this popover; no one while Google is off. */
   function reconnectOf(calendar: OwnerCalendar): Reconnect {
+    if (!props.google.available) return 'none';
     if (!calendar.mine) return 'other';
     return Platform.OS === 'web' ? 'here' : 'web';
   }

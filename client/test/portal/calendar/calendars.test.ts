@@ -117,6 +117,8 @@ describe('statusWords', () => {
     expect(statusWords('google_revoked', 'google', 'here')).toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. Reconnect, or remove it.');
     expect(statusWords('google_revoked', 'google', 'web'))
       .toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. Reconnect on the web, or remove it.');
+    // Google calendars off: no Google option is named, as the help and native's line name none.
+    expect(statusWords('google_revoked', 'google', 'none')).toBe('Couldn’t refresh: Google no longer lets Townwise read this calendar. You can remove it.');
     // Only google_revoked depends on it: key_mismatch still says remove and add again, since a fresh token can't open
     // calendar ids sealed under an old key.
     expect(statusWords('key_mismatch', 'google', 'here')).toBe('Townwise can’t open this Google connection any more. Remove the calendar and add it again.');

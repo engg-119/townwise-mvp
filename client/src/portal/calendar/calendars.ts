@@ -165,15 +165,18 @@ const LINK_REFUSALS: Readonly<Record<string, string>> = {
 
 /**
  * Who can mend a Google calendar Google no longer lets Townwise read: the person who added it, with Reconnect beside it
- * (`here`, on web) or on the web (`web`, on native, which connects nowhere), or someone else (`other`), who asks them.
+ * (`here`, on web) or on the web (`web`, on native, which connects nowhere), someone else (`other`), who asks them, or
+ * no one while Google calendars are off (`none`), when the popover names no Google option, as its help and native's
+ * line don't.
  */
-export type Reconnect = 'here' | 'web' | 'other';
+export type Reconnect = 'here' | 'web' | 'other' | 'none';
 
 const REVOKED = 'Couldn’t refresh: Google no longer lets Townwise read this calendar.';
 const REVOKED_WORDS: Readonly<Record<Reconnect, string>> = {
   here: `${REVOKED} Reconnect, or remove it.`,
   web: `${REVOKED} Reconnect on the web, or remove it.`,
   other: `${REVOKED} Ask whoever added it to reconnect, or remove it.`,
+  none: `${REVOKED} You can remove it.`,
 };
 
 /** A Google calendar's status after a failed refresh, but `google_revoked` (REVOKED_WORDS); its last good events stay. */
