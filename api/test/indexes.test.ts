@@ -25,6 +25,8 @@ describe('indexes', () => {
       // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
       'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
       'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
+      // A TownwiseAI turn's progress (openspec change resumable-chat-turns).
+      'tw_chat_turns',
       'tw_file_entries', 'tw_file_sweeps', 'tw_files', 'tw_files_usage', 'tw_imports', 'tw_locations', 'tw_members', 'tw_notes', 'tw_orgs', 'tw_sales_days', 'tw_upload_days',
       'tw_uploads', 'tw_view_as_grants',
       // U11, statement moments.
@@ -155,6 +157,14 @@ describe('indexes', () => {
     expect(indexesOf(registered(), 'TwChatLiveTurn')).toContainEqual([
       { orgId: 1, userId: 1 }, expect.objectContaining({ unique: true }),
     ]);
+  });
+
+  it('keeps one record per TownwiseAI turn, and indexes the sweep’s and the deletions’ queries (resumable-chat-turns)', () => {
+    const turns = indexesOf(registered(), 'TwChatTurn');
+    expect(turns).toContainEqual([{ orgId: 1, turnId: 1 }, expect.objectContaining({ unique: true })]);
+    for (const keys of [{ orgId: 1, conversationId: 1 }, { orgId: 1, locationId: 1 }, { userId: 1 }, { state: 1, leaseUntil: 1 }, { endedAt: 1 }]) {
+      expect(turns.map(([fields]) => fields)).toContainEqual(keys);
+    }
   });
 
   // U11, statement moments.

@@ -141,3 +141,7 @@ For the owner, each with the default this change builds:
 4. How long should an ended turn's record be kept for late readers? Default: 15 minutes.
 5. Should the chat page open the conversation with a running turn on load? Default: yes.
 6. Is it acceptable to ship with no environment switch to turn this off? Default: yes, rollback is the previous revision.
+
+## As built
+
+- **DocumentDB operators (task 1.1, 2026-11-17).** Azure DocumentDB's compatibility page (learn.microsoft.com/azure/documentdb/compatibility-features, updated 2026-05-22) lists only what is unsupported, and neither `$push`, `$each` nor `$slice` is on it. `$push` with `$each` is already in production use: `conversations.finish` appends a turn's messages with it. No Azure page could be found for the find projection's `$slice: [skip, limit]` form (the one Azure `$slice` page found is the aggregation expression), so that form is not relied on: `tw_chat_turns` records are read whole and the events after a cursor are picked in code. A record is at most about 1 MB (decision 2), so a tail's read every 500 ms stays small.

@@ -10,6 +10,7 @@ import { createCalibrationStore, type CalibrationStore } from './calibrations.ts
 import { createChatConversationStore, type ChatConversationStore } from './chat-conversations.ts';
 import { createChatLiveTurnStore, type ChatLiveTurnStore } from './chat-live-turns.ts';
 import { createChatProposalStore, type ChatProposalStore } from './chat-proposals.ts';
+import { createChatTurnStore, type ChatTurnStore } from './chat-turns.ts';
 import { createChatUsageStore, type ChatUsageStore } from './chat-usage.ts';
 import { createFileEntryStore, type FileEntryStore } from './file-entries.ts';
 import { fileSweepModel } from './file-sweeps.ts';
@@ -58,6 +59,8 @@ export interface TownwiseStores {
   readonly chatLiveTurns: ChatLiveTurnStore;
   readonly chatUsage: ChatUsageStore;
   readonly chatProposals: ChatProposalStore;
+  /** A TownwiseAI turn's progress while it runs, for readers that reattach (openspec change resumable-chat-turns). */
+  readonly chatTurns: ChatTurnStore;
   /** U9, TownwiseAI's questions. */
   readonly agentAnswers: AgentAnswerStore;
   /** TownwiseAI's weekly suggestions and each location's weekly pass (openspec change weekly-forecast-suggestions). */
@@ -110,6 +113,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     chatLiveTurns: createChatLiveTurnStore(connection),
     chatUsage: createChatUsageStore(connection),
     chatProposals: createChatProposalStore(connection),
+    chatTurns: createChatTurnStore(connection),
     // U9, TownwiseAI's questions.
     agentAnswers: createAgentAnswerStore(connection),
     // TownwiseAI's weekly suggestions.
