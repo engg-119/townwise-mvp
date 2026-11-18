@@ -309,7 +309,7 @@ describe('tools', () => {
     });
     expect(content(2)).toEqual({ notes: [{
       kind: 'closure', startDate: '2026-05-10', endDate: '2026-05-10', weekdays: null, startTime: null, endTime: null, effect: 'closed',
-      expectedGuests: null, detail: 'Closed for the floor refinish',
+      expectedGuests: null, title: null, detail: 'Closed for the floor refinish',
     }] });
     expect(content(3)).toMatchObject({ profile: { townId: 'hanover-nh', name: 'Hanover', county: expect.any(String) as unknown } });
 
@@ -354,7 +354,7 @@ describe('tools', () => {
     );
     const { events } = await turn({ content: 'We have a rehearsal dinner on June 20.' });
     expect(shape(events)).toEqual(['conversation', 'tool', 'proposal', 'tool', 'text', 'done']);
-    const proposal = { ...PROPOSAL, weekdays: [5, 6], startTime: null, endTime: null };
+    const proposal = { ...PROPOSAL, weekdays: [5, 6], title: null, startTime: null, endTime: null };
     expect(eventData(events, 'proposal')).toEqual([{ id: 'p1', proposal }]);
     expect(eventData(events, 'tool')).toEqual([
       { id: 'p1', name: 'propose_note', state: 'running', input: null, result: null },

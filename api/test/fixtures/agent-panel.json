@@ -24,7 +24,7 @@
         "id": "0000000000000000000000c1", "why": "Independence Day is Sat, Jul 4, and you were closed on it last year.",
         "calendar": [{ "id": "us:independence-day:2026", "title": "Independence Day", "start": "2026-07-04", "end": "2026-07-04" }],
         "createdAt": "2026-06-01T06:00:00.000Z", "type": "note",
-        "note": { "kind": "closure", "startDate": "2026-07-04", "weekdays": null, "effect": "closed", "expectedGuests": null, "startTime": null, "endTime": null, "endDate": "2026-07-04", "detail": null }
+        "note": { "kind": "closure", "startDate": "2026-07-04", "weekdays": null, "effect": "closed", "expectedGuests": null, "startTime": null, "endTime": null, "endDate": "2026-07-04", "detail": null, "title": null }
       }
     ],
     "weeklySuggestions": { "on": true, "available": false, "canChange": false }

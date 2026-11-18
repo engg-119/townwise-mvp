@@ -42,13 +42,13 @@ async function person(role: 'org_admin' | 'member'): Promise<TestSession> {
  * The author's conversation with one finished turn: TownwiseAI proposed `PROPOSAL` (call `toolu_proposal0001`), and a
  * note that broke a rule (call `toolu_invalid0001`, answered as an error, so never shown).
  */
-async function conversationWithProposal(opts: { location?: string; userId?: string } = {}): Promise<string> {
+async function conversationWithProposal(opts: { location?: string; userId?: string; input?: Record<string, unknown> } = {}): Promise<string> {
   const _id = new Types.ObjectId();
   const at = server.clock.now();
   const params = [
     { role: 'user', content: 'We have a rehearsal dinner on June 20.' },
     { role: 'assistant', content: [
-      { type: 'tool_use', id: 'toolu_proposal0001', name: 'propose_note', input: PROPOSAL },
+      { type: 'tool_use', id: 'toolu_proposal0001', name: 'propose_note', input: opts.input ?? PROPOSAL },
       { type: 'tool_use', id: 'toolu_invalid0001', name: 'propose_note', input: { ...PROPOSAL, endDate: '2026-06-19' } },
     ] },
     { role: 'user', content: [
@@ -142,6 +142,20 @@ describe('saving a proposal', () => {
     expect(body.proposal).toMatchObject({ status: 'saved', edited: true });
     expect(body.note).toMatchObject(edit);
     expect(await notesOf()).toEqual([expect.objectContaining(edit)]);
+  });
+
+  it('a proposal with a title (D49) saves it, and an edit of only the title counts as edited', async () => {
+    const id = await conversationWithProposal({ input: { ...PROPOSAL, title: 'Alumni weekend dinner' } });
+    const { status, body } = await act(id, { action: 'save' });
+    expect(status).toBe(200);
+    expect(body.proposal.edited).toBe(false);
+    expect(body.note).toMatchObject({ title: 'Alumni weekend dinner' });
+    expect((await notesOf())[0]).toMatchObject({ title: 'Alumni weekend dinner' });
+
+    const other = await conversationWithProposal({ input: { ...PROPOSAL, title: 'Alumni weekend dinner' } });
+    const edited = await act(other, { action: 'save', note: { ...PROPOSAL, title: 'Reunion dinner' } });
+    expect(edited.body.proposal.edited).toBe(true);
+    expect(edited.body.note).toMatchObject({ title: 'Reunion dinner' });
   });
 
   it('an edit identical to the proposal is not counted as edited', async () => {

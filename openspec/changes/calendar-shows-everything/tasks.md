@@ -66,7 +66,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - `noteId` is null once its note is deleted;
   - the list answer carries no `events`;
   - a cross-organization `GET data/f_` is 404.
-- [ ] 1.9 TownwiseAI tools, with tests in `api/test/chat-tools.test.ts` and `api/test/chat-data-tools.int.test.ts`:
+- [x] 1.9 TownwiseAI tools, with tests in `api/test/chat-tools.test.ts` and `api/test/chat-data-tools.int.test.ts`:
   - `api/src/chat/tools/notes.ts` and `day.ts` return `title`;
   - `propose-note.ts` takes `title` (in `required`, nullable, max 120, never a person), and the proposal saves it;
   - add one clause to each description;
