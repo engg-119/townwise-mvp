@@ -87,6 +87,31 @@ test('a rule’s schedule: Change the forecast opens the note form’s fields wi
   }]);
 });
 
+test('Every year (D46) is a 44px checkbox, and Add rule sends the season with no end', async () => {
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([]) });
+  await renderApp('/locations/l1/rules', api);
+  await fireEvent.changeText(await screen.findByLabelText('New rule'), 'Closed over the holidays');
+  await fireEvent.press(screen.getByRole('button', { name: 'Change the forecast' }));
+  const box = screen.getByRole('checkbox', { name: 'Every year' });
+  expect(minHeightOf(box)).toBeGreaterThanOrEqual(44);
+  await fireEvent.press(box);
+  expect(screen.getByRole('checkbox', { name: 'Every year' }).props.accessibilityState).toMatchObject({ checked: true });
+  expect(screen.getByText('Closes the same days every year from Starts on, until you delete the rule.')).toBeTruthy();
+  await fireEvent.changeText(screen.getByLabelText('Starts'), '2026-12-20');
+  await fireEvent.changeText(screen.getByLabelText('Ends'), '2027-01-05');
+  await fireEvent.press(screen.getByRole('button', { name: 'Add rule' }));
+  expect(await screen.findByText('Closed over the holidays')).toBeTruthy();
+  expect(writes(api)).toEqual([{
+    method: 'POST', path: PATH, body: {
+      text: 'Closed over the holidays',
+      schedule: {
+        kind: 'closure', startDate: '2026-12-20', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+        season: { repeat: 'yearly', from: '12-20', to: '01-05' },
+      },
+    },
+  }]);
+});
+
 test('the pressed control goes, so the screen reader moves: to the section’s heading on Change the forecast, to the line under its button on Remove', async () => {
   const send = jest.spyOn(AccessibilityInfo, 'sendAccessibilityEvent');
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: rulesFake([ruleOf('r1', 'Closed Mondays')]) });

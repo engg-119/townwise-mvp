@@ -254,6 +254,48 @@ test('editing a rule with a schedule opens its section filled in; removing it se
   });
 });
 
+test('Every year (D46): the box makes Starts and Ends the first season, requires Ends, and an edit prefills it', async () => {
+  const { api } = setup();
+  renderAt('/locations/l1/rules', api);
+  await screen.findByText('Closed Mondays');
+  fireEvent.change(field(), { target: { value: 'Closed in winter' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Change the forecast' }));
+  const fields = section();
+  const box = within(fields).getByRole<HTMLInputElement>('checkbox', { name: 'Every year' });
+  expect(box.checked).toBe(false);
+  fireEvent.click(box);
+  expect(box.checked).toBe(true);
+  const help = within(fields).getByText('Closes the same days every year from Starts on, until you delete the rule.');
+  expect(box.getAttribute('aria-describedby')).toBe(help.id);
+  // Ends is no longer optional.
+  expect(within(fields).queryByLabelText('Ends (optional)')).toBeNull();
+  fireEvent.change(within(fields).getByLabelText('Starts'), { target: { value: '2027-01-01' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  expect(within(fields).getByText('Enter the season’s last day.')).toBeTruthy();
+  fireEvent.change(within(fields).getByLabelText('Ends'), { target: { value: '2027-12-31' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  expect(within(fields).getByText('Pick a season shorter than a year that doesn’t start or end on Feb 29.')).toBeTruthy();
+  expect(writes(api)).toEqual([]);
+  fireEvent.change(within(fields).getByLabelText('Ends'), { target: { value: '2027-03-31' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Add rule' }));
+  expect(await screen.findByText('Closed in winter')).toBeTruthy();
+  const winter = {
+    kind: 'closure', startDate: '2027-01-01', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+    season: { repeat: 'yearly', from: '01-01', to: '03-31' },
+  };
+  expect(writes(api)).toEqual([{ method: 'POST', path: PATH, body: { text: 'Closed in winter', schedule: winter } }]);
+
+  // Its edit opens with the box checked and the first season filled in; saved unchanged, the same season goes.
+  fireEvent.click(screen.getByRole('button', { name: 'Edit “Closed in winter”' }));
+  const editing = section(editingRow());
+  expect(within(editing).getByRole<HTMLInputElement>('checkbox', { name: 'Every year' }).checked).toBe(true);
+  expect(within(editing).getByLabelText<HTMLInputElement>('Starts').value).toBe('2027-01-01');
+  expect(within(editing).getByLabelText<HTMLInputElement>('Ends').value).toBe('2027-03-31');
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api).at(-1)).toEqual({ method: 'PATCH', path: `${PATH}/r101`, body: { text: 'Closed in winter', schedule: winter } });
+});
+
 test('adds a rule with Enter, edits one in place and deletes one after confirming', async () => {
   const { api, fake } = setup();
   renderAt('/locations/l1/rules', api);

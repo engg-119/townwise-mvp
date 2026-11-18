@@ -78,7 +78,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 - [x] 3.2 `agent/questions.ts` `noteCovers` learns the season, including one crossing the new year. `rules.ts` `sameSchedule` compares it.
 - [x] 3.3 `forecasts/reasons.ts`: `scheduleSummary` and `ruleReasonView` word a season as in design decision 12.
 - [x] 3.4 `lab/suggestions.ts`: the one sentence on `season` in `SUGGESTIONS_SYSTEM_PROMPT`; the request sends it.
-- [ ] 3.5 Client: `client/src/portal/analytics/days.ts` `noteCovers` mirror; `rules/api.ts` schema; the P29 form's "Every year" box in `NoteFields` (rules only), with `checkSchedule`, `draftOfSchedule` and its words in `noteRules.ts` and `rules.ts`; editing a yearly rule prefills its first season.
+- [x] 3.5 Client: `client/src/portal/analytics/days.ts` `noteCovers` mirror; `rules/api.ts` schema; the P29 form's "Every year" box in `NoteFields` (rules only), with `checkSchedule`, `draftOfSchedule` and its words in `noteRules.ts` and `rules.ts`; editing a yearly rule prefills its first season.
 
 ## 4. Client (web and native)
 
@@ -136,7 +136,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
     - a past range, a 400-day span and a pattern with neither weekdays nor dates are dropped;
     - "closed every winter, January to March" gives `yearly`;
     - an answer with no `closedPatterns` reads as empty.
-- [ ] 6.2 Season unit tests:
+- [x] 6.2 Season unit tests:
   - `noteCovers` with a season, one crossing the new year, Feb 29 in a leap year inside a season, and before `startDate`;
   - `validDays` refusals;
   - `scheduleSummary` and the reason label;

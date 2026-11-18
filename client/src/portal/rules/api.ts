@@ -11,7 +11,14 @@ function rulesPath(locationId: string): `/${string}` {
   return `/api/org/locations/${encodeURIComponent(locationId)}/rules`;
 }
 
-/** A rule's schedule (D31): a note's fields but its detail, with `endDate` null for no end. */
+/** D46: a yearly season, 'MM-DD' to 'MM-DD' both inclusive; `to` before `from` crosses the new year. */
+export const ruleSeasonSchema = z.object({ repeat: z.literal('yearly'), from: z.string(), to: z.string() });
+export type RuleSeason = z.infer<typeof ruleSeasonSchema>;
+
+/**
+ * A rule's schedule (D31): a note's fields but its detail, with `endDate` null for no end, and (D46) a yearly season,
+ * absent or null for none, with `endDate` null.
+ */
 export const ruleScheduleSchema = z.object({
   kind: z.enum(NOTE_KINDS),
   startDate: z.string(),
@@ -21,6 +28,7 @@ export const ruleScheduleSchema = z.object({
   expectedGuests: z.number().nullable(),
   startTime: z.string().nullable(),
   endTime: z.string().nullable(),
+  season: ruleSeasonSchema.nullish(),
 });
 export type RuleSchedule = z.infer<typeof ruleScheduleSchema>;
 
