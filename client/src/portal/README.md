@@ -11,7 +11,7 @@ The signed-in app of `docs/portal/spec.md`: access routing (4.3), the app shell 
 | P5 No access | `/no-access` | `(access)/no-access.tsx` | built |
 | P6 Joining | `/joining` | `(access)/joining.tsx` | built |
 | P7 Two-step sign-in | `/settings/security` | `(account)/settings/security.tsx` | built: steps in panels, Copy on web, the staff setup lead (a kit screen: `client/MODULE.md`, Local changes) |
-| P8 Staff sign in again | `/staff/sign-in-again` | `(access)/staff/sign-in-again.tsx` | built |
+| P8 Staff sign in again | none | `AccessGuard` in `shell/PortalGate.tsx` signs the session out to `/sign-in`, with the reason as its notice | built |
 | P9 Locations | `/dashboard` | `(client)/dashboard.tsx` | built |
 | P10 Add location | `/locations/new` | `(client)/locations/new.tsx` | built (`src/portal/locations/`, `AddLocationForm`), with the places checklist while the Places search is on |
 | P11 Home | `/locations/[locationId]` | `(client)/locations/[locationId]/index.tsx` | built (`src/portal/home/`); onboarding step 3 (`src/portal/onboarding/`, `HistoryStep`) takes the place of the cards that need days while `needsHistory` holds and the location has no stored day. This month reads the month's published forecast on its own, and Last week the seven days before today's (D42, `analytics/week.ts` `lastWeekComparison`), each never in Home's way; This month shows the Calendar's tooltip (`calendar/DayTooltip.web.tsx`, `calendar/model.ts` `tooltipLines`) and opens a day in P28 |

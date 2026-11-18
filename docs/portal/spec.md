@@ -251,7 +251,7 @@ The client calls `GET /api/me` after restore, after sign-in, after join and afte
 |---|---|
 | `staff` | `/admin`; with `viewAs` set, the target’s route under the view-as banner; with `openAsAdmin` set, the organization admin’s route under the open-as-admin banner (D25) |
 | `staff_setup_required` | `/settings/security` with the staff notice (**Exists**; notice added) |
-| `staff_reauth_required` | `/staff/sign-in-again` |
+| `staff_reauth_required` | none: the client signs the session out to `/sign-in`, with the reason as its notice (P8). `/settings/security` stays open |
 | `member` | `/dashboard` |
 | `invited` | `/joining` |
 | `pending` | `/waiting` |
@@ -352,7 +352,7 @@ Staff do the same for any organization from its detail page. Those rows carry `a
 
 1. A staff email continues with Google, and `GET /api/me` answers `staff_setup_required`. The client opens `/settings/security` (**Exists**) with the notice “Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.”
 2. After enrollment the kit shows recovery codes once and revokes the other sessions (**Exists**). This session predates `enabledAt`, so the resolver answers `staff_reauth_required` (`session_before_codes`), and the client offers “Sign in again”. The second sign-in goes through the code step, which also proves the authenticator works.
-3. Every 60 minutes staff sign in again with a code on `/staff/sign-in-again`. The shell has no return-to route (expo-shell Known gaps, **Exists**), so staff land on `/admin`.
+3. Every 60 minutes the client signs staff out to the ordinary sign-in page (P8), where they sign in again with a code. The shell has no return-to route (expo-shell Known gaps, **Exists**), so staff land on `/admin`.
 
 Runbook line: add a staff email only when that person will sign in and enroll within minutes. Until they enroll, anyone who takes over their Google account could enroll a factor of their own. People shows each staff email’s two-step status.
 
@@ -1898,7 +1898,7 @@ Mockup builders work from this section in parallel, so every page uses exactly t
 | Frame | Used by | Top bar | Nav items |
 |---|---|---|---|
 | **Public** | `/sign-in`, `/totp` | the marketing Nav and footer, as on the SignIn artboard (**Exists**) | the marketing links |
-| **Gate** | `/request-access`, `/waiting`, `/no-access`, `/joining`, `/staff/sign-in-again`, the staff notice on `/settings/security` | `ground` fill, 64px; wordmark left; right: “Signed in as {email}” (`mono`, `text3`, hidden below 641px) and “Sign out” (text link) | none |
+| **Gate** | `/request-access`, `/waiting`, `/no-access`, `/joining`, the staff notice on `/settings/security` | `ground` fill, 64px; wordmark left; right: “Signed in as {email}” (`mono`, `text3`, hidden below 641px) and “Sign out” (text link) | none |
 | **Client app** | members and org admins, and staff in view-as | `ground` fill, 64px | per role (15.3) |
 | **Staff console** | staff | `panel` fill, 64px | Requests, Organizations, People, Audit log |
 
@@ -2001,7 +2001,7 @@ The sections are Home (`/locations/[id]`), Calendar (`/locations/[id]/calendar`,
 - **No time.** The mode has no timer of its own (D25), so the line has none.
 - **Every control is enabled**, Sign out included: signing out ends the staff sign-in, and with it the mode. Sign out first sends End with `{ grantId }`, so `open_as_admin.ended` is recorded at the sign-out; a failed End never stops the sign-out. Nothing is read-only and there is no helper line.
 - **End** sends `POST /api/admin/view-as/end` with `{ grantId }`, the grant the banner shows (8a), and applies the answer, the staff member’s own access, so the client goes to `/admin`.
-- **When it ends** (End, a suspension; never a join), the next `GET /api/me` returns staff access without `openAsAdmin`. The client goes to `/admin` and shows the notice “Setting up {org} as Townwise staff ended at {time}.” once. A read that finds it ended sends End once, naming the grant it showed (4.3). When the staff sign-in ends, `GET /api/me` answers `staff_reauth_required` instead and the client goes to `/staff/sign-in-again`, with no notice and no End; the next start or End records the end (8a).
+- **When it ends** (End, a suspension; never a join), the next `GET /api/me` returns staff access without `openAsAdmin`. The client goes to `/admin` and shows the notice “Setting up {org} as Townwise staff ended at {time}.” once. A read that finds it ended sends End once, naming the grant it showed (4.3). When the staff sign-in ends, `GET /api/me` answers `staff_reauth_required` instead and the client signs out to `/sign-in` (P8), with no End; the next start or End records the end (8a).
 
 ### 15.6 Visual language
 
@@ -2072,7 +2072,7 @@ Two full-screen statements reveal word by word, hold, then dissolve into the pag
 | P5 | `/no-access` | No access (rejected, removed, left, paused) | `rejected`, `removed`, `org_suspended` | Gate |
 | P6 | `/joining` | Joining your team, choosing one, or saying it isn’t yours | `invited` | Gate |
 | P7 | `/settings/security` | Two-step sign-in (**Exists**), with the staff setup notice | everyone; staff in setup | Gate for staff in setup, Client app otherwise |
-| P8 | `/staff/sign-in-again` | Staff sign in again | `staff_reauth_required` | Gate |
+| P8 | none (`/sign-in`) | Staff sign in again | `staff_reauth_required` | Sign-in |
 | P9 | `/dashboard` | Locations, home and first-run | members | Client app |
 | P10 | `/locations/new` | Add location | org admins | Client app |
 | P11 | `/locations/[id]` | Home, a dashboard of blocks: at a glance, this week on the calendar and in past years, this month’s calendar with a day’s detail, last week, bar order (the next order, or what is missing; D35), who’s in town, past years, your history | members | Client app |
@@ -2173,12 +2173,12 @@ States: Loading shows “Checking your access”; Error shows the network copy w
 
 **P7. Two-step sign-in (`/settings/security`).** **Exists.** For staff in `staff_setup_required`, a notice sits above the existing screen: “Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.” After the recovery codes, the page shows the primary “Sign in again”, which signs out and opens `/sign-in`. Enrolling needs a sign-in within the last 15 minutes; the shell already handles the kit’s `reauth_required` (**Exists**). Until the account is read, the skeleton of the “Before you start” panel (15.7), with “Loading two-step sign-in”.
 
-**P8. Staff sign in again (`/staff/sign-in-again`).** Title “Sign in again to use the staff console”. The body depends on the reason:
+**P8. Staff sign in again (no page of its own).** When `GET /api/me` answers `staff_reauth_required` on any portal path but `/settings/security`, the client signs out at once (kit `POST /auth/logout`) and the gate opens the ordinary sign-in page, whose notice gives the reason:
 
-- `session_before_codes`: “This session started before two-step sign-in was on.”
+- `session_before_codes`: “Two-step sign-in is on. Sign in again with your code.”
 - `session_too_old`: “Staff sessions need a fresh sign-in with your code every 60 minutes.”
 
-Primary: “Sign in again” (kit `POST /auth/logout`, then `/sign-in`).
+Until the sign-out answers, the gate frame shows “Signing you out”. A sign-out that fails shows “Couldn’t sign out. Check your connection and try again.” with Try again. `/settings/security` stays open in this state, so the recovery codes after enrollment (P7) are never cut off; P7's own “Sign in again” signs out from there. Owner request of 2026-11-17: the separate page (“Sign in again to use the staff console”, with its own button) is gone.
 
 ### 16.3 Client app pages
 
@@ -2939,6 +2939,8 @@ Each is marked inline with “lead default”:
 ---
 
 ## 23. Changelog
+
+**2026-11-17, staff sign in again (P8).** Owner request of 2026-11-17 (“let's remove the sign in again as an admin page and just show the normal sign in page”): `/staff/sign-in-again` is removed. A staff session that resolves to `staff_reauth_required` is signed out at once and lands on `/sign-in`, whose notice gives the reason (4.3, F9, P8). `/settings/security` stays open in that state. The API is unchanged. `client/test/app/gate-pages.test.native.tsx` (P8) and `client/test/portal/console/requests.test.web.tsx` > “a staff window that ran out mid-action signs staff out to the ordinary sign-in page” pin this.
 
 **2026-11-16, autonomous forecasts (D42).** Owner request of 2026-11-16 (“set this up so it runs autonomously”; OpenSpec change `autonomous-forecasts`): every location of an organization whose forecasts are on keeps a published forecast reaching 91 days past today, refreshed weekly by a background worker with no person starting anything (14.6). Decided: an hourly scheduled job (`caj-townwise-forecasts`, running the worker `api/src/workers/weekly-forecasts.ts`) under a Mongo lease starts one scheduled calibration per changed location a week from 03:00 on Monday in the town, system-paid, at most 3 live and roughly 200 a week, recorded in the new collections `tw_forecast_schedule` (6.25) and `tw_forecast_weeks` (6.26), stopped by `TOWNWISE_WEEKLY_FORECASTS` (18), a staff pause (P21, `POST /api/admin/forecast-schedule`, audited `forecast_schedule.paused` and `.resumed`; each start `calibration.scheduled`) or G1; a baseline engine beside the model, from 230 days on scheduled calibrations only, the current engine sticking unless the other is 0.5 points better; lab input version 2 with the town calendar’s entries (10.15); one set of publish rules for every calibration, with a same-engine tolerance against the streak’s best (a tie publishing, an exception to G2), each engine’s absolute checks, a 25% jump guard and the reasons `refreshed`, `refresh_worse`, `model_not_run`, `biased` and `jump_held` (6.23); runs to today plus 91 days; `calibrated` and `stale` as derived states (14.3); and Home’s Last week showing the published forecast’s error, or the forecast where no guest count is uploaded (P11), Home’s “never a guess” becoming “never an unpublished guess”. Built in phase 1: the forecast route and `get_forecast` read up to 92 days (10.13, a frozen-prefix change, `tuning-chat.md` section 4), with the window’s `accuracy`, each day’s `scored` and each run’s `engine` and the baseline’s label (14.4); `seasonal_baseline` as a model family (6.20); and the client and the staff view accepting the new states, requester and gate reasons. The rest lands in later phases. Owner directive, the same day: every part is on by default (the env switch, and forecasts for every organization, reversing G1, item 94), runs as a background worker, and is tested end to end before anything is pushed; nothing publishes in production until the lab is enabled there. D27, G2, 6.20, 6.23, 10.13, 10.15, 14.2 to 14.4, P11 and P21 carry build notes; D12 and its DECISION NEEDED are unchanged, since a calibration a person starts keeps 595 days. TownwiseAI’s weekly suggestions of notes and rules are the follow-up change `weekly-forecast-suggestions`. Its defaults are CONFIRM index items 83 to 94. Written in `feat/autonomous-forecasts` (openspec change `autonomous-forecasts`).
 

@@ -15,7 +15,6 @@ import RequestAccess from '../../app/(gate)/(app)/(access)/request-access';
 import Waiting from '../../app/(gate)/(app)/(access)/waiting';
 import NoAccess from '../../app/(gate)/(app)/(access)/no-access';
 import Joining from '../../app/(gate)/(app)/(access)/joining';
-import StaffSignInAgain from '../../app/(gate)/(app)/(access)/staff/sign-in-again';
 import AccountLayout from '../../app/(gate)/(app)/(account)/_layout';
 import Security from '../../app/(gate)/(app)/(account)/settings/security';
 import ClientLayout from '../../app/(gate)/(app)/(client)/_layout';
@@ -81,7 +80,6 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(access)/waiting': Waiting,
     '(gate)/(app)/(access)/no-access': NoAccess,
     '(gate)/(app)/(access)/joining': Joining,
-    '(gate)/(app)/(access)/staff/sign-in-again': StaffSignInAgain,
     '(gate)/(app)/(account)/_layout': AccountLayout,
     '(gate)/(app)/(account)/settings/security': Security,
     '(gate)/(app)/(client)/_layout': ClientLayout,

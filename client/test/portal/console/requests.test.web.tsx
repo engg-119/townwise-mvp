@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-import { ACCESS, deferred, offline, refusal, staffMe, viewAsMe, writes } from '../../helpers/portal';
+import { ACCESS, deferred, offline, refusal, STAFF_EMAIL, staffMe, viewAsMe, writes } from '../../helpers/portal';
+import { createAuthStore } from '../../../src/auth/store';
 import { adminRequest, consoleApi, emailOf, renderAt, REQUESTER_EMAIL, type ConsoleApi } from './helpers';
 
 // P19 Requests, with Approve (C3), Reject (C4) and View as (C1): docs/portal/spec.md 16.4, F3, F4, F8.
@@ -450,17 +451,24 @@ test('while view-as is active, the console answers 409 view_as_active and the sh
   expect(await screen.findByRole('region', { name: 'View-as' })).toBeTruthy();
 });
 
-test('a staff window that ran out mid-action sends staff to sign in again', async () => {
+test('a staff window that ran out mid-action signs staff out to the ordinary sign-in page', async () => {
   const api = consoleApi();
+  const store = createAuthStore({ status: 'signedIn', user: { id: 's1', email: STAFF_EMAIL } });
+  const signOut = jest.fn((notice?: string) => {
+    store.set(notice === undefined ? { status: 'signedOut' } : { status: 'signedOut', notice });
+    return Promise.resolve();
+  });
   list(api, 'pending', [TAVERN]);
   api.routes['POST /api/admin/requests/r1/approve'] = () => {
     api.me = staffMe(ACCESS.staffReauth);
     return refusal(403, 'staff_reauth_required');
   };
-  renderAt('/admin', api);
+  renderAt('/admin', api, { signOut, store });
   fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
-  await waitFor(() => { expect(window.location.pathname).toBe('/staff/sign-in-again'); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/sign-in'); });
+  expect(signOut).toHaveBeenCalledWith('Staff sessions need a fresh sign-in with your code every 60 minutes.');
+  expect(await screen.findByText('Staff sessions need a fresh sign-in with your code every 60 minutes.')).toBeTruthy();
 });
 
 function navCount(): string | null | undefined {

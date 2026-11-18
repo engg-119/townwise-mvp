@@ -15,7 +15,7 @@ import { ACCESS, meOf, openAsAdminMe, orgOf, refusal, staffMe, viewAsMe } from '
 
 const ALL: [string, Access][] = Object.entries(ACCESS);
 
-const GATE = ['/request-access', '/waiting', '/no-access', '/joining', '/staff/sign-in-again'];
+const GATE = ['/request-access', '/waiting', '/no-access', '/joining'];
 /** An upload's and a stored file's item page (P27). */
 const UPLOAD_ITEM = '/locations/l1/data/u_0123456789abcdef01234567';
 const FILE_ITEM = '/locations/l1/data/f_89abcdef0123456789abcdef';
@@ -33,7 +33,7 @@ describe('access routing (spec 4.3)', () => {
     expect(HOME).toEqual({
       staff: '/admin',
       staff_setup_required: '/settings/security',
-      staff_reauth_required: '/staff/sign-in-again',
+      staff_reauth_required: null,
       member: '/dashboard',
       invited: '/joining',
       pending: '/waiting',
@@ -46,15 +46,18 @@ describe('access routing (spec 4.3)', () => {
 
   test.each(ALL)('%s may stay on its own route, so a redirect never loops', (_name, access) => {
     const me = access.state.startsWith('staff') ? staffMe(access) : meOf(access);
-    expect(isAllowed(me, homeFor(me))).toBe(true);
-    if (!access.state.startsWith('staff')) expect(isAllowed(viewAsMe(access), homeFor(meOf(access)))).toBe(true);
+    // A staff session that must sign in again has no route: the guard signs it out instead of redirecting.
+    const home = homeFor(me);
+    if (access.state === 'staff_reauth_required') expect(home).toBeNull();
+    else expect(isAllowed(me, home ?? '')).toBe(true);
+    if (!access.state.startsWith('staff')) expect(isAllowed(viewAsMe(access), homeFor(meOf(access)) ?? '')).toBe(true);
   });
 
   test('the paths each state may open; every other path redirects', () => {
     const allowed = (me: Parameters<typeof isAllowed>[0]): string[] => EVERY.filter((path) => isAllowed(me, path));
     expect(allowed(staffMe())).toEqual([...CONSOLE, '/settings/security']);
     expect(allowed(staffMe(ACCESS.staffSetup))).toEqual(['/settings/security']);
-    expect(allowed(staffMe(ACCESS.staffReauth))).toEqual(['/staff/sign-in-again', '/settings/security']);
+    expect(allowed(staffMe(ACCESS.staffReauth))).toEqual(['/settings/security']);
     expect(allowed(meOf(ACCESS.member))).toEqual([...MEMBER, '/settings/security']);
     expect(allowed(meOf(ACCESS.admin))).toEqual([...MEMBER, ...ADMIN_ONLY, '/settings/security']);
     expect(allowed(meOf(ACCESS.invited))).toEqual(['/joining', '/settings/security']);
@@ -76,7 +79,7 @@ describe('access routing (spec 4.3)', () => {
 
   test('open as admin routes as the organization’s admin without Team, never into the console', () => {
     expect(EVERY.filter((path) => isAllowed(openAsAdminMe(), path))).toEqual([...MEMBER, '/locations/new', '/locations/l1/settings', '/settings/security']);
-    expect(isAllowed(openAsAdminMe(), homeFor(openAsAdminMe()))).toBe(true);
+    expect(isAllowed(openAsAdminMe(), homeFor(openAsAdminMe()) ?? '')).toBe(true);
   });
 
   test('paths are compared without a trailing slash, query or fragment', () => {

@@ -124,7 +124,7 @@ function useSignOut(): { run: () => void; failed: React.ReactNode } {
   return { run: action.run, failed };
 }
 
-/** Request access, Waiting, No access, Joining, Staff sign in again, and P7 for anyone without an organization. */
+/** Request access, Waiting, No access, Joining, and P7 for anyone without an organization. */
 export function GateFrame(props: { children: React.ReactNode }): React.JSX.Element {
   const authState = useAuthState();
   const portal = useOptionalPortal();

@@ -30,7 +30,6 @@ function meFor(access: Access): MeResponse {
 test.each<[string, Access, string, string]>([
   ['staff', ACCESS.staff, '/admin', 'The staff console is on the web. Open townwise.tech on a computer.'],
   ['staff_setup_required', ACCESS.staffSetup, '/settings/security', 'Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.'],
-  ['staff_reauth_required', ACCESS.staffReauth, '/staff/sign-in-again', 'Sign in again to use the staff console'],
   ['member', ACCESS.member, '/dashboard', 'Main Street Bar'],
   ['invited', TWO_INVITES, '/joining', 'Choose your team'],
   ['pending', ACCESS.pending, '/waiting', 'Your request is in'],

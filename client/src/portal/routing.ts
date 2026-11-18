@@ -5,11 +5,14 @@ import type { AccessState, MeResponse, Role } from './schemas';
 // The portal layout (app/(gate)/(app)/_layout.tsx) redirects any path isAllowed refuses to homeFor. A new page
 // adds its path here, in the state or role that may open it, or it redirects.
 
-/** Each access state's own route (4.3). Staff in view-as are routed by the target's access. */
-export const HOME: Readonly<Record<AccessState, string>> = {
+/**
+ * Each access state's own route (4.3). Staff in view-as are routed by the target's access. `staff_reauth_required` has
+ * none: the guard signs the session out instead, so staff sign in again on the ordinary sign-in page.
+ */
+export const HOME: Readonly<Record<AccessState, string | null>> = {
   staff: '/admin',
   staff_setup_required: '/settings/security',
-  staff_reauth_required: '/staff/sign-in-again',
+  staff_reauth_required: null,
   member: '/dashboard',
   invited: '/joining',
   pending: '/waiting',
@@ -25,7 +28,6 @@ const GATE_PAGES: Readonly<Record<string, readonly AccessState[]>> = {
   '/waiting': ['pending'],
   '/no-access': ['rejected', 'removed', 'org_suspended'],
   '/joining': ['invited'],
-  '/staff/sign-in-again': ['staff_reauth_required'],
 };
 
 const ID = '[^/]+';
@@ -44,7 +46,8 @@ const MEMBER_PAGES = new RegExp(
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
 const CONSOLE_PAGES = /^\/admin(\/.*)?$/;
 
-export function homeFor(me: MeResponse): string {
+/** The access's own route, or null when the session has to sign in again first. */
+export function homeFor(me: MeResponse): string | null {
   return HOME[me.access.state];
 }
 
