@@ -42,7 +42,7 @@ import { townCalendarOf, townTermEntries } from '../forecasts/reasons.ts';
 import { readNoteContent, readRuleSchedule } from '../handlers/notes.ts';
 import { ruleTextOf } from '../handlers/rules.ts';
 import type { NewSuggestion, SuggestionContent } from '../stores/agent-suggestions.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import { sameSeason, type RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import { localDay, timeZoneOf, weekdayOf } from '../time-zones.ts';
@@ -86,6 +86,7 @@ export const SUGGESTIONS_SYSTEM_PROMPT = [
   'Only three things change Townwise\'s forecast: a closure (kind closure, effect closed), a buyout (kind private_event, effect closed, expectedGuests the party\'s size), and a private event with a guest count (kind private_event, effect more_guests, expectedGuests set). Suggest those. Never suggest more_guests or fewer_guests without a guest count, an opening, or a reminder: they change nothing.',
   'Good suggestions: a closure on a holiday this location was closed on in past years (see each entry\'s pastDays and history), a closure on a day the town calendar suggests the owner would close (a holiday most restaurants in a small town close for), a counted private event the owner usually books around a town event (commencement, reunions), a standing rule for a recurring pattern that the calendar makes likely. Prefer fewer, surer suggestions; answer an empty list when nothing is worth asking.',
   'A note covers one date range (endDate at most 366 days after startDate). A business rule is a standing fact with short words (text, at most 200 characters, like "Closed on Thanksgiving") and a schedule with the same fields as a note but no detail; its endDate may be null for no end. Use type "note" for a one-off and "rule" only for something that repeats.',
+  'A rule\'s season, when set, repeats its closure on the same months and days every year from its startDate.',
   'Every date is YYYY-MM-DD, from the request\'s from to its to. weekdays is null for every day in the range, or numbers from 0 (Sunday) to 6. startTime and endTime are both null (all day) or both HH:MM. detail is null or at most 280 characters (required on kind other). On a rule, detail is null and ruleText holds the words; on a note, ruleText is null.',
   'Never repeat a note, a rule or an earlier suggestion in the request: one that covers the same days the same way is dropped.',
   'why is one short sentence the owner reads beside the suggestion, in plain words, naming the calendar entry (for example "Thanksgiving is Thu, Nov 26, and you were closed on it last year."). calendarIds lists the ids of the calendar entries it rests on.',
@@ -183,13 +184,16 @@ export function suggestionsReserveMicroUsd(params: BetaMessageStreamParams): num
   return Math.max(SUGGESTIONS_RESERVE_MICRO_USD, ceiling);
 }
 
-/** The days a note, a rule's schedule or a suggestion decides, field by field; its words (a note's detail) aside. */
-type Days = Pick<RuleSchedule, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'startTime' | 'endTime'>;
+/**
+ * The days a note, a rule's schedule or a suggestion decides, field by field; its words (a note's detail) aside. A note
+ * has no season (D46).
+ */
+type Days = Pick<RuleSchedule, 'kind' | 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'expectedGuests' | 'startTime' | 'endTime' | 'season'>;
 
 function sameDays(a: Days, b: Days): boolean {
   return a.kind === b.kind && a.startDate === b.startDate && a.endDate === b.endDate && a.effect === b.effect
     && a.expectedGuests === b.expectedGuests && a.startTime === b.startTime && a.endTime === b.endTime
-    && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays);
+    && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays) && sameSeason(a.season, b.season);
 }
 
 function daysOf(content: SuggestionContent): Days {

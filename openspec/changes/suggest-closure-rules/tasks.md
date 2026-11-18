@@ -68,16 +68,16 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 
 ## 3. Seasons in D31 rule schedules
 
-- [ ] 3.1 `stores/business-rules.ts`: `season { repeat: 'yearly', from, to }` on `RuleSchedule` and its schema (absent read as null). `handlers/notes.ts` `validDays` and `readRuleSchedule`:
+- [x] 3.1 `stores/business-rules.ts`: `season { repeat: 'yearly', from, to }` on `RuleSchedule` and its schema (absent read as null). `handlers/notes.ts` `validDays` and `readRuleSchedule`:
   - real month-days, never `02-29`;
   - shorter than a year;
   - `endDate` null with a season;
   - notes refuse a season.
 
   `[CONFIRM: a yearly rule runs every year from its start until it is deleted; Feb 29 can't start or end a season; a season is shorter than a year]`
-- [ ] 3.2 `agent/questions.ts` `noteCovers` learns the season, including one crossing the new year. `rules.ts` `sameSchedule` compares it.
-- [ ] 3.3 `forecasts/reasons.ts`: `scheduleSummary` and `ruleReasonView` word a season as in design decision 12.
-- [ ] 3.4 `lab/suggestions.ts`: the one sentence on `season` in `SUGGESTIONS_SYSTEM_PROMPT`; the request sends it.
+- [x] 3.2 `agent/questions.ts` `noteCovers` learns the season, including one crossing the new year. `rules.ts` `sameSchedule` compares it.
+- [x] 3.3 `forecasts/reasons.ts`: `scheduleSummary` and `ruleReasonView` word a season as in design decision 12.
+- [x] 3.4 `lab/suggestions.ts`: the one sentence on `season` in `SUGGESTIONS_SYSTEM_PROMPT`; the request sends it.
 - [ ] 3.5 Client: `client/src/portal/analytics/days.ts` `noteCovers` mirror; `rules/api.ts` schema; the P29 form's "Every year" box in `NoteFields` (rules only), with `checkSchedule`, `draftOfSchedule` and its words in `noteRules.ts` and `rules.ts`; editing a yearly rule prefills its first season.
 
 ## 4. Client (web and native)

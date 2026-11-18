@@ -14,7 +14,7 @@ import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { utcDay } from '../dates.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
 import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
-import { MAX_RULES, type BusinessRuleRecord, type RuleSchedule, type RuleVia } from '../stores/business-rules.ts';
+import { MAX_RULES, sameSeason, type BusinessRuleRecord, type RuleSchedule, type RuleVia } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { readRuleSchedule } from './notes.ts';
@@ -89,7 +89,7 @@ function sameSchedule(a: RuleSchedule | null, b: RuleSchedule | null): boolean {
   if (a === null || b === null) return a === b;
   return a.kind === b.kind && a.startDate === b.startDate && a.endDate === b.endDate && a.effect === b.effect
     && a.expectedGuests === b.expectedGuests && a.startTime === b.startTime && a.endTime === b.endTime
-    && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays);
+    && JSON.stringify(a.weekdays) === JSON.stringify(b.weekdays) && sameSeason(a.season, b.season);
 }
 
 function canEdit(caller: MemberPrincipal, rule: BusinessRuleRecord): boolean {

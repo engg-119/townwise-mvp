@@ -527,6 +527,27 @@ describe('question ids and the notes an answer saves', () => {
     expect(isClosure({ kind: 'private_event', effect: 'closed' })).toBe(true);
     expect(isClosure({ kind: 'other', effect: 'fewer_guests' })).toBe(false);
   });
+
+  it('noteCovers reads a yearly season: its months and days every year from its start, on its weekdays', () => {
+    const winter = { startDate: '2026-11-17', endDate: null, weekdays: null, season: { repeat: 'yearly' as const, from: '01-01', to: '03-31' } };
+    expect(['2027-02-10', '2028-02-10', '2027-01-01', '2027-03-31'].map((day) => noteCovers(winter, day))).toEqual([true, true, true, true]);
+    expect(['2027-04-01', '2026-12-31', '2026-02-10'].map((day) => noteCovers(winter, day))).toEqual([false, false, false]);
+    // Before its start, the season never covers a day, last winter's included.
+    expect(noteCovers({ ...winter, startDate: '2027-02-15' }, '2027-02-10')).toBe(false);
+    expect(noteCovers({ ...winter, startDate: '2027-02-15' }, '2027-02-15')).toBe(true);
+    // Across the new year.
+    const holidays = { ...winter, season: { repeat: 'yearly' as const, from: '12-20', to: '01-05' } };
+    expect(['2026-12-31', '2027-01-03', '2027-12-20', '2028-01-05'].map((day) => noteCovers(holidays, day))).toEqual([true, true, true, true]);
+    expect(['2027-01-06', '2027-12-19', '2027-06-01'].map((day) => noteCovers(holidays, day))).toEqual([false, false, false]);
+    // Feb 29 inside a season that spans it is covered in a leap year.
+    expect(noteCovers({ ...winter, season: { repeat: 'yearly', from: '02-01', to: '03-10' } }, '2028-02-29')).toBe(true);
+    expect(noteCovers({ ...winter, season: { repeat: 'yearly', from: '03-01', to: '03-10' } }, '2028-02-29')).toBe(false);
+    // Weekdays still apply: Mondays in winter only.
+    const mondays = { ...winter, weekdays: [1] };
+    expect([noteCovers(mondays, '2027-02-08'), noteCovers(mondays, '2027-02-09'), noteCovers(mondays, '2027-04-05')]).toEqual([true, false, false]);
+    // A null season reads as none.
+    expect(noteCovers({ ...winter, season: null }, '2027-06-01')).toBe(true);
+  });
 });
 
 describe('the audit summary of an answer', () => {

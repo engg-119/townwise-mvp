@@ -8,7 +8,7 @@
 import { termEntries, termStateOn, type TermDay, type TermEntry } from '../people-in-town/term.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import { townCalendarCovers, townEvents, type TownEvent, type TownEventSource } from '../town-calendar.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import type { RuleSchedule, RuleSeason } from '../stores/business-rules.ts';
 import type { NoteRecord } from '../stores/notes.ts';
 import type { NoteOutcome, ScheduledRule } from './adjust.ts';
 import type { ReasonEffect, ReasonEffectOf } from './effects.ts';
@@ -192,14 +192,29 @@ function hoursWords(schedule: Pick<RuleSchedule, 'startTime' | 'endTime'>): stri
   return schedule.startTime === null || schedule.endTime === null ? '' : `, ${clockWords(schedule.startTime)} to ${clockWords(schedule.endTime)}`;
 }
 
+/** 'MM-DD' in words: "Jan 1". */
+function monthDayWords(monthDay: string): string {
+  const [month = '', day = ''] = monthDay.split('-');
+  return `${SHORT_MONTHS[Number(month) - 1] ?? ''} ${String(Number(day))}`;
+}
+
+/** A yearly season (D46) and its weekdays: "Jan 1 to Mar 31 every year", "on Mondays, Dec 20 to Jan 5 every year". */
+function seasonWords(season: RuleSeason, days: string | null): string {
+  const span = `${monthDayWords(season.from)} to ${monthDayWords(season.to)} every year`;
+  return days === null ? span : `on ${days}, ${span}`;
+}
+
 /**
  * A rule's schedule in plain words, built from its fields only (the rules page's "Changes the forecast" line and the
  * business_rules block TownwiseAI reads): what it does, its weekdays, its dates and its hours. "Closed on Mondays from
- * Jan 5, 2027", "Adds 40 guests on Fridays from Jan 2, 2026, 6 pm to 9 pm", "Closed on Dec 24, 2026".
+ * Jan 5, 2027", "Adds 40 guests on Fridays from Jan 2, 2026, 6 pm to 9 pm", "Closed on Dec 24, 2026". A yearly season
+ * (D46): "Closed Jan 1 to Mar 31 every year, from Nov 17, 2026".
  */
 export function scheduleSummary(schedule: RuleSchedule): string {
   const { startDate, endDate } = schedule;
   const days = weekdayList(schedule.weekdays);
+  const season = schedule.season ?? null;
+  if (season !== null) return `${scheduleWhat(schedule)} ${seasonWords(season, days)}, from ${dateWords(startDate)}${hoursWords(schedule)}`;
   const oneDay = endDate === startDate;
   const dates = endDate === null ? `from ${dateWords(startDate)}`
     : oneDay ? `on ${dateWords(startDate)}` : `from ${dateWords(startDate)} to ${dateWords(endDate)}`;
@@ -212,9 +227,11 @@ export function ruleReasonView(rule: ScheduledRule, outcome: NoteOutcome): Reaso
   const { schedule } = rule;
   const what = scheduleWhat(schedule);
   const days = weekdayList(schedule.weekdays);
+  const season = schedule.season ?? null;
+  const which = season !== null ? ` ${seasonWords(season, days)}` : days === null ? '' : ` on ${days}`;
   return {
     kind: 'rule',
-    label: `Your rule: ${what.charAt(0).toLowerCase()}${what.slice(1)}${days === null ? '' : ` on ${days}`}${hoursWords(schedule)}`,
+    label: `Your rule: ${what.charAt(0).toLowerCase()}${what.slice(1)}${which}${hoursWords(schedule)}`,
     effectPct: null,
     effect: null,
     sources: [],

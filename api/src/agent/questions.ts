@@ -31,7 +31,7 @@
 //   "Were you closed?" about it.
 import { closureOf, isClosure, TYPICAL_WEEKS, typicalGuests } from '../closed-days.ts';
 import { daysBetween, isCalendarDate } from '../dates.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import type { RuleSchedule, RuleSeason } from '../stores/business-rules.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
 
@@ -174,13 +174,27 @@ function asksAbout(asked: AskedQuestion, day: string): boolean {
   return day >= asked.from && day <= asked.to && (asked.kind === 'gap' || weekdayOf(day) === asked.weekday);
 }
 
+/** Whether `day`'s month and day fall in the yearly season (D46), `to` before `from` crossing the new year. */
+function inSeason(season: RuleSeason, day: string): boolean {
+  const monthDay = day.slice(5);
+  return season.from <= season.to
+    ? monthDay >= season.from && monthDay <= season.to
+    : monthDay >= season.from || monthDay <= season.to;
+}
+
 /**
  * Whether `note` covers `day`: inside its dates and, when it names weekdays, on one of them. A business rule's schedule
- * (D31) is read the same way, its `endDate` null meaning no end.
+ * (D31) is read the same way, its `endDate` null meaning no end, and, with a yearly season (D46), only on the season's
+ * months and days.
  */
-export function noteCovers(note: Pick<NoteContent, 'startDate' | 'weekdays'> & { readonly endDate: string | null }, day: string): boolean {
+export function noteCovers(
+  note: Pick<NoteContent, 'startDate' | 'weekdays'> & { readonly endDate: string | null; readonly season?: RuleSeason | null },
+  day: string,
+): boolean {
+  const season = note.season ?? null;
   return day >= note.startDate && (note.endDate === null || day <= note.endDate)
-    && (note.weekdays === null || note.weekdays.includes(weekdayOf(day)));
+    && (note.weekdays === null || note.weekdays.includes(weekdayOf(day)))
+    && (season === null || inSeason(season, day));
 }
 
 // A closure note, or any note whose effect is closed: closed-days.ts keeps the one definition.
