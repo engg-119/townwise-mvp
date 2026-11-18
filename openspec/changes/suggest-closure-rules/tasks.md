@@ -91,7 +91,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - what it does, and where it came from;
   - Confirm, Edit and Dismiss when `canDecide`, disabled under view-as;
   - the lines for 409 `rule_limit`, `rule_exists` (with the link to edit the unscheduled rule) and `already_decided` ("Already confirmed as: {text}").
-- [ ] 4.3 P29 `BusinessRules.tsx`:
+- [x] 4.3 P29 `BusinessRules.tsx`:
   - the "Suggested by TownwiseAI" group above Add a rule;
   - Edit opens the rule form prefilled, and Save sends the accept with `rule`;
   - `?suggestion={id}` opens that card's edit;

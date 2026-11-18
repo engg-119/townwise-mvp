@@ -1,3 +1,4 @@
+import { useLocalSearchParams } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
@@ -20,8 +21,11 @@ import { EmptyState, ErrorNotice, Notice, ReadOnlyLine } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Body, Small } from '../ui/text';
-import type { Rule, RuleWrite } from './api';
+import { alreadyDecidedRule, decideRuleSuggestion, type Rule, type RuleSchedule, type RuleSuggestion, type RuleWrite } from './api';
+import { RuleSuggestionCard } from './RuleSuggestionCard';
 import { checkSchedule, counterLine, draftOfSchedule, forecastLine, normalizeRule, RULES_COPY, ruleProblem } from './rules';
+import { alreadyLine, decideErrorLine, SUGGESTED_COPY, toDecideLine } from './suggestionWords';
+import { useRuleDecisions, type RuleDecision } from './useRuleDecisions';
 import { useRules } from './useRules';
 
 // P29 Business rules (spec 16.3, 10.16, D31; /locations/[id]/rules, members): standing facts about how the location
@@ -36,8 +40,15 @@ import { useRules } from './useRules';
 // Errors show where the write happened: on the add form, the row's edit or the dialog. A 404 on an edit or a delete
 // means the rule went in the meantime: the page says so and the list loads again. A 403 forbidden (an org admin made
 // a member since the list loaded) shows its line and re-reads the person's access, as every access error does (4.3). Under view-as every write control is
-// disabled in place, described by the read-only line. TownwiseAI's rule proposals come later; nothing here says it
-// suggests rules yet.
+// disabled in place, described by the read-only line.
+//
+// Suggested by TownwiseAI (D46): above Add a rule, the location's open suggested closure rules, from files TownwiseAI
+// read and from the sales history, each a RuleSuggestionCard. Any member confirms, edits or dismisses one; none changes
+// the forecast until confirmed. Edit opens the rule form in the card, filled in (Every year included), and Save confirms
+// the edited rule; `?suggestion={id}` (the TownwiseAI panel's Edit) opens that card's edit. A confirmed card moves its
+// rule into the list in place (useRules settle), and a dismissed one goes, each with a notice; a Confirm another tab won
+// (409 already_decided) moves that tab's rule in. A suggestion gone in the meantime (404) says so and loads the page
+// again. 409 rule_exists offers the saved rule with the same words, which needs a schedule to close anything.
 
 const READ_ONLY_ID = 'rules-ro';
 const LIMIT_ID = 'rules-limit';
@@ -65,7 +76,7 @@ interface ScheduleState {
   focus: boolean;
 }
 
-function scheduleState(rule: Rule | null): ScheduleState {
+function scheduleState(rule: { schedule?: RuleSchedule | null | undefined } | null): ScheduleState {
   const schedule = rule?.schedule ?? null;
   return { open: schedule !== null, draft: schedule === null ? emptyDraft('closure') : draftOfSchedule(schedule), messages: {}, focus: false };
 }
@@ -238,29 +249,33 @@ function AddRule(props: {
 }
 
 /**
- * A row in edit: the field with the rule's text, its schedule (open when it has one), Save and Cancel. Save sends the
- * schedule when the rule has one or the section is open, null when the section was closed on a rule that had one.
+ * A row in edit, or a suggested rule's Edit (D46): the field with the rule's text, its schedule (open when it has one),
+ * Save and Cancel. Save sends the schedule when the rule has one or the section is open, null when the section was
+ * closed on a rule that had one.
  */
 function EditRule(props: {
-  rule: Rule;
-  edit: (ruleId: string, write: RuleWrite) => Promise<Rule>;
+  rule: { text: string; schedule?: RuleSchedule | null | undefined };
+  idPrefix: string;
+  save: (write: RuleWrite) => Promise<unknown>;
   onSaved: () => void;
   onCancel: () => void;
   onRefused: (error: unknown) => boolean;
+  /** A refusal's words, when the caller words it (a suggestion's); else the page's write errors. */
+  errorLine?: (error: unknown, text: string) => string;
 }): React.JSX.Element {
-  const { rule, edit, onSaved, onRefused } = props;
+  const { rule, save, onSaved, onRefused } = props;
   const [text, setText] = useState(rule.text);
   const [problem, setProblem] = useState<string | null>(null);
   const [schedule, setSchedule] = useState<ScheduleState>(() => scheduleState(rule));
   const action = useAction(useCallback(async (write: RuleWrite) => {
     try {
-      await edit(rule.id, write);
+      await save(write);
     } catch (error) {
       if (onRefused(error)) return;
       throw error;
     }
     onSaved();
-  }, [edit, rule.id, onSaved, onRefused]));
+  }, [save, onSaved, onRefused]));
 
   function submit(): void {
     if (action.pending) return;
@@ -273,13 +288,67 @@ function EditRule(props: {
   return (
     <Stack>
       <RuleField label="Edit rule" value={text} onChange={setText} onSubmit={submit} message={problem} readOnlyId={null} />
-      <ScheduleSection state={schedule} setState={setSchedule} idPrefix={`rule-${rule.id}`} readOnlyId={null} />
-      {action.error === null ? null : <ErrorNotice message={writeError(action.error, text)} />}
+      <ScheduleSection state={schedule} setState={setSchedule} idPrefix={props.idPrefix} readOnlyId={null} />
+      {action.error === null ? null : <ErrorNotice message={(props.errorLine ?? writeError)(action.error, text)} />}
       <Actions>
         <Button variant="outline" label={action.pending ? 'Saving…' : 'Save'} disabled={action.pending} onPress={submit} />
         <Button variant="link" label="Cancel" onPress={props.onCancel} />
       </Actions>
     </Stack>
+  );
+}
+
+/**
+ * Suggested by TownwiseAI (D46): the open suggested closure rules, each a card, or the rule form filled in from it while
+ * its Edit is open.
+ */
+function SuggestedGroup(props: {
+  suggested: readonly RuleSuggestion[];
+  locationId: string;
+  readOnlyId: string | null;
+  decisions: ReturnType<typeof useRuleDecisions>;
+  editing: string | null;
+  setEditing: (suggestionId: string | null) => void;
+  save: (suggestion: RuleSuggestion, write: RuleWrite) => Promise<void>;
+  onRefused: (error: unknown) => boolean;
+  onEditExisting: (suggestion: RuleSuggestion) => void;
+}): React.JSX.Element {
+  const { suggested, decisions } = props;
+  const open = suggested.filter((suggestion) => decisions.decided[suggestion.id] === undefined).length;
+  return (
+    <View role="region" aria-label={SUGGESTED_COPY.heading}>
+      <Section first kicker={toDecideLine(open)} title={SUGGESTED_COPY.heading}>
+        <Small>{SUGGESTED_COPY.lead}</Small>
+        <View role="list" aria-label={SUGGESTED_COPY.heading} style={styles.suggested}>
+          {suggested.map((suggestion) => (
+            <View key={suggestion.id} role="listitem">
+              {props.editing === suggestion.id && props.readOnlyId === null && suggestion.canDecide ? (
+                <View style={styles.suggestionEdit}>
+                  <EditRule
+                    rule={suggestion}
+                    idPrefix={`suggestion-${suggestion.id}`}
+                    save={(write) => props.save(suggestion, write)}
+                    onSaved={() => undefined}
+                    onCancel={() => { props.setEditing(null); }}
+                    onRefused={props.onRefused}
+                    errorLine={(error, text) => (hasCode(error, 400, 'invalid_request') ? writeError(error, text) : decideErrorLine(error))}
+                  />
+                </View>
+              ) : (
+                <RuleSuggestionCard
+                  suggestion={suggestion}
+                  locationId={props.locationId}
+                  decisions={decisions}
+                  readOnlyId={props.readOnlyId}
+                  edit={{ onPress: () => { props.setEditing(suggestion.id); } }}
+                  onEditExisting={() => { props.onEditExisting(suggestion); }}
+                />
+              )}
+            </View>
+          ))}
+        </View>
+      </Section>
+    </View>
   );
 }
 
@@ -296,6 +365,43 @@ export function BusinessRules(): React.JSX.Element {
   const [deleting, setDeleting] = useState<Rule | null>(null);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
   const [staleError, setStaleError] = useState<unknown>(null);
+  // D46: the suggested rule whose Edit is open; the TownwiseAI panel's Edit opens one with ?suggestion=.
+  const params = useLocalSearchParams<{ suggestion?: string }>();
+  const [editingSuggestion, setEditingSuggestion] = useState<string | null>(params.suggestion ?? null);
+  const { settle } = rules;
+
+  /** A suggested rule decided here or by another tab (409 already_decided): its rule into the list, and a notice. */
+  const decided = useCallback((suggestionId: string, decision: RuleDecision) => {
+    settle(suggestionId, decision.rule);
+    setEditingSuggestion((current) => (current === suggestionId ? null : current));
+    if (decision.status === 'dismissed') setNotice(SUGGESTED_COPY.dismissed);
+    else if (decision.already && decision.rule !== null) setNotice(alreadyLine(decision.rule.text));
+    else setNotice(decision.rule === null ? 'Added the rule.' : `Added the rule “${decision.rule.text}”.`);
+  }, [settle]);
+  /** A suggested rule gone in the meantime (404): says so and loads the page again. */
+  const suggestionGone = useCallback(() => {
+    setEditingSuggestion(null);
+    setNotice(SUGGESTED_COPY.gone);
+    reload();
+  }, [reload]);
+  const decisions = useRuleDecisions(api, location.id, { onDecided: decided, onGone: suggestionGone });
+
+  /** Edit's Save: confirms the suggestion as the edited rule. */
+  const saveSuggestion = useCallback(async (suggestion: RuleSuggestion, write: RuleWrite) => {
+    const result = await decideRuleSuggestion(api, location.id, suggestion.id, 'accept', { text: write.text, schedule: write.schedule ?? null });
+    decided(suggestion.id, { status: result.suggestion.status, rule: result.rule, already: false });
+  }, [api, location.id, decided]);
+  /** Edit's refusals the page answers itself: another tab's Confirm (409 already_decided), and a 404. */
+  const suggestionRefused = useCallback((error: unknown): boolean => {
+    const stored = alreadyDecidedRule(error);
+    if (stored !== null && editingSuggestion !== null) {
+      decided(editingSuggestion, { status: 'accepted', rule: stored, already: true });
+      return true;
+    }
+    if (!hasCode(error, 404, 'not_found')) return false;
+    suggestionGone();
+    return true;
+  }, [decided, editingSuggestion, suggestionGone]);
 
   const gone = useCallback((text: string | null) => {
     setEditingId(null);
@@ -324,13 +430,35 @@ export function BusinessRules(): React.JSX.Element {
   }, [removeRule, ruleGone, editingId]));
 
   const { state } = rules;
+  /** 409 rule_exists on a suggestion: the saved rule with its words opens for edit, so it can get a schedule. */
+  const editExisting = (suggestion: RuleSuggestion): void => {
+    const saved = state.status === 'ready'
+      ? state.data.rules.find((rule) => normalizeRule(rule.text).toLowerCase() === suggestion.text.toLowerCase())
+      : undefined;
+    if (saved === undefined) { reload(); return; }
+    setNotice(null);
+    setEditingId(saved.id);
+  };
   let content: React.ReactNode;
   if (state.status === 'loading') content = <RulesSkeleton label="Loading business rules" />;
   else if (state.status === 'failed') content = <LoadFailure error={state.error} onRetry={reload} />;
   else {
-    const { rules: list, limit } = state.data;
+    const { rules: list, limit, suggested } = state.data;
     content = (
       <Stack gap={32}>
+        {suggested.length === 0 ? null : (
+          <SuggestedGroup
+            suggested={suggested}
+            locationId={location.id}
+            readOnlyId={readOnlyId}
+            decisions={decisions}
+            editing={editingSuggestion}
+            setEditing={(suggestionId) => { setNotice(null); setEditingSuggestion(suggestionId); }}
+            save={saveSuggestion}
+            onRefused={suggestionRefused}
+            onEditExisting={editExisting}
+          />
+        )}
         <Columns
           main={(
             <AddRule
@@ -350,7 +478,8 @@ export function BusinessRules(): React.JSX.Element {
                   {editingId === rule.id ? (
                     <EditRule
                       rule={rule}
-                      edit={rules.edit}
+                      idPrefix={`rule-${rule.id}`}
+                      save={(write) => rules.edit(rule.id, write)}
                       onSaved={() => { setEditingId(null); setNotice('Saved.'); }}
                       onCancel={() => { setEditingId(null); }}
                       onRefused={ruleGone}
@@ -438,4 +567,6 @@ const styles = StyleSheet.create({
   // The Mono type in text3 (ui/text.tsx), and the Small type's text2, each on a Text that can take focus.
   scheduleHead: { ...theme.type.mono, fontVariant: ['tabular-nums'], color: c.text3 },
   help: { color: c.text2 },
+  suggested: { gap: theme.space[3], maxWidth: 720 },
+  suggestionEdit: { padding: theme.space[4], borderWidth: theme.stroke.hairline, borderColor: c.border, backgroundColor: c.panel },
 });

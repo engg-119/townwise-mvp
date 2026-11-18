@@ -3,6 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import { ApiError } from '../../../src/api/client';
 import { formatDate } from '../../../src/portal/format';
 import type { Rule, RuleSchedule } from '../../../src/portal/rules/api';
 import type { MeResponse } from '../../../src/portal/schemas';
@@ -10,7 +11,7 @@ import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, ADMIN_EMAIL, deferred, EMAIL, fakePortalApi, meOf, offline, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { openMore } from '../../helpers/topBar';
-import { manyRules, ruleOf, rulesFake, type RulesFake } from './fakes';
+import { manyRules, ruleOf, rulesFake, suggestionOf, type RulesFake } from './fakes';
 
 // P29 Business rules on web (spec 16.3, 10.16): the lead, the add form, the list with who added each rule, inline
 // edit and a confirmed delete, the errors in place, the 30 limit, view-as, loading and failure. The page lives
@@ -40,8 +41,10 @@ const RULES: Rule[] = [
   ruleOf('r4', 'Large parties call ahead', { createdByEmail: 'Deleted person', canEdit: false }),
 ];
 
-function setup(me: MeResponse = meOf(ACCESS.member), rules: RulesFake['rules'] = RULES): { api: FakePortalApi; fake: RulesFake } {
-  const fake = rulesFake(rules);
+function setup(
+  me: MeResponse = meOf(ACCESS.member), rules: RulesFake['rules'] = RULES, suggested: RulesFake['suggested'] = [],
+): { api: FakePortalApi; fake: RulesFake } {
+  const fake = rulesFake(rules, suggested);
   return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake }), fake };
 }
 
@@ -452,4 +455,162 @@ test('loading shows one line; a load failure shows the network copy with Try aga
   fake.rules = RULES;
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await screen.findByText('Closed Mondays')).toBeTruthy();
+});
+
+describe('Suggested by TownwiseAI (D46)', () => {
+  const DECIDE = '/api/org/locations/l1/agent/rule-suggestions';
+  const MONDAYS = suggestionOf('0000000000000000000000d1', 'Closed on Mondays');
+  const WINTER = suggestionOf('0000000000000000000000d2', 'Closed Jan 1 to Mar 31 every year', {
+    schedule: { ...MONDAYS.schedule, weekdays: null, season: { repeat: 'yearly', from: '01-01', to: '03-31' } },
+    scheduleSummary: 'Closed Jan 1 to Mar 31 every year, from Nov 17, 2026', file: null,
+  });
+  const SALES = suggestionOf('sales_weekday_2', 'Closed on Tuesdays', {
+    source: 'sales', file: null, schedule: { ...MONDAYS.schedule, weekdays: [2] }, scheduleSummary: 'Closed on Tuesdays from Sep 9, 2026',
+    evidence: { noSalesCount: 10, weekdayCount: 14, lastSalesDate: '2026-09-08' },
+  });
+
+  function group(): HTMLElement {
+    return screen.getByRole('region', { name: 'Suggested by TownwiseAI' });
+  }
+
+  function cardOf(text: string): HTMLElement {
+    const found = within(group()).getByRole('heading', { level: 3, name: text }).parentElement;
+    if (found === null) throw new Error(`no card for ${text}`);
+    return found;
+  }
+
+  test('the group sits above Add a rule, each card with what it does, where it came from, and Confirm, Edit and Dismiss', async () => {
+    const { api } = setup(meOf(ACCESS.member), RULES, [MONDAYS, WINTER, SALES]);
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Mondays');
+    expect(group().compareDocumentPosition(field()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(within(group()).getByText('3 to decide')).toBeTruthy();
+    expect(within(group()).getByText('TownwiseAI found these in your files and sales history. Each changes nothing until someone on your team confirms it.')).toBeTruthy();
+    const mondays = cardOf('Closed on Mondays');
+    expect(within(mondays).getByText('Changes the forecast: Closed on Mondays from Nov 17, 2026')).toBeTruthy();
+    expect(within(mondays).getByRole('link', { name: 'From Hours.pdf' }).getAttribute('href')).toBe('/locations/l1/data/f_1');
+    expect(within(cardOf('Closed Jan 1 to Mar 31 every year')).getByText('From a file you deleted')).toBeTruthy();
+    expect(within(cardOf('Closed on Tuesdays')).getByText(`No sales on any Tuesday since ${formatDate('2026-09-08')}. In all, 10 of 14 Tuesdays had no sales.`)).toBeTruthy();
+    for (const name of ['Confirm “Closed on Mondays”', 'Edit “Closed on Mondays”', 'Dismiss “Closed on Mondays”']) {
+      expect(within(mondays).getByRole('button', { name })).toBeTruthy();
+    }
+    // The rules list is unchanged: a suggestion is not a rule.
+    expect(screen.getByText('4 of 30')).toBeTruthy();
+    // With none, there is no group.
+    cleanup();
+    renderAt('/locations/l1/rules', setup().api);
+    await screen.findByText('Closed Mondays');
+    expect(screen.queryByRole('region', { name: 'Suggested by TownwiseAI' })).toBeNull();
+  });
+
+  test('Confirm moves the rule into the list in place; Dismiss takes the card away; each says so', async () => {
+    const { api } = setup(meOf(ACCESS.member), RULES, [MONDAYS, SALES]);
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Mondays');
+    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
+    expect(await screen.findByText('Added the rule “Closed on Mondays”.')).toBeTruthy();
+    expect(within(rowOf('Closed on Mondays')).getByText('Changes the forecast: Closed on Mondays from Nov 17, 2026')).toBeTruthy();
+    expect(within(rowOf('Closed on Mondays')).getByText(/^Saved from TownwiseAI by /)).toBeTruthy();
+    expect(screen.getByText('5 of 30')).toBeTruthy();
+    expect(within(group()).getByText('1 to decide')).toBeTruthy();
+    fireEvent.click(within(cardOf('Closed on Tuesdays')).getByRole('button', { name: 'Dismiss “Closed on Tuesdays”' }));
+    expect(await screen.findByText('Dismissed. TownwiseAI won’t suggest it again.')).toBeTruthy();
+    expect(screen.queryByRole('region', { name: 'Suggested by TownwiseAI' })).toBeNull();
+    expect(writes(api)).toEqual([
+      { method: 'POST', path: `${DECIDE}/0000000000000000000000d1/accept`, body: {} },
+      { method: 'POST', path: `${DECIDE}/sales_weekday_2/dismiss`, body: {} },
+    ]);
+  });
+
+  test('Edit opens the rule form filled in, Every year and all; Save confirms the edited rule; Cancel goes back to the card', async () => {
+    const { api } = setup(meOf(ACCESS.member), RULES, [WINTER]);
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed Jan 1 to Mar 31 every year');
+    fireEvent.click(within(cardOf('Closed Jan 1 to Mar 31 every year')).getByRole('button', { name: 'Edit “Closed Jan 1 to Mar 31 every year”' }));
+    const form = group();
+    expect(within(form).getByRole<HTMLInputElement>('textbox', { name: 'Edit rule' }).value).toBe('Closed Jan 1 to Mar 31 every year');
+    const fields = section(form);
+    expect(within(fields).getByRole<HTMLInputElement>('checkbox', { name: 'Every year' }).checked).toBe(true);
+    expect(within(fields).getByLabelText<HTMLInputElement>('Starts').value).toBe('2027-01-01');
+    expect(within(fields).getByLabelText<HTMLInputElement>('Ends').value).toBe('2027-03-31');
+    fireEvent.click(within(form).getByRole('button', { name: 'Cancel' }));
+    expect(within(group()).getByRole('button', { name: 'Confirm “Closed Jan 1 to Mar 31 every year”' })).toBeTruthy();
+
+    fireEvent.click(within(group()).getByRole('button', { name: 'Edit “Closed Jan 1 to Mar 31 every year”' }));
+    fireEvent.change(within(group()).getByRole('textbox', { name: 'Edit rule' }), { target: { value: 'Closed all winter' } });
+    fireEvent.change(within(section(group())).getByLabelText('Ends'), { target: { value: '2027-02-28' } });
+    fireEvent.click(within(group()).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Added the rule “Closed all winter”.')).toBeTruthy();
+    expect(rowOf('Closed all winter')).toBeTruthy();
+    expect(writes(api)).toEqual([{
+      method: 'POST', path: `${DECIDE}/0000000000000000000000d2/accept`, body: {
+        rule: {
+          text: 'Closed all winter',
+          schedule: {
+            kind: 'closure', startDate: '2027-01-01', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null,
+            endTime: null, season: { repeat: 'yearly', from: '01-01', to: '02-28' },
+          },
+        },
+      },
+    }]);
+  });
+
+  test('?suggestion= opens that card’s edit, as the panel’s Edit links to it', async () => {
+    const { api } = setup(meOf(ACCESS.member), RULES, [MONDAYS, SALES]);
+    renderAt('/locations/l1/rules?suggestion=sales_weekday_2', api);
+    const edit = await screen.findByRole<HTMLInputElement>('textbox', { name: 'Edit rule' });
+    expect(edit.value).toBe('Closed on Tuesdays');
+    expect(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Confirm “Closed on Mondays”' })).toBeTruthy();
+  });
+
+  test('refusals: the limit and a saved rule with the same words stay on the card; another tab’s Confirm moves its rule in', async () => {
+    const unscheduled = ruleOf('r9', 'Closed on Mondays');
+    const { api, fake } = setup(meOf(ACCESS.member), [...RULES, unscheduled], [MONDAYS, SALES]);
+    fake.fail[`POST ${DECIDE}/0000000000000000000000d1/accept`] = () => refusal(409, 'rule_exists');
+    fake.fail[`POST ${DECIDE}/sales_weekday_2/accept`] = () => refusal(409, 'rule_limit');
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Tuesdays');
+    fireEvent.click(within(cardOf('Closed on Tuesdays')).getByRole('button', { name: 'Confirm “Closed on Tuesdays”' }));
+    expect(await within(cardOf('Closed on Tuesdays')).findByText('This location has 30 rules, the most it can hold. Delete one to confirm this.')).toBeTruthy();
+    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
+    const mondays = cardOf('Closed on Mondays');
+    expect(await within(mondays).findByText('A rule with these words is saved without a schedule. Add the schedule to it on Business rules.')).toBeTruthy();
+    // Edit that rule opens the saved one's edit in the list.
+    fireEvent.click(within(mondays).getByRole('button', { name: 'Edit that rule' }));
+    expect(field('Edit rule').value).toBe('Closed on Mondays');
+    expect(editingRow().closest('[role="list"]')?.getAttribute('aria-label')).toBe('Business rules');
+
+    const stored = ruleOf('r900', 'Closed Tuesdays', { addedVia: 'townwise_ai' });
+    fake.fail[`POST ${DECIDE}/sales_weekday_2/accept`] = () => new ApiError('http', 'x', { status: 409, code: 'already_decided', detail: { rule: stored } });
+    fireEvent.click(within(cardOf('Closed on Tuesdays')).getByRole('button', { name: 'Confirm “Closed on Tuesdays”' }));
+    expect(await screen.findByText('Already confirmed as: Closed Tuesdays')).toBeTruthy();
+    expect(rowOf('Closed Tuesdays')).toBeTruthy();
+  });
+
+  test('a suggestion decided elsewhere (404) says so and loads the page again', async () => {
+    const { api, fake } = setup(meOf(ACCESS.member), RULES, [MONDAYS]);
+    fake.fail[`POST ${DECIDE}/0000000000000000000000d1/dismiss`] = () => refusal(404, 'not_found');
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Mondays');
+    fake.suggested = [];
+    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Dismiss “Closed on Mondays”' }));
+    expect(await screen.findByText('That suggestion was already decided, or its dates have passed.')).toBeTruthy();
+    await waitFor(() => { expect(screen.queryByRole('region', { name: 'Suggested by TownwiseAI' })).toBeNull(); });
+  });
+
+  test('under view-as Confirm, Edit and Dismiss stay in place, disabled and described by the read-only line', async () => {
+    const { api } = setup(viewAsMe(ACCESS.member), RULES, [{ ...MONDAYS, canDecide: false, file: { ref: 'f_1', title: null } }]);
+    renderAt('/locations/l1/rules', api);
+    await screen.findByText('Closed on Mondays');
+    const mondays = cardOf('Closed on Mondays');
+    expect(within(mondays).getByRole('link', { name: 'From a file TownwiseAI read' })).toBeTruthy();
+    for (const name of ['Confirm “Closed on Mondays”', 'Edit “Closed on Mondays”', 'Dismiss “Closed on Mondays”']) {
+      const button = within(mondays).getByRole('button', { name });
+      expect(button.getAttribute('aria-disabled')).toBe('true');
+      expect(button.getAttribute('aria-describedby')?.split(' ')).toContain('rules-ro');
+      fireEvent.click(button);
+    }
+    expect(screen.queryByRole('textbox', { name: 'Edit rule' })).toBeNull();
+    expect(writes(api)).toEqual([]);
+  });
 });
