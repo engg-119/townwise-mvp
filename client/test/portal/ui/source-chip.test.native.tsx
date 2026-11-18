@@ -73,6 +73,8 @@ test('an in-app chip opens its page inside the app, and never opens a URL', asyn
   }, { initialUrl: '/' });
   const link = await routerScreen.findByRole('link', { name: 'US holidays. Opens this calendar in Your data' });
   expect(routerScreen.getByText('US holidays')).toBeTruthy();
+  // It hugs its pill rather than stretching across its column (UI review S1).
+  expect((StyleSheet.flatten(link.props.style as never) as { alignSelf?: string }).alignSelf).toBe('flex-start');
   expect(hiddenPart(link).types.some((type) => /svg/i.test(type))).toBe(true);
   await fireEvent.press(link);
   expect(await routerScreen.findByText('Calendar page')).toBeTruthy();

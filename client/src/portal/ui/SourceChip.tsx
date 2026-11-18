@@ -110,14 +110,14 @@ export function AppChip(props: { href: string; name: string; label: string; glyp
     return (
       <Link href={props.href} asChild>
         {/* A child of Link asChild takes one plain style object (ui/hover.ts). */}
-        <Pressable role="link" accessibilityLabel={props.label} style={styles.target}>
+        <Pressable role="link" accessibilityLabel={props.label} style={styles.appTarget}>
           {pill}
         </Pressable>
       </Link>
     );
   }
   return (
-    <Pressable role="link" accessibilityLabel={props.label} onPress={() => { router.push(props.href); }} style={styles.target}>
+    <Pressable role="link" accessibilityLabel={props.label} onPress={() => { router.push(props.href); }} style={styles.appTarget}>
       {pill}
     </Pressable>
   );
@@ -140,6 +140,8 @@ const c = theme.color;
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 8, rowGap: 0, minWidth: 0 },
   target: { minHeight: 44, justifyContent: 'center', maxWidth: '100%' },
+  // An in-app chip sits alone in a column, which would stretch it across the panel: it hugs its pill (UI review S1).
+  appTarget: { minHeight: 44, justifyContent: 'center', maxWidth: '100%', alignSelf: 'flex-start' },
   pill: {
     flexDirection: 'row', alignItems: 'center', columnGap: 6, minHeight: 24, maxWidth: '100%', paddingHorizontal: 8, paddingVertical: 3,
     borderRadius: 12, borderWidth: 1, borderColor: c.border, backgroundColor: c.raised,

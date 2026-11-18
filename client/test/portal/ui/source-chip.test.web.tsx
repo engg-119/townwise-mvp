@@ -151,6 +151,8 @@ describe('an in-app chip', () => {
     expect(link.getAttribute('href')).toBe(PAGE);
     expect(link.textContent).toBe('US holidays');
     expect(window.getComputedStyle(link).minHeight).toBe('44px');
+    // It hugs its pill in a column, as the town chips do in their row, rather than stretching across the panel (UI review S1).
+    expect(window.getComputedStyle(link).alignSelf).toBe('flex-start');
     const pill = link.firstElementChild;
     if (!(pill instanceof HTMLElement)) throw new Error('no pill');
     expect(window.getComputedStyle(pill).borderTopLeftRadius).toBe('12px');
