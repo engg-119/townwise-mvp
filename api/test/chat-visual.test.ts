@@ -62,6 +62,16 @@ describe('the figures of each kind', () => {
     });
   });
 
+  it('daily: a day in its run’s outlook carries outlook (D52); a forecast day carries none, and replays as stored', () => {
+    const v = dailyVisual(req('daily', 'guests', '2026-10-02', '2026-10-03'), [], [fc('2026-10-02', 45, 60), { ...fc('2026-10-03', 117, 256), outlook: true }], run);
+    expect(v).toMatchObject({
+      days: [{ date: '2026-10-02', low: 45, high: 60 }, { date: '2026-10-03', low: 117, mid: 187, high: 256, outlook: true }],
+    });
+    if (v.kind !== 'daily') return expect.unreachable('a daily visual');
+    expect(v.days[0]).not.toHaveProperty('outlook');
+    expect(visualOf(JSON.stringify({ shown: SHOWN_FORECAST, visual: v }))).toEqual(v);
+  });
+
   it('daily: the band rounds low down and high up, as get_forecast does; a closed forecast day has none; no band, no forecast', () => {
     const v = dailyVisual(req('daily', 'guests', '2026-10-01', '2026-10-02'), [day('2026-10-01', 40)], [fc('2026-10-01', 44.6, 59.2), fc('2026-10-02', null, null)], run);
     expect(v).toMatchObject({ days: [{ low: 44, high: 60 }, { low: null, mid: null, high: null, status: 'closed' }], forecast: run });
