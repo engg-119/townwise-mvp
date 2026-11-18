@@ -225,7 +225,7 @@ export async function readSetupWithAi(api: ApiClient, locationId: string, source
 // conversation, checked again by the server (api/src/chat/tools/order-setup.ts). The card is open or set aside, never
 // saved: the owner saves on Ordering setup. These live here, not in src/chat/api.ts, with the setup they preview against.
 
-const setupProposalSchema = z.object({
+export const setupProposalSchema = z.object({
   kind: z.literal('setup'),
   status: z.enum(['open', 'dismissed']),
   /** As a read on Ordering setup answers them; never a par, a never run out or a point-of-sale name. */

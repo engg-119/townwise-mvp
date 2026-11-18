@@ -71,6 +71,7 @@ export interface ItemCard {
 export const ITEM_TOOL = 'propose_data_item';
 export const ORDER_CHANGE_TOOL = 'propose_order_change';
 export const ORDER_RULE_TOOL = 'propose_order_rule';
+export const ORDER_SETUP_TOOL = 'propose_order_setup';
 
 export interface OrderCard {
   id: string;
@@ -668,7 +669,7 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
           ? { ...state, messages: withLive(state, (message) => withItem(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
           : state;
       }
-      if (event.name === ORDER_CHANGE_TOOL || event.name === ORDER_RULE_TOOL) {
+      if (event.name === ORDER_CHANGE_TOOL || event.name === ORDER_RULE_TOOL || event.name === ORDER_SETUP_TOOL) {
         return event.state === 'done' && event.result?.shown === true
           ? { ...state, messages: withLive(state, (message) => withOrder(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
           : state;
@@ -1362,7 +1363,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
           }
           continue;
         }
-        if (part.name === ORDER_CHANGE_TOOL || part.name === ORDER_RULE_TOOL) {
+        if (part.name === ORDER_CHANGE_TOOL || part.name === ORDER_RULE_TOOL || part.name === ORDER_SETUP_TOOL) {
           if (part.state === 'done' && part.result?.shown === true) {
             message.parts.push({ type: 'order', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
           }

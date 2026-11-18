@@ -3,6 +3,7 @@ import { formatCount, plural } from '../format';
 import type { OrderSetup, SetupRead } from './api';
 import type { ImportProblem } from './merge';
 import { importProposal, type CutWording, type ProposalImport } from './proposal';
+import { locationHref } from '../routing';
 import { CATEGORY_LABEL, draftOf, normalizeName, UNIT_LABEL, WEEKDAY_NAMES, type DeliveryDraft, type ItemDraft, type SetupDraft } from './setupDraft';
 
 // The ordering setup card of a TownwiseAI chat (spec D56): what the card's suggestions would do to the live setup,
@@ -20,6 +21,20 @@ export const CHAT_CUT: CutWording = {
   limit: 'suggests in a chat',
   rest: 'For the rest, use Read a file with TownwiseAI on Ordering setup, on the web.',
 };
+
+/** `?proposal=` on Ordering setup: a conversation's id, a dot, and the tool call's id. Ids only, checked before any request. */
+const PROPOSAL_PARAM = /^([0-9a-f]{24})\.([A-Za-z0-9_-]{1,128})$/;
+
+/** Ordering setup opened with a card's suggestions (SetupProposal.tsx merges them into the unsaved draft). */
+export function setupProposalHref(locationId: string, conversationId: string, proposalId: string): string {
+  return `${locationHref(locationId, 'ordersSetup')}?proposal=${encodeURIComponent(`${conversationId}.${proposalId}`)}`;
+}
+
+/** The card a `?proposal=` value names, or null when it is not two ids. */
+export function proposalParam(value: string | string[] | undefined): { conversationId: string; proposalId: string } | null {
+  const match = typeof value === 'string' ? PROPOSAL_PARAM.exec(value) : null;
+  return match === null ? null : { conversationId: match[1] ?? '', proposalId: match[2] ?? '' };
+}
 
 export interface FieldChange {
   readonly field: 'name' | 'supplier' | 'category' | 'unit' | 'servings per unit' | 'deal size';
