@@ -24,7 +24,7 @@ The staff console SHALL have an Overview page at `/admin/overview`, first in the
 
 #### Scenario: Before the record existed
 - **WHEN** the previous window starts before the first recorded active day
-- **THEN** active organizations and active people have no previous value, and the page says no earlier days are recorded
+- **THEN** active organizations and active people have no previous value, and the page says there is not enough history to compare
 
 #### Scenario: A staff setup upload counts as an upload
 - **WHEN** a staff member uploads sales for an organization in staff setup
@@ -76,11 +76,11 @@ The answer SHALL list, independent of the window: each access request pending mo
 - **THEN** the page says nothing needs attention
 
 ### Requirement: Changing the window keeps the last answer on screen
-The page SHALL offer 7, 28 and 90 days as links (`?days=`), with 28 when none is given. While another window's answer loads, the page SHALL keep showing the last answer, and SHALL show its loading skeleton only before its first answer. Each stat SHALL state its change against the previous window in words.
+The page SHALL offer 7, 28 and 90 days as links (`?days=`), with 28 when none is given. While another window's answer loads, the page SHALL keep showing the last answer, dimmed and inert, under a line that says which window is loading and which window the figures shown are for, in a slot whose height does not change; it SHALL show its loading skeleton only before its first answer. A failed read SHALL show the error in place of the figures, never the last answer under the new window's tab. Each count SHALL state its change against the previous window in words.
 
 #### Scenario: Switching to 90 days
 - **WHEN** staff viewing 28 days choose 90 days
-- **THEN** the 28-day figures stay on screen until the 90-day answer replaces them, with no skeleton in between
+- **THEN** the 28-day figures stay on screen, dimmed, under "Loading the last 90 days… Below: the last 28 days until then.", until the 90-day answer replaces them, with no skeleton in between and nothing moving
 
 #### Scenario: A change in words
 - **WHEN** active people rose from 6 to 9
