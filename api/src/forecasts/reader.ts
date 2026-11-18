@@ -16,10 +16,12 @@
 // the 52 weeks the effects need when the range reaches today and over the 8 weeks before the first scored day that
 // likely closed reads, and one read of the notes and rules marks the closed days for the effects and the accuracy. The
 // town calendar's term entries are made once for the labels and the effects. A read also scores its own days, each
-// against the run chosen for it, as the window's accuracy (D42). Rows are read by range (D42, about 52 weekly runs a
-// year): every run's rows over the days the answer needs, which are the read's days and a week either side, and every
-// past day of each run that could supply one of them, for its live accuracy; the model card's, over the newest run's
-// days. It logs nothing and stores nothing.
+// against the run chosen for it, as the window's accuracy (D42). A day after the forecast tier of the run chosen for it
+// is an outlook day (D52, tiers.ts), and so is a week holding one; an outlook day is never scored. Each date's run is
+// chosen from run metadata when the run has no gap in its days (every lab run) and from rows for a run with gaps (an
+// imported file may skip days), so rows are read only for the runs chosen (D52 decision 11, about 52 year-long weekly
+// runs a year): over the read's days and a week either side, and each run the read's days use over its own past days,
+// for its live accuracy; the model card's, the newest run's over its days. It logs nothing and stores nothing.
 import type { OrgScope } from '../access/policy.ts';
 import { noteCovers } from '../agent/questions.ts';
 import { closureOf, TYPICAL_LOOKBACK_DAYS, typicalByDate } from '../closed-days.ts';
@@ -35,6 +37,7 @@ import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
 import { noteReasonView, reasonViews, ruleReasonView, townCalendarOf, townTermEntries, type ReasonView } from './reasons.ts';
 import { inRangeOf, liveAccuracy, scoredDay, weekActual, type LiveAccuracy, type ScoredDay } from './score.ts';
+import { isOutlook } from './tiers.ts';
 
 /** A forecast read covers at most this many days, both ends included: today and the next 91 (D42), as people in town. */
 export const MAX_FORECAST_RANGE_DAYS = 92;
@@ -99,8 +102,13 @@ export interface ForecastDayView {
   actual: number | null;
   /** The actual within the model's [low, high]; null when either is missing or the model did not forecast the day open. */
   inRange: boolean | null;
-  /** Counted in the window's accuracy (score.ts scoredDay): open in the model, not closed or likely closed, with guests. */
+  /**
+   * Counted in the window's accuracy (score.ts scoredDay): open in the model, not closed or likely closed, not an
+   * outlook day, with guests.
+   */
   scored: boolean;
+  /** After the forecast tier of the run chosen for the day (D52, tiers.ts): its outlook. Derived, never stored. */
+  outlook: boolean;
 }
 
 export interface ForecastWeekView {
@@ -118,6 +126,8 @@ export interface ForecastWeekView {
   inRange: boolean | null;
   /** Guests notes and rules add on the week's open days, already in low, mid and high. */
   noteGuests: number;
+  /** Any of its days is an outlook day (D52). */
+  outlook: boolean;
 }
 
 /** The earliest and the latest of some YYYY-MM-DD dates, missing ones skipped; undefined with none. */
@@ -168,21 +178,36 @@ export function runView(run: ForecastRunRecord): ForecastRunView {
 
 interface Chosen { readonly run: ForecastRunRecord; readonly row: ForecastRow }
 
-/** The day each date uses: from the newest published run whose data ends before it (runs come newest first). */
-function chooseDays(runs: readonly ForecastRunRecord[], rows: readonly ForecastRow[]): Map<string, Chosen> {
-  const byRunDate = new Map(rows.filter((row) => row.span === 'day').map((row) => [`${row.runId}|${row.from}`, row]));
-  const dates = [...new Set(rows.filter((row) => row.span === 'day').map((row) => row.from))].sort();
+/** The rows a read loaded and the day each date uses. */
+interface Choice { readonly rows: ForecastRow[]; readonly chosen: Map<string, Chosen> }
+
+/** Whether the run supplies every date of its range, as every lab run does (a run file never repeats a date, file.ts). */
+function gapFree(run: ForecastRunRecord): boolean {
+  return run.dayCount === daysBetween(run.range.from, run.range.to) + 1;
+}
+
+/**
+ * The run each date uses: the newest published run whose data ends before it and that supplies it (runs come newest
+ * first), a gap-free run by its range and a run with gaps by its day rows in `gappyRows`.
+ */
+function runChooser(runs: readonly ForecastRunRecord[], gappyRows: readonly ForecastRow[]): (date: string) => ForecastRunRecord | undefined {
+  const supplied = new Set(gappyRows.filter((row) => row.span === 'day').map((row) => `${row.runId}|${row.from}`));
+  const full = new Map(runs.map((run) => [run.id, gapFree(run)]));
+  return (date) => runs.find((run) => run.dataThrough < date
+    && (full.get(run.id) === true ? run.range.from <= date && date <= run.range.to : supplied.has(`${run.id}|${date}`)));
+}
+
+/** Each date's chosen run with its day row from `rows` (deduplicated), dates in order; a date with no row is left out. */
+function choiceOf(picks: ReadonlyMap<string, ForecastRunRecord>, rows: readonly ForecastRow[]): Choice {
+  const unique = [...new Map(rows.map((row) => [`${row.runId}|${row.span}|${row.from}`, row])).values()];
+  const dayRow = new Map(unique.filter((row) => row.span === 'day').map((row) => [`${row.runId}|${row.from}`, row]));
   const chosen = new Map<string, Chosen>();
-  for (const date of dates) {
-    for (const run of runs) {
-      if (run.dataThrough >= date) continue;
-      const row = byRunDate.get(`${run.id}|${date}`);
-      if (row === undefined) continue;
-      chosen.set(date, { run, row });
-      break;
-    }
+  for (const date of [...picks.keys()].sort()) {
+    const run = picks.get(date);
+    const row = run === undefined ? undefined : dayRow.get(`${run.id}|${date}`);
+    if (run !== undefined && row !== undefined) chosen.set(date, { run, row });
   }
-  return chosen;
+  return { rows: unique, chosen };
 }
 
 /** `date` moved by `days`. */
@@ -191,9 +216,10 @@ function shifted(date: string, days: number): string {
 }
 
 /**
- * The rows a window read needs (D42): the days from 6 before `range` to 6 after it (its days and the weeks holding
- * them), and every day to yesterday of each run reaching into those, so each run used keeps its live accuracy over all
- * its own past days. Every run's rows over these days choose each date exactly as all of their rows would.
+ * The days a window read's choices are made over (D42): the days from 6 before `range` to 6 after it (its days and the
+ * weeks holding them), and every day to yesterday of each run reaching into those, so each run used keeps its live
+ * accuracy over all its own past days. Every run's rows over these days choose each date exactly as all of their rows
+ * would; since D52 only a run with gaps has its rows read over all of them.
  */
 function windowRows(runs: readonly ForecastRunRecord[], range: { from: string; to: string }, today: string): { from: string; to: string } {
   const from = shifted(range.from, -6);
@@ -235,14 +261,12 @@ export function createForecastReader(deps: {
     scope: OrgScope, locationId: string, today: string,
     reach: {
       historyFrom?: string; notes?: { from: string; to: string };
-      /** The days whose rows the answer needs (windowRows), from the published runs. */
-      rows: (runs: readonly ForecastRunRecord[]) => { from: string; to: string } | null;
+      /** The rows the answer needs and the day each date uses, from the published runs. */
+      choose: (runs: readonly ForecastRunRecord[]) => Promise<Choice>;
     },
   ) {
     const runs = await forecasts.published(scope, locationId);
-    const span = reach.rows(runs);
-    const rows = span === null ? [] : await forecasts.rows(scope, locationId, runs.map((run) => run.id), span);
-    const chosen = chooseDays(runs, rows);
+    const { rows, chosen } = await reach.choose(runs);
     const dates = [...chosen.keys()].sort();
     const [first] = dates;
     const yesterday = utcDay(new Date(`${today}T00:00:00.000Z`), -1);
@@ -268,13 +292,72 @@ export function createForecastReader(deps: {
     const closedOn = (date: string): boolean => date < today && closureOf(
       storedOn.get(date), typical.get(date) ?? null, notesOn(date), { rules: rulesOn(date).map((rule) => rule.schedule), past: true },
     ) !== null;
-    const scored = (date: string, row: ForecastRow): ScoredDay => ({
+    const scored = (date: string, { run, row }: Chosen): ScoredDay => ({
       date, status: row.status ?? 'open', low: row.low, mid: row.mid, high: row.high, actual: actuals.get(date) ?? null, closed: closedOn(date),
+      outlook: isOutlook(date, run),
     });
     const daysOf = new Map<string, ScoredDay[]>();
-    for (const [date, { run, row }] of chosen) daysOf.set(run.id, [...(daysOf.get(run.id) ?? []), scored(date, row)]);
+    for (const [date, pick] of chosen) daysOf.set(pick.run.id, [...(daysOf.get(pick.run.id) ?? []), scored(date, pick)]);
     const liveOf = (runId: string): LiveAccuracy | null => liveAccuracy(daysOf.get(runId) ?? []);
     return { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn };
+  }
+
+  /**
+   * A window read's rows and choices (D52 decision 11): each date of windowRows' days is chosen as chooseDays chose from
+   * every run's rows there, with only the runs with gaps read over all of them; then rows are read for the runs chosen,
+   * over the read's days and a week either side, and for each run the read's days use, over its own past days.
+   */
+  async function chooseWindow(
+    scope: OrgScope, locationId: string, runs: readonly ForecastRunRecord[], range: { from: string; to: string }, today: string,
+  ): Promise<Choice> {
+    if (runs.length === 0) return { rows: [], chosen: new Map() };
+    const gappy = runs.filter((run) => !gapFree(run)).map((run) => run.id);
+    const gappyRows = gappy.length === 0 ? [] : await forecasts.rows(scope, locationId, gappy, windowRows(runs, range, today));
+    const runFor = runChooser(runs, gappyRows);
+    const around = { from: shifted(range.from, -6), to: shifted(range.to, 6) };
+    const picks = new Map<string, ForecastRunRecord>();
+    for (const date of eachDay(around.from, around.to)) {
+      const run = runFor(date);
+      if (run !== undefined) picks.set(date, run);
+    }
+    const inWindow = new Set(picks.values());
+    const used = new Set(eachDay(range.from, range.to).flatMap((date) => picks.get(date) ?? []));
+    const yesterday = shifted(today, -1);
+    const pastDates: string[] = [];
+    const pastRuns = new Set<ForecastRunRecord>();
+    for (const run of used) {
+      const to = run.range.to < yesterday ? run.range.to : yesterday;
+      if (run.range.from > to) continue;
+      for (const date of eachDay(run.range.from, to)) {
+        if (picks.has(date) || runFor(date) !== run) continue;
+        picks.set(date, run);
+        pastDates.push(date);
+        pastRuns.add(run);
+      }
+    }
+    const fullIds = (chosenRuns: Iterable<ForecastRunRecord>): string[] => [...chosenRuns].filter(gapFree).map((run) => run.id);
+    const windowIds = fullIds(inWindow);
+    const pastIds = fullIds(pastRuns);
+    const pastFrom = firstOf(pastDates);
+    const pastTo = lastOf(pastDates);
+    const [windowRead, pastRead] = await Promise.all([
+      windowIds.length === 0 ? [] : forecasts.rows(scope, locationId, windowIds, around),
+      pastIds.length === 0 || pastFrom === undefined || pastTo === undefined ? [] : forecasts.rows(scope, locationId, pastIds, { from: pastFrom, to: pastTo }),
+    ]);
+    return choiceOf(picks, [...gappyRows, ...windowRead, ...pastRead]);
+  }
+
+  /** The model card's rows and choices: the newest run's own days, every one of which it supplies (no run is newer). */
+  async function chooseNewest(scope: OrgScope, locationId: string, runs: readonly ForecastRunRecord[]): Promise<Choice> {
+    const [newest] = runs;
+    if (newest === undefined) return { rows: [], chosen: new Map() };
+    const rows = await forecasts.rows(scope, locationId, [newest.id], newest.range);
+    const runFor = runChooser(runs, rows);
+    const picks = new Map<string, ForecastRunRecord>();
+    for (const row of rows) {
+      if (row.span === 'day' && runFor(row.from) === newest) picks.set(row.from, newest);
+    }
+    return choiceOf(picks, rows);
   }
 
   return {
@@ -286,7 +369,7 @@ export function createForecastReader(deps: {
       const { runs, rows, chosen, actuals, scored, liveOf, stored, notesOn, rulesOn } = await load(scope, location.id, today, {
         ...(history === null ? {} : { historyFrom: history.readFrom }),
         notes: { from: firstOf([at(range.from, -6), history?.from]) ?? range.from, to: at(range.to, 6) },
-        rows: (published) => (published.length === 0 ? null : windowRows(published, range, today)),
+        choose: (published) => chooseWindow(scope, location.id, published, range, today),
       });
       const dates = eachDay(range.from, range.to);
       if (runs.length === 0) {
@@ -315,13 +398,14 @@ export function createForecastReader(deps: {
           (entry) => ('note' in entry ? noteReasonView(entry.note, entry.outcome) : ruleReasonView(entry.rule, entry.outcome)),
         );
         const actual = actuals.get(date) ?? null;
-        const score = scored(date, row);
+        const score = scored(date, pick);
         scoredDays.push(score);
         days.push({
           date, weekday: weekdayOf(date), status: day.status, low: day.low, mid: day.mid, high: day.high,
           baseline: day.status === model.status ? row.baseline : null, reasons, model, noteGuests: day.noteGuests, moreNotes, moreRules,
           runId: run.id, madeAt: run.madeAt, madeAfterDay: run.madeAt >= date,
           actual, inRange: model.status === 'open' ? inRangeOf(actual, row.low, row.high) : null, scored: scoredDay(score),
+          outlook: score.outlook === true,
         });
       }
       const weeks: ForecastWeekView[] = weekRows.flatMap((row): ForecastWeekView[] => {
@@ -330,7 +414,7 @@ export function createForecastReader(deps: {
         if (picks.some((pick) => pick?.run.id !== row.runId)) return [];
         const run = picks[0]?.run;
         if (run === undefined || row.low === null || row.mid === null || row.high === null) return [];
-        const actual = weekActual(picks.flatMap((pick, index) => (pick === undefined ? [] : [scored(weekDates[index] ?? '', pick.row)])));
+        const actual = weekActual(picks.flatMap((pick, index) => (pick === undefined ? [] : [scored(weekDates[index] ?? '', pick)])));
         // The run's own week shifts by each day's adjusted middle less the model's: a day the model closed or booked adds
         // nothing to the run's week, so only a model-open day with no middle can't be taken off, and leaves the week out.
         const changes = picks.flatMap((pick, index) => (pick === undefined ? [] : [{ model: modelOf(pick.row), day: adjusted(weekDates[index] ?? '', pick.row) }]));
@@ -344,6 +428,7 @@ export function createForecastReader(deps: {
         return [{
           from: row.from, to: row.to, openDays: Math.max(0, (row.openDays ?? 0) + opened - closed), low: shifted(row.low), mid: shifted(row.mid),
           high: shifted(row.high), runId: run.id, madeAt: run.madeAt, actual, inRange: inRangeOf(actual, row.low, row.high), noteGuests,
+          outlook: weekDates.some((date) => isOutlook(date, run)),
         }];
       });
       const used = new Set(days.map((day) => day.runId));
@@ -359,7 +444,7 @@ export function createForecastReader(deps: {
     },
     async latest(scope, locationId, today) {
       // The newest run supplies every one of its own days, so its rows' days are all its live accuracy needs.
-      const { runs, liveOf } = await load(scope, locationId, today, { rows: (published) => published[0]?.range ?? null });
+      const { runs, liveOf } = await load(scope, locationId, today, { choose: (published) => chooseNewest(scope, locationId, published) });
       const [newest] = runs;
       return newest === undefined ? null : { run: runView(newest), live: liveOf(newest.id) };
     },

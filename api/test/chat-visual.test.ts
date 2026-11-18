@@ -45,7 +45,8 @@ function fc(date: string, low: number | null, high: number | null): ForecastDayV
   const mid = low === null || high === null ? null : (low + high) / 2;
   return {
     date, weekday: weekdayOf(date), status, low, mid, high, baseline: null, reasons: [], runId: 'run-0001', madeAt: run.madeAt,
-    madeAfterDay: false, actual: null, inRange: null, scored: false, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0, moreRules: 0,
+    madeAfterDay: false, actual: null, inRange: null, scored: false, outlook: false, model: { status, low, mid, high }, noteGuests: 0, moreNotes: 0,
+    moreRules: 0,
   };
 }
 

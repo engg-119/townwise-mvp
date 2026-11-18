@@ -334,8 +334,12 @@ describe('get_forecast (U13B)', () => {
     const OLDER = '000000000000000000000011';
     const NEWER = '000000000000000000000012';
     const runs = [
-      publishedRun({ id: NEWER, model: { family: 'hybrid_linear_xgboost', version: 'v10', notebookCommit: '0000000' }, dataThrough: '2026-11-01', madeAt: '2026-11-02', backtest: null }),
-      publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26' }),
+      // Each run's range and dayCount are its rows' (the reader chooses by them, D52).
+      publishedRun({
+        id: NEWER, model: { family: 'hybrid_linear_xgboost', version: 'v10', notebookCommit: '0000000' }, dataThrough: '2026-11-01', madeAt: '2026-11-02',
+        backtest: null, range: { from: '2026-11-02', to: '2026-11-05' }, dayCount: 4,
+      }),
+      publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26', range: { from: '2026-10-27', to: '2026-11-01' }, dayCount: 6 }),
     ];
     const olderDays = ['2026-10-27', '2026-10-28', '2026-10-29', '2026-10-30', '2026-10-31', '2026-11-01'];
     const rows = [
@@ -457,7 +461,9 @@ describe('get_forecast (U13B)', () => {
       stored.push({ date, guests, netSalesCents });
     }
     const forecasts = {
-      published: () => Promise.resolve([publishedRun({ id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26' })]),
+      published: () => Promise.resolve([publishedRun({
+        id: OLDER, dataThrough: '2026-10-25', madeAt: '2026-10-26', range: { from: '2026-10-27', to: '2026-11-04' }, dayCount: 9,
+      })]),
       rows: () => Promise.resolve(rows),
     } as unknown as ForecastStore;
     const salesDays = { days: () => Promise.resolve(stored) } as unknown as SalesDayStore;
