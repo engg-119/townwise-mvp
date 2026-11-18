@@ -54,8 +54,9 @@ import { workedOpenStore } from './workedOpen';
 // the dock, when a reply grows below the view; the dock growing or shrinking moves the end, never the pin. The header
 // sits under the portal's top bar on every screen, above what scrolls.
 //
-// Previous chats (spec P25 build note, 2026-11-18): while a reply runs in another chat, the landing lists the recent
-// chats under its chips (PreviousChats), and the list is read every 3 seconds while the page is in view.
+// Previous chats (spec P25 build note, 2026-11-18): while there is any earlier chat, the landing has a Previous chats
+// dropdown under its chips (PreviousChats), closed at first; the list is read every 3 seconds while a chat replies and
+// the page is in view.
 //
 // The landing starts at the top (spec P25 build note, 2026-11-18): an independent browser review saw a centered
 // landing jump when TownwiseAI's questions came under its chips (176px at 1280px) and the centered skeleton give way
@@ -63,7 +64,8 @@ import { workedOpenStore } from './workedOpen';
 // [CONFIRM: the TownwiseAI new chat page starts at the top rather than centred, so it never moves while it loads]
 //
 // Questions and activity (spec P25 build note, 2026-11-18; owner: "we should likely put the questions and activity back
-// to the right side of the screen and it should only appear on the new chat page"): shown only while no conversation is
+// to the right side of the screen and it should only appear on the new chat page", then "the questions below should be
+// moved to the right side": from 641px TownwiseAI's questions are in the column, not under the chips): shown only while no conversation is
 // open (the landing, and the skeleton, the error and TownwiseAI off, where the panel still works). From 641px it is a
 // column (4 of 12) beside the landing, under the header, open by default and shown or hidden by the header's button; at
 // 640px and below it is PanelRow under the chips, collapsed by default and opening in place. Inside a conversation
@@ -229,9 +231,12 @@ function isLanding(state: TuningChatState): boolean {
   return state.status === 'ready' && state.enabled && state.messages.length === 0 && !state.conversationLoading;
 }
 
-/** Whether the landing lists TownwiseAI's questions under its chips, so the panel's column beside it leaves them out. */
-export function landingShowsQuestions(state: TuningChatState, panel: AgentPanelState): boolean {
-  return isLanding(state) && panel.state.status === 'ready' && panel.state.data.questions.length > 0;
+/**
+ * Whether the landing lists TownwiseAI's questions under its chips (at 640px and below only), so the panel leaves them
+ * out; from 641px they are in the column beside the landing (owner, 2026-11-18).
+ */
+export function landingShowsQuestions(state: TuningChatState, panel: AgentPanelState, phone: boolean): boolean {
+  return phone && isLanding(state) && panel.state.status === 'ready' && panel.state.data.questions.length > 0;
 }
 
 export function AgentChat(props: {
@@ -306,10 +311,10 @@ export function AgentChat(props: {
 
   // The conversation whose reply streams here is replying, whatever the list last read said.
   const listed = state.conversations.map((item) => (state.streaming && item.id === state.conversationId && !item.running ? { ...item, running: true } : item));
-  // Previous chats stays while it is open, even once no reply runs, so a row holding focus is never unmounted from under
-  // the person; closed with nothing running, it goes (and focus, if it was on the toggle, goes to the composer).
+  // Previous chats shows while there is any earlier chat, and stays while it is open, so a row holding focus is never
+  // unmounted from under the person; closed with no chat left, it goes (and focus, if it was on the toggle, goes to the composer).
   const [previousOpen, setPreviousOpen] = useState(false);
-  const previousShown = listed.some((item) => item.running) || previousOpen;
+  const previousShown = listed.length > 0 || previousOpen;
   const wasShown = useRef(false);
   if (!landing && previousOpen) setPreviousOpen(false);
   useEffect(() => {
@@ -701,7 +706,7 @@ export function AgentChat(props: {
           <PreviousChats conversations={listed} open={previousOpen} onToggle={setPreviousOpen} onOpen={(id) => { opened(() => { chat.openConversation(id); }, id); }} />
         ) : null}
         {phone ? panelRow(questionsInRow ? questions : null) : null}
-        {questionsInRow ? null : questions}
+        {phone && !questionsInRow ? questions : null}
       </View>
     </ScrollView>
   ) : (

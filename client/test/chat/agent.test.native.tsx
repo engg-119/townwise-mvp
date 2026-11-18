@@ -565,10 +565,11 @@ describe('the side panel', () => {
     expect(await within(side).findByText('Couldn’t load TownwiseAI’s questions.')).toBeTruthy();
     chat.panelError = null;
     await fireEvent.press(first(within(side).getAllByRole('button', { name: 'Try again' })));
-    // Read, they show under the landing's chips, and the column beside it leaves them out.
-    expect(await within(await screen.findByTestId('chat-landing-questions')).findByText('Were you open on Sat, Jan 24, 2026?')).toBeTruthy();
+    // Read, they show in the column beside the landing (owner, 2026-11-18: "the questions below should be moved to the
+    // right side"), and the landing leaves them out.
+    expect(await within(side).findByText('Were you open on Sat, Jan 24, 2026?')).toBeTruthy();
     expect(within(side).queryByText('Couldn’t load TownwiseAI’s questions.')).toBeNull();
-    expect(within(side).queryByText('Were you open on Sat, Jan 24, 2026?')).toBeNull();
+    expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
   });
 });
 
@@ -907,10 +908,11 @@ describe('view-as', () => {
     disabled('New chat');
     disabled('Which days last month were unusual?');
     await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
-    await openPanel();
+    const side = await openPanel();
     disabled('No, we were closed');
-    // Beside the landing, the cards are under its chips; the panel's column leaves them out.
-    await fireEvent.press(within(screen.getByTestId('chat-landing-questions')).getByRole('button', { name: 'No, we were closed' }));
+    // From 641px the cards are in the column beside the landing; the landing leaves them out.
+    expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
+    await fireEvent.press(within(side).getByRole('button', { name: 'No, we were closed' }));
     // Reading is allowed: the target's past conversation opens, and its actions are disabled too.
     await fireEvent.press(screen.getByRole('button', { name: 'History' }));
     disabled('Delete Earlier chat');

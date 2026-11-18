@@ -7,6 +7,7 @@ import { ApiError, type ApiClient } from '../../src/api/client';
 import { aboutDraft } from '../../src/chat/about';
 import { resetDrafts } from '../../src/chat/drafts';
 import { COMPOSER_LABEL } from '../../src/chat/ui/Composer';
+import { COLLAPSE_MS } from '../../src/chat/ui/Collapse.web';
 import { ATTACH_FILES, WAIT_ID } from '../../src/chat/ui/ComposerFiles.web';
 import { resetVersionFocus } from '../../src/chat/ui/VersionNav';
 import { localToday } from '../../src/portal/locations/dates';
@@ -557,11 +558,17 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
 
     await act(async () => { answer?.(); await new Promise((resolve) => { setTimeout(resolve, 20); }); });
     const landing = await screen.findByTestId('chat-landing-column');
-    // Row for row: the heading, the line, the composer with its help line, the chips. TownwiseAI's questions, under
-    // them, load with the side panel, on their own.
+    // Row for row: the heading, the line, the composer with its help line, the chips. What the skeleton can't know
+    // isn't stood for: Previous chats under the chips, there whenever there is an earlier chat (owner, 2026-11-18), and
+    // at 640px and below TownwiseAI's questions, last, which load with the side panel, on their own (from 641px they
+    // are in the column).
     const real = Array.from(landing.children);
-    expect(real.at(-1)).toBe(screen.getByTestId('chat-landing-questions'));
-    const stood = real.slice(0, -1);
+    const previous = screen.getByTestId('chat-previous');
+    expect(previous.parentElement).toBe(landing);
+    const questions = screen.queryByTestId('chat-landing-questions');
+    expect(questions === null).toBe(width > 640);
+    if (questions !== null) expect(real.at(-1)).toBe(questions);
+    const stood = real.filter((row) => row !== previous && row !== questions);
     expect(stood.map(words)).toEqual(rows.map((row) => row.text));
     expect(screen.getByTestId('chat-header-controls').children.length).toBe(width > 640 ? 3 : 2);
     expect(screen.queryByTestId('agent-side') === null ? null : style(screen.getByTestId('agent-side')).flexGrow).toBe(width > 640 ? '4' : null);
@@ -650,8 +657,10 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
         expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
         await settle(answerPanel);
       }
-      // The questions come under the chips, and nothing above them is drawn again or moved.
-      expect(screen.queryByTestId('chat-landing-questions') !== null).toBe(order !== 'no questions');
+      // At 640px and below the questions come under the chips, and from 641px in the column beside the landing (owner,
+      // 2026-11-18); either way nothing above them is drawn again or moved.
+      expect(screen.queryByTestId('chat-landing-questions') !== null).toBe(order !== 'no questions' && at <= 640);
+      if (at > 640) expect(within(screen.getByTestId('agent-side')).queryByRole('heading', { level: 3, name: 'Were you open on Sat, Jan 24, 2026?' }) !== null).toBe(order !== 'no questions');
       expect(screen.getByTestId('chat-landing-column')).toBe(landing);
       expect(within(landing).getByRole('heading', { name: 'Ask TownwiseAI about Main Street Bar' })).toBe(heading);
       expect(boxes(landing)).toEqual(stood);
@@ -809,7 +818,7 @@ test('History marks a conversation TownwiseAI is replying in, and the mark goes 
   expect(screen.getByRole('button', { name: 'Earlier chat, Nov 2, 2026' })).toBeTruthy();
 }, 10_000);
 
-describe('Previous chats on the new chat page (owner, 2026-11-18: “if a response is going then that chat should show up below the questions in the chat box on the new page in a previous chats dropdown”)', () => {
+describe('Previous chats on the new chat page (owner, 2026-11-18: “if a response is going then that chat should show up below the questions in the chat box on the new page in a previous chats dropdown”, then “there should be a previous chats dropdown that is closed by default that has a smooth open/ close animation”)', () => {
   const TWO = [
     { id: 'c2', title: 'Newer chat', updatedAt: '2026-11-03T15:00:00.000Z', turnCount: 1, running: false },
     { id: 'c1', title: 'Earlier chat', updatedAt: '2026-11-02T15:00:00.000Z', turnCount: 2, running: true },
@@ -829,7 +838,8 @@ describe('Previous chats on the new chat page (owner, 2026-11-18: “if a respon
     fireEvent.click(toggle);
     expect(toggle.getAttribute('aria-expanded')).toBe('true');
     const list = within(landing).getByTestId('chat-previous-list');
-    expect(list.id).toBe(toggle.getAttribute('aria-controls'));
+    // The toggle controls the list's region (its Collapse), which holds the list.
+    expect(document.getElementById(toggle.getAttribute('aria-controls') ?? '')?.contains(list)).toBe(true);
     const rows = within(list).getAllByRole('button');
     expect(rows.map((row) => row.getAttribute('aria-label'))).toEqual(['Earlier chat, Replying', 'Newer chat, Nov 3, 2026']);
     const running = first(rows);
@@ -853,20 +863,25 @@ describe('Previous chats on the new chat page (owner, 2026-11-18: “if a respon
     expect(within(running).queryByTestId('chat-replying-spinner')).toBeNull();
   });
 
-  test('the list is read every 3 seconds while a chat runs; once it ends the dropdown goes, and nothing more is read', async () => {
+  test('the list is read every 3 seconds while a chat runs; once none runs nothing more is read, and the dropdown stays, closed', async () => {
     const api = fakeChatApi();
     api.summary = { ...SUMMARY, conversations: TWO };
     renderAt('/locations/l1/agent', api);
     await screen.findByRole('button', { name: 'Previous chats' });
     const loads = api.summaryLoads;
     api.summary = { ...SUMMARY, conversations: TWO.map((item) => ({ ...item, running: false })) };
-    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull(); }, { timeout: 4500 });
-    expect(api.summaryLoads).toBe(loads + 1);
+    await waitFor(() => { expect(api.summaryLoads).toBe(loads + 1); }, { timeout: 4500 });
     await act(() => new Promise((resolve) => { setTimeout(resolve, 3500); }));
     expect(api.summaryLoads).toBe(loads + 1);
+    const toggle = screen.getByRole('button', { name: 'Previous chats' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    fireEvent.click(toggle);
+    expect(within(screen.getByTestId('chat-previous-list')).getAllByRole('button').map((row) => row.getAttribute('aria-label'))).toEqual([
+      'Newer chat, Nov 3, 2026', 'Earlier chat, Nov 2, 2026',
+    ]);
   }, 15_000);
 
-  test('open when the last reply ends, the dropdown stays (focus stays on its row) and goes once it is closed', async () => {
+  test('open when the last reply ends, the dropdown stays (focus stays on its row), and closed it stays while there are earlier chats', async () => {
     const api = fakeChatApi();
     api.summary = { ...SUMMARY, conversations: TWO };
     renderAt('/locations/l1/agent', api);
@@ -881,18 +896,68 @@ describe('Previous chats on the new chat page (owner, 2026-11-18: “if a respon
     expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Newer chat, Nov 3, 2026' }));
     expect(document.activeElement).not.toBe(document.body);
     fireEvent.click(screen.getByRole('button', { name: 'Previous chats' }));
-    await waitFor(() => { expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull(); });
+    await waitFor(() => { expect(screen.queryByTestId('chat-previous-list')).toBeNull(); });
+    expect(screen.getByRole('button', { name: 'Previous chats' }).getAttribute('aria-expanded')).toBe('false');
   }, 15_000);
 
-  test('nothing running: no dropdown, and no reading of the list', async () => {
+  test('earlier chats with nothing running: the dropdown shows, closed, and the list isn’t read again', async () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
-    await screen.findByTestId('chat-landing-column');
+    const landing = await screen.findByTestId('chat-landing-column');
+    const toggle = await within(landing).findByRole('button', { name: 'Previous chats' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByTestId('chat-previous-list')).toBeNull();
     const loads = api.summaryLoads;
     await act(() => new Promise((resolve) => { setTimeout(resolve, 3500); }));
-    expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull();
     expect(api.summaryLoads).toBe(loads);
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
   }, 10_000);
+
+  test('no earlier chats: no dropdown', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, conversations: [] };
+    renderAt('/locations/l1/agent', api);
+    const landing = await screen.findByTestId('chat-landing-column');
+    await within(landing).findByRole('group', { name: 'Suggestions' });
+    expect(screen.queryByRole('button', { name: 'Previous chats' })).toBeNull();
+    expect(screen.queryByTestId('chat-previous')).toBeNull();
+  });
+
+  test('opens and closes smoothly: the list’s row eases between 0fr and 1fr, and a closing list stays until it has folded', async () => {
+    reduceMotion(false);
+    renderAt('/locations/l1/agent', fakeChatApi());
+    const toggle = await screen.findByRole('button', { name: 'Previous chats' });
+    const region = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
+    if (region === null) throw new Error('no list region');
+    expect(region.style.gridTemplateRows).toBe('0fr');
+    expect(region.style.transition).toContain(`grid-template-rows ${String(COLLAPSE_MS)}ms`);
+    expect(screen.queryByTestId('chat-previous-list')).toBeNull();
+    fireEvent.click(toggle);
+    expect(region.style.gridTemplateRows).toBe('1fr');
+    expect(within(region).getByTestId('chat-previous-list')).toBeTruthy();
+    await act(() => new Promise((resolve) => { setTimeout(resolve, COLLAPSE_MS + 20); }));
+    fireEvent.click(toggle);
+    expect(region.style.gridTemplateRows).toBe('0fr');
+    // Folding, the rows stay drawn but out of reach, until the move ends.
+    const list = within(region).getByTestId('chat-previous-list');
+    expect(list.parentElement?.hasAttribute('inert')).toBe(true);
+    await act(() => new Promise((resolve) => { setTimeout(resolve, COLLAPSE_MS + 20); }));
+    expect(screen.queryByTestId('chat-previous-list')).toBeNull();
+    expect(region.isConnected).toBe(true);
+  });
+
+  test('under reduced motion it opens and closes at once, with no transition', async () => {
+    reduceMotion(true);
+    renderAt('/locations/l1/agent', fakeChatApi());
+    const toggle = await screen.findByRole('button', { name: 'Previous chats' });
+    const region = document.getElementById(toggle.getAttribute('aria-controls') ?? '');
+    if (region === null) throw new Error('no list region');
+    expect(region.style.transition).toBe('none');
+    fireEvent.click(toggle);
+    expect(within(region).getByTestId('chat-previous-list')).toBeTruthy();
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId('chat-previous-list')).toBeNull();
+  });
 
   test('New chat while a reply streams shows that chat in Previous chats, replying', async () => {
     const api = fakeChatApi();
@@ -973,8 +1038,8 @@ describe('on phones, where the header stays put as the landing and the thread re
   });
 });
 
-describe('Questions and activity only on the new chat page (owner, 2026-11-18: “we should likely put the questions and activity back to the right side of the screen and it should only appear on the new chat page”)', () => {
-  test.each([1280, 800])('at %ipx it is a column beside the landing, open by default; its button hides and shows it without drawing the landing again', async (at) => {
+describe('Questions and activity only on the new chat page (owner, 2026-11-18: “we should likely put the questions and activity back to the right side of the screen and it should only appear on the new chat page”, then “the questions below should be moved to the right side”)', () => {
+  test.each([1280, 800])('at %ipx it is a column beside the landing, open by default, with the questions the landing leaves out; its button hides and shows it without drawing the landing again', async (at) => {
     setWidth(at);
     renderAt('/locations/l1/agent', fakeChatApi());
     const toggle = await screen.findByRole('button', { name: 'Questions and activity (2)' });
@@ -986,9 +1051,10 @@ describe('Questions and activity only on the new chat page (owner, 2026-11-18: �
     expect(side.previousElementSibling?.contains(landing)).toBe(true);
     expect([style(side).flexGrow, style(side.previousElementSibling ?? side).flexGrow]).toEqual(['4', '8']);
     expect(screen.queryByRole('dialog')).toBeNull();
-    // The landing lists the questions under its chips, so the column leaves them out.
-    expect(within(side).queryByRole('heading', { name: 'Questions for you' })).toBeNull();
-    expect(within(screen.getByTestId('chat-landing-questions')).getByRole('heading', { name: 'Questions for you (2)' })).toBeTruthy();
+    // From 641px the column lists the questions, and the landing leaves them out.
+    expect(await within(side).findByRole('heading', { name: 'Questions for you' })).toBeTruthy();
+    expect(within(side).getByText('2 open')).toBeTruthy();
+    expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
     expect(within(side).getByRole('heading', { name: 'What it’s been doing' })).toBeTruthy();
     expect(within(side).getByRole('heading', { name: 'This month’s budget' })).toBeTruthy();
     expect(within(side).getByRole('button', { name: 'How TownwiseAI works' })).toBeTruthy();
@@ -999,6 +1065,8 @@ describe('Questions and activity only on the new chat page (owner, 2026-11-18: �
     expect(screen.queryByTestId('agent-side')).toBeNull();
     expect(toggle.getAttribute('aria-expanded')).toBe('false');
     expect(column.isConnected).toBe(true);
+    // Hidden with the column, the questions aren't on the landing either.
+    expect(screen.queryByRole('heading', { name: /^Questions for you/ })).toBeNull();
     fireEvent.click(toggle);
     expect(await screen.findByTestId('agent-side')).toBeTruthy();
     expect(column.isConnected).toBe(true);
@@ -1025,9 +1093,11 @@ describe('Questions and activity only on the new chat page (owner, 2026-11-18: �
     expect(row.getAttribute('aria-expanded')).toBe('false');
     expect(within(row).getByTestId('chat-badge').textContent).toBe('2');
     expect(style(row).minHeight).toBe('44px');
-    // Under the chips, above the landing's questions.
+    // Under the chips and Previous chats, above the landing's questions.
     const wrap = screen.getByTestId('chat-panel-row');
-    expect(wrap.previousElementSibling).toBe(within(landing).getByRole('group', { name: 'Suggestions' }).closest('[data-testid="chat-landing-column"] > *'));
+    const previous = screen.getByTestId('chat-previous');
+    expect(wrap.previousElementSibling).toBe(previous);
+    expect(previous.previousElementSibling).toBe(within(landing).getByRole('group', { name: 'Suggestions' }).closest('[data-testid="chat-landing-column"] > *'));
     expect(wrap.nextElementSibling).toBe(screen.getByTestId('chat-landing-questions'));
     expect(screen.queryByTestId('agent-side')).toBeNull();
     fireEvent.click(row);
@@ -1306,8 +1376,8 @@ test('one primary: only the composer’s button has the white fill', async () =>
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);
   // The landing with the panel's column and the questions' answers, and text in the composer, so Send is on.
-  await panelColumn();
-  await within(await screen.findByTestId('chat-landing-questions')).findByRole('button', { name: 'No, we were closed' });
+  const side = await panelColumn();
+  await within(side).findByRole('button', { name: 'No, we were closed' });
   fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
   expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([screen.getByRole('button', { name: 'Send' })]);
   // A reply with a proposal card, and text in the docked composer.
@@ -1386,9 +1456,9 @@ test('under view-as every write is disabled in place and versions still switch b
   expect(input.getAttribute('aria-readonly')).toBe('true');
   expect(input.getAttribute('aria-describedby')).toBe('chat-ro composer-help');
   for (const name of ['Send', 'New chat', 'Which days last month were unusual?']) expectReadOnly(screen.getByRole('button', { name }));
-  await panelColumn();
-  // Beside the landing, the cards are under its chips; the panel's column leaves them out.
-  const cards = await screen.findByTestId('chat-landing-questions');
+  // From 641px the cards are in the panel's column; the landing leaves them out.
+  const cards = await panelColumn();
+  expect(screen.queryByTestId('chat-landing-questions')).toBeNull();
   expectReadOnly(await within(cards).findByRole('button', { name: 'No, we were closed' }));
   fireEvent.click(within(cards).getByRole('button', { name: 'No, we were closed' }));
   // Reading is allowed: the target's conversation opens, with every action in place and disabled.
@@ -1679,8 +1749,8 @@ test('nothing goes to browser storage', async () => {
   try {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
-    // An answer on the new chat page, where the questions are.
-    const cards = await screen.findByTestId('chat-landing-questions');
+    // An answer on the new chat page, where the questions are (from 641px, in the column beside the landing).
+    const cards = await panelColumn();
     const [notSure] = await within(cards).findAllByRole('button', { name: 'Not sure' });
     if (notSure === undefined) throw new Error('no answer');
     fireEvent.click(notSure);

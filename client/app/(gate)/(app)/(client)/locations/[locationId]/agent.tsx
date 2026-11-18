@@ -140,7 +140,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       send={tellFromPanel}
       about={about.state}
       onRetryAbout={about.reload}
-      showQuestions={!landingShowsQuestions(chat.state, panel)}
+      showQuestions={!landingShowsQuestions(chat.state, panel, phone)}
     />
   );
 

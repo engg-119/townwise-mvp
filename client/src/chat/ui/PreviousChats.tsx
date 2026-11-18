@@ -4,16 +4,17 @@ import { webAria } from '../../portal/ui/aria';
 import { theme } from '../../theme';
 import type { ConversationSummary } from '../api';
 import { formatDay } from '../format';
+import { Collapse } from './Collapse';
 import { ChevronDown } from './icons';
 import { Replying } from './Replying';
 
 // Previous chats on the new chat page (spec P25 build note, 2026-11-18; owner: "if a response is going then that chat
-// should show up below the questions in the chat box on the new page in a previous chats dropdown"). The page draws it
-// under the suggestion chips only while a reply runs in another chat (the list's `running`), and reads the list every
-// 3 seconds meanwhile, so it goes by itself once none runs and it is closed (open, it stays, so a row holding focus is never removed from under the person). A disclosure, closed at first: open, it lists the recent
-// chats, the running ones first with Replying (Replying.tsx: a turning ring, a still square under reduced motion),
-// each a button that opens that chat, reattaching its live turn. [CONFIRM: "Previous chats" shows only while a reply
-// runs elsewhere, listing recent chats with the running one first]
+// should show up below the questions in the chat box on the new page in a previous chats dropdown", then "there should
+// be a previous chats dropdown that is closed by default that has a smooth open/ close animation"). The page draws it
+// under the suggestion chips while there is any earlier chat. A disclosure, closed at first, that opens and closes
+// smoothly (Collapse: the height eases, at once under reduced motion): open, it lists the recent chats, the running
+// ones first with Replying (Replying.tsx: a turning ring, a still square under reduced motion), each a button that
+// opens that chat, reattaching its live turn.
 
 /** How many chats the list holds: every running one, then the most recent others. */
 export const PREVIOUS_MAX = 5;
@@ -52,8 +53,8 @@ export function PreviousChats(props: {
         <View style={styles.push} />
         <ChevronDown color={c.text2} up={open} />
       </Pressable>
-      {open ? (
-        <View nativeID={LIST_ID} testID={LIST_ID}>
+      <Collapse id={LIST_ID} open={open}>
+        <View testID={LIST_ID}>
           {previousChats(props.conversations).map((item) => (
             <Pressable
               key={item.id}
@@ -67,7 +68,7 @@ export function PreviousChats(props: {
             </Pressable>
           ))}
         </View>
-      ) : null}
+      </Collapse>
     </View>
   );
 }
