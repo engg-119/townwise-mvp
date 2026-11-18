@@ -9,7 +9,7 @@ jest.mock('expo-splash-screen', () => ({
 
 import { useEffect } from 'react';
 import { act, cleanup, fireEvent, renderRouter, screen, waitFor, within } from 'expo-router/testing-library';
-import { Dimensions, Pressable, ScrollView, Text, View } from 'react-native';
+import { Dimensions, Pressable, Text, View } from 'react-native';
 import type { z } from 'zod';
 
 import { ApiError } from '../../src/api/client';
@@ -118,34 +118,21 @@ test('the first load says “Loading this location”, then shows the header and
   expect((await townLink()).props.accessibilityState).toMatchObject({ selected: true });
 });
 
-test('on a phone the top bar’s sections scroll, without animating, to keep the current one in view, on mount and on a new route', async () => {
-  const scrollTo = jest.spyOn(ScrollView.prototype, 'scrollTo');
+test('on a phone the top bar’s sections are under Menu, with the current one marked (D51)', async () => {
   const spy = jest.spyOn(Dimensions, 'get').mockReturnValue({ ...Dimensions.get('window'), width: 320 });
   try {
     const router = await renderTab(adminApi());
     await screen.findByText('Probe: Main Street Bar, org_admin');
-    const sections = screen.getByLabelText('Sections');
-    // A 320px region, and eight entries 90px wide and 4px apart in a nav that starts at the 16px margin. Town is
-    // under More (D38), the sixth, which ends at 16 + 560 = 576px and keeps 16px after it in view.
-    await fireEvent(sections, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 45 } } });
-    expect(within(sections).getAllByRole('link')).toHaveLength(7);
-    expect(within(sections).queryByRole('link', { name: 'Town' })).toBeNull();
-    const order = ['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'More', 'Team', 'Settings'];
-    for (const [index, name] of order.entries()) {
-      // More's layout is its box's, which a layout event on the button reaches.
-      const entry = within(sections).getByRole(name === 'More' ? 'button' : 'link', { name });
-      await fireEvent(entry, 'layout', { nativeEvent: { layout: { x: index * 94, y: 0, width: 90, height: 44 } } });
-    }
-    expect(scrollTo).toHaveBeenLastCalledWith({ x: 576 + 16 - 320, animated: false });
-    scrollTo.mockClear();
-    await fireEvent.press(within(sections).getByRole('link', { name: 'Home' }));
+    expect(screen.queryByLabelText('Main')).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Menu' }));
+    const main = screen.getByLabelText('Main');
+    expect(within(main).getAllByRole('link')).toHaveLength(12);
+    expect(within(main).getByRole('link', { name: 'Town' }).props.accessibilityState).toMatchObject({ selected: true });
+    await fireEvent.press(within(main).getByRole('link', { name: 'Home' }));
     expect(router.getPathname()).toBe('/locations/l1');
-    // The sections end at x 0, then the frame scrolls the new page to its top: a parent's effect runs after its
-    // children's in the same commit, and every ScrollView shares the one jest mock.
-    expect(scrollTo.mock.calls).toEqual([[{ x: 0, animated: false }], [{ x: 0, y: 0, animated: false }]]);
+    expect(screen.getByRole('button', { name: 'Menu' }).props.accessibilityState).toMatchObject({ expanded: false });
   } finally {
     spy.mockRestore();
-    scrollTo.mockRestore();
   }
 });
 
@@ -287,6 +274,8 @@ describe('Home’s title and TownwiseAI’s missing header', () => {
       expect(screen.queryByRole('heading')).toBeNull();
       expect(screen.queryByRole('link', { name: 'Location settings' })).toBeNull();
       expect(screen.queryByRole('link', { name: 'All locations' })).toBeNull();
+      // On a phone the sections are under Menu (D51).
+      if (width === 320) await fireEvent.press(screen.getByRole('button', { name: 'Menu' }));
       expect(within(screen.getByLabelText('Main')).getByRole('link', { name: 'TownwiseAI' }).props.accessibilityState).toMatchObject({ selected: true });
       await cleanup();
     }
