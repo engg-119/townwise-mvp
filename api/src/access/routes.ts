@@ -23,7 +23,7 @@ import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/est
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
 import { holdSetupReadBytes, readOrderSetup } from '../handlers/order-setup-read.ts';
 import { getOrders, saveOrderDecision, saveOrderRule, turnOffOrderRule } from '../handlers/orders.ts';
-import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
+import { deleteForecastRun, getForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
   addTextItem, answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
   listEntries, listFiles, putChunk, startImport,
@@ -551,6 +551,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'admin.forecasts.list', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs', policy: 'staff', bodyLimit: 'none',
     handler: listForecastRuns,
+  },
+  {
+    id: 'admin.forecasts.get', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none',
+    handler: getForecastRun,
   },
   {
     id: 'admin.forecasts.import', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/forecast-runs', policy: 'staff',

@@ -101,6 +101,7 @@ describe('route table', () => {
     expect(rows).toEqual([
       { id: 'org.forecast.get', method: 'GET', path: '/org/locations/:locationId/forecast', policy: 'member', bodyLimit: 'none', limiter: undefined },
       { id: 'admin.forecasts.list', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs', policy: 'staff', bodyLimit: 'none', limiter: undefined },
+      { id: 'admin.forecasts.get', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none', limiter: undefined },
       {
         id: 'admin.forecasts.import', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/forecast-runs', policy: 'staff',
         bodyLimit: '256kb', limiter: undefined,

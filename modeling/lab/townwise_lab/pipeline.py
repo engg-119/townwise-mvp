@@ -23,6 +23,7 @@ from townwise_lab.forecast import iso
 # 12th week with a range is the 24th scored, ending 167 days after the first: 364 + 30 + 34 + 167. Pinned by
 # test_min_history_days_always_gives_twelve_weeks_with_a_range.
 MIN_HISTORY_DAYS = 595
+MIN_LEARNING_DAYS = 28  # held-out days a fold needs before its learning curve is worth reading
 HORIZON = 28  # the scorecard's horizon: each week forecast from a refit at least 28 days before its Monday
 SHORT_HORIZON = 7
 LONG_HORIZON = forecast.REACH_DAYS  # reported, never gated: each week forecast at least 91 days before its Monday
@@ -109,6 +110,25 @@ def _folds(frame: pd.DataFrame, hist: pd.DataFrame, through: pd.Timestamp, base_
             continue
         folds.append(_fold(train_through, start, stop, metrics.weekly_totals(days)))
     return folds
+
+
+def _learning(frame: pd.DataFrame, hist: pd.DataFrame, through: pd.Timestamp, base_cols: list[str],
+              event_cols: list[str]) -> dict | None:
+    """How the trees learned, round by round, on the latest half-year fold with at least MIN_LEARNING_DAYS held-out
+    days: their loss on the days before the fold (training) and on the fold's days (validation), which they never saw.
+    Ratios only (model.learning_curve). None when no fold is long enough."""
+    for train_through, start, stop in reversed(backtest.six_month_folds(hist.date.min(), through)):
+        fr = features.limit_weekday_regime(features.add_recent_level(frame, train_through),
+                                           hist.index[hist.date <= train_through])
+        h = fr.loc[hist.index]
+        train, valid = h[h.date <= train_through], h[h.date.between(start, stop)]
+        if train.empty or len(valid) < MIN_LEARNING_DAYS:
+            continue
+        train_loss, valid_loss = model.learning_curve(fr, train, valid, base_cols, event_cols)
+        return {"trainThrough": iso(train_through), "from": iso(start), "to": iso(stop), "trainDays": len(train),
+                "validDays": len(valid), "metric": "mae_log",
+                "train": [round(float(v), 5) for v in train_loss], "valid": [round(float(v), 5) for v in valid_loss]}
+    return None
 
 
 def _baseline_folds(history: baseline.History, hist: pd.DataFrame, through: pd.Timestamp) -> list[dict]:
@@ -363,6 +383,8 @@ def calibrate(inp: dict, code_version: str) -> dict:
     run = forecast.run_file(fitted, fit, effects, widen_k, log_range, trained_from=first, data_through=through,
                             end=end, widening=widening, made_at=inp["today"], code_version=code_version,
                             backtest_block=run_backtest)
+    # Only a model run carries how its trees learned: the baseline is a rule, with nothing fitted round by round
+    scorecard["learning"] = _learning(frame, hist, through, base_cols, event_cols)
     return _success(calibration_id, code_version, params, scorecard, run)
 
 

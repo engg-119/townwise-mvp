@@ -125,6 +125,8 @@ export function checkLabResult(
       ));
       issues.push(...later('scorecard.backtest.series', result.scorecard.backtest.series));
       if (compared !== null) issues.push(...later('scorecard.comparison.series', compared.series));
+      const { learning } = result.scorecard;
+      if (learning != null && learning.to > through) issues.push({ path: 'scorecard.learning.to', code: 'after_data_through' });
     }
   }
   return issues.length > 0 ? { ok: false, issues: issues.slice(0, MAX_ISSUES) } : { ok: true, result };

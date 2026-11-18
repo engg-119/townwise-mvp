@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen, within } from '@testing-librar
 
 import { ApiError } from '../../../src/api/client';
 import { ForecastRuns } from '../../../src/portal/console/ForecastRuns';
-import { issueText, readRunFile, summaryText, type StaffRun } from '../../../src/portal/console/forecasts';
+import { issueText, learningSummary, learningWords, readRunFile, summaryText, type RunTraining, type StaffRun } from '../../../src/portal/console/forecasts';
 import { refusal, staffMe } from '../../helpers/portal';
 import { portalWrapper } from '../files/harness';
 import { consoleApi, orgDetail, type ConsoleApi } from './helpers';
@@ -215,6 +215,90 @@ test('the server’s issues read through the same words', async () => {
   await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'Import for Hanover' })); });
   expect(screen.getByText('days[1].high is lower than mid.')).toBeTruthy();
   expect(screen.getByText('madeAt is after today.')).toBeTruthy();
+});
+
+describe('how a run was trained (D50)', () => {
+  const TRAINING_PATH = 'GET /api/admin/orgs/o1/forecast-runs/run1';
+  const IMPORTED: RunTraining = {
+    code: { commit: 'abc1234', imageDigest: null }, history: { from: '2025-01-01', to: '2026-04-30', days: null }, method: null,
+    backtest: { from: '2026-01-05', to: '2026-03-15', weeks: 10, weeklyTypicalErrorPct: 7.5, weeksOver20Pct: 1, weeklyRangePct: null },
+    validation: null, learning: null,
+  };
+  const LAB: RunTraining = {
+    code: { commit: 'f'.repeat(40), imageDigest: 'sha256:abc' }, history: { from: '2025-01-01', to: '2026-04-30', days: 430 },
+    method: {
+      kind: 'model', baseInputs: ['weekday', 'recent_level', 'term'], eventInputs: ['ev_hanover-nh:home-football', 'week_of_term', 'weekday'],
+      trees: { objective: 'reg:absoluteerror', rounds: 400, learningRate: 0.03, maxDepth: 3, minChildWeight: 5, subsample: 0.8, columnSample: 0.8, l2: 5 },
+      refitEveryMonths: 3, regimeStart: null,
+    },
+    backtest: IMPORTED.backtest,
+    validation: {
+      from: '2026-01-05', to: '2026-04-26', weeks: 16, weeklyWapePct: 8.4, dailyWapePct: 14.2, worstWeekPct: 22.5, weeksOver20: 1,
+      coverage: { inside: 13, weeks: 16 }, weekdayMedianWeeklyWapePct: 11.9, engines: { modelWeeklyWapePct: 8.4, baselineWeeklyWapePct: 9.6 },
+      folds: [{ trainThrough: '2025-12-31', from: '2026-01-01', to: '2026-04-30', weeks: 17, weeklyWapePct: 9.1, weeksOver20: 2 }],
+    },
+    learning: {
+      trainThrough: '2025-12-31', from: '2026-01-01', to: '2026-04-30', trainDays: 320, validDays: 110,
+      train: [0.2, 0.15, 0.12, 0.1], valid: [0.21, 0.17, 0.18, 0.19],
+    },
+  };
+
+  async function open(training: RunTraining, fields: Partial<StaffRun> = {}): Promise<HTMLElement> {
+    const api = await show([run(fields)]);
+    api.routes[TRAINING_PATH] = () => ({ run: run(fields), training });
+    const name = screen.getByRole('button', { name: 'How Townwise demand model v9, May 1, 2026, was trained' });
+    expect(name.getAttribute('aria-expanded')).toBe('false');
+    await settle(() => { fireEvent.click(name); });
+    expect(name.getAttribute('aria-expanded')).toBe('true');
+    return screen.findByRole('region', { name: 'How Townwise demand model v9 was trained' });
+  }
+
+  it('opens an imported run’s facts from its model name, says what wasn’t recorded, and closes', async () => {
+    const panel = await open(IMPORTED);
+    expect(within(panel).getByText('abc1234')).toBeTruthy();
+    expect(within(panel).getByText(/Trained in the team’s notebook from files the owner sent/)).toBeTruthy();
+    expect(within(panel).getByText('10 weeks from Jan 5, 2026 to Mar 15, 2026: a typical week 7.5% off, 1 week more than 20% off.')).toBeTruthy();
+    expect(within(panel).getByText(/No loss curve was recorded for this run/)).toBeTruthy();
+    expect(panel.querySelector('svg')).toBeNull();
+    await settle(() => { fireEvent.click(within(panel).getByRole('button', { name: 'Close How Townwise demand model v9 was trained' })); });
+    expect(screen.queryByRole('region', { name: 'How Townwise demand model v9 was trained' })).toBeNull();
+  });
+
+  it('shows a lab model run’s settings, folds and its loss curve, in words and as two lines', async () => {
+    const panel = await open(LAB, { trainingSource: 'townwise_lab' });
+    expect(within(panel).getByText(/400 rounds, learning rate 0.03, depth 3/)).toBeTruthy();
+    expect(within(panel).getByText('Tree inputs: ev_hanover-nh:home-football, week_of_term, weekday.')).toBeTruthy();
+    expect(within(panel).getByText(/weekly error 8.4%, daily error 14.2%, worst week 22.5%, 1 week more than 20% off, 13 of 16 weeks inside the 80% range/)).toBeTruthy();
+    expect(within(panel).getByText(/Model 8.4%, seasonal baseline 9.6%/)).toBeTruthy();
+    const folds = within(panel).getByRole('region', { name: 'Half-year folds' });
+    expect(within(folds).getByText('9.1%')).toBeTruthy();
+    expect(within(panel).getByText('Trained on 320 days through Dec 31, 2025, then checked on the 110 days from Jan 1, 2026 to Apr 30, 2026, which the trees never saw.')).toBeTruthy();
+    expect(within(panel).getByText('After 4 rounds the loss was 0.100 on the training days and 0.190 on the validation days.')).toBeTruthy();
+    expect(within(panel).getByText('Validation loss was lowest at round 2 (0.170) and rose after it: the later rounds fitted the training days only.')).toBeTruthy();
+    const svg = panel.querySelector('svg');
+    expect(svg?.getAttribute('aria-hidden')).toBe('true');
+    expect(svg?.querySelector('[data-series="train"]')?.getAttribute('points')?.split(' ')).toHaveLength(4);
+    expect(svg?.querySelector('[data-series="valid"]')?.getAttribute('stroke-dasharray')).toBe('4 3');
+    expect(within(panel).getByText('Lowest validation loss, round 2')).toBeTruthy();
+    expect(within(panel).getByText(/Scale 0 to 0.250/)).toBeTruthy();
+  });
+
+  it('says a seasonal baseline has no curve, and shows a failed read with a retry', async () => {
+    const panel = await open({ ...LAB, method: { kind: 'baseline', levelDays: 364, levelMinDays: 28, regimeStart: null }, learning: null }, { trainingSource: 'townwise_lab' });
+    expect(within(panel).getByText('A seasonal baseline has no rounds, so it has no loss curve.')).toBeTruthy();
+    cleanup();
+    const api = await show([run()]);
+    api.routes[TRAINING_PATH] = () => new ApiError('http', 'Unavailable', { status: 503, code: 'unavailable' });
+    await settle(() => { fireEvent.click(screen.getByRole('button', { name: 'How Townwise demand model v9, May 1, 2026, was trained' })); });
+    const failed = await screen.findByRole('region', { name: 'How Townwise demand model v9 was trained' });
+    expect(within(failed).getByRole('button', { name: /again/i })).toBeTruthy();
+  });
+
+  it('words a curve that ends at its lowest', () => {
+    const flat = { trainThrough: '2025-12-31', from: '2026-01-01', to: '2026-04-30', trainDays: 320, validDays: 110, train: [0.2, 0.15, 0.12, 0.1], valid: [0.21, 0.19, 0.18, 0.18] };
+    expect(learningWords(flat)[2]).toBe('Validation loss was lowest at round 3 (0.180) and ended within 2% of it.');
+    expect(learningSummary(flat)).toMatchObject({ rounds: 4, bestRound: 3, roseAfterBest: false });
+  });
 });
 
 describe('reading a run file', () => {
