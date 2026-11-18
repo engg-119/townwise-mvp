@@ -37,5 +37,5 @@ D46 (`feat/suggested-closure-rules`, which also edits `api/src/stores/agent-sugg
 ## Owner sign-offs
 
 1. Owner-calendar event titles are sent to Anthropic in the weekly suggestions call by default, and an org admin can turn that off (owner, 2026-11-17, after the privacy cost was explained; the default stays marked `[CONFIRM]`).
-2. Decided by the owner on 2026-11-17, each still marked `[CONFIRM]`: Google calendars connected before the new explainer stay title-free until their person connects again; staff open as admin can turn titles off, not on; chat's `propose_note` stays unlinked (no frozen-prefix change); spotted events get their own cap of 5; follow-ups show in TownwiseAI's panel only.
+2. Decided by the owner on 2026-11-17, each still marked `[CONFIRM]`: Google calendars connected before the new explainer stay title-free until their person connects again (built as a stored notice: a calendar or connection sends titles only when its add or connect came from a screen that said so); staff open as admin can turn titles off, not on; chat's `propose_note` stays unlinked (no frozen-prefix change); spotted events get their own cap of 5; follow-ups show in TownwiseAI's panel only.
 3. The privacy page's new words, before this runs in production.
