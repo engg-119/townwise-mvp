@@ -43,7 +43,7 @@ const PLACE_READ_ONLY_ID = 'location-place-ro';
 /** Delete location (D43): one press takes the location and everything in it. */
 export const DELETE_COPY = {
   kicker: 'Can’t be undone',
-  line: 'Deletes this location with everything in it: its sales data, stored files, notes, business rules, ordering setup and TownwiseAI chats.',
+  line: 'Deletes this location with everything in it: its sales data, stored files, notes, business rules, ordering setup, calendars and TownwiseAI chats.',
   reading: 'Townwise is reading files for this location. Try again when it’s done.',
   filesOff: 'Stored files are off right now, so nothing was deleted. Try again later.',
 } as const;
@@ -52,14 +52,18 @@ function count(n: number, one: string, many: string): string {
   return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
 }
 
-/** The dialog's body: what goes with the location, with the counts the organization holds. */
-export function deleteBody(location: { coverage: { dayCount: number }; notesCount: number }, orgName: string): string {
-  const { dayCount } = location.coverage;
-  const { notesCount } = location;
-  const data = dayCount === 0 && notesCount === 0
+const REST = 'its stored files, business rules, ordering setup, calendars and TownwiseAI chats';
+
+/**
+ * The dialog's body: what goes with the location. The days count those turned-off uploads hold too, which coverage
+ * leaves out; files, item sales and the rest are always named, since the organization's summary doesn't count them.
+ */
+export function deleteBody(location: { coverage: { dayCount: number }; offDayCount?: number | undefined; notesCount: number }, orgName: string): string {
+  const days = location.coverage.dayCount + (location.offDayCount ?? 0);
+  const counted = days === 0 && location.notesCount === 0
     ? ''
-    : ` with everything in it: ${count(dayCount, 'day', 'days')} of sales data, ${count(notesCount, 'note', 'notes')}, its stored files, business rules, ordering setup and TownwiseAI chats`;
-  return `This deletes the location from ${orgName}${data}. This can’t be undone.`;
+    : `${count(days, 'day', 'days')} of sales data, ${count(location.notesCount, 'note', 'notes')}, `;
+  return `This deletes the location from ${orgName} with everything in it: ${counted}${REST}. This can’t be undone.`;
 }
 
 function deleteErrorText(error: unknown): string | undefined {

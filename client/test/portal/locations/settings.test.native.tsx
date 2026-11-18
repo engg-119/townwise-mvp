@@ -14,7 +14,7 @@ import {
   ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
-import { DELETE_COPY } from '../../../src/portal/locations/LocationSettings';
+import { DELETE_COPY, deleteBody } from '../../../src/portal/locations/LocationSettings';
 import { locationsFake, salesOf, type LocationsFake } from './fakes';
 
 // P16 Location settings and P10 Add location on native (spec 16.3).
@@ -156,7 +156,7 @@ describe('P16 Location settings', () => {
     expect(screen.getByText(DELETE_COPY.line)).toBeTruthy();
     await fireEvent.press(screen.getByRole('button', { name: 'Delete location' }));
     expect(screen.getByText('This deletes the location from Test Group with everything in it: 400 days of sales data, 2 notes, '
-      + 'its stored files, business rules, ordering setup and TownwiseAI chats. This can’t be undone.')).toBeTruthy();
+      + 'its stored files, business rules, ordering setup, calendars and TownwiseAI chats. This can’t be undone.')).toBeTruthy();
     await fireEvent.changeText(screen.getByLabelText('Type Main Street Bar to confirm.'), 'Main Street Bar');
     await fireEvent.press(dialogButton('Delete location'));
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l2'); });
@@ -173,7 +173,8 @@ describe('P16 Location settings', () => {
     const { router } = await renderApp('/locations/l2/settings', api);
     await fireEvent.press(await screen.findByRole('button', { name: 'Delete location' }));
     expect(screen.getByRole('heading', { name: 'Delete River Grill?' })).toBeTruthy();
-    expect(screen.getByText('This deletes the location from Test Group. This can’t be undone.')).toBeTruthy();
+    expect(screen.getByText('This deletes the location from Test Group with everything in it: its stored files, business rules, '
+      + 'ordering setup, calendars and TownwiseAI chats. This can’t be undone.')).toBeTruthy();
     expect(dialogButton('Delete location').props.accessibilityState).toMatchObject({ disabled: true });
     await fireEvent.changeText(screen.getByLabelText('Type River Grill to confirm.'), 'River Grill');
     await fireEvent.press(dialogButton('Delete location'));
@@ -231,6 +232,11 @@ describe('P16 Location settings', () => {
     const { router } = await renderApp('/locations/l2/settings', api);
     await fireEvent.press(await screen.findByRole('link', { name: 'Add another location' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/new'); });
+  });
+
+  test('the dialog counts days turned-off uploads hold, which coverage leaves out', () => {
+    expect(deleteBody({ coverage: { dayCount: 0 }, offDayCount: 1, notesCount: 0 }, 'Test Group')).toBe('This deletes the location from Test Group with '
+      + 'everything in it: 1 day of sales data, 0 notes, its stored files, business rules, ordering setup, calendars and TownwiseAI chats. This can’t be undone.');
   });
 
   test('while a file is being read, or stored files are off, the dialog says so and stays open', async () => {

@@ -266,6 +266,10 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   const google = googleAccessDeps(ctx);
   const connections = await markLocationForCheck(google, scope, locationId);
   if (!(await ctx.stores.locations.remove(scope, locationId))) return false;
+  // D43: an upload or a note that loaded the location before its row went can land after the org admin's delete swept
+  // them, so they are swept again here (a no-op for staff setup, which only deletes an empty location).
+  await ctx.stores.salesDays.removeForLocation(scope, locationId);
+  await ctx.stores.notes.removeForLocation(scope, locationId);
   // Records of uploads that never wrote a day (a crash leaves `applying`) go with it, and so do its tuning chats,
   // which nothing could reach without the location.
   await ctx.stores.uploads.removeForLocation(scope, locationId);
