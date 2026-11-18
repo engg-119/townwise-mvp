@@ -12,6 +12,7 @@ import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing
 import { ACCESS, fakePortalApi, meOf, orgOf } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
+import { ownerCalendar } from '../calendar/fakes';
 import { dailyTotalsOf, dataFake, itemOf } from './fakes';
 
 // Your data on native (P26, D28): the same rows, each opening its item's page, where Turn off and Delete are
@@ -60,4 +61,14 @@ test('native has no Add a file or Paste text and says Upload from a computer at 
   expect(screen.queryByText(/^Any kind of file up to 200 MB/)).toBeNull();
   // Stored files are not asked about on native: nothing there can add one.
   expect(fake.files.calls.filter((call) => call.path.startsWith('/files'))).toEqual([]);
+});
+
+// D49 (calendar-detail): the Calendars group on native, a tap opening the calendar's page inside the app.
+test('the Calendars group lists the location’s calendars, and a tap opens one’s page', async () => {
+  const { api, fake } = setup();
+  fake.calendars = [ownerCalendar({ id: 'fedcba9876543210fedcba98', label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 11 })];
+  const { router } = await renderApp('/locations/l1/data', api);
+  const link = await screen.findByRole('link', { name: 'US holidays. Link, calendar.google.com, 11 events' });
+  await fireEvent.press(link);
+  await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1/data/c_fedcba9876543210fedcba98'); });
 });

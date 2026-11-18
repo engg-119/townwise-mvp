@@ -27,6 +27,7 @@ import {
   turnedOnLine,
 } from './copy';
 import { AiSection } from './item/AiSection';
+import { CalendarItem } from './item/CalendarItem';
 import { addedByLine, EDIT, editedLine, ITEM, itemDaysLine, kindLine, renamedLine, statusLine, tooBigToEditLine } from './item/copy';
 import type { Editable, Saved } from './item/edit';
 import { ItemContent } from './item/ItemContent';
@@ -58,6 +59,9 @@ import { RenameForm } from './item/RenameForm';
 //
 // TownwiseAI (D34, item/AiSection): an item with a stored file offers a TownwiseAI read, shows it while it runs and
 // what it found and added once done, with Undo; an upload or a summary TownwiseAI made links to its file.
+//
+// A ref `c_<calendarId>` is one of the location's calendars (D49): item/CalendarItem.tsx, which reads the calendar
+// routes, never GET .../data/:ref.
 
 /** One action in the item's header. */
 interface ItemAction {
@@ -90,6 +94,9 @@ function savedLine(saved: string | string[] | undefined): string | null {
 }
 
 export function ItemPage(): React.JSX.Element {
+  const ref = refOf(usePathname());
+  // A calendar's page (D49): a client-only ref, which never reads the data item route.
+  if (ref.startsWith('c_')) return <CalendarItem calendarId={ref.slice(2)} />;
   return <MessageFocus><ItemOfPath /></MessageFocus>;
 }
 

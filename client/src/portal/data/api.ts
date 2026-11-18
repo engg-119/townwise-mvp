@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
 import { fileViewSchema, FILE_KINDS, type FileView } from '../files/api';
+import { NOTE_KINDS } from '../locations/api';
 
 // Your data (D28), with the shapes of api/src/handlers/data.ts: every upload and stored file a location received.
 // Items are named by `ref` (`u_<id>` for an upload, `f_<id>` for a stored file that wrote no days). Names travel
@@ -45,6 +46,14 @@ export const aiReadSchema = z.object({
   calibration: z.object({ status: z.string(), id: z.string().nullable() }).nullable(),
   /** The caller may undo it: done and made something, or failed or skipped after it began adding. */
   canUndo: z.boolean(),
+  /**
+   * A calendar read's events (D49), on the single item's read only (the list leaves it out): each with the note it
+   * made while that note exists, its title null under view-as; none once the original is deleted.
+   */
+  events: z.array(z.object({
+    title: z.string().nullable(), startDate: z.string(), endDate: z.string(), kind: z.enum(NOTE_KINDS),
+    effect: z.enum(['closed', 'more', 'fewer', 'unknown']), expectedGuests: z.number().nullable(), noteId: z.string().nullable(),
+  })).optional(),
 });
 export type AiRead = z.infer<typeof aiReadSchema>;
 

@@ -218,7 +218,7 @@ test('adds a note from the day and reloads the forecast', async () => {
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: SATURDAY, endDate: SATURDAY, weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
-      startTime: null, endTime: null,
+      title: null, startTime: null, endTime: null,
     },
   }]);
 });

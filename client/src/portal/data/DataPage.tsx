@@ -24,6 +24,7 @@ import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
 import { Lead, Small } from '../ui/text';
 import { AddFile } from './AddFile';
+import { CalendarsGroup } from './CalendarsGroup';
 import { rowAiLine } from './aiCopy';
 import { listData, type DataItem } from './api';
 import {
@@ -42,7 +43,8 @@ import { PasteText } from './PasteText';
 // did), and it changes what the location holds, so the organization (GET /api/org) is read again when the page closes.
 // Opened with a page notice meant for it that hasn't shown yet (an item's page deleted the item and came back here), it
 // gives that notice focus, since the control that had focus went with the item's page.
-// Item sales, the ordering setup and counts are not listed here; one line points to Ordering setup.
+// Item sales, the ordering setup and counts are not listed here; one line points to Ordering setup. The location's own
+// calendars are a group of their own above the list (CalendarsGroup.tsx, D49), each opening its page.
 
 const READ_ONLY_ID = 'data-ro';
 const ALL = 'all';
@@ -241,6 +243,8 @@ function Data(): React.JSX.Element {
             />
           </Actions>
         ) : null}
+        {/* The location's calendars (D49), above the list; stored files on or off. */}
+        <CalendarsGroup locationId={location.id} />
         {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : items === null ? <TableSkeleton name="data" label={DATA.loading} columns={columns} rowHeight={56} /> : items.length === 0 ? (
           <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : locationName)} />
         ) : (

@@ -71,3 +71,22 @@ test('a read whose days were all there already, and one that stopped part way, s
   expect(screen.getByText('TownwiseAI stopped before it finished, and may have added some notes, days or a summary first. You can undo what it added.')).toBeTruthy();
   expect(screen.getByRole('button', { name: 'Undo what TownwiseAI added' })).toBeTruthy();
 });
+
+// D49 (calendar-detail): a calendar file's read shows its events by month, each that made a note linked to its day.
+test('a calendar read lists its events by month, marked Note made or No note made', async () => {
+  const { api } = setup({
+    ai: aiOf({
+      kind: 'calendar', notes: [{ id: 'n1', title: 'Rehearsal dinner', startDate: '2026-12-12', endDate: '2026-12-12' }],
+      events: [
+        { title: 'Rehearsal dinner', startDate: '2026-12-12', endDate: '2026-12-12', kind: 'private_event', effect: 'closed', expectedGuests: 60, noteId: 'n1' },
+        { title: 'Staff party', startDate: '2026-12-03', endDate: '2026-12-03', kind: 'other', effect: 'unknown', expectedGuests: null, noteId: null },
+      ],
+    }),
+  });
+  const { router } = await renderApp(`/locations/l1/data/${FILE}`, api);
+  expect(await screen.findByText('December 2026')).toBeTruthy();
+  expect(screen.getByText('No note made')).toBeTruthy();
+  const made = screen.getByRole('link', { name: 'Rehearsal dinner, Sat, Dec 12, 2026. Opens the day on the Calendar. Note made.' });
+  await fireEvent.press(made);
+  expect(router.getPathname()).toBe('/locations/l1/calendar');
+});

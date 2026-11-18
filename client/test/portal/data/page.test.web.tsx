@@ -12,6 +12,7 @@ import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, meOf, orgOf, refusal, viewAsMe
 import { daysOf, locationsFake, salesOf, uploadOf } from '../locations/fakes';
 import { choicesOf, choose, shownChoice } from '../../helpers/select';
 import { openMore } from '../../helpers/topBar';
+import { ownerCalendar } from '../calendar/fakes';
 import { aiOf, dailyTotalsOf, dataFake, itemOf, type DataFake } from './fakes';
 
 // Your data (P26, D28) on web: the table of everything a location received, each row opening its item's page (where
@@ -60,11 +61,12 @@ async function settle(fire: () => void): Promise<void> {
 }
 
 function setup(
-  me: MeResponse, items: DataItem[] = ITEMS, opts: { files?: 'on' | 'off'; org?: OrgResponse } = {},
+  me: MeResponse, items: DataItem[] = ITEMS, opts: { files?: 'on' | 'off'; org?: OrgResponse; calendars?: unknown[] } = {},
 ): DataFake {
   const inner = locationsFake({ sales: { l1: salesOf(DAYS, [uploadOf('u1')]) }, days: { l1: DAYS } });
   const fake = dataFake({ inner, items: items.map((item) => ({ ...item, file: item.file === null ? null : { ...item.file }, days: item.days === null ? null : { ...item.days } })) });
   if (opts.files === 'off') fake.files.lists[''] = refusal(503, 'files_unavailable');
+  if (opts.calendars !== undefined) fake.calendars = opts.calendars;
   const api = fakePortalApi({ me, org: opts.org ?? orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake });
   portal = api;
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
@@ -499,4 +501,32 @@ test('nothing yet: the empty line, and the failure to list shows the error with 
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
   expect(await table()).toBeTruthy();
   expect(fake.items).toEqual([]);
+});
+
+// D49 (calendar-detail): the location's calendars, a group above the list, each opening its page in Your data.
+const KITCHEN = ownerCalendar({ id: '0123456789abcdef01234567', label: 'Kitchen', kind: 'file', eventCount: 12 });
+const HOLIDAYS = ownerCalendar({ id: 'fedcba9876543210fedcba98', label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 11 });
+
+test('the Calendars group lists the location’s calendars above the list, each opening its page; a link’s host is text', async () => {
+  setup(meOf(ACCESS.member), ITEMS, { calendars: [KITCHEN, HOLIDAYS] });
+  const group = await screen.findByRole('list', { name: 'Calendars' });
+  expect(within(group).getAllByRole('listitem').map((row) => row.textContent)).toEqual([
+    'KitchenFile, 12 events', expect.stringMatching(/^US holidaysLink, calendar\.google\.com, 11 eventsUpdated /) as unknown,
+  ]);
+  const link = within(group).getByRole('link', { name: 'US holidays. Link, calendar.google.com, 11 events' });
+  expect(link.getAttribute('href')).toBe('/locations/l1/data/c_fedcba9876543210fedcba98');
+  // The host is never a link, and no link holds a calendar's address.
+  expect(within(group).getAllByRole('link').map((each) => each.getAttribute('href'))).toEqual([
+    '/locations/l1/data/c_0123456789abcdef01234567', '/locations/l1/data/c_fedcba9876543210fedcba98',
+  ]);
+  expect(group.compareDocumentPosition(await table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+});
+
+test('no calendars, no group; with stored files off the group still shows', async () => {
+  setup(meOf(ACCESS.member));
+  await table();
+  expect(screen.queryByRole('list', { name: 'Calendars' })).toBeNull();
+  cleanup();
+  setup(meOf(ACCESS.member), ITEMS, { files: 'off', calendars: [KITCHEN] });
+  expect(await screen.findByRole('list', { name: 'Calendars' })).toBeTruthy();
 });

@@ -145,14 +145,14 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 
 ## 6. Client: calendars in Your data
 
-- [ ] 6.1 Extract the week view's agenda card from `CalendarWeek.tsx` into `client/src/portal/calendar/AgendaCard.tsx`, with the week view importing it unchanged. Then add `client/src/portal/data/item/CalendarAgenda.tsx` (web and native), with events grouped by month, each linking to its day, and "No events in {Month}." for an empty month. Tests: `week.test.native.tsx` still passes; `client/test/portal/data/calendar-agenda.test.ts` (new).
-- [ ] 6.2 `DataPage.tsx`: the Calendars group (hidden with none; shown with stored files off). Tests: `client/test/portal/data/page.test.web.tsx` and `page.test.native.tsx`.
-- [ ] 6.3 `ItemPage.tsx`: a `c_` ref renders the calendar page:
+- [x] 6.1 Extract the week view's agenda card from `CalendarWeek.tsx` into `client/src/portal/calendar/AgendaCard.tsx`, with the week view importing it unchanged. Then add `client/src/portal/data/item/CalendarAgenda.tsx` (web and native), with events grouped by month, each linking to its day, and "No events in {Month}." for an empty month. Tests: `week.test.native.tsx` still passes; `client/test/portal/data/calendar-agenda.test.ts` (new).
+- [x] 6.2 `DataPage.tsx`: the Calendars group (hidden with none; shown with stored files off). Tests: `client/test/portal/data/page.test.web.tsx` and `page.test.native.tsx`.
+- [x] 6.3 `ItemPage.tsx`: a `c_` ref renders the calendar page:
   - it makes no `org.data.get` request;
   - it shows the header facts and the host as text, then the month agenda with Earlier and Later, filtered by `calendarId`;
   - an unknown id shows not found.
   - Tests: `client/test/portal/data/calendar-page.test.web.tsx` and `calendar-page.test.native.tsx` (new).
-- [ ] 6.4 `item/AiSection.tsx` and `aiCopy.ts`: a `calendar` read shows its `ai.events` in the agenda, marked "Note made" or "No note made". Tests: `client/test/portal/data/item-ai.test.web.tsx` and `item-ai.test.native.tsx`.
+- [x] 6.4 `item/AiSection.tsx` and `aiCopy.ts`: a `calendar` read shows its `ai.events` in the agenda, marked "Note made" or "No note made". Tests: `client/test/portal/data/item-ai.test.web.tsx` and `item-ai.test.native.tsx`.
 
 ## 7. Docs, review and ship
 

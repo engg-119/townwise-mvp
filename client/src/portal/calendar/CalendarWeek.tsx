@@ -1,16 +1,15 @@
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
-import { CARD_MARK, cardWords, headLine, periodCard, weekHead, type InertCell, type MonthBounds, type WeekCard, type WeekDay, type WeekSlot } from './grid';
+import { AgendaCard } from './AgendaCard';
+import { cardWords, headLine, weekHead, type InertCell, type MonthBounds, type WeekDay, type WeekSlot } from './grid';
 import { statusWord, type TooltipLines } from './model';
 
 // The Calendar's week view (P28, spec 16.3, step 2): the 7-day block counted from today that holds the selected day,
 // which reads its own days when it runs past the grid (grid.ts buildWeek, readRangeFor). On native it is an agenda at
 // every width: 7 rows, each a Pressable labeled as its month cell, with its selected state, holding the day's head
 // line (the day, a Today tag under today, the status word, the figure with "+70", and the range, "guests" or "No
-// forecast") over the day's full-width cards (hours first when timed, the title in full, the kind words; a term or
-// season its title and kind words on one run), each on a `panel` fill with a 2px left rule in its mark's token, every
-// card's words wrapping.
+// forecast") over the day's full-width cards (AgendaCard.tsx).
 // Pressing a row selects its day; the selected row is outlined `mint`. An inert day (outside the 25 months) is a
 // disabled row with its head line only; a pending one (its reads in flight) shows its head line only. Web has its own
 // file (CalendarWeek.web.tsx): day columns from 641px and an agenda below, with the keys and the tooltip. Only types
@@ -36,25 +35,6 @@ export interface CalendarWeekProps {
   label: string;
   /** Web only: the hover tooltip's lines for a day; null for none. */
   tooltip: (date: string) => TooltipLines | null;
-}
-
-function Card(props: { card: WeekCard }): React.JSX.Element {
-  const { card } = props;
-  const rule = { borderLeftColor: c[CARD_MARK[card.kind]] };
-  if (periodCard(card)) {
-    return (
-      <View style={[styles.card, rule]}>
-        <Text style={styles.period}>{card.title} <Text style={styles.sub}>{card.sub}</Text></Text>
-      </View>
-    );
-  }
-  return (
-    <View style={[styles.card, rule]}>
-      {card.hours === null ? null : <Text style={styles.hours}>{card.hours}</Text>}
-      <Text style={styles.title}>{card.title}</Text>
-      <Text style={styles.sub}>{card.sub}</Text>
-    </View>
-  );
 }
 
 function Head(props: { day: WeekDay }): React.JSX.Element {
@@ -89,7 +69,7 @@ function Row(props: { day: WeekDay; selected: boolean; onSelect: (date: string) 
       style={[styles.row, props.selected ? styles.selected : null]}
     >
       <Head day={day} />
-      {day.pending ? null : day.cards.map((card) => <Card key={card.key} card={card} />)}
+      {day.pending ? null : day.cards.map((card) => <AgendaCard key={card.key} card={card} />)}
     </Pressable>
   );
 }
@@ -136,9 +116,4 @@ const styles = StyleSheet.create({
   past: { color: c.text2 },
   added: { ...theme.type.mono, color: c.mint, fontVariant: ['tabular-nums'] },
   line: { ...theme.type.mono, fontSize: 11, lineHeight: 14, color: c.text3 },
-  card: { gap: 2, paddingVertical: 4, paddingHorizontal: 6, backgroundColor: c.panel, borderLeftWidth: 2 },
-  hours: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text2 },
-  title: { ...theme.type.small, fontSize: 12, lineHeight: 16, color: c.white },
-  period: { ...theme.type.small, fontSize: 12, lineHeight: 16, color: c.text2 },
-  sub: { ...theme.type.mono, fontSize: 10, lineHeight: 14, color: c.text3 },
 });
