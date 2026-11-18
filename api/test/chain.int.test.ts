@@ -143,6 +143,8 @@ describe('GET is side-effect free (7.3)', () => {
     await addGoogleConnection(server, { orgId, userId: member.userId, key: CALENDAR_KEY });
     const query: Record<string, string> = {
       'admin.people.lookup': `?q=${encodeURIComponent(memberEmail)}`,
+      // staff-overview.
+      'admin.overview': '?days=28',
       'org.sales.days': '?from=2026-01-01&to=2026-05-31',
       'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
       // U13A.

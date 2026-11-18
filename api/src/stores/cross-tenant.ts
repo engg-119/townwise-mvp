@@ -6,9 +6,10 @@
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
 // countedWeekRows (D42), the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
-// weekly-forecast-suggestions), and the active days recorder's removeOldActivityDays (openspec change staff-overview).
+// weekly-forecast-suggestions), the active days recorder's removeOldActivityDays, and the staff Overview's
+// activityDaysSince, peopleActionsSince, openInvitesBefore and chatUsageForMonth (openspec change staff-overview).
 // Only access/resolve.ts, the active days recorder (access/activity.ts), the join and decline handlers, the staff
-// handlers (admin.ts, deletion.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
+// handlers (admin.ts, deletion.ts, overview.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
 // (calendar/google-access.ts) and the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) import
 // this file (test/isolation.test.ts enforces
@@ -20,10 +21,12 @@ import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
 import { activityDayModel } from './activity-days.ts';
 import { agentSuggestionModel, suggestionPassModel } from './agent-suggestions.ts';
+import { auditEventModel, type AuditAction } from './audit-events.ts';
 import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
+import { chatUsageModel } from './chat-usage.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
 import { DELETED_PERSON } from '../people.ts';
@@ -539,6 +542,67 @@ export async function removeOldUploadDays(connection: Connection, beforeDay: str
  */
 export async function removeOldActivityDays(connection: Connection, beforeDay: string): Promise<number> {
   return (await activityDayModel(connection).deleteMany({ day: trusted({ $lt: beforeDay }) })).deletedCount;
+}
+
+/** An active day as the staff Overview reads it (staff-overview): ids and the date only. */
+export interface ActivityDayRow {
+  readonly orgId: string;
+  readonly userId: string;
+  readonly day: string;
+}
+
+/** Every organization's active days from `day` (YYYY-MM-DD) on, for the staff Overview. Ids and dates only. */
+export async function activityDaysSince(connection: Connection, day: string): Promise<ActivityDayRow[]> {
+  const docs = await activityDayModel(connection).find({ day: trusted({ $gte: day }) }, { orgId: 1, userId: 1, day: 1 }).lean();
+  return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), userId: doc.userId, day: doc.day }));
+}
+
+/** One of people's actions as the staff Overview counts it: its organization, action and time only. */
+export interface PeopleAction {
+  readonly orgId: string;
+  readonly action: AuditAction;
+  readonly at: Date;
+}
+
+/**
+ * People's actions since `at`, every organization's (openspec change staff-overview, design decision 4): events whose
+ * actor is a member or an org admin, and staff setup's sales uploads (`sales.uploaded` by staff with no view-as or
+ * open-as-admin grant, D23), which the owner counts as uploads. Never another staff event (staff opened as admin always
+ * carry their grant's id), a view-as or the system's.
+ */
+export async function peopleActionsSince(connection: Connection, at: Date): Promise<PeopleAction[]> {
+  const docs = await auditEventModel(connection).find(
+    {
+      at: trusted({ $gte: at }), orgId: trusted({ $ne: null }),
+      $or: [
+        { actorRole: trusted({ $in: ['member', 'org_admin'] }) },
+        { action: 'sales.uploaded', actorRole: 'superadmin', viewAsGrantId: null },
+      ],
+    },
+    { orgId: 1, action: 1, at: 1 },
+  ).lean();
+  return docs.flatMap((doc) => (doc.orgId === null ? [] : [{ orgId: doc.orgId.toHexString(), action: doc.action, at: doc.at }]));
+}
+
+/** An organization's invitations still open: how many, and when the oldest was sent. */
+export interface OpenInvites {
+  readonly count: number;
+  readonly oldest: Date;
+}
+
+/** Invitations still open that were sent before `before`, per organization, keyed by its id (the Overview's Needs attention). */
+export async function openInvitesBefore(connection: Connection, before: Date): Promise<Map<string, OpenInvites>> {
+  const rows = await memberModel(connection).aggregate<{ _id: Types.ObjectId; n: number; oldest: Date }>([
+    { $match: { status: 'invited', invitedAt: { $lt: before } } },
+    { $group: { _id: '$orgId', n: { $sum: 1 }, oldest: { $min: '$invitedAt' } } },
+  ]);
+  return new Map(rows.map((row) => [row._id.toHexString(), { count: row.n, oldest: row.oldest }]));
+}
+
+/** What the tuning chat has cost each organization in `month` (YYYY-MM, UTC), in micro-dollars, keyed by its id. */
+export async function chatUsageForMonth(connection: Connection, month: string): Promise<Map<string, number>> {
+  const docs = await chatUsageModel(connection).find({ month }, { orgId: 1, costMicroUsd: 1 }).lean();
+  return new Map(docs.map((doc) => [doc.orgId.toHexString(), doc.costMicroUsd]));
 }
 
 /** Which of `ids` (file ids) still have a row, in any organization: the orphan check for blobs. */

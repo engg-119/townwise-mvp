@@ -27,11 +27,12 @@ describe('isolation (source)', () => {
     // organization before revoking (connect-google-calendar). lab/schedule.ts, the weekly refresh (D42), lists its
     // candidates, its live calibrations and its week rows left starting across organizations, and counts the week's starts.
     // access/activity.ts, the active days recorder (staff-overview), removes every organization's rows older than the
-    // 180 days kept, once a day.
+    // 180 days kept, once a day. handlers/overview.ts, the staff Overview, reads active days, people's actions, open
+    // invitations, chat spend and the Organizations page's counts across organizations.
     expect(importers).toEqual([
       'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
-      'handlers/me.ts', 'lab/callback.ts', 'lab/schedule.ts',
+      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts',
     ]);
   });
 
@@ -221,6 +222,11 @@ describe('isolation (source)', () => {
       expect({ path, reaches: file !== undefined && reaches(file), viaGoogleAccess: file !== undefined && imports(file).includes('calendar/google-access.ts') })
         .toEqual({ path, reaches: false, viaGoogleAccess: true });
     }
+  });
+
+  it('only access/policy.ts mints the listed organization’s scope, and only handlers/overview.ts asks for it (staff-overview)', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForListedOrg(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'handlers/overview.ts']);
   });
 
   it('only access/policy.ts mints the open-as-admin scope, and only access/resolve.ts asks for it', () => {

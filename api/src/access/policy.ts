@@ -83,6 +83,14 @@ export function scopeForNewOrg(_staff: StaffPrincipal, orgId: string): OrgScope 
   return mint(orgId);
 }
 
+/**
+ * The staff Overview only (handlers/overview.ts, openspec change staff-overview), for an organization `orgs.list()` just
+ * returned, so it is not read again through scopeForStaffOrg.
+ */
+export function scopeForListedOrg(_staff: StaffPrincipal, org: OrgRecord): OrgScope {
+  return mint(org.id);
+}
+
 /** The resolver only (D25), for the organization of the open-as-admin grant holding the staff session. */
 export function scopeForOpenAsAdmin(grant: OpenAsAdminGrantRecord): OrgScope {
   return mint(grant.orgId);
