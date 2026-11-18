@@ -68,6 +68,46 @@ describe('note reasons', () => {
   });
 });
 
+// D49: two run reasons that read as one label on a day (case and spacing aside) show once: the larger effect, else the
+// first, with both reasons' sources. Note and rule reasons are never merged.
+describe('one run reason per label', () => {
+  const DAY = '2026-11-11';
+  const term = townCalendarOf('hanover-nh')(DAY).term;
+  const holiday = {
+    id: 'us:veterans-day:2026', title: 'Veterans Day', start: DAY, end: DAY, kind: 'holiday', scope: 'national', group: 'us:veterans-day',
+    groupLabel: 'Veterans Day', confidence: null, sources: [{ label: 'OPM', url: 'https://www.opm.gov/holidays' }],
+  } as const;
+  const parade = {
+    ...holiday, id: 'hanover-nh:2026-11-11:parade', title: 'veterans  day ', kind: 'event', scope: 'town', group: null, groupLabel: null,
+    confidence: 'high', sources: [{ label: 'Town of Hanover', url: 'https://www.hanovernh.org/parade' }, { label: 'OPM', url: 'https://www.opm.gov/holidays' }],
+  } as const;
+  const calendar = { events: [holiday, parade], term };
+
+  it('keeps the larger effect where it first stood, with the union of both sources', () => {
+    const views = reasonViews(DAY, [
+      { kind: 'holiday', ref: holiday.id, effectPct: 4 }, { kind: 'weekday', ref: null, effectPct: null }, { kind: 'event', ref: parade.id, effectPct: -9 },
+    ], calendar);
+    expect(views.map((view) => [view.kind, view.label, view.effectPct])).toEqual([['event', 'veterans  day ', -9], ['weekday', 'Wednesday', null]]);
+    expect(views[0]?.sources).toEqual([
+      { label: 'Town of Hanover', url: 'https://www.hanovernh.org/parade' }, { label: 'OPM', url: 'https://www.opm.gov/holidays' },
+    ]);
+  });
+
+  it('keeps the first when the effects tie or neither has one, and a recorded effect over none', () => {
+    const tie = reasonViews(DAY, [{ kind: 'holiday', ref: holiday.id, effectPct: 5 }, { kind: 'event', ref: parade.id, effectPct: -5 }], calendar);
+    expect(tie.map((view) => [view.kind, view.effectPct])).toEqual([['holiday', 5]]);
+    const none = reasonViews(DAY, [{ kind: 'holiday', ref: holiday.id, effectPct: null }, { kind: 'event', ref: parade.id, effectPct: null }], calendar);
+    expect(none.map((view) => view.kind)).toEqual(['holiday']);
+    const recorded = reasonViews(DAY, [{ kind: 'holiday', ref: holiday.id, effectPct: null }, { kind: 'event', ref: parade.id, effectPct: 2 }], calendar);
+    expect(recorded.map((view) => [view.kind, view.effectPct])).toEqual([['event', 2]]);
+  });
+
+  it('never merges two note reasons with one label', () => {
+    const views = [noteReasonView(note(), 'added'), noteReasonView(note({ detail: 'Another party' }), 'added')];
+    expect(views.map((view) => view.label)).toEqual(['Your private event, 70 guests', 'Your private event, 70 guests']);
+  });
+});
+
 describe('rule reasons', () => {
   const RULE_ID = '0000000000000000000000bb';
   const schedule = (fields: Partial<RuleSchedule> = {}): RuleSchedule => ({

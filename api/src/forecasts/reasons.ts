@@ -105,17 +105,49 @@ function wordsFor(kind: ReasonKind, ref: string | null, date: string, calendar: 
   return { label: PLAIN[kind], sources: [] };
 }
 
-/** A day's reasons in words, in the run's order, each with its effect when `effectOf` is given (a day from today on). */
+/** A run reason's recorded effect for choosing between two with one label: its size, and none below any. */
+function effectSize(view: ReasonView): number {
+  return view.effectPct === null ? -1 : Math.abs(view.effectPct);
+}
+
+/**
+ * D49: one run reason per label on a day, the label compared in lower case with each run of white space one space: the
+ * one with the larger recorded effect (else the first) stands where the first did, with both reasons' sources, so Why
+ * never says "Veterans Day" twice. Note and rule reasons never come here (reader.ts adds them), so they never merge.
+ */
+function onePerLabel(views: readonly ReasonView[]): ReasonView[] {
+  const kept: ReasonView[] = [];
+  const at = new Map<string, number>();
+  for (const view of views) {
+    const key = view.label.toLowerCase().replace(/\s+/g, ' ').trim();
+    const index = at.get(key);
+    const earlier = index === undefined ? undefined : kept[index];
+    if (index === undefined || earlier === undefined) {
+      at.set(key, kept.length);
+      kept.push(view);
+      continue;
+    }
+    const [winner, other] = effectSize(view) > effectSize(earlier) ? [view, earlier] : [earlier, view];
+    const sources = new Map([...winner.sources, ...other.sources].map((source) => [source.url, source] as const));
+    kept[index] = { ...winner, sources: [...sources.values()] };
+  }
+  return kept;
+}
+
+/**
+ * A day's reasons in words, in the run's order, one per label (onePerLabel), each with its effect when `effectOf` is
+ * given (a day from today on).
+ */
 export function reasonViews(
   date: string,
   reasons: readonly { kind: ReasonKind; ref: string | null; effectPct: number | null }[],
   calendar: DayCalendar,
   effectOf?: ReasonEffectOf,
 ): ReasonView[] {
-  return reasons.map((reason) => ({
+  return onePerLabel(reasons.map((reason) => ({
     kind: reason.kind, effectPct: reason.effectPct, effect: effectOf?.(date, reason, calendar) ?? null,
     ...wordsFor(reason.kind, reason.ref, date, calendar), note: null, rule: null,
-  }));
+  })));
 }
 
 /** A local 'HH:MM' in words: '18:30' is "6:30 pm", '18:00' is "6 pm", '12:00' is "noon" and '00:00' is "midnight". */

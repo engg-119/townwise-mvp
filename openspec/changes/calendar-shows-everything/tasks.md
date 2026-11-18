@@ -61,7 +61,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
     - the pass run from `api/src/main.ts` after `ensureIndexes`;
     - the write `updateOne({ _id, title: { $exists: false } }, { $set: { title } })`.
   - Update `api/test/isolation.test.ts` for the new cross-tenant import.
-- [ ] 1.7 `api/src/forecasts/reasons.ts` `reasonViews` keeps one run reason per folded label (the larger |effectPct|, else the first), with the union of both reasons' sources, and leaves note and rule reasons as they are. Test first: `api/test/forecast-reasons.test.ts` (two "Veterans Day" reasons with their sources, two note reasons).
+- [x] 1.7 `api/src/forecasts/reasons.ts` `reasonViews` keeps one run reason per folded label (the larger |effectPct|, else the first), with the union of both reasons' sources, and leaves note and rule reasons as they are. Test first: `api/test/forecast-reasons.test.ts` (two "Veterans Day" reasons with their sources, two note reasons).
 - [ ] 1.8 `api/src/handlers/data.ts`: `ai.events` on `getDataItem` only (not `listData`). `noteId` is set while its note exists, titles are null under view-as, and the list is empty after the original is deleted. Tests: `api/test/data.int.test.ts`:
   - `noteId` is null once its note is deleted;
   - the list answer carries no `events`;
