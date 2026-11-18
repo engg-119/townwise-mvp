@@ -249,6 +249,8 @@ export async function deleteConversation(ctx: TownwiseContext, req: Request, res
   // deletion goes by the person's conversations) could find them again. A failure after this leaves a card open again.
   await ctx.stores.orders.removeForConversation(scope, conversationId);
   if (!(await ctx.stores.chatConversations.remove(scope, owner, conversationId))) throw notFound();
+  // resumable-chat-turns: its turns' records, so a turn still running ends at its next write and saves nothing.
+  await ctx.stores.chatTurns.removeForConversation(scope, conversationId);
   // After the conversation: while it exists its proposals keep their state, so none is offered for a second note.
   await ctx.stores.chatProposals.removeForConversation(scope, conversationId);
   await recordAfter(ctx, {

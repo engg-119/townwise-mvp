@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
-  addActivityDay, addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
+  addActivityDay, addAuditEvent, addChatTurn, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
   addRemovedSeat, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { addGoogleCalendar, addGoogleConnection, createFakeGoogle, REFRESH_TOKEN, SHARED_ID } from './helpers/google.ts';
@@ -38,6 +38,8 @@ afterEach(async () => { await server.authStores.totp.remove(staff.userId); });
 const TENANT_COLLECTIONS = [
   'tw_members', 'tw_locations', 'tw_sales_days', 'tw_uploads', 'tw_notes', 'tw_chat_conversations', 'tw_chat_live_turns',
   'tw_chat_usage', 'tw_chat_proposals',
+  // A TownwiseAI turn's progress (resumable-chat-turns).
+  'tw_chat_turns',
   // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
   'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
   // U13B.
@@ -162,6 +164,7 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addGoogleCalendar(server, { orgId, locationId, connectionId, key: KEY, googleCalendarId: SHARED_ID, slot: 1 });
   const conversationId = await addConversation(server, { orgId, locationId, userId: member.session.userId, text: `${name} chat` });
   await addProposal({ orgId, locationId, userId: member.session.userId });
+  await addChatTurn(server, { orgId, locationId, conversationId, userId: member.session.userId });
   // Orders: a record in each of its collections, the card in the member's conversation.
   await addOrderRecords(server, { orgId, locationId, conversationId });
   // U9: an answer to a TownwiseAI question.
@@ -426,6 +429,7 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   // The days they used the app, in both organizations they were in (staff-overview).
   await addActivityDay(server, { orgId: formerOrgId, userId, day: '2026-05-30' });
   await addActivityDay(server, { orgId: olderOrgId, userId, day: '2026-04-02' });
+  await addChatTurn(server, { orgId: formerOrgId, locationId, conversationId, userId });
   const inviting = await createOrg(server, { name: `${name} Inviting Cafe` });
   const paused = await createOrg(server, { name: `${name} Paused Inviter`, status: 'suspended' });
   await addInvite(server, { orgId: inviting, email: doomed.email, invitedBy: 'f'.repeat(24) });
@@ -474,6 +478,7 @@ async function snapshotOfPerson(target: Person): Promise<string> {
     await server.connection.collection('tw_chat_conversations').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_live_turns').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_chat_proposals').find({ userId }).sort({ _id: 1 }).toArray(),
+    await server.connection.collection('tw_chat_turns').find({ userId }).sort({ _id: 1 }).toArray(),
     // Order cards hold no person id: they are the cards in the person's conversations.
     await server.connection.collection('tw_order_cards').find({ conversationId: { $in: conversationIds } }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_profiles').find({ userId }).sort({ _id: 1 }).toArray(),
@@ -503,6 +508,7 @@ describe('POST /api/admin/people/delete', () => {
     await addOrderCard({ orgId: doomed.formerOrgId, locationId: doomed.locationId, conversationId: sharerConversation });
     await addProposal({ orgId: doomed.formerOrgId, locationId: doomed.locationId, userId: sharer.session.userId });
     await addLiveTurn(server, { orgId: doomed.formerOrgId, userId: sharer.session.userId });
+    await addChatTurn(server, { orgId: doomed.formerOrgId, locationId: doomed.locationId, conversationId: sharerConversation, userId: sharer.session.userId });
     await addRemovedSeat(server, {
       orgId: bystander.formerOrgId, userId: sharer.session.userId, email: sharer.email, removedAt: server.clock.now(), removedBy: 'e'.repeat(24),
     });
@@ -522,6 +528,7 @@ describe('POST /api/admin/people/delete', () => {
     expect(await count('tw_chat_conversations', { userId })).toBe(0);
     expect(await count('tw_chat_live_turns', { userId })).toBe(0);
     expect(await count('tw_chat_proposals', { userId })).toBe(0);
+    expect(await count('tw_chat_turns', { userId })).toBe(0);
     expect(await count('tw_order_cards', { conversationId: new Types.ObjectId(doomed.conversationId) })).toBe(0);
     expect(await count('tw_profiles', { userId })).toBe(0);
     // Their active days, in both organizations (staff-overview); not counted, so the answer above is unchanged.

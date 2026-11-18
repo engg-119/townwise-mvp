@@ -26,6 +26,7 @@ import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
 import { chatConversationModel } from './chat-conversations.ts';
 import { chatLiveTurnModel } from './chat-live-turns.ts';
 import { chatProposalModel } from './chat-proposals.ts';
+import { chatTurnModel } from './chat-turns.ts';
 import { chatUsageModel } from './chat-usage.ts';
 import { fileModel, type FileStatus } from './files.ts';
 import { fileSweepModel } from './file-sweeps.ts';
@@ -284,7 +285,7 @@ export interface DeletedPersonRecords {
 
 /**
  * Person deletion (spec 10.7 step 3): their access requests, their open invitations in every organization, their
- * removed seats, their tuning chat conversations, live turns, proposal records and order cards, their welcome markers
+ * removed seats, their tuning chat conversations, live turns, turn records, proposal records and order cards, their welcome markers
  * and their Google connections for calendars, in every organization, and their display name (the notes they saved from proposals stay with the organization, as every note does). Their staff id
  * is cleared from the forecast runs they imported or published (U13B), and their id from the calibrations they started
  * and from the forecasts switch they last set (the forecast lab), and from the weekly suggestions switch they last set
@@ -325,6 +326,9 @@ export async function deletePersonRecords(
   const conversations = (await chatConversationModel(connection).deleteMany({ userId })).deletedCount;
   const liveTurns = (await chatLiveTurnModel(connection).deleteMany({ userId })).deletedCount;
   await chatProposalModel(connection).deleteMany({ userId });
+  // resumable-chat-turns: their turns' records, in every organization, so a turn still running ends at its next write.
+  // Not counted, so the audit details are unchanged.
+  await chatTurnModel(connection).deleteMany({ userId });
   // U11: the welcome markers, in every organization. Not counted, so the audit details are unchanged.
   await welcomeModel(connection).deleteMany({ userId });
   // The display name (spec 6.22). Not counted, so the audit details are unchanged.

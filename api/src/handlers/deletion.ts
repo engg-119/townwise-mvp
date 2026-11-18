@@ -67,6 +67,7 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.googleConnections.removeForOrg(scope);
     await stores.chatConversations.removeForOrg(scope);
     await stores.chatLiveTurns.removeForOrg(scope);
+    await stores.chatTurns.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
     // The days its people used the app (staff-overview).
     await stores.activityDays.removeForOrg(scope);

@@ -18,7 +18,7 @@ import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TOOLS } from '../src/chat/tools/registry.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
 import {
-  addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
+  addChatTurn, addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
 } from './helpers/fixtures.ts';
 import {
   eventsOf, message, messagesOf, scriptedModel, text, thinking, toolUse, type ScriptedModel,
@@ -843,9 +843,16 @@ describe('who sees what', () => {
 
   it('the author deletes a conversation: 204, recorded with ids only; a second delete is 404', async () => {
     const id = await addConversation(server, { orgId, locationId, userId: author.session.userId, text: 'Delete me' });
+    // resumable-chat-turns: the conversation's turn records go with it, and another conversation's stay.
+    const kept = await addConversation(server, { orgId, locationId, userId: author.session.userId, text: 'Keep me' });
+    await addChatTurn(server, { orgId, locationId, conversationId: id, userId: author.session.userId });
+    await addChatTurn(server, { orgId, locationId, conversationId: kept, userId: author.session.userId });
     const path = `/api/org/locations/${locationId}/chat/${id}`;
     expect((await call(server, path, { method: 'DELETE', session: author.session })).status).toBe(204);
     expect(await conversationDoc(id)).toBeNull();
+    const turns = server.connection.collection('tw_chat_turns');
+    expect(await turns.countDocuments({ conversationId: new Types.ObjectId(id) })).toBe(0);
+    expect(await turns.countDocuments({ conversationId: new Types.ObjectId(kept) })).toBe(1);
     const event = (await auditEvents(server)).find((e) => (e.target as { id: string }).id === id);
     expect(event).toMatchObject({
       action: 'chat.conversation_deleted', actorUserId: author.session.userId, target: { type: 'conversation', id },
@@ -854,11 +861,13 @@ describe('who sees what', () => {
     expect(await errorOf(await call(server, path, { method: 'DELETE', session: author.session }))).toEqual({ status: 404, error: 'not_found' });
   });
 
-  it('deleting a location deletes its conversations', async () => {
+  it('deleting a location deletes its conversations and their turn records', async () => {
     const roomId = await addLocation(server, { orgId, name: 'Pop-up Room' });
     const id = await addConversation(server, { orgId, locationId: roomId, userId: author.session.userId, text: 'Pop-up question' });
+    await addChatTurn(server, { orgId, locationId: roomId, conversationId: id, userId: author.session.userId });
     expect((await call(server, `/api/org/locations/${roomId}`, { method: 'DELETE', session: admin.session })).status).toBe(204);
     expect(await conversationDoc(id)).toBeNull();
+    expect(await server.connection.collection('tw_chat_turns').countDocuments({ locationId: new Types.ObjectId(roomId) })).toBe(0);
   });
 });
 
