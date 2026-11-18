@@ -256,7 +256,7 @@ export async function addChatUsage(server: Server, opts: { orgId: string; month:
 
 /** A tw_activity_days record (openspec change staff-overview): the person used the app in the organization that UTC day. */
 export async function addActivityDay(server: Server, opts: { orgId: string; userId: string; day: string }): Promise<void> {
-  await server.connection.collection<{ _id: string }>('tw_activity_days').insertOne({
+  await server.connection.collection<{ _id: string; orgId: Types.ObjectId; userId: string; day: string }>('tw_activity_days').insertOne({
     _id: `${opts.orgId}:${opts.userId}:${opts.day}`, orgId: new Types.ObjectId(opts.orgId), userId: opts.userId, day: opts.day,
   });
 }

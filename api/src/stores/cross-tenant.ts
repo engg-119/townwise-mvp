@@ -7,8 +7,8 @@
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
 // countedWeekRows (D42), the weekly suggestions' suggestionCandidates and staleSuggestionPasses (openspec change
 // weekly-forecast-suggestions), and the active days recorder's removeOldActivityDays (openspec change staff-overview).
-// Only access/resolve.ts, the join and decline handlers, the staff handlers (admin.ts, deletion.ts), the file reader
-// (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
+// Only access/resolve.ts, the active days recorder (access/activity.ts), the join and decline handlers, the staff
+// handlers (admin.ts, deletion.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
 // (calendar/google-access.ts) and the weekly refresh (lab/schedule.ts, which also runs the weekly suggestions) import
 // this file (test/isolation.test.ts enforces

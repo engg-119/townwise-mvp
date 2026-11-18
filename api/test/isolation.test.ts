@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access and the weekly refresh import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access and the weekly refresh import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -26,8 +26,10 @@ describe('isolation (source)', () => {
     // person's seat before reading their Google calendar, and whether they hold a Google connection in another
     // organization before revoking (connect-google-calendar). lab/schedule.ts, the weekly refresh (D42), lists its
     // candidates, its live calibrations and its week rows left starting across organizations, and counts the week's starts.
+    // access/activity.ts, the active days recorder (staff-overview), removes every organization's rows older than the
+    // 180 days kept, once a day.
     expect(importers).toEqual([
-      'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts',
+      'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'files/ai-reader.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
       'handlers/me.ts', 'lab/callback.ts', 'lab/schedule.ts',
     ]);
