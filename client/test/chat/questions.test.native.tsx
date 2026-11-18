@@ -65,14 +65,15 @@ function turn(api: FakeChatApi): LiveTurn {
   return live;
 }
 
-test('?panel=questions opens the sheet on a phone, Suggested rules (D46) then Questions for you first, and drops the parameter', async () => {
+test('?panel=questions opens the row under the chips on a phone, Suggested rules (D46) first, and drops the parameter', async () => {
   at(375);
   const { router } = await renderAgent('/locations/l1/agent?panel=questions');
-  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
-  const side = screen.getByTestId('agent-side');
+  const side = await screen.findByTestId('agent-side');
+  expect(screen.getByRole('button', { name: 'Questions and activity (6)' }).props.accessibilityState).toMatchObject({ expanded: true });
   const headings = within(side).getAllByRole('heading').map((heading) => heading.props.children as unknown);
   expect(headings[0]).toBe('Suggested rules');
-  expect(headings.indexOf('Questions for you')).toBeGreaterThan(headings.indexOf('Closed on Mondays'));
+  // The landing lists the questions under its chips, so the panel leaves them out.
+  expect(headings).not.toContain('Questions for you');
   await waitFor(() => { expect(router.getSearchParams().panel).toBeUndefined(); });
   expect(router.getPathname()).toBe('/locations/l1/agent');
 });
@@ -85,23 +86,24 @@ test('?panel=questions opens the column from 1024px', async () => {
   expect(screen.getByRole('button', { name: 'Questions and activity (6)' }).props.accessibilityState).toMatchObject({ expanded: true });
 });
 
-test('Something else… from the sheet on a phone closes it once the turn starts, not before', async () => {
+test('a card’s message from the new chat page opens the conversation, and the open row goes with the landing', async () => {
   at(375);
   const { chat } = await renderAgent('/locations/l1/agent?panel=questions');
-  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
-  const side = screen.getByTestId('agent-side');
-  const gapOther = within(side).getAllByRole('button', { name: 'Something else…' })[1];
+  const landing = await screen.findByTestId('chat-landing');
+  await within(landing).findByRole('heading', { name: 'Questions for you (2)' });
+  expect(screen.getByTestId('agent-side')).toBeTruthy();
+  const gapOther = within(landing).getAllByRole('button', { name: 'Something else…' })[1];
   if (gapOther === undefined) throw new Error('no Something else… on the gap');
   await fireEvent.press(gapOther);
-  await fireEvent.changeText(within(side).getByLabelText('Tell TownwiseAI in your own words'), WORDS);
-  await fireEvent.press(within(side).getByRole('button', { name: 'Send to TownwiseAI' }));
+  await fireEvent.changeText(within(landing).getByLabelText('Tell TownwiseAI in your own words'), WORDS);
+  await fireEvent.press(within(landing).getByRole('button', { name: 'Send to TownwiseAI' }));
   await waitFor(() => { expect(chat.turns).toHaveLength(1); });
-  expect(screen.getByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
   await act(() => {
     turn(chat).emit('conversation', { id: 'c9', title: 'A party', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
   });
-  await waitFor(() => { expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull(); });
   expect(screen.getByText(MESSAGE)).toBeTruthy();
+  expect(screen.queryByTestId('chat-panel-row')).toBeNull();
+  expect(screen.queryByTestId('agent-side')).toBeNull();
   await act(() => {
     turn(chat).emit('done', { stopReason: 'end_turn', leafId: 'a9' });
     turn(chat).end();
@@ -143,7 +145,9 @@ test('the landing shows the questions under the chips, and Something else… sen
   await waitFor(() => {
     expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/gap_2026-05-12_2026-05-13', body: { answer: 'other' } }]);
   });
-  expect(screen.getByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
+  // Back on the new chat page, the row counts one fewer.
+  await fireEvent.press(screen.getByRole('button', { name: 'New chat' }));
+  expect(await screen.findByRole('button', { name: 'Questions and activity (5)' })).toBeTruthy();
   for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) {
     for (const call of jest.mocked(SecureStore[name]).mock.calls) {
       expect(call[0]).toMatch(/^townwise\.chatReturn\./);

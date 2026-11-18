@@ -176,19 +176,9 @@ async function openEarlierChat(): Promise<void> {
   await screen.findByText('We close for the holidays.');
 }
 
-async function openPanel(): Promise<HTMLElement> {
-  fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (2)' }));
+/** Questions and activity's column, open by default beside the new chat page from 641px. */
+async function panelColumn(): Promise<HTMLElement> {
   return screen.findByTestId('agent-side');
-}
-
-/**
- * A whole Escape press where focus is: react-native-web's Modal closes the top-most modal on its keyup. The page
- * renders between keydown and keyup, as in a browser, so a keydown that closed one modal can't hide a keyup that
- * then closes the next.
- */
-function pressEscape(): void {
-  act(() => { fireEvent.keyDown(document.activeElement ?? document.body, { key: 'Escape' }); });
-  act(() => { fireEvent.keyUp(document.activeElement ?? document.body, { key: 'Escape' }); });
 }
 
 function expectReadOnly(control: HTMLElement): void {
@@ -526,10 +516,17 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
     return [own.minHeight, own.paddingTop, own.paddingBottom, own.paddingLeft, own.paddingRight, own.borderTopWidth, own.borderTopLeftRadius, own.borderBottomRightRadius, own.flexDirection, own.gap];
   }
 
+  /** A row's words, without the open questions' badge, which comes with the panel's data. */
+  function words(row: Element): string {
+    const copy = row.cloneNode(true) as Element;
+    for (const badge of Array.from(copy.querySelectorAll('[data-testid="chat-badge"]'))) badge.remove();
+    return copy.textContent;
+  }
+
   /** Each row's lines of words, as the size and line height of the text that sets them. */
   function fonts(row: Element, nested: boolean): string[] {
     return [row, ...Array.from(row.querySelectorAll('*'))]
-      .filter((node) => node.children.length === 0 && node.textContent !== '')
+      .filter((node) => node.children.length === 0 && node.textContent !== '' && node.closest('[data-testid="chat-badge"]') === null)
       .map((node) => (nested ? node.parentElement ?? node : node))
       .map((node) => `${style(node).fontSize}/${style(node).lineHeight}`);
   }
@@ -547,7 +544,13 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
     expect(style(heading).color).toBe('rgba(0, 0, 0, 0)');
     expect(style(heading).backgroundColor).not.toBe('rgba(0, 0, 0, 0)');
     // The words sit in a span inside the row's own text, which sets their type.
-    const rows = Array.from(column.children).map((row) => ({ text: row.textContent, fonts: fonts(row, true), shape: shape(row) }));
+    const rows = Array.from(column.children).map((row) => ({ text: words(row), fonts: fonts(row, true), shape: shape(row) }));
+    // The header's icons: three where the new chat page has Questions and activity in it, two on phones (spec P25
+    // build note, 2026-11-18), and from 641px the panel's column stands beside the landing.
+    const header = screen.getByTestId('skeleton-chat-header').firstElementChild?.firstElementChild;
+    expect(header?.children.length).toBe(width > 640 ? 3 : 2);
+    const standIn = screen.queryByTestId('skeleton-agent-side');
+    expect(standIn === null ? null : style(standIn).flexGrow).toBe(width > 640 ? '4' : null);
     const composer = within(column).getByTestId('skeleton-agent-composer');
     const box = first(Array.from(first(Array.from(composer.children)).children));
     const chips = within(column).getByTestId('skeleton-agent-suggestions');
@@ -559,7 +562,11 @@ describe('while the page loads (owner, 2026-11-18: “fix the skeleton loader on
     const real = Array.from(landing.children);
     expect(real.at(-1)).toBe(screen.getByTestId('chat-landing-questions'));
     const stood = real.slice(0, -1);
-    expect(stood.map((row) => row.textContent)).toEqual(rows.map((row) => row.text));
+    expect(stood.map(words)).toEqual(rows.map((row) => row.text));
+    expect(screen.getByTestId('chat-header-controls').children.length).toBe(width > 640 ? 3 : 2);
+    expect(screen.queryByTestId('agent-side') === null ? null : style(screen.getByTestId('agent-side')).flexGrow).toBe(width > 640 ? '4' : null);
+    // On phones the collapsed Questions and activity row stands under the chips in both.
+    expect(stood.at(-1)?.getAttribute('data-testid') === 'chat-panel-row').toBe(width <= 640);
     expect(stood.map((row) => fonts(row, false))).toEqual(rows.map((row) => row.fonts));
     expect(stood.map(shape)).toEqual(rows.map((row) => row.shape));
     // The composer: the same box (56 high, radius 28) under the same padding, its help line the same.
@@ -791,57 +798,83 @@ describe('on phones, where the header stays put as the landing and the thread re
   });
 });
 
-test('the side panel is closed by default and opens as a column from 1024px and as a sheet below', async () => {
-  renderAt('/locations/l1/agent', fakeChatApi());
-  const toggle = await screen.findByRole('button', { name: 'Questions and activity (2)' });
-  expect(toggle.getAttribute('aria-expanded')).toBe('false');
-  expect(screen.queryByTestId('agent-side')).toBeNull();
-  fireEvent.click(toggle);
-  // A column beside the chat: the same button (the chat isn't drawn again), and no dialog.
-  const side = await screen.findByTestId('agent-side');
-  expect(toggle.getAttribute('aria-expanded')).toBe('true');
-  expect(toggle.isConnected).toBe(true);
-  // Beside the empty conversation's landing, which lists the questions under its chips, the column leaves them out.
-  expect(within(side).queryByRole('heading', { name: 'Questions for you' })).toBeNull();
-  expect(within(screen.getByTestId('chat-landing-questions')).getByRole('heading', { name: 'Questions for you (2)' })).toBeTruthy();
-  expect(within(side).getByRole('heading', { name: 'What it’s been doing' })).toBeTruthy();
-  expect(within(side).getByRole('heading', { name: 'This month’s budget' })).toBeTruthy();
-  expect(within(side).getByRole('button', { name: 'How TownwiseAI works' })).toBeTruthy();
-  expect(screen.queryByRole('dialog', { name: 'Questions and activity' })).toBeNull();
-  fireEvent.click(toggle);
-  expect(screen.queryByTestId('agent-side')).toBeNull();
-  // Below 1024px, a full-screen sheet: Escape shuts it and focus goes back to the button.
-  setWidth(800);
-  const narrow = screen.getByRole('button', { name: 'Questions and activity (2)' });
-  fireEvent.click(narrow);
-  const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
-  expect(within(sheet).getByRole('heading', { name: 'Questions for you' })).toBeTruthy();
-  pressEscape();
-  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Questions and activity' })).toBeNull(); });
-  expect(document.activeElement).toBe(narrow);
-});
+describe('Questions and activity only on the new chat page (owner, 2026-11-18: “we should likely put the questions and activity back to the right side of the screen and it should only appear on the new chat page”)', () => {
+  test.each([1280, 800])('at %ipx it is a column beside the landing, open by default; its button hides and shows it without drawing the landing again', async (at) => {
+    setWidth(at);
+    renderAt('/locations/l1/agent', fakeChatApi());
+    const toggle = await screen.findByRole('button', { name: 'Questions and activity (2)' });
+    expect(toggle.getAttribute('aria-expanded')).toBe('true');
+    const side = await screen.findByTestId('agent-side');
+    expect(side.id).toBe(toggle.getAttribute('aria-controls'));
+    // Beside the landing, under the header: the landing's box and the column share a row, 8 and 4 of 12.
+    const landing = screen.getByTestId('chat-landing');
+    expect(side.previousElementSibling?.contains(landing)).toBe(true);
+    expect([style(side).flexGrow, style(side.previousElementSibling ?? side).flexGrow]).toEqual(['4', '8']);
+    expect(screen.queryByRole('dialog')).toBeNull();
+    // The landing lists the questions under its chips, so the column leaves them out.
+    expect(within(side).queryByRole('heading', { name: 'Questions for you' })).toBeNull();
+    expect(within(screen.getByTestId('chat-landing-questions')).getByRole('heading', { name: 'Questions for you (2)' })).toBeTruthy();
+    expect(within(side).getByRole('heading', { name: 'What it’s been doing' })).toBeTruthy();
+    expect(within(side).getByRole('heading', { name: 'This month’s budget' })).toBeTruthy();
+    expect(within(side).getByRole('button', { name: 'How TownwiseAI works' })).toBeTruthy();
+    // No phone row at this width.
+    expect(screen.queryByTestId('chat-panel-row')).toBeNull();
+    const column = screen.getByTestId('chat-landing-column');
+    fireEvent.click(toggle);
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    expect(toggle.getAttribute('aria-expanded')).toBe('false');
+    expect(column.isConnected).toBe(true);
+    fireEvent.click(toggle);
+    expect(await screen.findByTestId('agent-side')).toBeTruthy();
+    expect(column.isConnected).toBe(true);
+  });
 
-test('below 1024px, Escape in the model card closes only the card, and focus goes back to How Townwise estimates', async () => {
-  setWidth(800);
-  renderAt('/locations/l1/agent', fakeChatApi());
-  fireEvent.click(await screen.findByRole('button', { name: 'Questions and activity (2)' }));
-  const sheet = await screen.findByRole('dialog', { name: 'Questions and activity' });
-  fireEvent.click(within(sheet).getByRole('button', { name: 'How TownwiseAI works' }));
-  const estimates = within(sheet).getByRole('button', { name: 'How Townwise estimates' });
-  act(() => { estimates.focus(); });
-  fireEvent.click(estimates);
-  expect(await screen.findByRole('dialog', { name: 'How Townwise estimates' })).toBeTruthy();
-  pressEscape();
-  await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'How Townwise estimates' })).toBeNull(); });
-  expect(screen.getByRole('dialog', { name: 'Questions and activity' })).toBe(sheet);
-  expect(document.activeElement).toBe(estimates);
+  test('inside a conversation neither the panel nor its button shows; New chat brings both back', async () => {
+    renderAt('/locations/l1/agent', fakeChatApi());
+    await screen.findByTestId('agent-side');
+    await openEarlierChat();
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Questions and activity/ })).toBeNull();
+    expect(within(screen.getByTestId('chat-header-controls')).getAllByRole('button').map((button) => button.getAttribute('aria-label'))).toEqual(['History', 'New chat']);
+    fireEvent.click(screen.getByRole('button', { name: 'New chat' }));
+    expect(await screen.findByTestId('agent-side')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Questions and activity (2)' })).toBeTruthy();
+  });
+
+  test('at 640px and below it is a collapsed row under the chips with its count, opening in place; none in the header or a conversation', async () => {
+    setWidth(390);
+    renderAt('/locations/l1/agent', fakeChatApi());
+    const landing = await screen.findByTestId('chat-landing-column');
+    const row = await within(landing).findByRole('button', { name: 'Questions and activity (2)' });
+    expect(within(screen.getByTestId('chat-header-controls')).queryByRole('button', { name: /^Questions and activity/ })).toBeNull();
+    expect(row.getAttribute('aria-expanded')).toBe('false');
+    expect(within(row).getByTestId('chat-badge').textContent).toBe('2');
+    expect(style(row).minHeight).toBe('44px');
+    // Under the chips, above the landing's questions.
+    const wrap = screen.getByTestId('chat-panel-row');
+    expect(wrap.previousElementSibling).toBe(within(landing).getByRole('group', { name: 'Suggestions' }).closest('[data-testid="chat-landing-column"] > *'));
+    expect(wrap.nextElementSibling).toBe(screen.getByTestId('chat-landing-questions'));
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    fireEvent.click(row);
+    expect(row.getAttribute('aria-expanded')).toBe('true');
+    const side = within(wrap).getByTestId('agent-side');
+    expect(side.id).toBe(row.getAttribute('aria-controls'));
+    expect(within(side).getByRole('heading', { name: 'What it’s been doing' })).toBeTruthy();
+    expect(within(side).queryByRole('heading', { name: 'Questions for you' })).toBeNull();
+    fireEvent.click(row);
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    await openEarlierChat();
+    expect(screen.queryByTestId('chat-panel-row')).toBeNull();
+    expect(screen.queryByRole('button', { name: /^Questions and activity/ })).toBeNull();
+  });
 });
 
 test('shows the 80% budget line above the composer', async () => {
   const api = fakeChatApi();
   api.summary = { ...SUMMARY, budget: { ...SUMMARY.budget, usedUsd: 16 } };
   renderAt('/locations/l1/agent', api);
-  const line = await screen.findByText(BUDGET_LINE);
+  // The panel's column beside the new chat page says it too, in its budget section.
+  const line = await within(await screen.findByTestId('chat-landing-column')).findByText(BUDGET_LINE);
   expect(before(line, screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
   await send(api, 'How was December?');
   expect(before(screen.getByText(BUDGET_LINE), screen.getByLabelText(COMPOSER_LABEL))).toBe(true);
@@ -925,7 +958,7 @@ test('F7: a malformed ?about= leaves the composer empty', async () => {
 
 test('F10: How Townwise estimates opens the model card as a dialog; Escape closes it', async () => {
   renderAt('/locations/l1/agent', fakeChatApi());
-  const side = await openPanel();
+  const side = await panelColumn();
   fireEvent.click(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
   fireEvent.click(within(side).getByRole('button', { name: 'How Townwise estimates' }));
   const dialog = await screen.findByRole('dialog', { name: 'How Townwise estimates' });
@@ -938,8 +971,7 @@ test('F10: How Townwise estimates opens the model card as a dialog; Escape close
 test('the forecast line says a lab run was trained on the sales history and notes uploaded to Townwise', async () => {
   const chat = serveAbout(fakeChatApi(), { ...PUBLISHED, forecast: { run: { ...RUN, trainingSource: 'townwise_lab' }, live: null } });
   renderAt('/locations/l1/agent', chat);
-  // The panel is behind the header's toggle in the redesign (D26).
-  const side = await openPanel();
+  const side = await panelColumn();
   fireEvent.click(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
   expect(await within(side).findByText('TownwiseAI also reads the forecast Townwise published: Townwise demand model v9, trained on sales history and notes you uploaded to Townwise from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026.')).toBeTruthy();
 });
@@ -947,8 +979,7 @@ test('the forecast line says a lab run was trained on the sales history and note
 test('the forecast line reads a training source this client doesn’t know as sales history', async () => {
   const chat = serveAbout(fakeChatApi(), { ...PUBLISHED, forecast: { run: { ...RUN, trainingSource: 'a_future_source' }, live: null } });
   renderAt('/locations/l1/agent', chat);
-  // The panel is behind the header's toggle in the redesign (D26).
-  const side = await openPanel();
+  const side = await panelColumn();
   fireEvent.click(within(side).getByRole('button', { name: 'How TownwiseAI works' }));
   expect(await within(side).findByText('TownwiseAI also reads the forecast Townwise published: Townwise demand model v9, trained on sales history from Jan 1, 2025 to Oct 21, 2026, made Nov 1, 2026.')).toBeTruthy();
 });
@@ -1099,11 +1130,14 @@ describe('a tool card', () => {
 test('one primary: only the composer’s button has the white fill', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);
-  // A reply with a proposal card, the side panel's answers, and text in the composer, so Send is on.
+  // The landing with the panel's column and the questions' answers, and text in the composer, so Send is on.
+  await panelColumn();
+  await within(await screen.findByTestId('chat-landing-questions')).findByRole('button', { name: 'No, we were closed' });
+  fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
+  expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([screen.getByRole('button', { name: 'Send' })]);
+  // A reply with a proposal card, and text in the docked composer.
   await openEarlierChat();
   expect(screen.getByText('Proposed note')).toBeTruthy();
-  const side = await openPanel();
-  await within(side).findByRole('button', { name: 'No, we were closed' });
   fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'And January?' } });
   const send = screen.getByRole('button', { name: 'Send' });
   expect(screen.getAllByRole('button').filter((button) => style(button).backgroundColor === WHITE)).toEqual([send]);
@@ -1177,7 +1211,7 @@ test('under view-as every write is disabled in place and versions still switch b
   expect(input.getAttribute('aria-readonly')).toBe('true');
   expect(input.getAttribute('aria-describedby')).toBe('chat-ro composer-help');
   for (const name of ['Send', 'New chat', 'Which days last month were unusual?']) expectReadOnly(screen.getByRole('button', { name }));
-  await openPanel();
+  await panelColumn();
   // Beside the landing, the cards are under its chips; the panel's column leaves them out.
   const cards = await screen.findByTestId('chat-landing-questions');
   expectReadOnly(await within(cards).findByRole('button', { name: 'No, we were closed' }));
@@ -1470,6 +1504,12 @@ test('nothing goes to browser storage', async () => {
   try {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
+    // An answer on the new chat page, where the questions are.
+    const cards = await screen.findByTestId('chat-landing-questions');
+    const [notSure] = await within(cards).findAllByRole('button', { name: 'Not sure' });
+    if (notSure === undefined) throw new Error('no answer');
+    fireEvent.click(notSure);
+    await screen.findByText('Got it. TownwiseAI won’t ask about this day again.');
     await send(api, 'Hello');
     // A draft typed while the reply streams is kept in memory only.
     fireEvent.change(screen.getByLabelText(COMPOSER_LABEL), { target: { value: 'Half typed' } });
@@ -1478,11 +1518,6 @@ test('nothing goes to browser storage', async () => {
       turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0 });
       turn(api).end();
     });
-    const side = await openPanel();
-    const [notSure] = await within(side).findAllByRole('button', { name: 'Not sure' });
-    if (notSure === undefined) throw new Error('no answer');
-    fireEvent.click(notSure);
-    await within(side).findByText('Got it. TownwiseAI won’t ask about this day again.');
     expect(setItem).not.toHaveBeenCalled();
   } finally {
     setItem.mockRestore();

@@ -5,12 +5,13 @@ import {
 } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
+import { useBreakpoint } from '../../portal/hooks';
 import { localToday } from '../../portal/locations/dates';
 import { useOptionalPortal } from '../../portal/PortalProvider';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
 import { ErrorNotice, Messages, ReadOnlyLine } from '../../portal/ui/feedback';
-import { Skeleton, SkeletonButton, SkeletonText, SkeletonWords } from '../../portal/skeleton/kit';
+import { Skeleton, SkeletonButton, SkeletonHeading, SkeletonText, SkeletonWords } from '../../portal/skeleton/kit';
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
@@ -23,11 +24,12 @@ import type { MessageAttachment } from '../api';
 import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat, type TuningChatState } from '../useTuningChat';
 import { budgetLines } from './AgentSidePanel';
 import { ChatDrop } from './ChatDrop';
-import { ChatHeader, ChatHeaderSkeleton, PanelButton } from './ChatHeader';
+import { ChatHeader, ChatHeaderSkeleton, PANEL_ID, PanelButton } from './ChatHeader';
 import { Composer, ComposerSkeleton, type ComposerHandle } from './Composer';
 import { useComposerFiles } from './ComposerFiles';
 import { focusLost } from './controls';
 import { NextChips } from './NextChips';
+import { PanelRow, PanelRowSkeleton } from './PanelRow';
 import { QuestionCard, questionChatOf } from './QuestionCard';
 import { ReplyView } from './ReplyView';
 import { Suggestions, SuggestionsSkeleton } from './Suggestions';
@@ -36,7 +38,7 @@ import { UserMessage } from './UserMessage';
 import { workedOpenStore } from './workedOpen';
 
 // The TownwiseAI chat page (spec P25, D26): the header (History,
-// New chat and Questions and activity; no title), then the landing of an empty conversation (one centered column: what to ask,
+// New chat and, on the new chat page, Questions and activity; no title), then the landing of an empty conversation (one centered column: what to ask,
 // what TownwiseAI reads, the composer, the quick-start chips and TownwiseAI's questions, the panel's cards sharing its
 // state) or the thread, with the composer docked over its
 // bottom edge. The thread runs the full height and scrolls under the dock: what passes shows above the box and at its
@@ -49,6 +51,14 @@ import { workedOpenStore } from './workedOpen';
 // version shows after a switch (and, while a saved conversation loads, its skeleton's “Loading the conversation…”). The log keeps its end in view while pinned (scrollPin.ts), and shows Latest, above
 // the dock, when a reply grows below the view; the dock growing or shrinking moves the end, never the pin. The header
 // sits under the portal's top bar on every screen, above what scrolls.
+//
+// Questions and activity (spec P25 build note, 2026-11-18; owner: "we should likely put the questions and activity back
+// to the right side of the screen and it should only appear on the new chat page"): shown only while no conversation is
+// open (the landing, and the skeleton, the error and TownwiseAI off, where the panel still works). From 641px it is a
+// column (4 of 12) beside the landing, under the header, open by default and shown or hidden by the header's button; at
+// 640px and below it is PanelRow under the chips, collapsed by default and opening in place. Inside a conversation
+// neither the panel nor its button shows. The column is drawn beside the same main box whether or not it shows, so
+// showing it never draws the landing again.
 //
 // Files (web, D36): the composer's + and a drop anywhere on the page (ChatDrop, drawn after the body and outside the
 // dock) attach files to the message as chips inside the composer's box (ComposerFiles). Send waits while one
@@ -65,18 +75,14 @@ export interface AgentChatContext extends ToolContext {
 }
 
 type Scroller = React.ComponentRef<typeof ScrollView>;
-type Host = React.ComponentRef<typeof View>;
 
 /** What the page does through the chat for the panel's question cards. */
 export interface AgentChatHandle {
   /**
    * Sends a question's Something else… message in the conversation shown (the landing starts one), as a chip does
-   * (TuningChat.tell). `focus`: on web focus goes to the composer at once (from the column; the sheet moves it there
-   * when it closes).
+   * (TuningChat.tell). `focus`: on web focus goes to the composer at once.
    */
   tell: (message: string, telling: Telling, focus: boolean) => void;
-  /** Focuses the composer, where focus goes when a question's message closes the panel sheet (web). */
-  focusComposer: () => void;
 }
 
 /**
@@ -147,31 +153,42 @@ function landingSuggestions(ctx: AgentChatContext, today: string): ReturnType<ty
  * their own shapes, so each row takes the lines the landing's will at any width and the landing replaces it without
  * moving (an independent browser review saw it move 48px at 1280px and 64px at 390px when the skeleton guessed its
  * lines). "Loading TownwiseAI…" stays its one status line for screen readers. TownwiseAI's questions under the chips
- * load with the side panel, on their own. A turn still running opens its conversation as the page loads
+ * load with the side panel, on their own. The panel's places are the landing's (build note, 2026-11-18): from 641px the
+ * header has its three icons and, while the panel is open, a column of shapes stands where the panel's column will;
+ * at 640px and below the header has two and the collapsed Questions and activity row stands under the chips. A turn still running opens its conversation as the page loads
  * (useTuningChat), so a refresh mid-reply goes from this to the thread, never through the landing. Nothing here
  * scrolls, so the thread's pin starts fresh when the thread mounts.
  */
-function PageSkeleton(props: { ctx: AgentChatContext }): React.JSX.Element {
+function PageSkeleton(props: { ctx: AgentChatContext; phone: boolean; beside: boolean }): React.JSX.Element {
   const words = landingWords(props.ctx);
   const line = <Text style={styles.body}><SkeletonWords>{words.line}</SkeletonWords></Text>;
   return (
     <Skeleton name="agent" label="Loading TownwiseAI…" fill>
       <View style={styles.fill}>
-        <ChatHeaderSkeleton />
-        <View style={[styles.fill, styles.landingScroll]}>
-          <View testID="skeleton-agent-landing" style={styles.landing}>
-            <Heading><SkeletonWords>{words.heading}</SkeletonWords></Heading>
-            {props.ctx.hasSales ? line : (
-              <View style={styles.noSales}>
-                {line}
-                {words.link ? <SkeletonButton link width={120} /> : null}
+        <ChatHeaderSkeleton panel={!props.phone} />
+        <View style={styles.split}>
+          <View style={[props.beside ? styles.main : styles.fill, styles.landingScroll]}>
+            <View testID="skeleton-agent-landing" style={styles.landing}>
+              <Heading><SkeletonWords>{words.heading}</SkeletonWords></Heading>
+              {props.ctx.hasSales ? line : (
+                <View style={styles.noSales}>
+                  {line}
+                  {words.link ? <SkeletonButton link width={120} /> : null}
+                </View>
+              )}
+              <View testID="skeleton-agent-composer">
+                <ComposerSkeleton help={words.help} />
               </View>
-            )}
-            <View testID="skeleton-agent-composer">
-              <ComposerSkeleton help={words.help} />
+              <SuggestionsSkeleton items={landingSuggestions(props.ctx, localToday())} />
+              {props.phone ? <PanelRowSkeleton /> : null}
             </View>
-            <SuggestionsSkeleton items={landingSuggestions(props.ctx, localToday())} />
           </View>
+          {props.beside ? (
+            <View testID="skeleton-agent-side" style={[styles.side, styles.sideContent]}>
+              <SkeletonHeading width={160} />
+              <SkeletonText lines={3} type="small" />
+            </View>
+          ) : null}
         </View>
       </View>
     </Skeleton>
@@ -193,13 +210,13 @@ export function AgentChat(props: {
   ctx: AgentChatContext;
   readOnlyId: string | null;
   readOnlyLine: string;
-  /** Questions and activity is open: a column from 1024px, a sheet below (the page draws it). */
+  /** Questions and activity is open: the column beside the new chat page from 641px, the row's region at 640px and below. */
   panelOpen: boolean;
   onTogglePanel: () => void;
-  /** The open questions, for the panel button; null while they load. */
+  /** The open questions, for the panel button and row; null while they load. */
   openQuestions: number | null;
-  /** The panel button, where the panel sheet returns focus (web). */
-  panelButtonRef?: React.RefObject<Host | null>;
+  /** The panel's sections (AgentSidePanel), drawn in the column or under the row. */
+  panelSections: React.ReactNode;
   /** TownwiseAI's questions, also shown on the landing under the chips. */
   panel: AgentPanelState;
   handleRef?: React.Ref<AgentChatHandle>;
@@ -207,6 +224,7 @@ export function AgentChat(props: {
   const { chat, ctx } = props;
   const { state } = chat;
   const reduced = useReducedMotion();
+  const { phone } = useBreakpoint();
   const scroll = useRef<Scroller>(null);
   const composer = useRef<ComposerHandle>(null);
   // The composer's + and the page's drop (web, stored files on): the files on the message, and the lines about them.
@@ -340,7 +358,7 @@ export function AgentChat(props: {
     if (focus && Platform.OS === 'web') composer.current?.focus();
   }
 
-  useImperativeHandle(props.handleRef, () => ({ tell, focusComposer: () => { composer.current?.focus(); } }));
+  useImperativeHandle(props.handleRef, () => ({ tell }));
 
   /** The person opens conversation `to` (null: a new one): the composer's files stay with the one shown, as its draft does. */
   function opened(run: () => void, to: string | null): void {
@@ -407,38 +425,49 @@ export function AgentChat(props: {
   };
 
   const readOnlyLine = <ReadOnlyLine text={props.readOnlyLine} {...(props.readOnlyId === null ? {} : { nativeID: props.readOnlyId })} />;
-  // TownwiseAI off or unreadable still has its panel: the questions and activity don't need the chat (spec 10.12).
-  const panelOnly = (
-    <View style={styles.panelBar}>
-      <PanelButton
-        open={props.panelOpen}
-        openQuestions={props.openQuestions}
-        onPress={props.onTogglePanel}
-        {...(props.panelButtonRef === undefined ? {} : { buttonRef: props.panelButtonRef })}
-      />
-    </View>
+  // From 641px the panel's column shows beside what is under the header while no conversation is open.
+  const beside = !phone && props.panelOpen;
+  /** `main` under the header, with the panel's column beside it when `column`; the same boxes either way. */
+  function split(main: React.ReactNode, column: boolean): React.JSX.Element {
+    return (
+      <View style={styles.split}>
+        <View style={column ? styles.main : styles.fill}>{main}</View>
+        {column ? (
+          <ScrollView nativeID={PANEL_ID} testID="agent-side" style={styles.side} contentContainerStyle={styles.sideContent}>
+            {props.panelSections}
+          </ScrollView>
+        ) : null}
+      </View>
+    );
+  }
+  const panelRow = (
+    <PanelRow open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel}>{props.panelSections}</PanelRow>
   );
-
-  // Every state of the page catches a drop of files, so the browser never opens one in its place.
-  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton ctx={ctx} />{drop}</View>;
-  if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
-  if (state.status === 'failed') {
+  // TownwiseAI off or unreadable still has its panel: the questions and activity don't need the chat (spec 10.12).
+  function panelOnly(content: React.ReactNode): React.JSX.Element {
     return (
       <View style={styles.fill}>
-        {panelOnly}
-        <ErrorNotice message={state.loadError ?? 'Something went wrong.'} onRetry={chat.reload} />
+        {phone ? null : (
+          <View style={styles.panelBar}>
+            <PanelButton open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel} />
+          </View>
+        )}
+        {split(<>{phone ? panelRow : null}{content}</>, beside)}
         {drop}
       </View>
     );
   }
+
+  // Every state of the page catches a drop of files, so the browser never opens one in its place.
+  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton ctx={ctx} phone={phone} beside={beside} />{drop}</View>;
+  if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
+  if (state.status === 'failed') return panelOnly(<ErrorNotice message={state.loadError ?? 'Something went wrong.'} onRetry={chat.reload} />);
   if (!state.enabled) {
-    return (
-      <View style={styles.fill}>
-        {panelOnly}
+    return panelOnly(
+      <>
         <Text style={styles.body}>TownwiseAI isn’t turned on yet.</Text>
         {readOnlyLine}
-        {drop}
-      </View>
+      </>,
     );
   }
 
@@ -494,8 +523,8 @@ export function AgentChat(props: {
       }}
       onRename={chat.rename}
       onTogglePanel={props.onTogglePanel}
+      panel={landing && !phone}
       onListOpen={chat.watchList}
-      {...(props.panelButtonRef === undefined ? {} : { panelButtonRef: props.panelButtonRef })}
     />
   );
   
@@ -590,6 +619,7 @@ export function AgentChat(props: {
             composer.current?.focus();
           }}
         />
+        {phone ? panelRow : null}
         {asked.length === 0 ? null : (
           <View testID="chat-landing-questions" style={styles.questions}>
             <Heading>{`Questions for you${open !== null && open > 0 ? ` (${formatCount(open)})` : ''}`}</Heading>
@@ -732,7 +762,7 @@ export function AgentChat(props: {
   return (
     <View style={styles.fill}>
       {header}
-      {body}
+      {split(body, landing && beside)}
       {/* After the body and outside the dock, so a drag never changes the dock's measured height. */}
       {drop}
       <View testID="chat-live" style={styles.live} aria-live="polite" accessibilityLiveRegion="polite">
@@ -750,6 +780,12 @@ const SKIRT_TOP = theme.space[3] + 28;
 
 const styles = StyleSheet.create({
   fill: { flex: 1, minHeight: 0 },
+  split: { flex: 1, minHeight: 0, flexDirection: 'row', columnGap: theme.space.gutter },
+  // The landing and the panel's column, 8 and 4 of 12; the column scrolls on its own.
+  main: { flex: 8, minWidth: 0, minHeight: 0 },
+  // Longhands: a ScrollView's own flexGrow would win over `flex`'s.
+  side: { flexGrow: 4, flexShrink: 1, flexBasis: 0, minWidth: 0, minHeight: 0 },
+  sideContent: { gap: theme.space[8], paddingBottom: theme.space[8] },
   panelBar: {
     flexDirection: 'row', justifyContent: 'flex-end', borderBottomWidth: theme.stroke.hairline, borderBottomColor: c.border,
     paddingBottom: theme.space[2], marginBottom: theme.space[4],

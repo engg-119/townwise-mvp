@@ -13,7 +13,7 @@ it('the header wraps on phones and every control is a 44px icon named by its wor
   await render(
     <ChatHeader
       conversations={[]} openId={null} streaming={false} readOnlyId={null} panelOpen={false} openQuestions={2}
-      onOpen={jest.fn()} onNew={jest.fn()} onDelete={jest.fn()} onRename={jest.fn()} onTogglePanel={jest.fn()}
+      onOpen={jest.fn()} onNew={jest.fn()} onDelete={jest.fn()} onRename={jest.fn()} onTogglePanel={jest.fn()} panel
     />,
   );
   const controls = StyleSheet.flatten(screen.getByTestId('chat-header-controls').props.style) as { flexWrap?: string };

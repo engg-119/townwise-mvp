@@ -25,8 +25,8 @@ import { SuggestionsSection } from './SuggestionCard';
 // openspec change weekly-forecast-suggestions, shown in the column beside the landing too, which lists only questions),
 // What it's been doing, this month's budget, and How TownwiseAI works. Beside an empty conversation's landing, which lists the questions under its chips, the column leaves Questions
 // for you out (owner request, 2026-11-15), so they aren't drawn twice. Every activity item is a real, dated event the server read from the location's own records; a kind this
-// client doesn't know shows as nothing. The page shows the four as Questions and activity: a column from 1024px, a
-// sheet below. How TownwiseAI works says whether Townwise has a forecast for the location from
+// client doesn't know shows as nothing. The page shows the four as Questions and activity on the new chat page only: a column
+// beside the landing from 641px, a row under its chips that opens in place at 640px and below. How TownwiseAI works says whether Townwise has a forecast for the location from
 // GET .../estimates/about (F10), and opens the model card in a sheet.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];

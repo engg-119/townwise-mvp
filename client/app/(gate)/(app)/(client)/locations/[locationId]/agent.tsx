@@ -1,13 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
-import { KeyboardAvoidingView, Platform, ScrollView, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
 import { aboutDraft, orderDraft } from '../../../../../../src/chat/about';
 import { openToDecide, useAgentPanel, type SendToChat } from '../../../../../../src/chat/useAgentPanel';
 import { useTuningChat } from '../../../../../../src/chat/useTuningChat';
 import { AgentChat, landingShowsQuestions, type AgentChatContext, type AgentChatHandle } from '../../../../../../src/chat/ui/AgentChat';
 import { AgentSidePanel } from '../../../../../../src/chat/ui/AgentSidePanel';
-import { PanelSheet } from '../../../../../../src/chat/ui/PanelSheet';
 import { questionChatOf } from '../../../../../../src/chat/ui/QuestionCard';
 import { fetchEstimatesAbout } from '../../../../../../src/portal/estimates/api';
 import { fetchOrderBoard } from '../../../../../../src/portal/orders/api';
@@ -23,12 +22,11 @@ import { theme } from '../../../../../../src/theme';
 import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
 
 // P25 TownwiseAI (/locations/[locationId]/agent, members; spec 16.3, D26): the chat page and its panel, Questions
-// and activity (Questions for you, What it's been doing, the budget, How TownwiseAI works). The panel is closed by
-// default and its open state lives here, in memory. Open from 1024px, the chat takes columns 1 to 8 and the panel 9 to
-// 12, scrolling on its own; closed, the chat takes 1 to 12. Beside an empty conversation's landing, which lists the
-// questions under its chips, the column leaves Questions for you out (owner request, 2026-11-15); the sheet, drawn over
-// the landing, keeps them. Below 1024px the panel is a full-screen sheet. The chat
-// is drawn in the same place either way, so opening the panel never redraws it. The page has no header of its own: the
+// and activity (Questions for you, What it's been doing, the budget, How TownwiseAI works), which shows only on the new
+// chat page (spec P25 build note, 2026-11-18): AgentChat draws it as a column beside the landing from 641px, open by
+// default, and as a row under the chips at 640px and below, collapsed by default. Whether it is open lives here, in
+// memory: the person's choice, else the width's default. The landing lists the questions under its chips, so the
+// panel leaves Questions for you out there (owner request, 2026-11-15). The page has no header of its own: the
 // chat header is the first thing under the portal's top bar and the chat fills the rest of the screen, with a
 // visually hidden h1, TownwiseAI, for screen readers.
 // Under view-as (spec 15.5) everything reads, and every write control stays in place, disabled, described by the one
@@ -39,21 +37,18 @@ import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
 // Orders) fills it with a question about that order, drafted only from the location's own live board (GET .../orders,
 // never the sample); an order or item the board doesn't have fills nothing. `?panel=questions` (Home's "N questions
 // from TownwiseAI") opens the panel on load, Questions for you first, and the address drops it.
-// A question's Something else… sends its message through the chat drawn here. From the column the panel stays open;
-// from the sheet the sheet closes once the turn starts (its first event), so the thread shows the message and the
-// reply, and on web focus goes to the composer, as after a chip. A turn refused outright leaves the sheet open, with
-// the card's words and the reason in view.
+// A question's Something else… sends its message through the chat drawn here, and on web focus goes to the composer,
+// as after a chip. The turn opens a conversation, so the panel goes with the landing; a turn refused outright leaves
+// the landing and the panel, with the card's words and the reason in view.
 
 const READ_ONLY_ID = 'chat-ro';
-
-type Host = React.ComponentRef<typeof View>;
 
 export default function TownwiseAIScreen(): React.JSX.Element {
   // The portal's client, so the access errors of spec 4.3 re-read GET /api/me and route again.
   const { api, me } = usePortal();
   const { location, org } = useLocation();
   const { readOnly, line } = useReadOnly();
-  const { desktop } = useBreakpoint();
+  const { phone } = useBreakpoint();
   // A note saved from a card or an answer changes the location's notes count: the organization is read again on leaving.
   const markOrgStale = useOrgRefreshOnLeave();
   // Back within 5 minutes, the page opens the conversation it closed on, kept per person, location and view-as target.
@@ -86,29 +81,22 @@ export default function TownwiseAIScreen(): React.JSX.Element {
     filled.current = draft;
     if (empty) setDraft(draft);
   }, [draft, empty, setDraft]);
-  const [panelOpen, setPanelOpen] = useState(false);
+  // Open by default beside the landing from 641px, collapsed under the chips at 640px and below, until the person chooses.
+  const [chosen, setChosen] = useState<boolean | null>(null);
+  const panelOpen = chosen ?? !phone;
   // ?panel=questions opens the panel once per arrival; the person can close it, and the address drops it.
   const askedPanel = params.panel === 'questions';
   const [openedFor, setOpenedFor] = useState(false);
   if (askedPanel !== openedFor) {
     setOpenedFor(askedPanel);
-    if (askedPanel) setPanelOpen(true);
+    if (askedPanel) setChosen(true);
   }
   // This screen's own navigation: the router's setParams goes to the focused route, which isn't ready while the page mounts.
   const navigation = useNavigation<{ setParams: (params: { panel: undefined }) => void }>();
   useEffect(() => {
     if (askedPanel) navigation.setParams({ panel: undefined });
   }, [askedPanel, navigation]);
-  const panelButton = useRef<Host>(null);
-  const closePanel = useCallback(() => { setPanelOpen(false); }, []);
   const chatView = useRef<AgentChatHandle>(null);
-  // A question's message closed the sheet: focus goes to the composer, not back to the panel button (web).
-  const toComposer = useRef(false);
-  const restoreFocus = useCallback(() => {
-    if (toComposer.current) chatView.current?.focusComposer();
-    else panelButton.current?.focus();
-    toComposer.current = false;
-  }, []);
   // iOS: the keyboard avoider measures itself from its parent, so it is offset by the portal's top bar above it.
   const root = useRef<React.ComponentRef<typeof View>>(null);
   const [top, setTop] = useState(0);
@@ -133,14 +121,8 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       ended('TownwiseAI isn’t ready yet. Try again.');
       return;
     }
-    const started = (): void => {
-      if (desktop) return;
-      toComposer.current = true;
-      setPanelOpen(false);
-    };
-    view.tell(message, { started, ended }, desktop);
+    view.tell(message, { ended }, true);
   };
-  const column = desktop && panelOpen;
   const sections = (
     <AgentSidePanel
       panel={panel}
@@ -153,7 +135,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       send={tellFromPanel}
       about={about.state}
       onRetryAbout={about.reload}
-      showQuestions={!(column && landingShowsQuestions(chat.state, panel))}
+      showQuestions={!landingShowsQuestions(chat.state, panel)}
     />
   );
 
@@ -166,36 +148,20 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       <View role="heading" accessible {...webAria({ 'aria-level': 1 })}><Hidden>TownwiseAI</Hidden></View>
       <KeyboardAvoidingView behavior="padding" enabled={Platform.OS === 'ios'} keyboardVerticalOffset={top} style={styles.fill}>
         <Wrap style={styles.wrap}>
-          <View style={styles.grid}>
-            <View style={column ? styles.main : styles.fill}>
-              <AgentChat
-                chat={chat}
-                ctx={ctx}
-                readOnlyId={readOnlyId}
-                readOnlyLine={line}
-                panelOpen={panelOpen}
-                onTogglePanel={() => {
-                  // A turn that started after the person shut the sheet themselves leaves no say over the next close.
-                  toComposer.current = false;
-                  setPanelOpen((open) => !open);
-                }}
-                openQuestions={questions}
-                panelButtonRef={panelButton}
-                panel={panel}
-                handleRef={chatView}
-              />
-            </View>
-            {column ? (
-              <View style={styles.side}>
-                <ScrollView style={styles.fill} contentContainerStyle={styles.sideContent} testID="agent-side">{sections}</ScrollView>
-              </View>
-            ) : null}
-          </View>
+          <AgentChat
+            chat={chat}
+            ctx={ctx}
+            readOnlyId={readOnlyId}
+            readOnlyLine={line}
+            panelOpen={panelOpen}
+            onTogglePanel={() => { setChosen(!panelOpen); }}
+            openQuestions={questions}
+            panelSections={sections}
+            panel={panel}
+            handleRef={chatView}
+          />
         </Wrap>
       </KeyboardAvoidingView>
-      <PanelSheet open={panelOpen} onClose={closePanel} openerRef={panelButton} restoreFocus={restoreFocus}>
-        <View testID="agent-side">{sections}</View>
-      </PanelSheet>
     </View>
   );
 }
@@ -205,8 +171,4 @@ const c = theme.color;
 const styles = StyleSheet.create({
   fill: { flex: 1, minHeight: 0, minWidth: 0, backgroundColor: c.ground },
   wrap: { flex: 1, minHeight: 0, paddingTop: theme.space[4], paddingBottom: theme.space[4] },
-  grid: { flex: 1, minHeight: 0, flexDirection: 'row', columnGap: theme.space.gutter },
-  main: { flex: 8, minWidth: 0, minHeight: 0 },
-  side: { flex: 4, minWidth: 0, minHeight: 0 },
-  sideContent: { gap: theme.space[8], paddingBottom: theme.space[8] },
 });

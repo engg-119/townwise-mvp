@@ -20,7 +20,7 @@ function props(over: Partial<Props> = {}): Props {
   return {
     conversations: CONVERSATIONS, openId: 'c1', streaming: false, readOnlyId: null, panelOpen: false,
     openQuestions: null, onOpen: jest.fn(), onNew: jest.fn(), onDelete: jest.fn(() => Promise.resolve()),
-    onRename: jest.fn(() => Promise.resolve()), onTogglePanel: jest.fn(), ...over,
+    onRename: jest.fn(() => Promise.resolve()), onTogglePanel: jest.fn(), panel: true, ...over,
   };
 }
 
@@ -235,6 +235,15 @@ describe('icon buttons (owner, 2026-11-18: “use icons for the new chat and his
     expect(screen.getByTestId('chat-tooltip').textContent).toBe('Questions and activity');
     view.rerender(<ChatHeader {...props({ openQuestions: 0 })} />);
     expect(screen.queryByTestId('chat-badge')).toBeNull();
+  });
+
+  it('Questions and activity comes first, only where the page asks for it, so History and New chat keep their places', () => {
+    const view = render(<ChatHeader {...props()} />);
+    const names = (): (string | null)[] => within(screen.getByTestId('chat-header-controls')).getAllByRole('button').map((button) => button.getAttribute('aria-label'));
+    expect(names()).toEqual(['Questions and activity', 'History', 'New chat']);
+    expect(screen.getByRole('button', { name: 'Questions and activity' }).getAttribute('aria-controls')).toBe('chat-panel');
+    view.rerender(<ChatHeader {...props({ panel: false })} />);
+    expect(names()).toEqual(['History', 'New chat']);
   });
 
   it('New chat under view-as stays in place, aria-disabled and described by the read-only line', () => {

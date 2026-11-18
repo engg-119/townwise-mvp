@@ -7,7 +7,8 @@ import type { ConversationSummary } from '../api';
 import { HistoryMenu } from './HistoryMenu';
 import { HistoryIcon, NewChatIcon, QuestionsIcon } from './icons';
 
-// The chat's header: History, New chat and Questions and activity at the right, wrapping on narrow phones. Each is a
+// The chat's header: at the right Questions and activity (on the new chat page from 641px only; spec P25 build note,
+// 2026-11-18), History and New chat, wrapping on narrow phones. Each is a
 // 44px icon named by its words (owner request, 2026-11-18: "use icons for the new chat and history buttons and the
 // questions and activity instead of just saying them"), and on web hovering or focusing it shows those words in a
 // tooltip under it, never over it (the rule of the chart tooltips: keep a tooltip off what it describes); native reads
@@ -51,7 +52,6 @@ function HeaderButton(props: {
     if (disabled) element?.setAttribute('aria-disabled', 'true');
     else element?.removeAttribute('aria-disabled');
   }, [disabled, ref]);
-  const badge = props.badge ?? 0;
   return (
     <View style={styles.anchor}>
       <Pressable
@@ -71,11 +71,7 @@ function HeaderButton(props: {
         style={[styles.icon, hover && !disabled ? styles.iconHover : null, disabled ? styles.inert : null]}
       >
         {props.icon(disabled ? c.text3 : c.white)}
-        {badge > 0 ? (
-          <View testID="chat-badge" aria-hidden style={styles.badge}>
-            <Text style={styles.badgeText}>{String(badge)}</Text>
-          </View>
-        ) : null}
+        <CountBadge count={props.badge ?? null} />
       </Pressable>
       {web && (hover || focused) ? (
         <View testID="chat-tooltip" aria-hidden style={TIP}>
@@ -86,22 +82,33 @@ function HeaderButton(props: {
   );
 }
 
+/**
+ * The open questions on Questions and activity's icon (or, `inline`, after its words in the phone row): hidden from
+ * screen readers, since the control's name says the count. Nothing at 0 or while they load.
+ */
+export function CountBadge(props: { count: number | null; inline?: boolean }): React.JSX.Element | null {
+  if (props.count === null || props.count <= 0) return null;
+  return (
+    <View testID="chat-badge" aria-hidden style={[styles.badge, props.inline === true ? null : styles.badgeOnIcon]}>
+      <Text style={styles.badgeText}>{String(props.count)}</Text>
+    </View>
+  );
+}
+
+/** The panel's column and its phone row's region: what Questions and activity controls. */
+export const PANEL_ID = 'chat-panel';
+
 /** The panel button's words: "Questions and activity", with " ({n})" while n questions are open. */
 export function panelName(openQuestions: number | null): string {
   return `Questions and activity${openQuestions !== null && openQuestions > 0 ? ` (${String(openQuestions)})` : ''}`;
 }
 
 /**
- * Questions and activity's icon, its open questions a badge: it opens and closes the panel and is never off. The page
- * also shows it alone while TownwiseAI is off or can't load, since the panel works either way (spec 10.12).
+ * Questions and activity's icon from 641px, its open questions a badge: it shows and hides the panel's column and is
+ * never off. The page also shows it alone while TownwiseAI is off or can't load, since the panel works either way
+ * (spec 10.12). At 640px and below the panel is PanelRow, under the landing's chips.
  */
-export function PanelButton(props: {
-  open: boolean;
-  openQuestions: number | null;
-  onPress: () => void;
-  /** Where the panel sheet returns focus to (web). */
-  buttonRef?: React.RefObject<Host | null>;
-}): React.JSX.Element {
+export function PanelButton(props: { open: boolean; openQuestions: number | null; onPress: () => void }): React.JSX.Element {
   return (
     <HeaderButton
       name={panelName(props.openQuestions)}
@@ -109,8 +116,8 @@ export function PanelButton(props: {
       icon={(color) => <QuestionsIcon color={color} />}
       badge={props.openQuestions}
       expanded={props.open}
+      controls={PANEL_ID}
       onPress={props.onPress}
-      hostRef={props.buttonRef}
     />
   );
 }
@@ -128,10 +135,13 @@ export function ChatHeader(props: {
   onDelete: (id: string) => Promise<void>;
   onRename: (id: string, title: string) => Promise<void>;
   onTogglePanel: () => void;
+  /**
+   * Questions and activity is in the header: on the new chat page from 641px only (owner, 2026-11-18: "it should only
+   * appear on the new chat page"). It comes first, so History and New chat keep their places when it goes.
+   */
+  panel: boolean;
   /** History opened or closed (its list is read again every 3 seconds while open and a conversation is replying). */
   onListOpen?: (open: boolean) => void;
-  /** Where the panel sheet returns focus to (web). */
-  panelButtonRef?: React.RefObject<Host | null>;
 }): React.JSX.Element {
   const [open, setOpened] = useState(false);
   const button = useRef<Host>(null);
@@ -155,6 +165,7 @@ export function ChatHeader(props: {
     <View style={[styles.header, float ? styles.raised : null]}>
       <View style={styles.bar}>
         <View testID="chat-header-controls" style={styles.controls}>
+          {props.panel ? <PanelButton open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel} /> : null}
           <HeaderButton
             name="History"
             tip="History"
@@ -174,12 +185,6 @@ export function ChatHeader(props: {
               setOpened(false);
               props.onNew();
             }}
-          />
-          <PanelButton
-            open={props.panelOpen}
-            openQuestions={props.openQuestions}
-            onPress={props.onTogglePanel}
-            {...(props.panelButtonRef === undefined ? {} : { buttonRef: props.panelButtonRef })}
           />
         </View>
       </View>
@@ -209,13 +214,16 @@ export function ChatHeader(props: {
   );
 }
 
-/** The header while the page loads (AgentChat's skeleton): its three icons' 44px squares, in the header's own row. */
-export function ChatHeaderSkeleton(): React.JSX.Element {
+/**
+ * The header while the page loads (AgentChat's skeleton): its icons' 44px squares in the header's own row, three where
+ * the new chat page's header has Questions and activity (`panel`), else History's and New chat's.
+ */
+export function ChatHeaderSkeleton(props: { panel: boolean }): React.JSX.Element {
   return (
     <View testID="skeleton-chat-header" style={styles.header}>
       <View style={styles.bar}>
         <View style={styles.controls}>
-          <IconShape />
+          {props.panel ? <IconShape /> : null}
           <IconShape />
           <IconShape />
         </View>
@@ -251,10 +259,8 @@ const styles = StyleSheet.create({
   /** No pointer cursor on a control that does nothing. */
   inert: { cursor: 'auto' as const },
   iconBar: { width: 20, height: 20, backgroundColor: c.raised },
-  badge: {
-    position: 'absolute', top: 4, right: 2, minWidth: 16, height: 16, paddingHorizontal: 3, alignItems: 'center', justifyContent: 'center',
-    backgroundColor: c.mint,
-  },
+  badge: { minWidth: 16, height: 16, paddingHorizontal: 3, alignItems: 'center', justifyContent: 'center', backgroundColor: c.mint },
+  badgeOnIcon: { position: 'absolute', top: 4, right: 2 },
   badgeText: { ...theme.type.mono, fontSize: 11, lineHeight: 16, color: c.onMint },
   tipText: { ...theme.type.small, color: c.white },
 });
