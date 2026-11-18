@@ -94,8 +94,20 @@ $got || die "the download was refused for 5 minutes: $(code_of "$work/dump.archi
 close
 
 echo "restoring into $target (local)"
-docker exec "$mongo" mongosh --quiet "$target" --eval 'db.dropDatabase()' > /dev/null
-docker exec -i "$mongo" mongorestore --quiet --archive --gzip --nsFrom 'townwise.*' --nsTo "$target.*" \
+docker exec "$mongo" mongosh --quiet "$target" --eval 'db.dropDatabase()' > /dev/null || die "couldn't drop the local $target"
+# A failed restore keeps the dump for diagnosis, readable by you alone; delete it once the pull works.
+kept() {
+  local keep="$HOME/.townwise-ci/prod-pull"
+  mkdir -p "$keep"
+  chmod 700 "$keep"
+  mv "$work/dump.archive.gz" "$keep/$dump"
+  chmod 600 "$keep/$dump"
+  die "$1; the dump is kept at $keep/$dump"
+}
+docker exec -i "$mongo" mongorestore --archive --gzip --nsFrom 'townwise.*' --nsTo "$target.*" \
   --nsExclude 'townwise.auth_sessions' --nsExclude 'townwise.auth_refresh_retired' \
-  --nsExclude 'townwise.auth_magic_links' --nsExclude 'townwise.auth_totp' < "$work/dump.archive.gz"
-echo "done: $target holds $dump. Stop your usual API, then: npm run dev:prod-copy -w @townwise/api"
+  --nsExclude 'townwise.auth_magic_links' --nsExclude 'townwise.auth_totp' < "$work/dump.archive.gz" \
+  || kept "mongorestore failed (above)"
+collections="$(docker exec "$mongo" mongosh --quiet "$target" --eval 'db.getCollectionNames().length')"
+[ "$collections" -gt 0 ] || kept "mongorestore restored nothing into $target"
+echo "done: $target holds $dump ($collections collections). Stop your usual API, then: npm run dev:prod-copy -w @townwise/api"
