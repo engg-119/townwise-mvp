@@ -22,7 +22,7 @@ import {
 } from './api';
 import {
   addedLines, addGoogleLabel, addRefusal, CALENDARS_COPY, GOOGLE_COPY, googleRefusal, helpText, labelOfFile, linkProblems, MAX_CALENDARS,
-  pickerLine, refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords,
+  pickerLine, refreshable, refreshedLine, refreshRefusal, refusedLine, removedLine, roomLine, rowLines, statusWords, type Reconnect,
 } from './calendars';
 import { GoogleConnect } from './GoogleConnect';
 import { IcsImport } from './IcsImport';
@@ -37,7 +37,7 @@ import { IcsImport } from './IcsImport';
 // which takes focus as it opens; closing it (Close, Escape, Android's back button or a press outside) gives focus back
 // to the button. Top to bottom: the list (`role="list"`, oldest first: each row's name, kind and count, repeating
 // events left out, and for a link or a Google calendar its status in words and its "Updated" time, then "Refresh now"
-// for a link or a Google calendar and "Remove"; a kind the page doesn't know reads "Calendar, {n} events" with "Remove"
+// for a link or a Google calendar, "Reconnect" (below) and "Remove"; a kind the page doesn't know reads "Calendar, {n} events" with "Remove"
 // only; "No calendars yet." with none; "Couldn't load your calendars." with Try again, which reads the list and the
 // grid's stored events again, when the list couldn't be read), the messages line (results as status, refusals as
 // alerts), the import (IcsImport: the file picker on web, native's line pointing to it), "Add a link", which the
@@ -73,6 +73,15 @@ import { IcsImport } from './IcsImport';
 // changes nothing here: the API's connection check ends an unused connection a day after its connect. Native never
 // offers the section (its line points to the web), and under view-as "Add a Google calendar" stays in place, disabled,
 // described by the read-only line.
+// Reconnect: a Google calendar Google no longer lets Townwise read (`google_revoked`) says who can mend it. For the
+// person who added it (the list's `mine`) on web, while the list answers Google calendars on, its row offers
+// "Reconnect", which opens the same section on its explainer, in place of the row's Reconnect and of "Add a Google
+// calendar"; a connect started there shows no picker: the section closes, the messages line says Townwise reads their
+// Google calendars again (the API makes them due at once), focus moves to it, and the list and the stored events read
+// again (`onChanged(false)`). Its Cancel gives focus back to that row's Reconnect. Anyone else's row asks them to ask
+// whoever added it, and native's, which connects nowhere, tells the person who added it to reconnect on the web. The
+// API answers `mine` false under view-as, so staff see the words for anyone else; a Reconnect shown under view-as would
+// stay in place, disabled, described by the read-only line, as every write does.
 // While a link add, a file import, a Refresh now, or a Google choices read, wait, connect or add runs the popover waits
 // for its answer (Popover's `busy`: Close disabled in place, Escape, back and a press outside doing nothing), and a
 // press outside never closes it while its Remove dialog is open, so every answer lands in the open popover. The
@@ -144,7 +153,7 @@ type GoogleStep = 'closed' | 'loading' | 'explaining' | 'waiting' | 'connecting'
  * What takes focus as the Google section's next part mounts: "Continue to Google", the picker's first control, or "Add
  * a Google calendar" coming back; null after the popover opens, so a part that shows as it opens leaves focus on Close.
  */
-type GoogleFocus = 'continue' | 'picker' | 'add' | null;
+type GoogleFocus = 'continue' | 'picker' | 'add' | 'reconnect' | null;
 
 /** A refusal about the one calendar it was for: the next add of a batch may still work. */
 function aboutOneCalendar(error: unknown): boolean {
@@ -175,11 +184,14 @@ function useFocusFirstControl(enabled: boolean): RefObject<React.ComponentRef<ty
  * A calendar in the list: its name, "File, 12 events", "Link, calendar.google.com, 1 event", "Google calendar, 40
  * events" or "Calendar, 3 events" for a kind the page doesn't know, the repeating events it left out, and for a link or
  * a Google calendar its status in words (none when `ok`) before the time of its last refresh that worked; then "Refresh
- * now" (a link or a Google calendar; "Refreshing…" while it runs, and every row's disabled meanwhile) and "Remove"
- * (disabled while its own row refreshes, so the refresh can't answer 404 for a calendar the popover has just removed).
+ * now" (a link or a Google calendar; "Refreshing…" while it runs, and every row's disabled meanwhile), "Reconnect" when
+ * the popover offers it (`onReconnect`), and "Remove" (disabled while its own row refreshes, so the refresh can't answer
+ * 404 for a calendar the popover has just removed).
  */
 function CalendarRow(props: {
   calendar: OwnerCalendar;
+  /** Who can mend it if Google no longer lets Townwise read it. */
+  reconnect: Reconnect;
   /** This row's refresh runs. */
   refreshing: boolean;
   /** Any row's refresh runs: one at a time. */
@@ -187,13 +199,17 @@ function CalendarRow(props: {
   /** The list is reading again. */
   reading: boolean;
   ro: ReadOnlyProps;
+  /** "Reconnect" takes focus as it comes back, after the section it opened was cancelled. */
+  focusReconnect: boolean;
   onRefresh: (calendar: OwnerCalendar) => void;
+  /** Present only when the row offers "Reconnect". */
+  onReconnect: ((calendar: OwnerCalendar) => void) | null;
   onRemove: (calendar: OwnerCalendar) => void;
 }): React.JSX.Element {
-  const { calendar, ro } = props;
+  const { calendar, ro, onReconnect } = props;
   const row = rowLines(calendar);
   const read = refreshable(calendar.kind);
-  const status = read ? statusWords(calendar.status, calendar.kind) : null;
+  const status = read ? statusWords(calendar.status, calendar.kind, props.reconnect) : null;
   return (
     <View role="listitem" style={styles.row}>
       <Small white>{calendar.label}</Small>
@@ -211,6 +227,16 @@ function CalendarRow(props: {
             onPress={() => { props.onRefresh(calendar); }}
           />
         ) : null}
+        {onReconnect === null ? null : (
+          <Button
+            variant="link"
+            label={GOOGLE_COPY.reconnectAction}
+            accessibilityLabel={`${GOOGLE_COPY.reconnectAction} ${calendar.label}`}
+            focusOnMount={props.focusReconnect}
+            {...(ro ?? { disabled: props.reading })}
+            onPress={() => { onReconnect(calendar); }}
+          />
+        )}
         <Button
           variant="link"
           label="Remove"
@@ -377,6 +403,9 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   // takes focus, so they are in view; the popover's own messages line is above the long explainer. A new object for
   // each refusal, so the same words twice still bring Continue into view.
   const [googleWords, setGoogleWords] = useState<{ text: string } | null>(null);
+  // The calendar whose Reconnect opened the section: its connect shows no picker, and its Cancel gives focus back to
+  // that row's Reconnect. Null when "Add a Google calendar" opened it.
+  const [reconnectId, setReconnectId] = useState<string | null>(null);
   // The `state` Google's answer must carry while the section waits on a press; null otherwise. Leaving the page forgets
   // it, so an answer that lands after never posts a code.
   const expectedStateRef = useRef<string | null>(null);
@@ -446,7 +475,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
       }
       return;
     }
-    const words = statusWords(saved.status, saved.kind);
+    const words = statusWords(saved.status, saved.kind, reconnectOf(saved));
     setMessage(words === null ? { live: 'status', items: [refreshedLine(calendar.label)] } : { live: 'alert', items: [words] });
     onChanged(false);
   }, [api, location.id, onChanged, onRefused, focusMessage]));
@@ -514,9 +543,10 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     pick(found, false);
   }, [api, location.id, explain, pick, focusMessage]));
 
-  // Google's code, posted with the agreement; the choices it answers open the picker. The list reads again, so its
-  // `google.connected` (and any calendar the connect healed) is current even if nothing is added.
-  const connect = useAction(useCallback(async (code: string) => {
+  // Google's code, posted with the agreement; the choices it answers open the picker, unless Reconnect started it, when
+  // the section closes with the reconnected line instead. The list reads again, so its `google.connected` (and any
+  // calendar the connect healed) is current even if nothing is added.
+  const connect = useAction(useCallback(async (code: string, reconnecting: boolean) => {
     let found: GoogleChoice[];
     try {
       found = await connectGoogleCalendars(api, location.id, code);
@@ -524,9 +554,18 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
       explain(googleRefusal(error));
       return;
     }
-    pick(found, true);
+    if (reconnecting) {
+      setGoogleStep('closed');
+      setGoogleFocus(null);
+      setGoogleWords(null);
+      setReconnectId(null);
+      setMessage({ live: 'status', items: [GOOGLE_COPY.reconnected] });
+      focusMessage();
+    } else {
+      pick(found, true);
+    }
     onChanged(false);
-  }, [api, location.id, explain, pick, onChanged]));
+  }, [api, location.id, explain, pick, onChanged, focusMessage]));
 
   // One add at a time, each with its own line. A refusal about another thing than that one calendar (the limit, the
   // account's adds, Google, the connection) would refuse the rest too, so it ends the batch.
@@ -574,6 +613,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
   }, [api, location.id, platform, onChanged, focusMessage]));
 
   function openGoogle(): void {
+    setReconnectId(null);
     if (props.google.connected) {
       setGoogleStep('loading');
       loadChoices.run();
@@ -590,14 +630,27 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
     closeGoogle();
   }
 
-  /** The section closes, and "Add a Google calendar" comes back with focus. */
+  /** A row's Reconnect: the section opens on its explainer, whatever the list says of the connection. */
+  function reconnect(calendar: OwnerCalendar): void {
+    setMessage(null);
+    setReconnectId(calendar.id);
+    explain(null);
+  }
+
+  /** The section closes, and "Add a Google calendar" (or the row's Reconnect that opened it) comes back with focus. */
   function closeGoogle(): void {
     setGoogleStep('closed');
     setChoices([]);
     setChecked([]);
     setFresh(false);
-    setGoogleFocus('add');
+    setGoogleFocus(reconnectId === null ? 'add' : 'reconnect');
     setGoogleWords(null);
+  }
+
+  /** Who can mend a calendar Google no longer lets Townwise read, from this popover. */
+  function reconnectOf(calendar: OwnerCalendar): Reconnect {
+    if (!calendar.mine) return 'other';
+    return Platform.OS === 'web' ? 'here' : 'web';
   }
 
   // An add, an import, a refresh, or a Google choices read, wait, connect or add is out: the popover waits for its
@@ -644,11 +697,16 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
               <CalendarRow
                 key={calendar.id}
                 calendar={calendar}
+                reconnect={reconnectOf(calendar)}
                 refreshing={refresh.pending && refreshingId === calendar.id}
                 refreshBusy={refresh.pending}
                 reading={props.reading}
                 ro={ro}
+                focusReconnect={googleFocus === 'reconnect' && reconnectId === calendar.id}
                 onRefresh={(chosen) => { setRefreshingId(chosen.id); refresh.run(chosen); }}
+                // While the section is open it stands in for every Reconnect, as for "Add a Google calendar".
+                onReconnect={googleClientId !== null && googleStep === 'closed' && calendar.kind === 'google' && calendar.status === 'google_revoked'
+                  && calendar.mine ? reconnect : null}
                 onRemove={(chosen) => { removeEnded.current = false; setStaleError(remove.error); setRemoving(chosen); }}
               />
             ))}
@@ -711,7 +769,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
                 }}
                 onCode={(code) => {
                   setGoogleStep('connecting');
-                  connect.run(code);
+                  connect.run(code, reconnectId !== null);
                 }}
                 onCancel={() => { explain(null); }}
                 onRefusal={explain}

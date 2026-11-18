@@ -1003,7 +1003,8 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     if (googleRow === undefined || laterRow === undefined) throw new Error('rows missing');
     expect(lines(googleRow)).toEqual([
       'Google calendar', 'Google calendar, 40 events',
-      'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.',
+      // A teammate's (not `mine`): no Reconnect, and the words ask whoever added it.
+      'Couldn’t refresh: Google no longer lets Townwise read this calendar. Ask whoever added it to reconnect, or remove it.',
       `Updated ${formatDate(at)}, ${formatTime(at)}`,
     ]);
     expect(within(googleRow).getAllByRole('button').map((button) => button.textContent)).toEqual(['Refresh now', 'Remove']);
@@ -1349,12 +1350,118 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
       return { calendar: { ...google, status: 'google_revoked' } };
     };
     fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Google calendar' }));
-    const words = 'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.';
+    const words = 'Couldn’t refresh: Google no longer lets Townwise read this calendar. Ask whoever added it to reconnect, or remove it.';
     await waitFor(() => {
       expect(lines(within(within(panel).getByRole('list')).getByRole('listitem'))).toEqual([
         'Google calendar', 'Google calendar, 40 events', words, `Updated ${formatDate(at)}, ${formatTime(at)}`,
       ]);
     });
+  });
+
+  const REVOKED = 'Couldn’t refresh: Google no longer lets Townwise read this calendar.';
+  const MINE_REVOKED = ownerCalendar({ id: 'c3', label: 'Bookings', kind: 'google', eventCount: 40, status: 'google_revoked', mine: true });
+
+  /** A row's Reconnect, the script's load, and the code client its "Continue to Google" will set up. */
+  async function reconnectFrom(panel: HTMLElement, label: string): Promise<CodeClientConfig[]> {
+    const configs = fakeGis();
+    fireEvent.click(within(panel).getByRole('button', { name: `Reconnect ${label}` }));
+    act(() => { document.querySelector(`script[src="${GIS_SRC}"]`)?.dispatchEvent(new Event('load')); });
+    await within(panel).findByRole('button', { name: 'Continue to Google' });
+    return configs;
+  }
+
+  test('Reconnect shows only on a revoked Google calendar the person added, between Refresh now and Remove, with its own words; a teammate’s asks whoever added it', async () => {
+    const theirs = ownerCalendar({ id: 'c4', label: 'Staff rota', kind: 'google', eventCount: 2, status: 'google_revoked' });
+    const working = ownerCalendar({ id: 'c5', label: 'Private dining', kind: 'google', eventCount: 1, mine: true });
+    // A fresh token can't open calendar ids sealed under an old key: still remove and add again, with no Reconnect.
+    const sealed = ownerCalendar({ id: 'c6', label: 'Old bookings', kind: 'google', eventCount: 1, status: 'key_mismatch', mine: true });
+    await renderGoogle({ calendars: [MINE_REVOKED, theirs, working, sealed] });
+    const panel = openPopover();
+    const rows = within(within(panel).getByRole('list')).getAllByRole('listitem');
+    expect(rows.map((row) => within(row).getAllByRole('button').map((button) => button.textContent))).toEqual([
+      ['Refresh now', 'Reconnect', 'Remove'], ['Refresh now', 'Remove'], ['Refresh now', 'Remove'], ['Refresh now', 'Remove'],
+    ]);
+    expect(within(panel).getByRole('button', { name: 'Reconnect Bookings' })).toBeTruthy();
+    const [mineRow, theirRow, , sealedRow] = rows;
+    if (mineRow === undefined || theirRow === undefined || sealedRow === undefined) throw new Error('rows missing');
+    expect(within(mineRow).getByText(`${REVOKED} Reconnect, or remove it.`)).toBeTruthy();
+    expect(within(theirRow).getByText(`${REVOKED} Ask whoever added it to reconnect, or remove it.`)).toBeTruthy();
+    expect(within(sealedRow).getByText('Townwise can’t open this Google connection any more. Remove the calendar and add it again.')).toBeTruthy();
+  });
+
+  test('with Google calendars off, a revoked Google calendar the person added offers no Reconnect', async () => {
+    await renderGoogle({ calendars: [MINE_REVOKED], google: { available: false, connected: false, clientId: null } });
+    const panel = openPopover();
+    expect(within(panel).queryByRole('button', { name: 'Reconnect Bookings' })).toBeNull();
+    expect(within(panel).getByRole('button', { name: 'Remove Bookings' })).toBeTruthy();
+  });
+
+  test('Reconnect opens the explainer in place of every Reconnect and “Add a Google calendar”; a connect started there shows no picker: the section closes, the reconnected line takes focus, and the list and the stored events read again', async () => {
+    const { api, fake } = await renderGoogle({ calendars: [MINE_REVOKED] });
+    const panel = openPopover();
+    const configs = await reconnectFrom(panel, 'Bookings');
+    expect(within(panel).getByText(GOOGLE_COPY.explainer)).toBeTruthy();
+    expect(within(panel).queryByRole('button', { name: 'Reconnect Bookings' })).toBeNull();
+    expect(within(panel).queryByRole('button', { name: 'Add a Google calendar' })).toBeNull();
+    const go = within(panel).getByRole('button', { name: 'Continue to Google' });
+    expect(document.activeElement).toBe(go);
+    fireEvent.click(go);
+    const config = configs.at(-1);
+    if (config === undefined) throw new Error('no code client');
+    const reads = fake.paths.length;
+    api.answers[`${GOOGLE_PATH}/connect`] = () => ({ calendars: [PRIMARY, SHARED] });
+    act(() => { config.callback({ code: CODE, state: config.state }); });
+    expect(await within(panel).findByText(GOOGLE_COPY.reconnected)).toBeTruthy();
+    expect(GOOGLE_COPY.reconnected).toBe('Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.');
+    await waitFor(() => { expect(focusOnLine(panel, GOOGLE_COPY.reconnected)).toBe(true); });
+    expect(writes(api)).toEqual([{ method: 'POST', path: `${GOOGLE_PATH}/connect`, body: { code: CODE, agreed: true } }]);
+    expect(within(panel).queryByText('Choose the calendars to add to Main Street Bar.')).toBeNull();
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    await waitFor(() => { expect(fake.paths.slice(reads).filter((path) => path === CALENDARS_PATH)).toHaveLength(1); });
+    expect(fake.paths.slice(reads).filter((path) => path === NOVEMBER_EVENTS)).toHaveLength(1);
+    expect(fake.paths.slice(reads).filter((path) => path === GOOGLE_PATH)).toEqual([]);
+    // The section is closed: "Add a Google calendar" is back, and nothing holds the popover.
+    expect(within(panel).getByRole('button', { name: 'Add a Google calendar' })).toBeTruthy();
+    expect(closeOf(panel).getAttribute('aria-disabled')).toBeNull();
+  });
+
+  test('a refused reconnect shows the explainer again with its words, and Cancel gives focus back to that row’s Reconnect', async () => {
+    const { api } = await renderGoogle({ calendars: [MINE_REVOKED] });
+    const panel = openPopover();
+    const configs = await reconnectFrom(panel, 'Bookings');
+    fireEvent.click(within(panel).getByRole('button', { name: 'Continue to Google' }));
+    const config = configs.at(-1);
+    if (config === undefined) throw new Error('no code client');
+    api.answers[`${GOOGLE_PATH}/connect`] = () => refusal(409, 'google_other_account');
+    act(() => { config.callback({ code: CODE, state: config.state }); });
+    expect(await within(panel).findByText(
+      'Choose the Google account you sign in to Townwise with. To add another account’s calendar, share it with that account in Google Calendar first.',
+    )).toBeTruthy();
+    expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Continue to Google' }));
+    fireEvent.click(within(panel).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(document.activeElement).toBe(within(panel).getByRole('button', { name: 'Reconnect Bookings' })); });
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    // "Add a Google calendar" came back too, without focus, and opens the section in its own way.
+    expect(within(panel).getByRole('button', { name: 'Add a Google calendar' })).toBeTruthy();
+  });
+
+  test('view-as: a revoked Google calendar shows the words for anyone else and no Reconnect (the API answers mine false to staff); one answered mine would keep Reconnect in place, disabled', async () => {
+    const targets = ownerCalendar({ id: 'c4', label: 'Staff rota', kind: 'google', eventCount: 2, status: 'google_revoked' });
+    const { api, fake } = await renderGoogle({ calendars: [targets, MINE_REVOKED] }, viewAsMe(ACCESS.admin));
+    const panel = openPopover();
+    const [targetRow] = within(within(panel).getByRole('list')).getAllByRole('listitem');
+    if (targetRow === undefined) throw new Error('row missing');
+    expect(within(targetRow).getByText(`${REVOKED} Ask whoever added it to reconnect, or remove it.`)).toBeTruthy();
+    expect(within(targetRow).queryByRole('button', { name: 'Reconnect Staff rota' })).toBeNull();
+    const line = within(panel).getByText('Read-only while viewing as gm@example.org.');
+    const action = within(panel).getByRole('button', { name: 'Reconnect Bookings' });
+    expect(action.getAttribute('aria-disabled')).toBe('true');
+    expect(action.getAttribute('aria-describedby')?.split(' ')).toContain(line.id);
+    fireEvent.click(action);
+    expect(within(panel).queryByText(GOOGLE_COPY.explainer)).toBeNull();
+    expect(document.querySelector(`script[src="${GIS_SRC}"]`)).toBeNull();
+    expect(fake.paths).not.toContain(GOOGLE_PATH);
+    expect(writes(api)).toEqual([]);
   });
 
   test('view-as: “Add a Google calendar” stays in place, disabled and described by the read-only line; no choices are read and nothing is sent', async () => {

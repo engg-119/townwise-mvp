@@ -39,6 +39,11 @@ export const ownerCalendarSchema = z.object({
   lastSuccessAt: z.string().nullable(),
   lastAttemptAt: z.string().nullable(),
   createdAt: z.string(),
+  /**
+   * The person's own Google calendar, added through their own connection, which they can reconnect; false for a file,
+   * a link, a teammate's Google calendar, under view-as, and from an API older than it.
+   */
+  mine: z.boolean().default(false),
 });
 export type OwnerCalendar = z.infer<typeof ownerCalendarSchema>;
 

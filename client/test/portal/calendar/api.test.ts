@@ -43,6 +43,16 @@ describe('owner calendar calls (spec 10.18)', () => {
     expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [GOOGLE, later], google: GOOGLE_OFF });
   });
 
+  test('a calendar’s `mine` parses, and a calendar without it, from an API older than Reconnect, reads as not mine', async () => {
+    const { fake, routes } = api();
+    const older: Record<string, unknown> = { ...GOOGLE };
+    delete older.mine;
+    routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: true }, { ...older, id: 'c5' }], google: GOOGLE_ON });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [{ ...GOOGLE, mine: true }, { ...GOOGLE, id: 'c5', mine: false }], google: GOOGLE_ON });
+    routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: 'yes' }] });
+    await expect(fetchOwnerCalendars(fake, 'l1')).rejects.toThrow();
+  });
+
   test('an answer without `google`, from an API older than Google calendars, reads as Google calendars off', async () => {
     const { fake, routes } = api();
     routes.gets[BASE] = () => ({ calendars: [FILE] });

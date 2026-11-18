@@ -117,8 +117,8 @@ The Calendar page (P28) SHALL show the stored events as "Your calendar" on web a
 - **AND** when it answers 200 with status `timeout`, the row shows "Couldn’t refresh: the link took too long to answer." above its "Updated" time, and when it answers 429 the popover says "This calendar was refreshed a few minutes ago. Try again in {n} minutes."
 
 #### Scenario: Refresh now on a Google calendar
-- **WHEN** a member presses "Refresh now" on a Google calendar and the API answers 200 with status `google_revoked`
-- **THEN** the row shows "Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it." above its "Updated" time
+- **WHEN** a member presses "Refresh now" on a teammate's Google calendar and the API answers 200 with status `google_revoked`
+- **THEN** the row shows "Couldn’t refresh: Google no longer lets Townwise read this calendar. Ask whoever added it to reconnect, or remove it." above its "Updated" time (the person who added it reads google-calendar's Reconnect words instead)
 
 #### Scenario: Remove
 - **WHEN** a member presses "Remove" on a calendar and confirms "Remove calendar"

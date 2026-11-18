@@ -88,6 +88,10 @@ export const GOOGLE_COPY = {
   /** Any other error Google answers the current press with, and an `unknown` error; never Google's own description. */
   notConnected: 'Google didn’t connect Townwise. Try again.',
   reconnect: 'Connect your Google account again to add calendars.',
+  /** A Google calendar's row action, for the person who added it, while Google refuses Townwise's access. */
+  reconnectAction: 'Reconnect',
+  /** A connect started from Reconnect worked: no picker, and the refresh loop reads the healed calendars soon. */
+  reconnected: 'Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.',
 } as const;
 
 /** The picker's first line. */
@@ -151,9 +155,21 @@ const LINK_REFUSALS: Readonly<Record<string, string>> = {
   not_calendar: 'That link doesn’t lead to a calendar. Use its iCal link, which often ends in .ics.',
 };
 
-/** A Google calendar's status after a failed refresh; its last good events stay. */
+/**
+ * Who can mend a Google calendar Google no longer lets Townwise read: the person who added it, with Reconnect beside it
+ * (`here`, on web) or on the web (`web`, on native, which connects nowhere), or someone else (`other`), who asks them.
+ */
+export type Reconnect = 'here' | 'web' | 'other';
+
+const REVOKED = 'Couldn’t refresh: Google no longer lets Townwise read this calendar.';
+const REVOKED_WORDS: Readonly<Record<Reconnect, string>> = {
+  here: `${REVOKED} Reconnect, or remove it.`,
+  web: `${REVOKED} Reconnect on the web, or remove it.`,
+  other: `${REVOKED} Ask whoever added it to reconnect, or remove it.`,
+};
+
+/** A Google calendar's status after a failed refresh, but `google_revoked` (REVOKED_WORDS); its last good events stay. */
 const GOOGLE_STATUS_WORDS: Readonly<Record<string, string>> = {
-  google_revoked: 'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.',
   google_not_found: 'Couldn’t refresh: this Google calendar was deleted or is no longer shared with the account that added it.',
   google_forbidden: 'Couldn’t refresh: Google refused to share this calendar’s events.',
   google_rate_limited: 'Couldn’t refresh: Google was busy. Townwise tries again later.',
@@ -233,13 +249,14 @@ export function refreshRefusal(error: unknown): string {
 }
 
 /**
- * A refreshed calendar's status in words, by its kind: null for `ok`, a link's or a Google calendar's own words, and
- * generic words for a code the client doesn't know or a kind without words of its own.
+ * A refreshed calendar's status in words, by its kind: null for `ok`, a link's or a Google calendar's own words (for
+ * `google_revoked`, by who can reconnect it), and generic words for a code the client doesn't know or a kind without
+ * words of its own.
  */
-export function statusWords(status: string, kind: string): string | null {
+export function statusWords(status: string, kind: string, reconnect: Reconnect = 'other'): string | null {
   if (status === 'ok') return null;
   if (kind === 'link') return STATUS_WORDS[status] ?? UNKNOWN_STATUS;
-  if (kind === 'google') return GOOGLE_STATUS_WORDS[status] ?? UNKNOWN_CALENDAR_STATUS;
+  if (kind === 'google') return status === 'google_revoked' ? REVOKED_WORDS[reconnect] : GOOGLE_STATUS_WORDS[status] ?? UNKNOWN_CALENDAR_STATUS;
   return UNKNOWN_CALENDAR_STATUS;
 }
 
