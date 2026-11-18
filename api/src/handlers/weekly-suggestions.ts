@@ -18,10 +18,13 @@
 // reads from its note's kind and dates only, and a spotted event names its title from the live event row, which staff
 // (under view-as or open as admin) read as "Google calendar event" when its calendar is a Google one, as on the
 // Calendar. The panel neither lists nor counts one whose calendar is gone, a follow-up whose note is gone, or a spotted
-// event no longer at its dates, and accepting one whose calendar or (a `move`) note is gone answers 404 and expires it.
-// Accepting a follow-up is a compare-and-set on the note's updatedAt as the follow-up recorded it (409 note_changed when
-// it differs, the suggestion left open); a spotted event is read again (409 event_changed and expired when it moved or
-// went) and written as a private-event note with the suggestion's id, linked to the event, with no detail.
+// event no longer at its dates or stale (another note linked to it, or a private-event or closure note over its days),
+// and accepting one whose calendar or (a `move`) note is gone answers 404 and expires it. Accepting a follow-up is a
+// compare-and-set on the note's updatedAt as the follow-up recorded it (409 note_changed when it differs, the
+// suggestion left open), after reading the suggestion again (409 note_changed when a refresh rewrote it since the accept
+// read it), and it is marked accepted only while its last write is the one read, or from expired when the accept's own
+// note write landed; a spotted event is read again (409 event_changed and expired when it moved, went or is stale) and
+// written as a private-event note with the suggestion's id, linked to the event, with no detail.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
@@ -39,6 +42,7 @@ import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteContent, NoteDates, NoteRecord } from '../stores/notes.ts';
 import type { OwnerCalendarRecord, StoredEvent } from '../stores/owner-calendars.ts';
 import { SUGGESTIONS_SEEN_MS } from '../lab/schedule.ts';
+import { coversEvent } from '../lab/suggestions.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { townEvents } from '../town-calendar.ts';
 import { utcDay } from '../dates.ts';
@@ -138,6 +142,18 @@ interface Footing {
   readonly notes: ReadonlyMap<string, NoteRecord | null>;
   /** A spotted event's live row by the suggestion's id, or null when it is gone. */
   readonly events: ReadonlyMap<string, StoredEvent | null>;
+  /** The location's notes, read only when a spotted event is open (spotStale). */
+  readonly spotNotes: readonly NoteRecord[];
+}
+
+/**
+ * A spotted event is stale once a note other than its own is linked to the same event, or a private-event or closure
+ * note covers its dates (lab/suggestions.ts coversEvent, as the pass checks before spotting it).
+ */
+function spotStale(record: EventRecord, notes: readonly NoteRecord[]): boolean {
+  const { event } = record;
+  return notes.some((note) => note.id !== record.id
+    && ((note.fromEvent !== null && note.fromEvent.calendarId === event.calendarId && note.fromEvent.uid === event.uid) || coversEvent(note, event)));
 }
 
 const NOTE_NOUN: Readonly<Record<NoteContent['kind'], string>> = {
@@ -199,7 +215,7 @@ function suggestionView(
   if (record.type === 'event') {
     const source = footing.calendars.get(record.event.calendarId);
     const live = footing.events.get(record.id) ?? null;
-    if (source === undefined || live === null || !sameDates(live, record.event)) return null;
+    if (source === undefined || live === null || !sameDates(live, record.event) || spotStale(record, footing.spotNotes)) return null;
     return eventView(caller, record, source, live);
   }
   if (record.type === 'move' || record.type === 'remove') {
@@ -223,15 +239,16 @@ async function footingOf(ctx: TownwiseContext, caller: MemberPrincipal, location
   const { scope } = caller;
   const follows = records.filter((record): record is FollowRecord => record.type === 'move' || record.type === 'remove');
   const spotted = records.filter((record): record is EventRecord => record.type === 'event');
-  if (follows.length === 0 && spotted.length === 0) return { calendars: new Map(), notes: new Map(), events: new Map() };
-  const [calendars, notes, events] = await Promise.all([
+  if (follows.length === 0 && spotted.length === 0) return { calendars: new Map(), notes: new Map(), events: new Map(), spotNotes: [] };
+  const [calendars, notes, events, spotNotes] = await Promise.all([
     ctx.stores.ownerCalendars.list(scope, location.id),
     Promise.all([...new Set(follows.map((record) => record.follow.noteId))].map(async (noteId) => [noteId, await ctx.stores.notes.find(scope, location.id, noteId)] as const)),
     Promise.all(spotted.map(async (record) => [
       record.id, await ctx.stores.ownerCalendars.findEvent(scope, location.id, record.event.calendarId, record.event.uid),
     ] as const)),
+    spotted.length === 0 ? Promise.resolve([]) : ctx.stores.notes.list(scope, location.id),
   ]);
-  return { calendars: new Map(calendars.map((each) => [each.id, each])), notes: new Map(notes), events: new Map(events) };
+  return { calendars: new Map(calendars.map((each) => [each.id, each])), notes: new Map(notes), events: new Map(events), spotNotes };
 }
 
 /** The town's today for a location. */
@@ -350,16 +367,21 @@ async function wasWritten(ctx: TownwiseContext, caller: MemberPrincipal, locatio
   return note !== null && moveLanded(record, note);
 }
 
-/** Marks it accepted by compare-and-set; only the request whose compare-and-set lands records `agent.suggestion_accepted`. */
-async function markAccepted(ctx: TownwiseContext, admin: MemberPrincipal, location: LocationRecord, record: SuggestionRecord): Promise<void> {
+/**
+ * Marks it accepted by compare-and-set (`cas` as the store's markAccepted takes it); only the request whose
+ * compare-and-set lands records `agent.suggestion_accepted`. True when it landed.
+ */
+async function markAccepted(
+  ctx: TownwiseContext, admin: MemberPrincipal, location: LocationRecord, record: SuggestionRecord, cas: { updatedAt?: Date; orExpired?: boolean } = {},
+): Promise<boolean> {
   const { scope } = admin;
-  if (await ctx.stores.agentSuggestions.markAccepted(scope, location.id, record.id, { by: admin.userId, now: ctx.now() })) {
-    await recordAfter(ctx, {
-      ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_accepted',
-      target: { type: 'location', id: location.id },
-      details: { locationId: location.id, suggestionId: record.id, type: record.type },
-    });
-  }
+  if (!(await ctx.stores.agentSuggestions.markAccepted(scope, location.id, record.id, { by: admin.userId, now: ctx.now(), ...cas }))) return false;
+  await recordAfter(ctx, {
+    ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'agent.suggestion_accepted',
+    target: { type: 'location', id: location.id },
+    details: { locationId: location.id, suggestionId: record.id, type: record.type },
+  });
+  return true;
 }
 
 /**
@@ -419,17 +441,23 @@ function eventNote(event: NoteDates, choice: z.infer<typeof eventBody>, today: s
 
 /**
  * Accepting a spotted event { effect, expectedGuests }: alongside regular service needs a count (400 invalid_request).
- * Its calendar gone answers 404 and expires it; the event gone or at other dates, 409 event_changed and expires it.
- * Otherwise the note is written with the suggestion's id and linked to the event, so a retry finds the one written.
+ * Its calendar gone answers 404 and expires it; the event gone or at other dates, or stale (spotStale: another note is
+ * linked to it or covers its days), 409 event_changed and expires it. Otherwise the note is written with the
+ * suggestion's id and linked to the event, so a retry finds the one written.
  */
 async function acceptEvent(ctx: TownwiseContext, admin: MemberPrincipal, location: LocationRecord, record: EventRecord, choice: z.infer<typeof eventBody>): Promise<void> {
   const { scope } = admin;
   if (choice.effect === 'more_guests' && choice.expectedGuests === null) throw new AppError(400, 'invalid_request', 'Invalid request');
   if ((await ctx.stores.notes.find(scope, location.id, record.id)) === null) {
     if ((await ctx.stores.ownerCalendars.find(scope, location.id, record.event.calendarId)) === null) throw await expired(ctx, admin, location, record);
-    const link = await linkTo(ctx, admin, location, { calendarId: record.event.calendarId, uid: record.event.uid }, ctx.now());
-    const content = link === null || !sameDates(link, record.event) ? null : eventNote(link, choice, utcDay(ctx.now()));
-    if (link === null || content === null) {
+    const { event } = record;
+    const [link, overlapping, linked] = await Promise.all([
+      linkTo(ctx, admin, location, { calendarId: event.calendarId, uid: event.uid }, ctx.now()),
+      ctx.stores.notes.overlapping(scope, location.id, { from: event.startDate, to: event.endDate }),
+      ctx.stores.notes.linkedTo(scope, location.id, event.calendarId),
+    ]);
+    const content = link === null || !sameDates(link, event) ? null : eventNote(link, choice, utcDay(ctx.now()));
+    if (link === null || content === null || spotStale(record, [...overlapping, ...linked])) {
       await ctx.stores.agentSuggestions.markExpired(scope, location.id, record.id, ctx.now());
       throw new AppError(409, 'event_changed', 'The event changed on your calendar');
     }
@@ -442,12 +470,20 @@ async function acceptEvent(ctx: TownwiseContext, admin: MemberPrincipal, locatio
  * Accepting a follow-up, by compare-and-set on the note's updatedAt as the follow-up recorded it: a `move` sets only
  * the note's dates and hours and its link's (recording `note.updated`), a `remove` deletes it (recording `note.deleted`).
  * A changed note answers 409 note_changed, the suggestion left open; a retry after the accept's own write is accepted
- * with no second note event. Its calendar gone, or a move's note gone, answers 404 and expires it.
+ * with no second note event. Its calendar gone, or a move's note gone, answers 404 and expires it. The suggestion is
+ * read again right before the note write, and marked accepted only while its last write is the one this accept read
+ * (or, when this accept's own write landed, from expired too): a follow-up a refresh rewrote meanwhile answers 409
+ * note_changed, so no move or removal is accepted under a choice the admin did not see.
  */
 async function acceptFollow(ctx: TownwiseContext, admin: MemberPrincipal, location: LocationRecord, record: FollowRecord): Promise<void> {
   const { scope } = admin;
   const { follow } = record;
   if ((await ctx.stores.ownerCalendars.find(scope, location.id, follow.calendarId)) === null) throw await expired(ctx, admin, location, record);
+  const fresh = await ctx.stores.agentSuggestions.find(scope, location.id, record.id);
+  if (fresh === null) throw notFound();
+  if (fresh.updatedAt.getTime() !== record.updatedAt.getTime()) throw noteChanged();
+  /** This accept's own note write landed (or, a move, the note is already at its target). */
+  let own = true;
   const noteEvent = (action: 'note.updated' | 'note.deleted', note: NoteContent) => recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action, target: { type: 'note', id: follow.noteId }, details: noteDetails(location.id, note),
   });
@@ -465,9 +501,13 @@ async function acceptFollow(ctx: TownwiseContext, admin: MemberPrincipal, locati
     await noteEvent('note.deleted', record.note);
   } else if ((await ctx.stores.notes.find(scope, location.id, follow.noteId)) !== null) {
     throw noteChanged();
+  } else {
+    // The note is already gone: a retry after this accept's own delete, or someone else's.
+    own = false;
   }
-  // Else the note is already gone: a retry after this accept's own delete.
-  await markAccepted(ctx, admin, location, record);
+  if (await markAccepted(ctx, admin, location, record, { updatedAt: record.updatedAt, orExpired: own })) return;
+  // Not marked: another accept got there first (fine), or a refresh rewrote it after the write (409).
+  if ((await ctx.stores.agentSuggestions.find(scope, location.id, record.id))?.status !== 'accepted') throw noteChanged();
 }
 
 /**

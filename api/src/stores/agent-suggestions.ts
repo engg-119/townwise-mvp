@@ -258,6 +258,8 @@ export type SuggestionRecord = SuggestionContent & {
   readonly calendarIds: readonly string[];
   readonly status: SuggestionStatus;
   readonly createdAt: Date;
+  /** Its last write: an accept of a follow-up compares and sets on it, so a refresh's rewrite is never accepted unseen. */
+  readonly updatedAt: Date;
 };
 
 export interface SuggestionPassRecord {
@@ -322,9 +324,11 @@ export interface AgentSuggestionStore {
   find(scope: OrgScope, locationId: string, id: string): Promise<SuggestionRecord | null>;
   /**
    * Open (or dismissed, when a dismiss raced an accept that had already written its note) to accepted. False when it
-   * is already accepted, expired or gone.
+   * is already accepted, expired or gone. With `updatedAt`, only while its last write is still that one (a follow-up
+   * a refresh rewrote since the accept read it stays as it is); with `orExpired` (the accept's own note write landed),
+   * also from expired, whatever its last write.
    */
-  markAccepted(scope: OrgScope, locationId: string, id: string, input: { by: string; now: Date }): Promise<boolean>;
+  markAccepted(scope: OrgScope, locationId: string, id: string, input: { by: string; now: Date; updatedAt?: Date; orExpired?: boolean }): Promise<boolean>;
   /** Open to dismissed; false otherwise. */
   markDismissed(scope: OrgScope, locationId: string, id: string, input: { by: string; now: Date }): Promise<boolean>;
   /** Open suggestions whose first date is `today` or past, to expired. Resolves the number changed. */
@@ -401,6 +405,7 @@ function toSuggestion(doc: SuggestionDoc): SuggestionRecord {
     calendarIds: doc.calendarIds,
     status: doc.status,
     createdAt: doc.createdAt,
+    updatedAt: doc.updatedAt,
   };
 }
 
@@ -522,8 +527,11 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
       return doc === null ? null : toSuggestion(doc);
     },
     async markAccepted(scope, locationId, id, input) {
+      const statuses: SuggestionStatus[] = ['open', 'dismissed'];
+      const live = { status: trusted({ $in: statuses }), ...(input.updatedAt === undefined ? {} : { updatedAt: input.updatedAt }) };
+      const expired: { status: SuggestionStatus } = { status: 'expired' };
       const result = await Suggestion.updateOne(
-        { ...one(scope, locationId, id), status: trusted({ $in: ['open', 'dismissed'] }) },
+        { ...one(scope, locationId, id), ...(input.orExpired === true ? { $or: [live, expired] } : live) },
         { $set: { status: 'accepted', decidedBy: input.by, decidedAt: input.now, updatedAt: input.now }, $unset: { openFollowFor: '' } },
       );
       return result.modifiedCount === 1;

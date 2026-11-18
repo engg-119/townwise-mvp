@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
 import { parseIcs } from '../src/calendar/ics.ts';
@@ -545,9 +545,50 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
   const ON_20 = { startDate: '2026-06-20', endDate: '2026-06-20', startTime: '18:00', endTime: '22:00' };
 
   afterEach(async () => {
+    vi.restoreAllMocks();
     await removeStaffFactor(server);
     await server.connection.collection('tw_view_as_grants').deleteMany({});
   });
+
+  const ON_27 = { startDate: '2026-06-27', endDate: '2026-06-27', startTime: '18:00', endTime: '22:00' };
+
+  type Query = PromiseLike<unknown> & { lean?: () => Promise<unknown> };
+
+  /**
+   * Runs `hook` once, right after the first `method` call on the shared model `name` resolves, inside the app's own
+   * request (the test server's ctx has stores of its own, so a race is staged at the model both share).
+   */
+  function afterFirst(name: string, method: string, hook: () => Promise<void>): void {
+    const model = server.connection.models[name] as unknown as Record<string, (...args: unknown[]) => Query>;
+    const original = model[method];
+    if (original === undefined) throw new Error(`no ${method} on ${name}`);
+    let done = false;
+    vi.spyOn(model, method).mockImplementation((...args: unknown[]): Query => {
+      const query = original.apply(model, args);
+      if (done) return query;
+      done = true;
+      const run = async (lean: boolean): Promise<unknown> => {
+        const result = lean && query.lean !== undefined ? await query.lean() : await query;
+        await hook();
+        return result;
+      };
+      return { lean: () => run(true), then: (onFulfilled, onRejected) => run(false).then(onFulfilled, onRejected) };
+    });
+  }
+
+  /** What a refresh does when the event moves again: the note's open move now proposes Jun 27. */
+  async function movedAgain(t: Team, note: NoteView, calendarId: string): Promise<void> {
+    const content: NoteContent = {
+      kind: note.kind, startDate: note.startDate, endDate: note.endDate, weekdays: note.weekdays, effect: note.effect,
+      expectedGuests: note.expectedGuests, detail: note.detail, startTime: note.startTime, endTime: note.endTime,
+    };
+    server.clock.advance(MINUTE);
+    const follow: FollowContent = {
+      type: 'move', note: { ...content, ...ON_27 },
+      follow: { noteId: note.id, calendarId, from: ON_13, noteUpdatedAt: new Date(note.updatedAt), change: 'moved', to: ON_27 },
+    };
+    expect(await server.ctx.stores.agentSuggestions.upsertFollow(t.scope, t.locationId, follow, { today: '2026-06-01', now: server.clock.now() })).toBe('updated');
+  }
 
   /** A calendar holding the party on `day` (YYYYMMDD), 6 pm to 10 pm. */
   function parsedOn(day: string) {
@@ -675,6 +716,57 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
     expect(await errorOf(await decide(t, t.admin, id, 'accept'))).toEqual({ status: 409, error: 'note_changed' });
     expect(await noteRow(note.id)).toMatchObject({ ...ON_13, expectedGuests: 55 });
     expect(await statusOf(id)).toBe('open');
+  });
+
+  it('a move a refresh rewrote after the accept read it answers 409 note_changed, and the note is not moved to the old target', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'move');
+    // The refresh lands right after the accept's first read of the suggestion.
+    afterFirst('TwAgentSuggestion', 'findOne', () => movedAgain(t, note, calendarId));
+    expect(await errorOf(await decide(t, t.admin, id, 'accept'))).toEqual({ status: 409, error: 'note_changed' });
+    expect(await noteRow(note.id)).toMatchObject(ON_13);
+    const row = await server.connection.collection('tw_agent_suggestions').findOne({ _id: new Types.ObjectId(id) });
+    expect(row).toMatchObject({ status: 'open', follow: { to: ON_27 } });
+    expect((await actions(t)).map((each) => each.action)).toEqual([]);
+  });
+
+  it('a move rewritten after its own write landed answers 409 note_changed and is not marked accepted under the old choice', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'move');
+    afterFirst('TwNote', 'findOneAndUpdate', () => movedAgain(t, note, calendarId));
+    expect(await errorOf(await decide(t, t.admin, id, 'accept'))).toEqual({ status: 409, error: 'note_changed' });
+    expect(await statusOf(id)).toBe('open');
+    expect((await actions(t)).map((each) => each.action)).toEqual(['note.updated']);
+  });
+
+  it('an accept whose own move or removal landed is accepted even when a refresh expired the follow-up meanwhile, once, and a retry answers accepted', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const note = await partyNote(t, calendarId);
+    const id = await followUp(t, note, calendarId, 'move');
+    /** The refresh after the write finds nothing to suggest and expires the follow-up. */
+    const expire = (suggestionId: string) => async (): Promise<void> => {
+      expect(await server.ctx.stores.agentSuggestions.markExpired(t.scope, t.locationId, suggestionId, server.clock.now())).toBe(true);
+    };
+    afterFirst('TwNote', 'findOneAndUpdate', expire(id));
+    expect((await decide(t, t.admin, id, 'accept')).status).toBe(200);
+    expect(await statusOf(id)).toBe('accepted');
+    vi.restoreAllMocks();
+    expect(await decide(t, t.admin, id, 'accept')).toMatchObject({ status: 200 });
+
+    const second = await partyNote(t, calendarId);
+    const removal = await followUp(t, second, calendarId, 'remove');
+    afterFirst('TwNote', 'deleteOne', expire(removal));
+    expect((await decide(t, t.admin, removal, 'accept')).status).toBe(200);
+    expect(await statusOf(removal)).toBe('accepted');
+    expect(await noteRow(second.id)).toBeNull();
+    expect((await actions(t)).map((each) => each.action)).toEqual([
+      'note.updated', 'agent.suggestion_accepted', 'note.deleted', 'agent.suggestion_accepted',
+    ]);
   });
 
   it('a removal deletes the note once; a retry after its own delete is accepted, and a changed note answers 409', async () => {
@@ -815,6 +907,42 @@ describe('accepting and dismissing the owner-calendar kinds (calendar-event-sugg
     expect(await noteRow(id)).toMatchObject({ createdBy: t.admin.userId, detail: null });
     expect(await actions(t)).toEqual([{ action: 'agent.suggestion_accepted', details: { locationId: t.locationId, suggestionId: id, type: 'event' } }]);
     expect(JSON.stringify(await noteRow(id))).not.toContain('Pemberton');
+  });
+
+  it('a spotted event another note now covers is hidden, not counted, and its accept answers 409 event_changed and expires it', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    // A member made a note on the event itself since the spot.
+    const linked = await spotted(t, calendarId);
+    const made = await partyNote(t, calendarId);
+    expect(only(await panel(t, t.admin), linked)).toBeUndefined();
+    expect(await errorOf(await decide(t, t.admin, linked, 'accept', { effect: 'closed', expectedGuests: 40 }))).toEqual({ status: 409, error: 'event_changed' });
+    expect(await statusOf(linked)).toBe('expired');
+    expect(await noteRow(linked)).toBeNull();
+    await call(server, `/api/org/locations/${t.locationId}/notes/${made.id}`, { method: 'DELETE', session: t.member });
+
+    // A closure note over its days, made by hand (not linked).
+    const closed = await spotted(t, calendarId);
+    expect(only(await panel(t, t.admin), closed)).toBeDefined();
+    const closure = await call(server, `/api/org/locations/${t.locationId}/notes`, {
+      session: t.member, json: { kind: 'closure', startDate: '2026-06-12', endDate: '2026-06-14', effect: 'closed' },
+    });
+    expect(closure.status).toBe(201);
+    expect((await panel(t, t.admin)).suggestions.filter((each) => each.type === 'event')).toEqual([]);
+    expect(await errorOf(await decide(t, t.admin, closed, 'accept', { effect: 'more_guests', expectedGuests: 40 }))).toEqual({ status: 409, error: 'event_changed' });
+    expect(await statusOf(closed)).toBe('expired');
+  });
+
+  it('a spotted event under a note of another kind stays listed and can be accepted', async () => {
+    const t = await team();
+    const { calendarId } = await calendarOf(t);
+    const id = await spotted(t, calendarId);
+    const opening = await call(server, `/api/org/locations/${t.locationId}/notes`, {
+      session: t.member, json: { kind: 'opening', startDate: '2026-06-13', endDate: '2026-06-13', effect: 'more_guests', expectedGuests: 30 },
+    });
+    expect(opening.status).toBe(201);
+    expect(only(await panel(t, t.admin), id)).toBeDefined();
+    expect((await decide(t, t.admin, id, 'accept', { effect: 'closed', expectedGuests: 40 })).status).toBe(200);
   });
 
   it('a spotted event that moved is hidden, and its accept answers 409 event_changed and expires it; its calendar gone, 404', async () => {

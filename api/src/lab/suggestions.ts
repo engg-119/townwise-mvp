@@ -465,6 +465,14 @@ function countFromTitle(guests: number | null, title: string): number | null {
   return stated.has(String(guests)) ? guests : null;
 }
 
+/**
+ * A private-event or closure note over an owner event's dates: a spot of that event is not suggested, and one already
+ * made is stale (handlers/weekly-suggestions.ts).
+ */
+export function coversEvent(note: Pick<NoteContent, 'kind' | 'startDate' | 'endDate'>, event: Pick<NoteDates, 'startDate' | 'endDate'>): boolean {
+  return (note.kind === 'private_event' || note.kind === 'closure') && note.startDate <= event.endDate && note.endDate >= event.startDate;
+}
+
 /** Whether `raw` is an answered `event` item (read apart from notes and rules). */
 function isEventItem(raw: unknown): boolean {
   return z.object({ type: z.literal('event') }).safeParse(raw).success;
@@ -483,9 +491,7 @@ function spottedOf(raw: unknown, checks: SuggestionChecks, used: Set<string>): N
   if (sent === undefined || used.has(ref)) return null;
   used.add(ref);
   if (sent.startDate <= checks.today) return null;
-  const covered = checks.notes.some((note) => (note.kind === 'private_event' || note.kind === 'closure')
-    && note.startDate <= sent.endDate && note.endDate >= sent.startDate);
-  if (covered) return null;
+  if (checks.notes.some((note) => coversEvent(note, sent))) return null;
   const base = {
     kind: 'private_event', startDate: sent.startDate, endDate: sent.endDate, weekdays: null, effect: 'unknown',
     expectedGuests: countFromTitle(item.data.expectedGuests, sent.title), detail: null,
