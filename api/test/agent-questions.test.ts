@@ -90,6 +90,28 @@ describe('weekday closures (D46: the weekday evidence, no longer a question)', (
     expect(evidenceOf(input(FROM, TO, (day) => weekday(day) === 1))).toMatchObject({ from: plus(FROM, 1), noSalesCount: 9, weekdayCount: 9, lastSalesDate: null });
   });
 
+  it('reads the last day with sales over every day of the weekday, counted or not (code review S1)', () => {
+    // Closed on Mondays for 20 weeks; the export ends on Monday 2026-05-25, the only day of its week, with net sales alone.
+    const from = '2026-01-05';
+    const to = '2026-05-25';
+    const base = input(from, plus(to, -1), (day) => weekday(day) === 1);
+    const lone: QuestionInput = {
+      ...base, coverage: { firstDate: from, lastDate: to }, days: [...base.days, { date: to, guests: null, netSalesCents: 30_000 }],
+    };
+    // Its week has no other sales, so it is not counted, yet it had sales: Mondays are not suggested as closed.
+    expect(weekdayEvidence(lone).find((each) => each.weekday === 1)).toBeUndefined();
+    // An uncounted Monday with sales before the last 4 counted ones: the rule starts after it, never covering it.
+    const early = '2026-02-02';
+    const hole = (day: string) => weekday(day) === 1 || (day > early && day <= plus(early, 6));
+    const gapped = input(from, '2026-05-24', hole);
+    const withEarly = { ...gapped, days: [...gapped.days, { date: early, guests: null, netSalesCents: 20_000 }] };
+    const evidence = weekdayEvidence(withEarly).find((each) => each.weekday === 1);
+    expect(evidence?.lastSalesDate).toBe(early);
+    const [suggested] = salesSuggestionsFor({ evidence: evidence === undefined ? [] : [evidence], answers: [], rules: [], takenKeys: new Set() });
+    expect(suggested?.schedule.startDate).toBe(plus(early, 1));
+    expect(noteCovers(suggested?.schedule ?? { startDate: '9999-12-31', endDate: null, weekdays: null }, early)).toBe(false);
+  });
+
   it('needs at least 4 of the weekday in the window', () => {
     const short = input('2026-01-04', '2026-01-25', (day) => weekday(day) === 1);
     expect(range('2026-01-04', '2026-01-25').filter((day) => weekday(day) === 1)).toHaveLength(3);

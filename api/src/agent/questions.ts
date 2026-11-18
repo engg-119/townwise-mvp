@@ -255,6 +255,8 @@ interface Counted {
   readonly from: string;
   readonly to: string;
   readonly withSales: ReadonlySet<string>;
+  /** Every day from `from` to `to`. */
+  readonly dates: readonly string[];
   /** Each weekday's counted days, oldest first: in a week with sales on another day, and not turned off. */
   readonly byWeekday: readonly (readonly string[])[];
 }
@@ -277,12 +279,15 @@ function countedDays(input: QuestionInput): Counted | null {
   const weekHasSales = (day: string): boolean => (salesInWeek.get(weekOf(day)) ?? 0) > (withSales.has(day) ? 1 : 0);
   // A turned-off day counts as no data, like a week with no sales: it never makes a weekday look usually closed.
   const byWeekday = Array.from({ length: 7 }, (_, weekday) => dates.filter((day) => weekdayOf(day) === weekday && weekHasSales(day) && !turnedOff.has(day)));
-  return { from, to: window.to, withSales, byWeekday };
+  return { from, to: window.to, withSales, dates, byWeekday };
 }
 
 /**
  * D46: the weekdays the sales history shows closed: at least 60% of at least 4 counted days with no sales, as a usually
- * closed weekday, and its last 4 counted days with no sales, so a past or seasonal pattern never becomes a standing rule.
+ * closed weekday, and no day of the weekday with sales on or after the first of its last 4 counted days, so a past or
+ * seasonal pattern never becomes a standing rule. The last day with sales is read over every day of the weekday in the
+ * window, counted or not (a Monday alone in its week, as an export that ends on a Monday leaves it, still had sales), so
+ * the rule never covers a past day with recorded sales.
  */
 export function weekdayEvidence(input: QuestionInput): WeekdayEvidence[] {
   const counted = countedDays(input);
@@ -291,8 +296,9 @@ export function weekdayEvidence(input: QuestionInput): WeekdayEvidence[] {
     if (days.length < WEEKDAY_MIN_DAYS) return [];
     const noSales = days.filter((day) => !counted.withSales.has(day));
     if (noSales.length < WEEKDAY_SHARE * days.length) return [];
-    if (days.slice(-WEEKDAY_RECENT_DAYS).some((day) => counted.withSales.has(day))) return [];
-    const lastSalesDate = days.findLast((day) => counted.withSales.has(day)) ?? null;
+    const lastSalesDate = counted.dates.findLast((day) => weekdayOf(day) === weekday && counted.withSales.has(day)) ?? null;
+    const recentFrom = days[days.length - WEEKDAY_RECENT_DAYS] ?? '';
+    if (lastSalesDate !== null && lastSalesDate >= recentFrom) return [];
     return [{ weekday, from: counted.from, to: counted.to, noSalesCount: noSales.length, weekdayCount: days.length, lastSalesDate }];
   });
 }
@@ -344,7 +350,7 @@ export function questionsFor(input: QuestionInput): Question[] {
   const rules = input.rules ?? [];
   const ruleClosures = rules.filter(isClosure);
   const turnedOff = new Set(input.turnedOff);
-  const dates = datesIn(counted.from, counted.to);
+  const { dates } = counted;
   const answeredAbout = (day: string): boolean => answered.some((asked) => asksAbout(asked, day));
 
   // Weekdays usually closed (60% of their counted days with no sales, at least 4): never asked about (D46), but they
