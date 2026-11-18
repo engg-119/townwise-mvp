@@ -11,7 +11,7 @@ const EMAIL = ['a', 'example.com'].join('@');
 
 export const PROPOSAL = {
   kind: 'closure', startDate: '2026-12-24', endDate: '2026-12-26', weekdays: null, effect: 'closed',
-  expectedGuests: null, detail: 'Closed for the holidays.',
+  expectedGuests: null, detail: 'Closed for the holidays.', title: null,
 } as const;
 
 export const PROPOSAL_ID = 'toolu_test_0001';
