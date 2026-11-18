@@ -96,9 +96,9 @@ test('on a phone the sections take one row in a focusable region that scrolls si
   expect(style(parentOf(nav)).paddingLeft).toBe('16px');
   expect(style(nav).flexWrap).toBe('nowrap');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Team', 'Settings',
+    'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Team', 'Settings',
   ]);
-  // Notes, Rules, Town and Your data sit under More (D38), right after TownwiseAI; More is white while it holds the
+  // Notes, Rules, Town and Your data sit under More (D38), right after Analytics; More is white while it holds the
   // current page.
   const more = within(nav).getByRole('button', { name: 'More' });
   expect(within(nav).getByRole('link', { name: 'TownwiseAI' }).compareDocumentPosition(more) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -153,7 +153,7 @@ test.each([768, 1279])('at %ipx the sections wrap in a second row under a rule, 
   // More drops its links down inside the nav, as from 1280px.
   fireEvent.click(within(nav).getByRole('button', { name: 'More' }));
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
+    'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings',
   ]);
   expect(screen.queryByRole('navigation', { name: 'More' })).toBeNull();
 });
@@ -169,7 +169,7 @@ test('from 1280px the nav sits in the bar, the sections then Team and Settings, 
   expect(parentOf(nav).contains(email)).toBe(true);
   expect(style(nav).flexGrow).toBe('1');
   expect(within(nav).getAllByRole('link').map((link) => link.textContent)).toEqual([
-    'Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Team', 'Settings',
+    'Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Team', 'Settings',
   ]);
   // The links sit `space-5` (20px) apart, not `space-6`, so at 1280px the organization name and the email keep
   // their room (D38); Team and Settings follow suit.

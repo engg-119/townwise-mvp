@@ -130,7 +130,7 @@ test('on a phone the top bar’s sections scroll, without animating, to keep the
     await fireEvent(sections, 'layout', { nativeEvent: { layout: { x: 0, y: 0, width: 320, height: 45 } } });
     expect(within(sections).getAllByRole('link')).toHaveLength(7);
     expect(within(sections).queryByRole('link', { name: 'Town' })).toBeNull();
-    const order = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'More', 'Team', 'Settings'];
+    const order = ['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'More', 'Team', 'Settings'];
     for (const [index, name] of order.entries()) {
       // More's layout is its box's, which a layout event on the button reaches.
       const entry = within(sections).getByRole(name === 'More' ? 'button' : 'link', { name });

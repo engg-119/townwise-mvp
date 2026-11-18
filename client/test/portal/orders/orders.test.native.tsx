@@ -113,6 +113,27 @@ test('one section per supplier order, soonest first, each with its deadline and 
   expect(writes(api)).toEqual([]);
 });
 
+test('Will it last? shows each counted line’s stock after the order against its expected use, short lines first', async () => {
+  const { api } = portal();
+  await renderApp('/locations/l1/orders', api);
+  expect(await screen.findAllByRole('heading', { name: 'Will it last?' })).toHaveLength(2);
+  // The seltzer orders its saved change (8), which with 5 on hand is under the 14 expected; the lager is over it.
+  const short = screen.getByText('5 cases on hand + 8 ordered = 13 cases. Expected use: about 14. That is less than the expected use.');
+  const thin = screen.getByText('5 cases on hand + 13 ordered = 18 cases. Expected use: about 14. That covers it, with less to spare than Townwise aims for.');
+  expect(short).toBeTruthy();
+  expect(thin).toBeTruthy();
+});
+
+test('the sample bar has no Will it last?, since it has no count', async () => {
+  const noCount: LiveBoard = {
+    ...SAMPLE, orders: SAMPLE.orders.map((order) => ({ ...order, lines: order.lines.map((each) => ({ ...each, onHand: null, countAgeDays: null })) })),
+  };
+  const { api } = portal(noCount);
+  await renderApp('/locations/l1/orders', api);
+  await screen.findAllByRole('heading', { name: /^Sample (brewery|distributor)$/ });
+  expect(screen.queryByRole('heading', { name: 'Will it last?' })).toBeNull();
+});
+
 test('each rule is listed on its line with its own turn-off', async () => {
   const { api } = portal();
   await renderApp('/locations/l1/orders', api);

@@ -35,7 +35,7 @@ function linkNames(region: string, names: readonly string[]): string[] {
   return found;
 }
 
-const NAV = ['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings'];
+const NAV = ['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Notes', 'Rules', 'Town', 'Your data', 'Location settings', 'Team', 'Settings'];
 /** The sections under More (D38), which open in a row under the bar on native. */
 const MORE = ['Notes', 'Rules', 'Town', 'Your data'];
 /** More for org admins, who also get Location settings (P16). */
@@ -60,7 +60,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
     const signOut = jest.fn(() => Promise.resolve());
     const { router } = await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), { signOut });
     await screen.findByText('Main Street Bar');
-    expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Settings']);
+    expect(navLabels()).toEqual(['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Settings']);
     // Notes, Rules, Town and Your data open in a row under the bar, and More says so.
     const more = within(screen.getByLabelText('Main')).getByRole('button', { name: 'More' });
     expect(more.props.accessibilityState).toMatchObject({ expanded: false });
@@ -124,7 +124,7 @@ describe('the client app top bar (spec 15.2, 15.3)', () => {
       await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }));
       await screen.findAllByText('Main Street Bar');
       expect(screen.queryByText(EMAIL)).toBeNull();
-      expect(navLabels()).toEqual(['Home', 'Calendar', 'Orders', 'Analytics', 'TownwiseAI', 'Settings']);
+      expect(navLabels()).toEqual(['Home', 'TownwiseAI', 'Calendar', 'Orders', 'Analytics', 'Settings']);
       expect(within(screen.getByLabelText('Sections')).getByLabelText('Main')).toBeTruthy();
       // More sits in the scrolling row; its row opens under it, outside the scroller.
       await moreLink('Notes');

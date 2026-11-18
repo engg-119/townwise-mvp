@@ -110,7 +110,7 @@ const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
 
 /** The location's sections in the top bar, in order (15.3). Sales data is reached from pages; Location settings is for org admins. */
 const SECTIONS: readonly (readonly [TabKey, string])[] = [
-  ['home', 'Home'], ['calendar', 'Calendar'], ['orders', 'Orders'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'],
+  ['home', 'Home'], ['agent', 'TownwiseAI'], ['calendar', 'Calendar'], ['orders', 'Orders'], ['analytics', 'Analytics'], ['notes', 'Notes'],
   ['rules', 'Rules'], ['town', 'Town'], ['data', 'Your data'], ['settings', 'Location settings'],
 ];
 
@@ -118,7 +118,7 @@ const SECTIONS: readonly (readonly [TabKey, string])[] = [
 const MORE: ReadonlySet<TabKey> = new Set(['notes', 'rules', 'town', 'data', 'settings']);
 
 /**
- * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Orders, Analytics, TownwiseAI, Notes, Rules,
+ * The client app's top bar (15.3): the sections of `locationId` (Home, TownwiseAI, Calendar, Orders, Analytics, Notes, Rules,
  * Town, Your data, and Location settings for org admins, all from Notes on under More), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
  * Analytics also marks Sales data, which lives under it, and Orders its Ordering setup. Rules opens Business rules (P29), for every member.
  */
