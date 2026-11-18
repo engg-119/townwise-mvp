@@ -31,8 +31,11 @@ const GATE_PAGES: Readonly<Record<string, readonly AccessState[]>> = {
 };
 
 const ID = '[^/]+';
-/** A Your data item's ref (D28): `u_` for an upload or `f_` for a stored file, then its 24-hex id. */
-const ITEM_REF = '[uf]_[0-9a-f]{24}';
+/**
+ * A Your data item's ref (D28): `u_` for an upload or `f_` for a stored file, then its 24-hex id; or `c_` for one of
+ * the location's calendars (D49), a client-only ref whose page reads the calendar routes, never the data item's.
+ */
+const ITEM_REF = '[ufc]_[0-9a-f]{24}';
 const ITEM_REF_ONLY = new RegExp(`^${ITEM_REF}$`);
 /**
  * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P26 Your data and P27 an
