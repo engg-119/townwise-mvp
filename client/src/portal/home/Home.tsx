@@ -169,6 +169,7 @@ function HomeView(props: {
         <Glance
           week={week}
           forecast={forecast?.available === true ? forecast : null}
+          forecastLoading={forecastRead.status === 'loading'}
           lastWeek={lastWeek}
           next={next}
           calendar={calendar}
