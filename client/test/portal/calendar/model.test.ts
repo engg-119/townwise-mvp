@@ -1,7 +1,8 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, calendarMonth, captionOf, dayCell, dayView, eventsOn, forecastWords, monthBounds, rangeWords, reasonOutcomeWords, reasonShortLines,
-  reasonSize, savedNotice, selectedDay, shortReasons, statusWord, tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
+  ALL_FILTERS, calendarMonth, captionOf, dayCell, dayView, eventsOn, forecastLabel, forecastWords, monthBounds, OUTLOOK_KEY, outlookKey, rangeWords,
+  reasonOutcomeWords, reasonShortLines, reasonSize, savedNotice, selectedDay, shortReasons, statusTakesFigure, statusWord, tooltipLines, topRightOf,
+  type CalendarCell, type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
 import { daysBetween } from '../../../src/portal/locations/dates';
@@ -20,7 +21,7 @@ const DECEMBER = { from: '2026-11-30', to: '2027-01-10' };
 function forecastDay(fields: Partial<ForecastDay> & Pick<ForecastDay, 'date'>): ForecastDay {
   return {
     status: 'open', low: 180, mid: 212.4, high: 240, model: { status: 'open', low: 180, mid: 212.4, high: 240 }, noteGuests: 0, moreNotes: 0,
-    reasons: [{ kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null,
+    reasons: [{ kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null, outlook: false,
     ...fields,
   };
 }
@@ -742,4 +743,61 @@ test('the short lists keep the three largest either way, in Why’s order: a 70%
     ['Dartmouth home football: more guests in Townwise’s model', '▲', 'up1'],
   ]);
   expect(shortReasons(THANKSGIVING, false, 6).map((each) => each.mark)).toEqual(['▲', '=', '=', null, '▼', '▼']);
+});
+
+describe('an outlook day (D52)', () => {
+  // A stale run's day more than 3 months after it was made: mid 212, low 150, high 290.
+  const OUTLOOK = forecastDay({ date: '2026-11-20', low: 150, mid: 212, high: 290, outlook: true, model: { status: 'open', low: 150, mid: 212, high: 290 } });
+  const reads = (days: ForecastDay[] = [OUTLOOK, forecastDay({ date: TODAY })]) => input({ forecast: windowOf(days), notes: [], imported: [] });
+
+  test('its cell shows its middle figure with “Outlook” as its status line, and its label says outlook', () => {
+    const cell = dayCell('2026-11-20', reads());
+    expect(cell).toMatchObject({ status: 'outlook', figure: { value: 212, kind: 'forecast' } });
+    expect(cell.label).toContain('Outlook about 212 guests, 150 to 290.');
+    expect(cell.label).not.toContain('Forecast about');
+    expect(statusWord(cell.status)).toBe('Outlook');
+    // The figure stays at every width, and from 641px the word sits in the top row, as a booked day's does.
+    expect([statusTakesFigure(cell.status, true), statusTakesFigure(cell.status, false)]).toEqual([false, false]);
+    expect(topRightOf(cell)).toBe('Outlook');
+  });
+
+  test('a forecast cell is unchanged: no status, “Forecast about”, and its 8 in 10 sentence', () => {
+    const cell = dayCell(TODAY, reads());
+    expect(cell).toMatchObject({ status: null, figure: { value: 212, kind: 'forecast' } });
+    expect(cell.label).toContain('Forecast about 212 guests, 180 to 240.');
+    expect(topRightOf(cell)).toBeNull();
+    const view = dayView(TODAY, reads());
+    expect(forecastLabel(view.forecast)).toBe('Forecast');
+    expect(forecastWords(view.forecast, 'Main Street').lines).toEqual(['Likely 180 to 240. About 8 in 10 days land in the range.']);
+    expect(tooltipLines(TODAY, reads())?.lines[0]).toBe('About 212 guests (180 to 240)');
+  });
+
+  test('its tooltip and day panel say outlook, with the range and no 8 in 10', () => {
+    expect(tooltipLines('2026-11-20', reads())?.lines[0]).toBe('Outlook: about 212 guests (150 to 290)');
+    const view = dayView('2026-11-20', reads());
+    expect(forecastLabel(view.forecast)).toBe('Outlook');
+    expect(forecastWords(view.forecast, 'Main Street')).toEqual({
+      figure: { before: 'About', value: '212', after: 'guests' },
+      lines: ['Likely 150 to 290. Days more than 3 months away are less certain, so this range is wider.'],
+    });
+    // With a note's guests, the model's range is named without the 8 in 10 claim either.
+    const noted = forecastDay({ ...OUTLOOK, low: 220, mid: 282, high: 360, noteGuests: 70, reasons: NOTED.reasons });
+    const words = forecastWords(dayView('2026-11-20', reads([noted])).forecast, 'Main Street');
+    expect(words.lines.join(' ')).not.toContain('8 in 10');
+    expect(words.lines).toEqual([
+      'Likely 220 to 360. Days more than 3 months away are less certain, so this range is wider.',
+      'Townwise’s model: 150 to 290. Your notes add 70 guests.',
+    ]);
+  });
+
+  test('the key line shows only when a shown day is an outlook day', () => {
+    const rows = calendarMonth('2026-11', reads()).flat().filter((cell) => cell !== null);
+    expect(outlookKey(rows)).toBe(OUTLOOK_KEY);
+    expect(OUTLOOK_KEY).toBe('Days more than 3 months after Townwise’s last refresh show its outlook: a wider range that firms up as the weeks pass and your new sales come in.');
+    const plain = calendarMonth('2026-11', input()).flat().filter((cell) => cell !== null);
+    expect(outlookKey(plain)).toBeNull();
+    // A booked or closed outlook day shows no outlook, so no key line for it.
+    const booked = forecastDay({ ...BOOKED, outlook: true });
+    expect(outlookKey(calendarMonth('2026-11', reads([booked])).flat().filter((cell) => cell !== null))).toBeNull();
+  });
 });

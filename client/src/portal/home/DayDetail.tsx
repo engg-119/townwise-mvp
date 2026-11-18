@@ -33,7 +33,10 @@ export const DETAIL_ID = 'home-day-detail';
 
 const WHY_LINES = 3;
 
-/** The Forecast part's words: “About 212 guests, likely 180 to 240.”, a booked day, or a closed one. */
+/**
+ * The Forecast part's words: “About 212 guests, likely 180 to 240.”, a booked day, or a closed one. An outlook day's
+ * read the same under a part headed “Outlook” (D52).
+ */
 export function forecastDayLines(day: ForecastDay): string[] {
   if (day.status === 'closed') return ['Closed.'];
   if (day.status === 'booked') {
@@ -86,7 +89,7 @@ export function DayDetail(props: {
     <View role="region" aria-label="Selected day" nativeID={DETAIL_ID} style={styles.root}>
       <Heading level={3}>{day.isToday ? `Today, ${shortDate(day.date)}` : shortDate(day.date)}</Heading>
       {lines.length === 0 ? null : (
-        <Part label="Forecast">
+        <Part label={forecast?.outlook === true && forecast.status === 'open' ? 'Outlook' : 'Forecast'}>
           {lines.map((line) => <Small key={line} white>{line}</Small>)}
         </Part>
       )}

@@ -192,3 +192,14 @@ No migration of existing rows. `outlook`, `tierEnd` and `forecastThrough` are de
 ## Open Questions
 
 None blocking. The owner decided the cap, the 26-week bar, the term cap, the cell display, the weekly suggestions' 91 days and the words on 2026-11-17; each is a `[CONFIRM]` for the team's sign-off.
+
+## Build notes (release A, 2026-11-17)
+
+Where the code differs from the decisions above, or a decision needed a reading. None changes a decision or days 1 to 91.
+
+- **Decision 4 (b), tests.** `api/test/lab-gate.test.ts`'s existing fixtures were partial casts without `madeAt` (and `streakOf`'s without `dataThrough`), which `forecastThrough` reads; each gains dates whose forecast tier reaches its `range.to`, assertions unchanged. That file's weekly fixture's "91-day" runs end at today plus 90, one day short of a D42 run (today plus 91), so the year-long streak case is compared with runs ending at today plus 91 as well as with the default.
+- **Decision 11, metadata choice.** A run is chosen by metadata when `dayCount` equals its range's length (a run file never repeats a date). Runs with gaps have their rows read over D42's span (windowRows) and are chosen from them, so a gapped import is chosen exactly as before. `latest` reads only the newest run's rows. Two unit fixtures in `api/test/chat-estimate-tools.test.ts` gave runs a `range` that did not match their rows; they now match.
+- **Decision 12, TownwiseAI's visuals.** A daily visual's day carries `outlook: true` only on an outlook day (as `status` is set only on a closed or booked day), so stored and new visuals without one are unchanged. When every banded day of a visual is an outlook day, the summary drops the 8 in 10 sentence ("The shaded band is {model}'s range, made {date}, plus guests from your notes on days that have them.") rather than say "for 0 days".
+- **Decision 12, Calendar cells.** An outlook cell has status `outlook` and keeps its figure: from 641px its word sits in the cell's top row over the figure, as a booked day's does; below 641px, where no cell shows a top-row word, the figure shows alone and the cell's label says "Outlook". A booked or closed outlook day reads as booked or closed. The day panel's heading comes from `forecastLabel` (model.ts), so `forecastWords`' shape is unchanged.
+- **Decision 10.** The cap of 400 days after the data is already the run file's own limit (`too_far_ahead`, `too_big` in `forecasts/file.ts`), so `outlook_too_far` can only fire on `madeAt` plus 365; both terms are kept as decided.
+- **Decision 8, task A.6.** Hanover's winter and spring 2028 terms (registrar's 2027-28 key dates, read 2026-11-17) move `townCalendarCovers('hanover-nh')` to 2028-06-06, so the tests pinning Hanover's coverage (`calendar.int`, `estimates.int`, `chat-estimate-tools`) and term count (`people-term`) follow; the days from 2027-11-25 to 2028-01-03 now read `between_terms` instead of `unknown`.

@@ -487,6 +487,21 @@ describe('buildWeek', () => {
     expect(headLine(unstored)).toBe('forecast');
   });
 
+  test('across the outlook boundary (D52): an outlook day’s head says “Outlook” over its figure and keeps its range', () => {
+    const input = reads({
+      forecast: windowOf([
+        forecastDay({ date: '2026-11-20', low: 180, mid: 212, high: 240 }),
+        forecastDay({ date: SATURDAY, low: 150, mid: 212, high: 290, outlook: true }),
+      ]),
+    });
+    const friday = dayIn(week(input), '2026-11-20');
+    expect(friday).toMatchObject({ status: null, figure: { value: 212, kind: 'forecast' }, range: '180 to 240' });
+    const saturday = dayIn(week(input), SATURDAY);
+    expect(saturday).toMatchObject({ status: 'outlook', figure: { value: 212, kind: 'forecast' }, range: '150 to 290' });
+    expect(headLine(saturday)).toBe('150 to 290');
+    expect(saturday.label).toContain('Outlook about 212 guests, 150 to 290.');
+  });
+
   test('a block at the 25 months’ ends has inert days with no cards', () => {
     // Today Nov 11, 2026: the first block, Oct 29 to Nov 4, 2025, starts before the first month.
     const first = week(reads({ covered: gridRange('2025-11', bounds), events: [townEvent({ start: '2025-10-30', title: 'Harvest supper' })] }), '2025-11-01');

@@ -277,7 +277,10 @@ export function forecastPhrase(day: ForecastDay | undefined): Phrase | null {
   if (day.low === null || day.mid === null || day.high === null) return null;
   const mid = Math.round(day.mid);
   // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
-  return [strong(`About ${plural(mid, 'guest', 'guests')}`), `, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`];
+  const range = `, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`;
+  // An outlook day (D52) says so: “Outlook: about 90 guests, 67 to 113”.
+  if (day.outlook) return ['Outlook: ', strong(`about ${plural(mid, 'guest', 'guests')}`), range];
+  return [strong(`About ${plural(mid, 'guest', 'guests')}`), range];
 }
 
 /** "Busiest last year: Sat, Nov 22, 2025 (253 guests).", the figure strong. */
@@ -685,8 +688,11 @@ export interface MonthCell {
    * middle figure, or a buyout's party on a booked day. Null otherwise, and always without the month's figures.
    */
   figure: { value: number; kind: 'forecast' | 'actual' | 'booked'; text: string } | null;
-  /** From today on, a day the published forecast has closed or booked; before today, a likely-closed day (closed). */
-  status: 'closed' | 'booked' | null;
+  /**
+   * From today on, a day the published forecast has closed or booked, or an open day in its run's outlook (D52), which
+   * keeps its figure; before today, a likely-closed day (closed).
+   */
+  status: 'closed' | 'booked' | 'outlook' | null;
   /**
    * Before today, a day whose guests were near zero for its weekday (spec D32): status closed, and no figure. monthGrid
    * always sets it; optional so a cell built elsewhere (a test's) reads as not likely closed.
@@ -698,10 +704,15 @@ export interface MonthCell {
   label: string;
 }
 
-/** The word a cell shows for its status: “Likely closed”, “Closed” or “Booked”; null for an open day. */
+/** The word a cell shows for its status: “Likely closed”, “Closed”, “Booked” or “Outlook”; null for an open day. */
 export function monthStatusWord(cell: Pick<MonthCell, 'status' | 'likelyClosed'>): string | null {
   if (cell.likelyClosed === true) return 'Likely closed';
-  return cell.status === 'closed' ? 'Closed' : cell.status === 'booked' ? 'Booked' : null;
+  switch (cell.status) {
+    case 'closed': return 'Closed';
+    case 'booked': return 'Booked';
+    case 'outlook': return 'Outlook';
+    case null: return null;
+  }
 }
 
 /** A likely-closed day's stored figure, for “Likely closed (1 guest recorded)”: “1 guest”, “3 guests” or “$12”. */
@@ -751,10 +762,13 @@ function cellFigure(date: string, figures: MonthFigures | undefined): CellFigure
   const mid = Math.round(day.mid);
   const words = [
     // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
-    `Forecast about ${plural(mid, 'guest', 'guests')}, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}.`,
+    `${day.outlook ? 'Outlook' : 'Forecast'} about ${plural(mid, 'guest', 'guests')}, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}.`,
     day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : null,
   ].filter((part) => part !== null).join(' ');
-  return { figure: { value: mid, kind: 'forecast', text: formatCount(mid) }, status: null, likelyClosed: false, noteGuests: day.noteGuests, words };
+  return {
+    figure: { value: mid, kind: 'forecast', text: formatCount(mid) }, status: day.outlook ? 'outlook' : null, likelyClosed: false,
+    noteGuests: day.noteGuests, words,
+  };
 }
 
 /** "Wed, Nov 11, 2026. Today. This week. Forecast about 212 guests, 180 to 240. Veterans Day. 1 note." */
