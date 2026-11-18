@@ -22,12 +22,14 @@ import { type RunningTurn, type StreamEvent, type TurnAbortReason, type TurnEndi
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
 import { historyForModel, userMessageOf } from '../chat/user-message.ts';
 import {
-  chatMessageViews, OPEN, type AttachmentFile, type ChatMessageView, type FeedbackView, type ProposalState, type ShownProposal,
+  chatMessageViews, OPEN, personMessageView, type AttachmentFile, type ChatMessageView, type FeedbackView, type ProposalState,
+  type ShownProposal,
 } from '../chat/view.ts';
 import { loadDataItem, parseRef } from '../data/library.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
+import type { ChatTurnRecord, RunningTurnRef } from '../stores/chat-turns.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { sameNoteContent } from './notes.ts';
@@ -37,9 +39,20 @@ import { actorOf } from './team.ts';
 /** Section 2. */
 export interface ChatBudget { month: string; usedUsd: number; limitUsd: number; exhausted: boolean }
 export interface ConversationListItem { id: string; title: string; updatedAt: string; turnCount: number }
-export interface ChatSummary { enabled: boolean; budget: ChatBudget; conversations: ConversationListItem[] }
+/** resumable-chat-turns: `liveTurn` is the caller's running turn at this location, which the page opens on load. */
+export interface ChatSummary { enabled: boolean; budget: ChatBudget; conversations: ConversationListItem[]; liveTurn: RunningTurnRef | null }
+/**
+ * resumable-chat-turns: the conversation's turn while it runs, or once it was interrupted until its record goes. `state`
+ * is `interrupted` also for a running record whose lease has passed. `message` is the person's message (null for a
+ * regenerate), shown under `parentId`.
+ */
+export interface LiveTurnView {
+  turnId: string; state: 'running' | 'interrupted'; startedAt: string; userNodeId: string | null; replyNodeId: string;
+  parentId: string | null; message: ChatMessageView | null;
+}
 export interface ConversationView {
   id: string; title: string; updatedAt: string; activeLeafId: string | null; tree: TreeNodeView[]; messages: ChatMessageView[];
+  liveTurn: LiveTurnView | null;
 }
 
 const MAX_LISTED = 50;
@@ -131,11 +144,12 @@ function titleOf(content: string): string {
 export async function getChat(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const [budget, conversations] = await Promise.all([
+  const [budget, conversations, liveTurn] = await Promise.all([
     budgetOf(ctx, caller.scope),
     ctx.stores.chatConversations.list(caller.scope, ownerOf(caller, location.id), MAX_LISTED),
+    ctx.stores.chatTurns.runningFor(caller.scope, { locationId: location.id, userId: caller.userId }),
   ]);
-  const body: ChatSummary = { enabled: ctx.chat !== null, budget, conversations: conversations.map(listItem) };
+  const body: ChatSummary = { enabled: ctx.chat !== null, budget, conversations: conversations.map(listItem), liveTurn };
   res.status(200).json(body);
 }
 
@@ -156,17 +170,32 @@ async function attachedFiles(
   }));
 }
 
-/** The conversation showing the path to `leafId` (null or unknown: the last node), its visible messages. */
+/**
+ * resumable-chat-turns: the conversation's newest turn while it is running or interrupted (until the sweep deletes its
+ * record, 15 minutes after it ended), else null. A turn that ended any other way is in the saved messages, or saved nothing.
+ */
+async function liveTurnOf(ctx: TownwiseContext, scope: OrgScope, conversationId: string): Promise<ChatTurnRecord | null> {
+  const record = await ctx.stores.chatTurns.latestFor(scope, conversationId);
+  return record !== null && (record.state === 'running' || record.state === 'interrupted') ? record : null;
+}
+
+/** While a turn is live: the path to the node its first new node hangs under, so an edit's or a regenerate's branch shows. */
+function livePath(nodes: readonly ChatNode[], live: ChatTurnRecord): ChatNode[] {
+  return live.parentId === null ? [] : pathTo(nodes, live.parentId);
+}
+
+/** The conversation showing `path`, its visible messages, and its live turn. */
 async function conversationView(
   ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, conversation: ConversationRecord, nodes: readonly ChatNode[],
-  leafId: string | null,
+  path: readonly ChatNode[], live: ChatTurnRecord | null,
 ): Promise<ConversationView> {
-  const path = pathTo(nodes, leafId);
+  const liveFiles = live?.message?.attachments ?? [];
   const [rows, notes, files] = await Promise.all([
     ctx.stores.chatProposals.list(caller.scope, conversation.id),
     ctx.stores.notes.list(caller.scope, location.id),
-    attachedFiles(ctx, caller, location.id, attachedOnPath(path)),
+    attachedFiles(ctx, caller, location.id, [...new Set([...attachedOnPath(path), ...liveFiles.map((file) => file.ref)])]),
   ]);
+  const fileOf = (ref: string): AttachmentFile => files.get(ref) ?? { name: null, state: 'gone' };
   const byId = new Map(rows.map((row) => [row.proposalId, row]));
   const stateOf = (proposal: ShownProposal): ProposalState => {
     const row = byId.get(proposal.id);
@@ -187,10 +216,16 @@ async function conversationView(
     activeLeafId: path.at(-1)?.id ?? null,
     tree: nodes.map(({ id, parentId, role }) => ({ id, parentId, role })),
     // U13A: input views re-read their dates against the town's local day, as the tools ran them.
-    messages: chatMessageViews(
-      path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf, feedbackOf,
-      (ref) => files.get(ref) ?? { name: null, state: 'gone' },
-    ),
+    messages: chatMessageViews(path, localDay(ctx.now(), timeZoneOf(location.town).timeZone), stateOf, feedbackOf, fileOf),
+    liveTurn: live === null ? null : {
+      turnId: live.turnId,
+      // Readers treat a running record whose lease has passed as interrupted; the sweep settles it.
+      state: live.state === 'running' && live.leaseUntil.getTime() > ctx.now().getTime() ? 'running' : 'interrupted',
+      startedAt: live.startedAt.toISOString(), userNodeId: live.userNodeId, replyNodeId: live.replyNodeId, parentId: live.parentId,
+      message: live.message === null || live.userNodeId === null ? null : personMessageView(
+        live.userNodeId, live.startedAt, live.message.text, live.message.attachments.map(({ ref, kind }) => ({ ref, kind, ...fileOf(ref) })),
+      ),
+    },
   };
 }
 
@@ -203,10 +238,14 @@ export async function getConversation(ctx: TownwiseContext, req: Request, res: R
   const conversation = await ctx.stores.chatConversations.find(caller.scope, ownerOf(caller, location.id), conversationId);
   if (conversation === null) throw notFound();
   const nodes = nodesOf(conversation.messages);
-  // `?node=` shows another version without storing it; otherwise the stored active leaf.
+  // `?node=` shows another version without storing it; otherwise the path to a live turn's parent, else the stored
+  // active leaf.
   if (node !== undefined && !nodes.some((candidate) => candidate.id === node)) throw notFound();
-  const leafId = node === undefined ? conversation.activeLeafId : newestLeafUnder(nodes, node);
-  const body: ConversationView = await conversationView(ctx, caller, location, conversation, nodes, leafId);
+  const live = await liveTurnOf(ctx, caller.scope, conversation.id);
+  const path = node !== undefined
+    ? pathTo(nodes, newestLeafUnder(nodes, node))
+    : live === null ? pathTo(nodes, conversation.activeLeafId) : livePath(nodes, live);
+  const body: ConversationView = await conversationView(ctx, caller, location, conversation, nodes, path, live);
   res.status(200).json(body);
 }
 
@@ -226,7 +265,8 @@ export async function showVersion(ctx: TownwiseContext, req: Request, res: Respo
   if (!nodes.some((candidate) => candidate.id === nodeId)) throw notFound();
   const leafId = newestLeafUnder(nodes, nodeId);
   if (!(await ctx.stores.chatConversations.setActiveLeaf(caller.scope, owner, conversationId, leafId))) throw notFound();
-  const body: ConversationView = await conversationView(ctx, caller, location, conversation, nodes, leafId);
+  const live = await liveTurnOf(ctx, caller.scope, conversation.id);
+  const body: ConversationView = await conversationView(ctx, caller, location, conversation, nodes, pathTo(nodes, leafId), live);
   res.status(200).json(body);
 }
 
@@ -472,17 +512,23 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const searched = (count: number): { webSearches?: number } => (count > 0 ? { webSearches: count } : {});
   // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
   const parentId = nodes.user === null ? nodes.reply.parentId : nodes.user.parentId;
+  // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
+  // D36: the attachments block goes after the rules block, and the files' content only into this turn's requests. Made
+  // before the turn starts, so its record shows the files the message carries (resumable-chat-turns).
+  let userMessage: BetaMessageParam | null;
+  try {
+    const blockRules = rules.map((rule) => ({ text: rule.text, summary: rule.schedule === null ? null : scheduleSummary(rule.schedule) }));
+    userMessage = 'replyTo' in body ? null : userMessageOf(history, { rules: blockRules, attachments: attached?.block ?? null }, body.content);
+  } catch (err) {
+    await releaseClaims();
+    throw err;
+  }
 
   // resumable-chat-turns: the turn runs on this replica's runner whatever its connection does; only its time limit, a
   // stop request, a lost lease or shutdown abort it (signal.reason says which). Its ending is the stream's last event.
   const run = async ({ signal, emit }: { signal: AbortSignal; emit: (event: StreamEvent) => void }): Promise<TurnEnding> => {
     const send = (type: string, data: unknown): void => { emit({ type, data }); };
     try {
-      // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
-      const blockRules = rules.map((rule) => ({ text: rule.text, summary: rule.schedule === null ? null : scheduleSummary(rule.schedule) }));
-      // D36: the attachments block goes after the rules block, and the files' content only into this turn's requests.
-      const userMessage = 'replyTo' in body
-        ? null : userMessageOf(history, { rules: blockRules, attachments: attached?.block ?? null }, body.content);
       // Only the newest business_rules block on the path is sent in full; the stored messages keep theirs.
       const modelHistory = historyForModel(history, userMessage);
       const person = userMessage ?? modelHistory.at(-1);
@@ -584,7 +630,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
       turn: {
         locationId: location.id, conversationId, userId: caller.userId, turnId, userNodeId: nodes.user?.id ?? null,
         replyNodeId: nodes.reply.id, parentId,
-        message: 'replyTo' in body ? null : { text: body.content, attachments: body.attachments ?? [] },
+        message: 'replyTo' in body || userMessage === null ? null : { text: body.content, attachments: attachedTo(userMessage) },
       },
     });
   } catch (err) {

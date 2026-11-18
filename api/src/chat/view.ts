@@ -137,6 +137,14 @@ function entry(
 }
 
 /**
+ * The person's message of a turn still running (resumable-chat-turns), as an entry of `messages`: written at `at`, with
+ * the files it carries joined with Your data as the saved message's are.
+ */
+export function personMessageView(nodeId: string, at: Date, text: string, attachments: AttachmentView[]): ChatMessageView {
+  return entry(nodeId, 'user', at, at, [{ type: 'text', text }], null, null, attachments);
+}
+
+/**
  * `path` is the nodes shown, root to leaf. `today` (the day the caller's tools read dates against) re-reads each call's
  * input, which was valid when it ran, through the same rules. `stateOf` says what became of each proposal; without it
  * every proposal reads as open. `feedbackOf` says how the author rated a reply (default: unrated). `fileOf` says what

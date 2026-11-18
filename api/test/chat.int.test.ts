@@ -216,6 +216,7 @@ describe('a plain answer', () => {
           attachments: [], sources: [],
         },
       ],
+      liveTurn: null,
     });
   });
 

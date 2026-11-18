@@ -102,9 +102,15 @@ function createClock(): TestClock {
   };
 }
 
-/** Drops the database and flushes Valkey (which also resets the kit's magic-link send limits). */
+/**
+ * Drops the database and flushes Valkey (which also resets the kit's magic-link send limits), unless `keepData`.
+ * Two instances against one database (resumable-chat-turns: the turn on one, its reader on the other) take the same
+ * auth keys: `sharedAuthKeys()` for the first's env, and the same env with `keepData` for the second.
+ */
 export async function startTownwiseServer(opts?: {
   env?: Record<string, string>;
+  /** Another instance on the same database and Valkey: nothing is dropped or flushed. */
+  keepData?: boolean;
   /** Mounted at /probe with the same chain, to exercise policies no product route uses yet. */
   probe?: readonly TownwiseRoute[];
   /** The tuning chat's model, a scripted fake (helpers/chat-model.ts); absent, the chat is off. */
@@ -200,8 +206,10 @@ export async function startTownwiseServer(opts?: {
   const mail: MagicLinkMessage[] = [];
   try {
     await waitForRedis(redis);
-    await mongo.connection.dropDatabase();
-    await redis.client.flushdb();
+    if (opts?.keepData !== true) {
+      await mongo.connection.dropDatabase();
+      await redis.client.flushdb();
+    }
     const authStores = createMongoAuthStores(mongo.connection);
     const auth = createAuth({
       config, logger, redis: redis.client, stores: authStores, now: clock.now,
@@ -272,6 +280,11 @@ export async function startTownwiseServer(opts?: {
     await mongo.close();
     throw err;
   }
+}
+
+/** Auth keys for two instances whose sessions work on both. */
+export function sharedAuthKeys(): Record<string, string> {
+  return { AUTH_JWT_KEYS: `k1:${randomBytes(32).toString('base64')}`, AUTH_ENCRYPTION_KEYS: `e1:${randomBytes(32).toString('base64')}` };
 }
 
 export interface TestSession {

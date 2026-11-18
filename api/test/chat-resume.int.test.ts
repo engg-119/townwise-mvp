@@ -1,7 +1,9 @@
 // Resumable TownwiseAI turns (openspec change resumable-chat-turns) against a scripted model: a turn runs on the
 // replica's turn runner whatever its connection does, its numbered events are kept in tw_chat_turns as the POST streams
 // them, and it ends the same way as before (saved, refused, timed out, out of budget or failed), now also on its record.
-// A replica shutting down takes no new turn and settles its running ones as interrupted.
+// A replica shutting down takes no new turn and settles its running ones as interrupted. A second instance on the same
+// database stands for the other replica: it serves the reads, the tail and the stop of a turn running on the first, and
+// runs the turns that a test holds open for longer.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -9,33 +11,49 @@ import { InternalServerError } from '@anthropic-ai/sdk';
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
+import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
+import { addChatTurn, addConversation, addGrant, addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
 import { eventsOf, message, scriptedModel, text, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
-import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+import {
+  call, removeStaffFactor, sharedAuthKeys, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
+} from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 let model: ScriptedModel;
+/** The other replica, on the same database, with its own model and a 10-second turn. */
+let other: TownwiseTestServer;
+let otherModel: ScriptedModel;
 let orgId: string;
 let locationId: string;
 let session: TestSession;
 
 beforeAll(async () => {
   model = scriptedModel();
+  otherModel = scriptedModel();
+  const env = sharedAuthKeys();
   // Long enough for every turn here to finish, short enough for the timeout case.
-  server = await startTownwiseServer({ chat: model, chatTurnTimeLimitMs: 1500 });
+  server = await startTownwiseServer({ env, chat: model, chatTurnTimeLimitMs: 1500 });
+  other = await startTownwiseServer({ env, keepData: true, chat: otherModel, chatTurnTimeLimitMs: 10_000 });
   orgId = await createOrg(server, { name: 'Resume Tavern' });
   const email = `member-${randomUUID().slice(0, 8)}@example.test`;
   session = await signIn(server, email);
   await addSeat(server, { orgId, userId: session.userId, email });
   locationId = await addLocation(server, { orgId, name: 'Taproom' });
 });
-afterAll(async () => { await server.close(); });
+afterAll(async () => {
+  await other.close();
+  await server.close();
+});
 beforeEach(async () => {
   await server.redis.flushdb();
   await server.connection.collection('tw_chat_usage').deleteMany({});
   model.calls.length = 0;
+  otherModel.calls.length = 0;
 });
-afterEach(() => { expect(model.remaining()).toBe(0); });
+afterEach(() => {
+  expect(model.remaining()).toBe(0);
+  expect(otherModel.remaining()).toBe(0);
+});
 
 interface SseEvent { id: number | null; event: string; data: unknown }
 
@@ -80,6 +98,41 @@ const conversationOf = (events: SseEvent[]): { id: string; turnId: string } => e
 
 /** The record's events as the stream shows them. */
 const asStream = (stored: StoredTurn | null): SseEvent[] => (stored?.events ?? []).map((each) => ({ id: each.seq, event: each.type, data: each.data }));
+
+const chatPath = (): string => `/api/org/locations/${locationId}/chat`;
+
+async function getJson<T>(on: TownwiseTestServer, path: string, as: TestSession = session): Promise<T> {
+  const res = await call(on, path, { session: as });
+  expect(res.status).toBe(200);
+  return await res.json() as T;
+}
+
+interface Nodes { userNodeId: string | null; replyNodeId: string }
+const nodesOf = (events: SseEvent[]): Nodes => events[0]?.data as Nodes;
+
+interface Held { turnId: string; conversationId: string; userNodeId: string | null; replyNodeId: string; release: () => void; body: Promise<SseEvent[]> }
+
+/** A turn sent to the other instance and held at its model call until `release`: its record is in and running. */
+async function holdTurn(json: unknown, reply: string): Promise<Held> {
+  let release = (): void => undefined;
+  const gate = new Promise<void>((resolve) => { release = resolve; });
+  // A later start than the conversation's earlier turns, whose records are still kept: the clocks are frozen otherwise.
+  for (const each of [server, other]) each.clock.advance(1000);
+  otherModel.script({ kind: 'message', message: message([text(reply)]), gate });
+  const res = await call(other, turnsPath(), { session, json });
+  expect(res.status).toBe(200);
+  const body = res.text().then(parseSse);
+  let found: StoredTurn | null = null;
+  await until(async () => {
+    found = await server.connection.collection<StoredTurn>('tw_chat_turns').findOne({ userId: session.userId, state: 'running' });
+    return (found?.eventCount ?? 0) >= 1;
+  });
+  const held = found as unknown as StoredTurn & { conversationId: Types.ObjectId; userNodeId: string | null; replyNodeId: string };
+  return {
+    turnId: held.turnId, conversationId: held.conversationId.toHexString(), userNodeId: held.userNodeId, replyNodeId: held.replyNodeId,
+    release, body,
+  };
+}
 
 const liveTurns = (): Promise<number> => server.connection.collection('tw_chat_live_turns').countDocuments({ orgId: new Types.ObjectId(orgId) });
 
@@ -199,6 +252,104 @@ describe('a turn and its record', () => {
     expect(await conversationDoc(id)).toMatchObject({ turnCount: 1 });
     expect(asStream(await record(turnId))).toEqual(events);
     expect((await record(turnId))?.state).toBe('done');
+  });
+});
+
+describe('reattaching: liveTurn on both GETs', () => {
+  it('names the running turn on either instance, and shows an edit’s live branch with the person’s message', async () => {
+    model.script({ kind: 'message', message: message([text('Saturday looks busy.')]) }, { kind: 'message', message: message([text('Sunday is quieter.')]) });
+    const first = await turn({ content: 'How busy is Saturday?' });
+    const { id } = conversationOf(first);
+    const { replyNodeId: r1 } = nodesOf(first);
+    const { userNodeId: u2 } = nodesOf(await turn({ conversationId: id, content: 'And Sunday?' }));
+    const before = await getJson<ConversationView>(server, `${chatPath()}/${id}`);
+    expect(before.liveTurn).toBeNull();
+    expect((await getJson<ChatSummary>(server, chatPath())).liveTurn).toBeNull();
+
+    // An edit of the second message: it hangs under the first reply.
+    const held = await holdTurn({ conversationId: id, content: 'And Monday?', parentId: r1 }, 'Monday is quiet.');
+    expect(held.conversationId).toBe(id);
+    const at = other.clock.now().toISOString();
+    const liveTurn = {
+      turnId: held.turnId, state: 'running', startedAt: at, userNodeId: held.userNodeId, replyNodeId: held.replyNodeId, parentId: r1,
+      message: {
+        nodeId: held.userNodeId, role: 'user', text: 'And Monday?', proposals: [], parts: [], feedback: null, next: null, at, endedAt: at,
+        attachments: [], sources: [],
+      },
+    };
+    for (const on of [server, other]) {
+      expect((await getJson<ChatSummary>(on, chatPath())).liveTurn).toEqual({ conversationId: id, turnId: held.turnId });
+      const view = await getJson<ConversationView>(on, `${chatPath()}/${id}`);
+      expect(view.messages.map((each) => each.nodeId)).toEqual(before.messages.slice(0, 2).map((each) => each.nodeId));
+      expect(view.activeLeafId).toBe(r1);
+      expect(view.liveTurn).toEqual(liveTurn);
+    }
+    // `?node=` still shows the version asked for, with the live turn beside it.
+    const asked = await getJson<ConversationView>(server, `${chatPath()}/${id}?node=${String(u2)}`);
+    expect(asked.messages.map((each) => each.nodeId)).toEqual(before.messages.map((each) => each.nodeId));
+    expect(asked.liveTurn?.turnId).toBe(held.turnId);
+
+    // View-as reads the target's live turn, as it reads their conversations.
+    const staff = await signInStaff(server);
+    try {
+      await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: session.userId, orgId });
+      expect((await getJson<ChatSummary>(other, chatPath(), staff)).liveTurn).toEqual({ conversationId: id, turnId: held.turnId });
+      expect((await getJson<ConversationView>(other, `${chatPath()}/${id}`, staff)).liveTurn).toEqual(liveTurn);
+    } finally {
+      await removeStaffFactor(server);
+      await server.connection.collection('tw_view_as_grants').deleteMany({});
+    }
+
+    held.release();
+    expect((await held.body).at(-1)?.event).toBe('done');
+    expect((await getJson<ChatSummary>(server, chatPath())).liveTurn).toBeNull();
+    const saved = await getJson<ConversationView>(server, `${chatPath()}/${id}`);
+    expect(saved.liveTurn).toBeNull();
+    expect(saved.messages.map((each) => each.nodeId)).toEqual([...before.messages.slice(0, 2).map((each) => each.nodeId), held.userNodeId, held.replyNodeId]);
+  });
+
+  it('shows a regenerate’s live branch: the path to the person’s message, with no message of its own', async () => {
+    model.script({ kind: 'message', message: message([text('Saturday looks busy.')]) });
+    const first = await turn({ content: 'How busy is Saturday?' });
+    const { id } = conversationOf(first);
+    const { userNodeId: u1, replyNodeId: r1 } = nodesOf(first);
+
+    const held = await holdTurn({ conversationId: id, replyTo: u1 }, 'Saturday will be busy.');
+    const view = await getJson<ConversationView>(server, `${chatPath()}/${id}`);
+    expect(view.messages.map((each) => each.nodeId)).toEqual([u1]);
+    expect(view.liveTurn).toMatchObject({ turnId: held.turnId, state: 'running', userNodeId: null, parentId: u1, message: null });
+    expect(held.replyNodeId).not.toBe(r1);
+
+    held.release();
+    expect((await held.body).at(-1)?.event).toBe('done');
+    const saved = await getJson<ConversationView>(server, `${chatPath()}/${id}`);
+    expect(saved.liveTurn).toBeNull();
+    expect(saved.messages.map((each) => each.nodeId)).toEqual([u1, held.replyNodeId]);
+  });
+
+  it('a running record whose lease passed reads as interrupted, a settled one too, and an ended one not at all', async () => {
+    const id = await addConversation(server, { orgId, locationId, userId: session.userId, text: 'Earlier question' });
+    const turnId = await addChatTurn(server, { orgId, locationId, conversationId: id, userId: session.userId });
+    const records = server.connection.collection('tw_chat_turns');
+    try {
+      await records.updateOne({ turnId }, { $set: { leaseUntil: new Date(server.clock.now().getTime() - 1000) } });
+      expect((await getJson<ChatSummary>(server, chatPath())).liveTurn).toEqual({ conversationId: id, turnId });
+      const lapsed = await getJson<ConversationView>(server, `${chatPath()}/${id}`);
+      expect(lapsed.liveTurn).toMatchObject({ turnId, state: 'interrupted', parentId: null, message: { nodeId: 'user-node', text: 'Sentinel live message' } });
+      // A live turn with no parent is a new first message: none of the saved ones is on its path.
+      expect(lapsed.messages).toEqual([]);
+
+      await records.updateOne({ turnId }, { $set: { state: 'interrupted', endedAt: server.clock.now() } });
+      expect((await getJson<ChatSummary>(server, chatPath())).liveTurn).toBeNull();
+      expect((await getJson<ConversationView>(server, `${chatPath()}/${id}`)).liveTurn).toMatchObject({ turnId, state: 'interrupted' });
+
+      await records.updateOne({ turnId }, { $set: { state: 'done' } });
+      const ended = await getJson<ConversationView>(server, `${chatPath()}/${id}`);
+      expect(ended.liveTurn).toBeNull();
+      expect(ended.messages).toHaveLength(2);
+    } finally {
+      await records.deleteMany({ turnId });
+    }
   });
 });
 

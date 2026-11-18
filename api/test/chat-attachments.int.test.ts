@@ -631,6 +631,37 @@ describe('with stored files on', () => {
     });
   });
 
+  describe('a live turn (resumable-chat-turns)', () => {
+    it('its record keeps each file\'s ref and kind, and its message shows them as a saved one does, with no name under view-as', async () => {
+      const textRef = await seed(Buffer.from(FILE_TEXT), { name: 'Catering.txt' });
+      const pictureRef = await seed(PNG, { name: 'Patio.png', kind: 'other' });
+      const first = await turn({ content: 'What is on these?', attachments: [textRef, pictureRef] });
+      const records = server.connection.collection('tw_chat_turns');
+      const conversationId = new Types.ObjectId(first.id);
+      const record = await records.findOne({ conversationId });
+      expect(record?.message).toEqual({ text: 'What is on these?', attachments: [{ ref: textRef, kind: 'text' }, { ref: pictureRef, kind: 'picture' }] });
+      // As if it were still running.
+      await records.updateOne({ conversationId }, { $set: { state: 'running', leaseUntil: new Date(server.clock.now().getTime() + 30_000) } });
+      try {
+        expect((await view(first.id)).liveTurn?.message?.attachments).toEqual([
+          { ref: textRef, kind: 'text', name: 'Catering.txt', state: 'on' }, { ref: pictureRef, kind: 'picture', name: 'Patio.png', state: 'on' },
+        ]);
+        const staff = await signInStaff(server);
+        try {
+          await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: author.userId, orgId });
+          expect((await view(first.id, staff)).liveTurn?.message?.attachments).toEqual([
+            { ref: textRef, kind: 'text', name: null, state: 'on' }, { ref: pictureRef, kind: 'picture', name: null, state: 'on' },
+          ]);
+        } finally {
+          await removeStaffFactor(server);
+          await server.connection.collection('tw_view_as_grants').deleteMany({});
+        }
+      } finally {
+        await records.deleteMany({ conversationId });
+      }
+    });
+  });
+
   describe('logs, audit and calibrations', () => {
     it('chat.turn_completed counts the files and the log counts them by kind; neither holds a name or content', async () => {
       server.logs.length = 0;

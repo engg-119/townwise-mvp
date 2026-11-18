@@ -7,6 +7,7 @@
 import { Schema, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import type { AttachmentKind } from '../files/items.ts';
 
 export const CHAT_TURNS_COLLECTION = 'tw_chat_turns';
 
@@ -20,10 +21,22 @@ export interface TurnRecordEvent {
   readonly data: unknown;
 }
 
-/** The person's message as they wrote it, for display while the turn runs: its text and its attachments' `f_` refs. */
+/** A file the person's message carries: its `f_` ref and kind, as the message's attachments block names them (D36). */
+export interface LiveTurnAttachment {
+  readonly ref: string;
+  readonly kind: AttachmentKind;
+}
+
+/** The person's message as they wrote it, for display while the turn runs: its text and the files it carries. */
 export interface LiveTurnMessage {
   readonly text: string;
-  readonly attachments: readonly string[];
+  readonly attachments: readonly LiveTurnAttachment[];
+}
+
+/** A person's running turn at a location, as `GET .../chat` reports it. */
+export interface RunningTurnRef {
+  readonly conversationId: string;
+  readonly turnId: string;
 }
 
 /** What a turn's record starts with, once both live-turn claims are held. */
@@ -66,7 +79,7 @@ interface TurnFields {
   userNodeId: string | null;
   replyNodeId: string;
   parentId: string | null;
-  message: { text: string; attachments: string[] } | null;
+  message: { text: string; attachments: { ref: string; kind: AttachmentKind }[] } | null;
   events: { seq: number; type: string; data: unknown }[];
   eventCount: number;
 }
@@ -77,9 +90,13 @@ function turnSchema(): Schema<TurnFields> {
     type: { type: String, required: true },
     data: { type: Schema.Types.Mixed },
   }, { _id: false, strict: true });
+  const attachment = new Schema({
+    ref: { type: String, required: true },
+    kind: { type: String, required: true },
+  }, { _id: false, strict: true });
   const message = new Schema({
     text: { type: String, required: true },
-    attachments: { type: [String], default: [] },
+    attachments: { type: [attachment], default: [] },
   }, { _id: false, strict: true });
   const schema = new Schema<TurnFields>({
     orgId: { type: Schema.Types.ObjectId, required: true },
@@ -148,6 +165,10 @@ export interface ChatTurnStore {
    * `$slice` with a skip on DocumentDB), at most about 1 MB.
    */
   readAfter(scope: OrgScope, conversationId: string, turnId: string, after: number): Promise<ChatTurnRecord | null>;
+  /** The person's newest running turn at this location (its lease passed or not), else null. */
+  runningFor(scope: OrgScope, owner: { locationId: string; userId: string }): Promise<RunningTurnRef | null>;
+  /** The conversation's newest turn without its events (`events` empty), else null. */
+  latestFor(scope: OrgScope, conversationId: string): Promise<ChatTurnRecord | null>;
   /** With its conversation. Resolves the number deleted. */
   removeForConversation(scope: OrgScope, conversationId: string): Promise<number>;
   /** With its location, whoever wrote it. Resolves the number deleted. */
@@ -162,7 +183,8 @@ function toRecord(doc: TurnDoc, after: number): ChatTurnRecord {
   return {
     locationId: doc.locationId.toHexString(), conversationId: doc.conversationId.toHexString(), userId: doc.userId,
     turnId: doc.turnId, userNodeId: doc.userNodeId ?? null, replyNodeId: doc.replyNodeId, parentId: doc.parentId ?? null,
-    message: doc.message === null ? null : { text: doc.message.text, attachments: [...doc.message.attachments] },
+    message: doc.message === null
+      ? null : { text: doc.message.text, attachments: doc.message.attachments.map(({ ref, kind }) => ({ ref, kind })) },
     startedAt: doc.startedAt, leaseUntil: doc.leaseUntil, state: doc.state, stopRequested: doc.stopRequested,
     endedAt: doc.endedAt ?? null, eventCount: doc.eventCount,
     events: doc.events.filter((event) => event.seq > after).map((event) => ({ seq: event.seq, type: event.type, data: event.data ?? {} })),
@@ -182,7 +204,8 @@ export function createChatTurnStore(connection: Connection): ChatTurnStore {
         ...org(scope), locationId: new Types.ObjectId(turn.locationId), conversationId: new Types.ObjectId(turn.conversationId),
         userId: turn.userId, turnId: turn.turnId, state: 'running', leaseUntil: turn.leaseUntil, stopRequested: false,
         startedAt: turn.startedAt, endedAt: null, userNodeId: turn.userNodeId, replyNodeId: turn.replyNodeId, parentId: turn.parentId,
-        message: turn.message === null ? null : { text: turn.message.text, attachments: [...turn.message.attachments] },
+        message: turn.message === null
+          ? null : { text: turn.message.text, attachments: turn.message.attachments.map(({ ref, kind }) => ({ ref, kind })) },
         events: [], eventCount: 0,
       });
     },
@@ -223,6 +246,18 @@ export function createChatTurnStore(connection: Connection): ChatTurnStore {
     async readAfter(scope, conversationId, turnId, after) {
       const doc = await Turn.findOne({ ...org(scope), conversationId: new Types.ObjectId(conversationId), turnId }).lean();
       return doc === null ? null : toRecord(doc, after);
+    },
+    async runningFor(scope, owner) {
+      const doc = await Turn.findOne(
+        { ...org(scope), locationId: new Types.ObjectId(owner.locationId), userId: owner.userId, state: 'running' },
+        { conversationId: 1, turnId: 1 },
+      ).sort({ startedAt: -1, _id: -1 }).lean();
+      return doc === null ? null : { conversationId: doc.conversationId.toHexString(), turnId: doc.turnId };
+    },
+    async latestFor(scope, conversationId) {
+      const doc = await Turn.findOne({ ...org(scope), conversationId: new Types.ObjectId(conversationId) }, { events: 0 })
+        .sort({ startedAt: -1, _id: -1 }).lean();
+      return doc === null ? null : toRecord({ ...doc, events: [] }, 0);
     },
     async removeForConversation(scope, conversationId) {
       return (await Turn.deleteMany({ ...org(scope), conversationId: new Types.ObjectId(conversationId) })).deletedCount;
