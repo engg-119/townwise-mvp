@@ -254,11 +254,11 @@ describe('notes from the events', () => {
     await readAs(team.member, l1, fileId);
 
     const notes = await notesOf(l1);
-    expect(notes.map(({ kind, startDate, endDate, effect, expectedGuests, detail, createdByEmail, source }) => ({
-      kind, startDate, endDate, effect, expectedGuests, detail, createdByEmail, source,
+    expect(notes.map(({ kind, startDate, endDate, effect, expectedGuests, title, detail, createdByEmail, source }) => ({
+      kind, startDate, endDate, effect, expectedGuests, title, detail, createdByEmail, source,
     }))).toEqual([
-      { kind: 'private_event', startDate: '2026-06-14', endDate: '2026-06-14', effect: 'more_guests', expectedGuests: 80, detail: 'Wedding dinner: Back room', createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId, ref: `f_${fileId}` } },
-      { kind: 'closure', startDate: '2026-07-01', endDate: '2026-07-02', effect: 'closed', expectedGuests: null, detail: 'Closed for the floor', createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId, ref: `f_${fileId}` } },
+      { kind: 'private_event', startDate: '2026-06-14', endDate: '2026-06-14', effect: 'more_guests', expectedGuests: 80, title: 'Wedding dinner', detail: 'Back room', createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId, ref: `f_${fileId}` } },
+      { kind: 'closure', startDate: '2026-07-01', endDate: '2026-07-02', effect: 'closed', expectedGuests: null, title: 'Closed for the floor', detail: null, createdByEmail: team.memberEmail, source: { via: 'ai_file', fileId, ref: `f_${fileId}` } },
     ]);
     const stored = await server.connection.collection('tw_notes').findOne({ _id: oid(notes[0]?.id ?? '') });
     expect(stored).toMatchObject({ createdBy: team.member.userId, source: { via: 'ai_file', fileId: oid(fileId) } });
@@ -294,6 +294,35 @@ describe('notes from the events', () => {
     await readAs(team.member, l1, fileId);
     expect(await count('tw_notes', { locationId: oid(l1) })).toBe(2);
     expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 2, cap: 0, invalid: 0, guard: 0 } });
+  });
+
+  it('names the note after the event (D49): a buyout with no detail, a detail that only repeats the title, and a title cleaned of line breaks and format characters', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    const buyout = { title: 'Rehearsal dinner', startDate: '2026-12-12', endDate: '2026-12-12', kind: 'private_event', effect: 'closed', expectedGuests: 60, detail: '' };
+    const repeated = { ...EVENT, title: 'Wine dinner', startDate: '2026-06-20', endDate: '2026-06-20', detail: 'wine  DINNER' };
+    const broken = { ...EVENT, title: 'Harvest\nfestival\u202E dinner', startDate: '2026-06-21', endDate: '2026-06-21', detail: '' };
+    const unnamed = { ...EVENT, title: '\u200B\u2060', startDate: '2026-06-22', endDate: '2026-06-22', detail: 'Patio party' };
+    answers = [answer({ events: [buyout, repeated, broken, unnamed] })];
+    await readAs(team.member, l1, fileId);
+    expect((await notesOf(l1)).map(({ startDate, title, detail, effect, expectedGuests }) => ({ startDate, title, detail, effect, expectedGuests }))).toEqual([
+      { startDate: '2026-06-20', title: 'Wine dinner', detail: null, effect: 'more_guests', expectedGuests: 80 },
+      { startDate: '2026-06-21', title: 'Harvest festival dinner', detail: null, effect: 'more_guests', expectedGuests: 80 },
+      { startDate: '2026-06-22', title: null, detail: 'Patio party', effect: 'more_guests', expectedGuests: 80 },
+      { startDate: '2026-12-12', title: 'Rehearsal dinner', detail: null, effect: 'closed', expectedGuests: 60 },
+    ]);
+    expect(server.logs.join('\n')).not.toMatch(/Rehearsal|Harvest|Wine dinner/);
+  });
+
+  it('skips an event a note already names, title case and spacing aside, even with no detail', async () => {
+    const l1 = await newLocation();
+    const named = { kind: 'private_event', startDate: '2026-12-12', endDate: '2026-12-12', effect: 'closed', expectedGuests: 60, title: 'rehearsal  dinner' };
+    expect((await call(server, `/api/org/locations/${l1}/notes`, { session: team.member, json: named })).status).toBe(201);
+    const fileId = await seedStored(l1);
+    answers = [answer({ events: [{ title: 'Rehearsal Dinner', startDate: '2026-12-12', endDate: '2026-12-12', kind: 'private_event', effect: 'closed', expectedGuests: 60, detail: '' }] })];
+    await readAs(team.member, l1, fileId);
+    expect(await count('tw_notes', { locationId: oid(l1) })).toBe(1);
+    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 1, cap: 0, invalid: 0, guard: 0 } });
   });
 
   it('makes at most 50 notes a file, and stops at the location’s 1,000 notes, counting what it skipped', async () => {
@@ -341,7 +370,7 @@ describe('notes from the events', () => {
     ] })];
     await readAs(team.member, l1, fileId);
     const notes = await notesOf(l1);
-    expect(notes.map((note) => [note.detail, note.expectedGuests])).toEqual([['Huge fair: Back room', null]]);
+    expect(notes.map((note) => [note.title, note.detail, note.expectedGuests])).toEqual([['Huge fair', 'Back room', null]]);
     expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 2, guard: 0 } });
   });
 
@@ -361,7 +390,7 @@ describe('notes from the events', () => {
     ] })];
     await readAs(team.member, l1, fileId);
     const notes = await notesOf(l1);
-    expect(notes.map((note) => note.detail)).toEqual(['Winter break', 'Spring break', 'Private buyout', 'Long festival: Back room']);
+    expect(notes.map((note) => note.title)).toEqual(['Winter break', 'Spring break', 'Private buyout', 'Long festival']);
     expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 0, guard: 2 } });
     expect((await itemOf(team.member, l1, `f_${fileId}`)).ai?.notesSkipped).toEqual({ duplicate: 0, cap: 0, invalid: 0, guard: 2 });
   });

@@ -43,7 +43,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - `api/src/chat/view.ts` and `api/src/handlers/chat-proposals.ts` (a stored proposal with none reads as null);
   - `api/src/handlers/agent.ts`, `handlers/chat.ts`, `handlers/weekly-suggestions.ts`, `chat/turn.ts` and `chat/tools/registry.ts`.
 - [x] 1.4 The note view's `source.ref`: `f_<fileId>`, `u_<uploadId>` for a file that wrote days, or null once gone or while stored files are off, from one `files.byIds` read in `listNotes`. Tests: `api/test/notes.int.test.ts` (each of the three cases).
-- [ ] 1.5 `api/src/files/ai-actions.ts`:
+- [x] 1.5 `api/src/files/ai-actions.ts`:
   - `title` from the event, cleaned (`Cc` and `Cf` removed, white space collapsed, no title when empty);
   - `detail` the event's own (null when empty or equal to the title);
   - `duplicates()` checks the folded title before its `detail === null` return.

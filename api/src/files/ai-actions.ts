@@ -71,24 +71,34 @@ function folded(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-/** A note's detail from an event: its title, then its own detail when it says more. */
-function noteDetailOf(event: AiReadEvent): string {
-  const title = event.title.trim();
+/**
+ * D49: an event's title as a note's title. NFC, each run of white space (a line break included) one space, and every
+ * control or format character removed rather than refused, since the person did not type them; trimmed; null when
+ * nothing is left. The title backfill (files/note-titles.ts) names older notes with it too.
+ */
+export function eventNoteTitle(raw: string): string | null {
+  const title = raw.normalize('NFC').replace(/\s+/gu, ' ').replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/ {2,}/g, ' ').trim();
+  return title === '' ? null : title;
+}
+
+/** A note's detail from an event: its own detail, or null when it is empty or only repeats the title (D49). */
+function noteDetailOf(event: AiReadEvent, title: string | null): string | null {
   const detail = event.detail.trim();
-  return cut(detail === '' || folded(detail) === folded(title) ? title : `${title}: ${detail}`, NOTE_DETAIL_CHARS).trim();
+  return detail === '' || (title !== null && folded(detail) === folded(title)) ? null : cut(detail, NOTE_DETAIL_CHARS).trim();
 }
 
 /** The event as a note, through the notes route's own rules; null when it breaks one (its dates, say). */
 function noteContentOf(event: AiReadEvent, today: string): NoteContent | null {
   const effect = EFFECTS[event.effect];
   const guests = event.expectedGuests;
+  const title = eventNoteTitle(event.title);
   return readNoteContent({
     kind: event.kind, startDate: event.startDate, endDate: event.endDate, weekdays: null, effect,
     // A count the notes route would refuse (0, a crowd past a restaurant's, or one on a closed note that is not a
     // buyout) is left out rather than the event. A buyout keeps its party's size, which books the day (D30).
     expectedGuests: (effect === 'closed' && event.kind !== 'private_event') || guests === null || guests < 1
       || guests > MAX_EXPECTED_GUESTS ? null : guests,
-    detail: noteDetailOf(event),
+    title, detail: noteDetailOf(event, title),
   }, today);
 }
 
@@ -103,11 +113,14 @@ function spanDays(startDate: string, endDate: string): number {
 }
 
 /**
- * An existing note says the same as the event: same kind, start and end, and its detail is the event's title (or
- * starts with it and a colon, as a note TownwiseAI made from the same event of another file does).
+ * An existing note says the same as the event: same kind, start and end, and its title is the event's (D49), or its
+ * detail is the event's title (or starts with it and a colon, as a note TownwiseAI made before titles did).
  */
 function duplicates(note: NoteRecord, event: AiReadEvent): boolean {
-  if (note.kind !== event.kind || note.startDate !== event.startDate || note.endDate !== event.endDate || note.detail === null) return false;
+  if (note.kind !== event.kind || note.startDate !== event.startDate || note.endDate !== event.endDate) return false;
+  const named = eventNoteTitle(event.title);
+  if (named !== null && note.title !== null && folded(note.title) === folded(named)) return true;
+  if (note.detail === null) return false;
   const detail = folded(note.detail);
   const title = folded(event.title);
   return detail === title || detail.startsWith(`${title}:`);
