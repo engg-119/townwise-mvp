@@ -50,7 +50,7 @@ function EachDay(props: { overview: Overview }): React.JSX.Element {
             label="Activity by day"
             columns={[
               { key: 'day', label: 'Day (UTC)', flex: 1.2 },
-              { key: 'people', label: 'People active', numeric: true },
+              { key: 'people', label: 'People who used the app', numeric: true },
               { key: 'actions', label: 'Actions', numeric: true },
               ...ACTION_GROUPS.map((group) => ({ key: group, label: GROUP_LABEL[group], numeric: true })),
             ]}

@@ -254,7 +254,9 @@ test('activity by day: the chart hidden from screen readers, its summary, and ea
   expect(svg?.getAttribute('aria-hidden')).toBe('true');
   expect(svg?.querySelectorAll('[data-band="people"]')).toHaveLength(2);
   expect([...(svg?.querySelectorAll('[data-day="2026-11-16"] [data-group]') ?? [])].map((rect) => rect.getAttribute('data-group'))).toEqual(['notes', 'orders', 'team']);
-  expect(screen.getByText(/^9 actions recorded in the last 7 days \(UTC\): 2 Uploads and data, 4 Notes, rules and calendars/)).toBeTruthy();
+  expect(screen.getByText(/^9 actions recorded in the last 7 days \(UTC\): uploads and data 2; notes, rules and calendars 4/)).toBeTruthy();
+  // No caption repeats the scales the axis already prints.
+  expect(screen.queryByText(/scale 0 to/)).toBeNull();
 
   // A mouse over a day shows its counts (jsdom lays nothing out, so the svg gets a 280px box: seven 40px days).
   const box = svg as SVGSVGElement;
@@ -263,7 +265,7 @@ test('activity by day: the chart hidden from screen readers, its summary, and ea
   Object.defineProperty(move, 'pointerType', { value: 'mouse' });
   fireEvent(box, move);
   expect(Array.from(screen.getByTestId('chart-tooltip').children, (line) => line.textContent)).toEqual([
-    'Nov 16, 2026', '5 people active', '6 actions recorded', 'Notes, rules and calendars: 4', 'Orders: 1', 'Team and settings: 1',
+    'Nov 16, 2026', '5 people used the app', '6 actions recorded', 'Notes, rules and calendars: 4', 'Orders: 1', 'Team and settings: 1',
   ]);
   fireEvent.pointerLeave(box);
   expect(screen.queryByTestId('chart-tooltip')).toBeNull();
@@ -277,6 +279,59 @@ test('activity by day: the chart hidden from screen readers, its summary, and ea
   expect(newest).toEqual(['Nov 17, 2026', '3', '3', '2', '0', '1', '0', '0']);
   expect(before).toEqual(['Nov 16, 2026', '5', '6', '0', '4', '0', '1', '1']);
   expect(rows(days)).toHaveLength(7);
+});
+
+test('the five groups differ by mark, not shade alone, the key draws each the same way, and mint is the people’s alone', async () => {
+  const api = consoleApi();
+  answer(api, 7, overviewAnswer(7));
+  renderAt('/admin/overview?days=7', api);
+  await screen.findByRole('heading', { name: 'Activity by day' });
+  const svg = document.querySelector('svg[data-chart="activity"]');
+  const drawn = (group: string) => {
+    const rect = svg?.querySelector(`[data-group="${group}"]`);
+    return [rect?.getAttribute('data-mark'), rect?.getAttribute('fill')?.replace(/#.*-/, '#'), rect?.getAttribute('stroke') ?? null];
+  };
+  const marks = ['uploads', 'notes', 'townwiseAi', 'orders', 'team'].map(drawn);
+  expect(marks).toEqual([
+    ['solid', 'var(--tw-white)', null],
+    ['hatch', 'url(#hatch)', 'var(--tw-white)'],
+    ['gray', 'var(--tw-line)', null],
+    ['dots', 'url(#dots)', 'var(--tw-white)'],
+    ['outline', 'none', 'var(--tw-white)'],
+  ]);
+  expect(new Set(marks.map(([mark]) => mark)).size).toBe(5);
+  // Each pattern a fill names is defined.
+  for (const name of ['hatch', 'dots']) {
+    const fill = svg?.querySelector(`[data-mark="${name}"]`)?.getAttribute('fill') ?? '';
+    expect(document.querySelector(fill.replace(/^url\((.*)\)$/, '$1'))?.tagName.toLowerCase()).toBe('pattern');
+  }
+  // The key's marks match the bars'.
+  const key = [...document.querySelectorAll('[data-key]')].map((entry) => [entry.getAttribute('data-key'), entry.querySelector('[data-mark]')?.getAttribute('data-mark'), entry.textContent]);
+  expect(key).toEqual([
+    ['uploads', 'solid', 'Uploads and data'], ['notes', 'hatch', 'Notes, rules and calendars'], ['townwiseAi', 'gray', 'TownwiseAI'],
+    ['orders', 'dots', 'Orders'], ['team', 'outline', 'Team and settings'],
+  ]);
+  expect([...(svg?.querySelectorAll('[data-group]') ?? [])].some((rect) => rect.getAttribute('fill') === 'var(--tw-mint)')).toBe(false);
+  expect([...(svg?.querySelectorAll('[data-band="people"]') ?? [])].every((rect) => rect.getAttribute('fill') === 'var(--tw-mint)')).toBe(true);
+});
+
+test.each([[320, true], [600, false]])('at %ipx, 90 days draw as weeks: %s', async (width, weekly) => {
+  setWidth(width);
+  const api = consoleApi();
+  answer(api, 90, overviewAnswer(90));
+  renderAt('/admin/overview?days=90', api);
+  await screen.findByRole('heading', { name: 'Activity by day' });
+  const svg = document.querySelector('svg[data-chart="activity"]');
+  const caption = 'Each bar is a week, counted back from the newest day: the week’s actions, and the most people on one of its days.';
+  if (weekly) {
+    expect(svg?.querySelectorAll('[data-week]')).toHaveLength(1);
+    expect(svg?.querySelector('[data-week="2026-11-11"]')).toBeTruthy();
+    expect(screen.getByText(caption)).toBeTruthy();
+    expect(screen.getByText('Most people on one day of each week')).toBeTruthy();
+  } else {
+    expect(svg?.querySelectorAll('[data-day]')).toHaveLength(2);
+    expect(screen.queryByText(caption)).toBeNull();
+  }
 });
 
 test('the console’s wordmark opens Overview, and Requests stays at /admin', async () => {

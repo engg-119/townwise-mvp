@@ -121,20 +121,56 @@ export const GROUP_LABEL: Readonly<Record<ActionGroup, string>> = {
   team: 'Team and settings',
 };
 
-export function dayActions(day: OverviewDay): number {
+/** The groups' names mid-sentence: lower case, but TownwiseAI keeps its name. */
+export function groupWords(group: ActionGroup): string {
+  const label = GROUP_LABEL[group];
+  return group === 'townwiseAi' ? label : label.toLowerCase();
+}
+
+export function dayActions(day: Pick<OverviewDay, 'actions'>): number {
   return ACTION_GROUPS.reduce((sum, group) => sum + day.actions[group], 0);
 }
 
-/** The chart's summary: actions recorded by group, and the day the most people were active. */
+/** One bar of the activity chart: a day, or a week of days from `from` to `to`. */
+export interface ChartBar {
+  from: string;
+  to: string;
+  /** People who used the app that day; for a week, the most on one of its days (people are not summed across days). */
+  activePeople: number;
+  actions: Readonly<Record<ActionGroup, number>>;
+}
+
+/**
+ * The chart's bars, oldest first: one per day, or with `weekly` one per 7 days counted back from the newest day (so the
+ * oldest may be shorter), with the week's actions summed and the most people on one of its days.
+ */
+export function chartBars(series: readonly OverviewDay[], weekly: boolean): ChartBar[] {
+  if (!weekly) return series.map((day) => ({ from: day.day, to: day.day, activePeople: day.activePeople, actions: day.actions }));
+  const bars: ChartBar[] = [];
+  for (let end = series.length; end > 0; end -= 7) {
+    const days = series.slice(Math.max(0, end - 7), end);
+    const first = days[0];
+    const last = days[days.length - 1];
+    if (first === undefined || last === undefined) continue;
+    bars.unshift({
+      from: first.day, to: last.day,
+      activePeople: Math.max(...days.map((day) => day.activePeople)),
+      actions: Object.fromEntries(ACTION_GROUPS.map((group) => [group, days.reduce((sum, day) => sum + day.actions[group], 0)])) as Record<ActionGroup, number>,
+    });
+  }
+  return bars;
+}
+
+/** The chart's summary: actions recorded by group, and the day the most people used the app. */
 export function activitySummary(series: readonly OverviewDay[], days: number): string {
   const window = `the last ${String(days)} days (UTC)`;
   const total = series.reduce((sum, day) => sum + dayActions(day), 0);
   const busiest = series.reduce<OverviewDay | null>((best, day) => (best === null || day.activePeople > best.activePeople ? day : best), null);
-  if (total === 0 && (busiest === null || busiest.activePeople === 0)) return `No one was active and no actions were recorded in ${window}.`;
-  const groups = ACTION_GROUPS.map((group) => `${formatCount(series.reduce((sum, day) => sum + day.actions[group], 0))} ${GROUP_LABEL[group]}`);
-  const actions = `${plural(total, 'action', 'actions')} recorded in ${window}: ${groups.join(', ')}.`;
-  if (busiest === null || busiest.activePeople === 0) return `${actions} No one was active on any day.`;
-  return `${actions} The most people active on one day: ${formatCount(busiest.activePeople)}, on ${formatDate(busiest.day)}.`;
+  if (total === 0 && (busiest === null || busiest.activePeople === 0)) return `No one used the app and no actions were recorded in ${window}.`;
+  const groups = ACTION_GROUPS.map((group) => `${groupWords(group)} ${formatCount(series.reduce((sum, day) => sum + day.actions[group], 0))}`);
+  const actions = `${plural(total, 'action', 'actions')} recorded in ${window}: ${groups.join('; ')}.`;
+  if (busiest === null || busiest.activePeople === 0) return `${actions} No one used the app on any day.`;
+  return `${actions} The most people who used the app on one day: ${formatCount(busiest.activePeople)}, on ${formatDate(busiest.day)}.`;
 }
 
 /** “$4.10”, or “$20” for whole dollars. */

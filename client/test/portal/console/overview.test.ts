@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import type { ApiClient } from '../../../src/api/client';
 import { fetchOverview } from '../../../src/portal/console/api';
 import {
-  accuracyWords, activitySummary, attentionLines, changeWords, forecastWords, GROUP_LABEL, overviewDaysOf, overviewHref, recordingLine,
+  accuracyWords, activitySummary, attentionLines, changeWords, chartBars, groupWords, forecastWords, GROUP_LABEL, overviewDaysOf, overviewHref, recordingLine,
   spendWords, tilesOf, usd, windowLine,
 } from '../../../src/portal/console/overview';
 import { ACTION_GROUPS, overviewSchema, type Overview } from '../../../src/portal/console/schemas';
@@ -220,12 +220,25 @@ describe('activity by day', () => {
     ]);
   });
 
-  test('sums the window’s actions by group and names the busiest day', () => {
+  test('sums the window’s actions by group, the names in lower case mid-sentence, and names the busiest day', () => {
     const { series } = overview(7);
+    expect(ACTION_GROUPS.map(groupWords)).toEqual(['uploads and data', 'notes, rules and calendars', 'TownwiseAI', 'orders', 'team and settings']);
     expect(activitySummary(series, 7)).toBe(
-      '9 actions recorded in the last 7 days (UTC): 2 Uploads and data, 4 Notes, rules and calendars, 1 TownwiseAI, 1 Orders, 1 Team and settings. The most people active on one day: 5, on Nov 16, 2026.',
+      '9 actions recorded in the last 7 days (UTC): uploads and data 2; notes, rules and calendars 4; TownwiseAI 1; orders 1; team and settings 1. The most people who used the app on one day: 5, on Nov 16, 2026.',
     );
     const quiet = series.map((day) => ({ ...day, activePeople: 0, actions: { uploads: 0, notes: 0, townwiseAi: 0, orders: 0, team: 0 } }));
-    expect(activitySummary(quiet, 7)).toBe('No one was active and no actions were recorded in the last 7 days (UTC).');
+    expect(activitySummary(quiet, 7)).toBe('No one used the app and no actions were recorded in the last 7 days (UTC).');
+  });
+
+  test('draws a bar a day, or a bar a week counted back from the newest day, actions summed and people at their most', () => {
+    const { series } = overview(90);
+    expect(chartBars(series, false)).toHaveLength(90);
+    const weeks = chartBars(series, true);
+    // 90 days: 12 weeks of 7 and the oldest 6.
+    expect(weeks).toHaveLength(13);
+    expect(weeks.map((week) => [week.from, week.to]).slice(0, 1)).toEqual([['2026-08-20', '2026-08-25']]);
+    expect(weeks.at(-1)).toEqual({
+      from: '2026-11-11', to: '2026-11-17', activePeople: 5, actions: { uploads: 2, notes: 4, townwiseAi: 1, orders: 1, team: 1 },
+    });
   });
 });
