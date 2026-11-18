@@ -157,6 +157,11 @@ export interface AiActionPlan {
   readonly uploadId: string;
   readonly itemId: string;
   readonly calibrationId: string;
+  /**
+   * D46: one per closed pattern the answer may hold (5); absent on a plan saved before them, which then suggests none.
+   * A closure the guard refuses for its span takes its event's unused note id instead.
+   */
+  readonly suggestionIds?: readonly string[];
 }
 
 /** Why the read wrote no days. `already_had_days`: every verified day was already stored (AI days never replace one). */
@@ -193,7 +198,17 @@ export interface AiActionsOutcome {
   readonly itemId: string | null;
   readonly itemReason: AiItemReason | null;
   readonly calibration: AiCalibration;
+  /**
+   * D46: the suggested closure rules it stored (ids), and the patterns and guard-refused closures it did not, by why: a
+   * row or rule already says it, the location's 10 open file suggestions, or the rule schedule rules refuse it. Absent on
+   * an outcome recorded before them.
+   */
+  readonly rulesSuggested?: readonly string[];
+  readonly rulesSkipped?: AiRulesSkipped;
 }
+
+/** D46: the closed patterns a read did not suggest, by why. */
+export interface AiRulesSkipped { readonly duplicate: number; readonly cap: number; readonly invalid: number }
 
 /** S2: the plan (saved first), and the outcome (null until every write is done). */
 export interface AiReadActions { readonly plan: AiActionPlan; readonly outcome: AiActionsOutcome | null }

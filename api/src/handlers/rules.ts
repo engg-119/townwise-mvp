@@ -11,6 +11,7 @@ import { z } from 'zod';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import { ruleSuggestionViews } from '../agent/rule-suggestion-views.ts';
 import { utcDay } from '../dates.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
 import { authorEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
@@ -85,7 +86,7 @@ function scheduleIn(raw: unknown, today: string): RuleSchedule | null {
 }
 
 /** True when the two schedules say the same thing, field by field. */
-function sameSchedule(a: RuleSchedule | null, b: RuleSchedule | null): boolean {
+export function sameSchedule(a: RuleSchedule | null, b: RuleSchedule | null): boolean {
   if (a === null || b === null) return a === b;
   return a.kind === b.kind && a.startDate === b.startDate && a.endDate === b.endDate && a.effect === b.effect
     && a.expectedGuests === b.expectedGuests && a.startTime === b.startTime && a.endTime === b.endTime
@@ -162,16 +163,22 @@ export async function addRule(
   return rule;
 }
 
-/** GET /api/org/locations/:locationId/rules, oldest first. */
+/**
+ * GET /api/org/locations/:locationId/rules, oldest first, with (D46) `suggested`: the open suggested closure rules from
+ * files and the sales history (agent/rule-suggestion-views.ts), which P29 lists above Add a rule.
+ */
 export async function listRules(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
-  const rules = await ctx.stores.businessRules.list(caller.scope, location.id);
+  const [rules, suggested] = await Promise.all([
+    ctx.stores.businessRules.list(caller.scope, location.id), ruleSuggestionViews(ctx, caller, location),
+  ]);
   const authors = [...new Set(rules.filter((rule) => !rule.byStaff).map((rule) => rule.createdBy))];
   const emails = new Map(await Promise.all(authors.map(async (userId) => [userId, await authorEmail(ctx, userId, false)] as const)));
   res.status(200).json({
     rules: rules.map((rule) => ruleView(rule, rule.byStaff ? TOWNWISE_STAFF : emails.get(rule.createdBy) ?? DELETED_PERSON, caller)),
     limit: MAX_RULES,
+    suggested,
   });
 }
 

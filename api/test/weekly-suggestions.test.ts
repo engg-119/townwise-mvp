@@ -143,6 +143,14 @@ describe('the checks', () => {
     expect(keptSuggestions(answer(CLOSURE, { ...CLOSURE, why: 'Again.' }, asRule), checks())).toHaveLength(1);
   });
 
+  it('drop a rule whose closure key a file or sales suggestion holds (D46), even with another start', () => {
+    const standing = { ...CLOSURE, type: 'rule', ruleText: 'Shut on Thursdays', weekdays: [4], endDate: null };
+    expect(keptSuggestions(answer(standing), checks({ closureKeys: new Set(['closed|w=4|ongoing']) }))).toEqual([]);
+    expect(keptSuggestions(answer(standing), checks({ closureKeys: new Set(['closed|w=1|ongoing']) }))).toHaveLength(1);
+    // A note is never dropped by a key.
+    expect(keptSuggestions(answer(CLOSURE), checks({ closureKeys: new Set(['closed|w=*|2026-11-26..2026-11-26']) }))).toHaveLength(1);
+  });
+
   it('a rule with a yearly season decides other days than the same schedule without one', () => {
     const asRule = { ...CLOSURE, type: 'rule', ruleText: 'Closed from Thanksgiving', endDate: null };
     const yearly = { ...SCHEDULE, endDate: null, season: { repeat: 'yearly', from: '11-26', to: '11-27' } } as const;

@@ -147,6 +147,7 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
           locationId: file.locationId, kind: result.kind, events: result.eventCount, days: result.dayCount,
           ...(done === null ? {} : {
             notes: done.notes.length, daysWritten: done.daysWritten, item: done.itemId !== null, calibration: done.calibration.status,
+            rulesSuggested: done.rulesSuggested?.length ?? 0,
           }),
         },
       });
@@ -276,6 +277,7 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
       ...(done === null ? {} : {
         notes: done.notes.length, notesSkipped: done.notesSkipped, daysWritten: done.daysWritten, daysAlreadyHad: done.daysAlreadyHad,
         daysReason: done.daysReason, item: done.itemId !== null, itemReason: done.itemReason, calibration: done.calibration.status,
+        rulesSuggested: done.rulesSuggested?.length ?? 0, rulesSkipped: done.rulesSkipped ?? { duplicate: 0, cap: 0, invalid: 0 },
       }),
     }, 'townwise.ai_read');
     await audit(scope, file, result, done);

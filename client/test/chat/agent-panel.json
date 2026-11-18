@@ -27,7 +27,15 @@
         "note": { "kind": "closure", "startDate": "2026-07-04", "weekdays": null, "effect": "closed", "expectedGuests": null, "startTime": null, "endTime": null, "endDate": "2026-07-04", "detail": null }
       }
     ],
-    "weeklySuggestions": { "on": true, "available": false, "canChange": false }
+    "weeklySuggestions": { "on": true, "available": false, "canChange": false },
+    "ruleSuggestions": [
+      {
+        "id": "0000000000000000000000d1", "source": "file", "text": "Closed on Tuesdays",
+        "schedule": { "kind": "closure", "startDate": "2026-06-01", "weekdays": [2], "effect": "closed", "expectedGuests": null, "startTime": null, "endTime": null, "endDate": null },
+        "scheduleSummary": "Closed on Tuesdays from Jun 1, 2026", "file": { "ref": "f_0000000000000000000000f1", "title": "Sentinel-file-name.csv" },
+        "evidence": null, "canDecide": true
+      }
+    ]
   },
   "answer": {
     "questionId": "gap_2026-05-12_2026-05-13",

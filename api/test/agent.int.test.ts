@@ -94,8 +94,8 @@ async function addRules(locationId: string, schedules: readonly (Record<string, 
   })));
 }
 
-/** A member's panel at a location with no weekly suggestions (openspec change weekly-forecast-suggestions). */
-const NO_SUGGESTIONS = { suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false } };
+/** A member's panel at a location with no weekly suggestions (openspec change weekly-forecast-suggestions) and no suggested rules (D46). */
+const NO_SUGGESTIONS = { suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false }, ruleSuggestions: [] };
 
 async function panel(locationId: string, session = member): Promise<{ status: number; body: AgentPanel }> {
   const res = await call(server, `/api/org/locations/${locationId}/agent`, { session });
@@ -816,6 +816,13 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
         },
       }),
     ]);
+
+    // A suggested closure rule a read of that file stored (openspec change suggest-closure-rules).
+    await server.connection.collection('tw_agent_suggestions').insertOne(suggestion('0000000000000000000000d1', {
+      type: 'rule', text: 'Closed on Tuesdays', why: null, calendarIds: [], source: 'file', fileId: new Types.ObjectId('0000000000000000000000f1'),
+      closureKey: 'closed|w=2|ongoing',
+      content: { kind: 'closure', startDate: '2026-06-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null },
+    }));
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
     expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });

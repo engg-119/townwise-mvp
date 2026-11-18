@@ -12,8 +12,10 @@ import type { OrgScope } from '../src/access/policy.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import type { DecideResult } from '../src/handlers/weekly-suggestions.ts';
 import { SUGGESTIONS_SEEN_MS } from '../src/lab/schedule.ts';
+import { suggestFor } from '../src/lab/suggestions.ts';
 import { createAgentSuggestionStore, type NewSuggestion, type SuggestionRecord } from '../src/stores/agent-suggestions.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
+import { message, messagesOf, scriptedModel, text } from './helpers/chat-model.ts';
 import { addGrant, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -383,5 +385,32 @@ describe('suggested closure rules beside weekly ones (openspec change suggest-cl
     });
     expect(other).toBeNull();
     expect(await store.findByKey(t.scope, t.locationId, 'closed|w=1|ongoing')).toMatchObject({ id, status: 'dismissed' });
+  });
+});
+
+describe('the weekly pass beside suggested closure rules (D46)', () => {
+  it('sends no file or sales suggestion in alreadySuggested, and drops a weekly rule matching one’s closure key', async () => {
+    const t = await team();
+    const store = createAgentSuggestionStore(server.connection);
+    await store.insertOne(t.scope, {
+      id: new Types.ObjectId().toHexString(), locationId: t.locationId, week: '2026-06-01', source: 'file', fileId: new Types.ObjectId().toHexString(),
+      text: 'Closed on Thursdays', closureKey: 'closed|w=4|ongoing', now: server.clock.now(),
+      schedule: { kind: 'closure', startDate: '2026-06-01', endDate: null, weekdays: [4], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    });
+    const [weekly] = await stored(t, [THANKSGIVING_LIKE]);
+    const reply = JSON.stringify({ suggestions: [{
+      type: 'rule', ruleText: 'Shut Thursdays', kind: 'closure', startDate: '2026-06-04', endDate: null, weekdays: [4], effect: 'closed',
+      expectedGuests: null, detail: null, startTime: null, endTime: null, why: 'Thursdays are quiet.', calendarIds: [],
+    }] });
+    const chat = scriptedModel();
+    chat.script({ kind: 'message', message: message([text(reply)]) });
+    const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('no location');
+    const outcome = await suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, chat }, t.scope, location, '2026-06-01');
+    expect(outcome).toEqual({ status: 'none' });
+    const [sent] = messagesOf(chat.calls[0]);
+    expect((JSON.parse(typeof sent?.content === 'string' ? sent.content : '') as { alreadySuggested: unknown[] }).alreadySuggested).toEqual([
+      expect.objectContaining({ type: 'note', startDate: (weekly?.type === 'note' ? weekly.note.startDate : '') }),
+    ]);
   });
 });

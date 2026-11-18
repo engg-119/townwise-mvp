@@ -152,6 +152,9 @@ const LIKELY_CLOSED_ANSWER_WORDS: Readonly<Record<string, string>> = {
 };
 
 /** What TownwiseAI found a file it read to be (spec 11A.9). */
+/** D46: where a suggested closure rule came from; a weekly suggestion's event carries no source. */
+const SUGGESTION_SOURCE_WORDS: Readonly<Record<string, string>> = { file: ' from a file', sales: ' from the sales history' };
+
 const AI_KIND_WORDS: Readonly<Record<string, string>> = {
   sales: 'sales', calendar: 'a calendar', inventory: 'inventory', menu: 'a menu', staffing: 'staffing', other: 'other',
 };
@@ -210,9 +213,14 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       const read = `TownwiseAI read a file (${AI_KIND_WORDS[text(d.kind)] ?? 'other'}): ${text(d.events)} dated events, ${text(d.days)} days`;
       // Events from before the actions stage carry no counts of what the read wrote.
       if (d.notes === undefined) return read;
-      return `${read}; it added ${text(d.notes)} notes and ${text(d.daysWritten)} days${d.item === true ? ' and kept its notes on the file' : ''}`;
+      const rules = typeof d.rulesSuggested === 'number' && d.rulesSuggested > 0 ? `, and suggested ${text(d.rulesSuggested)} business rules` : '';
+      return `${read}; it added ${text(d.notes)} notes and ${text(d.daysWritten)} days${d.item === true ? ' and kept its notes on the file' : ''}${rules}`;
     }
-    case 'file.ai_undone': return `Undid what TownwiseAI made from a file: ${text(d.notes)} notes, ${text(d.days)} days and ${text(d.items)} items`;
+    case 'file.ai_undone':
+      // D46: events from before suggested rules carry no count of them.
+      return typeof d.suggestions === 'number' && d.suggestions > 0
+        ? `Undid what TownwiseAI made from a file: ${text(d.notes)} notes, ${text(d.days)} days, ${text(d.items)} items and ${text(d.suggestions)} suggested rules still waiting`
+        : `Undid what TownwiseAI made from a file: ${text(d.notes)} notes, ${text(d.days)} days and ${text(d.items)} items`;
     case 'org.originals_deleted':
       return `Purged ${text(d.count)} original files, for ${ORIGINALS_BASIS[text(d.basis)] ?? 'another reason'}: each deleted at once, or as soon as Townwise finishes uploading or reading it`;
     case 'note.created': return noteSummary('Added', d);
@@ -236,8 +244,10 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
       }
       return `Answered TownwiseAI’s question about days with no sales: ${QUESTION_ANSWER_WORDS[text(d.answer)] ?? text(d.answer)}`;
     case 'org.weekly_suggestions_changed': return d.on === true ? 'Turned TownwiseAI’s weekly suggestions on' : 'Turned TownwiseAI’s weekly suggestions off';
-    case 'agent.suggestion_accepted': return d.type === 'rule' ? 'Accepted a business rule TownwiseAI suggested' : 'Accepted a note TownwiseAI suggested';
-    case 'agent.suggestion_dismissed': return d.type === 'rule' ? 'Dismissed a business rule TownwiseAI suggested' : 'Dismissed a note TownwiseAI suggested';
+    case 'agent.suggestion_accepted':
+      return `Accepted${d.edited === true ? ', edited,' : ''} ${d.type === 'rule' ? 'a business rule' : 'a note'} TownwiseAI suggested${SUGGESTION_SOURCE_WORDS[text(d.source)] ?? ''}`;
+    case 'agent.suggestion_dismissed':
+      return `Dismissed ${d.type === 'rule' ? 'a business rule' : 'a note'} TownwiseAI suggested${SUGGESTION_SOURCE_WORDS[text(d.source)] ?? ''}`;
     // Orders.
     case 'order.setup_saved': return `Saved the ordering setup: ${text(d.supplierCount)} suppliers and ${text(d.itemCount)} items`;
     case 'order.item_sales_uploaded':

@@ -11,7 +11,8 @@
 // The answer is at most 5 suggestions, each a note or a business rule with a schedule (D31), a one-sentence why and the
 // calendar ids it rests on. Each is checked by the note rules (spec 12) or D31's schedule rules, and dropped when it
 // fails them, starts before tomorrow in the town or after the 91 days, decides the same days the same way as a note, a
-// rule or an earlier suggestion of the location, or repeats a rule's words. Kept ones are stored open
+// rule or an earlier suggestion of the location, or repeats a rule's words, or (D46) is a rule whose closure key a file or
+// sales suggestion holds (those are never sent: nothing new reaches Anthropic). Kept ones are stored open
 // (stores/agent-suggestions.ts) and change nothing until an org admin accepts one.
 //
 // Bounds: the organization's switch is read again right before each location (an org admin's off stops the locations
@@ -30,6 +31,7 @@ import type {
 import { z } from 'zod';
 
 import type { OrgScope } from '../access/policy.ts';
+import { closureKeyOf } from '../agent/closure-suggestions.ts';
 import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { ChatModel } from '../chat/model.ts';
@@ -212,6 +214,11 @@ export interface SuggestionChecks {
   readonly suggested: readonly SuggestionContent[];
   /** The calendar ids the request sent. */
   readonly calendarIds: ReadonlySet<string>;
+  /**
+   * D46: the closure keys of the location's file and sales suggestions (any status): a rule with one is dropped, since
+   * sameDays compares starts and would miss a standing rule. They are never sent.
+   */
+  readonly closureKeys?: ReadonlySet<string>;
 }
 
 /** The why: one line, trimmed, 1 to 280 characters with no control or format character; null otherwise. */
@@ -263,6 +270,7 @@ export function keptSuggestions(output: unknown, checks: SuggestionChecks): NewS
     if (days.startDate < tomorrow || days.startDate > checks.to) continue;
     if (taken.some((other) => sameDays(other, days))) continue;
     if (content.type === 'rule' && words.has(content.text.toLowerCase())) continue;
+    if (content.type === 'rule' && checks.closureKeys?.has(closureKeyOf(content.schedule)) === true) continue;
     const calendarIds = [...new Set(item.data.calendarIds.filter((id) => checks.calendarIds.has(id)))].slice(0, MAX_CALENDAR_IDS);
     kept.push({ content, why, calendarIds });
     taken.push(days);
@@ -327,6 +335,7 @@ function monthOf(at: Date): string {
  */
 export async function suggestionsInput(
   ctx: Pick<SuggestionsContext, 'stores'>, scope: OrgScope, location: LocationRecord, today: string, suggested: readonly SuggestionContent[],
+  closureKeys: ReadonlySet<string> = new Set(),
 ): Promise<{ input: SuggestionsInput; checks: SuggestionChecks }> {
   const { stores } = ctx;
   const at = (days: number): string => utcDay(new Date(`${today}T00:00:00.000Z`), days);
@@ -389,7 +398,7 @@ export async function suggestionsInput(
     input: { today, from, to, town: { name: location.town.name, state: location.town.state }, calendar, notes: sent, rules: inRange, suggested: earlier },
     checks: {
       today, to, notes, rules: rules.map((rule) => ({ text: rule.text, schedule: rule.schedule })), suggested,
-      calendarIds: new Set(calendar.map((entry) => entry.id)),
+      calendarIds: new Set(calendar.map((entry) => entry.id)), closureKeys,
     },
   };
 }
@@ -443,10 +452,13 @@ export async function suggestFor(
   const today = localDay(now, timeZoneOf(location.town).timeZone);
   try {
     await stores.agentSuggestions.expire(scope, location.id, today, now);
-    const earlier = (await stores.agentSuggestions.recent(scope, location.id)).map((record): SuggestionContent => (record.type === 'note'
+    const recent = await stores.agentSuggestions.recent(scope, location.id);
+    // D46: file and sales suggestions are never sent; their closure keys drop a matching rule instead.
+    const earlier = recent.filter((record) => record.source === 'weekly').map((record): SuggestionContent => (record.type === 'note'
       ? { type: 'note', note: record.note }
       : { type: 'rule', text: record.text, schedule: record.schedule }));
-    const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier);
+    const closureKeys = new Set(recent.flatMap((record) => (record.closureKey === null ? [] : [record.closureKey])));
+    const { input, checks } = await suggestionsInput(ctx, scope, location, today, earlier, closureKeys);
     const params = suggestionsRequest(input);
     const reserve = suggestionsReserveMicroUsd(params);
     const budget = Math.round(ctx.config.chatMonthlyBudgetUsd * 1_000_000);

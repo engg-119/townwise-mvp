@@ -20,27 +20,27 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - an answer with no `closedPatterns` reads as empty.
 
   Pass `today` from `files/ai-reader.ts`.
-- [ ] 1.4 `stores/files.ts`: the answer's `closedPatterns`, `plan.suggestionIds` (absent on old plans), and the outcome's `rulesSuggested` (ids) and `rulesSkipped { duplicate, cap, invalid }`.
-- [ ] 1.5 `files/ai-actions.ts`: after the notes, while the read is held, each pattern becomes an open suggestion (`source: 'file'`, `fileId`, `closureKey`, Townwise's words) under its planned id.
+- [x] 1.4 `stores/files.ts`: the answer's `closedPatterns`, `plan.suggestionIds` (absent on old plans), and the outcome's `rulesSuggested` (ids) and `rulesSkipped { duplicate, cap, invalid }`.
+- [x] 1.5 `files/ai-actions.ts`: after the notes, while the read is held, each pattern becomes an open suggestion (`source: 'file'`, `fileId`, `closureKey`, Townwise's words) under its planned id.
   - The planned id is looked up first; the caps of 5 a read and 10 open per location apply only to ids not yet written.
   - A duplicate `closureKey` counts `duplicate`.
   - A `closure` event refused for its span only, ending on or after today, becomes a suggestion under its own unused `noteIds[index]`. It is counted in `rulesSuggested`, not `notesSkipped.guard`. The 31-day total and buyouts stay `guard`.
-- [ ] 1.6 `files/ai-reader.ts`: `townwise.ai_read` gains `rulesSuggested` and `rulesSkipped`; `file.ai_read` gains `rulesSuggested`.
-- [ ] 1.7 `handlers/data.ts`: `undoAiRead` finishes as accepted each open suggestion whose rule exists under its id, deletes the other open ones, and keeps accepted and dismissed ones. `undoable` counts suggestions, and `file.ai_undone` gains `suggestions`.
-- [ ] 1.8 New `handlers/rule-suggestions.ts` and two `TOWNWISE_ROUTES` entries, `org.agent.rule_suggestion_accept` and `org.agent.rule_suggestion_dismiss` (`.../agent/rule-suggestions/:suggestionId/accept|dismiss`, `member`, `openAsAdmin: true`, 2 KB).
+- [x] 1.6 `files/ai-reader.ts`: `townwise.ai_read` gains `rulesSuggested` and `rulesSkipped`; `file.ai_read` gains `rulesSuggested`.
+- [x] 1.7 `handlers/data.ts`: `undoAiRead` finishes as accepted each open suggestion whose rule exists under its id, deletes the other open ones, and keeps accepted and dismissed ones. `undoable` counts suggestions, and `file.ai_undone` gains `suggestions`.
+- [x] 1.8 New `handlers/rule-suggestions.ts` and two `TOWNWISE_ROUTES` entries, `org.agent.rule_suggestion_accept` and `org.agent.rule_suggestion_dismiss` (`.../agent/rule-suggestions/:suggestionId/accept|dismiss`, `member`, `openAsAdmin: true`, 2 KB).
   - A `weekly` row answers 404 before any write.
   - Accept takes `{}` or `{ rule: { text, schedule } }`, checked by `ruleTextOf` and `readRuleSchedule`.
   - A rule already under the id with different words or schedule answers 409 `already_decided` with the stored rule.
   - `edited` is worked out from the stored rule.
   - 409 `rule_limit` and `rule_exists` leave the suggestion open.
   - Records `agent.suggestion_accepted { source, edited }` or `agent.suggestion_dismissed { source }` once, and logs `townwise.agent_suggestion` with `source` and `edited`.
-- [ ] 1.9 `handlers/weekly-suggestions.ts`: `suggestionOf` answers 404 for a `file` or `sales` row. No other change.
-- [ ] 1.10 `handlers/agent.ts`: GET .../agent adds `ruleSuggestions`. `handlers/rules.ts`: GET .../rules adds `suggested`. Both use one builder, listing file rows from `listOpenRules`.
-- [ ] 1.11 `lab/suggestions.ts`:
+- [x] 1.9 `handlers/weekly-suggestions.ts`: `suggestionOf` answers 404 for a `file` or `sales` row. No other change.
+- [x] 1.10 `handlers/agent.ts`: GET .../agent adds `ruleSuggestions`. `handlers/rules.ts`: GET .../rules adds `suggested`. Both use one builder, listing file rows from `listOpenRules`.
+- [x] 1.11 `lab/suggestions.ts`:
   - `keptSuggestions` drops a weekly rule whose `closureKey` matches a file or sales row;
   - `alreadySuggested` leaves file and sales rows out;
   - `sameDays` compares `season`.
-- [ ] 1.12 `stores/audit-events.ts` allowlists (`file.ai_read` `rulesSuggested`; `file.ai_undone` `suggestions`; `agent.suggestion_accepted` `source`, `edited`; `agent.suggestion_dismissed` `source`) and `audit.ts` wording.
+- [x] 1.12 `stores/audit-events.ts` allowlists (`file.ai_read` `rulesSuggested`; `file.ai_undone` `suggestions`; `agent.suggestion_accepted` `source`, `edited`; `agent.suggestion_dismissed` `source`) and `audit.ts` wording.
 
 ## 2. The sales source (its own sign-off: `[CONFIRM: the sales history suggests standing closed weekdays]`)
 
@@ -127,7 +127,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 
 ## 6. Tests
 
-- [ ] 6.1 Unit tests:
+- [x] 6.1 Unit tests:
   - `api/test/closure-suggestions.test.ts`: keys, words and `isSuggestable`, including an unscheduled same-words rule.
   - The reader prompt and check tests (`api/test/files/`):
     - "Closed Mondays" gives weekdays `[1]`;
@@ -142,7 +142,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - `scheduleSummary` and the reason label;
   - the client `noteCovers` mirror and the P29 form's Every year checks (web and native);
   - a rule with no season unchanged in the existing forecast, lab input and questions tests.
-- [ ] 6.3 Integration tests in `api/test/closure-suggestions.int.test.ts`:
+- [x] 6.3 Integration tests in `api/test/closure-suggestions.int.test.ts`:
   - a file read with "Closed Mondays" makes one open suggestion and no rule;
   - a retried read makes it once and counts no `cap`;
   - an action on a pre-change saved answer and plan makes none and fails nothing;
@@ -161,8 +161,8 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - 409 `rule_limit` at 30 leaves the suggestion open;
   - a yearly suggestion confirms into a yearly rule;
   - logs and audit carry no rule text, file name or date sentinel.
-- [ ] 6.4 The forecast is unchanged until accepted: with a published forecast, next Monday stays open while the suggestion is open, and closes once confirmed. A confirmed yearly rule closes the season's days and no others.
-- [ ] 6.5 Weekly pins in `api/test/weekly-suggestions.int.test.ts` and `.test.ts`:
+- [x] 6.4 The forecast is unchanged until accepted: with a published forecast, next Monday stays open while the suggestion is open, and closes once confirmed. A confirmed yearly rule closes the season's days and no others.
+- [x] 6.5 Weekly pins in `api/test/weekly-suggestions.int.test.ts` and `.test.ts`:
   - the pass's `expire()` leaves an ongoing file row that starts today open;
   - `listOpen` returns no file or sales row;
   - `alreadySuggested` holds no file or sales row;

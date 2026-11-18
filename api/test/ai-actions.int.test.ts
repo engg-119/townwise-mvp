@@ -362,8 +362,9 @@ describe('notes from the events', () => {
     await readAs(team.member, l1, fileId);
     const notes = await notesOf(l1);
     expect(notes.map((note) => note.detail)).toEqual(['Winter break', 'Spring break', 'Private buyout', 'Long festival: Back room']);
-    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 0, guard: 2 } });
-    expect((await itemOf(team.member, l1, `f_${fileId}`)).ai?.notesSkipped).toEqual({ duplicate: 0, cap: 0, invalid: 0, guard: 2 });
+    // D46: the renovation, a closure over 14 days still to come, is a suggested rule instead; Fall break stays guard.
+    expect(await outcomeOf(fileId)).toMatchObject({ notesSkipped: { duplicate: 0, cap: 0, invalid: 0, guard: 1 }, rulesSuggested: [expect.any(String)] });
+    expect((await itemOf(team.member, l1, `f_${fileId}`)).ai?.notesSkipped).toEqual({ duplicate: 0, cap: 0, invalid: 0, guard: 1 });
   });
 
   /** A read Townwise staff asked for while open as admin under `grantId`, queued straight into the file. */
@@ -932,7 +933,7 @@ describe('DELETE /api/org/locations/:locationId/data/:ref/ai', () => {
     expect(undone).toMatchObject({
       actorUserId: team.admin.userId, actorRole: 'org_admin', target: { type: 'file', id: fileId }, details: { locationId: l1, notes: 2, days: 2, items: 1 },
     });
-    expect(Object.keys(undone?.details as object).sort()).toEqual(['days', 'items', 'locationId', 'notes']);
+    expect(Object.keys(undone?.details as object).sort()).toEqual(['days', 'items', 'locationId', 'notes', 'suggestions']);
     expect(JSON.stringify(undone)).not.toMatch(/Qvzx|Wedding|Brunch|Moved/);
     expect(logLines(server).filter((line) => line.msg === 'townwise.ai_read_undone').at(-1)).toMatchObject({ fileId, notes: 2, days: 2, items: 1 });
 
@@ -1023,6 +1024,8 @@ describe('a read whose original is deleted', () => {
     expect(res.status).toBe(200);
     expect((await aiOf(fileId)).result).toEqual({
       kind: 'sales', confidence: 'high', summary: '', facts: [], events: [], days: [], daysCut: false, eventCount: 1, dayCount: 2, daysBorneOut: [],
+      // D46: closed patterns are Townwise's schedules, holding no words of the file.
+      closedPatterns: [],
     });
     const item = await itemOf(team.member, l1, `f_${fileId}`);
     expect(item.ai).toMatchObject({ status: 'done', kind: 'sales', summary: '', facts: [], daysWritten: 2 });
