@@ -12,6 +12,7 @@ import type { BetaContentBlockParam, BetaMessageParam } from '@anthropic-ai/sdk/
 
 import type { OrgScope } from '../access/policy.ts';
 import type { AttachmentKind, ItemContent, ItemForModel, ItemReader, ItemViewer } from '../files/items.ts';
+import type { SentFile } from './tools/registry.ts';
 import type { ChatNode } from './tree.ts';
 import { ATTACHMENTS_BLOCK_OPEN, isContextBlock } from './user-message.ts';
 
@@ -124,6 +125,8 @@ export interface TurnAttachments {
   readonly counts: Readonly<Partial<Record<AttachmentKind, number>>>;
   /** The bytes of the pictures sent, which count toward the turn's MESSAGE_PICTURE_BYTES (read_data_item adds to them). */
   readonly pictureBytes: number;
+  /** D56: by ref, what `content` carries of each file sent: its text and whether it was cut, or a picture. */
+  readonly sent: ReadonlyMap<string, SentFile>;
 }
 
 function attachmentsBlockAt(content: readonly BetaContentBlockParam[]): number {
@@ -301,6 +304,7 @@ export function turnAttachments(reads: readonly AttachmentRead[]): TurnAttachmen
   const lines: string[] = [];
   const content: BetaContentBlockParam[] = [];
   const counts: Partial<Record<AttachmentKind, number>> = {};
+  const sent = new Map<string, SentFile>();
   let tokens = 0;
   let pictureBytes = 0;
   let full = false;
@@ -324,15 +328,17 @@ export function turnAttachments(reads: readonly AttachmentRead[]): TurnAttachmen
     line(noteOf(read));
     if (read.status === 'text') {
       content.push({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: read.text }, title: ref });
+      sent.set(ref, { text: read.text, truncated: read.truncated });
     } else if (read.status === 'picture') {
       pictureBytes += Buffer.byteLength(read.base64, 'base64');
       content.push(
         { type: 'text', text: `The picture ${ref}:` },
         { type: 'image', source: { type: 'base64', media_type: read.mediaType, data: read.base64 } },
       );
+      sent.set(ref, { picture: true });
     }
   }
-  return { block: attachmentsBlock(lines), content, counts, pictureBytes };
+  return { block: attachmentsBlock(lines), content, counts, pictureBytes, sent };
 }
 
 /**

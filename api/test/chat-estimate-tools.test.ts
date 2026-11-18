@@ -107,7 +107,7 @@ function context(opts: {
   const scope = { orgId: '000000000000000000000003' } as unknown as OrgScope;
   return { ctx, scope, location: location(opts.town), today: TODAY, timeZone: 'America/New_York', role: 'member',
     actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null }, turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
-    files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined } } };
+    files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() } };
 }
 
 async function run(name: string, input: unknown, tc: ToolContext = context()): Promise<{ content: string; parsed: Record<string, unknown> }> {

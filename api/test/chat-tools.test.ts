@@ -38,7 +38,7 @@ const FROZEN_NAMES = [
   // The owner's own calendars.
   'get_owner_calendar',
   // Orders.
-  'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule',
+  'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule', 'propose_order_setup',
 ];
 
 describe('the tool registry', () => {
@@ -256,7 +256,7 @@ describe('get_day', () => {
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
       turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
-      files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined } },
+      files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
     };
     return { tc, byIds, ranges };
   }

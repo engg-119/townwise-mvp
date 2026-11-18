@@ -159,8 +159,18 @@ function daysOf(deliveries: readonly DeliveryDraft[]): string {
   return listText(deliveries.map((delivery) => WEEKDAY_NAMES[Number(delivery.deliveryWeekday)] ?? '').filter((day) => day !== ''));
 }
 
+/** How the summary says the content held more items than were given: "... than TownwiseAI {limit} ({cap}), so some were left out. {rest}". */
+export interface CutWording {
+  readonly cap: number;
+  readonly limit: string;
+  readonly rest: string;
+}
+
+/** A read on Ordering setup (D41). A chat card's suggestions pass their own (setupCard.ts CHAT_CUT, D56). */
+export const SETUP_READ_CUT: CutWording = { cap: 150, limit: 'reads at once', rest: 'Read the rest separately.' };
+
 /** What a read did, in lines for the page's status, ending with the lead-in to the problems when there are any. */
-export function proposalSummary(result: ProposalImport, from: ReadFrom = 'file'): string[] {
+export function proposalSummary(result: ProposalImport, from: ReadFrom = 'file', cut: CutWording = SETUP_READ_CUT): string[] {
   const lines: string[] = [];
   if (result.found > 0) {
     lines.push(
@@ -198,7 +208,7 @@ export function proposalSummary(result: ProposalImport, from: ReadFrom = 'file')
     lines.push(`Filled in the delivery days TownwiseAI found for ${listText(result.deliveriesFilled)}, which had none. Check each delivery’s order-by day and time.`);
   }
   if (result.suppliersLeftOut.length > 0) lines.push(`Left out ${listText(result.suppliersLeftOut)}: the setup holds up to 20 suppliers.`);
-  if (result.itemsCut) lines.push(`The ${from} lists more items than TownwiseAI reads at once (150), so some were left out. Read the rest separately.`);
+  if (result.itemsCut) lines.push(`The ${from} lists more items than TownwiseAI ${cut.limit} (${String(cut.cap)}), so some were left out. ${cut.rest}`);
   if (result.partial) lines.push(`The ${from} was too long to read whole, so TownwiseAI read only the start of it.`);
   if (result.problems.length > 0) lines.push(`Left out ${plural(result.problems.length, 'item', 'items')} that failed a check:`);
   return lines;

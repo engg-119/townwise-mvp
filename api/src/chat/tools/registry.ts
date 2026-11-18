@@ -27,6 +27,7 @@ import { readDataTool } from './read-data.ts';
 import { salesDaysTool } from './sales-days.ts';
 import { townCalendarTool } from './town-calendar.ts';
 import { townProfileTool } from './town-profile.ts';
+import { proposeOrderSetupTool } from './order-setup.ts';
 import { orderBoardTool, orderLineTool, orderSetupTool, proposeOrderChangeTool, proposeOrderRuleTool } from './orders.ts';
 import { showVisualTool, type Visual } from './visual.ts';
 
@@ -72,7 +73,16 @@ export interface TurnFiles {
    * holds its file's bytes first, and whatever the turn still holds is given back when it ends.
    */
   readonly bytes: Pick<ByteGate, 'reserve' | 'release'>;
+  /**
+   * D56: by ref, the files whose content this turn's requests carry: those sent with the person's message, then each
+   * one read_data_item hands back. propose_order_setup suggests only from one of them, and reads no file itself. A read
+   * from an earlier turn is sent again only as a stub, so it is never here.
+   */
+  readonly sent: Map<string, SentFile>;
 }
+
+/** What a turn's requests carry of one file: its text as sent (and whether it was cut), or a picture. */
+export type SentFile = { readonly text: string; readonly truncated: boolean } | { readonly picture: true };
 
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
@@ -166,6 +176,8 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   orderSetupTool,
   proposeOrderChangeTool,
   proposeOrderRuleTool,
+  // D56: a card of ordering setup suggestions from a file attached to the conversation. It saves nothing.
+  proposeOrderSetupTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */
