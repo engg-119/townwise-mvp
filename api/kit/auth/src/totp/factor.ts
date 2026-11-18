@@ -135,6 +135,7 @@ async function mfaVerify(rt: AuthRuntime, req: Request, res: Response): Promise<
     const claimed = step !== null && await rt.stores.totp.claimStep({
       userId: claims.sub,
       step,
+      verifiedSecretEnc: factor.secretEnc,
       ...(secretEnc !== undefined ? { secretEnc } : {}),
     });
     if (!claimed) {
@@ -172,7 +173,7 @@ async function disable(rt: AuthRuntime, req: Request, res: Response): Promise<vo
   let accepted = false;
   if (body.code !== undefined) {
     const step = verifyCode(secret, body.code, now);
-    accepted = step !== null && await rt.stores.totp.claimStep({ userId: ctx.userId, step });
+    accepted = step !== null && await rt.stores.totp.claimStep({ userId: ctx.userId, step, verifiedSecretEnc: factor.secretEnc });
   } else if (body.recoveryCode !== undefined) {
     accepted = await rt.stores.totp.consumeRecoveryCode({
       userId: ctx.userId,
@@ -208,7 +209,7 @@ async function resetStart(rt: AuthRuntime, req: Request, res: Response): Promise
   let accepted = false;
   if (body.code !== undefined) {
     const step = verifyCode(rt.cipher.decrypt(factor.secretEnc, context), body.code, now);
-    accepted = step !== null && await rt.stores.totp.claimStep({ userId: ctx.userId, step });
+    accepted = step !== null && await rt.stores.totp.claimStep({ userId: ctx.userId, step, verifiedSecretEnc: factor.secretEnc });
   } else if (body.recoveryCode !== undefined) {
     accepted = await rt.stores.totp.consumeRecoveryCode({ userId: ctx.userId, codeHash: hashToken(body.recoveryCode) });
   }

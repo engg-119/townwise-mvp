@@ -347,7 +347,8 @@ export default function SecurityScreen(): React.JSX.Element {
           )}
           <Actions>
             <Button label="Continue" disabled={startReset.pending} onPress={() => { startReset.submit(); }} />
-            <Button variant="outline" label="Cancel" onPress={leaveReset} />
+            {/* Not while the proof is on its way: its answer would show the new key after Cancel. */}
+            <Button variant="outline" label="Cancel" disabled={startReset.pending} onPress={leaveReset} />
           </Actions>
           <Button
             variant="link"

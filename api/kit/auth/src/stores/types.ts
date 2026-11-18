@@ -85,8 +85,12 @@ export interface TotpStore {
   startEnrollment(input: { userId: string; secretEnc: string; pendingExpiresAt: Date }): Promise<boolean>;
   /** CAS pending AND pendingExpiresAt > now: enabled, lastUsedStep = step, recovery hashes set. */
   confirmEnrollment(input: { userId: string; step: number; recoveryCodeHashes: readonly string[]; now: Date }): Promise<boolean>;
-  /** CAS enabled AND lastUsedStep < step; also replaces secretEnc when given (lazy re-encryption). */
-  claimStep(input: { userId: string; step: number; secretEnc?: string }): Promise<boolean>;
+  /**
+   * CAS enabled AND secretEnc is `verifiedSecretEnc` AND lastUsedStep < step; also replaces secretEnc when given
+   * (lazy re-encryption). `verifiedSecretEnc` is the ciphertext the code was checked against, so a code checked
+   * against a secret a reset has since replaced claims nothing and writes nothing.
+   */
+  claimStep(input: { userId: string; step: number; verifiedSecretEnc: string; secretEnc?: string }): Promise<boolean>;
   /** Atomic $pull; true if the hash was present. */
   consumeRecoveryCode(input: { userId: string; codeHash: string }): Promise<boolean>;
   /** CAS enabled: sets the pending secret, its expiry and its session, replacing any earlier one. The live secret is untouched. */

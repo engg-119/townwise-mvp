@@ -100,7 +100,7 @@ export function createTotpStore(connection: Connection): TotpStore {
       const set: { lastUsedStep: number; secretEnc?: string } = { lastUsedStep: input.step };
       if (input.secretEnc !== undefined) set.secretEnc = input.secretEnc;
       const doc = await Totp.findOneAndUpdate(
-        { _id: input.userId, status: 'enabled', lastUsedStep: trusted({ $lt: input.step }) },
+        { _id: input.userId, status: 'enabled', secretEnc: input.verifiedSecretEnc, lastUsedStep: trusted({ $lt: input.step }) },
         { $set: set },
         { returnDocument: 'after' },
       );

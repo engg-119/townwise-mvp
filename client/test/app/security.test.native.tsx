@@ -1,5 +1,5 @@
 import { AccessibilityInfo, Dimensions } from 'react-native';
-import { cleanup, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
+import { act, cleanup, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
 
 afterEach(async () => {
   await cleanup();
@@ -287,6 +287,19 @@ describe('moving to a new authenticator app (D54)', () => {
     // The next try starts with empty fields.
     await openProof();
     expect(screen.getByLabelText('Current code').props.value).toBe('');
+  });
+
+  test('Cancel waits for a proof that is on its way, so its answer never shows a key after Cancel', async () => {
+    let answer: (value: typeof ENROLLMENT) => void = () => undefined;
+    await renderOn({ beginTotpReset: () => new Promise<typeof ENROLLMENT>((resolve) => { answer = resolve; }) });
+    await openProof();
+    await fireEvent.changeText(screen.getByLabelText('Current code'), '123456');
+    await fireEvent.press(screen.getByRole('button', { name: 'Continue' }));
+    expect(screen.getByRole('button', { name: 'Cancel' }).props.accessibilityState).toMatchObject({ disabled: true });
+    await fireEvent.press(screen.getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByRole('heading', { name: 'Confirm it’s you' })).toBeTruthy();
+    await act(async () => { answer(ENROLLMENT); await Promise.resolve(); });
+    expect(await screen.findByRole('button', { name: 'Cancel and keep my current app' })).toBeTruthy();
   });
 
   test('a wrong code from the new app prints under the code field and keeps the QR; a timeout says nothing changed', async () => {

@@ -112,6 +112,8 @@ test('reset: a code from the current authenticator starts it, and a code from th
     expect(factor).toMatchObject({ status: 'enabled', pendingSecretEnc: null, pendingExpiresAt: null, pendingSessionId: null });
     expect(factor?.recoveryCodeHashes).toHaveLength(10);
 
+    // The code that confirmed the move is spent: it does not also sign in.
+    expect((await signInWith(server, { code: currentCode(next, server) })).status).toBe(400);
     // From now on only the new authenticator signs in, and the old recovery codes are void.
     server.clock.advance(2 * STEP_MS);
     expect((await signInWith(server, { code: currentCode(person.secret, server) })).status).toBe(400);
@@ -290,5 +292,31 @@ test('reset: the logs name the user and never the secret, the code or the recove
     for (const secret of [next, person.secret, recoveryCode, recoveryCode.replace(/-/g, ''), code, ...fresh]) {
       expect(text.includes(secret)).toBe(false);
     }
+  });
+});
+
+test('reset: disabling two-step sign-in mid-reset leaves nothing to confirm', async () => {
+  await withServer(async (server) => {
+    const person = await enrolled(server);
+    const next = await started(server, person.bearer, person.secret);
+    server.clock.advance(2 * STEP_MS);
+    const disabled = await call(server.url, '/auth/totp/disable', { bearer: person.bearer, json: { code: currentCode(person.secret, server) } });
+    expect(disabled.status).toBe(204);
+    expect((await confirm(server, person.bearer, currentCode(next, server))).status).toBe(400);
+    expect(await server.stores.totp.get(person.userId)).toBeNull();
+  });
+});
+
+test('reset: a second start replaces the first pending secret, which then confirms nothing', async () => {
+  await withServer(async (server) => {
+    const person = await enrolled(server);
+    const first = await started(server, person.bearer, person.secret);
+    server.clock.advance(2 * STEP_MS);
+    const second = await started(server, person.bearer, person.secret);
+    expect(second).not.toBe(first);
+    const stale = await confirm(server, person.bearer, currentCode(first, server));
+    expect(stale.status).toBe(400);
+    expect(await stale.json()).toMatchObject({ error: 'invalid_code' });
+    expect((await confirm(server, person.bearer, currentCode(second, server))).status).toBe(200);
   });
 });
