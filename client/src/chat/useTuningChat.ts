@@ -999,8 +999,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         if (last?.type === 'tools') last.steps.push(step);
         else message.parts.push({ type: 'tools', key: nextKey(), steps: [step] });
       } else {
-        const { id, status, kind, startDate, endDate, weekdays, effect, expectedGuests, detail } = part.proposal;
-        const proposal: NoteProposal = { kind, startDate, endDate, weekdays, effect, expectedGuests, detail };
+        const { id, status, kind, startDate, endDate, weekdays, effect, expectedGuests, detail, title } = part.proposal;
+        const proposal: NoteProposal = { kind, startDate, endDate, weekdays, effect, expectedGuests, detail, title };
         message.parts.push({
           type: 'proposal', key: nextKey(), card: { id, proposal, status, stored: 'kept', edited: false, gone: false, error: null },
         });

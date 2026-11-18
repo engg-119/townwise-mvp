@@ -78,7 +78,7 @@ test('a row is one accessible element, so its hint reads its cards, a timed one�
   expect(rows[0]?.props.accessibilityHint).toBeUndefined();
 });
 
-test('each row is its head line over the day’s full cards, all day first, then by time', async () => {
+test('each row is its head line over the day’s full cards, in the entries’ order (D49)', async () => {
   await renderWeek(375);
   const saturday = screen.getAllByRole('button')[3];
   if (saturday === undefined) throw new Error('no Saturday');
@@ -86,7 +86,7 @@ test('each row is its head line over the day’s full cards, all day first, then
   expect(within(saturday).getByText('212')).toBeTruthy();
   expect(within(saturday).getByText('180 to 240')).toBeTruthy();
   const texts = within(saturday).getAllByText(/./).map((each) => each.props.children as unknown);
-  const order = ['Dartmouth home football', '9 am to 10 am', 'Wine delivery', '6 pm to 9 pm', 'Private event, 70'].map((text) => texts.indexOf(text));
+  const order = ['6 pm to 9 pm', 'Private event, 70', 'Dartmouth home football', '9 am to 10 am', 'Wine delivery'].map((text) => texts.indexOf(text));
   expect(order.every((at) => at >= 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(within(saturday).getAllByText('Your note')).toHaveLength(1);

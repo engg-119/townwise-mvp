@@ -173,9 +173,10 @@ test('clicking a trailing day selects it, and the selected outside day is outlin
 test('three entries show as three lines; four show the first two and “+2 more”', () => {
   renderGrid();
   const three = rowsOf('2026-11-21')[2];
-  expect([...(three?.children ?? [])].map((line) => line.textContent)).toEqual(['Dartmouth home football', 'Private event, 70', 'Wine delivery']);
+  // Notes first (D49).
+  expect([...(three?.children ?? [])].map((line) => line.textContent)).toEqual(['Private event, 70', 'Dartmouth home football', 'Wine delivery']);
   const four = rowsOf('2026-11-22')[2];
-  expect([...(four?.children ?? [])].map((line) => line.textContent)).toEqual(['Craft fair', 'Choir concert', '+2 more']);
+  expect([...(four?.children ?? [])].map((line) => line.textContent)).toEqual(['Other', 'Craft fair', '+2 more']);
   // The figure sits centered in the middle row with the notes' guests inline.
   expect(rowsOf('2026-11-21')[1]?.textContent).toBe('282+70');
 });

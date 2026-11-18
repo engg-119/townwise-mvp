@@ -6,9 +6,11 @@ import { MONTH_NAMES, shortDate } from '../analytics/words';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
-import { KIND_LABEL } from '../locations/noteRules';
 import type { Rule } from '../rules/api';
+import { compactEntries, dayEntries, filterOf, fitLines, noteChip, notNamed, type DayEntry } from './entries';
 import type { DateRange } from './grid';
+
+export { filterOf, noteChip };
 
 // The Calendar's pure model (P28, spec 16.3): the month as week rows with each day's figure,
 // status, chips, corner marks and screen-reader label; the selected day's panel (its forecast, the reasons, and what
@@ -46,6 +48,8 @@ export const ALL_FILTERS: Filters = { holidays: true, events: true, terms: true,
  */
 export interface ImportedEvent {
   calendarId: string;
+  /** Its calendar's name, which the events read always carries (“Google calendar” under view-as, D39). */
+  calendar?: string | undefined;
   uid: string;
   title: string;
   startDate: string;
@@ -75,34 +79,15 @@ export interface CalendarInput {
   filters: Filters;
 }
 
-/** Holidays, town events, and term and season periods ("Term dates"). */
-export function filterOf(event: Pick<TownEvent, 'kind'>): FilterKey {
-  if (event.kind === 'holiday') return 'holidays';
-  if (event.kind === 'event') return 'events';
-  return 'terms';
-}
-
-/** Term and season periods span weeks or months, so they mark no cell; the day panel lists them. */
-function marksCell(event: Pick<TownEvent, 'kind'>): boolean {
-  return event.kind === 'holiday' || event.kind === 'event';
-}
 
 /** The day's holidays, town events and term periods as the filters allow, including those the day's Why names. */
 export function eventsOn(date: string, input: CalendarInput): TownEvent[] {
   return input.events.filter((event) => event.start <= date && date <= event.end && input.filters[filterOf(event)]);
 }
 
-function notesOn(date: string, input: CalendarInput): Note[] {
-  return input.filters.notes ? input.notes.filter((note) => noteCovers(note, date)) : [];
-}
-
 /** The rules whose schedule covers the day, oldest first. */
 function rulesOn(date: string, input: CalendarInput): Rule[] {
   return (input.rules ?? []).filter((rule) => rule.schedule !== null && rule.schedule !== undefined && noteCovers(rule.schedule, date));
-}
-
-function importedOn(date: string, input: CalendarInput): ImportedEvent[] {
-  return input.filters.imported ? input.imported.filter((event) => event.startDate <= date && date <= event.endDate) : [];
 }
 
 function forecastDayOf(date: string, input: CalendarInput): ForecastDay | null {
@@ -137,12 +122,6 @@ export function rangeWords(low: number, high: number): string {
   return `${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}`;
 }
 
-/** A note in a cell's chip: “Private event, 70”, “Private buyout”, “Closure”. */
-export function noteChip(note: Pick<Note, 'kind' | 'effect' | 'expectedGuests'>): string {
-  const kind = note.kind === 'private_event' && note.effect === 'closed' ? 'Private buyout' : KIND_LABEL[note.kind];
-  return note.expectedGuests === null ? kind : `${kind}, ${formatCount(note.expectedGuests)}`;
-}
-
 
 // Cells
 
@@ -169,10 +148,14 @@ export interface CalendarCell {
   figure: CellFigure | null;
   /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
   noteGuests: number;
-  /** The first three entries of the day: holidays and town events, then notes, then imported events (grid.ts entryLines). */
+  /**
+   * The first three of the day's compact entries (entries.ts: notes, rules, holidays and town events, imported events,
+   * each title once across sources; grid.ts entryLines).
+   */
   chips: string[];
   /** Entries past the chips. */
   more: number;
+  /** event: a holiday or town event; note: one of yours, a note or a business rule; imported: from the location's calendars. */
   marks: { event: boolean; note: boolean; imported: boolean };
   /** What a screen reader hears: everything the cell shows, in words. */
   label: string;
@@ -226,22 +209,28 @@ function figureOf(date: string, input: CalendarInput): FigureOf {
   return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
 }
 
+function withStop(words: string): string {
+  return /[.!?]$/.test(words) ? words : `${words}.`;
+}
+
+/** An entry as a screen reader hears it in a cell's label: its words, an imported event after “From your calendar”. */
+export function entryLabel(entry: Pick<DayEntry, 'kind' | 'words'>): string {
+  return withStop(entry.kind === 'imported' ? `From your calendar: ${entry.words}` : entry.words);
+}
+
 /** One day's cell from the reads in `input`, whichever range they were made for; today's week comes from `input.today`. */
 export function dayCell(date: string, input: CalendarInput): CalendarCell {
   const monday = mondayOf(input.today);
-  const events = eventsOn(date, input).filter(marksCell);
-  const notes = notesOn(date, input);
-  const imported = importedOn(date, input);
-  const entries = [...events.map((event) => event.title), ...notes.map(noteChip), ...imported.map((event) => event.title)];
+  const all = dayEntries(date, input);
+  const entries = compactEntries(all).map((entry) => entry.words);
   const found = figureOf(date, input);
   const isToday = date === input.today;
+  // The label says the status and every entry, with no dedupe.
   const label = [
     `${shortDate(date)}.`,
     isToday ? 'Today.' : null,
     found.words,
-    ...events.map((event) => `${event.title}.`),
-    notes.length === 0 ? null : `${plural(notes.length, 'note', 'notes')}.`,
-    ...imported.map((event) => `From your calendar: ${event.title}.`),
+    ...all.map(entryLabel),
   ].filter((part) => part !== null).join(' ');
   return {
     date,
@@ -252,7 +241,11 @@ export function dayCell(date: string, input: CalendarInput): CalendarCell {
     noteGuests: found.noteGuests,
     chips: entries.slice(0, MAX_CHIPS),
     more: Math.max(0, entries.length - MAX_CHIPS),
-    marks: { event: events.length > 0, note: notes.length > 0, imported: imported.length > 0 },
+    marks: {
+      event: all.some((entry) => entry.kind === 'holiday' || entry.kind === 'event'),
+      note: all.some((entry) => entry.kind === 'note' || entry.kind === 'rule'),
+      imported: all.some((entry) => entry.kind === 'imported'),
+    },
     label,
   };
 }
@@ -586,9 +579,11 @@ export function reasonShortLines(day: Pick<ForecastDay, 'reasons' | 'model'>, pa
 export function dayView(date: string, input: CalendarInput): CalendarDayView {
   const day = forecastDayOf(date, input);
   const short = shortDate(date);
+  // Every entry, with its source and no dedupe (entries.ts), periods included.
+  const all = dayEntries(date, input, { periods: true });
   // A holiday, town event or term the run's reasons name is in Why with its sources, so On the calendar doesn't repeat it.
   const inWhy = new Set((day?.reasons ?? []).filter((reason) => appliedOf(reason) === null).map((reason) => reason.label));
-  const listed = eventsOn(date, input);
+  const listed = all.flatMap((entry) => ('event' in entry ? [entry.event] : []));
   const events = listed.filter((event) => !inWhy.has(event.title));
   return {
     date,
@@ -599,9 +594,9 @@ export function dayView(date: string, input: CalendarInput): CalendarDayView {
     moreRules: day?.moreRules ?? 0,
     events,
     shownInWhy: listed.length - events.length,
-    notes: notesOn(date, input),
-    rules: rulesOn(date, input),
-    imported: importedOn(date, input),
+    notes: all.flatMap((entry) => (entry.kind === 'note' ? [entry.note] : [])),
+    rules: all.flatMap((entry) => (entry.kind === 'rule' ? [entry.rule] : [])),
+    imported: all.flatMap((entry) => (entry.kind === 'imported' ? [entry.imported] : [])),
   };
 }
 
@@ -673,10 +668,24 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
 export interface TooltipLines { date: string; lines: string[] }
 
 const TOOLTIP_REASONS = 3;
+const TOOLTIP_ENTRIES = 3;
 
 /**
- * The hover tooltip: the day's figure and range, the notes' guests, and the three reasons with the largest effect either
- * way in short words (shortReasons), or with no reasons the first three entries.
+ * The title of the note a note reason comes from (D49), joined by its id against the notes already read; null for a
+ * run's or a rule's reason, an untitled note, or a note this read doesn't hold. Shown after the reason's label, never
+ * in its place (D30).
+ */
+export function noteTitleOf(reason: Pick<ForecastReason, 'note'>, notes: readonly Pick<Note, 'id' | 'title'>[]): string | null {
+  const id = reason.note?.id;
+  if (id === undefined) return null;
+  return notes.find((note) => note.id === id)?.title ?? null;
+}
+
+/**
+ * The hover tooltip: the day's figure and range, the notes' guests, the three reasons with the largest effect either
+ * way in short words (shortReasons), a note reason followed by its note's title as the person's own words (D30 as D49
+ * amends it, joined by the reason's note id), then the day's compact entries no shown reason names (entries.ts
+ * notNamed), three, or the first two and “+N more”. A day's status never hides an entry.
  */
 export function tooltipLines(date: string, input: CalendarInput): TooltipLines | null {
   const day = forecastDayOf(date, input);
@@ -704,13 +713,20 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }
-  const reasons = day === null ? [] : reasonShortLines(day, date < input.today, TOOLTIP_REASONS);
-  const entries = reasons.length > 0 ? reasons : [
-    ...eventsOn(date, input).filter(marksCell).map((event) => event.title),
-    ...notesOn(date, input).map(noteChip),
-    ...importedOn(date, input).map((event) => event.title),
-  ];
-  lines.push(...entries.slice(0, TOOLTIP_REASONS));
+  const reasons = day === null ? [] : shortReasons(day, date < input.today, TOOLTIP_REASONS);
+  const names: string[] = [];
+  // A note or rule whose reason is shown is already named, whatever its words.
+  const shownIds = new Set<string>();
+  for (const { reason, line } of reasons) {
+    const title = noteTitleOf(reason, input.notes);
+    names.push(reason.label, ...(title === null ? [] : [title]));
+    for (const id of [reason.note?.id, reason.rule?.id]) if (id !== undefined) shownIds.add(id);
+    lines.push(title === null ? line : `${line}: ${title}`);
+  }
+  const unnamed = notNamed(compactEntries(dayEntries(date, input)), names).filter((entry) =>
+    !(entry.kind === 'note' && shownIds.has(entry.note.id)) && !(entry.kind === 'rule' && shownIds.has(entry.rule.id)));
+  const entries = fitLines(unnamed.map((entry) => entry.words), TOOLTIP_ENTRIES);
+  lines.push(...entries.lines, ...(entries.more === null ? [] : [entries.more]));
   return lines.length === 0 ? null : { date: shortDate(date), lines };
 }
 

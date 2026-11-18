@@ -74,19 +74,19 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
 
 ## 2. Client: the shared entries helper
 
-- [ ] 2.1 Tests `client/test/portal/calendar/entries.test.ts`:
+- [x] 2.1 Tests `client/test/portal/calendar/entries.test.ts`:
   - order (notes, rules, holidays, events, imported);
   - words (title, else kind words; a rule's text);
   - `compactEntries` merges only across sources: Veterans Day from the town and a calendar merges, two titled notes "Holiday party" stay two, two "Private party" events of one calendar at 12:00 and 18:00 stay two, and kind words never merge;
   - tooltip entries left out when a reason names them.
-- [ ] 2.2 `client/src/portal/calendar/entries.ts` (new, pure), and `client/src/portal/locations/api.ts` (`title` and `source.ref` on `Note`, nullish for an older API).
-- [ ] 2.3 `client/src/portal/calendar/model.ts`:
+- [x] 2.2 `client/src/portal/calendar/entries.ts` (new, pure), and `client/src/portal/locations/api.ts` (`title` and `source.ref` on `Note`, nullish for an older API).
+- [x] 2.3 `client/src/portal/calendar/model.ts`:
   - `dayCell`, `tooltipLines` (status line, 3 deduped reasons with a note reason's title, then 3 entries or 2 and "+N more") and `dayView` read the helper;
   - the label says every entry.
   - Update `client/test/portal/calendar/model.test.ts` and `day-tooltip.test.web.tsx`.
-- [ ] 2.4 `client/src/portal/calendar/grid.ts` `weekCards` reads the helper (compact, terms last), and a cell's yours mark covers rules. Update `grid.test.ts` and `grid.test.web.tsx`.
+- [x] 2.4 `client/src/portal/calendar/grid.ts` `weekCards` reads the helper (compact, terms last), and a cell's yours mark covers rules. Update `grid.test.ts` and `grid.test.web.tsx`.
 - [ ] 2.5 Cross-surface parity test `client/test/portal/calendar/entries-parity.test.ts` (new): one fixture day through the `dayCell` chips, `weekCards`, `tooltipLines` and Home's This week gives the same order and dedupe, cut only by each surface's limit. Home's half is filled in by 5.2.
-- [ ] 2.6 Run `npm test -w @ckeith26/expo-shell -- test/portal/calendar` and `npx eslint client/src/portal/calendar`.
+- [x] 2.6 Run `npm test -w @ckeith26/expo-shell -- test/portal/calendar` and `npx eslint client/src/portal/calendar`.
 
 ## 3. Client: routing, the in-app chip and Calendar surfaces
 

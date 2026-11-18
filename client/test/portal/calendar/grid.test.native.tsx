@@ -52,7 +52,8 @@ function heightOf(label: string): unknown {
   return style?.height;
 }
 
-const NOV_21 = 'Sat, Nov 21, 2026. Dartmouth home football. 1 note. From your calendar: Wine delivery.';
+// The label says every entry, notes first (D49).
+const NOV_21 = 'Sat, Nov 21, 2026. Private event, 70. Dartmouth home football. From your calendar: Wine delivery.';
 
 test('42 Pressables, each 104px tall at 1280 and 52px at 375', async () => {
   widthOf(1280);

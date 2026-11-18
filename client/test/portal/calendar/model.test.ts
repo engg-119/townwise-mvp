@@ -210,7 +210,8 @@ test('filters hide holidays, town events, term dates, notes and imported events 
   expect(all.notes.map((each) => each.id)).toEqual([PARTY.id]);
   expect(all.imported.map((event) => event.title)).toEqual(['Wine delivery']);
   expect(cellOf(calendarMonth('2026-11', input()), '2026-11-21')).toMatchObject({
-    chips: ['Dartmouth home football', 'Private event, 70', 'Wine delivery'], more: 0, marks: { event: true, note: true, imported: true },
+    // Notes first (D49), so a booked day shows its party within the cell's lines.
+    chips: ['Private event, 70', 'Dartmouth home football', 'Wine delivery'], more: 0, marks: { event: true, note: true, imported: true },
   });
   // Term periods show in the day panel only: they span weeks, so no cell repeats them.
   expect(dayView('2026-11-12', input()).events.map((event) => event.title)).toEqual(['Fall term classes']);
@@ -230,16 +231,48 @@ test('filters hide holidays, town events, term dates, notes and imported events 
   expect(dayView('2026-11-21', off('notes')).reasons).toHaveLength(4);
 });
 
-test('the cell label says the figure, range, note guests, events and notes', () => {
+test('the cell label says the figure, range, note guests and every entry', () => {
   const rows = calendarMonth('2026-11', input());
   expect(cellOf(rows, '2026-11-21').label).toBe(
-    'Sat, Nov 21, 2026. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Dartmouth home football. 1 note. From your calendar: Wine delivery.',
+    'Sat, Nov 21, 2026. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Private event, 70. Dartmouth home football. From your calendar: Wine delivery.',
   );
   expect(cellOf(rows, TODAY).label).toBe('Wed, Nov 11, 2026. Today. Forecast about 212 guests, 180 to 240. Veterans Day.');
   expect(cellOf(rows, '2026-11-14').label).toBe('Sat, Nov 14, 2026. Booked: a private buyout, 70 guests.');
   expect(cellOf(rows, '2026-11-26').label).toBe('Thu, Nov 26, 2026. Closed.');
   expect(cellOf(rows, '2026-11-07').label).toBe('Sat, Nov 7, 2026. 138 guests.');
   expect(cellOf(rows, '2026-11-30').label).toBe('Mon, Nov 30, 2026. No forecast.');
+});
+
+test('a note reason is followed by its note’s title, and the tooltip names that note once (D49)', () => {
+  const titled = input({ notes: [{ ...PARTY, id: 'n1', title: 'Holiday party' }] });
+  expect(tooltipLines('2026-11-21', titled)?.lines).toEqual([
+    'About 282 guests (250 to 310)', 'Includes 70 guests from your notes', 'Your private event, 70 guests, 6 pm to 9 pm: Holiday party',
+    'Saturday: usually more guests', 'Dartmouth home football: more guests in Townwise’s model', 'Wine delivery',
+  ]);
+  // A cell shows the title in place of the kind words.
+  expect(cellOf(calendarMonth('2026-11', titled), '2026-11-21').chips).toEqual(['Holiday party', 'Dartmouth home football', 'Wine delivery']);
+});
+
+test('a status never hides an entry: a closed day lists its rule and its named event (D49)', () => {
+  const closed = forecastDay({ date: '2026-11-24', status: 'closed', low: null, mid: null, high: null, reasons: [] });
+  const fields = {
+    forecast: windowOf([closed]),
+    notes: [note({ startDate: '2026-11-24', title: 'Holiday party', effect: 'closed' as const })],
+    rules: [ruleOf('r9', 'Closed Tuesdays in winter', { schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null } })],
+  };
+  const cell = dayCell('2026-11-24', input(fields));
+  expect(cell).toMatchObject({ status: 'closed', chips: ['Holiday party', 'Closed Tuesdays in winter'], more: 0, marks: { note: true } });
+  expect(cell.label).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
+  expect(tooltipLines('2026-11-24', input(fields))?.lines).toEqual(['Closed', 'Holiday party', 'Closed Tuesdays in winter']);
+});
+
+test('the tooltip shows three entries, or two and “+N more”', () => {
+  const many = input({
+    forecast: windowOf([forecastDay({ date: '2026-11-25', reasons: [] })]),
+    notes: ['A', 'B', 'C', 'D'].map((title) => note({ startDate: '2026-11-25', title })),
+  });
+  expect(tooltipLines('2026-11-25', many)?.lines).toEqual(['About 212 guests (180 to 240)', 'A', 'B', '+2 more']);
+  expect(dayCell('2026-11-25', many)).toMatchObject({ chips: ['A', 'B', 'C'], more: 1 });
 });
 
 test('the day panel words a forecast; the 8 in 10 sentence goes with the model’s own range only', () => {
@@ -377,11 +410,14 @@ test('a day the model closed that a private event opened shows only the notes’
 });
 
 test('the tooltip holds the range, the notes’ guests and at most three reasons', () => {
-  expect(tooltipLines('2026-11-21', input())).toEqual({
+  // The note reason's note is PARTY, joined by its id.
+  expect(tooltipLines('2026-11-21', input({ notes: [{ ...PARTY, id: 'n1' }] }))).toEqual({
     date: 'Sat, Nov 21, 2026',
     lines: [
       'About 282 guests (250 to 310)', 'Includes 70 guests from your notes', 'Your private event, 70 guests, 6 pm to 9 pm',
       'Saturday: usually more guests', 'Dartmouth home football: more guests in Townwise’s model',
+      // Then the entries no shown reason names: the note and the football game are named; the imported event is not.
+      'Wine delivery',
     ],
   });
   expect(tooltipLines('2026-11-07', input())?.lines).toEqual(['138 guests', 'Saturday']);

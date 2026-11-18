@@ -183,14 +183,14 @@ describe('the day columns at 1280', () => {
     expect(within(head('2026-11-12')).queryByText('Today')).toBeNull();
   });
 
-  test('the cards, all day first and then by time, each with its hours, title and kind words', () => {
+  test('the cards in the entries’ order (D49), each with its hours, title and kind words', () => {
     renderWeek();
     expect(cardTexts(SATURDAY)).toEqual([
-      'Dartmouth home football Town event',
       'Other Your note',
-      'Patio closes at 8 pm Saturdays from Nov 1, 2026',
-      '9 am to 10 am Wine delivery Your calendar',
       '6 pm to 9 pm Private event, 70 Your note',
+      'Patio closes at 8 pm Saturdays from Nov 1, 2026',
+      'Dartmouth home football Town event',
+      '9 am to 10 am Wine delivery Your calendar',
     ]);
     // Cards are not focusable; the panel keeps the actions.
     expect(cell(SATURDAY).querySelectorAll('[tabindex]:not([data-date])')).toHaveLength(0);

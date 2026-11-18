@@ -538,7 +538,7 @@ test('a file over 1 MB is refused unread, and a file that isn’t a calendar say
   expect(writes(api)).toHaveLength(3);
 });
 
-test('stored events show on load: the cells, the tooltip, the day panel and the week view’s cards, with Your calendar on; the same uid in two calendars shows twice', async () => {
+test('stored events show on load: the cells, the tooltip, the day panel and the week view’s cards, with Your calendar on; the same uid in two calendars shows once in a cell and twice in the panel (D49)', async () => {
   const errors = jest.spyOn(console, 'error');
   try {
     // The same export imported twice is two calendars, each with the event's uid.
@@ -551,7 +551,7 @@ test('stored events show on load: the cells, the tooltip, the day panel and the 
     expect(writes(api)).toEqual([]);
     expect(screen.getByRole('button', { name: 'Your calendar' }).getAttribute('aria-pressed')).toBe('true');
     expect(screen.getByRole('button', { name: 'Your calendars (2)' })).toBeTruthy();
-    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(3);
+    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(2);
     expect(cell('2026-11-24').textContent).toContain('Owner away');
     expect(cell('2026-11-25').textContent).toContain('Owner away');
     expect(cell('2026-11-21').textContent).toContain('212');
@@ -563,7 +563,7 @@ test('stored events show on load: the cells, the tooltip, the day panel and the 
     expect(within(panel()).getAllByRole('button', { name: 'Make a note from Smith rehearsal dinner' })).toHaveLength(2);
     fireEvent.click(within(screen.getByRole('group', { name: 'Calendar view' })).getByRole('button', { name: 'Week' }));
     expect(await screen.findByRole('grid', { name: 'Nov 18 to 24, 2026' })).toBeTruthy();
-    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(3);
+    expect(cell('2026-11-21').textContent.split('Smith rehearsal dinner')).toHaveLength(2);
     // Each item keeps its own key: {calendarId}:{uid}.
     expect(errors.mock.calls.filter((call) => String(call[0]).includes('same key'))).toEqual([]);
   } finally {
