@@ -193,6 +193,61 @@ it('the panel button names the open questions and reports aria-expanded', () => 
   expect(closed.getAttribute('aria-expanded')).toBe('false');
 });
 
+describe('icon buttons (owner, 2026-11-18: “use icons for the new chat and history buttons and the questions and activity instead of just saying them”)', () => {
+  it('History, New chat and Questions and activity are 44px icons named by their words, with no words drawn', () => {
+    render(<ChatHeader {...props()} />);
+    for (const name of ['History', 'New chat', 'Questions and activity']) {
+      const button = screen.getByRole('button', { name });
+      expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+      expect(button.textContent).toBe('');
+      const box = window.getComputedStyle(button);
+      expect([box.width, box.height]).toEqual(['44px', '44px']);
+    }
+  });
+
+  it('hover or focus shows the words in a tooltip under the button, never over it, hidden from screen readers; leaving or blur hides it', () => {
+    render(<ChatHeader {...props()} />);
+    const history = screen.getByRole('button', { name: 'History' });
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+    fireEvent.mouseEnter(history);
+    const tip = screen.getByTestId('chat-tooltip');
+    expect(tip.textContent).toBe('History');
+    expect(tip.getAttribute('aria-hidden')).toBe('true');
+    // Under the button (its anchor's full height down), so it never covers the icon it names.
+    expect([window.getComputedStyle(tip).position, window.getComputedStyle(tip).top]).toEqual(['absolute', '100%']);
+    expect(tip.parentElement?.contains(history)).toBe(true);
+    fireEvent.mouseLeave(history);
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+    const fresh = screen.getByRole('button', { name: 'New chat' });
+    act(() => { fresh.focus(); });
+    expect(screen.getByTestId('chat-tooltip').textContent).toBe('New chat');
+    act(() => { fresh.blur(); });
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+  });
+
+  it('the open questions show as a badge on the icon, which the name carries; none at 0', () => {
+    const view = render(<ChatHeader {...props({ openQuestions: 5 })} />);
+    const panel = screen.getByRole('button', { name: 'Questions and activity (5)' });
+    const badge = within(panel).getByTestId('chat-badge');
+    expect(badge.textContent).toBe('5');
+    expect(badge.getAttribute('aria-hidden')).toBe('true');
+    fireEvent.mouseEnter(panel);
+    expect(screen.getByTestId('chat-tooltip').textContent).toBe('Questions and activity');
+    view.rerender(<ChatHeader {...props({ openQuestions: 0 })} />);
+    expect(screen.queryByTestId('chat-badge')).toBeNull();
+  });
+
+  it('New chat under view-as stays in place, aria-disabled and described by the read-only line', () => {
+    const p = props({ readOnlyId: 'chat-ro' });
+    render(<ChatHeader {...p} />);
+    const fresh = screen.getByRole('button', { name: 'New chat' });
+    expect(fresh.getAttribute('aria-disabled')).toBe('true');
+    expect(fresh.getAttribute('aria-describedby')).toBe('chat-ro');
+    fireEvent.click(fresh);
+    expect(p.onNew).not.toHaveBeenCalled();
+  });
+});
+
 function reduceMotion(reduce: boolean): void {
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,

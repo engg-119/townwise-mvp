@@ -4,7 +4,8 @@ import Svg, { Path } from 'react-native-svg';
 // is named by its words. The thumbs on Helpful and Not helpful and the composer's up arrow are Lucide's thumbs-up,
 // thumbs-down and arrow-up (ISC license, lucide.dev), as are the message rows' Copy, Check, Pencil and Regenerate
 // (Lucide's copy, check, pencil and rotate-cw), the composer's Attach files (Lucide's plus) and a file chip's Remove
-// (Lucide's x); Stop is a filled square.
+// (Lucide's x), and the header's New chat, History and Questions and activity (Lucide's square-pen, history and
+// message-circle-question) and a disclosure's chevron (Lucide's chevron-down); Stop is a filled square.
 
 const UP = 'M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z';
 const DOWN = 'M9 18.12 10 14H4.17a2 2 0 0 1-1.92-2.56l2.33-8A2 2 0 0 1 6.5 2H20a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2h-2.76a2 2 0 0 0-1.79 1.11L12 22a3.13 3.13 0 0 1-3-3.88Z';
@@ -131,6 +132,50 @@ export function Shrink(props: { color: string }): React.JSX.Element {
       <Path d="M20 10h-6V4" />
       <Path d="m14 10 7-7" />
       <Path d="m3 21 7-7" />
+    </Stroked>
+  );
+}
+
+/** The size of the chat header's icons, in their 44px buttons. */
+const HEADER = 20;
+
+/** Lucide's square-pen: the header's New chat. */
+export function NewChatIcon(props: { color: string }): React.JSX.Element {
+  return (
+    <Stroked color={props.color} size={HEADER}>
+      <Path d="M12 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+      <Path d="M18.375 2.625a1 1 0 0 1 3 3l-9.013 9.014a2 2 0 0 1-.853.505l-2.873.84a.5.5 0 0 1-.62-.62l.84-2.873a2 2 0 0 1 .506-.852z" />
+    </Stroked>
+  );
+}
+
+/** Lucide's history: the header's History. */
+export function HistoryIcon(props: { color: string }): React.JSX.Element {
+  return (
+    <Stroked color={props.color} size={HEADER}>
+      <Path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+      <Path d="M3 3v5h5" />
+      <Path d="M12 7v5l4 2" />
+    </Stroked>
+  );
+}
+
+/** Lucide's message-circle-question: Questions and activity. */
+export function QuestionsIcon(props: { color: string }): React.JSX.Element {
+  return (
+    <Stroked color={props.color} size={HEADER}>
+      <Path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+      <Path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+      <Path d="M12 17h.01" />
+    </Stroked>
+  );
+}
+
+/** Lucide's chevron-down: a disclosure row, turned up while it is open. */
+export function ChevronDown(props: { color: string; up?: boolean }): React.JSX.Element {
+  return (
+    <Stroked color={props.color} size={18}>
+      <Path d={props.up === true ? 'm18 15-6-6-6 6' : 'm6 9 6 6 6-6'} />
     </Stroked>
   );
 }
