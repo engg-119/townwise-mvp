@@ -24,6 +24,7 @@ import type { LocationRecord } from '../stores/locations.ts';
 import { NO_COVERAGE, type Coverage } from '../stores/sales-days.ts';
 import { resolveTown, townInputSchema, type Town } from '../towns.ts';
 import { townOfAddress } from './places.ts';
+import { assertNotReading, filesUnavailable, removeSalesData } from './sales.ts';
 import { actorOf, assertOpenAsAdminTab, orgAdmin } from './team.ts';
 
 /** Spec 10.1. */
@@ -239,8 +240,8 @@ export async function checkedUpdate(
 }
 
 /**
- * DELETE's check, shared by the org admin route and staff setup (D23): only a location with no sales day, note,
- * stored file or item-sales day. Stored files and item sales are data too (spec 11A, D35): deleting the sales data
+ * Staff setup's DELETE check (D23): only a location with no sales day, note, stored file or item-sales day. The org
+ * admin's route deletes the data with the location instead (D43). Stored files and item sales are data too (spec 11A, D35): deleting the sales data
  * deletes them.
  */
 export async function assertNoLocationData(ctx: TownwiseContext, scope: OrgScope, locationId: string): Promise<void> {
@@ -334,17 +335,29 @@ export async function updateLocation(ctx: TownwiseContext, req: Request, res: Re
   res.status(200).json({ location: await summarize(updated) });
 }
 
-/** DELETE /api/org/locations/:locationId (P16): only a location with no sales day and no note. */
+/**
+ * DELETE /api/org/locations/:locationId (P16, D43): the location with all its data (sales days, uploads, stored files,
+ * forecasts, notes, then everything `removeLocation` takes). 409 `import_running` while one of its files is being read,
+ * 503 `files_unavailable` while stored files are off but it has some; nothing is deleted then.
+ */
 export async function deleteLocation(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const admin = orgAdmin(principal);
   const { scope } = admin;
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  await assertNoLocationData(ctx, scope, location.id);
+  // D43: one press deletes the location with all its data. The data goes first and the location row last, so a request
+  // that stops partway leaves the location in place and the same delete, sent again, finishes it.
+  await assertNotReading(ctx, scope, location.id);
+  const removed = await removeSalesData(ctx, scope, location.id);
+  if (removed === 'files_unavailable') throw filesUnavailable();
+  const deletedNotes = await ctx.stores.notes.removeForLocation(scope, location.id);
   if (!(await removeLocation(ctx, scope, location.id))) throw notFound();
   await recordAfter(ctx, {
     ...actorOf(admin), at: ctx.now(), orgId: scope.orgId, action: 'location.deleted',
     target: { type: 'location', id: location.id },
-    details: { name: location.name, townId: location.town.townId },
+    details: {
+      name: location.name, townId: location.town.townId,
+      deletedDays: removed.deletedDays, deletedFiles: removed.deletedFiles, deletedNotes,
+    },
   });
   res.status(204).end();
 }

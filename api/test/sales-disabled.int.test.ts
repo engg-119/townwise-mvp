@@ -104,11 +104,6 @@ function dates(body: SalesHistory): string[] {
   return body.days.date;
 }
 
-async function errorOf(res: Response): Promise<{ status: number; error: string }> {
-  const body = await res.json() as { error: string };
-  return { status: res.status, error: body.error };
-}
-
 /** An OrgScope for calling the stores directly, as a staff handler would mint one. */
 function scopeOf(id: string): OrgScope {
   const staff = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
@@ -167,10 +162,10 @@ describe('turned-off uploads leave every read (D28)', () => {
     expect(dates(await history(l1))).toEqual(range('2026-05-11', '2026-05-15'));
   });
 
-  it('a location with only turned-off days still has data: DELETE /api/org/locations/:id answers 409 location_has_data', async () => {
+  it('a location with only turned-off days is deleted with them (D43)', async () => {
     await turnOff(await send(admin, l1, '2026-05-01', 3));
-    expect(await errorOf(await call(server, `/api/org/locations/${l1}`, { method: 'DELETE', session: admin })))
-      .toEqual({ status: 409, error: 'location_has_data' });
+    expect((await call(server, `/api/org/locations/${l1}`, { method: 'DELETE', session: admin })).status).toBe(204);
+    expect(await server.connection.collection('tw_sales_days').countDocuments({ locationId: new Types.ObjectId(l1) })).toBe(0);
   });
 
   // A smoke test, not the isolation pin: B's upload ids never hold A's days, so this would pass even if the turned-off

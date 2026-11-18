@@ -20,7 +20,8 @@ export const AUDIT_DETAIL_KEYS = {
   'member.left': ['email'],
   'location.created': ['name', 'townId', 'hasPlace'],
   'location.updated': ['name', 'townId', 'hasPlace'],
-  'location.deleted': ['name', 'townId'],
+  // D43: the org admin's delete also says how much data went with the location (counts only).
+  'location.deleted': ['name', 'townId', 'deletedDays', 'deletedFiles', 'deletedNotes'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
   // D28, Your data: `item` is 'upload' or 'file' and `kind` an item kind; `replaces` is the id of the file an edit took

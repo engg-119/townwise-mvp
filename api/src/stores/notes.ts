@@ -118,6 +118,8 @@ export interface NoteStore {
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
   /** Undoing a TownwiseAI read (spec 11A.9): the location's notes it made from `fileId`, edited or not. Resolves the count. */
   removeFromAiRead(scope: OrgScope, locationId: string, fileId: string): Promise<number>;
+  /** Deleting a location (D43): every note of it. Resolves the number deleted. */
+  removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
 }
@@ -216,6 +218,9 @@ export function createNoteStore(connection: Connection): NoteStore {
     },
     async removeFromAiRead(scope, locationId, fileId) {
       return (await Note.deleteMany({ orgId: scope.orgId, locationId, 'source.fileId': new Types.ObjectId(fileId) })).deletedCount;
+    },
+    async removeForLocation(scope, locationId) {
+      return (await Note.deleteMany({ orgId: scope.orgId, locationId })).deletedCount;
     },
     async removeForOrg(scope) {
       return (await Note.deleteMany({ orgId: scope.orgId })).deletedCount;

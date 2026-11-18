@@ -25,8 +25,8 @@ import { deleteLocation, updateLocation } from './api';
 import { shownLocationName } from './naming';
 
 // P16 Location settings (spec 16.3, org admins; the route guard sends members to Locations): Name and Town with
-// “Save changes”, then Delete location, offered only while the location holds no sales day and no note, behind a
-// typed-name confirmation. Saving reloads the organization, so the header shows the new name, and the page shows
+// “Save changes”, then Delete location (D43), which deletes the location with all its data behind a typed-name
+// confirmation whose body counts the days and notes that go with it. Saving reloads the organization, so the header shows the new name, and the page shows
 // “Saved.”; deleting opens Locations with “Deleted {name}.”. A 404 on either write means the location was deleted
 // in the meantime: the organization reloads, and the location layout says “This location isn’t available.” with
 // the link to Locations (spec 10.9). Under view-as every write is disabled in place.
@@ -39,7 +39,34 @@ import { shownLocationName } from './naming';
 
 const READ_ONLY_ID = 'location-settings-ro';
 const PLACE_READ_ONLY_ID = 'location-place-ro';
-const HAS_DATA = 'Delete this location’s sales data and notes first.';
+
+/** Delete location (D43): one press takes the location and everything in it. */
+export const DELETE_COPY = {
+  kicker: 'Can’t be undone',
+  line: 'Deletes this location with everything in it: its sales data, stored files, notes, business rules, ordering setup and TownwiseAI chats.',
+  reading: 'Townwise is reading files for this location. Try again when it’s done.',
+  filesOff: 'Stored files are off right now, so nothing was deleted. Try again later.',
+} as const;
+
+function count(n: number, one: string, many: string): string {
+  return `${n.toLocaleString('en-US')} ${n === 1 ? one : many}`;
+}
+
+/** The dialog's body: what goes with the location, with the counts the organization holds. */
+export function deleteBody(location: { coverage: { dayCount: number }; notesCount: number }, orgName: string): string {
+  const { dayCount } = location.coverage;
+  const { notesCount } = location;
+  const data = dayCount === 0 && notesCount === 0
+    ? ''
+    : ` with everything in it: ${count(dayCount, 'day', 'days')} of sales data, ${count(notesCount, 'note', 'notes')}, its stored files, business rules, ordering setup and TownwiseAI chats`;
+  return `This deletes the location from ${orgName}${data}. This can’t be undone.`;
+}
+
+function deleteErrorText(error: unknown): string | undefined {
+  if (hasCode(error, 409, 'import_running')) return DELETE_COPY.reading;
+  if (hasCode(error, 503, 'files_unavailable')) return DELETE_COPY.filesOff;
+  return undefined;
+}
 
 export const PLACE_SETTINGS_COPY = {
   linked: 'Linked to a place on Google Maps. Townwise keeps Google’s id for it and its town.',
@@ -68,8 +95,6 @@ export function LocationSettings(): React.JSX.Element {
   const [confirming, setConfirming] = useState(false);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
   const [staleError, setStaleError] = useState<unknown>(null);
-  // The server's answer wins over the organization's counts, which can be a moment old.
-  const [hasData, setHasData] = useState(location.coverage.dayCount > 0 || location.notesCount > 0);
   const settingsPath = locationHref(location.id, 'settings');
   const search = usePlaceSearchAvailability(api, { known: org.placeSearch === true, readOnly: false });
   const [finding, setFinding] = useState(false);
@@ -121,7 +146,6 @@ export function LocationSettings(): React.JSX.Element {
     try {
       await deleteLocation(api, location.id);
     } catch (error) {
-      if (hasCode(error, 409, 'location_has_data')) { setHasData(true); setConfirming(false); return; }
       if (hasCode(error, 404, 'not_found')) { setConfirming(false); reloadOrg(); return; }
       throw error;
     }
@@ -130,6 +154,8 @@ export function LocationSettings(): React.JSX.Element {
     reloadOrg();
     router.replace('/dashboard');
   }, [api, location.id, shown, reloadOrg, router, showNotice]));
+
+  const deleteMessage = deleteErrorText(remove.error);
 
   function submit(): void {
     if (readOnly) return;
@@ -243,34 +269,30 @@ export function LocationSettings(): React.JSX.Element {
           />
         </Section>
       ) : null}
-      <Section kicker="Only when it holds no data" title="Delete location">
+      <Section kicker={DELETE_COPY.kicker} title="Delete location">
         <Columns
-          main={hasData ? (
+          main={(
             <Stack>
-              <Small>{HAS_DATA}</Small>
+              <Small>{DELETE_COPY.line}</Small>
               <Actions>
-                <LinkButton href={locationHref(location.id, 'sales')} label="Sales data" />
-                <LinkButton href={locationHref(location.id, 'notes')} label="Notes" />
+                {readOnlyId === null
+                  ? <Button variant="outline" label="Delete location" onPress={() => { setStaleError(remove.error); setConfirming(true); }} />
+                  : <Button variant="outline" label="Delete location" disabled describedBy={readOnlyId} />}
               </Actions>
             </Stack>
-          ) : (
-            <Actions>
-              {readOnlyId === null
-                ? <Button variant="outline" label="Delete location" onPress={() => { setStaleError(remove.error); setConfirming(true); }} />
-                : <Button variant="outline" label="Delete location" disabled describedBy={readOnlyId} />}
-            </Actions>
           )}
         />
       </Section>
       <ConfirmDialog
         visible={confirming}
         title={`Delete ${shown}?`}
-        body={`This deletes the location from ${org.org.name}. This can’t be undone.`}
+        body={deleteBody(location, org.org.name)}
         typedName={shown}
         confirmLabel="Delete location"
         pendingLabel="Deleting…"
         pending={remove.pending}
         error={remove.error === staleError ? null : remove.error}
+        {...(deleteMessage === undefined ? {} : { errorMessage: deleteMessage })}
         onConfirm={() => { remove.run(); }}
         onCancel={() => { setConfirming(false); }}
       />

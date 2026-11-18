@@ -198,25 +198,35 @@ describe('PATCH /api/org/locations/:locationId', () => {
 });
 
 describe('DELETE /api/org/locations/:locationId', () => {
-  it('refuses a location with a sales day or a note; deletes an empty one, with its unfinished upload records', async () => {
+  // D43: one press deletes the location with all its data; a member still can't.
+  it('deletes a location with its sales days and notes, and no other location’s; an empty one, with its unfinished upload records', async () => {
     const t = await team('Delete Group');
-    const withDays = await addLocation(server, { orgId: t.orgId, name: 'With Days' });
-    await addSalesDay(server, { orgId: t.orgId, locationId: withDays, date: '2026-05-01', guests: 5, netSalesCents: null });
-    const withNotes = await addLocation(server, { orgId: t.orgId, name: 'With Notes' });
-    await addNote(server, { orgId: t.orgId, locationId: withNotes, detail: 'Closed for a staff day' });
+    const withData = await addLocation(server, { orgId: t.orgId, name: 'With Data' });
+    for (const date of ['2026-05-01', '2026-05-02']) await addSalesDay(server, { orgId: t.orgId, locationId: withData, date, guests: 5, netSalesCents: null });
+    for (const detail of ['Closed for a staff day', 'Graduation weekend']) await addNote(server, { orgId: t.orgId, locationId: withData, detail });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    await addSalesDay(server, { orgId: t.orgId, locationId: kept, date: '2026-05-01', guests: 7, netSalesCents: null });
+    await addNote(server, { orgId: t.orgId, locationId: kept, detail: 'Kept note' });
     const empty = await addLocation(server, { orgId: t.orgId, name: 'Empty' });
     await addUpload(server, { orgId: t.orgId, locationId: empty, uploadedAt: server.clock.now(), status: 'applying' });
 
-    expect(await errorOf(await remove(t.admin, withDays))).toEqual({ status: 409, error: 'location_has_data' });
-    expect(await errorOf(await remove(t.admin, withNotes))).toEqual({ status: 409, error: 'location_has_data' });
+    expect(await errorOf(await remove(t.member, withData))).toEqual({ status: 403, error: 'forbidden' });
     expect(await errorOf(await remove(t.member, empty))).toEqual({ status: 403, error: 'forbidden' });
 
+    expect((await remove(t.admin, withData)).status).toBe(204);
+    const of = (collection: string, locationId: string) => server.connection.collection(collection).countDocuments({ locationId: new Types.ObjectId(locationId) });
+    expect({ days: await of('tw_sales_days', withData), notes: await of('tw_notes', withData) }).toEqual({ days: 0, notes: 0 });
+    expect({ days: await of('tw_sales_days', kept), notes: await of('tw_notes', kept) }).toEqual({ days: 1, notes: 1 });
+    const dataEvent = (await auditEvents(server)).find((e) => e.action === 'location.deleted' && (e.target as { id: string }).id === withData);
+    expect(dataEvent?.details).toEqual({ name: 'With Data', townId: 'hanover-nh', deletedDays: 2, deletedFiles: 0, deletedNotes: 2 });
+    expect(JSON.stringify(await auditEvents(server))).not.toContain('Graduation weekend');
+
     expect((await remove(t.admin, empty)).status).toBe(204);
-    expect(await server.connection.collection('tw_uploads').countDocuments({ locationId: new Types.ObjectId(empty) })).toBe(0);
+    expect(await of('tw_uploads', empty)).toBe(0);
     const org = await (await call(server, '/api/org', { session: t.admin })).json() as { locations: { name: string }[] };
-    expect(org.locations.map((l) => l.name)).toEqual(['With Days', 'With Notes']);
+    expect(org.locations.map((l) => l.name)).toEqual(['Kept']);
     const event = (await auditEvents(server)).find((e) => e.action === 'location.deleted' && (e.target as { id: string }).id === empty);
-    expect(event?.details).toEqual({ name: 'Empty', townId: 'hanover-nh' });
+    expect(event?.details).toEqual({ name: 'Empty', townId: 'hanover-nh', deletedDays: 0, deletedFiles: 0, deletedNotes: 0 });
     expect(await errorOf(await remove(t.admin, empty))).toEqual({ status: 404, error: 'not_found' });
   });
 
@@ -269,9 +279,7 @@ describe('DELETE /api/org/locations/:locationId', () => {
     const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
     const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
     for (const locationId of [doomed, kept]) await addOrderRecords(server, { orgId: t.orgId, locationId });
-    // A12: item sales are data, so the location is refused until they are deleted (with the sales data, or on their own).
-    expect(await errorOf(await remove(t.admin, doomed))).toEqual({ status: 409, error: 'location_has_data' });
-    expect((await call(server, `/api/org/locations/${doomed}/orders/item-sales`, { method: 'DELETE', session: t.admin })).status).toBe(200);
+    // D43: item sales go with it in the same press.
     expect((await remove(t.admin, doomed)).status).toBe(204);
     for (const name of ORDER_COLLECTIONS) {
       const collection = server.connection.collection(name);
