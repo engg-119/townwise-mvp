@@ -411,13 +411,18 @@ describe('the composer', () => {
     const api = fakeChatApi();
     renderAt('/locations/l1/agent', api);
     await send(api, 'How was December?');
-    await stream(() => { turn(api).emit('text', { delta: 'December was' }); });
+    await stream(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'How was December?', turnId: 'turn-1' });
+      turn(api).emit('text', { delta: 'December was' });
+    });
     const input = screen.getByLabelText(COMPOSER_LABEL);
     fireEvent.change(input, { target: { value: 'And January?' } });
     // Enter does nothing while a reply streams.
     fireEvent.keyDown(input, { key: 'Enter' });
     expect(api.turns).toHaveLength(1);
     fireEvent.click(screen.getByRole('button', { name: 'Stop and send' }));
+    // The stop route first; the send once the turn's stopped arrived.
+    expect(api.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/chat/c2/turns/turn-1/stop', body: {} }]);
     await waitFor(() => { expect(api.turns).toHaveLength(2); });
     expect(turn(api).body).toEqual({ content: 'And January?' });
     expect(screen.getByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
@@ -1383,5 +1388,76 @@ describe('files on the message (D36)', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save and send' }));
     await waitFor(() => { expect(api.turns).toHaveLength(1); });
     expect(turn(api).body).toEqual({ conversationId: 'c1', content: 'We close for the holidays, all week.', parentId: null, attachments: [REF] });
+  });
+});
+
+// resumable-chat-turns on web: a turn runs on the server whatever the page does, so a refresh or a dropped network
+// picks the reply up again, and Stop stops it there.
+describe('a reply that outlives its connection', () => {
+  const AT = '2026-11-02T15:00:00.000Z';
+  const ASKED = { nodeId: 'u2', role: 'user', text: 'And January?', proposals: [], parts: [], at: AT };
+  /** CONVERSATION while a second turn runs: the path to the node it hangs under, and the person's message. */
+  const LIVE = {
+    ...CONVERSATION,
+    liveTurn: { turnId: 'turn-9', state: 'running', startedAt: AT, userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', message: ASKED },
+  };
+  const TAIL = '/api/org/locations/l1/chat/c1/turns/turn-9';
+  const BEGUN = { id: 'c1', title: 'Earlier chat', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-9' };
+
+  test('a refresh mid-reply shows the message and the reply so far and follows it; Stop stops it on the server', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE;
+    renderAt('/locations/l1/agent', api);
+    expect(await screen.findByText('And January?')).toBeTruthy();
+    expect(screen.getByText('We close for the holidays.')).toBeTruthy();
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    expect(turn(api)).toMatchObject({ method: 'GET', path: `${TAIL}?after=0` });
+    await stream(() => {
+      turn(api).emit('conversation', BEGUN, 1);
+      turn(api).emit('text', { delta: 'January was quiet' }, 2);
+    });
+    expect(await screen.findByText('January was quiet')).toBeTruthy();
+    api.conversation = { ...LIVE, liveTurn: null };
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(await screen.findByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
+    expect(api.writes).toEqual([{ method: 'POST', path: `${TAIL}/stop`, body: {} }]);
+    expect(screen.getByText('January was quiet')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeTruthy();
+  });
+
+  test('a dropped network keeps the reply streaming; back online, or the tab back in view, it is read again at once, with no text twice', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    await send(api, 'And January?');
+    await stream(() => {
+      turn(api).emit('conversation', BEGUN, 1);
+      turn(api).emit('text', { delta: 'January ' }, 2);
+    });
+    api.conversation = LIVE;
+    await stream(() => { turn(api).fail(new ApiError('network', 'The connection closed before the reply finished.')); });
+    expect(screen.getByRole('button', { name: 'Stop' })).toBeTruthy();
+    expect(screen.queryByText(/didn’t finish|weren’t saved/)).toBeNull();
+    expect(api.turns).toHaveLength(1);
+    await stream(() => { window.dispatchEvent(new Event('online')); });
+    expect(api.turns).toHaveLength(2);
+    expect(turn(api)).toMatchObject({ method: 'GET', path: `${TAIL}?after=2` });
+    await stream(() => {
+      turn(api).emit('text', { delta: 'January ' }, 2);
+      turn(api).emit('text', { delta: 'was ' }, 3);
+      turn(api).fail(new ApiError('network', 'The connection closed before the reply finished.'));
+    });
+    await stream(() => { document.dispatchEvent(new Event('visibilitychange')); });
+    expect(api.turns).toHaveLength(3);
+    expect(turn(api).path).toBe(`${TAIL}?after=3`);
+    await stream(() => {
+      turn(api).emit('text', { delta: 'quiet.' }, 4);
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a2' }, 5);
+      turn(api).end();
+    });
+    expect(await screen.findByText('January was quiet.')).toBeTruthy();
+    expect(screen.queryByText(/January January/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Send' })).toBeTruthy();
   });
 });

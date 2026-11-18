@@ -3,15 +3,17 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, type ApiClient } from '../api/client';
 import { describeError } from '../ui';
 import {
-  actOnItemProposal, addNote as postNote, deleteConversation as removeConversation, dismissProposal, loadChat, loadConversation,
-  loadItemProposal, rateReply, renameConversation, saveProposal, sendTurn, setActiveVersion,
+  actOnItemProposal, addNote as postNote, deleteConversation as removeConversation, dismissProposal, endsTurn, followTurn, loadChat,
+  loadConversation, loadItemProposal, rateReply, renameConversation, saveProposal, sendTurn, setActiveVersion, stopTurn, TURN_INTERRUPTED,
   type Budget, type ChatEvent, type ChatSummary, type ConversationLoad, type ConversationSummary, type Feedback, type FeedbackReason,
-  type ItemProposal, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
+  type ItemProposal, type LiveTurnLoad, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage, type TurnListener,
+  type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
 import { isHiddenTool, type SourceLink, type ToolStep } from './tools';
 import { siblingAt, withTurn, type TreeNode } from './tree';
 import type { Visual } from './visuals/schema';
+import { onWake } from './wake';
 
 // TownwiseAI's conversation state (spec P25; docs/portal/tuning-chat.md 2 and 3). A reply is an
 // ordered list of parts, in the order they streamed: text, a group of tool calls, more text, a visual, a proposal
@@ -31,6 +33,13 @@ import type { Visual } from './visuals/schema';
 // A message may carry files of Your data (D36): the composer hands them to `send` with a callback for a turn taken
 // back (the files go back to the composer, as the text does); an edit sends the edited message's files again (all
 // but those gone from Your data), Try again sends its message's, and a regenerate sends none.
+//
+// A turn runs on the server whatever its connection does (resumable-chat-turns). Its events are numbered, so a
+// dropped stream is read again from the last number (`followTurn`): at once on a wake (src/chat/wake), else after 1, 2
+// and 4 seconds, then every 4, until the turn's last event or until the conversation shows it no longer live. Opening
+// a conversation with a live turn (on load after a refresh, or in a second tab) shows the person's message and follows
+// the reply from its first event, then reads the conversation again once it is saved. Stop asks the server to stop
+// the turn and waits for its `stopped`; closing the stream never stops it.
 
 export type CardStatus = 'open' | 'editing' | 'saving' | 'saved' | 'dismissed';
 
@@ -185,7 +194,13 @@ export type ChatAction =
   | { type: 'switched'; id: string; shown: ShownPath }
   | { type: 'switchFailed'; id: string }
   | { type: 'rated'; key: string; feedback: Feedback | null; error: string | null }
-  | { type: 'renamed'; id: string; title: string };
+  | { type: 'renamed'; id: string; title: string }
+  /**
+   * A conversation opened with a turn live in it: its path, the person's message (null for a regenerate) and the reply
+   * that streams, read back from the turn's events.
+   */
+  | { type: 'reattach'; id: string; shown: ShownPath; asked: ChatMessage | null; replyKey: string; request: TurnRequest | null; live: LiveTurnLoad }
+  | { type: 'stopFailed'; error: string };
 
 export const NOT_SAVED = 'Your message and this reply weren’t saved.';
 export const STOPPED = 'Stopped. Your message and this reply weren’t saved.';
@@ -196,6 +211,10 @@ export const TIMED_OUT = 'The reply took too long. Try asking something shorter.
 export const REGENERATE_FAILED = 'That reply didn’t finish, so your earlier reply is back.';
 export const VERSION_FAILED = 'Couldn’t show that version. Try again.';
 export const RATING_FAILED = 'Couldn’t save your rating. Try again.';
+/** A turn whose server stopped mid-turn (a restart): it is not continued, and the person sends again. */
+export const INTERRUPTED = 'TownwiseAI was interrupted. Your message and this reply weren’t saved. Try again.';
+/** Stop's request didn't reach the server: the reply goes on. */
+export const STOP_FAILED = 'Couldn’t stop the reply. Try again.';
 /** Why a question card's message (Something else…) can't go, once the month's budget is used up. */
 export const TELL_BUDGET = 'This month’s budget is used up, so TownwiseAI can’t answer in the chat.';
 const TELL_WAIT = 'Wait for TownwiseAI’s reply to finish, then try again.';
@@ -207,11 +226,14 @@ const SAVED_STOP_REASONS: readonly string[] = ['end_turn', 'max_tokens', 'tool_l
 export const FLUSH_MS = 32;
 
 /**
- * Stop and send: the server lets go of a stopped turn's claim just after the connection closes, so the new turn's
- * 409 `chat_turn_in_progress` is tried again this many times, this far apart.
+ * Stop and send: the server lets go of a stopped turn's claim before its `stopped`, so a 409 `chat_turn_in_progress`
+ * is only a backstop, tried again this many times, this far apart.
  */
 const CLAIM_RETRIES = 3;
 const CLAIM_RETRY_MS = 500;
+
+/** A dropped turn's stream is read again after these waits, then every last one, unless a wake comes first. */
+export const RESUME_MS: readonly number[] = [1000, 2000, 4000];
 
 export function initialChatState(): TuningChatState {
   return {
@@ -552,6 +574,24 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
         ...state,
         conversations: state.conversations.map((conversation) => (conversation.id === action.id ? { ...conversation, title: action.title } : conversation)),
       };
+    case 'reattach': {
+      if (state.conversationId !== action.id) return state;
+      const { live } = action;
+      // As a send's pair (turnPair): the message has no node until the turn is saved; a regenerate's reply hangs under
+      // the message it answers from the start.
+      const asked = action.asked === null ? [] : [{ ...action.asked, nodeId: null, parentId: live.parentId }];
+      const reply: ChatMessage = {
+        ...blankMessage(action.replyKey, 'assistant'), state: 'streaming', parentId: live.message === null ? live.parentId : null,
+        request: action.request, startedAt: live.startedAt,
+      };
+      return {
+        ...shownState(state, action.shown), conversationLoading: false, streaming: true, error: null,
+        turn: { kind: live.message === null ? 'regenerate' : 'send', nodes: { user: live.userNodeId, reply: live.replyNodeId, parentId: live.parentId }, earlier: null },
+        messages: [...action.shown.messages, ...asked, reply],
+      };
+    }
+    case 'stopFailed':
+      return { ...state, error: action.error };
   }
 }
 
@@ -631,6 +671,8 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
     }
     case 'error':
       if (state.turn?.earlier) return putBack(state, state.turn.earlier, REGENERATE_FAILED);
+      // Its words are the reply's own line, as a stopped reply's are.
+      if (event.code === TURN_INTERRUPTED) return { ...state, turn: null, messages: endLive(state, { state: 'failed', note: INTERRUPTED }, now) };
       return { ...state, error: streamErrorText(event.code), turn: null, messages: endLive(state, { state: 'failed', note: NOT_SAVED }, now) };
     case 'stopped':
       // resumable-chat-turns: the turn stopped on the server, and saved nothing.
@@ -739,6 +781,78 @@ function cardOf(state: TuningChatState, cardId: string): ProposalCard | undefine
   return undefined;
 }
 
+/**
+ * The turn the page follows, from Send (or opening a conversation with a live turn) until it ends
+ * (resumable-chat-turns).
+ */
+interface TurnHandle {
+  /** Aborted only when the page lets go of the turn (it unmounts or reloads): the turn runs on, on the server. */
+  controller: AbortController;
+  /** The open stream's own: a wake closes it, so it is read again from `cursor`. */
+  connection: AbortController | null;
+  conversationId: string | null;
+  /** From its `conversation` event; until then the turn can be neither read back nor stopped. */
+  turnId: string | null;
+  /** The number of the last event read: a stream read again starts after it, so nothing shows twice. */
+  cursor: number;
+  /** Its last event arrived. */
+  ended: boolean;
+  /** It ended with a saved `done`. */
+  saved: boolean;
+  /** Stop was pressed; the request goes once the turn id is known. */
+  stopping: boolean;
+  /** Ends the wait before the stream is read again. */
+  wake: (() => void) | null;
+}
+
+function handleFor(conversationId: string | null): TurnHandle {
+  return {
+    controller: new AbortController(), connection: null, conversationId, turnId: null, cursor: 0, ended: false, saved: false, stopping: false,
+    wake: null,
+  };
+}
+
+/** A new connection for the turn's stream, closed with the turn's own controller too. */
+function connect(handle: TurnHandle): AbortSignal {
+  const connection = new AbortController();
+  handle.connection = connection;
+  const { signal } = handle.controller;
+  if (signal.aborted) connection.abort();
+  else signal.addEventListener('abort', () => { connection.abort(); }, { once: true });
+  return connection.signal;
+}
+
+/** Waits `ms` before a stream is read again; a wake ends it early, and the page letting go of the turn rejects it. */
+function rest(handle: TurnHandle, ms: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const { signal } = handle.controller;
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', stopped);
+      handle.wake = null;
+    };
+    const stopped = (): void => {
+      done();
+      reject(new ApiError('aborted', 'The request was stopped.'));
+    };
+    const timer = setTimeout(() => {
+      done();
+      resolve();
+    }, ms);
+    handle.wake = () => {
+      done();
+      resolve();
+    };
+    if (signal.aborted) stopped();
+    else signal.addEventListener('abort', stopped, { once: true });
+  });
+}
+
+/** A stream closed by the page itself: a wake (the turn's own controller is checked first). */
+function woken(error: unknown): boolean {
+  return error instanceof ApiError && error.kind === 'aborted';
+}
+
 function isClaimHeld(error: unknown): boolean {
   return error instanceof ApiError && error.kind === 'http' && error.code === 'chat_turn_in_progress';
 }
@@ -765,7 +879,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   const [generation, setGeneration] = useState(0);
   // The state after the last action, ahead of the render that draws it: a send that follows a stop builds on it.
   const latest = useRef(state);
-  const live = useRef<AbortController | null>(null);
+  const live = useRef<TurnHandle | null>(null);
   // The live turn's end, for Stop and send; and the send waiting for it.
   const turnEnd = useRef<Promise<void> | null>(null);
   const waiting = useRef<{ content: string; returned: (() => void) | undefined } | null>(null);
@@ -813,17 +927,28 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     dispatch({ type: 'event', event: { type: pending.kind, delta }, key: nextKey(), at: '' });
   }
 
+  // The newest render's openConversation, for the load below: a turn still live here opens its conversation.
+  const reopen = useRef<(id: string) => void>(() => undefined);
+  useEffect(() => {
+    reopen.current = openConversation;
+  });
+
   useEffect(() => {
     let cancelled = false;
     void loadChat(api, locationId).then(
-      (summary) => { if (!cancelled) dispatch({ type: 'loaded', summary }); },
+      (summary) => {
+        if (cancelled) return;
+        dispatch({ type: 'loaded', summary });
+        // A refresh mid-reply, or a second tab: the turn's conversation opens and its reply is followed.
+        if (summary.liveTurn !== null) reopen.current(summary.liveTurn.conversationId);
+      },
       (error: unknown) => { if (!cancelled) dispatch({ type: 'loadFailed', notFound: isStatus(error, 404), error: describeError(error) }); },
     );
     const pending = buffer.current;
     return () => {
       cancelled = true;
       waiting.current = null;
-      live.current?.abort();
+      live.current?.controller.abort();
       live.current = null;
       if (pending.timer !== null) clearTimeout(pending.timer);
       pending.timer = null;
@@ -831,12 +956,21 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     };
   }, [api, locationId, generation, dispatch]);
 
+  // A wake reads a dropped stream again at once, and closes an open one to read it again from its cursor (it may be
+  // dead after the app or tab was suspended). A turn without its id yet is left alone: it can't be read back.
+  useEffect(() => onWake(() => {
+    const handle = live.current;
+    if (handle === null || handle.ended || handle.turnId === null) return;
+    if (handle.wake !== null) handle.wake();
+    else handle.connection?.abort();
+  }), []);
+
   function refresh(): void {
     void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
   }
 
   /** The turn's stream; with `retries`, a 409 `chat_turn_in_progress` is tried again after a pause. */
-  async function stream(request: TurnRequest, signal: AbortSignal, onEvent: (event: ChatEvent) => void, retries: number): Promise<void> {
+  async function stream(request: TurnRequest, signal: AbortSignal, onEvent: TurnListener, retries: number): Promise<void> {
     try {
       await sendTurn(api, locationId, request, signal, onEvent);
     } catch (error: unknown) {
@@ -847,28 +981,24 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   }
 
   /**
-   * Streams a turn: `action` puts it on the page, `request` goes to the server. `telling`, for a question card, hears
-   * when it starts and how it ended; `returned`, for the composer's files, runs if a send is taken back.
+   * A turn's events, into the reducer: each one once (by its number), text and thinking drawn in batches. `seen` hears
+   * each event first.
    */
-  function run(
-    action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0, telling?: Telling, returned?: () => void,
-  ): void {
-    const attached = 'attachments' in request && request.attachments.length > 0;
-    const controller = new AbortController();
-    live.current = controller;
-    dispatch(action);
-    // A first turn that saved nothing (an error, Stop, a cut-off stream or a refusal) left no conversation behind.
-    let created: string | null = null;
-    let saved = false;
-    let started = false;
-    // Why it saved nothing, in the words the chat shows for it.
-    let failure: string | null = null;
-    const onEvent = (event: ChatEvent): void => {
-      if (controller.signal.aborted) return;
-      if (!started) {
-        started = true;
-        telling?.started?.();
+  function listener(handle: TurnHandle, seen: (event: ChatEvent) => void): TurnListener {
+    return (event, seq) => {
+      if (handle.controller.signal.aborted) return;
+      if (seq !== null) {
+        if (seq <= handle.cursor) return;
+        handle.cursor = seq;
       }
+      seen(event);
+      if (event.type === 'conversation') {
+        handle.conversationId = event.id;
+        if (event.turnId !== null) handle.turnId = event.turnId;
+        if (handle.stopping) askToStop(handle);
+      }
+      if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) handle.saved = true;
+      if (endsTurn(event)) handle.ended = true;
       if (event.type === 'text' || event.type === 'thinking') {
         // Text and thinking keep their order: a change from one to the other draws what the first had gathered.
         if (buffer.current.kind !== event.type) flush();
@@ -879,13 +1009,147 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       }
       // Any other event draws the text before it first, so the parts keep their order.
       flush();
+      dispatch({ type: 'event', event, key: nextKey(), at: new Date().toISOString() });
+    };
+  }
+
+  /**
+   * Reads a turn's events after its cursor until its last one. `dropped`: its stream just dropped, so the first read
+   * waits too. Each read after a drop waits the RESUME_MS waits (cut short by a wake), and first checks that the
+   * conversation still shows the turn live; a read after a wake closed the stream, or after one that brought something
+   * (it ends on its own after 200 seconds), goes at once. Resolves true once the turn's last event arrived, false once
+   * the turn is no longer live (its read answers 404, or the conversation shows no live turn of it); rejects when the
+   * page lets go of it.
+   */
+  async function follow(handle: TurnHandle, ids: { conversationId: string; turnId: string }, onEvent: TurnListener, dropped: boolean): Promise<boolean> {
+    let tries = 0;
+    let wait = dropped;
+    for (;;) {
+      if (wait) {
+        if (!(await stillLive(ids))) return false;
+        await rest(handle, RESUME_MS[Math.min(tries, RESUME_MS.length - 1)] ?? 0);
+        tries += 1;
+      }
+      wait = true;
+      const before = handle.cursor;
+      try {
+        await followTurn(api, locationId, ids, handle.cursor, connect(handle), onEvent);
+        if (handle.ended) return true;
+        if (handle.cursor > before) {
+          tries = 0;
+          wait = false;
+        }
+      } catch (error: unknown) {
+        if (handle.controller.signal.aborted) throw error;
+        if (handle.ended) return true;
+        if (isStatus(error, 404)) return false;
+        // A wake closed it.
+        if (woken(error)) {
+          tries = 0;
+          wait = false;
+        }
+      } finally {
+        handle.connection = null;
+      }
+    }
+  }
+
+  /** Whether the conversation still shows the turn as live; a read that fails is no answer, so it may be. */
+  async function stillLive(ids: { conversationId: string; turnId: string }): Promise<boolean> {
+    try {
+      return (await loadConversation(api, locationId, ids.conversationId)).liveTurn?.turnId === ids.turnId;
+    } catch (error: unknown) {
+      return !isStatus(error, 404);
+    }
+  }
+
+  /**
+   * After a turn this page followed without sending it, or one whose end it never saw: the conversation as the server
+   * keeps it now. A turn that ended without saving stays as its stream left it, as in the tab that sent it. Answers
+   * whether the conversation is there; one the server no longer has is let go, so the next send starts a new one.
+   */
+  async function reread(handle: TurnHandle): Promise<boolean> {
+    flush();
+    const id = handle.conversationId;
+    if (id === null) return false;
+    try {
+      const load = await loadConversation(api, locationId, id);
+      if (!handle.ended || handle.saved) dispatch({ type: 'opened', id, shown: shownOf(load, id) });
+      return true;
+    } catch (error: unknown) {
+      if (!isStatus(error, 404)) return true;
+      dispatch({ type: 'discard', id });
+      return false;
+    }
+  }
+
+  /** Stop: the server stops the turn and every stream of it ends with `stopped`; a turn without its id yet waits for it. */
+  function askToStop(handle: TurnHandle): void {
+    const { conversationId, turnId } = handle;
+    if (conversationId === null || turnId === null || handle.ended) return;
+    void stopTurn(api, locationId, { conversationId, turnId }).then(() => undefined, (error: unknown) => {
+      // A turn that is gone (404) ended already; its stream says how.
+      if (handle.ended || live.current !== handle || isStatus(error, 404)) return;
+      handle.stopping = false;
+      dispatch({ type: 'stopFailed', error: STOP_FAILED });
+    });
+  }
+
+  function stop(): void {
+    const handle = live.current;
+    if (handle === null || handle.ended || handle.stopping) return;
+    handle.stopping = true;
+    askToStop(handle);
+  }
+
+  /**
+   * Streams a turn: `action` puts it on the page, `request` goes to the server. `telling`, for a question card, hears
+   * when it starts and how it ended; `returned`, for the composer's files, runs if a send is taken back.
+   */
+  function run(
+    action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0, telling?: Telling, returned?: () => void,
+  ): void {
+    const attached = 'attachments' in request && request.attachments.length > 0;
+    const handle = handleFor(request.conversationId);
+    live.current = handle;
+    dispatch(action);
+    // A first turn that saved nothing (an error, Stop, a cut-off stream or a refusal) left no conversation behind.
+    let created: string | null = null;
+    let saved = false;
+    let started = false;
+    // The conversation read again after a turn whose end this page never saw is still there.
+    let found = false;
+    // Why it saved nothing, in the words the chat shows for it.
+    let failure: string | null = null;
+    const onEvent = listener(handle, (event) => {
+      if (!started) {
+        started = true;
+        telling?.started?.();
+      }
       if (event.type === 'conversation') created = event.id;
       if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) saved = true;
       else if (event.type === 'done') failure = doneNote(event.stopReason) ?? NOT_SAVED;
-      if (event.type === 'error') failure = streamErrorText(event.code);
-      dispatch({ type: 'event', event, key: nextKey(), at: new Date().toISOString() });
+      if (event.type === 'error') failure = event.code === TURN_INTERRUPTED ? INTERRUPTED : streamErrorText(event.code);
+      if (event.type === 'stopped') failure = STOPPED;
+    });
+    const follows = async (): Promise<void> => {
+      // A stream that closed without the turn's last event dropped, unless a wake closed it.
+      let dropped = true;
+      try {
+        await stream(request, connect(handle), onEvent, retries);
+      } catch (error: unknown) {
+        // Once the turn has its id, a dropped (or woken) stream is read back from its last number; before that, the
+        // failure is the turn's.
+        if (!handle.ended && (handle.turnId === null || handle.controller.signal.aborted)) throw error;
+        dropped = !woken(error);
+      } finally {
+        handle.connection = null;
+      }
+      const { conversationId, turnId } = handle;
+      if (handle.ended || conversationId === null || turnId === null) return;
+      if (!(await follow(handle, { conversationId, turnId }, onEvent, dropped))) found = await reread(handle);
     };
-    turnEnd.current = stream(request, controller.signal, onEvent, retries).then(
+    turnEnd.current = follows().then(
       () => {
         flush();
         dispatch({ type: 'ended' });
@@ -910,11 +1174,39 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         if (takenBack && draftBefore === '' && content !== '') returned?.();
       },
     ).finally(() => {
-      if (live.current === controller) live.current = null;
-      if (request.conversationId === null && created !== null && !saved) dispatch({ type: 'discard', id: created });
+      if (live.current === handle) live.current = null;
+      if (request.conversationId === null && created !== null && !saved && !found) dispatch({ type: 'discard', id: created });
       // The list, the budget and the off switch may all have changed with this turn.
       refresh();
       telling?.ended(saved ? null : failure ?? NOT_SAVED);
+    });
+  }
+
+  /**
+   * Follows a turn live in a conversation just opened (a refresh mid-reply, a second tab): the person's message and the
+   * reply from its first event, through the same reducer, then the conversation read again.
+   */
+  function reattach(id: string, load: ConversationLoad, turn: LiveTurnLoad): void {
+    const handle = handleFor(id);
+    handle.turnId = turn.turnId;
+    live.current = handle;
+    const asked = turn.message === null ? null : toMessage(turn.message, load.tree, undefined, id);
+    // What Try again sends, if the turn doesn't save.
+    let request: TurnRequest | null = null;
+    if (turn.message !== null) request = { conversationId: id, content: turn.message.text, parentId: turn.parentId };
+    else if (turn.parentId !== null) request = { conversationId: id, replyTo: turn.parentId };
+    dispatch({ type: 'reattach', id, shown: shownOf(load, id), asked, replyKey: nextKey(), request, live: turn });
+    const onEvent = listener(handle, () => undefined);
+    turnEnd.current = follow(handle, { conversationId: id, turnId: turn.turnId }, onEvent, false).then(() => reread(handle)).then(
+      () => {
+        flush();
+        dispatch({ type: 'ended' });
+      },
+      // The page let go of it.
+      () => { flush(); },
+    ).finally(() => {
+      if (live.current === handle) live.current = null;
+      refresh();
     });
   }
 
@@ -952,7 +1244,9 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     dispatch({ type: 'open', id, draft: draftFor(id) });
     void loadConversation(api, locationId, id).then(
       (load) => {
-        if (token === opening.current) dispatch({ type: 'opened', id, shown: shownOf(load, id) });
+        if (token !== opening.current) return;
+        if (load.liveTurn !== null && live.current === null) reattach(id, load, load.liveTurn);
+        else dispatch({ type: 'opened', id, shown: shownOf(load, id) });
       },
       (error: unknown) => {
         if (token === opening.current) dispatch({ type: 'openFailed', id, error: describeError(error) });
@@ -1143,12 +1437,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       start(content, 0, undefined, attachments, returned);
       return;
     }
-    // The send waits for the stopped turn to end, so it goes after the leaf as the stop left it. A second press
+    // The send waits for the stopped turn's last event, so it goes after the leaf as the stop left it. A second press
     // meanwhile takes its place, and the first one's files go back.
     const queued = { content, returned };
     waiting.current?.returned?.();
     waiting.current = queued;
-    live.current.abort();
+    stop();
     void ending.then(() => {
       if (waiting.current !== queued) return;
       waiting.current = null;
@@ -1162,7 +1456,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     send: (attachments = [], returned) => { start(state.draft.trim(), 0, undefined, attachments, returned); },
     ask: (text) => { start(text.trim()); },
     tell: (text, telling) => { start(text.trim(), 0, telling); },
-    stop: () => { live.current?.abort(); },
+    stop,
     stopAndSend,
     newConversation: () => {
       if (state.streaming) return;
@@ -1201,6 +1495,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       const asked = state.messages[at - 1];
       if (at < 1 || asked?.role !== 'user' || !canStart(state)) return;
       const request = state.messages[at]?.request ?? null;
+      // A regenerate followed from another tab or a refresh: asked again in the failed reply's place, which comes back
+      // if this one doesn't save either.
+      if (request !== null && 'replyTo' in request) {
+        if (live.current === null) run({ type: 'regenerate', replyKey, newKey: nextKey(), request }, request);
+        return;
+      }
       dispatch({ type: 'drop', replyKey });
       // A question card's message goes again as the card sent it: its words never reach the composer, and once saved
       // the card answers its question.

@@ -184,7 +184,10 @@ describe('a reply', () => {
   test('a stopped reply keeps what arrived, says it wasn’t saved, and Try again sends the message again', async () => {
     const { chat } = await renderAgent(meOf(ACCESS.member));
     await send('Hello');
-    await act(() => { turn(chat).emit('text', { delta: 'Half a rep' }); });
+    await act(() => {
+      turn(chat).emit('conversation', { id: 'c2', title: 'Hello', turnId: 'turn-1' });
+      turn(chat).emit('text', { delta: 'Half a rep' });
+    });
     await fireEvent.press(screen.getByRole('button', { name: 'Stop' }));
     expect(await screen.findByText('Stopped. Your message and this reply weren’t saved.')).toBeTruthy();
     expect(screen.getByText('Half a rep')).toBeTruthy();
