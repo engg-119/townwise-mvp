@@ -232,6 +232,27 @@ describe('which locations a Monday starts', () => {
     expect(await weekRow(p, '2026-08-03')).toMatchObject({ status: 'started', dataSha256: (await calibration(firstId))?.dataSha256 });
   });
 
+  it('unchanged data refits a year-long run on the Monday a 91-day run would (D52: current by the forecast tier)', async () => {
+    // As the case above, but the run reaches today plus 365 (2027-06-01): its forecast tier still ends Aug 31.
+    const p = await place({ span: 620 });
+    await pass();
+    const [job] = jobs();
+    const firstId = job?.calibrationId ?? '';
+    const input = labInputSchema.parse(await (await jobCall(server, { calibrationId: firstId }, 'input')).json());
+    const result = labResultFor(input, { run: runDays(input.dataThrough, 366) });
+    expect(result.run.days.at(-1)?.date).toBe('2027-06-01');
+    expect((await jobCall(server, { calibrationId: firstId }, 'result', result)).status).toBe(200);
+    expect(await calibration(firstId)).toMatchObject({ gate: { published: true } });
+    for (const week of ['2026-06-08', '2026-06-15', '2026-06-22', '2026-06-29', '2026-07-06', '2026-07-13', '2026-07-20', '2026-07-27']) {
+      server.clock.advance(7 * DAY);
+      expect(await pass()).toMatchObject({ started: 0, skipped: 1 });
+      expect(await weekRow(p, week)).toMatchObject({ status: 'unchanged' });
+    }
+    server.clock.advance(7 * DAY);
+    expect(await pass()).toMatchObject({ started: 1, skipped: 0 });
+    expect(await weekRow(p, '2026-08-03')).toMatchObject({ status: 'started', dataSha256: (await calibration(firstId))?.dataSha256 });
+  });
+
   it('a published run that ends where its data does, not at its today plus 91, is not refit on unchanged data', async () => {
     // labResultFor's run covers 14 days after the data: a refit on the same days would end there again.
     const p = await place({ span: 620 });

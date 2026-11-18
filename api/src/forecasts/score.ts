@@ -18,6 +18,11 @@ export interface ScoredDay {
   readonly actual: number | null;
   /** The day was closed or likely closed (spec D32, closed-days.ts): left out of live accuracy. */
   readonly closed?: boolean;
+  /**
+   * The day is in its run's outlook (D52, tiers.ts): left out of live accuracy, which keeps scoring the forecast tier
+   * only. [CONFIRM: outlook days are left out of live accuracy, so it keeps scoring only the forecast tier]
+   */
+  readonly outlook?: boolean;
 }
 
 export interface LiveAccuracy {
@@ -41,9 +46,12 @@ export function inRangeOf(actual: number | null, low: number | null, high: numbe
   return actual >= low && actual <= high;
 }
 
-/** Whether live accuracy counts the day: forecast open with a middle and stored guests, and not closed or likely closed. */
+/**
+ * Whether live accuracy counts the day: forecast open with a middle and stored guests, not closed or likely closed, and
+ * not an outlook day.
+ */
 export function scoredDay(day: ScoredDay): day is ScoredDay & { mid: number; actual: number } {
-  return day.status === 'open' && day.closed !== true && day.mid !== null && day.actual !== null;
+  return day.status === 'open' && day.closed !== true && day.outlook !== true && day.mid !== null && day.actual !== null;
 }
 
 /**
