@@ -6,6 +6,7 @@ import type { Logger, ServerConfig } from '@ckeith26/server-core';
 import express, { type Router } from 'express';
 import type { Connection } from 'mongoose';
 
+import { createActivityRecorder, type ActivityRecorder } from './access/activity.ts';
 import { mountTownwiseRoutes, TOWNWISE_ROUTES, type TownwiseRoute } from './access/routes.ts';
 import { createCalendarFetcher, type CalendarFetcher } from './calendar/fetch.ts';
 import type { GoogleCalendarClient, revokeGoogleGrant } from './calendar/google.ts';
@@ -94,6 +95,11 @@ export interface TownwiseDeps {
    * 14). Absent, nothing is revoked. Tests pass a fake.
    */
   readonly revokeGoogle?: typeof revokeGoogleGrant | undefined;
+  /**
+   * Records the days each person used the app (access/activity.ts, openspec change staff-overview); absent, one is built
+   * over this connection, as main.ts runs it. The test harness passes OFF_ACTIVITY unless a suite asks for it.
+   */
+  readonly activity?: ActivityRecorder | undefined;
 }
 
 /**
@@ -153,6 +159,8 @@ export interface TownwiseContext {
   readonly googleCalendarClientId: string | null;
   /** Null when main.ts has no TOWNWISE_CALENDAR_KEY, so no stored Google token could be opened to revoke anyway. */
   readonly revokeGoogle: typeof revokeGoogleGrant | null;
+  /** The route chain's active days recorder (staff-overview); always set. */
+  readonly activity: ActivityRecorder;
 }
 
 /** Registers the Townwise models on `connection` (call it before ensureIndexes) and builds what every handler receives. */
@@ -191,6 +199,9 @@ export function createTownwiseContext(deps: TownwiseDeps): TownwiseContext {
     googleCalendar: deps.googleCalendar ?? null,
     googleCalendarClientId: deps.googleCalendar === undefined ? null : deps.googleCalendarClientId ?? null,
     revokeGoogle: deps.revokeGoogle ?? null,
+    activity: deps.activity ?? createActivityRecorder({
+      connection: deps.connection, activityDays: stores.activityDays, logger: deps.logger, now: deps.now,
+    }),
   };
 }
 

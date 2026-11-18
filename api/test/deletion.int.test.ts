@@ -11,7 +11,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
-  addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
+  addActivityDay, addAuditEvent, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
   addRemovedSeat, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { addGoogleCalendar, addGoogleConnection, createFakeGoogle, REFRESH_TOKEN, SHARED_ID } from './helpers/google.ts';
@@ -50,6 +50,8 @@ const TENANT_COLLECTIONS = [
   'tw_calendar_sources', 'tw_calendar_events', 'tw_google_connections',
   // Orders: edits, rules, cards, setups, item sales and counts.
   ...ORDER_COLLECTIONS,
+  // The days each person used the app (staff-overview).
+  'tw_activity_days',
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -187,6 +189,9 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
     calibrationId: null, dataSha256: null, createdAt: server.clock.now(), updatedAt: server.clock.now(),
   });
   await addLiveTurn(server, { orgId, userId: member.session.userId });
+  // The days its people used the app (staff-overview).
+  await addActivityDay(server, { orgId, userId: admin.session.userId, day: '2026-05-31' });
+  await addActivityDay(server, { orgId, userId: member.session.userId, day: '2026-06-01' });
   await addChatUsage(server, { orgId, month: '2026-06', costMicroUsd: 1_250_000 });
   await addGrant(server, { actorUserId: staff.userId, sessionId: randomUUID(), targetUserId: member.session.userId, orgId });
 
@@ -242,12 +247,12 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // The event is written before the effect; the organization row is deleted last, then sales days, ordering's
     // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
-    // Stored files (none here) are swept again after the row too: imports first. Then (D42) week rows, the weekly
-    // suggestions' pass rows and suggestions, and (U13B) forecast rows, then runs.
-    expect(writes.slice(-16)).toEqual([
+    // Stored files (none here) are swept again after the row too: imports first. Then (staff-overview) active days, (D42)
+    // week rows, the weekly suggestions' pass rows and suggestions, and (U13B) forecast rows, then runs.
+    expect(writes.slice(-17)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
       'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
-      'delete tw_chat_usage', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_suggestion_passes',
+      'delete tw_chat_usage', 'delete tw_activity_days', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_suggestion_passes',
       'delete tw_agent_suggestions', 'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 
@@ -346,6 +351,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
       const removed = await deleteOne(...args);
       await addSalesDay(server, { orgId: org.orgId, locationId, date: '2026-05-03', guests: 77, netSalesCents: 199_900 });
       await addChatUsage(server, { orgId: org.orgId, month: '2026-07', costMicroUsd: 40_000 });
+      // A request already past its policy can still record an active day (staff-overview).
+      await addActivityDay(server, { orgId: org.orgId, userId: org.member.session.userId, day: '2026-06-02' });
       // A setup save, an item sales upload, a count, an edit, a rule and a card save still running (A14).
       await addOrderRecords(server, { orgId: org.orgId, locationId });
       return removed;
@@ -416,6 +423,9 @@ async function doomedPerson(name: string): Promise<DoomedPerson> {
   // Orders: the location's records, with an order card in the person's conversation.
   await addOrderRecords(server, { orgId: formerOrgId, locationId, conversationId });
   await addLiveTurn(server, { orgId: formerOrgId, userId });
+  // The days they used the app, in both organizations they were in (staff-overview).
+  await addActivityDay(server, { orgId: formerOrgId, userId, day: '2026-05-30' });
+  await addActivityDay(server, { orgId: olderOrgId, userId, day: '2026-04-02' });
   const inviting = await createOrg(server, { name: `${name} Inviting Cafe` });
   const paused = await createOrg(server, { name: `${name} Paused Inviter`, status: 'suspended' });
   await addInvite(server, { orgId: inviting, email: doomed.email, invitedBy: 'f'.repeat(24) });
@@ -468,6 +478,7 @@ async function snapshotOfPerson(target: Person): Promise<string> {
     await server.connection.collection('tw_order_cards').find({ conversationId: { $in: conversationIds } }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_profiles').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_google_connections').find({ userId }).sort({ _id: 1 }).toArray(),
+    await server.connection.collection('tw_activity_days').find({ userId }).sort({ _id: 1 }).toArray(),
     await server.connection.collection('tw_audit_events').find({ $or: [{ actorUserId: userId }, { 'details.email': target.email }] }).sort({ _id: 1 }).toArray(),
     await server.authStores.totp.get(userId),
   ];
@@ -513,6 +524,8 @@ describe('POST /api/admin/people/delete', () => {
     expect(await count('tw_chat_proposals', { userId })).toBe(0);
     expect(await count('tw_order_cards', { conversationId: new Types.ObjectId(doomed.conversationId) })).toBe(0);
     expect(await count('tw_profiles', { userId })).toBe(0);
+    // Their active days, in both organizations (staff-overview); not counted, so the answer above is unchanged.
+    expect(await count('tw_activity_days', { userId })).toBe(0);
     expect(await server.authStores.totp.get(userId)).toBeNull();
     for (const session of [doomed.person.session, doomed.second]) {
       expect(await errorOf(await call(server, '/api/me', { session }))).toEqual({ status: 401, error: 'unauthenticated' });

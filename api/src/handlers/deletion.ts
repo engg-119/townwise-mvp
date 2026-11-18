@@ -68,6 +68,8 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.chatConversations.removeForOrg(scope);
     await stores.chatLiveTurns.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
+    // The days its people used the app (staff-overview).
+    await stores.activityDays.removeForOrg(scope);
     await stores.welcomes.removeForOrg(scope);
     await stores.chatProposals.removeForOrg(scope);
     // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
@@ -108,6 +110,9 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     await stores.orderSetups.removeForOrg(scope);
     await stores.orders.removeForOrg(scope);
     await stores.chatUsage.removeForOrg(scope);
+    // A request already past its policy when the organization was suspended can still record an active day; a suspended
+    // organization's members never resolve as members, so none starts after (staff-overview).
+    await stores.activityDays.removeForOrg(scope);
     await stores.calibrations.removeForOrg(scope);
     // D42: a weekly pass already past its candidates can still write a week row, and its suggestions.
     await stores.forecastWeeks.removeForOrg(scope);

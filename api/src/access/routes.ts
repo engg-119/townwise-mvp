@@ -23,6 +23,7 @@ import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/est
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
 import { holdSetupReadBytes, readOrderSetup } from '../handlers/order-setup-read.ts';
 import { getOrders, saveOrderDecision, saveOrderRule, turnOffOrderRule } from '../handlers/orders.ts';
+import { getOverview } from '../handlers/overview.ts';
 import { deleteForecastRun, getForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
   addTextItem, answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
@@ -494,6 +495,8 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     handler: removeMember,
   },
 
+  // The console's Overview (openspec change staff-overview): usage and health across organizations, a read with no limiter.
+  { id: 'admin.overview', method: 'GET', path: '/admin/overview', policy: 'staff', bodyLimit: 'none', handler: getOverview },
   { id: 'admin.requests.list', method: 'GET', path: '/admin/requests', policy: 'staff', bodyLimit: 'none', handler: listRequests },
   {
     id: 'admin.requests.approve', method: 'POST', path: '/admin/requests/:requestId/approve', policy: 'staff',
@@ -719,6 +722,8 @@ function authorize(ctx: TownwiseContext, route: TownwiseRoute): RequestHandler {
     }
     principals.set(req, principal);
     recordResolution(req, resolution);
+    // The person's active day (staff-overview): only once every guard and the policy passed, never awaited.
+    ctx.activity.record(principal);
   });
 }
 

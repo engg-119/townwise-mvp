@@ -10,7 +10,7 @@ import type { AccessState, MeResponse, Role } from './schemas';
  * none: the guard signs the session out instead, so staff sign in again on the ordinary sign-in page.
  */
 export const HOME: Readonly<Record<AccessState, string | null>> = {
-  staff: '/admin',
+  staff: '/admin/overview',
   staff_setup_required: '/settings/security',
   staff_reauth_required: null,
   member: '/dashboard',
@@ -143,10 +143,11 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
   return [...items, ...account.map((item, index) => (index === 0 ? { ...item, end: true } : item))];
 }
 
-/** The staff console's top bar (15.4). */
+/** The staff console's top bar (15.4): Overview (P32), where staff land, first. */
 export function consoleNav(pathname: string, pendingCount: number | null): NavItem[] {
   const path = normalize(pathname);
   return [
+    { label: 'Overview', href: '/admin/overview', current: currentFor(path, '/admin/overview', null) },
     { label: 'Requests', href: '/admin', current: currentFor(path, '/admin', null), count: pendingCount },
     { label: 'Organizations', href: '/admin/orgs', current: currentFor(path, '/admin/orgs', /^\/admin\/orgs\//) },
     { label: 'People', href: '/admin/people', current: currentFor(path, '/admin/people', null) },

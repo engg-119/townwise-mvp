@@ -15,6 +15,7 @@ import type { Connection } from 'mongoose';
 import { inject } from 'vitest';
 import { z } from 'zod';
 
+import { createActivityRecorder, OFF_ACTIVITY } from '../../src/access/activity.ts';
 import type { TownwiseRoute } from '../../src/access/routes.ts';
 import { createTownwiseApi, createTownwiseContext, createTownwiseLab, type TownwiseContext } from '../../src/app.ts';
 import type { CalendarFetcher } from '../../src/calendar/fetch.ts';
@@ -32,6 +33,7 @@ import type { LabRunner } from '../../src/lab/runner.ts';
 import type { MailTransport } from '../../src/mail/acs.ts';
 import { createMailer, OFF_MAILER, type Mailer } from '../../src/mail/mailer.ts';
 import type { PeopleData } from '../../src/people-in-town/sources.ts';
+import { createActivityDayStore } from '../../src/stores/activity-days.ts';
 import { createTownwiseStores } from '../../src/stores/index.ts';
 import type { PlacesClient } from '../../src/places/google.ts';
 import type { StaticMapSigner } from '../../src/places/static-map.ts';
@@ -150,6 +152,11 @@ export async function startTownwiseServer(opts?: {
   googleCalendarClientId?: string;
   /** Revokes a Google grant (helpers/google.ts has a fake that records each call); absent, nothing is revoked. */
   revokeGoogle?: typeof revokeGoogleGrant;
+  /**
+   * Records active days (access/activity.ts) as production does, the recorder at `ctx.activity` (await its idle() before
+   * asserting); absent, OFF_ACTIVITY, so other suites' write checks stay about their own routes.
+   */
+  activity?: boolean;
 }): Promise<TownwiseTestServer> {
   const env: Record<string, string> = {
     NODE_ENV: 'test',
@@ -217,6 +224,9 @@ export async function startTownwiseServer(opts?: {
       labCaller: opts?.labCaller ?? (opts?.labRunner === undefined ? undefined : testLabCaller(clock.now)),
       calendarKey: opts?.calendarKey, calendarFetcher: opts?.calendarFetcher, googleCalendar: opts?.googleCalendar,
       googleCalendarClientId: opts?.googleCalendarClientId, revokeGoogle: opts?.revokeGoogle,
+      activity: opts?.activity === true
+        ? createActivityRecorder({ connection: mongo.connection, activityDays: createActivityDayStore(mongo.connection), logger, now: clock.now })
+        : OFF_ACTIVITY,
     };
     const { aroundOnRead = (actions: OnAiRead) => actions, ...readerOpts } = opts?.aiReader ?? { model: undefined };
     const aiReader = files === undefined || readerOpts.model === undefined ? null : createAiReader({

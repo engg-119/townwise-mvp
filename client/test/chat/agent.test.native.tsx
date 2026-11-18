@@ -803,7 +803,7 @@ describe('the portal’s client (spec 4.3)', () => {
 
   test('a view-as grant that expired meanwhile lands staff on the console', async () => {
     const { router } = await refusedChat(viewAsMe(ACCESS.member), staffMe());
-    await waitFor(() => { expect(router.getPathname()).toBe('/admin'); });
+    await waitFor(() => { expect(router.getPathname()).toBe('/admin/overview'); });
   });
 
   test('a note saved from a card reads the organization again on leaving, so Locations shows the new count', async () => {

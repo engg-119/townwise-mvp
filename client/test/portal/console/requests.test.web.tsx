@@ -85,6 +85,29 @@ test('empty tabs say what is missing; the tabs filter by status, newest first, w
   expect(await screen.findByText('No rejected requests.')).toBeTruthy();
 });
 
+test('a tab change keeps the list and the Pending count on the page until the next list arrives: no skeleton, no moved tabs', async () => {
+  const api = consoleApi();
+  list(api, 'pending', [], 0);
+  const answer = deferred<unknown>();
+  api.routes['GET /api/admin/requests?status=approved'] = () => answer.promise;
+  renderAt('/admin', api);
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  const tabs = screen.getByRole('navigation', { name: 'Requests by status' });
+  fireEvent.click(within(tabs).getByRole('link', { name: 'Approved' }));
+  await waitFor(() => { expect(within(tabs).getByRole('link', { name: 'Approved' }).getAttribute('aria-current')).toBe('page'); });
+  expect(screen.queryByText('Loading requests')).toBeNull();
+  expect(screen.getByText('No requests are waiting.')).toBeTruthy();
+  // The held list is dimmed and busy, so it never reads as the new tab's.
+  expect(screen.getByTestId('requests-held').getAttribute('aria-busy')).toBe('true');
+  expect(screen.getByTestId('requests-held').hasAttribute('inert')).toBe(true);
+  expect(screen.getByRole('status').textContent).toBe('Loading approved requests…');
+  expect(within(tabs).getAllByRole('link').map((link) => link.textContent)).toEqual(['Pending 0', 'Approved', 'Rejected', 'Withdrawn']);
+  await act(async () => { answer.resolve({ requests: [], pendingCount: 0 }); await answer.promise; });
+  expect(await screen.findByText('No approved requests.')).toBeTruthy();
+  expect(screen.queryByText('No requests are waiting.')).toBeNull();
+  expect(screen.queryByTestId('requests-held')).toBeNull();
+});
+
 test('loading, then the network copy with Try again', async () => {
   const api = consoleApi();
   let fail = true;
@@ -471,8 +494,9 @@ test('a staff window that ran out mid-action signs staff out to the ordinary sig
   expect(await screen.findByText('Staff sessions need a fresh sign-in with your code every 60 minutes.')).toBeTruthy();
 });
 
+/** The Requests item of the console nav, after Overview (D48). */
 function navCount(): string | null | undefined {
-  return within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')[0]?.textContent;
+  return within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Requests/ }).textContent;
 }
 
 test('the console nav’s Requests count reads again after an approve and after a reject', async () => {
