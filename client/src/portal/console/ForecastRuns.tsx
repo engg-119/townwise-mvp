@@ -6,7 +6,7 @@ import { useAction } from '../hooks';
 import { usePortal } from '../PortalProvider';
 import { Button } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
-import { ErrorNotice, LoadingLine, Messages } from '../ui/feedback';
+import { ErrorNotice, LoadingLine, Notice } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { Heading, Small } from '../ui/text';
 import { Calibrations } from './CalibrationsPanel';
@@ -18,6 +18,7 @@ import { changeForecastRun, deleteForecastRun, fetchForecastRuns, STATUS_LABEL, 
 import { CellLines, RowActions } from './parts';
 import { problemOf } from './problems';
 import type { OrgLocation, StaffOrg } from './schemas';
+import { RunTraining } from './RunTraining';
 import { useRefreshable } from './useRefreshable';
 import { WeeklyRefresh } from './WeeklyRefresh';
 
@@ -25,7 +26,7 @@ import { WeeklyRefresh } from './WeeklyRefresh';
 // Publish (drafts only), Withdraw and Delete, each through a console dialog, and the import. A run is a draft until
 // published: owners and TownwiseAI see only published runs, and never the model. Every change is a staff action the
 // organization's admins see in their Townwise staff activity. The table shows a run's model, dates and day count,
-// never a figure.
+// never a figure. A run's model name opens how it was trained under its location's table (D50, RunTraining).
 
 type Verb = 'publish' | 'withdraw' | 'delete';
 
@@ -97,8 +98,11 @@ function statusNote(run: StaffRun): string | null {
   return null;
 }
 
-function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onAct: (verb: Verb, run: StaffRun) => void }): React.JSX.Element {
-  const { location, runs, onAct } = props;
+function RunTable(props: {
+  location: OrgLocation; runs: readonly StaffRun[]; onAct: (verb: Verb, run: StaffRun) => void;
+  openId: string | null; onOpen: (run: StaffRun) => void;
+}): React.JSX.Element {
+  const { location, runs, onAct, openId, onOpen } = props;
   return (
     <DataTable
       label={`Forecasts for ${location.name}`}
@@ -115,7 +119,15 @@ function RunTable(props: { location: OrgLocation; runs: readonly StaffRun[]; onA
         key: run.id,
         cells: {
           // The model card's words (forecast-publish-policy): a baseline run never reads like a model run.
-          model: run.model.label,
+          model: (
+            <Button
+              variant="link"
+              label={run.model.label}
+              accessibilityLabel={`How ${run.model.label}, ${formatDate(run.range.from)}, was trained`}
+              expanded={openId === run.id}
+              onPress={() => { onOpen(run); }}
+            />
+          ),
           dates: <CellLines main={`${formatDate(run.range.from)} to ${formatDate(run.range.to)}`} note={plural(run.dayCount, 'day', 'days')} />,
           trained: formatDate(run.dataThrough),
           made: formatDate(run.madeAt),
@@ -145,6 +157,7 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
   const calibrations = useRefreshable(useCallback(() => fetchCalibrations(api, org.id), [api, org.id]));
   const [acting, setActing] = useState<{ verb: Verb; run: StaffRun } | null>(null);
   const [done, setDone] = useState<string | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
 
   const refreshed = useCallback(async () => { await refresh(); }, [refresh]);
   const finished = useCallback(async () => {
@@ -162,7 +175,7 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
         {state.status === 'loading' ? <LoadingLine text="Loading forecasts…" /> : null}
         {state.status === 'failed' ? <ErrorNotice error={state.error} onRetry={reload} /> : null}
         {refreshError === null ? null : <ErrorNotice message="The forecasts couldn’t load again, so this list may be out of date." onRetry={() => { void refresh(); }} />}
-        {done === null ? null : <Messages live="status" items={[done]} />}
+        {done === null ? null : <Notice text={done} />}
         {state.status === 'ready' ? locations.map((location) => {
           const runs = state.data.filter((run) => run.locationId === location.id);
           return (
@@ -170,7 +183,18 @@ export function ForecastRuns(props: { org: StaffOrg; locations: readonly OrgLoca
               <Heading level={3}>{location.name}</Heading>
               {runs.length === 0
                 ? <Small>{`No forecast imported for ${location.name}.`}</Small>
-                : <RunTable location={location} runs={runs} onAct={(verb, run) => { setDone(null); setActing({ verb, run }); }} />}
+                : (
+                  <RunTable
+                    location={location}
+                    runs={runs}
+                    onAct={(verb, run) => { setDone(null); setActing({ verb, run }); }}
+                    openId={openId}
+                    onOpen={(run) => { setOpenId((current) => (current === run.id ? null : run.id)); }}
+                  />
+                )}
+              {runs.filter((run) => run.id === openId).map((run) => (
+                <RunTraining key={run.id} org={org} run={run} onClose={() => { setOpenId(null); }} />
+              ))}
             </Stack>
           );
         }) : null}

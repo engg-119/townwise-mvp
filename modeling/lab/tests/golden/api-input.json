@@ -8511,7 +8511,7 @@
    "kind": "event",
    "start": "2025-09-20",
    "end": "2025-09-20",
-   "confidence": "medium"
+   "confidence": "high"
   },
   {
    "id": "hanover-nh:2025-09-26:family-weekend",
@@ -8551,7 +8551,7 @@
    "kind": "event",
    "start": "2025-10-24",
    "end": "2025-10-24",
-   "confidence": "medium"
+   "confidence": "high"
   },
   {
    "id": "hanover-nh:2025-11-08:home-football-vs-princeton",
@@ -8559,7 +8559,7 @@
    "kind": "event",
    "start": "2025-11-08",
    "end": "2025-11-08",
-   "confidence": "medium"
+   "confidence": "high"
   },
   {
    "id": "us:veterans-day:2025",
@@ -8575,7 +8575,7 @@
    "kind": "event",
    "start": "2025-11-15",
    "end": "2025-11-15",
-   "confidence": "medium"
+   "confidence": "high"
   },
   {
    "id": "hanover-nh:2025-11-21:fall-term-finals",
@@ -8767,7 +8767,7 @@
    "kind": "event",
    "start": "2026-09-26",
    "end": "2026-09-26",
-   "confidence": "medium"
+   "confidence": "high"
   },
   {
    "id": "hanover-nh:2026-10-02:dartmouth-night-and-homecoming",
@@ -8807,7 +8807,7 @@
    "kind": "event",
    "start": "2026-10-30",
    "end": "2026-10-30",
-   "confidence": "medium"
+   "confidence": "high"
   },
   {
    "id": "us:veterans-day:2026",
@@ -8839,7 +8839,7 @@
    "kind": "event",
    "start": "2026-11-21",
    "end": "2026-11-21",
-   "confidence": "medium"
+   "confidence": "high"
   },
   {
    "id": "us:thanksgiving:2026",

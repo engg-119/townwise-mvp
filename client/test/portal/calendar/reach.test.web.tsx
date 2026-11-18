@@ -85,7 +85,7 @@ test('a day 91 days after today shows its forecast, and the day after the run sa
   );
   await screen.findByRole('grid', { name: 'February 2027' }, SLOW);
   const panel = (): HTMLElement => screen.getByRole('region', { name: 'Selected day' });
-  await waitFor(() => { expect(cell(LAST).getAttribute('aria-label')).toBe('Wed, Feb 10, 2027. Forecast about 175 guests, 150 to 205.'); }, SLOW);
+  await waitFor(() => { expect(cell(LAST).getAttribute('aria-label')).toBe('Wed, Feb 10, 2027. 175 guests, forecast, likely 150 to 205.'); }, SLOW);
   expect(within(panel()).getByText(whole('About 175 guests'))).toBeTruthy();
   // One read of the grid, of at most 42 days.
   const reads = fake.paths.filter((each) => each.includes('/forecast?'));

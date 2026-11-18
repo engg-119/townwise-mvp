@@ -6,6 +6,9 @@
 // the row's dates, source URL and confidence copied exactly (the test reads the file and compares). Where the file's
 // notes column changes how a date reads, a comment says so. No other town has entries yet.
 //
+// Team schedules come from the school's official athletics site (for Dartmouth, dartmouthsports.com), not from
+// aggregators or Wikipedia. Until a season is published there, a game may stand on the college's own calendar.
+//
 // Term entries follow one convention, which the term state (spec 13.2) reads:
 //   kind 'term'; group '{townId}:classes:{season}' for the class period or '{townId}:finals:{season}' for the exam
 //   period; season one of fall, winter, spring, summer.
@@ -64,17 +67,13 @@ const FIVE_YEAR_OCT_2026: CalendarSource = {
   label: 'Dartmouth Conferences and Events five-year calendar, October 2026',
   url: 'https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf',
 };
-const FOOTBALL_2025_WIKIPEDIA: CalendarSource = {
-  label: 'Wikipedia, 2025 Dartmouth Big Green football team',
-  url: 'https://en.wikipedia.org/wiki/2025_Dartmouth_Big_Green_football_team',
+const FOOTBALL_2025: CalendarSource = {
+  label: 'Dartmouth Athletics, 2025 football schedule',
+  url: 'https://dartmouthsports.com/sports/football/schedule/2025',
 };
-const FOOTBALL_2025_PROMOTIONS: CalendarSource = {
-  label: 'Dartmouth Athletics, 2025 football promotional schedule',
-  url: 'https://dartmouthsports.com/news/2025/8/26/football-announces-2025-promotional-schedule',
-};
-const FOOTBALL_2026_FBSCHEDULES: CalendarSource = {
-  label: 'FBSchedules, Dartmouth 2026 football schedule',
-  url: 'https://fbschedules.com/dartmouth-adds-merrimack-completes-2026-football-schedule/',
+const FOOTBALL_2026: CalendarSource = {
+  label: 'Dartmouth Athletics, 2026 football schedule',
+  url: 'https://dartmouthsports.com/sports/football/schedule/2026',
 };
 const HOMECOMING_2025_NEWS: CalendarSource = {
   label: 'Dartmouth News, Homecoming 2025 preview',
@@ -148,20 +147,19 @@ export const TOWN_CALENDAR: readonly TownCalendarEntry[] = [
   event('New student orientation', 'orientation', 'Orientation', '2025-09-03', '2025-09-15', medium(FIVE_YEAR_SEP_2025)),
   event('New student orientation', 'orientation', 'Orientation', '2026-09-02', '2026-09-14', medium(FIVE_YEAR_MAY_2026)),
 
-  // Home football at Memorial Field.
-  homeFootball('New Hampshire', '2025-09-20', medium(FOOTBALL_2025_WIKIPEDIA)),
-  homeFootball('Yale', '2025-10-11', high(FOOTBALL_2025_PROMOTIONS)),
+  // Home football at Memorial Field, from the official Athletics schedules (checked 2026-11-17).
+  homeFootball('New Hampshire', '2025-09-20', high(FOOTBALL_2025)),
+  homeFootball('Yale', '2025-10-11', high(FOOTBALL_2025)),
   // A Friday night game; the five-year calendar's Saturday 10-25 is wrong.
-  homeFootball('Columbia', '2025-10-24', medium(FOOTBALL_2025_WIKIPEDIA)),
-  homeFootball('Princeton', '2025-11-08', medium(FOOTBALL_2025_WIKIPEDIA)),
-  homeFootball('Cornell', '2025-11-15', medium(FOOTBALL_2025_WIKIPEDIA)),
-  homeFootball('Monmouth', '2026-09-26', medium(FOOTBALL_2026_FBSCHEDULES)),
-  homeFootball('Penn', '2026-10-03', high(FIVE_YEAR_OCT_2026)),
-  homeFootball('Merrimack', '2026-10-17', high(FIVE_YEAR_OCT_2026)),
+  homeFootball('Columbia', '2025-10-24', high(FOOTBALL_2025)),
+  homeFootball('Princeton', '2025-11-08', high(FOOTBALL_2025)),
+  homeFootball('Cornell', '2025-11-15', high(FOOTBALL_2025)),
+  homeFootball('Monmouth', '2026-09-26', high(FOOTBALL_2026)),
+  homeFootball('Penn', '2026-10-03', high(FOOTBALL_2026)),
+  homeFootball('Merrimack', '2026-10-17', high(FOOTBALL_2026)),
   // A Friday night game; an earlier schedule listed Saturday 10-31.
-  homeFootball('Harvard', '2026-10-30', medium(FIVE_YEAR_OCT_2026)),
-  // Kickoff time not yet published.
-  homeFootball('Brown', '2026-11-21', medium(FOOTBALL_2026_FBSCHEDULES)),
+  homeFootball('Harvard', '2026-10-30', high(FOOTBALL_2026)),
+  homeFootball('Brown', '2026-11-21', high(FOOTBALL_2026)),
 
   // Researched after the seed file (2026-11-06), so Hanover's term state stays known past fall 2026 finals. The
   // modeling team's CSV stops at fall 2026 and feeds demand_model_v0.ipynb, so these rows live only here, and
@@ -194,4 +192,16 @@ export const TOWN_CALENDAR: readonly TownCalendarEntry[] = [
   homeFootball('Columbia', '2027-10-23', medium(FIVE_YEAR_OCT_2026)),
   homeFootball('Princeton', '2027-11-06', medium(FIVE_YEAR_OCT_2026)),
   homeFootball('Cornell', '2027-11-13', medium(FIVE_YEAR_OCT_2026)),
+
+  // Researched 2026-11-17 from the registrar's 2027-28 key dates page, read that day, so the trained model's outlook
+  // (D52) is not cut at fall 2027 finals.
+  // The page lists Martin Luther King Jr. Day on 2028-01-17 without saying whether classes are held.
+  classes('winter', '2028-01-04', '2028-03-07', high(REGISTRAR_2027_28)),
+  // Scheduled exams end 2028-03-13; the exam period ends 2028-03-14.
+  finals('winter', '2028-03-10', '2028-03-14', high(REGISTRAR_2027_28)),
+  // No classes on 2028-05-29 (Memorial Day).
+  classes('spring', '2028-03-27', '2028-05-31', high(REGISTRAR_2027_28)),
+  // Scheduled exams end 2028-06-05; the exam period ends 2028-06-06.
+  finals('spring', '2028-06-02', '2028-06-06', high(REGISTRAR_2027_28)),
+  event('Commencement', 'commencement', 'Commencement', '2028-06-11', '2028-06-11', high(REGISTRAR_2027_28)),
 ];

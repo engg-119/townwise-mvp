@@ -1,17 +1,20 @@
 import { Link } from 'expo-router';
 import { useEffect, useRef } from 'react';
-import { Platform, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { openAsAdminOrgId } from '../../portal/api';
+import { plural } from '../../portal/format';
 import { usePortal } from '../../portal/PortalProvider';
-import { EFFECT_LABEL, guestsLine, hoursLine } from '../../portal/locations/noteRules';
+import { EFFECT_LABEL, guestsLine, guestsOf, hoursLine } from '../../portal/locations/noteRules';
+import { webAria } from '../../portal/ui/aria';
 import { Button } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine } from '../../portal/ui/feedback';
+import { FormField } from '../../portal/ui/FormField';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
-import type { Suggestion } from '../api';
-import { dayText, formatCount, KIND_LABEL, rangeText, weekdaysText } from '../format';
-import { openSuggestions, type AgentPanelState, type Decided } from '../useAgentPanel';
+import { isCalendarChange, type EventChoice, type Suggestion } from '../api';
+import { dayText, formatCount, KIND_LABEL, rangeText, suggestionDaysText as daysOf } from '../format';
+import type { AgentPanelState, Decided } from '../useAgentPanel';
 
 // TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions, spec P25): each Monday a pass reads the
 // next 3 months of the town's calendar with the location's notes and rules and suggests notes or business rules. A
@@ -19,18 +22,43 @@ import { openSuggestions, type AgentPanelState, type Decided } from '../useAgent
 // guests, hours and detail) and the calendar entries it rests on, and offers Accept and Dismiss to org admins only;
 // members see the card without them. Nothing changes the forecast until an admin accepts. Under the cards, the
 // organization's switch with its words: admins turn it off or on, members see its state.
+//
+// The location's own calendars (openspec change calendar-event-suggestions, design decisions 9, 10 and 15) add three
+// kinds, whose sentence (`words`) the server writes: a private event the weekly pass spotted on a calendar, whose card
+// asks the admin to choose the whole restaurant (a buyout) or alongside regular service, a radio group with neither
+// chosen, and the guest count, prefilled from the event's title when it gave one; once chosen, a line under the choices
+// says what it does to the forecast, in the note form's terms. Accept stays disabled until a choice is made (the help
+// line says so) and the count is right (its field says so; alongside regular service one is needed). The choice and
+// count are the panel's (useAgentPanel), so a re-read keeps them. And the follow-ups of a note made from an
+// event that moved or went, which list in their own section, "Your calendar changed", before the suggestions. Beside
+// the weekly switch, the organization's switch for reading the calendars' event titles: admins turn it off or on (staff
+// open as admin only off), members see its state.
 
 /** The switch's words (spec P25), with the town's name. */
 export function weeklyWords(town: string): string {
-  return `Each Monday TownwiseAI reads the next 3 months of ${town}’s calendar with your notes and rules, and suggests notes or rules for you to accept. It sends them to Anthropic and uses this organization’s TownwiseAI budget.`;
+  return `Once a week TownwiseAI reads the next 3 months of ${town}’s calendar with your notes and rules, and suggests notes or rules for you to accept. It sends them to Anthropic and uses this organization’s TownwiseAI budget.`;
 }
 
-/** The days a suggestion names: "Thu, Nov 26, 2026", "Dec 24 to Dec 26, 2026", with its weekdays and an open end. */
-function daysOf(startDate: string, endDate: string | null, weekdays: readonly number[] | null): string {
-  const dates = endDate === null ? `from ${dayText(startDate)} on` : startDate === endDate ? dayText(startDate) : rangeText(startDate, endDate);
-  const which = weekdaysText(weekdays);
-  return which === null ? dates : `${which.replace(/ only$/, '')}, ${dates}`;
-}
+/**
+ * The titles switch's words (calendar-event-suggestions design decision 9). [CONFIRM: the switch's words]
+ */
+export const TITLES_WORDS = 'Read your calendars’ event titles. Once a week TownwiseAI also reads the titles, dates and hours of the next 3 months of events on this location’s calendars, to suggest notes for private events. They are sent to Anthropic, which doesn’t train on them.';
+
+/** A spotted event's two choices, neither chosen until the admin picks one. */
+const EVENT_CHOICES: readonly { value: EventChoice['effect']; label: string }[] = [
+  { value: 'closed', label: 'The whole restaurant (a buyout)' },
+  { value: 'more_guests', label: 'Alongside regular service' },
+];
+const EVENT_CHOICE_LEGEND = 'How this event runs';
+/**
+ * What each choice does to the forecast, in the note form's terms (NoteFields: a buyout is "closed to walk-ins all day",
+ * and a private event's guests "add to the whole day’s total").
+ */
+const EVENT_CHOICE_EFFECT: Readonly<Record<EventChoice['effect'], string>> = {
+  closed: 'A buyout closes the whole day to walk-ins in the forecast.',
+  more_guests: 'These guests add to the whole day’s total.',
+};
+const EVENT_DISMISS = 'Dismiss and TownwiseAI won’t ask about this event again.';
 
 /**
  * What a note of kind other is, by its effect: "Other on Thu, Dec 31?" asks nothing an admin can answer. Null for
@@ -41,11 +69,14 @@ function otherWords(note: Extract<Suggestion, { type: 'note' }>['note']): string
   return note.effect === 'unknown' ? 'Something unusual' : EFFECT_LABEL[note.effect];
 }
 
-/** The card's question. */
+/** The card's question. A follow-up's and a spotted event's read from the note's kind and dates, never a title. */
 export function suggestionHeading(suggestion: Suggestion): string {
   if (suggestion.type === 'rule') return `Add the rule “${suggestion.text}”?`;
   const { note } = suggestion;
   const days = daysOf(note.startDate, note.endDate, note.weekdays);
+  if (suggestion.type === 'event') return `A private event on ${days}?`;
+  if (suggestion.type === 'move') return `Move the note to ${days}?`;
+  if (suggestion.type === 'remove') return `Delete the note on ${days}?`;
   if (note.kind === 'closure' || (note.effect === 'closed' && note.kind !== 'private_event')) return `Closed on ${days}?`;
   if (note.kind === 'private_event' && note.effect === 'closed') {
     return note.expectedGuests === null ? `Booked for a private party on ${days}?` : `Booked for a private party of ${formatCount(note.expectedGuests)} on ${days}?`;
@@ -60,7 +91,8 @@ export function suggestionHeading(suggestion: Suggestion): string {
  * when there is nothing more.
  */
 export function suggestionFacts(suggestion: Suggestion): string | null {
-  if (suggestion.type === 'rule') return null;
+  // A spotted event's effect and guests are the admin's to choose, on the card.
+  if (suggestion.type === 'rule' || suggestion.type === 'event') return null;
   const { note } = suggestion;
   const parts = [note.effect === 'closed' || note.kind === 'other' ? null : EFFECT_LABEL[note.effect], guestsLine(note.expectedGuests), hoursLine(note)]
     .filter((part) => part !== null);
@@ -70,17 +102,47 @@ export function suggestionFacts(suggestion: Suggestion): string | null {
 /** What Accept does, and who can press it. */
 export function suggestionHelp(suggestion: Suggestion, canChange: boolean): string {
   if (!canChange) return 'An admin of your organization can accept or dismiss this.';
-  return suggestion.type === 'rule'
-    ? 'Accept adds this business rule, and the forecast uses its schedule from then on. Dismiss and TownwiseAI won’t suggest it again.'
-    : 'Accept saves this note, and the forecast uses it from then on. Dismiss and TownwiseAI won’t suggest it again.';
+  switch (suggestion.type) {
+    case 'rule': return 'Accept adds this business rule, and the forecast uses its schedule from then on. Dismiss and TownwiseAI won’t suggest it again.';
+    case 'event': return `Accept saves a private-event note for these days, and the forecast uses it from then on. ${EVENT_DISMISS}`;
+    case 'move': return 'Accept moves the note to the event’s new dates and hours, and leaves the rest of it as it is. Dismiss keeps the note where it is.';
+    case 'remove': return 'Accept deletes the note, and the forecast stops using it. Dismiss keeps the note.';
+    case 'note': return 'Accept saves this note, and the forecast uses it from then on. Dismiss and TownwiseAI won’t suggest it again.';
+  }
+}
+
+/**
+ * A spotted event's Guests field's message, or null: a count, when given, is 1 to 20,000, and alongside regular service
+ * one is needed (the API refuses none, since it would change no forecast). Accept stays disabled while there is one.
+ */
+export function eventGuestsMessage(effect: EventChoice['effect'] | null, guests: string): string | null {
+  const count = guestsOf(guests);
+  if (count === 'invalid') return 'Enter a whole number from 1 to 20,000.';
+  if (effect === 'more_guests' && count === null) return 'Enter the guests to accept it alongside regular service.';
+  return null;
 }
 
 /** What the decision did. */
 export function decidedLine(suggestion: Suggestion, decided: Decided): string {
-  if (decided.status === 'dismissed') return 'Dismissed. TownwiseAI won’t suggest it again.';
+  if (decided.status === 'dismissed') return isCalendarChange(suggestion) ? 'Dismissed. The note stays as it is.' : 'Dismissed. TownwiseAI won’t suggest it again.';
   if (suggestion.type === 'rule') return `Added the business rule “${suggestion.text}”.`;
   const { note } = suggestion;
-  return `Saved a note: ${otherWords(note) ?? KIND_LABEL[note.kind]}, ${daysOf(note.startDate, note.endDate, note.weekdays)}.`;
+  const days = daysOf(note.startDate, note.endDate, note.weekdays);
+  if (suggestion.type === 'move') return `Moved the note to ${days}.`;
+  if (suggestion.type === 'remove') return 'Deleted the note.';
+  // A spotted event's from the note the accept saved, as the Calendar words a buyout: "Private buyout, 40 guests".
+  if (suggestion.type === 'event' && decided.note !== null) {
+    const saved = decided.note;
+    const what = saved.effect === 'closed' ? 'Private buyout' : KIND_LABEL.private_event;
+    const guests = saved.expectedGuests === null ? '' : `, ${plural(saved.expectedGuests, 'guest', 'guests')}`;
+    return `Saved a note: ${what}${guests}, ${daysOf(saved.startDate, saved.endDate, saved.weekdays)}.`;
+  }
+  return `Saved a note: ${otherWords(note) ?? KIND_LABEL[note.kind]}, ${days}.`;
+}
+
+/** The card's sentence under its question: TownwiseAI's why on a note or rule, the server's words on the other kinds. */
+function sentenceOf(suggestion: Suggestion): string {
+  return suggestion.type === 'note' || suggestion.type === 'rule' ? suggestion.why : suggestion.words;
 }
 
 /** "Based on Commencement (Jun 14)". Null when it names none. */
@@ -90,6 +152,78 @@ function basedOn(suggestion: Suggestion): string | null {
 }
 
 type Host = React.ComponentRef<typeof View>;
+
+/**
+ * A spotted event's two choices: a radio group with neither checked at first (the arrow keys and Space choose on web,
+ * with one tab stop, on the checked choice or the first while none is). Once one is checked, the line under the group
+ * says what it does to the forecast: the group is described by it on web, and the checked radio's hint says it on native.
+ */
+function EventChoiceGroup(props: {
+  value: EventChoice['effect'] | null;
+  onChange: (value: EventChoice['effect']) => void;
+  disabled: boolean;
+  describedBy: string | undefined;
+  /** The id of the line under the group. */
+  effectId: string;
+}): React.JSX.Element {
+  const refs = useRef<(Host | null)[]>([]);
+  const { disabled } = props;
+  function onKeyDown(event: { key: string; preventDefault: () => void }): void {
+    if (disabled) return;
+    const focused = refs.current.findIndex((element) => element !== null && element === (document.activeElement as unknown));
+    const at = focused === -1 ? EVENT_CHOICES.findIndex((choice) => choice.value === props.value) : focused;
+    if (event.key === ' ' || event.key === 'Enter') {
+      const here = EVENT_CHOICES[at];
+      if (here === undefined) return;
+      event.preventDefault();
+      props.onChange(here.value);
+      return;
+    }
+    const forward = event.key === 'ArrowRight' || event.key === 'ArrowDown';
+    if (!forward && event.key !== 'ArrowLeft' && event.key !== 'ArrowUp') return;
+    event.preventDefault();
+    const index = (Math.max(at, 0) + (forward ? 1 : EVENT_CHOICES.length - 1)) % EVENT_CHOICES.length;
+    const next = EVENT_CHOICES[index];
+    if (next === undefined) return;
+    props.onChange(next.value);
+    (refs.current[index] as unknown as { focus?: () => void } | null)?.focus?.();
+  }
+  return (
+    <>
+      <View
+        role="radiogroup"
+        aria-label={EVENT_CHOICE_LEGEND}
+        {...(Platform.OS === 'web' ? ({ onKeyDown } as object) : {})}
+        {...webAria({ 'aria-describedby': props.value === null ? undefined : props.effectId })}
+        style={styles.choices}
+      >
+        <Text style={styles.legend}>{EVENT_CHOICE_LEGEND}</Text>
+        <View style={styles.answers}>
+          {EVENT_CHOICES.map((choice, index) => {
+            const on = choice.value === props.value;
+            const tabStop = on || (props.value === null && index === 0);
+            return (
+              <Pressable
+                key={choice.value}
+                ref={(element) => { refs.current[index] = element; }}
+                role="radio"
+                accessibilityState={{ checked: on, disabled }}
+                {...(Platform.OS === 'web'
+                  ? { tabIndex: tabStop && !disabled ? 0 : -1, 'aria-checked': on, 'aria-disabled': disabled || undefined, 'aria-describedby': props.describedBy }
+                  : { disabled, ...(on ? { accessibilityHint: EVENT_CHOICE_EFFECT[choice.value] } : {}) })}
+                onPress={() => { if (!disabled) props.onChange(choice.value); }}
+                style={[styles.choice, on ? styles.choiceOn : null]}
+              >
+                <Text style={[styles.choiceLabel, on ? styles.choiceLabelOn : null]}>{choice.label}</Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+      {props.value === null ? null : <Text nativeID={props.effectId} style={styles.context}>{EVENT_CHOICE_EFFECT[props.value]}</Text>}
+    </>
+  );
+}
 
 export function SuggestionCard(props: {
   suggestion: Suggestion;
@@ -106,8 +240,16 @@ export function SuggestionCard(props: {
   const off = props.readOnlyId !== null || panel.deciding !== null;
   const based = basedOn(suggestion);
   const facts = suggestionFacts(suggestion);
-  const detail = suggestion.type === 'note' ? suggestion.note.detail : null;
+  const detail = suggestion.type === 'rule' || suggestion.type === 'event' ? null : suggestion.note.detail;
+  const title = suggestion.type === 'note' ? suggestion.note.title ?? null : null;
   const describedBy = [props.readOnlyId, helpId].filter((value): value is string => value !== null).join(' ');
+  // A spotted event's choice and guest count, kept by the panel, the count prefilled from the event's title when it gave
+  // a number.
+  const spotted = suggestion.type === 'event';
+  const draft = panel.eventDrafts[id] ?? { effect: null, guests: suggestion.type === 'event' && suggestion.note.expectedGuests !== null ? String(suggestion.note.expectedGuests) : '' };
+  const { effect, guests } = draft;
+  const guestsMessage = spotted ? eventGuestsMessage(effect, guests) : null;
+  const unchosen = spotted && effect === null;
   const decidedLineRef = useRef<Host>(null);
   // A decision pressed on this card moves focus to the line that says what it did (the buttons it pressed are gone), as
   // ProposalCard's save does. Only the card pressed: the same suggestion can also show in the column beside the landing.
@@ -119,13 +261,20 @@ export function SuggestionCard(props: {
   }, [isDecided]);
   function press(decision: 'accept' | 'dismiss'): void {
     pressed.current = true;
+    if (decision === 'accept' && spotted) {
+      const count = guestsOf(guests);
+      if (effect === null || count === 'invalid') return;
+      panel.decide(id, decision, { effect, expectedGuests: count });
+      return;
+    }
     panel.decide(id, decision);
   }
   return (
     <View style={styles.card}>
       <Heading level={3}>{suggestionHeading(suggestion)}</Heading>
-      <Text style={styles.context}>{suggestion.why}</Text>
+      <Text style={styles.context}>{sentenceOf(suggestion)}</Text>
       {suggestion.type === 'rule' ? <Text style={styles.context}>{suggestion.scheduleSummary}</Text> : null}
+      {title === null ? null : <Text style={styles.context}>{`Event name: ${title}`}</Text>}
       {facts === null ? null : <Text style={styles.context}>{facts}</Text>}
       {detail === null ? null : <Text style={styles.context}>{detail}</Text>}
       {based === null ? null : <Text style={styles.help}>{based}</Text>}
@@ -135,13 +284,40 @@ export function SuggestionCard(props: {
         </View>
       ) : (
         <>
+          {props.canChange && spotted ? (
+            <>
+              <EventChoiceGroup
+                value={effect}
+                onChange={(next) => { panel.setEventDraft(id, { ...draft, effect: next }); }}
+                disabled={off}
+                describedBy={props.readOnlyId ?? undefined}
+                effectId={`suggestion-${id}-effect`}
+              />
+              <View style={styles.guests}>
+                <FormField
+                  label="Guests"
+                  helper="Needed alongside regular service, optional for a buyout."
+                  value={guests}
+                  onChangeText={(text) => { panel.setEventDraft(id, { ...draft, guests: text }); }}
+                  keyboardType="number-pad"
+                  numeric
+                  maxLength={6}
+                  readOnly={off}
+                  {...(props.readOnlyId === null ? {} : { readOnlyId: props.readOnlyId })}
+                  {...(guestsMessage === null ? {} : { messages: [guestsMessage] })}
+                />
+              </View>
+            </>
+          ) : null}
           {props.canChange ? (
             <View role="group" aria-label={suggestionHeading(suggestion)} style={styles.answers}>
-              <Button variant="outline" label="Accept" disabled={off} describedBy={describedBy} onPress={() => { press('accept'); }} />
+              <Button variant="outline" label="Accept" disabled={off || unchosen || guestsMessage !== null} describedBy={describedBy} onPress={() => { press('accept'); }} />
               <Button variant="outline" label="Dismiss" disabled={off} describedBy={describedBy} onPress={() => { press('dismiss'); }} />
             </View>
           ) : null}
-          <Text nativeID={helpId} style={styles.help}>{deciding ? 'Saving…' : suggestionHelp(suggestion, props.canChange)}</Text>
+          <Text nativeID={helpId} style={styles.help}>
+            {deciding ? 'Saving…' : props.canChange && unchosen ? `Choose how this event runs to accept it. ${EVENT_DISMISS}` : suggestionHelp(suggestion, props.canChange)}
+          </Text>
         </>
       )}
       {error === undefined || decided !== undefined ? null : <ErrorNotice message={error} />}
@@ -179,30 +355,106 @@ function WeeklySwitch(props: { panel: AgentPanelState; town: string; readOnlyId:
   );
 }
 
-/** Suggested for the next 3 months: the open suggestions, then the switch. */
+/**
+ * The switch for reading the calendars' event titles (calendar-event-suggestions design decision 9), under the weekly
+ * one: its words and a button for admins, its state for members. Staff open as admin may turn it off but not on (the
+ * organization's own consent), so with it off they get a line that says so instead of a button. None from an API
+ * before it.
+ */
+function TitlesSwitch(props: { panel: AgentPanelState; readOnlyId: string | null }): React.JSX.Element | null {
+  const { me } = usePortal();
+  const { panel } = props;
+  if (panel.state.status !== 'ready') return null;
+  const weekly = panel.state.data.weeklySuggestions;
+  if (weekly?.calendarTitles === undefined) return null;
+  const on = panel.titlesOn ?? weekly.calendarTitles;
+  const openAsAdmin = openAsAdminOrgId(me);
+  return (
+    <View style={styles.switch}>
+      <Text style={styles.body}>
+        {TITLES_WORDS}{' '}
+        <Link href="/privacy" style={styles.link}>Privacy</Link>
+      </Text>
+      <Text style={styles.body}>{on ? 'Reading event titles is on.' : 'Reading event titles is off.'}</Text>
+      {weekly.canChange && (on || openAsAdmin === null) ? (
+        <Button
+          variant="outline"
+          label={on ? 'Turn off reading event titles' : 'Turn on reading event titles'}
+          disabled={props.readOnlyId !== null || panel.switchingTitles}
+          {...(props.readOnlyId === null ? {} : { describedBy: props.readOnlyId })}
+          onPress={() => { panel.setTitles(!on, openAsAdmin); }}
+        />
+      ) : null}
+      {weekly.canChange && openAsAdmin !== null ? (
+        <Text style={styles.help}>{on ? 'You can turn this off. Only an admin of this organization can turn it back on.' : 'Only an admin of this organization can turn this on.'}</Text>
+      ) : null}
+      {panel.titlesError === null ? null : <ErrorNotice message={panel.titlesError} />}
+    </View>
+  );
+}
+
+/**
+ * The notice for a card that went when its decision was sent (its event changed): it takes focus on web, as the card's
+ * decided line would have, and iOS is told, as ErrorNotice tells it.
+ */
+function SuggestionsNotice(props: { text: string }): React.JSX.Element {
+  const ref = useRef<Host>(null);
+  useEffect(() => {
+    if (Platform.OS === 'web') ref.current?.focus();
+    if (Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(props.text);
+  }, [props.text]);
+  return (
+    <View ref={ref} {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})} role="status">
+      <Text style={styles.done}>{props.text}</Text>
+    </View>
+  );
+}
+
+function undecided(panel: AgentPanelState, suggestions: readonly Suggestion[]): number {
+  return suggestions.filter((suggestion) => panel.decided[suggestion.id] === undefined).length;
+}
+
+/**
+ * "Your calendar changed" (the follow-ups of notes whose calendar event moved or went, shown only when there are some),
+ * then "Suggested for the next 3 months": the open suggestions, then the switches. Each heading counts its own.
+ */
 export function SuggestionsSection(props: { panel: AgentPanelState; town: string; readOnlyId: string | null }): React.JSX.Element | null {
   const { panel } = props;
   const { state } = panel;
+  if (state.status === 'failed') return null;
+  const canChange = state.status === 'ready' && state.data.weeklySuggestions?.canChange === true;
+  const all = state.status === 'ready' ? state.data.suggestions : [];
+  const changes = all.filter(isCalendarChange);
+  const suggested = all.filter((suggestion) => !isCalendarChange(suggestion));
+  const cards = (list: readonly Suggestion[]): React.ReactNode => list.map((suggestion) => (
+    <SuggestionCard key={suggestion.id} suggestion={suggestion} panel={panel} canChange={canChange} readOnlyId={props.readOnlyId} />
+  ));
   let body: React.ReactNode;
   if (state.status === 'loading') body = <LoadingLine text="Loading suggestions" minHeight={80} />;
-  else if (state.status === 'failed') return null;
-  else if (state.data.suggestions.length === 0) body = <Text style={styles.muted}>No suggestions right now.</Text>;
-  else {
-    const canChange = state.data.weeklySuggestions?.canChange === true;
-    body = state.data.suggestions.map((suggestion) => (
-      <SuggestionCard key={suggestion.id} suggestion={suggestion} panel={panel} canChange={canChange} readOnlyId={props.readOnlyId} />
-    ));
-  }
-  const open = openSuggestions(panel);
+  else if (suggested.length === 0) body = <Text style={styles.muted}>No suggestions right now.</Text>;
+  else body = cards(suggested);
   return (
-    <View style={styles.section}>
-      <View style={styles.head}>
-        {open === null ? null : <Eyebrow>{`${formatCount(open)} to decide`}</Eyebrow>}
-        <Heading>Suggested for the next 3 months</Heading>
+    <>
+      {changes.length === 0 ? null : (
+        <View style={styles.section}>
+          <View style={styles.head}>
+            <Eyebrow>{`${formatCount(undecided(panel, changes))} to decide`}</Eyebrow>
+            <Heading>Your calendar changed</Heading>
+          </View>
+          {cards(changes)}
+        </View>
+      )}
+      <View style={styles.section}>
+        <View style={styles.head}>
+          {state.status === 'ready' ? <Eyebrow>{`${formatCount(undecided(panel, suggested))} to decide`}</Eyebrow> : null}
+          <Heading>Suggested for the next 3 months</Heading>
+        </View>
+        {panel.suggestionsNotice === null ? null : <SuggestionsNotice text={panel.suggestionsNotice} />}
+        {body}
+        <WeeklySwitch panel={panel} town={props.town} readOnlyId={props.readOnlyId} />
+        <TitlesSwitch panel={panel} readOnlyId={props.readOnlyId} />
       </View>
-      {body}
-      <WeeklySwitch panel={panel} town={props.town} readOnlyId={props.readOnlyId} />
-    </View>
+    </>
   );
 }
 
@@ -220,6 +472,17 @@ const styles = StyleSheet.create({
   help: { ...theme.type.small, color: c.text3 },
   done: { ...theme.type.small, color: c.white },
   muted: { ...theme.type.small, color: c.text3, flexShrink: 1 },
+  // A spotted event's choices, in the look of MetricSwitch's radio group.
+  choices: { gap: theme.space[2], minWidth: 0 },
+  legend: { ...theme.type.ui, color: c.white },
+  choice: {
+    minHeight: 44, minWidth: 44, paddingHorizontal: 12, alignItems: 'center', justifyContent: 'center', borderWidth: 1,
+    borderColor: c.line, backgroundColor: 'transparent', flexShrink: 1, maxWidth: '100%',
+  },
+  choiceOn: { backgroundColor: c.mint, borderColor: c.mint },
+  choiceLabel: { ...theme.type.ui, color: c.white },
+  choiceLabelOn: { color: c.onMint },
+  guests: { maxWidth: 240 },
   switch: { gap: theme.space[2], alignItems: 'flex-start' },
   body: { ...theme.type.small, color: c.text2 },
   link: { color: c.white, textDecorationLine: 'underline', textDecorationColor: c.line },

@@ -11,8 +11,8 @@ import type { TownwiseContext } from '../src/app.ts';
 import { placesDetails, placesMap } from '../src/handlers/places.ts';
 import type { PlacesClient } from '../src/places/google.ts';
 import {
-  createStaticMapSigner, mapThemeSchema, signingSecretSchema, signPath, STATIC_MAP_PIN, STATIC_MAP_STYLES, staticMapPath,
-  staticMapPathOf, type StaticMapSigner,
+  createStaticMapSigner, labeledMapPathOf, mapThemeSchema, pinLabel, signingSecretSchema, signPath, STATIC_MAP_PIN,
+  STATIC_MAP_STYLES, staticMapPath, staticMapPathOf, type StaticMapSigner,
 } from '../src/places/static-map.ts';
 
 const KEY = 'test-static-key';
@@ -229,6 +229,59 @@ describe('the map of several places (D29)', () => {
   });
 });
 
+describe('the labeled map of every location (D47)', () => {
+  const SECRET = 'AAAAAAAAAAAAAAAAAAAAAAAAAAA=';
+  const IDS = ['ChIJTestPlace0003', 'ChIJTestPlace0001', 'ChIJTestPlace0002'];
+
+  it('sends one markers parameter per place, lettered A, B, C in the order given, with no center or zoom', () => {
+    for (const [theme, pin, rules] of [['dark', '0x7bd2b4', STATIC_MAP_STYLES.dark], ['light', '0x136a53', LIGHT_RULES]] as const) {
+      const path = labeledMapPathOf(IDS, KEY, theme);
+      expect(paramsOf(path)).toEqual([
+        ['size', '640x320'],
+        ['scale', '2'],
+        ['format', 'jpg-baseline'],
+        ['maptype', 'roadmap'],
+        ['language', 'en'],
+        ['region', 'us'],
+        ['markers', `color:${pin}|label:A|place_id:ChIJTestPlace0003`],
+        ['markers', `color:${pin}|label:B|place_id:ChIJTestPlace0001`],
+        ['markers', `color:${pin}|label:C|place_id:ChIJTestPlace0002`],
+        ...rules.map((rule) => ['style', rule]),
+        ['key', KEY],
+      ]);
+      const map = createStaticMapSigner(KEY, SECRET).mapOfLabeledPlaces(IDS, theme);
+      expect(map).toEqual({ url: `https://maps.googleapis.com${path}&signature=${signPath(path, SECRET)}`, width: 640, height: 320 });
+      expect([...new URL(map.url).searchParams.keys()].at(-1)).toBe('signature');
+    }
+  });
+
+  it('one place keeps the center and zoom 15, with its pin lettered A', () => {
+    expect(paramsOf(labeledMapPathOf([PLACE_ID], KEY, 'dark')).slice(0, 3)).toEqual([
+      ['center', `place_id:${PLACE_ID}`], ['zoom', '15'], ['size', '640x320'],
+    ]);
+    expect(new URL(createStaticMapSigner(KEY, SECRET).mapOfLabeledPlaces([PLACE_ID], 'light').url).searchParams.getAll('markers'))
+      .toEqual([`color:0x136a53|label:A|place_id:${PLACE_ID}`]);
+  });
+
+  it('25 place ids at the 512-character maximum stay under Google’s 16,384-character cap, in either mode', () => {
+    const signer = createStaticMapSigner(KEY, SECRET);
+    const dark = signer.mapOfLabeledPlaces(LONGEST_IDS, 'dark');
+    const light = signer.mapOfLabeledPlaces(LONGEST_IDS, 'light');
+    expect(new URL(dark.url).searchParams.getAll('markers').map((m) => m.split('|')[1])).toEqual(LONGEST_IDS.map((_, i) => `label:${pinLabel(i)}`));
+    expect(light.url.length).toBe(dark.url.length);
+    // The plain map's worst case (14,365) plus 900: each of the 24 markers after the first adds `&markers=` and its own
+    // color and label, and the first its label. Google's 39-character key adds 24: 15,289 in production, under the cap.
+    expect(dark.url.length).toBe(15_265);
+  });
+
+  it('letters run A to Z; an empty list throws', () => {
+    expect([pinLabel(0), pinLabel(1), pinLabel(25)]).toEqual(['A', 'B', 'Z']);
+    expect(() => pinLabel(26)).toThrow();
+    expect(() => pinLabel(-1)).toThrow();
+    expect(() => labeledMapPathOf([], KEY, 'dark')).toThrow();
+  });
+});
+
 describe('the mode (mapThemeSchema)', () => {
   it('takes dark or light exactly, and refuses anything else', () => {
     expect(mapThemeSchema.parse('dark')).toBe('dark');
@@ -248,6 +301,7 @@ describe('the routes read the mode from the body (handlers/places.ts)', () => {
     const places: PlacesClient = {
       autocomplete: () => Promise.reject(new Error('not called')),
       details: (placeId) => Promise.resolve({ placeId: placeId === PLACE_ID ? NEWER_ID : placeId, formattedAddress: '', addressComponents: [] }),
+      locate: () => Promise.reject(new Error('not called')),
     };
     const ctx = { places, placesMap: placesMapOn, logger: { warn: () => undefined } } as unknown as TownwiseContext;
     let sent: unknown;

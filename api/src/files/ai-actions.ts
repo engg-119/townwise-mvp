@@ -9,6 +9,11 @@
 // file read may start a calibration for the org admin who asked] [CONFIRM: a file read can close at most 31 days, 14
 // in a row]
 //
+// D46: the closed patterns the file states, and a closure the guard refuses only for its span, become suggested closure
+// rules (stores/agent-suggestions.ts), which change nothing until a member confirms one. [CONFIRM: a closure over 14
+// days that a file read may not write as a note becomes a suggested rule] [CONFIRM: 5 suggested rules a file read, 10
+// open per location from files]
+//
 // No multi-document transactions (DocumentDB): the ids are planned first and saved on the read by compare-and-set,
 // each write is keyed by its planned id and skipped when it is already there, and the outcome is recorded last, so a
 // retry (the reader calls onRead again on the saved answer, without another model call) completes the work once. Each
@@ -20,23 +25,26 @@ import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { closureKeyOf, closureRuleText, isSuggestable } from '../agent/closure-suggestions.ts';
 import type { Role } from '../access/resolve.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import { utcDay } from '../dates.ts';
-import { MAX_NOTES, readNoteContent } from '../handlers/notes.ts';
+import { MAX_NOTES, readNoteContent, readRuleSchedule } from '../handlers/notes.ts';
 import { checkStart, launch, type StartRefusal, type StartRequest } from '../lab/service.ts';
 import { DELETED_PERSON } from '../people.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
+import type { RuleSchedule } from '../stores/business-rules.ts';
 import type {
   AiActionPlan, AiActionsOutcome, AiCalibration, AiCalibrationStatus, AiDaysReason, AiEventEffect, AiItemReason, AiReadEvent,
-  AiReadResult, FileAiRead, FileRecord,
+  AiReadResult, AiRulesSkipped, FileAiRead, FileRecord,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import type { NoteContent, NoteEffect, NoteRecord } from '../stores/notes.ts';
+import { MAX_NOTE_TITLE_CHARS, type NoteContent, type NoteEffect, type NoteRecord } from '../stores/notes.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { OnAiRead } from './ai-reader.ts';
 import { salesDayOf } from './ai-verify.ts';
+import { CLOSED_PATTERNS_MAX } from './extract/reader-prompt.ts';
 import { saveTextItem, TEXT_ITEM_TITLE_MAX } from './items.ts';
 
 /** A note's detail, at most (spec 12). */
@@ -48,6 +56,8 @@ const VERIFIED_SHARE_PERCENT = 95;
 /** A closed note (a closure, or closed) a read makes spans at most this many days, and all of them this many together. */
 const CLOSED_SPAN_DAYS = 14;
 const CLOSED_DAYS_PER_READ = 31;
+/** D46: a read stores no suggested closure rule while the location has this many open from files. */
+const OPEN_FILE_SUGGESTIONS = 10;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 const EFFECTS: Readonly<Record<AiEventEffect, NoteEffect>> = {
@@ -71,24 +81,36 @@ function folded(text: string): string {
   return text.toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
-/** A note's detail from an event: its title, then its own detail when it says more. */
-function noteDetailOf(event: AiReadEvent): string {
-  const title = event.title.trim();
+/**
+ * D49: an event's title as a note's title. NFC, each run of white space (a line break included) one space, and every
+ * control or format character removed rather than refused, since the person did not type them; trimmed; cut to the
+ * note's 120 code points (NFC can lengthen a title the reader kept to 120), so the title is cut rather than the event
+ * refused; null when nothing is left. The title backfill (files/note-titles.ts) names older notes with it too.
+ */
+export function eventNoteTitle(raw: string): string | null {
+  const cleaned = raw.normalize('NFC').replace(/\s+/gu, ' ').replace(/[\p{Cc}\p{Cf}]/gu, '').replace(/ {2,}/g, ' ').trim();
+  const title = Array.from(cleaned).slice(0, MAX_NOTE_TITLE_CHARS).join('').trim();
+  return title === '' ? null : title;
+}
+
+/** A note's detail from an event: its own detail, or null when it is empty or only repeats the title (D49). */
+function noteDetailOf(event: AiReadEvent, title: string | null): string | null {
   const detail = event.detail.trim();
-  return cut(detail === '' || folded(detail) === folded(title) ? title : `${title}: ${detail}`, NOTE_DETAIL_CHARS).trim();
+  return detail === '' || (title !== null && folded(detail) === folded(title)) ? null : cut(detail, NOTE_DETAIL_CHARS).trim();
 }
 
 /** The event as a note, through the notes route's own rules; null when it breaks one (its dates, say). */
 function noteContentOf(event: AiReadEvent, today: string): NoteContent | null {
   const effect = EFFECTS[event.effect];
   const guests = event.expectedGuests;
+  const title = eventNoteTitle(event.title);
   return readNoteContent({
     kind: event.kind, startDate: event.startDate, endDate: event.endDate, weekdays: null, effect,
     // A count the notes route would refuse (0, a crowd past a restaurant's, or one on a closed note that is not a
     // buyout) is left out rather than the event. A buyout keeps its party's size, which books the day (D30).
     expectedGuests: (effect === 'closed' && event.kind !== 'private_event') || guests === null || guests < 1
       || guests > MAX_EXPECTED_GUESTS ? null : guests,
-    detail: noteDetailOf(event),
+    title, detail: noteDetailOf(event, title),
   }, today);
 }
 
@@ -103,14 +125,22 @@ function spanDays(startDate: string, endDate: string): number {
 }
 
 /**
- * An existing note says the same as the event: same kind, start and end, and its detail is the event's title (or
- * starts with it and a colon, as a note TownwiseAI made from the same event of another file does).
+ * An existing note says the same as the event: same kind, start and end, and its title is the event's (D49), or its
+ * detail is the event's title (or starts with it and a colon, as a note TownwiseAI made before titles did).
  */
 function duplicates(note: NoteRecord, event: AiReadEvent): boolean {
-  if (note.kind !== event.kind || note.startDate !== event.startDate || note.endDate !== event.endDate || note.detail === null) return false;
-  const detail = folded(note.detail);
-  const title = folded(event.title);
-  return detail === title || detail.startsWith(`${title}:`);
+  if (note.kind !== event.kind || note.startDate !== event.startDate || note.endDate !== event.endDate) return false;
+  const named = eventNoteTitle(event.title);
+  if (named !== null && note.title !== null && folded(note.title) === folded(named)) return true;
+  return detailSays(note.detail, event.title);
+}
+
+/** A note's detail still says the event's title, as a note from before titles wrote it: "title" or "title: detail". */
+export function detailSays(detail: string | null, title: string): boolean {
+  if (detail === null) return false;
+  const said = folded(detail);
+  const name = folded(title);
+  return said === name || said.startsWith(`${name}:`);
 }
 
 /** The summary item's title: "TownwiseAI’s notes on" the file's name without its extension, at most 120 characters. */
@@ -137,10 +167,27 @@ function daysRefusal(file: FileRecord, result: AiReadResult): AiDaysReason | nul
 
 function newPlan(events: number): AiActionPlan {
   const id = (): string => new Types.ObjectId().toHexString();
-  return { noteIds: Array.from({ length: events }, id), uploadId: id(), itemId: id(), calibrationId: id() };
+  return {
+    noteIds: Array.from({ length: events }, id), uploadId: id(), itemId: id(), calibrationId: id(),
+    suggestionIds: Array.from({ length: CLOSED_PATTERNS_MAX }, id),
+  };
 }
 
-interface Written { readonly notes: string[]; readonly notesSkipped: AiActionsOutcome['notesSkipped'] }
+/** A closure schedule a read may suggest (D46), under its planned id. */
+interface Candidate { readonly id: string; readonly schedule: RuleSchedule }
+
+interface Written {
+  readonly notes: string[];
+  readonly notesSkipped: AiActionsOutcome['notesSkipped'];
+  /** D46: closures the guard refused only for their span, ending today or later: suggestions under their note ids. */
+  readonly spans: Candidate[];
+}
+
+/** The Monday that starts `day`'s week. */
+function mondayOf(day: string): string {
+  const weekday = new Date(`${day}T00:00:00.000Z`).getUTCDay();
+  return utcDay(new Date(`${day}T00:00:00.000Z`), -((weekday + 6) % 7));
+}
 
 /** The person who asked, and their role now (org_admin for Townwise staff open as admin). */
 interface Requester { readonly ai: FileAiRead; readonly role: Role }
@@ -172,15 +219,18 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
    * Events to notes, at most one a planned id (50 a file): a note already holding its id was written by an earlier
    * attempt; an event the notes route would refuse, one an existing note already says, a closed note over 14 days or
    * past 31 closed days this read (the guard), and any past the location's 1,000 notes are skipped and counted. Each
-   * new note first checks the read is still held; once it is not, no more is written.
+   * new note first checks the read is still held; once it is not, no more is written. D46: a closure (kind closure) the
+   * guard refuses for its span, ending on or after the town's today, is handed on as a suggestion under its note id
+   * instead, on a plan that has suggestion ids; it is not counted as skipped.
    */
   async function writeNotes(
-    scope: OrgScope, file: FileRecord, requester: Requester, result: AiReadResult, plan: AiActionPlan, held: Held,
+    scope: OrgScope, file: FileRecord, requester: Requester, result: AiReadResult, plan: AiActionPlan, held: Held, townToday: string,
   ): Promise<Written> {
     const { ai } = requester;
     const existing = await stores.notes.list(scope, file.locationId);
     const ids = new Set(existing.map((note) => note.id));
     const notes: string[] = [];
+    const spans: Candidate[] = [];
     const skipped = { duplicate: 0, cap: 0, invalid: 0, guard: 0 };
     let closedDays = 0;
     const today = utcDay(ctx.now());
@@ -196,7 +246,14 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
       }
       if (content === null) skipped.invalid += 1;
       else if (existing.some((note) => duplicates(note, event))) skipped.duplicate += 1;
-      else if (closed > CLOSED_SPAN_DAYS || closedDays + closed > CLOSED_DAYS_PER_READ) skipped.guard += 1;
+      else if (closed > CLOSED_SPAN_DAYS && content.kind === 'closure' && content.endDate >= townToday && plan.suggestionIds !== undefined) {
+        spans.push({
+          id, schedule: {
+            kind: 'closure', startDate: content.startDate, endDate: content.endDate, weekdays: content.weekdays, effect: 'closed',
+            expectedGuests: null, startTime: null, endTime: null,
+          },
+        });
+      } else if (closed > CLOSED_SPAN_DAYS || closedDays + closed > CLOSED_DAYS_PER_READ) skipped.guard += 1;
       else if (existing.length >= MAX_NOTES) skipped.cap += 1;
       else {
         if (await held() === null) break;
@@ -214,7 +271,59 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
         closedDays += closed;
       }
     }
-    return { notes, notesSkipped: skipped };
+    return { notes, notesSkipped: skipped, spans };
+  }
+
+  /**
+   * D46: the answer's closed patterns, under the plan's suggestion ids, then the closures the guard refused for their
+   * span, under their note ids, as open suggested closure rules from this file, in the requester's name only as the
+   * read's: a member decides them. A planned id already stored was written by an earlier attempt and counts, before any
+   * cap. Otherwise: a schedule the rule schedule rules refuse is `invalid`; one a rule of the location already covers or
+   * words, or whose closure key a row already holds (in any status), is `duplicate`; past 10 open file suggestions at the
+   * location is `cap` (two reads of one organization never run at once, so only a sales decide can race it, and the
+   * unique key settles that). Each new one first checks the read is still held. A plan saved before suggestions had ids
+   * makes none.
+   */
+  async function writeSuggestions(
+    scope: OrgScope, file: FileRecord, result: AiReadResult, plan: AiActionPlan, spans: readonly Candidate[], held: Held, townToday: string,
+  ): Promise<{ rulesSuggested: string[]; rulesSkipped: AiRulesSkipped }> {
+    const rulesSuggested: string[] = [];
+    const skipped = { duplicate: 0, cap: 0, invalid: 0 };
+    const planned = plan.suggestionIds;
+    if (planned === undefined) return { rulesSuggested, rulesSkipped: skipped };
+    const patterns = (result.closedPatterns ?? []).slice(0, planned.length).flatMap((schedule, index) => {
+      const id = planned[index];
+      return id === undefined ? [] : [{ id, schedule }];
+    });
+    const candidates = [...patterns, ...spans];
+    if (candidates.length === 0) return { rulesSuggested, rulesSkipped: skipped };
+    const { agentSuggestions, businessRules } = stores;
+    const rules = await businessRules.list(scope, file.locationId);
+    let open = (await agentSuggestions.listOpenRules(scope, file.locationId, townToday)).filter((row) => row.source === 'file').length;
+    for (const candidate of candidates) {
+      const earlier = await agentSuggestions.find(scope, file.locationId, candidate.id);
+      if (earlier !== null) {
+        rulesSuggested.push(candidate.id);
+        continue;
+      }
+      const schedule = readRuleSchedule(candidate.schedule, townToday);
+      if (schedule === null) skipped.invalid += 1;
+      else if (!isSuggestable(schedule, { rules })) skipped.duplicate += 1;
+      else if (open >= OPEN_FILE_SUGGESTIONS) skipped.cap += 1;
+      else {
+        if (await held() === null) break;
+        const stored = await agentSuggestions.insertOne(scope, {
+          id: candidate.id, locationId: file.locationId, week: mondayOf(townToday), source: 'file', fileId: file.id,
+          text: closureRuleText(schedule), schedule, closureKey: closureKeyOf(schedule), now: ctx.now(),
+        });
+        if (stored === null) skipped.duplicate += 1;
+        else {
+          rulesSuggested.push(candidate.id);
+          if (stored.created) open += 1;
+        }
+      }
+    }
+    return { rulesSuggested, rulesSkipped: skipped };
   }
 
   /**
@@ -363,8 +472,11 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     };
     const location = await stores.locations.find(scope, file.locationId);
     if (location === null) return null;
+    const townToday = localDay(ctx.now(), timeZoneOf(location.town).timeZone);
     const { result } = read;
-    const written = await writeNotes(scope, file, requester, result, plan, held);
+    const { spans, ...written } = await writeNotes(scope, file, requester, result, plan, held, townToday);
+    if (await held() === null) return null;
+    const suggested = await writeSuggestions(scope, file, result, plan, spans, held, townToday);
     if (await held() === null) return null;
     const days = await writeDays(scope, file, requester, result, plan);
     const current = await held();
@@ -372,7 +484,7 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     const item = await keepSummary(scope, current, requester, result, plan);
     if (await held() === null) return null;
     const calibration = await calibrate(scope, requester, plan, location, written.notes.length > 0 || days.daysWritten > 0);
-    await stores.files.recordAiActions(scope, file.id, attempt, { ...written, ...days, ...item, calibration });
+    await stores.files.recordAiActions(scope, file.id, attempt, { ...written, ...days, ...item, calibration, ...suggested });
     return null;
   };
 }

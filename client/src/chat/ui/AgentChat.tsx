@@ -5,14 +5,18 @@ import {
 } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
+import { useBreakpoint } from '../../portal/hooks';
 import { localToday } from '../../portal/locations/dates';
+import { useOptionalPortal } from '../../portal/PortalProvider';
 import { locationHref } from '../../portal/routing';
 import { Button, LinkButton } from '../../portal/ui/Button';
-import { ErrorNotice, LoadingLine, ReadOnlyLine } from '../../portal/ui/feedback';
-import { Skeleton, SkeletonText } from '../../portal/skeleton/kit';
+import { ErrorNotice, Messages, ReadOnlyLine } from '../../portal/ui/feedback';
+import { Skeleton, SkeletonButton, SkeletonHeading, SkeletonText, SkeletonWords } from '../../portal/skeleton/kit';
 import { Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
+import { watchScrollIntent, type ScrollIntent } from '../scrollIntent';
+import { usePageVisible } from '../visible';
 import { INITIAL_PIN, nextPin, type PinEvent, type PinState } from '../scrollPin';
 import { nextFallback, suggestionsFor } from '../suggestions';
 import { readsLine, toolLine, type ToolContext } from '../tools';
@@ -21,19 +25,22 @@ import type { MessageAttachment } from '../api';
 import { canSend, messageText, stepsOf, type ChatMessage, type Telling, type TuningChat, type TuningChatState } from '../useTuningChat';
 import { budgetLines } from './AgentSidePanel';
 import { ChatDrop } from './ChatDrop';
-import { ChatHeader, PanelButton } from './ChatHeader';
-import { Composer, type ComposerHandle } from './Composer';
+import { ChatHeader, ChatHeaderSkeleton, PANEL_ID, PanelButton } from './ChatHeader';
+import { Composer, ComposerSkeleton, type ComposerHandle } from './Composer';
 import { useComposerFiles } from './ComposerFiles';
 import { focusLost } from './controls';
 import { NextChips } from './NextChips';
+import { PanelRow, PanelRowSkeleton } from './PanelRow';
+import { PreviousChats } from './PreviousChats';
 import { QuestionCard, questionChatOf } from './QuestionCard';
 import { ReplyView } from './ReplyView';
-import { Suggestions } from './Suggestions';
+import { Suggestions, SuggestionsSkeleton } from './Suggestions';
 import { FadeIn } from './ToolGroup';
 import { UserMessage } from './UserMessage';
+import { workedOpenStore } from './workedOpen';
 
 // The TownwiseAI chat page (spec P25, D26): the header (History,
-// New chat and Questions and activity; no title), then the landing of an empty conversation (one centered column: what to ask,
+// New chat and, on the new chat page, Questions and activity; no title), then the landing of an empty conversation (one column, centered across and starting at the top: what to ask,
 // what TownwiseAI reads, the composer, the quick-start chips and TownwiseAI's questions, the panel's cards sharing its
 // state) or the thread, with the composer docked over its
 // bottom edge. The thread runs the full height and scrolls under the dock: what passes shows above the box and at its
@@ -46,6 +53,22 @@ import { UserMessage } from './UserMessage';
 // version shows after a switch (and, while a saved conversation loads, its skeleton's “Loading the conversation…”). The log keeps its end in view while pinned (scrollPin.ts), and shows Latest, above
 // the dock, when a reply grows below the view; the dock growing or shrinking moves the end, never the pin. The header
 // sits under the portal's top bar on every screen, above what scrolls.
+//
+// Previous chats (spec P25 build note, 2026-11-18): while a reply runs in another chat, the landing lists the recent
+// chats under its chips (PreviousChats), and the list is read every 3 seconds while the page is in view.
+//
+// The landing starts at the top (spec P25 build note, 2026-11-18): an independent browser review saw a centered
+// landing jump when TownwiseAI's questions came under its chips (176px at 1280px) and the centered skeleton give way
+// to a landing with questions 101px higher at 390px. At the top, it is in one place in every state and load order.
+// [CONFIRM: the TownwiseAI new chat page starts at the top rather than centred, so it never moves while it loads]
+//
+// Questions and activity (spec P25 build note, 2026-11-18; owner: "we should likely put the questions and activity back
+// to the right side of the screen and it should only appear on the new chat page"): shown only while no conversation is
+// open (the landing, and the skeleton, the error and TownwiseAI off, where the panel still works). From 641px it is a
+// column (4 of 12) beside the landing, under the header, open by default and shown or hidden by the header's button; at
+// 640px and below it is PanelRow under the chips, collapsed by default and opening in place. Inside a conversation
+// neither the panel nor its button shows. The column is drawn beside the same main box whether or not it shows, so
+// showing it never draws the landing again.
 //
 // Files (web, D36): the composer's + and a drop anywhere on the page (ChatDrop, drawn after the body and outside the
 // dock) attach files to the message as chips inside the composer's box (ComposerFiles). Send waits while one
@@ -62,18 +85,14 @@ export interface AgentChatContext extends ToolContext {
 }
 
 type Scroller = React.ComponentRef<typeof ScrollView>;
-type Host = React.ComponentRef<typeof View>;
 
 /** What the page does through the chat for the panel's question cards. */
 export interface AgentChatHandle {
   /**
    * Sends a question's Something else… message in the conversation shown (the landing starts one), as a chip does
-   * (TuningChat.tell). `focus`: on web focus goes to the composer at once (from the column; the sheet moves it there
-   * when it closes).
+   * (TuningChat.tell). `focus`: on web focus goes to the composer at once.
    */
   tell: (message: string, telling: Telling, focus: boolean) => void;
-  /** Focuses the composer, where focus goes when a question's message closes the panel sheet (web). */
-  focusComposer: () => void;
 }
 
 /**
@@ -104,9 +123,106 @@ export const DROP_BLOCKED = {
   budget: 'This month’s TownwiseAI budget is used up, so files can’t be attached.',
 } as const;
 
+/** The notice over the composer while a send waits on the person's turn running in another chat. */
+export function stillReplying(title: string): string {
+  return `TownwiseAI is still replying in “${title}”.`;
+}
+
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 /** The docked composer's last rotating example, once there are sales to tell about. */
 const SATURDAY = 'Tell me about last Saturday';
+
+/**
+ * The landing's words (spec P25), known from the location before the chat loads: the landing and its skeleton both
+ * set them, so the skeleton takes the lines the landing will.
+ */
+function landingWords(ctx: AgentChatContext): { heading: string; line: string; help: string; link: boolean } {
+  return {
+    heading: `Ask TownwiseAI about ${ctx.locationName}`,
+    line: ctx.hasSales
+      ? `It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`
+      : ctx.uploadsOff === true
+        ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
+        : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`,
+    help: `Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`,
+    // Without sales, Open Your data or (on web) Upload sales under the line.
+    link: !ctx.hasSales && (ctx.uploadsOff === true || Platform.OS === 'web'),
+  };
+}
+
+/** The landing's quick-start chips, from the location and today. */
+function landingSuggestions(ctx: AgentChatContext, today: string): ReturnType<typeof suggestionsFor> {
+  return suggestionsFor({ coverage: ctx.coverage, today, townName: ctx.town, hasTownProfile: ctx.hasTownProfile });
+}
+
+/**
+ * The page while TownwiseAI loads (spec P25, owner, 2026-11-18: "fix the skeleton loader on townwise ai so there is one
+ * because it just says loading townwise ai"): the header's controls, then the landing's heading, line, composer and
+ * chips, in the header's and the landing's own rows, column and split (Split), starting at the top as the landing does. The landing's
+ * own words (`landingWords`, the chips' labels) are set in its own type and drawn as bars, and the composer and chips are
+ * their own shapes, so each row takes the lines the landing's will at any width and the landing replaces it without
+ * moving (an independent browser review saw it move 48px at 1280px and 64px at 390px when the skeleton guessed its
+ * lines). "Loading TownwiseAI…" stays its one status line for screen readers. TownwiseAI's questions under the chips
+ * load with the side panel, on their own. The panel's places are the landing's (build note, 2026-11-18): from 641px the
+ * header has its three icons and, while the panel is open, a column of shapes stands where the panel's column will;
+ * at 640px and below the header has two and the collapsed Questions and activity row stands under the chips. A turn still running opens its conversation as the page loads
+ * (useTuningChat), so a refresh mid-reply goes from this to the thread, never through the landing. Nothing here
+ * scrolls, so the thread's pin starts fresh when the thread mounts.
+ */
+function PageSkeleton(props: { ctx: AgentChatContext; phone: boolean; beside: boolean }): React.JSX.Element {
+  const words = landingWords(props.ctx);
+  const line = <Text style={styles.body}><SkeletonWords>{words.line}</SkeletonWords></Text>;
+  return (
+    <Skeleton name="agent" label="Loading TownwiseAI…" fill>
+      <View style={styles.fill}>
+        <ChatHeaderSkeleton panel={!props.phone} />
+        <Split
+          side={props.beside ? (
+            <View testID="skeleton-agent-side" style={[styles.side, styles.sideContent]}>
+              <SkeletonHeading width={160} />
+              <SkeletonText lines={3} type="small" />
+            </View>
+          ) : null}
+        >
+          {/* The landing's ScrollView and its content box, as boxes that don't scroll. */}
+          <View style={styles.fill}>
+            <View style={styles.landingScroll}>
+              <View testID="skeleton-agent-landing" style={styles.landing}>
+                <Heading><SkeletonWords>{words.heading}</SkeletonWords></Heading>
+                {props.ctx.hasSales ? line : (
+                  <View style={styles.noSales}>
+                    {line}
+                    {words.link ? <SkeletonButton link width={120} /> : null}
+                  </View>
+                )}
+                <View testID="skeleton-agent-composer">
+                  <ComposerSkeleton help={words.help} />
+                </View>
+                <SuggestionsSkeleton items={landingSuggestions(props.ctx, localToday())} />
+                {props.phone ? <PanelRowSkeleton /> : null}
+              </View>
+            </View>
+          </View>
+        </Split>
+      </View>
+    </Skeleton>
+  );
+}
+
+/**
+ * What is under the header, with the panel's column (`side`) beside it from 641px, 8 and 4 of 12: the page and its
+ * skeleton both draw it, so the landing and its skeleton take the same width and place (an independent browser review,
+ * 2026-11-18, saw the skeleton's landing 224px wide at 1280px where the landing is 745px). The main box is the same
+ * whether or not the column shows, so showing it never draws the landing again.
+ */
+function Split(props: { children: React.ReactNode; side: React.JSX.Element | null }): React.JSX.Element {
+  return (
+    <View style={styles.split}>
+      <View style={props.side === null ? styles.fill : styles.main}>{props.children}</View>
+      {props.side}
+    </View>
+  );
+}
 
 /** An empty conversation, drawn as the landing: what to ask, the composer, the chips and TownwiseAI's questions. */
 function isLanding(state: TuningChatState): boolean {
@@ -123,20 +239,26 @@ export function AgentChat(props: {
   ctx: AgentChatContext;
   readOnlyId: string | null;
   readOnlyLine: string;
-  /** Questions and activity is open: a column from 1024px, a sheet below (the page draws it). */
+  /** Questions and activity is open: the column beside the new chat page from 641px, the row's region at 640px and below. */
   panelOpen: boolean;
   onTogglePanel: () => void;
-  /** The open questions, for the panel button; null while they load. */
+  /** The open questions, for the panel button and row; null while they load. */
   openQuestions: number | null;
-  /** The panel button, where the panel sheet returns focus (web). */
-  panelButtonRef?: React.RefObject<Host | null>;
+  /** The panel's sections (AgentSidePanel), drawn in the column or under the row. */
+  panelSections: React.ReactNode;
   /** TownwiseAI's questions, also shown on the landing under the chips. */
   panel: AgentPanelState;
+  /**
+   * The panel was opened by `?panel=questions` (Home's link) and the person hasn't opened or closed it since: at 640px
+   * and below the opened row shows the landing's questions first, above the panel's sections, so they are in view.
+   */
+  questionsFirst?: boolean;
   handleRef?: React.Ref<AgentChatHandle>;
 }): React.JSX.Element {
   const { chat, ctx } = props;
   const { state } = chat;
   const reduced = useReducedMotion();
+  const { phone } = useBreakpoint();
   const scroll = useRef<Scroller>(null);
   const composer = useRef<ComposerHandle>(null);
   // The composer's + and the page's drop (web, stored files on): the files on the message, and the lines about them.
@@ -145,6 +267,10 @@ export function AgentChat(props: {
   // The pin lives in a ref (every scroll event moves it); only whether Latest shows is drawn.
   const pin = useRef<PinState>(INITIAL_PIN);
   const [behind, setBehind] = useState(false);
+  // Whether the person is scrolling the thread, which alone can unpin it (scrollPin.ts): on web the input heard on
+  // its scrolling element (scrollIntent.ts); on native a drag, and the momentum it leaves.
+  const intent = useRef<ScrollIntent | null>(null);
+  const touching = useRef({ drag: false, momentum: false });
   // The docked composer's measured height (with the lines above it): the room the thread keeps at its end.
   const [dock, setDock] = useState(0);
   const dockWas = useRef(0);
@@ -155,6 +281,10 @@ export function AgentChat(props: {
   // Words a message view gave the region ("Showing version 2 of 3."); `n` grows with each, so a repeat is news too.
   const [said, setSaid] = useState<{ words: string; n: number } | null>(null);
   const saidCount = useRef(0);
+  // Which replies' timelines the person opened (workedOpen.ts): the page's, so a reply drawn again keeps its own.
+  const [workedOpen] = useState(workedOpenStore);
+  // Who is reading, for a reply's links to the team's own data (ReplyView); none outside the portal.
+  const me = useOptionalPortal()?.me ?? null;
   // A send from the landing, and what sent it: the composer moves under the thread, and focus follows it.
   const docking = useRef<'composer' | 'other' | null>(null);
   // What docked the composer, until another conversation shows: if the first turn is taken back (refused, or the
@@ -165,6 +295,28 @@ export function AgentChat(props: {
   const switched = useRef(false);
   const landing = isLanding(state);
   const spoken = said ?? { words: announcementOf(chat, ctx, before), n: 0 };
+
+  // The list is watched (read every 3 seconds while a conversation replies, useTuningChat) while History is open, and
+  // while the new chat page is in view, for its Previous chats.
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const visible = usePageVisible();
+  const { watchList } = chat;
+  const watching = historyOpen || (landing && visible);
+  useEffect(() => { watchList(watching); }, [watchList, watching]);
+
+  // The conversation whose reply streams here is replying, whatever the list last read said.
+  const listed = state.conversations.map((item) => (state.streaming && item.id === state.conversationId && !item.running ? { ...item, running: true } : item));
+  // Previous chats stays while it is open, even once no reply runs, so a row holding focus is never unmounted from under
+  // the person; closed with nothing running, it goes (and focus, if it was on the toggle, goes to the composer).
+  const [previousOpen, setPreviousOpen] = useState(false);
+  const previousShown = listed.some((item) => item.running) || previousOpen;
+  const wasShown = useRef(false);
+  if (!landing && previousOpen) setPreviousOpen(false);
+  useEffect(() => {
+    const gone = wasShown.current && !previousShown;
+    wasShown.current = previousShown;
+    if (gone && landing && Platform.OS === 'web' && focusLost()) composer.current?.focus();
+  }, [previousShown, landing]);
 
   useEffect(() => {
     if (spoken.words !== '' && Platform.OS === 'ios') AccessibilityInfo.announceForAccessibility(spoken.words);
@@ -196,6 +348,36 @@ export function AgentChat(props: {
     else pin.current = { ...pin.current, lastY: pin.current.lastY - (dock - dockWas.current) };
     dockWas.current = dock;
   }, [dock]);
+
+  // The thread's content height, for the pin. On native, onContentSizeChange (below). On web, a ResizeObserver on the
+  // content, whose callback runs after layout and before paint, so a pinned thread is at its end in the frame that grew
+  // it: every frame of the timeline's 200ms open and close, a chart drawn, a reattached turn's first layout. (The
+  // ScrollView's onContentSizeChange measures in a timeout on web, a frame late: each growing frame was drawn short of
+  // the end, then moved.) `heard` is the latest render's, read when the observer fires. The person's scrolling is heard
+  // on the same element.
+  const thread = state.status === 'ready' && state.enabled && !landing;
+  const heard = useRef<(height: number) => void>(() => undefined);
+  useLayoutEffect(() => {
+    heard.current = (height) => {
+      measureBar();
+      apply({ type: 'contentGrew', contentHeight: height - dockWas.current });
+    };
+  });
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web' || !thread) return undefined;
+    const node = scroll.current?.getScrollableNode() as unknown as HTMLElement | null | undefined;
+    if (node == null) return undefined;
+    const watching = watchScrollIntent(node);
+    intent.current = watching;
+    const content = node.firstElementChild as HTMLElement | null;
+    const observer = content === null || typeof ResizeObserver !== 'function' ? null : new ResizeObserver(() => { heard.current(content.offsetHeight); });
+    if (content !== null) observer?.observe(content);
+    return () => {
+      observer?.disconnect();
+      watching.stop();
+      intent.current = null;
+    };
+  }, [thread]);
 
   function measureBar(): void {
     if (Platform.OS !== 'web') return;
@@ -232,12 +414,12 @@ export function AgentChat(props: {
     if (focus && Platform.OS === 'web') composer.current?.focus();
   }
 
-  useImperativeHandle(props.handleRef, () => ({ tell, focusComposer: () => { composer.current?.focus(); } }));
+  useImperativeHandle(props.handleRef, () => ({ tell }));
 
   /** The person opens conversation `to` (null: a new one): the composer's files stay with the one shown, as its draft does. */
   function opened(run: () => void, to: string | null): void {
-    // Opening and New chat do nothing while a reply streams (useTuningChat), so the files stay too.
-    if (!state.streaming) files.switchTo(state.conversationId, to);
+    // Opening the conversation whose reply streams changes nothing (useTuningChat), so its files stay too.
+    if (!(state.streaming && to === state.conversationId)) files.switchTo(state.conversationId, to);
     docking.current = null;
     docked.current = null;
     switched.current = true;
@@ -299,43 +481,59 @@ export function AgentChat(props: {
   };
 
   const readOnlyLine = <ReadOnlyLine text={props.readOnlyLine} {...(props.readOnlyId === null ? {} : { nativeID: props.readOnlyId })} />;
+  // From 641px the panel's column shows beside what is under the header while no conversation is open.
+  const beside = !phone && props.panelOpen;
+  /** `main` under the header, with the panel's column beside it when `column`. */
+  function split(main: React.ReactNode, column: boolean): React.JSX.Element {
+    return (
+      <Split
+        side={column ? (
+          <ScrollView nativeID={PANEL_ID} testID="agent-side" style={styles.side} contentContainerStyle={styles.sideContent}>
+            {props.panelSections}
+          </ScrollView>
+        ) : null}
+      >
+        {main}
+      </Split>
+    );
+  }
+  /** The row at 640px and below, opening to `lead` (the landing's questions, or nothing) and the panel's sections. */
+  function panelRow(lead: React.ReactNode = null): React.JSX.Element {
+    return (
+      <PanelRow open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel}>{lead}{props.panelSections}</PanelRow>
+    );
+  }
   // TownwiseAI off or unreadable still has its panel: the questions and activity don't need the chat (spec 10.12).
-  const panelOnly = (
-    <View style={styles.panelBar}>
-      <PanelButton
-        open={props.panelOpen}
-        openQuestions={props.openQuestions}
-        onPress={props.onTogglePanel}
-        {...(props.panelButtonRef === undefined ? {} : { buttonRef: props.panelButtonRef })}
-      />
-    </View>
-  );
-
-  // Every state of the page catches a drop of files, so the browser never opens one in its place.
-  if (state.status === 'loading') return <View style={styles.fill}><LoadingLine text="Loading TownwiseAI…" />{drop}</View>;
-  if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
-  if (state.status === 'failed') {
+  function panelOnly(content: React.ReactNode): React.JSX.Element {
     return (
       <View style={styles.fill}>
-        {panelOnly}
-        <ErrorNotice message={state.loadError ?? 'Something went wrong.'} onRetry={chat.reload} />
+        {phone ? null : (
+          <View style={styles.panelBar}>
+            <PanelButton open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel} />
+          </View>
+        )}
+        {split(<>{phone ? panelRow() : null}{content}</>, beside)}
         {drop}
       </View>
     );
   }
+
+  // Every state of the page catches a drop of files, so the browser never opens one in its place.
+  if (state.status === 'loading') return <View style={styles.fill}><PageSkeleton ctx={ctx} phone={phone} beside={beside} />{drop}</View>;
+  if (state.status === 'not_found') return <View style={styles.fill}><Text style={styles.body}>This location wasn’t found.</Text>{drop}</View>;
+  if (state.status === 'failed') return panelOnly(<ErrorNotice message={state.loadError ?? 'Something went wrong.'} onRetry={chat.reload} />);
   if (!state.enabled) {
-    return (
-      <View style={styles.fill}>
-        {panelOnly}
+    return panelOnly(
+      <>
         <Text style={styles.body}>TownwiseAI isn’t turned on yet.</Text>
         {readOnlyLine}
-        {drop}
-      </View>
+      </>,
     );
   }
 
   const today = localToday();
-  const suggestions = suggestionsFor({ coverage: ctx.coverage, today, townName: ctx.town, hasTownProfile: ctx.hasTownProfile });
+  const suggestions = landingSuggestions(ctx, today);
+  const words = landingWords(ctx);
   const examples = [...suggestions.flatMap((item) => (item.kind === 'ask' ? [item.text] : [])), ...(ctx.hasSales ? [SATURDAY] : [])];
   const exhausted = state.budget?.exhausted === true;
   const warning = state.budget === null ? null : budgetLines(state.budget).warning;
@@ -363,7 +561,7 @@ export function AgentChat(props: {
 
   const header = (
     <ChatHeader
-      conversations={state.conversations}
+      conversations={listed}
       openId={state.conversationId}
       streaming={state.streaming}
       readOnlyId={props.readOnlyId}
@@ -383,14 +581,24 @@ export function AgentChat(props: {
       }}
       onRename={chat.rename}
       onTogglePanel={props.onTogglePanel}
-      {...(props.panelButtonRef === undefined ? {} : { panelButtonRef: props.panelButtonRef })}
+      panel={landing && !phone}
+      onListOpen={setHistoryOpen}
     />
   );
   
+  // A send refused because the person's one running turn is in another chat (useTuningChat): standing state, not an
+  // error (D55), with a link that opens that chat. The text stays in the composer for when that turn ends.
+  const elsewhere = state.runningElsewhere === null ? null : state.conversations.find((item) => item.id === state.runningElsewhere) ?? null;
   // What sits right above the composer, wherever it is.
   const notices = (
     <>
       {warning === null ? null : <Text style={styles.warning}>{warning}</Text>}
+      {elsewhere === null ? null : (
+        <View testID="chat-running-elsewhere" style={styles.error}>
+          <Messages live="status" items={[stillReplying(elsewhere.title)]} />
+          <Button variant="link" label="Open that chat" onPress={() => { opened(() => { chat.openConversation(elsewhere.id); }, elsewhere.id); }} />
+        </View>
+      )}
       {files.alerts.map((line) => <ErrorNotice key={line.key} message={line.text} />)}
       {state.error === null ? null : (
         <View style={styles.error}>
@@ -403,7 +611,7 @@ export function AgentChat(props: {
       {readOnlyLine}
     </>
   );
-  const noticed = warning !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
+  const noticed = warning !== null || elsewhere !== null || files.alerts.length > 0 || state.error !== null || props.readOnlyLine !== '';
 
   function composerAt(placement: 'landing' | 'dock'): React.JSX.Element {
     if (exhausted) {
@@ -425,7 +633,7 @@ export function AgentChat(props: {
         onSend={() => { sendFromComposer(chat.send); }}
         onStop={chat.stop}
         onStopAndSend={() => { sendFromComposer(chat.stopAndSend); }}
-        help={`Leave out guest names. TownwiseAI answers from ${readsLine(ctx)}.`}
+        help={words.help}
         // On the landing the chips under it already show what to ask; under view-as nothing fills the composer.
         examples={placement === 'dock' && props.readOnlyId === null ? examples : []}
         readOnlyId={props.readOnlyId}
@@ -443,21 +651,33 @@ export function AgentChat(props: {
   const open = openQuestions(props.panel);
   const questionChat = questionChatOf(state);
   const last = state.messages.length - 1;
+  // Home's link at 640px and below: the questions first in the opened row (an independent browser review, 2026-11-18,
+  // found them under the whole panel, off screen at 390px). Otherwise they sit under the row.
+  const questionsInRow = phone && props.panelOpen && props.questionsFirst === true;
+  const questions = asked.length === 0 ? null : (
+    <View testID="chat-landing-questions" style={questionsInRow ? styles.questionsInRow : styles.questions}>
+      <Heading>{`Questions for you${open !== null && open > 0 ? ` (${formatCount(open)})` : ''}`}</Heading>
+      {asked.map((question) => (
+        <QuestionCard
+          key={question.id}
+          question={question}
+          panel={props.panel}
+          locationName={ctx.locationName}
+          readOnlyId={props.readOnlyId}
+          chat={questionChat}
+          send={(message, ended) => { tell(message, { ended }, true); }}
+          place="landing"
+        />
+      ))}
+    </View>
+  );
   const body = landing ? (
     <ScrollView testID="chat-landing" style={styles.fill} contentContainerStyle={styles.landingScroll} keyboardShouldPersistTaps="handled">
       <View testID="chat-landing-column" style={styles.landing}>
-        <Heading>{`Ask TownwiseAI about ${ctx.locationName}`}</Heading>
-        {ctx.hasSales ? (
-          <Text style={styles.body}>
-            {`It reads ${readsLine(ctx)}, and shows you each thing it reads. It suggests notes; you decide what’s saved.`}
-          </Text>
-        ) : (
+        <Heading>{words.heading}</Heading>
+        {ctx.hasSales ? <Text style={styles.body}>{words.line}</Text> : (
           <View style={styles.noSales}>
-            <Text style={styles.body}>
-              {ctx.uploadsOff === true
-                ? `Every sales upload for this location is turned off, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}. Turn one back on in Your data.`
-                : `You haven’t uploaded sales yet, so TownwiseAI can only use ${readsLine(ctx, { sales: false })}.`}
-            </Text>
+            <Text style={styles.body}>{words.line}</Text>
             {ctx.uploadsOff === true
               ? <LinkButton href={locationHref(ctx.locationId, 'data')} label="Open Your data" />
               : Platform.OS === 'web' ? <LinkButton href={locationHref(ctx.locationId, 'upload')} label="Upload sales" /> : null}
@@ -477,23 +697,11 @@ export function AgentChat(props: {
             composer.current?.focus();
           }}
         />
-        {asked.length === 0 ? null : (
-          <View testID="chat-landing-questions" style={styles.questions}>
-            <Heading>{`Questions for you${open !== null && open > 0 ? ` (${formatCount(open)})` : ''}`}</Heading>
-            {asked.map((question) => (
-              <QuestionCard
-                key={question.id}
-                question={question}
-                panel={props.panel}
-                locationName={ctx.locationName}
-                readOnlyId={props.readOnlyId}
-                chat={questionChat}
-                send={(message, ended) => { tell(message, { ended }, true); }}
-                place="landing"
-              />
-            ))}
-          </View>
-        )}
+        {previousShown ? (
+          <PreviousChats conversations={listed} open={previousOpen} onToggle={setPreviousOpen} onOpen={(id) => { opened(() => { chat.openConversation(id); }, id); }} />
+        ) : null}
+        {phone ? panelRow(questionsInRow ? questions : null) : null}
+        {questionsInRow ? null : questions}
       </View>
     </ScrollView>
   ) : (
@@ -522,13 +730,22 @@ export function AgentChat(props: {
           if (pin.current.pinned && contentSize.height - layoutMeasurement.height - contentOffset.y <= 1) {
             pin.current = { ...pin.current, lastY: Math.min(pin.current.lastY, y) };
           }
-          apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height });
+          const person = Platform.OS === 'web' ? intent.current?.person() === true : touching.current.drag || touching.current.momentum;
+          apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height, person });
         }}
-        // The content's width changes whenever the scrollbar comes or goes, so the bar is measured here.
-        onContentSizeChange={(_width, height) => {
-          measureBar();
-          apply({ type: 'contentGrew', contentHeight: height - dock });
-        }}
+        // Native's own word for the person scrolling: a drag, then the momentum it leaves (react-native-web sends none).
+        onScrollBeginDrag={() => { touching.current.drag = true; }}
+        onScrollEndDrag={() => { touching.current.drag = false; }}
+        onMomentumScrollBegin={() => { touching.current.momentum = true; }}
+        onMomentumScrollEnd={() => { touching.current.momentum = false; }}
+        // Native's content height (web's is the ResizeObserver above). The content's width changes whenever the scrollbar
+        // comes or goes, so the bar is measured with it.
+        {...(Platform.OS === 'web' ? {} : {
+          onContentSizeChange: (_width: number, height: number) => {
+            measureBar();
+            apply({ type: 'contentGrew', contentHeight: height - dock });
+          },
+        })}
       >
         <View testID="chat-column" style={styles.column}>
           {state.conversationLoading ? (
@@ -568,6 +785,8 @@ export function AgentChat(props: {
                   canAct={canAct}
                   onRetry={(key) => { send(() => { chat.retry(key); }); }}
                   onAnnounce={announce}
+                  workedOpen={workedOpen}
+                  me={me}
                 />
                 {newest && message.state === 'complete' ? (
                   <NextChips
@@ -608,7 +827,7 @@ export function AgentChat(props: {
   return (
     <View style={styles.fill}>
       {header}
-      {body}
+      {split(body, landing && beside)}
       {/* After the body and outside the dock, so a drag never changes the dock's measured height. */}
       {drop}
       <View testID="chat-live" style={styles.live} aria-live="polite" accessibilityLiveRegion="polite">
@@ -626,13 +845,19 @@ const SKIRT_TOP = theme.space[3] + 28;
 
 const styles = StyleSheet.create({
   fill: { flex: 1, minHeight: 0 },
+  split: { flex: 1, minHeight: 0, flexDirection: 'row', columnGap: theme.space.gutter },
+  // The landing and the panel's column, 8 and 4 of 12; the column scrolls on its own.
+  main: { flex: 8, minWidth: 0, minHeight: 0 },
+  // Longhands: a ScrollView's own flexGrow would win over `flex`'s.
+  side: { flexGrow: 4, flexShrink: 1, flexBasis: 0, minWidth: 0, minHeight: 0 },
+  sideContent: { gap: theme.space[8], paddingBottom: theme.space[8] },
   panelBar: {
     flexDirection: 'row', justifyContent: 'flex-end', borderBottomWidth: theme.stroke.hairline, borderBottomColor: c.border,
     paddingBottom: theme.space[2], marginBottom: theme.space[4],
   },
   landingScroll: { flexGrow: 1 },
   landing: {
-    flexGrow: 1, justifyContent: 'center', width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[4],
+    flexGrow: 1, justifyContent: 'flex-start', width: '100%', maxWidth: COLUMN, minWidth: 0, alignSelf: 'center', gap: theme.space[4],
     paddingVertical: theme.space[6],
   },
   thread: { gap: theme.space[5] },
@@ -647,6 +872,8 @@ const styles = StyleSheet.create({
   warning: { ...theme.type.small, color: c.text2, paddingTop: theme.space[2] },
   noSales: { gap: theme.space[2], alignItems: 'flex-start' },
   questions: { gap: theme.space[3], paddingTop: theme.space[4] },
+  // First in the opened row, whose region has its own top padding: the panel's gap between sections under it.
+  questionsInRow: { gap: theme.space[3], paddingBottom: theme.space[8] },
   latest: { position: 'absolute', right: 0, zIndex: 1, backgroundColor: c.ground },
   // Read by screen readers, not drawn.
   live: { position: 'absolute', width: 1, height: 1, margin: -1, overflow: 'hidden' },

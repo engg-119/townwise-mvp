@@ -11,7 +11,7 @@ import { isFillRoute, locationHref, locationIdOf, pageTitle, tabOf } from '../ro
 import type { LocationSummary, MeResponse, OrgResponse } from '../schemas';
 import { LinkButton } from '../ui/Button';
 import { Skeleton, SkeletonHeading, SkeletonText } from '../skeleton/kit';
-import { ErrorNotice, Notice } from '../ui/feedback';
+import { ErrorNotice, InlineNotice } from '../ui/feedback';
 import { Content, Wrap } from '../ui/layout';
 import { MessageFocus } from '../ui/messageFocus';
 import { Select } from '../ui/Select';
@@ -22,8 +22,8 @@ import { PageHeader, PageNotice } from './Page';
 // it has several (“{name}, {town}, {state}”, or “{name}, {state}” when the name already ends with its town:
 // locations/naming.ts locationEyebrow, D29); the page's one h1 is the page's own title (pageTitle),
 // except Home's, which greets the person by the name they gave Townwise (P11), and its side holds the location
-// switcher and “All locations” when the organization has more than one location, and “Location settings” for org
-// admins. TownwiseAI has no page header at all (D26): the chat fills the screen
+// switcher and “All locations” when the organization has more than one location (Location settings is under the
+// top bar's More). TownwiseAI has no page header at all (D26): the chat fills the screen
 // under the top bar and draws its own hidden h1. The location's sections are in the top bar (Frame), so the pages
 // render only their content. The page notice and the page share a MessageFocus, so a page that opens with a notice
 // meant for it (Your data after an item's delete) can give that notice focus; a page with its own MessageFocus keeps
@@ -61,7 +61,6 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const router = useRouter();
   const { me, openedLocation } = usePortal();
   const { state, reload } = useOrg();
-  const role = me.access.state === 'member' ? me.access.role : 'member';
   // While the organization reloads after a write, the layout keeps showing the answer before it, so the page
   // stays mounted. Hiding it would unmount the location's navigator, and expo-router would move the address to
   // the location's first page (Home) before the new answer arrived. A location the old answer lacks waits.
@@ -99,7 +98,7 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
       <Wrap>
         <Content>
           <View style={styles.missing}>
-            <Notice text="This location isn’t available." />
+            <InlineNotice text="This location isn’t available." />
             <LinkButton variant="link" href="/dashboard" label="Locations" />
           </View>
         </Content>
@@ -109,19 +108,16 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const tab = tabOf(pathname);
   const several = locations.length > 1;
   const eyebrow = locationEyebrow(location, several);
-  const side = several || (role === 'org_admin' && tab !== 'settings') ? (
+  const side = several ? (
     <>
-      {several ? (
-        <Select
-          label="Location"
-          compact
-          value={location.id}
-          items={locations.map((candidate) => ({ value: candidate.id, label: candidate.name }))}
-          onChange={(id) => { router.push(locationHref(id, tab)); }}
-        />
-      ) : null}
-      {several ? <LinkButton href="/dashboard" label="All locations" /> : null}
-      {role === 'org_admin' && tab !== 'settings' ? <LinkButton href={locationHref(location.id, 'settings')} label="Location settings" /> : null}
+      <Select
+        label="Location"
+        compact
+        value={location.id}
+        items={locations.map((candidate) => ({ value: candidate.id, label: candidate.name }))}
+        onChange={(id) => { router.push(locationHref(id, tab)); }}
+      />
+      <LinkButton href="/dashboard" label="All locations" />
     </>
   ) : undefined;
   const page = <ShownOrgContext.Provider value={shown}>{props.children}</ShownOrgContext.Provider>;
@@ -130,13 +126,14 @@ export function LocationShell(props: { children: React.ReactNode }): React.JSX.E
   const head = tab === 'home' ? <Greeting>{header}</Greeting> : header(pageTitle(tab, new Date()));
   return (
     <Wrap>
-      {head}
-      <Content>
-        <MessageFocus>
+      {/* Around the header too: its h1 takes focus in place of a notice shown as a toast (ui/messageFocus.tsx). */}
+      <MessageFocus>
+        {head}
+        <Content>
           <PageNotice />
           {page}
-        </MessageFocus>
-      </Content>
+        </Content>
+      </MessageFocus>
     </Wrap>
   );
 }

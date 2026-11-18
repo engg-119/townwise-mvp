@@ -440,8 +440,9 @@ describe('the actions Your data’s rows used to carry', () => {
     return within(row).getAllByRole('button').map((button) => button.textContent);
   }
 
-  function noticeHasFocus(notice: HTMLElement): boolean {
-    return document.activeElement !== document.body && document.activeElement?.contains(notice) === true;
+  /** The notice is a toast, which never takes focus: the page's h1 has it in its place (spec 15.7, D55). */
+  function headingHasFocus(notice: HTMLElement): boolean {
+    return notice.closest('[data-testid="toast"]') !== null && document.activeElement === screen.getByRole('heading', { level: 1 });
   }
 
   function orgReads(api: FakePortalApi): number {
@@ -480,17 +481,24 @@ describe('the actions Your data’s rows used to carry', () => {
     expect(deleteSection().buttons).toEqual(['Delete']);
   });
 
-  test('opening a delete’s dialog clears the last action’s notice', async () => {
+  // The page drops the last action's notice as the dialog opens. Its toast lives its own time, so it may still be up:
+  // what must not happen is a second one behind the dialog or after it.
+  test('opening a delete’s dialog shows the last action’s notice no second time', async () => {
     const ref = refOf('f', 62);
     setup([storedFile(ref, { name: 'menu-notes.txt' })], ref);
     fireEvent.click(await screen.findByRole('button', { name: 'Turn off: menu-notes.txt' }));
     expect(await screen.findByText(/^Turned off menu-notes\.txt\./)).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Delete: menu-notes.txt' }));
-    expect(await screen.findByRole('dialog', { name: 'Delete this file' })).toBeTruthy();
-    expect(screen.queryByText(/^Turned off menu-notes\.txt\./)).toBeNull();
+    const dialog = await screen.findByRole('dialog', { name: 'Delete this file' });
+    expect(screen.getAllByText(/^Turned off menu-notes\.txt\./)).toHaveLength(1);
+    expect(screen.getAllByTestId('toast')).toHaveLength(1);
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => { expect(screen.queryByRole('dialog', { name: 'Delete this file' })).toBeNull(); });
+    expect(screen.getAllByTestId('toast')).toHaveLength(1);
+    expect(within(screen.getByRole('main')).queryByText(/^Turned off menu-notes\.txt\./)).toBeNull();
   });
 
-  test('a delete opened from Your data goes back to that entry, so Your data is in the history once, and its notice takes focus', async () => {
+  test('a delete opened from Your data goes back to that entry, so Your data is in the history once, and the page’s heading takes focus as its toast shows', async () => {
     const ref = refOf('f', 63);
     setup([storedFile(ref, { name: 'menu-notes.txt' }), storedFile(refOf('f', 64), { name: 'other.txt' })], ref, { path: '/locations/l1/data' });
     const list = await screen.findByRole('region', { name: 'Your data for Main Street Bar' });
@@ -499,19 +507,19 @@ describe('the actions Your data’s rows used to carry', () => {
     await settle(() => { fireEvent.click(within(screen.getByRole('dialog', { name: 'Delete this file' })).getByRole('button', { name: 'Delete file' })); });
     await waitFor(() => { expect(window.location.pathname).toBe('/locations/l1/data'); });
     const notice = await screen.findByText('Deleted menu-notes.txt.');
-    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    await waitFor(() => { expect(headingHasFocus(notice)).toBe(true); });
     // The item's entry was taken off, not replaced by a second Your data: nothing is left to go back to.
     expect(router.canGoBack()).toBe(false);
   });
 
-  test('Turn off acts at once, says so, takes focus and shows Off; Turn on puts it back', async () => {
+  test('Turn off acts at once, says so in a toast, moves focus to the heading and shows Off; Turn on puts it back', async () => {
     const ref = refOf('u', 52);
     const { fake } = setup([dailyTotalsOf(ref)], ref, { history: historyOf(ref.slice(2)) });
     fireEvent.click(await screen.findByRole('button', { name: 'Turn off: Daily totals, May 1, 2026 to May 10, 2026' }));
     expect(fake.patches).toEqual([{ ref, body: { enabled: false } }]);
     const notice = await screen.findByText(/^Turned off Daily totals, May 1, 2026 to May 10, 2026\./);
     expect(notice.textContent).toBe('Turned off Daily totals, May 1, 2026 to May 10, 2026. Main Street Bar’s numbers, forecasts and TownwiseAI leave it out until it’s turned on.');
-    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    await waitFor(() => { expect(headingHasFocus(notice)).toBe(true); });
     expect(await screen.findByText('Off · Used')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Turn on: Daily totals, May 1, 2026 to May 10, 2026' }));
     expect(fake.patches.at(-1)).toEqual({ ref, body: { enabled: true } });
@@ -548,8 +556,8 @@ describe('the actions Your data’s rows used to carry', () => {
     expect(fake.removed).toEqual([{ locationId: 'l1', ref }]);
     const notice = await screen.findByText('Deleted menu-notes.txt.');
     expect(window.location.pathname).toBe('/locations/l1/data');
-    // Opened straight at the item, Your data takes its place, and the notice takes focus there too.
-    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    // Opened straight at the item, Your data takes its place, and its heading takes focus there too.
+    await waitFor(() => { expect(headingHasFocus(notice)).toBe(true); });
     expect(await screen.findByText('Nothing here yet. What your team uploads or adds for Main Street Bar shows here.')).toBeTruthy();
   });
 
@@ -561,7 +569,7 @@ describe('the actions Your data’s rows used to carry', () => {
     expect(within(dialog).getByText('This deletes the original of toast.csv. The cleaned copy and the days it added stay. This can’t be undone.')).toBeTruthy();
     fireEvent.click(within(dialog).getByRole('button', { name: 'Delete original' }));
     const notice = await screen.findByText('Deleted the original. The cleaned copy and its days stay.');
-    await waitFor(() => { expect(noticeHasFocus(notice)).toBe(true); });
+    await waitFor(() => { expect(headingHasFocus(notice)).toBe(true); });
     expect(fake.files.calls.filter((call) => call.method === 'DELETE').map((call) => call.path)).toEqual(['/files/file-sales/raw']);
     expect(fake.removed).toEqual([]);
     expect(window.location.pathname).toBe(`/locations/l1/data/${ref}`);

@@ -14,6 +14,7 @@ import { getLocationCalendar } from '../handlers/calendar.ts';
 import { listCalibrations, setForecastSchedule, startCalibration, switchForecasts } from '../handlers/calibrations.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { rateReply } from '../handlers/chat-feedback.ts';
+import { getTurnEvents, stopTurn } from '../handlers/chat-turns.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnOrderProposal, getOrderProposal } from '../handlers/chat-order-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
@@ -23,13 +24,15 @@ import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/est
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
 import { holdSetupReadBytes, readOrderSetup } from '../handlers/order-setup-read.ts';
 import { getOrders, saveOrderDecision, saveOrderRule, turnOffOrderRule } from '../handlers/orders.ts';
-import { deleteForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
+import { getOverview } from '../handlers/overview.ts';
+import { deleteForecastRun, getForecastRun, importForecastRun, listForecastRuns, publishForecastRun, withdrawForecastRun } from '../handlers/forecast-runs.ts';
 import {
   addTextItem, answerImport, completeFile, createFile, currentImport, deleteFile, deleteLocationOriginals, deleteRaw, downloadClean, downloadRaw, getFile, getImport,
   listEntries, listFiles, putChunk, startImport,
 } from '../handlers/files.ts';
 import { connectGoogle, dropGoogleConnection, listGoogleChoices } from '../handlers/google-calendars.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
+import { getLocationsMap } from '../handlers/locations-map.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
@@ -40,13 +43,14 @@ import {
 import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
+import { acceptRuleSuggestion, dismissRuleSuggestion } from '../handlers/rule-suggestions.ts';
 import { createRule, deleteRule, listRules, updateRule } from '../handlers/rules.ts';
 import { deleteSales, getSales, getSalesDays, getSalesHistory, uploadSales } from '../handlers/sales.ts';
 import { createSetupLocation, deleteSetupLocation, deleteSetupSales, updateSetupLocation, uploadSetupSales } from '../handlers/staff-setup.ts';
 import { addMembers, changeRole, listMembers, removeMember } from '../handlers/team.ts';
 import { getTownProfile } from '../handlers/towns.ts';
 import { endViewAs, startViewAs } from '../handlers/view-as.ts';
-import { acceptSuggestion, dismissSuggestion, switchWeeklySuggestions } from '../handlers/weekly-suggestions.ts';
+import { acceptSuggestion, dismissSuggestion, switchCalendarTitles, switchWeeklySuggestions } from '../handlers/weekly-suggestions.ts';
 import { openAsAdminRefusal, policyRefusal, principalOf, recordResolution, viewAsRefusal, type Policy, type Principal } from './policy.ts';
 import { resolveAccess } from './resolve.ts';
 
@@ -58,7 +62,7 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a TownwiseAI turn's stop, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
    * edit, an order rule's turn-off and open as admin's start (its reason);
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
    * switch, the weekly suggestions switch, (D31) a business rule, the order decisions and rules, the item and order change cards, and connecting a
@@ -75,8 +79,8 @@ export interface TownwiseRoute {
   readonly bodyLimit: 'none' | '1kb' | '2kb' | '8kb' | '32kb' | '256kb' | '1mb' | '2mb' | '8mb' | 'stream';
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?:
-    | 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'places' | 'files' | 'file_chunks' | 'downloads' | 'ai_reads'
-    | 'google_calendars';
+    | 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'chat_tail' | 'places' | 'files' | 'file_chunks' | 'downloads'
+    | 'ai_reads' | 'google_calendars';
   /**
    * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
    * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
@@ -137,6 +141,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     openAsAdmin: true, handler: getStaffActivity,
   },
   { id: 'org.leave', method: 'POST', path: '/org/leave', policy: 'member', bodyLimit: '32kb', handler: leaveOrg },
+  // D47: Settings' lettered map of the caller's own locations, with where each pin sits, for its hover.
+  {
+    id: 'org.locations.map', method: 'GET', path: '/org/locations/map', policy: 'member', bodyLimit: 'none',
+    limiter: 'places', openAsAdmin: true, handler: getLocationsMap,
+  },
   {
     id: 'org.locations.create', method: 'POST', path: '/org/locations', policy: 'org_admin', bodyLimit: '32kb',
     openAsAdmin: true, handler: createLocation,
@@ -356,6 +365,16 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.chat.turn', method: 'POST', path: '/org/locations/:locationId/chat/turns', policy: 'member', bodyLimit: '32kb',
     limiter: 'chat', openAsAdmin: true, handler: postTurn,
   },
+  // resumable-chat-turns: a running turn's events, read back from its record, for a page that lost its stream.
+  {
+    id: 'org.chat.turn_events', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId',
+    policy: 'member', bodyLimit: 'none', limiter: 'chat_tail', openAsAdmin: true, handler: getTurnEvents,
+  },
+  // resumable-chat-turns: stopping a running turn, from any replica; an empty body, the writes limiter only.
+  {
+    id: 'org.chat.turn_stop', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId/stop',
+    policy: 'member', bodyLimit: '1kb', openAsAdmin: true, handler: stopTurn,
+  },
   {
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',
     bodyLimit: 'none', openAsAdmin: true, handler: deleteConversation,
@@ -409,9 +428,26 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.agent.suggestion_dismiss', method: 'POST', path: '/org/locations/:locationId/agent/suggestions/:suggestionId/dismiss',
     policy: 'org_admin', bodyLimit: '1kb', openAsAdmin: true, handler: dismissSuggestion,
   },
+  // Suggested closure rules (openspec change suggest-closure-rules, D46): any member confirms, edits or dismisses a
+  // file or sales suggestion; 2 KB so an Edit of 200 four-byte characters and a schedule fits. A weekly one is 404 here.
+  {
+    id: 'org.agent.rule_suggestion_accept', method: 'POST',
+    path: '/org/locations/:locationId/agent/rule-suggestions/:suggestionId/accept', policy: 'member', bodyLimit: '2kb', openAsAdmin: true,
+    handler: acceptRuleSuggestion,
+  },
+  {
+    id: 'org.agent.rule_suggestion_dismiss', method: 'POST',
+    path: '/org/locations/:locationId/agent/rule-suggestions/:suggestionId/dismiss', policy: 'member', bodyLimit: '2kb', openAsAdmin: true,
+    handler: dismissRuleSuggestion,
+  },
   {
     id: 'org.weekly_suggestions.switch', method: 'PATCH', path: '/org/weekly-suggestions', policy: 'org_admin', bodyLimit: '2kb',
     openAsAdmin: true, handler: switchWeeklySuggestions,
+  },
+  // Sending the calendars' event titles to the weekly call (calendar-event-suggestions): open as admin may turn it off only.
+  {
+    id: 'org.weekly_suggestions.calendar_titles', method: 'PATCH', path: '/org/weekly-suggestions/calendar-titles', policy: 'org_admin',
+    bodyLimit: '2kb', openAsAdmin: true, handler: switchCalendarTitles,
   },
   // U13A, estimates (spec 10.13): people in town and "How Townwise estimates". Reads with no limiter.
   {
@@ -494,6 +530,8 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     handler: removeMember,
   },
 
+  // The console's Overview (openspec change staff-overview): usage and health across organizations, a read with no limiter.
+  { id: 'admin.overview', method: 'GET', path: '/admin/overview', policy: 'staff', bodyLimit: 'none', handler: getOverview },
   { id: 'admin.requests.list', method: 'GET', path: '/admin/requests', policy: 'staff', bodyLimit: 'none', handler: listRequests },
   {
     id: 'admin.requests.approve', method: 'POST', path: '/admin/requests/:requestId/approve', policy: 'staff',
@@ -551,6 +589,10 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'admin.forecasts.list', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs', policy: 'staff', bodyLimit: 'none',
     handler: listForecastRuns,
+  },
+  {
+    id: 'admin.forecasts.get', method: 'GET', path: '/admin/orgs/:orgId/forecast-runs/:runId', policy: 'staff', bodyLimit: 'none',
+    handler: getForecastRun,
   },
   {
     id: 'admin.forecasts.import', method: 'POST', path: '/admin/orgs/:orgId/locations/:locationId/forecast-runs', policy: 'staff',
@@ -627,6 +669,9 @@ export const ROUTE_LIMITS = {
   'view-as': { name: 'townwise:view-as', limit: 20, windowSeconds: 3600, whenStoreDown: 'deny' },
   // docs/portal/tuning-chat.md section 2: every turn costs money, so a store outage denies.
   chat: { name: 'townwise:chat', limit: 60, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // resumable-chat-turns: reading a turn's events back spends nothing (two reads a second of the record's state, count
+  // and lease, and the record only once it gained events, for at most 200 seconds), so a store outage allows. 300 an hour leaves room for a page that reconnects every few seconds through an outage.
+  chat_tail: { name: 'townwise:chat-tail', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' },
   // Both Places routes share it. A search is 10 to 15 debounced autocompletes and one details call, so this is about
   // 20 searches an hour; every call costs money, so a store outage denies.
   places: { name: 'townwise:places', limit: 300, windowSeconds: 3600, whenStoreDown: 'deny' },
@@ -715,6 +760,8 @@ function authorize(ctx: TownwiseContext, route: TownwiseRoute): RequestHandler {
     }
     principals.set(req, principal);
     recordResolution(req, resolution);
+    // The person's active day (staff-overview): only once every guard and the policy passed, never awaited.
+    ctx.activity.record(principal);
   });
 }
 

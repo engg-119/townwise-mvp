@@ -7,7 +7,7 @@ import { usePortal } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { webAria } from '../ui/aria';
 import { Button, LinkButton } from '../ui/Button';
-import { ErrorNotice, LoadingLine, Notice } from '../ui/feedback';
+import { ErrorNotice, InlineNotice, LoadingLine } from '../ui/feedback';
 import { Small } from '../ui/text';
 
 // Small pieces the location pages share (spec 15.6, 15.7, P11 to P16): the not-available state, the upload
@@ -20,7 +20,7 @@ export function LoadFailure(props: { error: unknown; onRetry: () => void }): Rea
   if (hasCode(props.error, 404, 'not_found')) {
     return (
       <View style={styles.missing}>
-        <Notice text="This location isn’t available." />
+        <InlineNotice text="This location isn’t available." />
         <LinkButton variant="link" href="/dashboard" label="Locations" />
       </View>
     );

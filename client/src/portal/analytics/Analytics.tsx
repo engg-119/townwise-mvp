@@ -1,3 +1,4 @@
+import { useLocalSearchParams, useRouter } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { Platform, StyleSheet, View, type ViewStyle } from 'react-native';
 
@@ -5,7 +6,7 @@ import { theme } from '../../theme';
 import { ModelCard } from '../estimates/ModelCard';
 import { formatCount, formatDate, plural } from '../format';
 import { useBreakpoint, useLoad } from '../hooks';
-import { addDays, formatMonth, localToday, monthRange } from '../locations/dates';
+import { addDays, formatMonth, isCalendarDate, localToday, monthRange } from '../locations/dates';
 import { fetchNotes, type Note } from '../locations/api';
 import { LoadFailure, ShowNumbers, UploadAction } from '../locations/parts';
 import { UPLOADS_OFF_LINE } from '../locations/sales';
@@ -43,7 +44,8 @@ import { YourData } from './YourData';
 // the compute modules beside this file; a section with too few days says so instead of showing a number. Every
 // section prints the same basis line. The page reads three routes (sales history, notes, the town calendar), and
 // the model card reads its own (estimates/about); the page writes nothing and keeps its filters in component state only, so view-as shows it unchanged; only its upload
-// links are disabled there.
+// links are disabled there. On web the selected day is also in the address (`?day=`), so a refresh keeps it; with no
+// usable `?day=`, the last day with data starts selected (owner request, 2026-11-17).
 
 const READ_ONLY_ID = 'analytics-ro';
 const SHORT = (name: string | undefined): string => (name ?? '').slice(0, 3);
@@ -88,14 +90,28 @@ function AnalyticsView(props: {
   const metrics = useMemo(() => metricsWithData(days), [days]);
   const [filters, setFilters] = useState<FilterState>(() => defaultFilters(days));
   const [keepOne, setKeepOne] = useState(false);
-  const [selected, setSelected] = useState<string | null>(null);
+  const native = Platform.OS !== 'web';
+  const router = useRouter();
+  const params = useLocalSearchParams<{ day?: string }>();
+  // Web starts on `?day=` when the heatmap can focus it, else on the last day with data. Native starts with none
+  // selected, since its panel opens inside a month row.
+  const [selected, setSelected] = useState<string | null>(() => {
+    const start = native ? null : focusBounds(days, filters.years, today);
+    if (start === null) return null;
+    const day = typeof params.day === 'string' ? params.day : '';
+    return isCalendarDate(day) && canFocus(day, start) ? day : start.lastData;
+  });
+  /** Selects `date` (null clears), and on web keeps it in the address; expo-router drops an undefined param. */
+  const select = (date: string | null): void => {
+    setSelected(date);
+    if (!native) router.setParams({ day: date ?? undefined });
+  };
   const [preview, setPreview] = useState<string | null>(null);
   const [focusKey, setFocusKey] = useState(0);
   const input = useMemo(() => analyticsInput(days, context, filters), [days, context, filters]);
   const { metric } = filters;
   const basis = useMemo(() => basisLine(days, filters, context), [days, filters, context]);
   const { coverage } = history;
-  const native = Platform.OS !== 'web';
   // The aggregates, so a hover preview (which re-renders the page) recomputes none of them.
   const months = useMemo(() => heatmapMonths({ days, metric, years: filters.years }), [days, metric, filters.years]);
   const summary = useMemo(
@@ -119,7 +135,7 @@ function AnalyticsView(props: {
   };
   const applyFilters = (next: FilterState): void => {
     setFilters(next);
-    if (selected !== null && !shows(selected, next)) setSelected(null);
+    if (selected !== null && !shows(selected, next)) select(null);
     if (preview !== null && !shows(preview, next)) setPreview(null);
   };
   const onFilters = (next: FilterState): void => { applyFilters(next); setKeepOne(false); };
@@ -181,7 +197,7 @@ function AnalyticsView(props: {
     if (base === null || bounds === null) return null;
     const next = neighbor(base, by);
     if (next === null || !canFocus(next, bounds)) return null;
-    return () => { setSelected(next); setPreview(null); setFocusKey((key) => key + 1); };
+    return () => { select(next); setPreview(null); setFocusKey((key) => key + 1); };
   };
   const panelData = shown === null ? null : dayPanel(shown, {
     byDate: index, context, uploads: history.uploads, metric, included: input.included, today, lastDate: coverage.lastDate, calendar,
@@ -197,7 +213,7 @@ function AnalyticsView(props: {
       years={filters.years}
       interactive
       selected={selected}
-      onSelect={(date) => { setSelected(date); }}
+      onSelect={select}
       onPreview={setPreview}
       label={summary}
       today={today}

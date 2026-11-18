@@ -33,6 +33,13 @@ const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'ut
 
 const NOTE_HEADING = 'Closed on Sat, Jul 4, 2026?';
 
+/** A card, by its question: the nearest element around its heading that holds an Accept. */
+function cardOf(heading: string): ReturnType<typeof screen.getByRole> {
+  let node = screen.getByRole('heading', { name: heading });
+  while (node.parent !== null && within(node).queryAllByRole('button', { name: 'Accept' }).length === 0) node = node.parent;
+  return node;
+}
+
 afterEach(async () => {
   await cleanup();
   resetDrafts();
@@ -50,7 +57,8 @@ async function renderSheet(me: MeResponse, canChange: boolean): Promise<FakeChat
   serveAbout(chat);
   const role = me.access.state === 'member' ? me.access.role : 'member';
   await renderApp('/locations/l1/agent?panel=questions', fakePortalApi({ me, org: orgOf(role), fallback: chat }));
-  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
+  // At 375px ?panel=questions opens the row under the chips, the panel in place under it.
+  expect(await screen.findByTestId('agent-side')).toBeTruthy();
   return chat;
 }
 
@@ -70,10 +78,7 @@ test('an org admin accepts a suggestion and turns weekly suggestions off', async
   api.respond[accept] = () => ({ suggestion: { id: '0000000000000000000000c1', status: 'accepted' }, note: null, rule: null });
   api.respond['/api/org/weekly-suggestions'] = () => ({ weeklySuggestions: { on: false } });
   await screen.findByRole('heading', { name: NOTE_HEADING });
-  // Soonest first: the rule (Jun 14), then the note (Jul 4).
-  const [, noteAccept] = screen.getAllByRole('button', { name: 'Accept' });
-  if (noteAccept === undefined) throw new Error('no Accept on the note');
-  await fireEvent.press(noteAccept);
+  await fireEvent.press(within(cardOf(NOTE_HEADING)).getByRole('button', { name: 'Accept' }));
   expect(await screen.findByText('Saved a note: Closure, Sat, Jul 4, 2026.')).toBeTruthy();
   await fireEvent.press(screen.getByRole('button', { name: 'Turn off weekly suggestions' }));
   expect(await screen.findByText('Weekly suggestions are off.')).toBeTruthy();

@@ -10,6 +10,8 @@ import { byDate, decodeHistory } from '../analytics/history';
 import {
   forecastRange, homeCalendarRange, lastWeekComparison, lastWeekRange, lateWeekShare, leadLine, monthFacts, nextEvent, thisWeek, type HomeInput,
 } from '../analytics/week';
+import { fetchOwnerCalendarEvents, type OwnerCalendarEvent } from '../calendar/api';
+import { ALL_FILTERS, type CalendarInput } from '../calendar/model';
 import { fetchForecast } from '../estimates/api';
 import { useBreakpoint, useLoad } from '../hooks';
 import { fetchNotes, type Note } from '../locations/api';
@@ -41,21 +43,26 @@ import { ThisWeek } from './ThisWeek';
 // month's events beside Who's in town; this month in past years beside the bar order; and the location's
 // history. Every figure is a sum, an average or a share of the location's own stored days, of a past day, except This
 // month's days from today on, which show the published forecast's own figures (spec 16.3 P11, 14.5,
-// D30), and Last week's published forecast for its seven days (D42), never an unpublished guess of Home's: with no
+// D30), At a glance's This week, which adds up This week's seven forecast figures with no range (D43), and Last
+// week's published forecast for its seven days (D42), never an unpublished guess of Home's: with no
 // published forecast the lead says so and those days show none. It reads three
 // routes in parallel (sales history, notes, the town calendar), then on their own TownwiseAI's questions (for the
 // lead's count), the location's business rules (a schedule with more or fewer guests says a near-empty day was open,
 // D31 and D32, as on the Calendar and Analytics; none while they load or if the read fails), this month's forecast
 // (GET .../forecast; Home never waits for it or fails with it), Last week's forecast (the same route for the seven days
 // before today, D42; likewise on its own), the month's people in town (in Who's in town) and the
-// next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), and writes nothing,
-// so view-as shows it unchanged with its upload links disabled.
+// next orders (GET .../orders, read once here for Bar order and the selected day's Reorder part), the events of the
+// location's own calendars over the forecast's range (D49: this month and This week's days past it, under the events
+// route's 92 days; none while they load or if the read fails), and writes nothing, so view-as shows it unchanged with
+// its upload links disabled. This week, This month (its grid, tooltip and day detail) and the month's list read one
+// CalendarInput, the Calendar's, through the shared entries helper (calendar/entries.ts).
 // "Today" is the device's date; This week in {Town} is the seven days from today, today first, and Last week the
 // seven days before today. While onboarding's needsHistory is true, its HistoryStep
 // takes the place of the blocks that need days, and when it has read the history Home loads again.
 
 const READ_ONLY_ID = 'home-ro';
 const NO_RULES: readonly Rule[] = [];
+const NO_EVENTS: readonly OwnerCalendarEvent[] = [];
 
 /** The lead's In progress line while no forecast is published. `locationName` is the shown name (shownLocationName). */
 export function forecastLine(locationName: string): string {
@@ -83,7 +90,7 @@ function Tagline(props: { kind: 'progress' | 'planned'; text: string }): React.J
 }
 
 /**
- * The count of TownwiseAI's open questions and weekly suggestions (GET .../agent, its side panel's read), linked to its page. It reads on its
+ * The count of TownwiseAI's open questions, weekly suggestions and suggested rules (GET .../agent, its side panel's read), linked to its page. It reads on its
  * own, so Home never waits for it or fails with it: while it loads, when the read fails and when there are none, the
  * lead shows nothing here (the page itself says "No questions right now" or the error).
  */
@@ -91,8 +98,9 @@ function QuestionsLink(props: { locationId: string }): React.JSX.Element | null 
   const { api } = usePortal();
   const { locationId } = props;
   const { state } = useLoad(useCallback(() => loadAgentPanel(api, locationId), [api, locationId]));
-  // Weekly suggestions count as questions (openspec change weekly-forecast-suggestions): each asks the owner to decide.
-  const count = state.status === 'ready' ? state.data.questions.length + state.data.suggestions.length : 0;
+  // Weekly suggestions (openspec change weekly-forecast-suggestions) and suggested rules (D46) count as questions: each
+  // asks the owner to decide.
+  const count = state.status === 'ready' ? state.data.questions.length + state.data.suggestions.length + state.data.ruleSuggestions.length : 0;
   if (count === 0) return null;
   // ?panel=questions: the page opens with its questions showing.
   return <LinkButton href={`${locationHref(locationId, 'agent')}?panel=questions`} label={questionsLabel(count)} />;
@@ -116,6 +124,9 @@ function HomeView(props: {
   const lastWeekRead = useLoad(useCallback(() => fetchForecast(api, locationId, lastWeekRange(today)), [api, locationId, today])).state;
   const lastWeekForecast = lastWeekRead.status === 'ready' ? lastWeekRead.data : null;
   const { history, notes, calendar } = data;
+  // The location's own calendars' events, on their own (D49): until they load, or if they can't, Home shows none.
+  const eventsRead = useLoad(useCallback(() => fetchOwnerCalendarEvents(api, locationId, forecastRange(today)), [api, locationId, today])).state;
+  const imported = eventsRead.status === 'ready' ? eventsRead.data : NO_EVENTS;
   // One read of the board for Bar order and the selected day's Reorder part; it fails on its own, in their places.
   const { state: board } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
   const days = useMemo(() => decodeHistory(history), [history]);
@@ -126,7 +137,12 @@ function HomeView(props: {
     () => ({ today, byDate: byDate(days), context, metric, lastDate: history.coverage.lastDate, uploadsOff: history.uploadsOff === true }),
     [today, days, context, metric, history.coverage.lastDate, history.uploadsOff],
   );
-  const week = useMemo(() => thisWeek(input), [input]);
+  // The one CalendarInput every Home calendar surface reads (D49), as the Calendar builds its own.
+  const entries = useMemo<CalendarInput>(() => ({
+    today, covered: forecastRange(today), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported,
+    filters: ALL_FILTERS,
+  }), [today, forecast, input.byDate, calendar.events, notes, rules, imported]);
+  const week = useMemo(() => thisWeek(input, entries), [input, entries]);
   const lastWeek = useMemo(() => lastWeekComparison(input, lastWeekForecast), [input, lastWeekForecast]);
   const share = useMemo(() => lateWeekShare(input), [input]);
   const facts = useMemo(() => monthFacts(input), [input]);
@@ -152,6 +168,7 @@ function HomeView(props: {
       {needs || !hasDays ? null : (
         <Glance
           week={week}
+          forecast={forecast?.available === true ? forecast : null}
           lastWeek={lastWeek}
           next={next}
           calendar={calendar}
@@ -168,8 +185,7 @@ function HomeView(props: {
             key: 'month', span: wideLastWeek ? 12 : 8,
             node: (
               <ThisMonth
-                input={input} calendar={calendar} notes={notes} rules={rules} forecast={forecast} history={hasDays} locationId={locationId}
-                board={board}
+                input={input} calendar={calendar} entries={entries} forecast={forecast} history={hasDays} locationId={locationId} board={board}
               />
             ),
           },
@@ -178,7 +194,7 @@ function HomeView(props: {
       />
       <BlockRow
         items={[
-          { key: 'list', span: 6, node: <MonthList today={today} context={context} /> },
+          { key: 'list', span: 6, node: <MonthList today={today} entries={entries} /> },
           { key: 'people', span: 6, node: <WhoIsInTown today={today} calendar={calendar} locationId={locationId} /> },
         ]}
       />

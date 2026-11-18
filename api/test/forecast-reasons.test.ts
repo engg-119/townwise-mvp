@@ -20,7 +20,7 @@ const ID = '0000000000000000000000aa';
 function note(fields: Partial<NoteContent> = {}): NoteRecord {
   return {
     id: ID, kind: 'private_event', startDate: '2026-06-06', endDate: '2026-06-06', weekdays: null, effect: 'more_guests',
-    expectedGuests: 70, detail: SENTINEL, startTime: null, endTime: null, createdBy: 'author', byStaff: false, source: null,
+    expectedGuests: 70, detail: SENTINEL, title: null, startTime: null, endTime: null, createdBy: 'author', byStaff: false, source: null, fromEvent: null,
     createdAt: new Date('2026-05-01T00:00:00Z'), updatedAt: new Date('2026-05-01T00:00:00Z'), ...fields,
   };
 }
@@ -68,6 +68,46 @@ describe('note reasons', () => {
   });
 });
 
+// D49: two run reasons that read as one label on a day (case and spacing aside) show once: the larger effect, else the
+// first, with both reasons' sources. Note and rule reasons are never merged.
+describe('one run reason per label', () => {
+  const DAY = '2026-11-11';
+  const term = townCalendarOf('hanover-nh')(DAY).term;
+  const holiday = {
+    id: 'us:veterans-day:2026', title: 'Veterans Day', start: DAY, end: DAY, kind: 'holiday', scope: 'national', group: 'us:veterans-day',
+    groupLabel: 'Veterans Day', confidence: null, sources: [{ label: 'OPM', url: 'https://www.opm.gov/holidays' }],
+  } as const;
+  const parade = {
+    ...holiday, id: 'hanover-nh:2026-11-11:parade', title: 'veterans  day ', kind: 'event', scope: 'town', group: null, groupLabel: null,
+    confidence: 'high', sources: [{ label: 'Town of Hanover', url: 'https://www.hanovernh.org/parade' }, { label: 'OPM', url: 'https://www.opm.gov/holidays' }],
+  } as const;
+  const calendar = { events: [holiday, parade], term };
+
+  it('keeps the larger effect where it first stood, with the union of both sources', () => {
+    const views = reasonViews(DAY, [
+      { kind: 'holiday', ref: holiday.id, effectPct: 4 }, { kind: 'weekday', ref: null, effectPct: null }, { kind: 'event', ref: parade.id, effectPct: -9 },
+    ], calendar);
+    expect(views.map((view) => [view.kind, view.label, view.effectPct])).toEqual([['event', 'veterans  day ', -9], ['weekday', 'Wednesday', null]]);
+    expect(views[0]?.sources).toEqual([
+      { label: 'Town of Hanover', url: 'https://www.hanovernh.org/parade' }, { label: 'OPM', url: 'https://www.opm.gov/holidays' },
+    ]);
+  });
+
+  it('keeps the first when the effects tie or neither has one, and a recorded effect over none', () => {
+    const tie = reasonViews(DAY, [{ kind: 'holiday', ref: holiday.id, effectPct: 5 }, { kind: 'event', ref: parade.id, effectPct: -5 }], calendar);
+    expect(tie.map((view) => [view.kind, view.effectPct])).toEqual([['holiday', 5]]);
+    const none = reasonViews(DAY, [{ kind: 'holiday', ref: holiday.id, effectPct: null }, { kind: 'event', ref: parade.id, effectPct: null }], calendar);
+    expect(none.map((view) => view.kind)).toEqual(['holiday']);
+    const recorded = reasonViews(DAY, [{ kind: 'holiday', ref: holiday.id, effectPct: null }, { kind: 'event', ref: parade.id, effectPct: 2 }], calendar);
+    expect(recorded.map((view) => [view.kind, view.effectPct])).toEqual([['event', 2]]);
+  });
+
+  it('never merges two note reasons with one label', () => {
+    const views = [noteReasonView(note(), 'added'), noteReasonView(note({ detail: 'Another party' }), 'added')];
+    expect(views.map((view) => view.label)).toEqual(['Your private event, 70 guests', 'Your private event, 70 guests']);
+  });
+});
+
 describe('rule reasons', () => {
   const RULE_ID = '0000000000000000000000bb';
   const schedule = (fields: Partial<RuleSchedule> = {}): RuleSchedule => ({
@@ -94,6 +134,14 @@ describe('rule reasons', () => {
     ]);
     expect(ruleReasonView({ id: RULE_ID, schedule: schedule({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40 }) }, 'added').rule)
       .toEqual({ id: RULE_ID, guests: 40, outcome: 'added' });
+  });
+
+  it('adds a yearly season to the label, with no start', () => {
+    const season = { repeat: 'yearly' as const, from: '01-01', to: '03-31' };
+    expect(ruleReasonView({ id: RULE_ID, schedule: schedule({ weekdays: null, season }) }, 'closed').label)
+      .toBe('Your rule: closed Jan 1 to Mar 31 every year');
+    expect(ruleReasonView({ id: RULE_ID, schedule: schedule({ season: { repeat: 'yearly', from: '12-20', to: '01-05' } }) }, 'closed').label)
+      .toBe('Your rule: closed on Mondays, Dec 20 to Jan 5 every year');
   });
 });
 

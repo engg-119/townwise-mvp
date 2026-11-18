@@ -21,6 +21,12 @@ const MAX_LABEL = 60;
 export const MAX_CALENDARS = 5;
 /** The API's `max(2048)` on a link. */
 const MAX_LINK = 2048;
+/**
+ * What an add of a file or link, and a Google connect, sends as `titlesNotice` when its screen showed the weekly words
+ * (CALENDARS_COPY.weeklyReading, the explainer's second paragraph), the API's WEEKLY_TITLES_NOTICE
+ * (api/src/calendar/titles-notice.ts): a calendar's titles go into the weekly call only when it was sent.
+ */
+export const WEEKLY_TITLES_NOTICE = 1;
 
 export const CALENDARS_COPY = {
   tooLarge: 'This file is over 1 MB. Export a shorter range of your calendar.',
@@ -37,6 +43,12 @@ export const CALENDARS_COPY = {
   linkLong: 'This link is too long. Copy it again from your calendar’s settings.',
   calendarLimit: 'This location has 5 calendars, the most it can hold. Remove one to add another.',
   alreadyRemoved: 'This calendar was already removed.',
+  /**
+   * Above "Import a calendar file" and "Add a link", said once for both (calendar-event-suggestions design decision 11:
+   * an add from this popover sends `titlesNotice`, and a file's or link's titles go into the weekly call only when its
+   * add did). [CONFIRM: the add screens' words on the weekly reading of titles]
+   */
+  weeklyReading: 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.',
 } as const;
 
 const HELP_IMPORT = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours.';
@@ -59,10 +71,15 @@ export function nativeLine(google: boolean): string {
     : 'To add events from your own calendar file, open Townwise on the web.';
 }
 
-/** The explainer's paragraphs: what Townwise reads, who sees it, and how its access ends. */
+/**
+ * The explainer's paragraphs: what Townwise reads, who sees it, and how its access ends. The second also says the
+ * weekly suggestions read the titles (calendar-event-suggestions design decision 11: a connect from this explainer
+ * sends `titlesNotice`, and a Google calendar's titles go into the weekly call only when its connection's did).
+ * [CONFIRM: the Google connect explainer's words on the weekly reading of titles]
+ */
 const EXPLAINER_PARAGRAPHS = [
   'Sign in with Google to pick calendars from your Google account. Townwise reads each event’s title, dates and hours, and nothing else, about every 6 hours, repeating events included.',
-  'Everyone on your team can see these events, and TownwiseAI reads their titles when you ask about your bookings, so they reach Anthropic, which doesn’t train on them. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one.',
+  'Everyone on your team can see these events. TownwiseAI reads their titles when you ask about your bookings, and once a week it reads the titles, dates and hours of the next 3 months of events, with email addresses and phone numbers removed, to suggest notes for private events. Either way, the titles reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page. Townwise staff never see these events’ titles on the Calendar. Under view-as, a recorded, read-only view shown to your organization’s admins, they can read your team’s TownwiseAI conversations, which may mention one.',
   'Removing your last Google calendar, or leaving your organization, ends Townwise’s access to your Google account. Google may warn that Townwise isn’t verified yet while Google reviews it.',
 ] as const;
 
@@ -88,6 +105,18 @@ export const GOOGLE_COPY = {
   /** Any other error Google answers the current press with, and an `unknown` error; never Google's own description. */
   notConnected: 'Google didn’t connect Townwise. Try again.',
   reconnect: 'Connect your Google account again to add calendars.',
+  /** A Google calendar's row action, for the person who added it, while Google refuses Townwise's access. */
+  reconnectAction: 'Reconnect',
+  /**
+   * A connect started from Reconnect worked, and Refresh now ran on each of the person's Google calendars here: alone
+   * when one still couldn't be read (its row's words say why), with `reconnectedFresh` when every one was read, and
+   * with `reconnectedLater` when a refresh was refused (too soon, Google busy), so the refresh loop reads it.
+   */
+  reconnected: 'Reconnected to Google.',
+  reconnectedFresh: 'Reconnected to Google. Your Google calendars are up to date.',
+  reconnectedLater: 'Reconnected to Google. Townwise reads your Google calendars again within 15 minutes.',
+  /** Under the actions for staff, open as admin or under view-as, beside "Add a Google calendar" disabled in place. */
+  staffLine: 'Members of this organization connect their own Google calendars. Staff can’t connect one.',
 } as const;
 
 /** The picker's first line. */
@@ -151,9 +180,24 @@ const LINK_REFUSALS: Readonly<Record<string, string>> = {
   not_calendar: 'That link doesn’t lead to a calendar. Use its iCal link, which often ends in .ics.',
 };
 
-/** A Google calendar's status after a failed refresh; its last good events stay. */
+/**
+ * Who can mend a Google calendar Google no longer lets Townwise read: the person who added it, with Reconnect beside it
+ * (`here`, on web) or on the web (`web`, on native, which connects nowhere), someone else (`other`), who asks them, or
+ * no one while Google calendars are off (`none`), when the popover names no Google option, as its help and native's
+ * line don't.
+ */
+export type Reconnect = 'here' | 'web' | 'other' | 'none';
+
+const REVOKED = 'Couldn’t refresh: Google no longer lets Townwise read this calendar.';
+const REVOKED_WORDS: Readonly<Record<Reconnect, string>> = {
+  here: `${REVOKED} Reconnect, or remove it.`,
+  web: `${REVOKED} Reconnect on the web, or remove it.`,
+  other: `${REVOKED} Ask whoever added it to reconnect, or remove it.`,
+  none: `${REVOKED} You can remove it.`,
+};
+
+/** A Google calendar's status after a failed refresh, but `google_revoked` (REVOKED_WORDS); its last good events stay. */
 const GOOGLE_STATUS_WORDS: Readonly<Record<string, string>> = {
-  google_revoked: 'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.',
   google_not_found: 'Couldn’t refresh: this Google calendar was deleted or is no longer shared with the account that added it.',
   google_forbidden: 'Couldn’t refresh: Google refused to share this calendar’s events.',
   google_rate_limited: 'Couldn’t refresh: Google was busy. Townwise tries again later.',
@@ -233,13 +277,14 @@ export function refreshRefusal(error: unknown): string {
 }
 
 /**
- * A refreshed calendar's status in words, by its kind: null for `ok`, a link's or a Google calendar's own words, and
- * generic words for a code the client doesn't know or a kind without words of its own.
+ * A refreshed calendar's status in words, by its kind: null for `ok`, a link's or a Google calendar's own words (for
+ * `google_revoked`, by who can reconnect it), and generic words for a code the client doesn't know or a kind without
+ * words of its own.
  */
-export function statusWords(status: string, kind: string): string | null {
+export function statusWords(status: string, kind: string, reconnect: Reconnect = 'other'): string | null {
   if (status === 'ok') return null;
   if (kind === 'link') return STATUS_WORDS[status] ?? UNKNOWN_STATUS;
-  if (kind === 'google') return GOOGLE_STATUS_WORDS[status] ?? UNKNOWN_CALENDAR_STATUS;
+  if (kind === 'google') return status === 'google_revoked' ? REVOKED_WORDS[reconnect] : GOOGLE_STATUS_WORDS[status] ?? UNKNOWN_CALENDAR_STATUS;
   return UNKNOWN_CALENDAR_STATUS;
 }
 

@@ -361,3 +361,20 @@ test('a checked place keeps its suggestion’s kind, and an address’s box says
   expect(rendered?.places.map((place) => [place.name, place.kind])).toEqual([['Lou’s Restaurant', 'business'], ['12 South Main Street', 'address']]);
   expect(groupNames()).toEqual([RESTAURANT, address]);
 });
+
+test('each row carries its pin’s letter, in check order, while the map shows; a failed image takes the letters away (D57)', async () => {
+  const { places } = await setup();
+  await search('Lou');
+  await press(BAKERY);
+  await press(RESTAURANT);
+  expect(within(group(BAKERY)).queryByText('A')).toBeNull();
+  await wait(400);
+  // The ids go in check order, not sorted, as the letters follow them.
+  expect(places.mapCalls).toEqual([['ChIJTestPlace0002', 'ChIJTestPlace0001']]);
+  expect(within(group(BAKERY)).getByText('A')).toBeTruthy();
+  expect(within(group(RESTAURANT)).getByText('B')).toBeTruthy();
+  await fireEvent(screen.getByLabelText('Map of your 2 places'), 'error');
+  expect(screen.queryByLabelText(/^Map of/)).toBeNull();
+  expect(within(group(BAKERY)).queryByText('A')).toBeNull();
+  expect(within(group(RESTAURANT)).queryByText('B')).toBeNull();
+});

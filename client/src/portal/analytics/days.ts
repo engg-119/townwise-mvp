@@ -1,6 +1,6 @@
 import type { Note } from '../locations/api';
 import { addDays } from '../locations/dates';
-import type { RuleSchedule } from '../rules/api';
+import type { RuleSchedule, RuleSeason } from '../rules/api';
 import type { TownEvent } from './api';
 import type { DayRecord } from './history';
 import { weekdayOf } from './words';
@@ -39,7 +39,7 @@ export interface DayContext {
 }
 
 /** What a day class reads of a rule's schedule; one without a kind is no closure unless its effect is closed. */
-export type RuleScheduleLike = Pick<RuleSchedule, 'startDate' | 'endDate' | 'weekdays' | 'effect'> & { kind?: RuleSchedule['kind'] };
+export type RuleScheduleLike = Pick<RuleSchedule, 'startDate' | 'endDate' | 'weekdays' | 'effect' | 'season'> & { kind?: RuleSchedule['kind'] };
 
 /** The schedules of the rules that have one, for `dayContext`. */
 export function ruleSchedules(rules: readonly { schedule?: RuleScheduleLike | null | undefined }[]): RuleScheduleLike[] {
@@ -58,9 +58,21 @@ export interface DayFlags {
 
 const NONE: readonly never[] = [];
 
-/** Whether a note covers the date; a business rule's schedule (D31) too, whose `endDate` null means no end. */
-export function noteCovers(note: Pick<Note, 'startDate' | 'weekdays'> & { endDate: string | null }, date: string): boolean {
+/** Whether the date's month and day fall in a yearly season (D46), `to` before `from` crossing the new year. */
+function inSeason(season: RuleSeason, date: string): boolean {
+  const monthDay = date.slice(5);
+  return season.from <= season.to ? monthDay >= season.from && monthDay <= season.to : monthDay >= season.from || monthDay <= season.to;
+}
+
+/**
+ * Whether a note covers the date; a business rule's schedule (D31) too, whose `endDate` null means no end and whose
+ * yearly season (D46) covers only its months and days. The mirror of api/src/agent/questions.ts noteCovers.
+ */
+export function noteCovers(
+  note: Pick<Note, 'startDate' | 'weekdays'> & { endDate: string | null; season?: RuleSeason | null | undefined }, date: string,
+): boolean {
   if (date < note.startDate || (note.endDate !== null && date > note.endDate)) return false;
+  if (note.season !== undefined && note.season !== null && !inSeason(note.season, date)) return false;
   return note.weekdays === null || note.weekdays.includes(weekdayOf(date));
 }
 

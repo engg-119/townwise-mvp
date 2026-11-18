@@ -28,9 +28,8 @@ function meFor(access: Access): MeResponse {
 
 // After sign-in the app opens /dashboard (src/auth/store.ts routeFor); the portal then routes on GET /api/me.
 test.each<[string, Access, string, string]>([
-  ['staff', ACCESS.staff, '/admin', 'The staff console is on the web. Open townwise.tech on a computer.'],
+  ['staff', ACCESS.staff, '/admin/overview', 'The staff console is on the web. Open townwise.tech on a computer.'],
   ['staff_setup_required', ACCESS.staffSetup, '/settings/security', 'Townwise staff accounts need two-step sign-in. Set up your authenticator app, then sign in again with a code.'],
-  ['staff_reauth_required', ACCESS.staffReauth, '/staff/sign-in-again', 'Sign in again to use the staff console'],
   ['member', ACCESS.member, '/dashboard', 'Main Street Bar'],
   ['invited', TWO_INVITES, '/joining', 'Choose your team'],
   ['pending', ACCESS.pending, '/waiting', 'Your request is in'],
@@ -74,8 +73,9 @@ test.each<[string, MeResponse, string, string]>([
   ['a member on /team', meOf(ACCESS.member), '/team', '/dashboard'],
   ['a member on a location’s Settings', meOf(ACCESS.member), '/locations/l1/settings', '/dashboard'],
   ['a member on /admin', meOf(ACCESS.member), '/admin', '/dashboard'],
-  ['staff on /dashboard', staffMe(), '/dashboard', '/admin'],
-  ['staff on /joining', staffMe(), '/joining', '/admin'],
+  ['a member on /admin/overview', meOf(ACCESS.member), '/admin/overview', '/dashboard'],
+  ['staff on /dashboard', staffMe(), '/dashboard', '/admin/overview'],
+  ['staff on /joining', staffMe(), '/joining', '/admin/overview'],
   ['staff in setup on /admin', staffMe(ACCESS.staffSetup), '/admin', '/settings/security'],
   ['a paused organization on /request-access', meOf(ACCESS.suspended), '/request-access', '/no-access'],
   ['no organization on /no-access', meOf(ACCESS.noOrg), '/no-access', '/request-access'],

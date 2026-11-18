@@ -31,7 +31,7 @@ export function aiOf(extra?: Partial<AiRead>): AiRead {
   return {
     status: 'done', reason: null, partial: false, kind: 'other', summary: null, facts: null, daysCut: false, notes: [], notesSkipped: null,
     daysWritten: 0, daysAlreadyHad: 0, uploadRef: null, itemRef: null, daysReason: null, itemReason: null, calibration: null, canUndo: false,
-    ...extra,
+    rulesSuggested: 0, rulesWaiting: 0, ...extra,
   };
 }
 
@@ -61,6 +61,12 @@ export interface DataFake extends ApiClient {
   /** Answers by "METHOD path": a body, an ApiError or a promise of either. */
   answers: Record<string, (body: unknown) => unknown>;
   files: FilesFake;
+  /** GET .../owner-calendars (D49): the location's calendars, as the API sends them. */
+  calendars: unknown[];
+  /** GET .../owner-calendars/events: the stored events, each answered when it overlaps the range asked for. */
+  calendarEvents: { startDate: string; endDate: string }[];
+  /** Every json path asked for, in order. */
+  paths: string[];
 }
 
 async function settle<T>(value: unknown, schema: z.ZodType<T>): Promise<T> {
@@ -84,8 +90,20 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
     history: {},
     answers: {},
     files,
+    calendars: [],
+    calendarEvents: [],
+    paths: [],
     json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
       const method = opts?.method ?? 'GET';
+      fake.paths.push(path);
+      if (method === 'GET' && /^\/api\/org\/locations\/[^/]+\/owner-calendars$/.test(path)) {
+        return settle({ calendars: fake.calendars }, schema);
+      }
+      const events = /^\/api\/org\/locations\/[^/]+\/owner-calendars\/events\?from=([\d-]+)&to=([\d-]+)$/.exec(path);
+      if (method === 'GET' && events?.[1] !== undefined && events[2] !== undefined) {
+        const [, from, to] = events;
+        return settle({ events: fake.calendarEvents.filter((event) => event.startDate <= to && event.endDate >= from) }, schema);
+      }
       if (method === 'GET' && path.startsWith('/api/org/data')) {
         const query = new URLSearchParams(path.split('?')[1] ?? '');
         const locationId = query.get('locationId');

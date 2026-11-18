@@ -16,7 +16,7 @@ import { itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { ErrorNotice, LoadingLine, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
+import { ErrorNotice, InlineNotice, LoadingLine, Messages, Notice, ReadOnlyLine, useNoticeState, type NoticeState } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Small } from '../ui/text';
@@ -27,6 +27,7 @@ import {
   turnedOnLine,
 } from './copy';
 import { AiSection } from './item/AiSection';
+import { CalendarItem } from './item/CalendarItem';
 import { addedByLine, EDIT, editedLine, ITEM, itemDaysLine, kindLine, renamedLine, statusLine, tooBigToEditLine } from './item/copy';
 import type { Editable, Saved } from './item/edit';
 import { ItemContent } from './item/ItemContent';
@@ -58,6 +59,9 @@ import { RenameForm } from './item/RenameForm';
 //
 // TownwiseAI (D34, item/AiSection): an item with a stored file offers a TownwiseAI read, shows it while it runs and
 // what it found and added once done, with Undo; an upload or a summary TownwiseAI made links to its file.
+//
+// A ref `c_<calendarId>` is one of the location's calendars (D49): item/CalendarItem.tsx, which reads the calendar
+// routes, never GET .../data/:ref.
 
 /** One action in the item's header. */
 interface ItemAction {
@@ -89,7 +93,18 @@ function savedLine(saved: string | string[] | undefined): string | null {
   return null;
 }
 
+/** An action's answer with the events already shown, while both are the same item's done read (a PATCH leaves them out). */
+function keepEvents(before: DataItem | null, next: DataItem): DataItem {
+  const events = before?.ai?.events;
+  if (before?.ref !== next.ref || before.ai?.status !== 'done' || events === undefined) return next;
+  if (next.ai?.status !== 'done' || next.ai.events !== undefined) return next;
+  return { ...next, ai: { ...next.ai, events } };
+}
+
 export function ItemPage(): React.JSX.Element {
+  const ref = refOf(usePathname());
+  // A calendar's page (D49): a client-only ref, which never reads the data item route.
+  if (ref.startsWith('c_')) return <CalendarItem calendarId={ref.slice(2)} />;
   return <MessageFocus><ItemOfPath /></MessageFocus>;
 }
 
@@ -102,7 +117,12 @@ function ItemOfPath(): React.JSX.Element {
   const ref = refOf(usePathname());
   const params = useLocalSearchParams<{ saved?: string }>();
   // How the save that opened this page ended, read once: the address loses it below.
-  const [saved] = useState(() => savedLine(params.saved));
+  // One object for the arrival (Notice's `result`): the item drawing again, as after a failed reload and Try again,
+  // never toasts it twice.
+  const [saved] = useState<NoticeState | null>(() => {
+    const text = savedLine(params.saved);
+    return text === null ? null : { text, stays: false };
+  });
   useEffect(() => { if (params.saved !== undefined) router.setParams({ saved: undefined }); }, [params.saved, router]);
   const { state, reload } = useLoad(useCallback(() => getItem(api, location.id, ref), [api, location.id, ref]));
   // The item as last read, kept on screen while `reload` reads it again, so the content stays mounted.
@@ -113,9 +133,10 @@ function ItemOfPath(): React.JSX.Element {
     const href = itemHref(location.id, next);
     router.replace(how === undefined ? href : `${href}?saved=${how}`);
   }, [router, location.id]);
-  // An action's answer, shown while the item is read again.
+  // An action's answer, shown while the item is read again. The answer leaves out a read's events (only the single
+  // item's read carries `ai.events`, D49), so a still-done read keeps the ones on screen until the read lands.
   const showItem = useCallback((next: DataItem) => {
-    setShown(next);
+    setShown((before) => keepEvents(before, next));
     reload();
   }, [reload]);
   const dataHref = locationHref(location.id, 'data');
@@ -130,7 +151,7 @@ function ItemOfPath(): React.JSX.Element {
   if (state.status === 'failed') {
     return (
       <Section>
-        {hasCode(state.error, 404, 'not_found') ? <Notice text={ITEM.gone} /> : <ErrorNotice message={dataError(state.error)} onRetry={reload} />}
+        {hasCode(state.error, 404, 'not_found') ? <InlineNotice text={ITEM.gone} /> : <ErrorNotice message={dataError(state.error)} onRetry={reload} />}
         {back}
       </Section>
     );
@@ -153,7 +174,7 @@ function Item(props: {
   showItem: (item: DataItem) => void;
   openRef: (ref: string, saved?: Saved) => void;
   /** “Saved.” when a save opened this page. */
-  saved: string | null;
+  saved: NoticeState | null;
   /** Reads the organization again once the page closes: the item's days changed. */
   markStale: () => void;
   /** Leaves the page after a delete, saying `text` on Your data. */
@@ -169,7 +190,7 @@ function Item(props: {
   // What opened can be edited (FileView reports it), and a rename or an edit being saved.
   const [editable, setEditable] = useState<Editable | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(saved);
+  const [notice, setNotice] = useNoticeState(saved);
   // A Turn off or on running, and the delete being asked about or run.
   const [toggling, setToggling] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
@@ -309,7 +330,7 @@ function Item(props: {
   return (
     <Section title={shownName(item)}>
       <Stack>
-        {notice === null ? null : <Notice text={notice} />}
+        {notice === null ? null : <Notice text={notice.text} result={notice} />}
         {props.back}
         <View style={styles.lines}>
           <Small>{kindLine(item)}</Small>

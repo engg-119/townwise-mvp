@@ -1,11 +1,12 @@
 import { memo, useEffect, useMemo, useRef, useState } from 'react';
 
 import { theme } from '../../theme';
+import { anchorOf, DayTooltip, type TooltipAnchor } from '../calendar/DayTooltip.web';
 import { localToday } from '../locations/dates';
 import { canFocus, focusBounds, heatmapBlocks, initialFocus, moveFocus, type Cell, type YearBlock } from './cells';
 import type { Level } from './levels';
 import type { HeatmapProps } from './Heatmap';
-import { WEEKDAY_NAMES, WEEK_ORDER } from './words';
+import { shortDate, WEEKDAY_NAMES, WEEK_ORDER } from './words';
 
 // The heatmap on web (home.md 4.4): DOM, not SVG, because each day takes focus. One grid per shown year, newest
 // first, 7 weekday rows (Monday first) by 53 week columns of square cells, with month labels above and Mon, Wed
@@ -19,6 +20,9 @@ import { WEEKDAY_NAMES, WEEK_ORDER } from './words';
 // than scrolling sideways, because a keyboard could not scroll a picture with nothing in it to focus. So that its
 // month labels never run together on a phone ("JanFebMar"), a narrow picture labels every other month (Jan, Mar,
 // May...) and a very narrow one every third (Jan, Apr, Jul, Oct), by a container query on its own width.
+// Home's picture also takes `onOpen` (owner request, 2026-11-17): a mouse or pen over a day rings it and shows its
+// label in the Calendar's DayTooltip (touch ignored), and a click on a day `opens` allows opens it. It still takes no
+// focus; the card's links reach the same pages from the keyboard.
 
 const C = theme.color;
 const LEVEL_PERCENT = [0, 25, 45, 70, 100] as const;
@@ -45,6 +49,8 @@ const CSS = [
   `.tw-hm [data-sel="1"]{box-shadow:0 0 0 1px ${C.mint},inset 0 0 0 1px ${C.ground}}`,
   `@media (hover:hover){.tw-hm-live [data-date]:hover:not([data-sel="1"]){box-shadow:0 0 0 1px ${C.white}}}`,
   '.tw-hm-live [data-date]{cursor:pointer}',
+  `@media (hover:hover){.tw-hm-pick [data-date]:hover{box-shadow:0 0 0 1px ${C.white}}}`,
+  '.tw-hm-pick [data-open]{cursor:pointer}',
   '.tw-hm-fit{container-type:inline-size}',
   `@container (width < ${String(EVERY_OTHER_BELOW)}px){.tw-hm-fit .tw-hm-m2{display:none}}`,
   `@container (width < ${String(EVERY_THIRD_BELOW)}px){.tw-hm-fit .tw-hm-m2{display:inline}.tw-hm-fit .tw-hm-m3{display:none}}`,
@@ -76,15 +82,22 @@ function fillOf(cell: Cell): React.CSSProperties {
 
 const square = { position: 'absolute', width: 3, height: 3, pointerEvents: 'none' } as const;
 
-function CellView(props: { cell: Cell; interactive: boolean; active: boolean; selected: boolean }): React.JSX.Element {
-  const { cell, interactive } = props;
+/** Which days of a picture open on a click; null when the picture is inert. */
+type Opens = ((date: string) => boolean) | null;
+const EVERY_DAY = (): boolean => true;
+
+function CellView(props: { cell: Cell; interactive: boolean; active: boolean; selected: boolean; opens: Opens }): React.JSX.Element {
+  const { cell, interactive, opens } = props;
   const live = interactive && cell.focusable;
+  // A picture's day with a label (not a future one) hovers; the days `opens` allows open on a click.
+  const pick = !interactive && opens !== null && cell.label !== '';
   return (
     <div
       {...(interactive ? { role: 'gridcell' } : {})}
       {...(live ? {
         'data-date': cell.date, 'aria-label': cell.label, 'aria-selected': props.selected, tabIndex: props.active ? 0 : -1,
       } : {})}
+      {...(pick ? { 'data-date': cell.date, ...(opens(cell.date) ? { 'data-open': '1' } : {}) } : {})}
       {...(props.selected ? { 'data-sel': '1' } : {})}
       style={{ position: 'relative', aspectRatio: '1 / 1', boxSizing: 'border-box', minWidth: 0, ...fillOf(cell) }}
     >
@@ -103,6 +116,7 @@ const YearGrid = memo(function YearGrid(props: {
   /** The roving tab stop, when it is in this year. */
   active: string | null;
   selected: string | null;
+  opens: Opens;
 }): React.JSX.Element {
   const { block, interactive } = props;
   const columns = `${String(HEAD)}px repeat(${String(block.weeks)}, minmax(0, 1fr))`;
@@ -139,6 +153,7 @@ const YearGrid = memo(function YearGrid(props: {
                   interactive={interactive}
                   active={cell.date === props.active}
                   selected={cell.date === props.selected}
+                  opens={props.opens}
                 />
               )))}
           </div>
@@ -173,6 +188,83 @@ function Legend(): React.JSX.Element {
 function dateOf(target: EventTarget | null): string | null {
   const element = target instanceof Element ? target.closest('[data-date]') : null;
   return element?.getAttribute('data-date') ?? null;
+}
+
+/** How long a pointer may rest over no day (the gap between cells) before the tooltip clears, as Home's month grid waits. */
+const CLEAR_DELAY_MS = 80;
+
+/** The words after the date in a cell's label ("Sat, Nov 7, 2026. 140 guests. Town event: Sample game."). */
+function tipOf(cell: Cell): { date: string; lines: string[] } {
+  const date = shortDate(cell.date);
+  const rest = cell.label.startsWith(`${date}. `) ? cell.label.slice(date.length + 2) : cell.label;
+  return { date, lines: [rest] };
+}
+
+/** The picture (Home, Reading): one image named by `label`; with `onOpen`, its days hover and open (Home). */
+function Picture(props: {
+  blocks: readonly YearBlock[];
+  label: string;
+  selected: string | null;
+  onOpen: ((date: string) => void) | undefined;
+  opens: ((date: string) => boolean) | undefined;
+}): React.JSX.Element {
+  const { blocks, onOpen } = props;
+  const box = useRef<HTMLDivElement>(null);
+  const [tip, setTip] = useState<{ cell: Cell; anchor: TooltipAnchor } | null>(null);
+  const clearing = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const cells = useMemo(
+    () => new Map(blocks.flatMap((block) => block.rows.flat()).filter((cell): cell is Cell => cell !== null).map((cell) => [cell.date, cell])),
+    [blocks],
+  );
+  useEffect(() => () => { if (clearing.current !== null) clearTimeout(clearing.current); }, []);
+  const opens: Opens = onOpen === undefined ? null : props.opens ?? EVERY_DAY;
+  const pickable = opens !== null;
+
+  function cancelClear(): void {
+    if (clearing.current === null) return;
+    clearTimeout(clearing.current);
+    clearing.current = null;
+  }
+
+  function onPointerOver(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.pointerType === 'touch') return;
+    const date = dateOf(event.target);
+    const cell = date === null ? undefined : cells.get(date);
+    const element = date === null ? null : box.current?.querySelector(`[data-date="${date}"]`) ?? null;
+    if (cell === undefined || element === null || box.current === null) {
+      // Over no day (a gap, a label): clear after a moment, so crossing a 3px gap doesn't flash the tooltip.
+      clearing.current ??= setTimeout(() => { clearing.current = null; setTip(null); }, CLEAR_DELAY_MS);
+      return;
+    }
+    cancelClear();
+    setTip({ cell, anchor: anchorOf(element, box.current) });
+  }
+
+  function onPointerLeave(event: React.PointerEvent<HTMLDivElement>): void {
+    if (event.pointerType === 'touch') return;
+    cancelClear();
+    setTip(null);
+  }
+
+  function onClick(event: React.MouseEvent<HTMLDivElement>): void {
+    const element = event.target instanceof Element ? event.target.closest('[data-open]') : null;
+    const date = element?.getAttribute('data-date') ?? null;
+    if (date !== null) onOpen?.(date);
+  }
+
+  return (
+    <div role="img" aria-label={props.label} className={pickable ? 'tw-hm tw-hm-fit tw-hm-pick' : 'tw-hm tw-hm-fit'} style={{ display: 'grid', gap: 12 }}>
+      <style href="townwise-heatmap" precedence="default">{CSS}</style>
+      <div
+        ref={box}
+        {...(pickable ? { onPointerOver, onPointerLeave, onClick } : {})}
+        style={{ position: 'relative', display: 'grid', gap: 16 }}
+      >
+        {blocks.map((block) => <YearGrid key={block.year} block={block} interactive={false} active={null} selected={props.selected} opens={opens} />)}
+        {tip === null ? null : <DayTooltip tip={tipOf(tip.cell)} anchor={tip.anchor} />}
+      </div>
+    </div>
+  );
 }
 
 export function Heatmap(props: HeatmapProps): React.JSX.Element {
@@ -218,14 +310,7 @@ export function Heatmap(props: HeatmapProps): React.JSX.Element {
   });
 
   if (!interactive) {
-    return (
-      <div role="img" aria-label={props.label} className="tw-hm tw-hm-fit" style={{ display: 'grid', gap: 12 }}>
-        <style href="townwise-heatmap" precedence="default">{CSS}</style>
-        <div style={{ display: 'grid', gap: 16 }}>
-          {blocks.map((block) => <YearGrid key={block.year} block={block} interactive={false} active={null} selected={selected} />)}
-        </div>
-      </div>
-    );
+    return <Picture blocks={blocks} label={props.label} selected={selected} onOpen={props.onOpen} opens={props.opens} />;
   }
 
   /** The keys take over from a pointer resting on a cell, so the panel follows focus and the selection. */
@@ -305,6 +390,7 @@ export function Heatmap(props: HeatmapProps): React.JSX.Element {
                 interactive
                 active={yearOf(current) === year ? current : null}
                 selected={yearOf(selected) === year ? selected : null}
+                opens={null}
               />
             );
           })}

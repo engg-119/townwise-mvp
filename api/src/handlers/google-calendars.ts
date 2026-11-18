@@ -26,6 +26,7 @@ import {
   CALENDAR_EVENTS_SCOPE, CALENDAR_LIST_SCOPE, GoogleCalendarError, type GoogleCalendarClient, type GoogleCodeExchange,
 } from '../calendar/google.ts';
 import { open, seal } from '../calendar/secret.ts';
+import { WEEKLY_TITLES_NOTICE } from '../calendar/titles-notice.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { actorOf } from './team.ts';
 
@@ -44,7 +45,8 @@ export interface GoogleChoice {
 }
 
 /** A Google code is about 75 characters; 512 keeps the JSON under the route's 2 KB. */
-const connectBody = z.strictObject({ code: z.string().min(1).max(512), agreed: z.literal(true) });
+/** `titlesNotice` is sent only by the explainer that says TownwiseAI reads the titles weekly (calendar-event-suggestions). */
+const connectBody = z.strictObject({ code: z.string().min(1).max(512), agreed: z.literal(true), titlesNotice: z.literal(WEEKLY_TITLES_NOTICE).optional() });
 
 export function googleCalendarUnavailable(): AppError {
   return new AppError(503, 'google_calendar_unavailable', 'Google calendars aren’t available right now');
@@ -142,7 +144,7 @@ export async function connectGoogle(ctx: TownwiseContext, req: Request, res: Res
   const { scope } = caller;
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const { client, key } = googleOn(ctx);
-  const { code } = parseInput(connectBody, req.body);
+  const { code, titlesNotice } = parseInput(connectBody, req.body);
   const deps = googleAccessDeps(ctx);
   let exchange: GoogleCodeExchange;
   try {
@@ -168,7 +170,9 @@ export async function connectGoogle(ctx: TownwiseContext, req: Request, res: Res
     await revokeAccessToken(deps, exchange.accessToken);
     throw connectAgain();
   }
-  const connection = await ctx.stores.googleConnections.upsert(scope, caller.userId, { sealedRefreshToken, scopes: exchange.scopes, now });
+  const connection = await ctx.stores.googleConnections.upsert(scope, caller.userId, {
+    sealedRefreshToken, scopes: exchange.scopes, now, titlesNotice: titlesNotice === WEEKLY_TITLES_NOTICE,
+  });
   // Revoked since storedTokenOpens read it: keeping that token would clear the refusal over a token that fails.
   if (connection === null) {
     await revokeAccessToken(deps, exchange.accessToken);

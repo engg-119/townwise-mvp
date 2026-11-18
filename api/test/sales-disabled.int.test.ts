@@ -104,11 +104,6 @@ function dates(body: SalesHistory): string[] {
   return body.days.date;
 }
 
-async function errorOf(res: Response): Promise<{ status: number; error: string }> {
-  const body = await res.json() as { error: string };
-  return { status: res.status, error: body.error };
-}
-
 /** An OrgScope for calling the stores directly, as a staff handler would mint one. */
 function scopeOf(id: string): OrgScope {
   const staff = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
@@ -167,10 +162,10 @@ describe('turned-off uploads leave every read (D28)', () => {
     expect(dates(await history(l1))).toEqual(range('2026-05-11', '2026-05-15'));
   });
 
-  it('a location with only turned-off days still has data: DELETE /api/org/locations/:id answers 409 location_has_data', async () => {
+  it('a location with only turned-off days is deleted with them (D44)', async () => {
     await turnOff(await send(admin, l1, '2026-05-01', 3));
-    expect(await errorOf(await call(server, `/api/org/locations/${l1}`, { method: 'DELETE', session: admin })))
-      .toEqual({ status: 409, error: 'location_has_data' });
+    expect((await call(server, `/api/org/locations/${l1}`, { method: 'DELETE', session: admin })).status).toBe(204);
+    expect(await server.connection.collection('tw_sales_days').countDocuments({ locationId: new Types.ObjectId(l1) })).toBe(0);
   });
 
   // A smoke test, not the isolation pin: B's upload ids never hold A's days, so this would pass even if the turned-off
@@ -218,6 +213,21 @@ describe('the switch in the stores', () => {
       expect(await uploads.setEnabled(s, locationId, uploadId, { enabled: false, by: admin.userId, at })).toBeNull();
     }
     expect((await uploads.get(scope, l1, id))?.disabledAt).toBeNull();
+  });
+
+  it('uploadIdsIn answers the uploads holding the range’s days, sorted, except turned-off ones and other locations’', async () => {
+    const salesDays = createSalesDayStore(server.connection);
+    const scope = scopeOf(orgId);
+    const a = await send(admin, l1, '2026-05-01', 10);
+    const b = await send(admin, l1, '2026-05-06', 10);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-01', to: '2026-05-31' })).toEqual([a, b].sort());
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-01', to: '2026-05-05' })).toEqual([a]);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-08', to: '2026-05-31' })).toEqual([b]);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-06-01', to: '2026-06-30' })).toEqual([]);
+    await turnOff(a);
+    expect(await salesDays.uploadIdsIn(scope, l1, { from: '2026-05-01', to: '2026-05-31' })).toEqual([b]);
+    const elsewhere = await addLocation(server, { orgId, name: 'Back Room' });
+    expect(await salesDays.uploadIdsIn(scope, elsewhere, { from: '2026-05-01', to: '2026-05-31' })).toEqual([]);
   });
 
   it('disabledDates answers the dates in the range a turned-off upload holds, oldest first; hasAny and hasAnyForOrg still see them', async () => {

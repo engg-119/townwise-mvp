@@ -20,7 +20,8 @@ export const AUDIT_DETAIL_KEYS = {
   'member.left': ['email'],
   'location.created': ['name', 'townId', 'hasPlace'],
   'location.updated': ['name', 'townId', 'hasPlace'],
-  'location.deleted': ['name', 'townId'],
+  // D44: the org admin's delete also says how much data went with the location (counts only).
+  'location.deleted': ['name', 'townId', 'deletedDays', 'deletedFiles', 'deletedNotes'],
   'sales.uploaded': ['locationId', 'dayCount', 'inserted', 'replaced', 'firstDate', 'lastDate', 'fileId', 'via'],
   'sales.deleted': ['locationId', 'deletedDays', 'deletedFiles'],
   // D28, Your data: `item` is 'upload' or 'file' and `kind` an item kind; `replaces` is the id of the file an edit took
@@ -40,8 +41,8 @@ export const AUDIT_DETAIL_KEYS = {
   // status); and undone (how many notes, days and items that removed). Never a name, the summary, a fact, an event's
   // title or a figure.
   'file.ai_read_requested': ['locationId', 'kind'],
-  'file.ai_read': ['locationId', 'kind', 'events', 'days', 'notes', 'daysWritten', 'item', 'calibration'],
-  'file.ai_undone': ['locationId', 'notes', 'days', 'items'],
+  'file.ai_read': ['locationId', 'kind', 'events', 'days', 'notes', 'daysWritten', 'item', 'calibration', 'rulesSuggested'],
+  'file.ai_undone': ['locationId', 'notes', 'days', 'items', 'suggestions'],
   // Staff: an organization's originals purged for a deletion request. The basis is an enum, never free text.
   'org.originals_deleted': ['count', 'basis'],
   'note.created': ['locationId', 'kind', 'startDate', 'endDate'],
@@ -72,10 +73,14 @@ export const AUDIT_DETAIL_KEYS = {
   // TownwiseAI's weekly suggestions (openspec change weekly-forecast-suggestions): the switch, and an org admin's
   // decision on one suggestion, with whether it was a note or a rule. Never its dates, words, why or guests.
   'org.weekly_suggestions_changed': ['on'],
-  'agent.suggestion_accepted': ['locationId', 'suggestionId', 'type'],
-  'agent.suggestion_dismissed': ['locationId', 'suggestionId', 'type'],
-  // Orders: ids, dates, counts and a card's kind (change or rule), never an item or supplier name, a servings figure, a
-  // quantity, or the owner's reason or situation.
+  'agent.suggestion_accepted': ['locationId', 'suggestionId', 'type', 'source', 'edited'],
+  'agent.suggestion_dismissed': ['locationId', 'suggestionId', 'type', 'source'],
+  // Sending the calendars' event titles to TownwiseAI's weekly call (calendar-event-suggestions): the switch's state only.
+  // A decided suggestion's `type` above is also `event`, `move` or `remove`; never a title, uid or date of an owner event.
+  'org.calendar_titles_ai_changed': ['on'],
+  // Orders: ids, dates, counts and a card's kind (change, rule or setup), never an item or supplier name, a servings
+  // figure, a quantity, or the owner's reason or situation. A setup card (D56) is only ever dismissed: nothing saves
+  // from it, so it never writes order.card_saved.
   'order.setup_saved': ['locationId', 'supplierCount', 'itemCount'],
   'order.item_sales_uploaded': ['locationId', 'dayCount', 'itemCount', 'firstDate', 'lastDate', 'removedCount', 'keptCount'],
   'order.item_sales_deleted': ['locationId', 'dayCount'],

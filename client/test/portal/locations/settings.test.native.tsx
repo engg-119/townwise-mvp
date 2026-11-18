@@ -14,6 +14,7 @@ import {
   ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
 } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
+import { DELETE_COPY, deleteBody } from '../../../src/portal/locations/LocationSettings';
 import { locationsFake, salesOf, type LocationsFake } from './fakes';
 
 // P16 Location settings and P10 Add location on native (spec 16.3).
@@ -143,17 +144,24 @@ describe('P16 Location settings', () => {
   });
 
 
-  test('a location with sales or notes cannot be deleted yet, and says where to start', async () => {
-    const { api } = setup();
+  // D44: one press deletes the location with all its data; the dialog counts what goes.
+  test('a location with sales and notes deletes in one press, and the dialog counts what goes with it', async () => {
+    const { api, fake } = setup();
+    fake.deletes['/api/org/locations/l1'] = () => {
+      api.org = orgOf('org_admin', [only('l2')]);
+      return null;
+    };
     const { router } = await renderApp('/locations/l1/settings', api);
-    expect(await screen.findByText('Delete this location’s sales data and notes first.')).toBeTruthy();
-    expect(screen.getByText('Only when it holds no data')).toBeTruthy();
-    expect(screen.queryByRole('button', { name: 'Delete location' })).toBeNull();
-    // The tabs hold the first Sales data link; this section the second.
-    const link = screen.getAllByRole('link', { name: 'Sales data' }).at(-1);
-    if (link === undefined) throw new Error('no link');
-    await fireEvent.press(link);
-    expect(router.getPathname()).toBe('/locations/l1/sales');
+    expect(await screen.findByText('Can’t be undone')).toBeTruthy();
+    expect(screen.getByText(DELETE_COPY.line)).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Delete location' }));
+    expect(screen.getByText('This deletes the location from Test Group with everything in it: 400 days of sales data, 2 notes, '
+      + 'its stored files, business rules, ordering setup, calendars and TownwiseAI chats. This can’t be undone.')).toBeTruthy();
+    await fireEvent.changeText(screen.getByLabelText('Type Main Street Bar to confirm.'), 'Main Street Bar');
+    await fireEvent.press(dialogButton('Delete location'));
+    await waitFor(() => { expect(router.getPathname()).toBe('/locations/l2'); });
+    expect(await screen.findByText('Deleted Main Street Bar.')).toBeTruthy();
+    expect(writes(api)).toEqual([{ method: 'DELETE', path: '/api/org/locations/l1', body: undefined }]);
   });
 
   test('an empty location deletes behind its typed name, then Locations says so', async () => {
@@ -165,7 +173,8 @@ describe('P16 Location settings', () => {
     const { router } = await renderApp('/locations/l2/settings', api);
     await fireEvent.press(await screen.findByRole('button', { name: 'Delete location' }));
     expect(screen.getByRole('heading', { name: 'Delete River Grill?' })).toBeTruthy();
-    expect(screen.getByText('This deletes the location from Test Group. This can’t be undone.')).toBeTruthy();
+    expect(screen.getByText('This deletes the location from Test Group with everything in it: its stored files, business rules, '
+      + 'ordering setup, calendars and TownwiseAI chats. This can’t be undone.')).toBeTruthy();
     expect(dialogButton('Delete location').props.accessibilityState).toMatchObject({ disabled: true });
     await fireEvent.changeText(screen.getByLabelText('Type River Grill to confirm.'), 'River Grill');
     await fireEvent.press(dialogButton('Delete location'));
@@ -225,15 +234,24 @@ describe('P16 Location settings', () => {
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/new'); });
   });
 
-  test('when the server finds data after all, the section says to delete it first', async () => {
+  test('the dialog counts days turned-off uploads hold, which coverage leaves out', () => {
+    expect(deleteBody({ coverage: { dayCount: 0 }, offDayCount: 1, notesCount: 0 }, 'Test Group')).toBe('This deletes the location from Test Group with '
+      + 'everything in it: 1 day of sales data, 0 notes, its stored files, business rules, ordering setup, calendars and TownwiseAI chats. This can’t be undone.');
+  });
+
+  test('while a file is being read, or stored files are off, the dialog says so and stays open', async () => {
     const { api, fake } = setup();
-    fake.deletes['/api/org/locations/l2'] = () => refusal(409, 'location_has_data');
+    let answer: 'import_running' | 'files_unavailable' = 'import_running';
+    fake.deletes['/api/org/locations/l2'] = () => refusal(answer === 'import_running' ? 409 : 503, answer);
     await renderApp('/locations/l2/settings', api);
     await fireEvent.press(await screen.findByRole('button', { name: 'Delete location' }));
     await fireEvent.changeText(screen.getByLabelText('Type River Grill to confirm.'), 'River Grill');
     await fireEvent.press(dialogButton('Delete location'));
-    expect(await screen.findByText('Delete this location’s sales data and notes first.')).toBeTruthy();
-    expect(screen.queryByRole('heading', { name: 'Delete River Grill?' })).toBeNull();
+    expect(await screen.findByText(DELETE_COPY.reading)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Delete River Grill?' })).toBeTruthy();
+    answer = 'files_unavailable';
+    await fireEvent.press(dialogButton('Delete location'));
+    expect(await screen.findByText(DELETE_COPY.filesOff)).toBeTruthy();
   });
 
   test('view-as: every write is disabled in place, with the read-only line', async () => {

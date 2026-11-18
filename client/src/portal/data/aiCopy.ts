@@ -11,7 +11,7 @@ import { dataError } from './copy';
 
 export const AI = {
   heading: 'TownwiseAI',
-  explain: 'TownwiseAI can read this file and use what it finds. The whole file is sent to Anthropic’s Claude to read (a picture without its metadata). TownwiseAI then adds what it finds to your account: dated events as notes, daily totals it can check against the file as new sales days (it never changes a day you already have), and a summary TownwiseAI can read later. When an org admin asks, it may also start updating the forecast. Everything it adds can be undone.',
+  explain: 'TownwiseAI can read this file and use what it finds. The whole file is sent to Anthropic’s Claude to read (a picture without its metadata). TownwiseAI then adds what it finds to your account: dated events as notes, daily totals it can check against the file as new sales days (it never changes a day you already have), and a summary TownwiseAI can read later. When the file states the days you’re regularly closed, it suggests them as business rules for your team to confirm. When an org admin asks, it may also start updating the forecast. Everything it adds can be undone, except a suggested rule someone has confirmed.',
   privacy: 'How Townwise handles your data',
   privacyHref: '/privacy',
   read: 'Let TownwiseAI read this file',
@@ -26,6 +26,7 @@ export const AI = {
   notesLink: 'Open Notes',
   daysLink: 'Open the days',
   summaryLink: 'Open the summary',
+  rulesLink: 'Open Business rules',
   noNotes: 'It added no notes.',
   partial: 'This file was too long to read whole, so TownwiseAI read only the start of it.',
   daysCut: 'This file has daily totals for more dates than TownwiseAI reads at once, so it read the newest 1,500 of them.',
@@ -115,6 +116,11 @@ export function notesLine(count: number): string {
   return `It added ${plural(count, 'note', 'notes')} to Notes:`;
 }
 
+/** D46: the suggested closure rules a read stored, or null when it suggested none. */
+export function rulesSuggestedLine(count: number): string | null {
+  return count === 0 ? null : `Suggested ${plural(count, 'rule', 'rules')} on Business rules.`;
+}
+
 /** The closed periods the guard left out (`notesSkipped.guard`), or null when it left none. */
 export function guardLine(skipped: AiRead['notesSkipped']): string | null {
   const count = skipped?.guard ?? 0;
@@ -183,6 +189,8 @@ export function forecastLine(calibration: AiRead['calibration']): string | null 
 export function undoBody(ai: AiRead): string {
   const goes: string[] = [];
   if (ai.notes.length > 0) goes.push(`the ${plural(ai.notes.length, 'note', 'notes')} it added (even if someone edited them since)`);
+  // D46: a suggested rule someone confirmed stays; only those still waiting go.
+  if (ai.rulesWaiting > 0) goes.push(`the ${plural(ai.rulesWaiting, 'suggested rule', 'suggested rules')} still waiting`);
   if (ai.uploadRef !== null) goes.push(`the sales upload it added, with the days it still holds`);
   if (ai.itemRef !== null) goes.push('its summary on Your data');
   const list = goes.length === 0 ? 'what TownwiseAI added from this file' : joinAnd(goes);

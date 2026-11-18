@@ -5,8 +5,8 @@ import { describe, expect, it } from 'vitest';
 
 import {
   answerOfNote, BUSY_OPEN_WEEKS, BUSY_TYPICAL_GUESTS, closureNoteOf, isClosure, MAX_QUESTIONS, noteCovers, noteFor,
-  OPEN_DAY_DETAIL, parseQuestionId, QUESTION_ANSWERS, questionId, questionsFor, questionWindow, type AskedQuestion,
-  type QuestionInput,
+  OPEN_DAY_DETAIL, parseQuestionId, QUESTION_ANSWERS, questionId, questionsFor, questionWindow, salesSuggestionsFor, weekdayEvidence,
+  type AskedQuestion, type QuestionAnswer, type QuestionInput,
 } from '../src/agent/questions.ts';
 import { summaryOf } from '../src/audit.ts';
 import { closureOf, typicalGuests } from '../src/closed-days.ts';
@@ -46,7 +46,7 @@ function input(
 function note(over: Partial<NoteContent>): NoteContent {
   return {
     kind: 'closure', startDate: '2026-01-01', endDate: '2026-01-01', weekdays: null, effect: 'closed', expectedGuests: null,
-    detail: null, startTime: null, endTime: null, ...over,
+    detail: null, title: null, startTime: null, endTime: null, ...over,
   };
 }
 
@@ -66,74 +66,131 @@ describe('the answers', () => {
   });
 });
 
-describe('weekday closures', () => {
-  it('asks about a weekday with no sales on at least 60% of its days in the window, and not below', () => {
+describe('weekday closures (D46: the weekday evidence, no longer a question)', () => {
+  /** The evidence of `weekday`, or undefined. */
+  const evidenceOf = (asked: QuestionInput, day = 1) => weekdayEvidence(asked).find((each) => each.weekday === day);
+
+  it('holds for a weekday with no sales on at least 60% of its counted days, the last 4 among them; never asked as a question', () => {
     expect(mondays).toHaveLength(10);
-    const six = new Set(mondays.slice(1, 7));
-    expect(questionsFor(input(FROM, TO, (day) => six.has(day)))).toEqual([{
-      id: `weekday_1_${FROM}_${TO}`, kind: 'weekday', weekday: 1, from: FROM, to: TO, noSalesCount: 6, weekdayCount: 10,
-    }]);
+    const lastSix = new Set(mondays.slice(4));
+    const asked = input(FROM, TO, (day) => lastSix.has(day));
+    expect(evidenceOf(asked)).toEqual({ weekday: 1, from: FROM, to: TO, noSalesCount: 6, weekdayCount: 10, lastSalesDate: mondays[3] });
+    expect(questionsFor(asked).some((q) => q.kind === 'weekday')).toBe(false);
+    // 60% but one of the last 4 had sales: a past or seasonal pattern, not a standing one.
+    const earlier = new Set(mondays.slice(1, 7));
+    expect(evidenceOf(input(FROM, TO, (day) => earlier.has(day)))).toBeUndefined();
     // Below 60% the missing Mondays are ordinary gaps instead, asked while Mondays were usually busy: the last one
     // follows only 4 Mondays with guests.
     const five = new Set(mondays.slice(5));
+    expect(evidenceOf(input(FROM, TO, (day) => five.has(day)))).toBeUndefined();
     expect(questionsFor(input(FROM, TO, (day) => five.has(day))).map((q) => q.id)).toEqual([
       'gap_2026-03-02_2026-03-02', 'gap_2026-02-23_2026-02-23', 'gap_2026-02-16_2026-02-16', 'gap_2026-02-09_2026-02-09',
     ]);
+    // Never any sales on the weekday: no last date, and the days count from the first day with sales, Tuesday.
+    expect(evidenceOf(input(FROM, TO, (day) => weekday(day) === 1))).toMatchObject({ from: plus(FROM, 1), noSalesCount: 9, weekdayCount: 9, lastSalesDate: null });
+  });
+
+  it('reads the last day with sales over every day of the weekday, counted or not (code review S1)', () => {
+    // Closed on Mondays for 20 weeks; the export ends on Monday 2026-05-25, the only day of its week, with net sales alone.
+    const from = '2026-01-05';
+    const to = '2026-05-25';
+    const base = input(from, plus(to, -1), (day) => weekday(day) === 1);
+    const lone: QuestionInput = {
+      ...base, coverage: { firstDate: from, lastDate: to }, days: [...base.days, { date: to, guests: null, netSalesCents: 30_000 }],
+    };
+    // Its week has no other sales, so it is not counted, yet it had sales: Mondays are not suggested as closed.
+    expect(weekdayEvidence(lone).find((each) => each.weekday === 1)).toBeUndefined();
+    // An uncounted Monday with sales before the last 4 counted ones: the rule starts after it, never covering it.
+    const early = '2026-02-02';
+    const hole = (day: string) => weekday(day) === 1 || (day > early && day <= plus(early, 6));
+    const gapped = input(from, '2026-05-24', hole);
+    const withEarly = { ...gapped, days: [...gapped.days, { date: early, guests: null, netSalesCents: 20_000 }] };
+    const evidence = weekdayEvidence(withEarly).find((each) => each.weekday === 1);
+    expect(evidence?.lastSalesDate).toBe(early);
+    const [suggested] = salesSuggestionsFor({ evidence: evidence === undefined ? [] : [evidence], answers: [], rules: [], takenKeys: new Set() });
+    expect(suggested?.schedule.startDate).toBe(plus(early, 1));
+    expect(noteCovers(suggested?.schedule ?? { startDate: '9999-12-31', endDate: null, weekdays: null }, early)).toBe(false);
   });
 
   it('needs at least 4 of the weekday in the window', () => {
     const short = input('2026-01-04', '2026-01-25', (day) => weekday(day) === 1);
     expect(range('2026-01-04', '2026-01-25').filter((day) => weekday(day) === 1)).toHaveLength(3);
-    // No weekday question, and three weeks are too little history for a gap.
+    expect(weekdayEvidence(short)).toEqual([]);
     expect(questionsFor(short)).toEqual([]);
   });
 
-  it('a closure note on the weekday explains it; a note that is not a closure does not', () => {
-    const closedMondays = (day: string) => weekday(day) === 1;
-    const covered = input(FROM, TO, closedMondays, { notes: [note({ startDate: FROM, endDate: TO, weekdays: [1] })] });
-    expect(questionsFor(covered)).toEqual([]);
-    const party = note({ kind: 'private_event', effect: 'more_guests', startDate: FROM, endDate: TO, weekdays: [1] });
-    expect(questionsFor(input(FROM, TO, closedMondays, { notes: [party] })).map((q) => q.kind)).toEqual(['weekday']);
-  });
-
-  it('counts a stored day with neither guests nor net sales as a day with no sales', () => {
+  it('counts a stored day with neither guests nor net sales as a day with no sales, and one with net sales alone as one with sales', () => {
     const base = input(FROM, TO, (day) => weekday(day) === 2);
     const blanks: SalesDay[] = range(FROM, TO).filter((day) => weekday(day) === 2).map((date) => ({ date, guests: null, netSalesCents: null }));
-    expect(questionsFor({ ...base, days: [...base.days, ...blanks] }).map((q) => q.id)).toEqual([`weekday_2_${FROM}_${TO}`]);
+    expect(evidenceOf({ ...base, days: [...base.days, ...blanks] }, 2)).toMatchObject({ noSalesCount: 10, weekdayCount: 10 });
+    // Net sales and no guest count on the first Tuesday: it had sales.
+    const [first = ''] = range(FROM, TO).filter((day) => weekday(day) === 2);
+    const net: SalesDay = { date: first, guests: null, netSalesCents: 50_000 };
+    expect(evidenceOf({ ...base, days: [...base.days, net] }, 2)).toMatchObject({ noSalesCount: 9, lastSalesDate: first });
   });
 
-  it('counts only weeks with sales on another day, from the first day with sales in the window', () => {
-    // An older upload and the latest two months: the window holds no data before 2025-11-01, which no question asks about.
-    const both = new Set([...range('2024-11-01', '2024-12-31'), ...range('2025-11-01', '2025-12-31')]);
-    const window = questionWindow({ firstDate: '2024-11-01', lastDate: '2025-12-31' });
-    expect(window).toEqual({ from: '2025-01-01', to: '2025-12-31' });
-    const days = input('2024-11-01', '2025-12-31', (day) => !both.has(day)).days.filter((day) => day.date >= (window?.from ?? ''));
-    expect(questionsFor({ coverage: { firstDate: '2024-11-01', lastDate: '2025-12-31' }, days, notes: [], answered: [] })).toEqual([]);
-    // Eight months missing whole: one gap question, and no weekday looks closed. Its first four weeks still follow at
-    // least 5 same weekdays with guests, so it is asked over its whole span, with their typical guests.
+  it('counts only weeks with sales on another day, and turned-off days not at all, from the first day with sales in the window', () => {
     const hole = (day: string) => day >= '2025-03-01' && day <= '2025-10-31';
-    expect(questionsFor(input('2025-01-01', '2025-12-31', hole))).toEqual([gap('2025-03-01', '2025-10-31')]);
-    expect(gap('2025-03-01', '2025-10-31').dayCount).toBe(245);
-    // Closed on Mondays through the same hole: the Mondays of the weeks with data, from the first day with sales.
-    const closedToo = input('2025-01-01', '2025-12-31', (day) => hole(day) || weekday(day) === 1);
-    const asked = questionsFor(closedToo);
-    expect(asked[0]).toEqual({
-      id: 'weekday_1_2025-01-01_2025-12-31', kind: 'weekday', weekday: 1, from: '2025-01-01', to: '2025-12-31',
-      noSalesCount: 18, weekdayCount: 18,
-    });
-    // The gap is trimmed to the days that are not closed Mondays.
-    expect(asked.slice(1).map((q) => q.id)).toEqual(['gap_2025-03-01_2025-10-31']);
-  });
-
-  it('a weekday question starts at the first day with sales in the window', () => {
+    expect(evidenceOf(input('2025-01-01', '2025-12-31', (day) => hole(day) || weekday(day) === 1)))
+      .toEqual({ weekday: 1, from: '2025-01-01', to: '2025-12-31', noSalesCount: 18, weekdayCount: 18, lastSalesDate: null });
     const late = '2026-01-14';
     const days = input(FROM, TO, (day) => day < late || weekday(day) === 1).days;
-    expect(questionsFor({ coverage: { firstDate: late, lastDate: TO }, days, notes: [], answered: [] })).toEqual([{
-      id: `weekday_1_${late}_${TO}`, kind: 'weekday', weekday: 1, from: late, to: TO, noSalesCount: 8, weekdayCount: 8,
+    expect(evidenceOf({ coverage: { firstDate: late, lastDate: TO }, days, notes: [], answered: [] }))
+      .toMatchObject({ from: late, noSalesCount: 8, weekdayCount: 8 });
+    expect(evidenceOf({ ...input(FROM, TO, (day) => weekday(day) === 1), turnedOff: mondays })).toBeUndefined();
+  });
+});
+
+describe('suggested standing closures from the sales history (D46)', () => {
+  const closedMondays = input(FROM, TO, (day) => mondays.slice(4).includes(day));
+  const evidence = weekdayEvidence(closedMondays);
+
+  it('suggests "Closed on Mondays" from the day after the last Monday with sales, with no end, and its evidence', () => {
+    expect(salesSuggestionsFor({ evidence, answers: [], rules: [], takenKeys: new Set() })).toEqual([{
+      weekday: 1, evidence: { noSalesCount: 6, weekdayCount: 10, lastSalesDate: mondays[3] },
+      schedule: {
+        kind: 'closure', startDate: plus(mondays[3] ?? '', 1), endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null,
+        startTime: null, endTime: null,
+      },
     }]);
-    // The same days with the coverage reaching back further: the window starts earlier, the question does not.
-    expect(questionsFor({ coverage: { firstDate: '2025-06-01', lastDate: TO }, days, notes: [], answered: [] }).map((q) => q.id))
-      .toEqual([`weekday_1_${late}_${TO}`]);
+    // A weekday that never had sales starts at the first day with sales (Tuesday: Monday the 5th had none).
+    const never = salesSuggestionsFor({ evidence: weekdayEvidence(input(FROM, TO, (day) => weekday(day) === 1)), answers: [], rules: [], takenKeys: new Set() });
+    expect(never[0]?.schedule.startDate).toBe(plus(FROM, 1));
+  });
+
+  it('never covers a Monday that had net sales but no guest count (audit B1)', () => {
+    const netMonday = mondays[2] ?? '';
+    const days = closedMondays.days.map((day) => (day.date === netMonday ? { ...day, guests: null, netSalesCents: 40_000 } : day));
+    const late = mondays[3] ?? '';
+    const withLate = { ...closedMondays, days: days.filter((day) => day.date !== late).concat({ date: late, guests: null, netSalesCents: 10_000 }) };
+    const [suggested] = salesSuggestionsFor({ evidence: weekdayEvidence(withLate), answers: [], rules: [], takenKeys: new Set() });
+    expect(suggested?.schedule.startDate).toBe(plus(late, 1));
+    for (const day of [netMonday, late]) expect(noteCovers(suggested?.schedule ?? { startDate: '9999-12-31', endDate: null, weekdays: null }, day)).toBe(false);
+  });
+
+  it('is suppressed by an earlier weekday answer of open, not sure or something else; not by closed', () => {
+    const at = (answer: QuestionAnswer) => salesSuggestionsFor({
+      evidence, answers: [{ questionId: `weekday_1_2025-03-03_2025-12-28`, answer }], rules: [], takenKeys: new Set(),
+    });
+    expect([at('open'), at('not_sure'), at('other')]).toEqual([[], [], []]);
+    expect(at('closed')).toHaveLength(1);
+    // Another weekday's answer changes nothing.
+    expect(salesSuggestionsFor({ evidence, answers: [{ questionId: 'weekday_2_2025-03-03_2025-12-28', answer: 'open' }], rules: [], takenKeys: new Set() }))
+      .toHaveLength(1);
+  });
+
+  it('is suppressed by a row with its closure key, and by a rule that already closes Mondays', () => {
+    expect(salesSuggestionsFor({ evidence, answers: [], rules: [], takenKeys: new Set(['closed|w=1|ongoing']) })).toEqual([]);
+    const ruled = {
+      text: 'Shut Mondays',
+      schedule: { kind: 'closure', startDate: FROM, endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null } as const,
+    };
+    expect(salesSuggestionsFor({ evidence, answers: [], rules: [ruled], takenKeys: new Set() })).toEqual([]);
+  });
+
+  it('gaps still bridge a closed weekday', () => {
+    const missing = (day: string) => weekday(day) === 1 || day === '2026-02-15' || day === '2026-02-17';
+    expect(questionsFor(input(FROM, TO, missing))).toEqual([gap('2026-02-15', '2026-02-17')]);
   });
 });
 
@@ -218,7 +275,6 @@ describe('the evidence, and asking only about usually busy days', () => {
     const guests = (day: string) => [80, 500, 120, 5, 100, 100, 100][weekday(day)] ?? 100;
     // The first day with sales is Tuesday 2025-06-03.
     expect(questionsFor(input('2025-06-02', TO, missing, {}, guests))).toEqual([
-      { id: `weekday_1_2025-06-03_${TO}`, kind: 'weekday', weekday: 1, from: '2025-06-03', to: TO, noSalesCount: 31, weekdayCount: 40 },
       // Sunday 2026-03-08 to Wednesday 2026-03-11: the bridged Monday (500) and the quiet Wednesday (5) are not in the
       // range, and the run still ends on that Wednesday.
       gap('2026-03-08', '2026-03-11', 80, 120),
@@ -242,12 +298,12 @@ describe('the evidence, and asking only about usually busy days', () => {
     expect(questionsFor({ ...all, days: read.filter((day) => day.date >= '2025-03-16') })).toEqual([]);
   });
 
-  it('asks a location with no guest counts weekday questions only', () => {
+  it('asks a location with no guest counts nothing', () => {
     const netOnly = (base: QuestionInput): QuestionInput => ({
       ...base, days: base.days.map((day) => ({ ...day, guests: null, netSalesCents: 150_000 })),
     });
     expect(questionsFor(netOnly(input(FROM, TO, lastMonday)))).toEqual([]);
-    expect(questionsFor(netOnly(input(FROM, TO, (day) => weekday(day) === 2))).map((q) => q.id)).toEqual([`weekday_2_${FROM}_${TO}`]);
+    expect(questionsFor(netOnly(input(FROM, TO, (day) => weekday(day) === 2)))).toEqual([]);
   });
 });
 
@@ -304,7 +360,7 @@ describe('likely-closed days (D32)', () => {
     const first = '2025-06-02';
     const base = input(first, TO, (day) => weekday(day) === 6 && day < '2026-01-01');
     const closedSaturdays = { ...base, days: base.days.map((day) => (day.date === SAT ? { ...day, guests: 1 } : day)) };
-    expect(questionsFor(closedSaturdays).map((q) => q.id)).toEqual([`weekday_6_${first}_${TO}`]);
+    expect(questionsFor(closedSaturdays)).toEqual([]);
     // Saturday 2026-01-31 follows 3 Saturdays with guests: D32 calls it likely closed, but it is not usually busy.
     const early = input(FROM, TO, () => false, {}, (day) => (day === '2026-01-31' ? 1 : 100));
     expect(d32(early, '2026-01-31')).toBe('likely_closed');
@@ -359,11 +415,21 @@ describe('business rule schedules (D31)', () => {
     }
   });
 
-  it('a closure schedule on the weekday explains a weekday question; one with more guests does not', () => {
+  it('a yearly closure across the new year (D46) explains a gap over Dec 29 to Jan 2; the same days with no rule are asked', () => {
+    const missing = (day: string) => day >= '2025-12-29' && day <= '2026-01-02';
+    const asked = input('2025-10-06', TO, missing);
+    expect(questionsFor(asked).map((q) => q.id)).toEqual(['gap_2025-12-29_2026-01-02']);
+    const holidays = rule({ weekdays: null, startDate: '2025-06-01', season: { repeat: 'yearly', from: '12-20', to: '01-05' } });
+    expect(questionsFor({ ...asked, rules: [holidays] })).toEqual([]);
+    // Before the rule's start, last winter's days are not explained.
+    expect(questionsFor({ ...asked, rules: [{ ...holidays, startDate: '2026-01-01' }] }).map((q) => q.id)).toEqual(['gap_2025-12-29_2025-12-31']);
+  });
+
+  it('a closed weekday asks nothing, whatever the schedules (D46: the weekday question is gone)', () => {
     const closedMondays = (day: string) => weekday(day) === 1;
     expect(questionsFor(input(FROM, TO, closedMondays, { rules: [rule({ weekdays: [1] })] }))).toEqual([]);
     const busy = rule({ kind: 'private_event', effect: 'more_guests', weekdays: [1] });
-    expect(questionsFor(input(FROM, TO, closedMondays, { rules: [busy] })).map((q) => q.kind)).toEqual(['weekday']);
+    expect(questionsFor(input(FROM, TO, closedMondays, { rules: [busy] }))).toEqual([]);
   });
 
   it('a likely-closed day is not asked under a schedule with fewer or more guests (open) or a closure (closed), as D32 reads it', () => {
@@ -414,14 +480,14 @@ describe('answered questions', () => {
 });
 
 describe('turned-off days (D28)', () => {
-  it('dates in turnedOff are explained: no gap and no weekday question counts them', () => {
+  it('dates in turnedOff are explained: no gap and no weekday evidence counts them', () => {
     const hole = range('2026-03-01', '2026-03-03');
     const withHole = input(FROM, TO, (day) => hole.includes(day));
     expect(questionsFor(withHole).some((q) => q.kind === 'gap')).toBe(true);
     expect(questionsFor({ ...withHole, turnedOff: hole }).some((q) => q.kind === 'gap')).toBe(false);
     const closedMondays = input(FROM, TO, (day) => weekday(day) === 1);
-    expect(questionsFor(closedMondays).some((q) => q.kind === 'weekday')).toBe(true);
-    expect(questionsFor({ ...closedMondays, turnedOff: mondays }).some((q) => q.kind === 'weekday')).toBe(false);
+    expect(weekdayEvidence(closedMondays).map((each) => each.weekday)).toEqual([1]);
+    expect(weekdayEvidence({ ...closedMondays, turnedOff: mondays })).toEqual([]);
   });
 
   it('turned-off Mondays in weeks with sales do not make Monday usually closed, so a gap never bridges one', () => {
@@ -433,18 +499,17 @@ describe('turned-off days (D28)', () => {
 });
 
 describe('the cap and the order', () => {
-  it('at most 5: weekday questions first, then gaps and likely-closed days together, newest first by their last day', () => {
+  it('at most 5: gaps and likely-closed days together, newest first by their last day; closed weekdays ask nothing', () => {
     const missing = (day: string) => weekday(day) === 3 || weekday(day) === 5 || ['2026-02-10', '2026-02-24', '2026-03-10'].includes(day);
     const guests = (day: string) => (day === '2026-02-28' || day === '2026-03-14' ? 1 : 100);
-    const weekdays = [`weekday_3_${FROM}_${TO}`, `weekday_5_${FROM}_${TO}`];
     const questions = questionsFor(input(FROM, TO, missing, {}, guests));
     expect(questions).toHaveLength(MAX_QUESTIONS);
     expect(questions.map((q) => q.id)).toEqual([
-      ...weekdays, 'likely_closed_2026-03-14', 'gap_2026-03-10_2026-03-10', 'likely_closed_2026-02-28',
+      'likely_closed_2026-03-14', 'gap_2026-03-10_2026-03-10', 'likely_closed_2026-02-28', 'gap_2026-02-24_2026-02-24', 'gap_2026-02-10_2026-02-10',
     ]);
-    // An answered question is left out before the cap, so the next one shows.
+    // An answered question is left out.
     expect(questionsFor(input(FROM, TO, missing, { answered: ['likely_closed_2026-03-14'] }, guests)).map((q) => q.id)).toEqual([
-      ...weekdays, 'gap_2026-03-10_2026-03-10', 'likely_closed_2026-02-28', 'gap_2026-02-24_2026-02-24',
+      'gap_2026-03-10_2026-03-10', 'likely_closed_2026-02-28', 'gap_2026-02-24_2026-02-24', 'gap_2026-02-10_2026-02-10',
     ]);
   });
 
@@ -461,7 +526,7 @@ describe('question ids and the notes an answer saves', () => {
   const likelyQ = { kind: 'likely_closed', date: '2026-03-14' } as const;
   const openDay: NoteContent = {
     kind: 'other', startDate: '2026-03-14', endDate: '2026-03-14', weekdays: null, effect: 'fewer_guests', expectedGuests: null,
-    detail: 'Open, with very few guests (your answer to TownwiseAI).', startTime: null, endTime: null,
+    detail: 'Open, with very few guests (your answer to TownwiseAI).', title: null, startTime: null, endTime: null,
   };
 
   it('an id round-trips to what it asks, and anything else names no question', () => {
@@ -526,6 +591,27 @@ describe('question ids and the notes an answer saves', () => {
     expect(isClosure({ kind: 'closure', effect: 'unknown' })).toBe(true);
     expect(isClosure({ kind: 'private_event', effect: 'closed' })).toBe(true);
     expect(isClosure({ kind: 'other', effect: 'fewer_guests' })).toBe(false);
+  });
+
+  it('noteCovers reads a yearly season: its months and days every year from its start, on its weekdays', () => {
+    const winter = { startDate: '2026-11-17', endDate: null, weekdays: null, season: { repeat: 'yearly' as const, from: '01-01', to: '03-31' } };
+    expect(['2027-02-10', '2028-02-10', '2027-01-01', '2027-03-31'].map((day) => noteCovers(winter, day))).toEqual([true, true, true, true]);
+    expect(['2027-04-01', '2026-12-31', '2026-02-10'].map((day) => noteCovers(winter, day))).toEqual([false, false, false]);
+    // Before its start, the season never covers a day, last winter's included.
+    expect(noteCovers({ ...winter, startDate: '2027-02-15' }, '2027-02-10')).toBe(false);
+    expect(noteCovers({ ...winter, startDate: '2027-02-15' }, '2027-02-15')).toBe(true);
+    // Across the new year.
+    const holidays = { ...winter, season: { repeat: 'yearly' as const, from: '12-20', to: '01-05' } };
+    expect(['2026-12-31', '2027-01-03', '2027-12-20', '2028-01-05'].map((day) => noteCovers(holidays, day))).toEqual([true, true, true, true]);
+    expect(['2027-01-06', '2027-12-19', '2027-06-01'].map((day) => noteCovers(holidays, day))).toEqual([false, false, false]);
+    // Feb 29 inside a season that spans it is covered in a leap year.
+    expect(noteCovers({ ...winter, season: { repeat: 'yearly', from: '02-01', to: '03-10' } }, '2028-02-29')).toBe(true);
+    expect(noteCovers({ ...winter, season: { repeat: 'yearly', from: '03-01', to: '03-10' } }, '2028-02-29')).toBe(false);
+    // Weekdays still apply: Mondays in winter only.
+    const mondays = { ...winter, weekdays: [1] };
+    expect([noteCovers(mondays, '2027-02-08'), noteCovers(mondays, '2027-02-09'), noteCovers(mondays, '2027-04-05')]).toEqual([true, false, false]);
+    // A null season reads as none.
+    expect(noteCovers({ ...winter, season: null }, '2027-06-01')).toBe(true);
   });
 });
 

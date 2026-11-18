@@ -94,7 +94,9 @@ export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
       <div aria-hidden="true" style={{ ...mono, color: C.text2, display: 'flex', flexWrap: 'wrap', gap: '4px 16px' }}>
         {segments.length > 0 || dots.length > 0 ? (
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${C.mint}` }} />{SERIES_TITLE[metric]}
+            {/* Beside a forecast the line is named the actual (D49, design decision 10). */}
+            <span style={{ display: 'inline-block', width: 16, borderTop: `2px solid ${C.mint}` }} />
+            {bands.length > 0 || middles.length > 0 ? (metric === 'guests' ? 'Actual guests' : 'Actual net sales') : SERIES_TITLE[metric]}
           </span>
         ) : null}
         {bands.length > 0 ? (
@@ -144,7 +146,7 @@ export function DailyChart(props: DailyChartProps): React.JSX.Element | null {
           </g>
         )}
       </svg>
-      {at === undefined ? null : <ChartTooltip tip={dailyTip(at, metric)} x={(hx / WIDTH) * hover.width} alignRight={hx > WIDTH / 2} />}
+      {at === undefined ? null : <ChartTooltip tip={dailyTip(at, metric)} from={(hx / WIDTH) * hover.width} to={(hx / WIDTH) * hover.width} alignRight={hx > WIDTH / 2} />}
       </div>
       <p style={{ ...mono, margin: 0 }}>{`Scale 0 to ${tick}${metric === 'guests' ? ' guests' : ''}. Scale fitted to this location.`}</p>
     </div>

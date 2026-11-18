@@ -1,7 +1,9 @@
 import type { TownEvent } from '../../../src/portal/analytics/api';
 import {
-  ALL_FILTERS, calendarMonth, captionOf, dayCell, dayView, eventsOn, forecastWords, monthBounds, rangeWords, reasonOutcomeWords, reasonShortLines,
-  reasonSize, savedNotice, selectedDay, shortReasons, statusWord, tooltipLines, type CalendarCell, type CalendarInput, type ImportedEvent,
+  ALL_FILTERS, calendarMonth, captionOf, checkWords, pastForecastLines, dayCell, dayView, eventsOn, FIGURE_KEY, figureLabel, figureSource, figureTone, forecastCheck,
+  forecastLabel, forecastWords, insideWords, markedFigure, monthBounds, monthCheckLine, OUTLOOK_KEY, outlookKey, rangeWords, reasonOutcomeWords,
+  reasonShortLines, reasonSize, savedNotice, selectedDay, shortReasons, statusTakesFigure, statusWord, tooltipLines, topRightOf, type CalendarCell,
+  type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
 import { daysBetween } from '../../../src/portal/locations/dates';
@@ -20,13 +22,13 @@ const DECEMBER = { from: '2026-11-30', to: '2027-01-10' };
 function forecastDay(fields: Partial<ForecastDay> & Pick<ForecastDay, 'date'>): ForecastDay {
   return {
     status: 'open', low: 180, mid: 212.4, high: 240, model: { status: 'open', low: 180, mid: 212.4, high: 240 }, noteGuests: 0, moreNotes: 0,
-    reasons: [{ kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null,
+    reasons: [{ kind: 'weekday', label: 'Saturday', effectPct: null, sources: [], note: null }], runId: 'r1', actual: null, inRange: null, outlook: false,
     ...fields,
   };
 }
 
 function windowOf(days: ForecastDay[]): ForecastWindow {
-  return { available: true, reason: null, runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-11-01', live: null }], days, weeks: [] };
+  return { available: true, reason: null, runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, dataThrough: '2026-10-31', madeAt: '2026-11-01', live: null }], days, weeks: [] };
 }
 
 const NONE: ForecastWindow = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] };
@@ -65,7 +67,10 @@ const CLOSED = forecastDay({
   date: '2026-11-26', status: 'closed', low: null, mid: null, high: null,
   reasons: [{ kind: 'note', label: 'Your closure', effectPct: null, sources: [], note: { id: 'n3', guests: null, outcome: 'closed' } }],
 });
-const PAST = forecastDay({ date: '2026-11-07', low: 120, mid: 135, high: 150, model: { status: 'open', low: 120, mid: 135, high: 150 }, actual: 138, inRange: true });
+const PAST = forecastDay({
+  date: '2026-11-07', low: 120, mid: 135, high: 150, model: { status: 'open', low: 120, mid: 135, high: 150 }, actual: 138, inRange: true, scored: true,
+  madeAt: '2026-11-02',
+});
 
 const GAME: TownEvent = townEvent({ start: '2026-11-21', title: 'Dartmouth home football' });
 const VETERANS: TownEvent = holiday('2026-11-11', 'Veterans Day', 'us:veterans', 'Veterans Day');
@@ -124,14 +129,49 @@ test('rangeWords rounds a range’s low down and its high up', () => {
   expect(rangeWords(180.4, 239.2)).toBe('180 to 240');
 });
 
-test('a past day shows its stored guests and never a forecast figure', () => {
+test('a past day shows its stored guests over the forecast made for it (owner request, 2026-11-17)', () => {
   const rows = calendarMonth('2026-11', input());
+  // PAST's run forecast 135 for Nov 7; the stored 138 wins.
   expect(cellOf(rows, '2026-11-07')).toMatchObject({ figure: { value: 138, kind: 'actual' }, status: null });
-  // No stored guests: nothing, though net sales were stored.
-  expect(cellOf(rows, '2026-11-08').figure).toBeNull();
-  // A past day the run covered, with no stored day, still shows no forecast figure.
-  const noSales = calendarMonth('2026-11', input({ salesDays: [] }));
-  expect(cellOf(noSales, '2026-11-07').figure).toBeNull();
+  expect(tooltipLines('2026-11-07', input())?.lines[0]).toBe('138 guests, actual');
+});
+
+test('a past day with no stored guests shows the forecast made for it, captioned “forecast”', () => {
+  const noSales = input({ salesDays: [] });
+  const cell = cellOf(calendarMonth('2026-11', noSales), '2026-11-07');
+  expect(cell).toMatchObject({ figure: { value: 135, kind: 'past_forecast' }, status: null });
+  expect(captionOf(cell)).toBe('forecast');
+  expect(cell.label).toBe('Sat, Nov 7, 2026. No data. 135 guests, forecast, likely 120 to 150.');
+  expect(tooltipLines('2026-11-07', noSales)?.lines[0]).toBe('No data. 135 guests, forecast (likely 120 to 150)');
+  // A run that had the day closed or booked says so, as the forecast from today on does.
+  const closed = input({ salesDays: [], forecast: windowOf([forecastDay({ date: '2026-11-02', status: 'closed', low: null, mid: null, high: null })]) });
+  const monday = cellOf(calendarMonth('2026-11', closed), '2026-11-02');
+  expect(monday).toMatchObject({ status: 'closed', figure: null });
+  expect(statusWord(monday.status)).toBe('Closed');
+  expect(monday.label).toBe('Mon, Nov 2, 2026. No data. Forecast closed.');
+  expect(tooltipLines('2026-11-02', closed)?.lines[0]).toBe('No data. Forecast closed');
+  const booked = input({ salesDays: [], forecast: windowOf([forecastDay({ date: '2026-11-06', status: 'booked', low: null, mid: null, high: null })]) });
+  expect(cellOf(calendarMonth('2026-11', booked), '2026-11-06')).toMatchObject({ status: 'booked', figure: null });
+});
+
+test('every day shows something: “No data” before today and “No forecast” from today on, once the forecast read answered', () => {
+  const rows = calendarMonth('2026-11', input());
+  // Net sales but no guests, and no run covering the day.
+  const sunday = cellOf(rows, '2026-11-08');
+  expect(sunday).toMatchObject({ status: 'no_data', figure: null });
+  expect(statusWord(sunday.status)).toBe('No data');
+  expect(sunday.label).toBe('Sun, Nov 8, 2026. No data.');
+  expect(tooltipLines('2026-11-08', input())?.lines).toEqual(['No data']);
+  // From today on, a day the read doesn't cover.
+  const later = cellOf(rows, '2026-11-30');
+  expect(later).toMatchObject({ status: 'no_forecast', figure: null });
+  expect(statusWord(later.status)).toBe('No forecast');
+  expect(tooltipLines('2026-11-30', input())?.lines).toEqual(['No forecast']);
+  // While the forecast read loads or after it failed: no word that may be wrong.
+  const loading = calendarMonth('2026-11', input({ forecast: null }));
+  expect(cellOf(loading, '2026-11-08').status).toBeNull();
+  expect(cellOf(loading, '2026-11-30').status).toBeNull();
+  expect(tooltipLines('2026-11-30', input({ forecast: null }))).toBeNull();
 });
 
 test('a past day under a tenth of its weekday’s typical guests reads “Likely closed”, its count kept in the words (spec D32)', () => {
@@ -151,18 +191,18 @@ test('a past day under a tenth of its weekday’s typical guests reads “Likely
   const slow = note({ startDate: '2026-11-07', kind: 'other', effect: 'fewer_guests' });
   const open = input({ salesDays, forecast: windowOf([]), notes: [slow], filters: { ...ALL_FILTERS, notes: false } });
   expect(cellOf(calendarMonth('2026-11', open), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
-  expect(forecastWords(dayView('2026-11-07', open).forecast, 'Sawtooth').figure).toEqual({ before: '', value: '1', after: 'guest' });
+  expect(forecastWords(dayView('2026-11-07', open).forecast, 'Sawtooth').figure).toEqual({ before: '', value: '1', after: 'guest', source: 'actual' });
   // Fewer than 3 Saturdays before it with guests: a real 1-guest day.
   const thin = input({ salesDays: [...saturdays.slice(-2), { date: '2026-11-07', guests: 1, netSalesCents: 2_500 }], forecast: windowOf([]) });
   expect(cellOf(calendarMonth('2026-11', thin), '2026-11-07')).toMatchObject({ status: null, figure: { value: 1, kind: 'actual' } });
 });
 
-test('no published forecast: no figure after today on any day', () => {
-  for (const forecast of [NONE, null]) {
+test('no published forecast: no figure after today on any day, and “No forecast” once the read answered', () => {
+  for (const [forecast, status] of [[NONE, 'no_forecast'], [null, null]] as const) {
     const rows = calendarMonth('2026-11', input({ forecast }));
     const future = rows.flat().filter((cell): cell is CalendarCell => cell !== null && cell.date >= TODAY);
     expect(future.length).toBeGreaterThan(0);
-    expect(future.every((cell) => cell.figure === null && cell.status === null)).toBe(true);
+    expect(future.every((cell) => cell.figure === null && cell.status === status)).toBe(true);
   }
   expect(dayView('2026-11-21', input({ forecast: NONE })).forecast).toEqual({ kind: 'none', why: 'no_published_forecast' });
   expect(dayView('2026-11-30', input()).forecast).toEqual({ kind: 'none', why: 'not_covered' });
@@ -175,7 +215,8 @@ test('filters hide holidays, town events, term dates, notes and imported events 
   expect(all.notes.map((each) => each.id)).toEqual([PARTY.id]);
   expect(all.imported.map((event) => event.title)).toEqual(['Wine delivery']);
   expect(cellOf(calendarMonth('2026-11', input()), '2026-11-21')).toMatchObject({
-    chips: ['Dartmouth home football', 'Private event, 70', 'Wine delivery'], more: 0, marks: { event: true, note: true, imported: true },
+    // Notes first (D49), so a booked day shows its party within the cell's lines.
+    chips: ['Private event, 70', 'Dartmouth home football', 'Wine delivery'], more: 0, marks: { event: true, note: true, imported: true },
   });
   // Term periods show in the day panel only: they span weeks, so no cell repeats them.
   expect(dayView('2026-11-12', input()).events.map((event) => event.title)).toEqual(['Fall term classes']);
@@ -195,23 +236,67 @@ test('filters hide holidays, town events, term dates, notes and imported events 
   expect(dayView('2026-11-21', off('notes')).reasons).toHaveLength(4);
 });
 
-test('the cell label says the figure, range, note guests, events and notes', () => {
+test('the cell label says the figure, range, note guests and every entry', () => {
   const rows = calendarMonth('2026-11', input());
   expect(cellOf(rows, '2026-11-21').label).toBe(
-    'Sat, Nov 21, 2026. Forecast about 282 guests, 250 to 310. Includes 70 guests from your notes. Dartmouth home football. 1 note. From your calendar: Wine delivery.',
+    'Sat, Nov 21, 2026. 282 guests, forecast, likely 250 to 310. Includes 70 guests from your notes. Private event, 70. Dartmouth home football. From your calendar: Wine delivery.',
   );
-  expect(cellOf(rows, TODAY).label).toBe('Wed, Nov 11, 2026. Today. Forecast about 212 guests, 180 to 240. Veterans Day.');
-  expect(cellOf(rows, '2026-11-14').label).toBe('Sat, Nov 14, 2026. Booked: a private buyout, 70 guests.');
+  expect(cellOf(rows, TODAY).label).toBe('Wed, Nov 11, 2026. Today. 212 guests, forecast, likely 180 to 240. Veterans Day.');
+  expect(cellOf(rows, '2026-11-14').label).toBe('Sat, Nov 14, 2026. Booked: a private buyout, 70 guests, forecast.');
   expect(cellOf(rows, '2026-11-26').label).toBe('Thu, Nov 26, 2026. Closed.');
-  expect(cellOf(rows, '2026-11-07').label).toBe('Sat, Nov 7, 2026. 138 guests.');
-  expect(cellOf(rows, '2026-11-30').label).toBe('Mon, Nov 30, 2026.');
+  expect(cellOf(rows, '2026-11-07').label).toBe('Sat, Nov 7, 2026. 138 guests, actual.');
+  expect(cellOf(rows, '2026-11-30').label).toBe('Mon, Nov 30, 2026. No forecast.');
+});
+
+test('a note reason is followed by its note’s title, and the tooltip names that note once (D49)', () => {
+  const titled = input({ notes: [{ ...PARTY, id: 'n1', title: 'Holiday party' }] });
+  expect(tooltipLines('2026-11-21', titled)?.lines).toEqual([
+    '282 guests, forecast (likely 250 to 310)', 'Includes 70 guests from your notes', 'Your private event, 70 guests, 6 pm to 9 pm: Holiday party',
+    'Saturday: usually more guests', 'Dartmouth home football: more guests in Townwise’s model', 'Wine delivery',
+  ]);
+  // A cell shows the title in place of the kind words.
+  expect(cellOf(calendarMonth('2026-11', titled), '2026-11-21').chips).toEqual(['Holiday party', 'Dartmouth home football', 'Wine delivery']);
+});
+
+test('a note reason’s title never hides a second note with the same title (D49)', () => {
+  const shown = { ...PARTY, id: 'n1', title: 'Holiday party' };
+  const second = note({ startDate: '2026-11-21', title: 'Holiday party', kind: 'other' });
+  const lines = tooltipLines('2026-11-21', input({ notes: [shown, second], imported: [] }))?.lines ?? [];
+  expect(lines).toContain('Your private event, 70 guests, 6 pm to 9 pm: Holiday party');
+  // The second note has no reason of its own, so it shows as an entry.
+  expect(lines.filter((line) => line === 'Holiday party')).toHaveLength(1);
+  // A town entry of the same name from another source still goes.
+  const town = input({ notes: [shown], imported: [], events: [townEvent({ start: '2026-11-21', title: 'Holiday party' })] });
+  expect(tooltipLines('2026-11-21', town)?.lines.filter((line) => line === 'Holiday party')).toEqual([]);
+});
+
+test('a status never hides an entry: a closed day lists its rule and its named event (D49)', () => {
+  const closed = forecastDay({ date: '2026-11-24', status: 'closed', low: null, mid: null, high: null, reasons: [] });
+  const fields = {
+    forecast: windowOf([closed]),
+    notes: [note({ startDate: '2026-11-24', title: 'Holiday party', effect: 'closed' as const })],
+    rules: [ruleOf('r9', 'Closed Tuesdays in winter', { schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null } })],
+  };
+  const cell = dayCell('2026-11-24', input(fields));
+  expect(cell).toMatchObject({ status: 'closed', chips: ['Holiday party', 'Closed Tuesdays in winter'], more: 0, marks: { note: true } });
+  expect(cell.label).toBe('Tue, Nov 24, 2026. Closed. Holiday party. Closed Tuesdays in winter.');
+  expect(tooltipLines('2026-11-24', input(fields))?.lines).toEqual(['Closed', 'Holiday party', 'Closed Tuesdays in winter']);
+});
+
+test('the tooltip shows three entries, or two and “+N more”', () => {
+  const many = input({
+    forecast: windowOf([forecastDay({ date: '2026-11-25', reasons: [] })]),
+    notes: ['A', 'B', 'C', 'D'].map((title) => note({ startDate: '2026-11-25', title })),
+  });
+  expect(tooltipLines('2026-11-25', many)?.lines).toEqual(['212 guests, forecast (likely 180 to 240)', 'A', 'B', '+2 more']);
+  expect(dayCell('2026-11-25', many)).toMatchObject({ chips: ['A', 'B', 'C'], more: 1 });
 });
 
 test('the day panel words a forecast; the 8 in 10 sentence goes with the model’s own range only', () => {
   const plain = dayView(TODAY, input());
   expect(plain.heading).toBe('Today, Wed, Nov 11');
   expect(forecastWords(plain.forecast, 'Sawtooth')).toEqual({
-    figure: { before: 'About', value: '212', after: 'guests' },
+    figure: { before: 'About', value: '212', after: 'guests', source: 'forecast' },
     lines: ['Likely 180 to 240. About 8 in 10 days land in the range.'],
   });
   const noted = dayView('2026-11-21', input());
@@ -225,9 +310,13 @@ test('the day panel words a forecast; the 8 in 10 sentence goes with the model�
   });
   expect(forecastWords(dayView('2026-11-26', input()).forecast, 'Sawtooth').lines).toEqual(['Closed.', 'From your closure note.']);
   expect(forecastWords(dayView('2026-11-07', input()).forecast, 'Sawtooth')).toEqual({
-    figure: { before: '', value: '138', after: 'guests' },
-    lines: ['Townwise’s model forecast 120 to 150, and the day landed in that range.'],
+    figure: { before: '', value: '138', after: 'guests', source: 'actual' },
+    lines: ['Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.'],
   });
+  // A day with stored guests is headed by what it is, never “Forecast” (UI review S2); every other part is the forecast.
+  expect(forecastLabel(dayView('2026-11-07', input()).forecast)).toBe('Actual guests');
+  expect(forecastLabel(dayView('2026-11-21', input()).forecast)).toBe('Forecast');
+  expect(forecastLabel(dayView('2026-11-14', input()).forecast)).toBe('Forecast');
   expect(forecastWords(dayView('2026-11-21', input({ forecast: NONE })).forecast, 'Sawtooth').lines).toEqual([
     'No forecast for this day.', 'Townwise hasn’t published a forecast for Sawtooth yet.',
   ]);
@@ -316,14 +405,14 @@ test('On the calendar leaves out what Why already shows, never a note', () => {
 
 test('ranges round low down and high up, as spec 14.4 and TownwiseAI’s get_forecast do; the middle figure to the nearest guest', () => {
   const day = forecastDay({ date: '2026-11-21', low: 180.6, mid: 212.4, high: 239.2, model: { status: 'open', low: 110.6, mid: 142.4, high: 169.2 }, noteGuests: 70 });
-  const rounded = input({ forecast: windowOf([day, forecastDay({ date: '2026-11-07', model: { status: 'open', low: 120.7, mid: 135, high: 149.1 }, actual: 138, inRange: true })]) });
-  expect(cellOf(calendarMonth('2026-11', rounded), '2026-11-21').label).toContain('Forecast about 212 guests, 180 to 240.');
+  const rounded = input({ forecast: windowOf([day, forecastDay({ date: '2026-11-07', model: { status: 'open', low: 120.7, mid: 135, high: 149.1 }, actual: 138, inRange: true, scored: true })]) });
+  expect(cellOf(calendarMonth('2026-11', rounded), '2026-11-21').label).toContain('212 guests, forecast, likely 180 to 240.');
   expect(forecastWords(dayView('2026-11-21', rounded).forecast, 'Sawtooth').lines).toEqual([
     'Likely 180 to 240.',
     'Townwise’s model: 110 to 170. About 8 in 10 days land in that range. Your notes add 70 guests.',
   ]);
-  expect(tooltipLines('2026-11-21', rounded)?.lines[0]).toBe('About 212 guests (180 to 240)');
-  expect(forecastWords(dayView('2026-11-07', rounded).forecast, 'Sawtooth').lines).toEqual(['Townwise’s model forecast 120 to 150, and the day landed in that range.']);
+  expect(tooltipLines('2026-11-21', rounded)?.lines[0]).toBe('212 guests, forecast (likely 180 to 240)');
+  expect(forecastWords(dayView('2026-11-07', rounded).forecast, 'Sawtooth').lines).toEqual(['Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.']);
 });
 
 test('a day the model closed that a private event opened shows only the notes’ guests and no 8 in 10 sentence', () => {
@@ -336,21 +425,24 @@ test('a day the model closed that a private event opened shows only the notes’
   });
   const view = dayView('2026-11-23', input({ forecast: windowOf([opened]) }));
   expect(forecastWords(view.forecast, 'Sawtooth')).toEqual({
-    figure: { before: 'About', value: '70', after: 'guests' },
+    figure: { before: 'About', value: '70', after: 'guests', source: 'forecast' },
     lines: ['Townwise’s model expects you closed. Your notes open the day with 70 guests.'],
   });
 });
 
 test('the tooltip holds the range, the notes’ guests and at most three reasons', () => {
-  expect(tooltipLines('2026-11-21', input())).toEqual({
+  // The note reason's note is PARTY, joined by its id.
+  expect(tooltipLines('2026-11-21', input({ notes: [{ ...PARTY, id: 'n1' }] }))).toEqual({
     date: 'Sat, Nov 21, 2026',
     lines: [
-      'About 282 guests (250 to 310)', 'Includes 70 guests from your notes', 'Your private event, 70 guests, 6 pm to 9 pm',
+      '282 guests, forecast (likely 250 to 310)', 'Includes 70 guests from your notes', 'Your private event, 70 guests, 6 pm to 9 pm',
       'Saturday: usually more guests', 'Dartmouth home football: more guests in Townwise’s model',
+      // Then the entries no shown reason names: the note and the football game are named; the imported event is not.
+      'Wine delivery',
     ],
   });
-  expect(tooltipLines('2026-11-07', input())?.lines).toEqual(['138 guests', 'Saturday']);
-  expect(tooltipLines('2026-11-30', input())).toBeNull();
+  expect(tooltipLines('2026-11-07', input())?.lines).toEqual(['138 guests, actual', 'Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range', 'Saturday']);
+  expect(tooltipLines('2026-11-30', input())?.lines).toEqual(['No forecast']);
 });
 
 test('monthBounds allows 12 months back and 12 ahead, inside the API’s 400 days', () => {
@@ -685,7 +777,7 @@ test('the short lists keep the three largest either way, in Why’s order: a 70%
     ['Thanksgiving Day: fewer guests last time', '▼', 'down3'],
   ]);
   expect(tooltipLines('2026-11-26', input({ forecast: windowOf([busy]) }))?.lines).toEqual([
-    'About 212 guests (180 to 240)', 'Turkey trot: usually more guests', 'Fall term finals: usually more guests', 'Thanksgiving Day: fewer guests last time',
+    '212 guests, forecast (likely 180 to 240)', 'Turkey trot: usually more guests', 'Fall term finals: usually more guests', 'Thanksgiving Day: fewer guests last time',
   ]);
   // Ties at the cutoff go in Why's order, not the read's: the two 10% rises stay and the 10% fall, read first, goes.
   const tied = forecastDay({
@@ -707,4 +799,163 @@ test('the short lists keep the three largest either way, in Why’s order: a 70%
     ['Dartmouth home football: more guests in Townwise’s model', '▲', 'up1'],
   ]);
   expect(shortReasons(THANKSGIVING, false, 6).map((each) => each.mark)).toEqual(['▲', '=', '=', null, '▼', '▼']);
+});
+
+// Actual or forecast (D49, owner 2026-11-18): one mark from one rule, and how the forecast did.
+
+test('a forecast figure is marked the same way past or future, booked or open; an actual is plain', () => {
+  const noSales = input({ salesDays: [] });
+  const marks = (cell: CalendarCell) => (cell.figure === null ? null : {
+    source: figureSource(cell.figure), text: markedFigure(String(cell.figure.value), cell.figure), tone: figureTone(cell.figure), tag: captionOf(cell),
+  });
+  const forecast = (value: number) => ({ source: 'forecast', text: `~${String(value)}`, tone: 'text2', tag: 'forecast' });
+  // Today, a future day, a booked day's party and a past day with only the run's figure: all forecasts, all alike.
+  expect(marks(dayCell(TODAY, noSales))).toEqual(forecast(212));
+  expect(marks(dayCell('2026-11-21', noSales))).toEqual(forecast(282));
+  expect(marks(dayCell('2026-11-14', noSales))).toEqual(forecast(70));
+  expect(marks(dayCell('2026-11-07', noSales))).toEqual(forecast(135));
+  // A stored figure is the actual: solid, with no mark and no tag.
+  expect(marks(dayCell('2026-11-07', input()))).toEqual({ source: 'actual', text: '138', tone: 'white', tag: null });
+  expect(FIGURE_KEY).toEqual({ actual: 'Actual guests', forecast: 'Forecast' });
+});
+
+test('each cell’s label and tooltip say “forecast” or “actual” after the figure', () => {
+  expect(dayCell('2026-11-07', input()).label).toMatch(/^Sat, Nov 7, 2026\. 138 guests, actual\./);
+  expect(tooltipLines('2026-11-07', input())?.lines[0]).toBe('138 guests, actual');
+  expect(dayCell(TODAY, input()).label).toBe('Wed, Nov 11, 2026. Today. 212 guests, forecast, likely 180 to 240. Veterans Day.');
+  expect(tooltipLines(TODAY, input())?.lines[0]).toBe('212 guests, forecast (likely 180 to 240)');
+  const noSales = input({ salesDays: [] });
+  expect(dayCell('2026-11-07', noSales).label).toBe('Sat, Nov 7, 2026. No data. 135 guests, forecast, likely 120 to 150.');
+  expect(tooltipLines('2026-11-07', noSales)?.lines[0]).toBe('No data. 135 guests, forecast (likely 120 to 150)');
+  expect(dayCell('2026-11-14', input()).label).toMatch(/^Sat, Nov 14, 2026\. Booked: a private buyout, 70 guests, forecast\./);
+  expect(figureLabel(94, { kind: 'actual' })).toBe('94 guests, actual');
+  expect(figureLabel(196_000, { kind: 'actual' }, 'netSales')).toBe('$1,960 in net sales, actual');
+  expect(figureLabel(1, { kind: 'past_forecast' })).toBe('1 guest, forecast');
+});
+
+test('a past day says how its forecast did, from any scored day, and when its run came after the day, from sales through when', () => {
+  const day = (fields: Partial<ForecastDay>) => forecastDay({ ...PAST, ...fields });
+  expect(forecastCheck(PAST, TODAY)).toEqual({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside', dataThrough: null });
+  expect(checkWords({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside', dataThrough: null })).toBe('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range');
+  expect(forecastCheck(day({ actual: 160, inRange: false }), TODAY)?.verdict).toBe('above');
+  expect(forecastCheck(day({ actual: 1, inRange: false }), TODAY)?.verdict).toBe('below');
+  // Not scored (closed, likely closed, no guests, or a later note the run may have read), not passed, or no range: no comparison.
+  expect(forecastCheck(day({ scored: false }), TODAY)).toBeNull();
+  expect(forecastCheck(day({ inRange: null }), TODAY)).toBeNull();
+  expect(forecastCheck(day({ date: TODAY }), TODAY)).toBeNull();
+  expect(forecastCheck(undefined, TODAY)).toBeNull();
+  // The tooltip and the day panel say it after the actual.
+  expect(tooltipLines('2026-11-07', input())?.lines.slice(0, 2)).toEqual([
+    '138 guests, actual', 'Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range',
+  ]);
+  expect(forecastWords(dayView('2026-11-07', input()).forecast, 'Sawtooth')).toEqual({
+    figure: { before: '', value: '138', after: 'guests', source: 'actual' },
+    lines: ['Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.'],
+  });
+  // A run made after the day never saw its sales (D49 as amended): it is compared all the same, and says what it saw.
+  const made = day({ madeAt: '2026-11-09' });
+  expect(forecastCheck(made, TODAY, [{ id: 'r1', dataThrough: '2026-10-31' }])).toMatchObject({ verdict: 'inside', dataThrough: '2026-10-31' });
+  expect(checkWords({ mid: 135, low: 120, high: 150, actual: 138, verdict: 'inside', dataThrough: '2026-10-31' }))
+    .toBe('Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range');
+  const later = input({ forecast: windowOf([made]) });
+  expect(tooltipLines('2026-11-07', later)?.lines.slice(0, 2)).toEqual([
+    '138 guests, actual', 'Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range',
+  ]);
+  expect(forecastWords(dayView('2026-11-07', later).forecast, 'Sawtooth').lines).toEqual([
+    'Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range.',
+  ]);
+  expect(pastForecastLines('2026-11-07', later)).toEqual(['Forecast from sales through Oct 31, 2026: about 135 (likely 120 to 150); 138 guests came: inside the range.']);
+  expect(monthCheckLine('2026-11', later)).toBe('So far this month: 1 of 1 day inside the forecast range.');
+  // A day whose run may have read a note or rule written on or after it is never compared, and the panel says why.
+  const noted = input({ forecast: windowOf([day({ madeAt: '2026-11-09', scored: false, inRange: null, laterNote: true })]) });
+  expect(tooltipLines('2026-11-07', noted)?.lines).toEqual(['138 guests, actual', 'Saturday']);
+  expect(forecastWords(dayView('2026-11-07', noted).forecast, 'Sawtooth').lines).toEqual([
+    'Townwise’s model forecast 120 to 150, but it may have used a note or rule written on or after this day, so it isn’t scored.',
+  ]);
+  // A past day with no stored guests shows the run's figure in the panel as the cell does: a forecast.
+  const unstored = input({ salesDays: [], forecast: windowOf([day({ actual: null, inRange: null, scored: false })]) });
+  expect(forecastWords(dayView('2026-11-07', unstored).forecast, 'Sawtooth')).toEqual({
+    figure: { before: 'About', value: '135', after: 'guests', source: 'forecast' },
+    lines: ['No guests stored for this day.', 'Townwise’s model forecast 120 to 150.'],
+  });
+});
+
+test('the month says how many of its days landed inside the forecast range, in the model card’s words', () => {
+  const scored = (date: string, actual: number, inRange: boolean) => forecastDay({ ...PAST, date, actual, inRange });
+  const days = [scored('2026-11-02', 130, true), scored('2026-11-03', 200, false), scored('2026-11-04', 140, true), forecastDay({ date: TODAY })];
+  expect(insideWords(2, 3)).toBe('2 of 3 days inside the forecast range');
+  expect(monthCheckLine('2026-11', input({ forecast: windowOf(days) }))).toBe('So far this month: 2 of 3 days inside the forecast range.');
+  expect(monthCheckLine('2026-10', input({ forecast: windowOf([{ ...scored('2026-10-30', 130, true), madeAt: '2026-10-26' }]) }))).toBe('In October: 1 of 1 day inside the forecast range.');
+  expect(monthCheckLine('2026-11', input({ forecast: windowOf([forecastDay({ date: TODAY })]) }))).toBe('No day this month can be compared with its forecast yet.');
+  expect(monthCheckLine('2026-10', input({ forecast: windowOf([forecastDay({ date: '2026-10-30' })]) }))).toBe('No day in October could be compared with its forecast.');
+  // A later month, a read that hasn't answered or failed, or nothing published: no line.
+  expect(monthCheckLine('2026-12', input({ forecast: windowOf(days) }))).toBeNull();
+  expect(monthCheckLine('2026-11', input({ forecast: null }))).toBeNull();
+  expect(monthCheckLine('2026-11', input({ forecast: NONE }))).toBeNull();
+});
+
+test('Home’s day detail says a past day’s forecast the same way: how it did, or the run’s figure with no data', () => {
+  expect(pastForecastLines('2026-11-07', input())).toEqual(['Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.']);
+  const unstored = input({ salesDays: [], forecast: windowOf([forecastDay({ ...PAST, actual: null, inRange: null, scored: false })]) });
+  expect(pastForecastLines('2026-11-07', unstored)).toEqual(['No data. 135 guests, forecast, likely 120 to 150.']);
+  // From today on, and a past day with neither: nothing (the forecast part shows the published day).
+  expect(pastForecastLines(TODAY, input())).toEqual([]);
+  expect(pastForecastLines('2026-11-08', input())).toEqual([]);
+});
+
+describe('an outlook day (D52)', () => {
+  // A stale run's day more than 3 months after it was made: mid 212, low 150, high 290.
+  const OUTLOOK = forecastDay({ date: '2026-11-20', low: 150, mid: 212, high: 290, outlook: true, model: { status: 'open', low: 150, mid: 212, high: 290 } });
+  const reads = (days: ForecastDay[] = [OUTLOOK, forecastDay({ date: TODAY })]) => input({ forecast: windowOf(days), notes: [], imported: [] });
+
+  test('its cell shows its middle figure with “Outlook” as its status line, and its label says outlook', () => {
+    const cell = dayCell('2026-11-20', reads());
+    expect(cell).toMatchObject({ status: 'outlook', figure: { value: 212, kind: 'forecast' } });
+    expect(cell.label).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
+    expect(cell.label).not.toMatch(/\. 212 guests, forecast/);
+    expect(statusWord(cell.status)).toBe('Outlook');
+    // The figure stays at every width, and from 641px the word sits in the top row, as a booked day's does.
+    expect([statusTakesFigure(cell.status, true), statusTakesFigure(cell.status, false)]).toEqual([false, false]);
+    expect(topRightOf(cell)).toBe('Outlook');
+  });
+
+  test('a forecast cell is unchanged: no status, no “Outlook”, and its 8 in 10 sentence', () => {
+    const cell = dayCell(TODAY, reads());
+    expect(cell).toMatchObject({ status: null, figure: { value: 212, kind: 'forecast' } });
+    expect(cell.label).toContain('212 guests, forecast, likely 180 to 240.');
+    expect(topRightOf(cell)).toBe('forecast');
+    const view = dayView(TODAY, reads());
+    expect(forecastLabel(view.forecast)).toBe('Forecast');
+    expect(forecastWords(view.forecast, 'Main Street').lines).toEqual(['Likely 180 to 240. About 8 in 10 days land in the range.']);
+    expect(tooltipLines(TODAY, reads())?.lines[0]).toBe('212 guests, forecast (likely 180 to 240)');
+  });
+
+  test('its tooltip and day panel say outlook, with the range and no 8 in 10', () => {
+    expect(tooltipLines('2026-11-20', reads())?.lines[0]).toBe('Outlook: 212 guests, forecast (likely 150 to 290)');
+    const view = dayView('2026-11-20', reads());
+    expect(forecastLabel(view.forecast)).toBe('Outlook');
+    expect(forecastWords(view.forecast, 'Main Street')).toEqual({
+      figure: { before: 'About', value: '212', after: 'guests', source: 'forecast' },
+      lines: ['Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.'],
+    });
+    // With a note's guests, the model's range is named without the 8 in 10 claim either.
+    const noted = forecastDay({ ...OUTLOOK, low: 220, mid: 282, high: 360, noteGuests: 70, reasons: NOTED.reasons });
+    const words = forecastWords(dayView('2026-11-20', reads([noted])).forecast, 'Main Street');
+    expect(words.lines.join(' ')).not.toContain('8 in 10');
+    expect(words.lines).toEqual([
+      'Likely 220 to 360. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.',
+      'Townwise’s model: 150 to 290. Your notes add 70 guests.',
+    ]);
+  });
+
+  test('the key line shows only when a shown day is an outlook day', () => {
+    const rows = calendarMonth('2026-11', reads()).flat().filter((cell) => cell !== null);
+    expect(outlookKey(rows)).toBe(OUTLOOK_KEY);
+    expect(OUTLOOK_KEY).toBe('Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.');
+    const plain = calendarMonth('2026-11', input()).flat().filter((cell) => cell !== null);
+    expect(outlookKey(plain)).toBeNull();
+    // A booked or closed outlook day shows no outlook, so no key line for it.
+    const booked = forecastDay({ ...BOOKED, outlook: true });
+    expect(outlookKey(calendarMonth('2026-11', reads([booked])).flat().filter((cell) => cell !== null))).toBeNull();
+  });
 });

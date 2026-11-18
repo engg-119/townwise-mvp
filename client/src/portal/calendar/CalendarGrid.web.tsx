@@ -7,7 +7,7 @@ import { MARK } from '../home/MonthKey';
 import type { CalendarGridProps } from './CalendarGrid';
 import { anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
 import { CELL_GAP, cellSize, entryLines, gridMove, slotOf, WEEKDAY_ROW, type DayCell } from './grid';
-import { captionOf, statusWord } from './model';
+import { figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf } from './model';
 
 // The Calendar's month grid on web (P28, spec 16.3): DOM, as Home's month grid is, because each day
 // takes focus. The grid is role="grid" named by its month and one tab stop (roving tabIndex on the selected day).
@@ -67,9 +67,10 @@ function Day(props: { cell: DayCell; selected: boolean; width: number }): React.
   const phone = props.width <= 640;
   const muted = cell.outside;
   const status = statusWord(cell.status);
-  // Below 641px every status takes the figure's place; above it a booked day says so in its top row, over its party.
-  const statusInFigure = status !== null && (phone || cell.status !== 'booked');
-  const topRight = phone || cell.pending ? null : cell.status === 'booked' ? status : captionOf(cell);
+  // Below 641px every status but an outlook day's takes the figure's place; above it a booked or outlook day says so in
+  // its top row, over its figure (D52).
+  const statusInFigure = status !== null && statusTakesFigure(cell.status, phone);
+  const topRight = phone || cell.pending ? null : topRightOf(cell);
   const entries = entryLines(cell);
   const border = props.selected ? C.mint : cell.inWeek ? C.line : muted ? C.border : C.raised;
   return (
@@ -97,8 +98,8 @@ function Day(props: { cell: DayCell; selected: boolean; width: number }): React.
         <span aria-hidden="true" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, flexShrink: 0, ...(size.lines > 0 ? { height: 26 } : {}) }}>
           {statusInFigure ? <StatusWords words={status} size={phone ? 9 : 10} color={muted ? C.text3 : C.text2} /> : cell.figure === null ? null : (
             <>
-              <span style={{ ...mono, fontSize: size.figure, lineHeight: `${String(size.figure + 4)}px`, fontWeight: 500, color: muted ? C.text3 : cell.figure.kind === 'actual' ? C.text2 : C.white }}>
-                {String(cell.figure.value)}
+              <span data-figure={figureTone(cell.figure) === 'white' ? 'actual' : 'forecast'} style={{ ...mono, fontSize: size.figure, lineHeight: `${String(size.figure + 4)}px`, fontWeight: 500, color: muted ? C.text3 : C[figureTone(cell.figure)] }}>
+                {markedFigure(String(cell.figure.value), cell.figure)}
               </span>
               {cell.noteGuests > 0 && !phone ? <span style={{ ...mono, color: C.mint }}>{`+${String(cell.noteGuests)}`}</span> : null}
             </>

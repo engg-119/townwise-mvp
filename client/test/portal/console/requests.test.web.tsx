@@ -1,6 +1,7 @@
 import { act, cleanup, fireEvent, screen, waitFor, within } from '@testing-library/react';
 
-import { ACCESS, deferred, offline, refusal, staffMe, viewAsMe, writes } from '../../helpers/portal';
+import { ACCESS, deferred, offline, refusal, STAFF_EMAIL, staffMe, viewAsMe, writes } from '../../helpers/portal';
+import { createAuthStore } from '../../../src/auth/store';
 import { adminRequest, consoleApi, emailOf, renderAt, REQUESTER_EMAIL, type ConsoleApi } from './helpers';
 
 // P19 Requests, with Approve (C3), Reject (C4) and View as (C1): docs/portal/spec.md 16.4, F3, F4, F8.
@@ -82,6 +83,30 @@ test('empty tabs say what is missing; the tabs filter by status, newest first, w
   expect(within(detail).getByRole('link', { name: 'Open the organization' }).getAttribute('href')).toBe('/admin/orgs/o9');
   fireEvent.click(within(screen.getByRole('navigation', { name: 'Requests by status' })).getByRole('link', { name: 'Rejected' }));
   expect(await screen.findByText('No rejected requests.')).toBeTruthy();
+});
+
+test('a tab change keeps the list and the Pending count on the page until the next list arrives: no skeleton, no moved tabs', async () => {
+  const api = consoleApi();
+  list(api, 'pending', [], 0);
+  const answer = deferred<unknown>();
+  api.routes['GET /api/admin/requests?status=approved'] = () => answer.promise;
+  renderAt('/admin', api);
+  expect(await screen.findByText('No requests are waiting.')).toBeTruthy();
+  const tabs = screen.getByRole('navigation', { name: 'Requests by status' });
+  fireEvent.click(within(tabs).getByRole('link', { name: 'Approved' }));
+  await waitFor(() => { expect(within(tabs).getByRole('link', { name: 'Approved' }).getAttribute('aria-current')).toBe('page'); });
+  expect(screen.queryByText('Loading requests')).toBeNull();
+  expect(screen.getByText('No requests are waiting.')).toBeTruthy();
+  // The held list is dimmed and busy, so it never reads as the new tab's.
+  expect(screen.getByTestId('requests-held').getAttribute('aria-busy')).toBe('true');
+  expect(screen.getByTestId('requests-held').hasAttribute('inert')).toBe(true);
+  // The page's one status line; the toast region outside <main> is a status too (spec 15.7, D55).
+  expect(within(screen.getByRole('main')).getByRole('status').textContent).toBe('Loading approved requests…');
+  expect(within(tabs).getAllByRole('link').map((link) => link.textContent)).toEqual(['Pending 0', 'Approved', 'Rejected', 'Withdrawn']);
+  await act(async () => { answer.resolve({ requests: [], pendingCount: 0 }); await answer.promise; });
+  expect(await screen.findByText('No approved requests.')).toBeTruthy();
+  expect(screen.queryByText('No requests are waiting.')).toBeNull();
+  expect(screen.queryByTestId('requests-held')).toBeNull();
 });
 
 test('loading, then the network copy with Try again', async () => {
@@ -450,21 +475,29 @@ test('while view-as is active, the console answers 409 view_as_active and the sh
   expect(await screen.findByRole('region', { name: 'View-as' })).toBeTruthy();
 });
 
-test('a staff window that ran out mid-action sends staff to sign in again', async () => {
+test('a staff window that ran out mid-action signs staff out to the ordinary sign-in page', async () => {
   const api = consoleApi();
+  const store = createAuthStore({ status: 'signedIn', user: { id: 's1', email: STAFF_EMAIL } });
+  const signOut = jest.fn((notice?: string) => {
+    store.set(notice === undefined ? { status: 'signedOut' } : { status: 'signedOut', notice });
+    return Promise.resolve();
+  });
   list(api, 'pending', [TAVERN]);
   api.routes['POST /api/admin/requests/r1/approve'] = () => {
     api.me = staffMe(ACCESS.staffReauth);
     return refusal(403, 'staff_reauth_required');
   };
-  renderAt('/admin', api);
+  renderAt('/admin', api, { signOut, store });
   fireEvent.click(await screen.findByRole('button', { name: 'Approve' }));
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
-  await waitFor(() => { expect(window.location.pathname).toBe('/staff/sign-in-again'); });
+  await waitFor(() => { expect(window.location.pathname).toBe('/sign-in'); });
+  expect(signOut).toHaveBeenCalledWith('Staff sessions need a fresh sign-in with your code every 60 minutes.');
+  expect(await screen.findByText('Staff sessions need a fresh sign-in with your code every 60 minutes.')).toBeTruthy();
 });
 
+/** The Requests item of the console nav, after Overview (D48). */
 function navCount(): string | null | undefined {
-  return within(screen.getByRole('navigation', { name: 'Main' })).getAllByRole('link')[0]?.textContent;
+  return within(screen.getByRole('navigation', { name: 'Main' })).getByRole('link', { name: /^Requests/ }).textContent;
 }
 
 test('the console nav’s Requests count reads again after an approve and after a reject', async () => {
@@ -566,7 +599,7 @@ function expectFocusOn(text: RegExp): void {
   expect(active?.textContent).toMatch(text);
 }
 
-test('a decision takes its opener off the page, so focus moves to the notice; after a 409, to its line', async () => {
+test('a decision takes its opener off the page, so focus moves to the page’s heading as the toast says so; after a 409, to its line', async () => {
   const api = consoleApi();
   let pending: unknown[] = [TAVERN, PUB];
   api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: pending.length });
@@ -581,7 +614,9 @@ test('a decision takes its opener off the page, so focus moves to the notice; af
   fireEvent.click(approve);
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
   await screen.findByRole('region', { name: 'Request: Sample Campus Pub' });
-  expectFocusOn(/^\d+Approved\. Mountain Tavern is set up/);
+  // The approval is a toast, which never takes focus (spec 15.7, D55): the h1 has it.
+  expect((await screen.findByText(/^Approved\. Mountain Tavern is set up/)).closest('[data-testid="toast"]')).not.toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Requests' }));
 
   const reject = screen.getByRole('button', { name: 'Reject' });
   reject.focus();
@@ -589,7 +624,7 @@ test('a decision takes its opener off the page, so focus moves to the notice; af
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Reject Sample Campus Pub?' })).getByRole('button', { name: 'Reject' }));
   await screen.findByText('Someone already decided this request.');
   await screen.findByRole('region', { name: 'Pending requests' });
-  // The newer line, not the approval notice still above it.
+  // The error line in the page, not the heading again for the approval's toast.
   expectFocusOn(/^\d+Someone already decided this request\.$/);
 
   // A second late decision with the same words is a new line, and takes focus again.

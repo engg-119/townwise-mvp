@@ -10,7 +10,8 @@ import { useBreakpoint } from '../hooks';
 // for what it holds. At 640px and below each row becomes stacked pairs, each label above its value so the value
 // has the full width. From 641px to 1023px the table keeps a minimum width and its region scrolls sideways instead
 // of squeezing the columns; from 1024px it fills its column with no minimum, so a desktop table does not scroll
-// sideways. The last row has no rule under it: a Section that follows draws its own.
+// sideways. A table too wide to read sideways (`stack="belowDesktop"`, the Overview's organizations) stacks its rows
+// below 1024px too, so no column sits off-screen. The last row has no rule under it: a Section that follows draws its own.
 //
 // A row with an `href` opens it from a press anywhere on it. Its one way in for the keyboard and screen readers is
 // the <RowLink> the caller puts in one of its cells (the item's name): the row itself is not focusable, so the table
@@ -142,12 +143,18 @@ function empty(value: React.ReactNode): boolean {
   return value === null || value === undefined || value === '' || value === false;
 }
 
-export function DataTable(props: { label: string; columns: readonly Column[]; rows: readonly Row[] }): React.JSX.Element {
+export function DataTable(props: {
+  label: string;
+  columns: readonly Column[];
+  rows: readonly Row[];
+  /** Stack the rows below 1024px, not only on phones: for a table whose columns would not fit there. */
+  stack?: 'belowDesktop';
+}): React.JSX.Element {
   const { phone, desktop } = useBreakpoint();
   const { columns, rows } = props;
   // The last row drops its rule unless it is selected: borderBottomWidth would beat the outline's later borderWidth.
   const ruleless = (row: Row, index: number) => (index === rows.length - 1 && row.selected !== true ? styles.lastRow : null);
-  if (phone) {
+  if (props.stack === 'belowDesktop' ? !desktop : phone) {
     return (
       <View role="region" aria-label={props.label} focusable style={styles.region}>
         <View role="list">

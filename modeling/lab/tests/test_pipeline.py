@@ -307,7 +307,7 @@ def check_horizon(report) -> None:
 
 
 def check_scorecard(card: dict, engine: str) -> None:
-    assert list(card) == SCORECARD_KEYS and card["horizonDays"] == 28 and card["engine"] == engine
+    assert list(card) == SCORECARD_KEYS + (["learning"] if engine == "model" else []) and card["horizonDays"] == 28 and card["engine"] == engine
     history = card["history"]
     assert set(history) == {"firstDate", "lastDate", "days", "spanDays"}
     assert is_date(history["firstDate"]) and is_date(history["lastDate"])
@@ -433,6 +433,23 @@ def test_result_matches_contract(model_result, lab_input):
     assert result["run"]["model"] == {"family": "hybrid_linear_xgboost", "version": version.MODEL_VERSION,
                                       "notebookCommit": CODE}
     assert version.MODEL_VERSION == "v8"
+
+
+def test_a_model_run_carries_how_its_trees_learned(model_result, result, lab_input):
+    learning = model_result["scorecard"]["learning"]
+    assert list(learning) == ["trainThrough", "from", "to", "trainDays", "validDays", "metric", "train", "valid"]
+    # The latest half-year fold: trained on every history day before it, validated on its own days
+    assert day(learning["trainThrough"]) + timedelta(days=1) == day(learning["from"])
+    assert learning["from"] <= learning["to"] <= lab_input["dataThrough"]
+    assert learning["trainDays"] > 0 and learning["validDays"] >= pipeline.MIN_LEARNING_DAYS
+    assert learning["metric"] == "mae_log"
+    rounds = model.XGB_PARAMS["n_estimators"]
+    assert len(learning["train"]) == len(learning["valid"]) == rounds
+    assert all(is_num(v) and v >= 0 for v in learning["train"] + learning["valid"])
+    # Each round fits the training days a little better; the held-out days are not promised that
+    assert learning["train"][-1] < learning["train"][0]
+    # The baseline is a rule: nothing learns round by round
+    assert "learning" not in result["scorecard"]
 
 
 def ratio_at(widening: list[dict], lead: int) -> float:

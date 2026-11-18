@@ -10,6 +10,7 @@ jest.mock('expo-splash-screen', () => ({
 import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
 import type { GoogleCalendars } from '../../../src/portal/calendar/api';
+import { WEEKLY_TITLES_NOTICE } from '../../../src/portal/calendar/calendars';
 import { ACCESS, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
@@ -44,6 +45,8 @@ const NATIVE_LINE_GOOGLE = 'To import a calendar file or connect a Google calend
 /** A made-up iCal address; the API never sends one back. */
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
 const KITCHEN = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', eventCount: 12 });
+/** The words on adding a link (calendar-event-suggestions design decision 11). [CONFIRM: the add screens' words] */
+const WEEKLY_READING = 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.';
 
 function setup(init: Partial<Pick<CalendarFake, 'calendars'>> = {}): { api: FakePortalApi; fake: CalendarFake } {
   const days = Array.from({ length: 20 }, (_, at) => forecastDay({ date: `2026-11-${String(11 + at)}` }));
@@ -89,6 +92,8 @@ test('Add a link works inside the popover: the link is posted and the popover sa
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars' }));
   await fireEvent.press(within(popover()).getByRole('button', { name: 'Add a link' }));
+  // Where the link is added, the popover says once that TownwiseAI reads its titles weekly.
+  expect(within(popover()).getAllByText(WEEKLY_READING)).toHaveLength(1);
   await fireEvent.changeText(within(popover()).getByLabelText('Name'), 'Bookings');
   await fireEvent.changeText(within(popover()).getByLabelText('Calendar link'), URL);
   const bookings = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
@@ -98,7 +103,8 @@ test('Add a link works inside the popover: the link is posted and the popover sa
   expect(await within(popover()).findByText('Link, calendar.google.com, 1 event')).toBeTruthy();
   expect(within(popover()).queryByLabelText('Calendar link')).toBeNull();
   expect(screen.getByRole('button', { name: 'Your calendars (1)' })).toBeTruthy();
-  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } }]);
+  // Posted from the popover that says titles are read weekly, so the add records that the person was told.
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL, titlesNotice: WEEKLY_TITLES_NOTICE } }]);
 });
 
 test('the back button closes it, and opened again it keeps what was typed', async () => {
@@ -129,7 +135,7 @@ function serveGoogle(fake: CalendarFake, google: GoogleCalendars): void {
 test('with Google calendars on, native offers no “Add a Google calendar”: the native line shows, and a Google calendar lists with Refresh now and Remove', async () => {
   const google = ownerCalendar({ id: 'c3', label: 'Google calendar', kind: 'google', eventCount: 40, status: 'google_rate_limited' });
   const { api, fake } = setup({ calendars: [KITCHEN, google] });
-  serveGoogle(fake, { available: true, connected: true, clientId: '123-abc.apps.googleusercontent.com' });
+  serveGoogle(fake, { available: true, connected: true, clientId: '123-abc.apps.googleusercontent.com', canConnect: true });
   await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
   await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
   const card = popover();
@@ -142,5 +148,22 @@ test('with Google calendars on, native offers no “Add a Google calendar”: th
   expect(within(card).getByRole('button', { name: 'Remove Google calendar' })).toBeTruthy();
   expect(within(card).queryByRole('button', { name: 'Refresh now: Kitchen' })).toBeNull();
   expect(fake.paths.filter((path) => path.includes('google-calendars'))).toEqual([]);
+  expect(writes(api)).toEqual([]);
+});
+
+test('native connects nowhere: a revoked Google calendar its person added tells them to reconnect on the web, a teammate’s to ask whoever added it, and neither offers Reconnect', async () => {
+  const revoked = 'Couldn’t refresh: Google no longer lets Townwise read this calendar.';
+  const mine = ownerCalendar({ id: 'c3', label: 'Bookings', kind: 'google', eventCount: 40, status: 'google_revoked', mine: true });
+  const theirs = ownerCalendar({ id: 'c4', label: 'Staff rota', kind: 'google', eventCount: 2, status: 'google_revoked' });
+  const { api, fake } = setup({ calendars: [mine, theirs] });
+  serveGoogle(fake, { available: true, connected: false, clientId: '123-abc.apps.googleusercontent.com', canConnect: true });
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Your calendars (2)' }));
+  const card = popover();
+  expect(within(card).getByText(`${revoked} Reconnect on the web, or remove it.`)).toBeTruthy();
+  expect(within(card).getByText(`${revoked} Ask whoever added it to reconnect, or remove it.`)).toBeTruthy();
+  expect(within(card).getByText(NATIVE_LINE_GOOGLE)).toBeTruthy();
+  expect(within(card).queryByRole('button', { name: 'Reconnect Bookings' })).toBeNull();
+  expect(within(card).getByRole('button', { name: 'Remove Bookings' })).toBeTruthy();
   expect(writes(api)).toEqual([]);
 });

@@ -15,7 +15,7 @@ import type { MeResponse, OrgResponse } from './schemas';
 // - `api`: the kit client, except that the access errors of 4.3 re-read GET /api/me so the layout routes again;
 // - the organization (GET /api/org), loaded once and shared by the frame, Locations and the location pages, and
 //   cleared whenever the access is read again;
-// - one-time page notices that survive a redirect ("You joined …", "View-as ended at …");
+// - one-time page notices that survive a redirect ("You joined …", "View-as ended at …"), shown as toasts (D55);
 // - the last location opened in this sign-in, which the top bar's sections open from pages outside a location. It
 //   lives in this state only, never in storage, and is cleared with the organization.
 
@@ -23,6 +23,8 @@ export interface Notice {
   text: string;
   /** A link after the text, ended with a full stop: "Not your team? Leave {org}." */
   link?: { label: string; href: string };
+  /** The words say why something on the page went or did not happen: a row in the page, never a toast. */
+  stays?: boolean;
 }
 
 /** Where a notice may show: a pattern, or a string meaning exactly that path (no pattern built from a path). */

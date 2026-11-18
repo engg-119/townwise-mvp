@@ -59,6 +59,104 @@ export async function deleteForecastRun(api: ApiClient, orgId: string, runId: st
   await api.request(`/api/admin/orgs/${id(orgId)}/forecast-runs/${id(runId)}`, { method: 'DELETE' });
 }
 
+// How one run was trained (spec D50): percentages, counts, dates, settings and loss ratios, never a guest figure.
+
+const learningSchema = z.object({
+  trainThrough: z.string(),
+  from: z.string(),
+  to: z.string(),
+  trainDays: z.number(),
+  validDays: z.number(),
+  train: z.array(z.number()).min(1),
+  valid: z.array(z.number()).min(1),
+});
+export type Learning = z.infer<typeof learningSchema>;
+
+const methodSchema = z.discriminatedUnion('kind', [
+  z.object({
+    kind: z.literal('model'),
+    baseInputs: z.array(z.string()),
+    eventInputs: z.array(z.string()),
+    trees: z.object({
+      objective: z.string(), rounds: z.number(), learningRate: z.number(), maxDepth: z.number(), minChildWeight: z.number(),
+      subsample: z.number(), columnSample: z.number(), l2: z.number(),
+    }),
+    refitEveryMonths: z.number(),
+    regimeStart: z.string().nullable(),
+  }),
+  z.object({ kind: z.literal('baseline'), levelDays: z.number(), levelMinDays: z.number(), regimeStart: z.string().nullable() }),
+]);
+
+export const runTrainingSchema = z.object({
+  code: z.object({ commit: z.string(), imageDigest: z.string().nullable() }),
+  history: z.object({ from: z.string(), to: z.string(), days: z.number().nullable() }),
+  // A method this client doesn't know yet reads as none, never as a failed page.
+  method: methodSchema.nullable().catch(null),
+  backtest: z.object({
+    from: z.string(), to: z.string(), weeks: z.number(), weeklyTypicalErrorPct: z.number(), weeksOver20Pct: z.number(),
+    weeklyRangePct: z.object({ below: z.number(), above: z.number() }).nullable(),
+  }).nullable(),
+  validation: z.object({
+    from: z.string(), to: z.string(), weeks: z.number(), weeklyWapePct: z.number(), dailyWapePct: z.number(), worstWeekPct: z.number(),
+    weeksOver20: z.number(), coverage: z.object({ inside: z.number(), weeks: z.number() }), weekdayMedianWeeklyWapePct: z.number(),
+    engines: z.object({ modelWeeklyWapePct: z.number().nullable(), baselineWeeklyWapePct: z.number() }).nullable(),
+    folds: z.array(z.object({
+      trainThrough: z.string(), from: z.string(), to: z.string(), weeks: z.number(), weeklyWapePct: z.number(), weeksOver20: z.number(),
+    })),
+  }).nullable(),
+  learning: learningSchema.nullable(),
+});
+export type RunTraining = z.infer<typeof runTrainingSchema>;
+
+const runTrainingAnswerSchema = z.object({ training: runTrainingSchema });
+
+export async function fetchRunTraining(api: ApiClient, orgId: string, runId: string): Promise<RunTraining> {
+  return (await api.json(`/api/admin/orgs/${id(orgId)}/forecast-runs/${id(runId)}`, runTrainingAnswerSchema)).training;
+}
+
+/** A loss to three places ("0.124"): the mean absolute log error, so 0.10 is about 10% off. */
+export function formatLoss(value: number): string {
+  return value.toFixed(3);
+}
+
+export interface LearningSummary {
+  rounds: number;
+  trainEnd: number;
+  validEnd: number;
+  /** The round (from 1) where the validation loss was lowest, and that loss. */
+  bestRound: number;
+  bestValid: number;
+  /** The validation loss ended more than 2% above its lowest: the later rounds fitted the training days only. */
+  roseAfterBest: boolean;
+}
+
+export function learningSummary(learning: Learning): LearningSummary {
+  const rounds = Math.min(learning.train.length, learning.valid.length);
+  const valid = learning.valid.slice(0, rounds);
+  const bestValid = Math.min(...valid);
+  const validEnd = valid[rounds - 1] ?? bestValid;
+  return {
+    rounds,
+    trainEnd: learning.train[rounds - 1] ?? 0,
+    validEnd,
+    bestRound: valid.indexOf(bestValid) + 1,
+    bestValid,
+    roseAfterBest: validEnd > bestValid * 1.02,
+  };
+}
+
+/** The curve in words, so the chart is never the only place its numbers are. */
+export function learningWords(learning: Learning): string[] {
+  const s = learningSummary(learning);
+  return [
+    `Trained on ${plural(learning.trainDays, 'day', 'days')} through ${formatDate(learning.trainThrough)}, then checked on the ${plural(learning.validDays, 'day', 'days')} from ${formatDate(learning.from)} to ${formatDate(learning.to)}, which the trees never saw.`,
+    `After ${plural(s.rounds, 'round', 'rounds')} the loss was ${formatLoss(s.trainEnd)} on the training days and ${formatLoss(s.validEnd)} on the validation days.`,
+    s.roseAfterBest
+      ? `Validation loss was lowest at round ${String(s.bestRound)} (${formatLoss(s.bestValid)}) and rose after it: the later rounds fitted the training days only.`
+      : `Validation loss was lowest at round ${String(s.bestRound)} (${formatLoss(s.bestValid)}) and ended within 2% of it.`,
+  ];
+}
+
 // The run file, read in the browser.
 
 /** The import route's body limit, on what is sent: the parsed file as compact JSON. */

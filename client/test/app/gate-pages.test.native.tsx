@@ -11,6 +11,7 @@ import { userEvent } from '@testing-library/react-native';
 import { act, cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 import { Dimensions, StyleSheet, type TextStyle, type ViewStyle } from 'react-native';
 
+import { createAuthStore, type AuthStore } from '../../src/auth/store';
 import type { Access } from '../../src/portal/schemas';
 import {
   ACCESS, deferred, EMAIL, fakePortalApi, INVITE, LOCATIONS, meOf, offline, orgOf, REQUEST, refusal, SECOND_INVITE,
@@ -356,10 +357,11 @@ describe('P6 Joining', () => {
     expect(writes(api)).toHaveLength(1);
     await fireEvent.press(screen.getByText('Leave Test Group'));
     expect(router.getPathname()).toBe('/settings');
-    // Shown once.
+    // Shown once: back on the page it showed on, the toast still up is the only one (it leaves by itself, D55).
     await fireEvent.press(screen.getByRole('link', { name: 'Home' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1'); });
-    expect(screen.queryByText(/You joined Test Group/)).toBeNull();
+    expect(screen.getAllByText(/You joined Test Group/)).toHaveLength(1);
+    expect(screen.getAllByTestId('toast')).toHaveLength(1);
   });
 
   test('with a pending request, nothing joins until Join; Not my team keeps the request and returns to Waiting', async () => {
@@ -472,17 +474,48 @@ describe('P6 Joining', () => {
   });
 });
 
+/** A signOut that does what the real one does after the kit's logout: the gate then opens /sign-in with the notice. */
+function signOutTo(store: AuthStore, fail = false): jest.Mock<Promise<void>, [notice?: string | undefined]> {
+  return jest.fn((notice?: string) => {
+    if (fail) return Promise.reject(new Error('offline'));
+    store.set(notice === undefined ? { status: 'signedOut' } : { status: 'signedOut', notice });
+    return Promise.resolve();
+  });
+}
+
 describe('P8 Staff sign in again, and the P7 staff notice', () => {
+  const signedIn = (): AuthStore => createAuthStore({ status: 'signedIn', user: { id: 'u1', email: STAFF_EMAIL } });
+
   test.each([
     ['session_too_old', 'Staff sessions need a fresh sign-in with your code every 60 minutes.'],
-    ['session_before_codes', 'This session started before two-step sign-in was on.'],
-  ] as const)('%s: says why, and Sign in again signs out', async (reason, text) => {
-    const signOut = jest.fn(() => Promise.resolve());
-    await renderApp('/staff/sign-in-again', fakePortalApi({ me: staffMe({ state: 'staff_reauth_required', reason }) }), { signOut });
-    expect(await screen.findByRole('heading', { name: 'Sign in again to use the staff console' })).toBeTruthy();
-    expect(screen.getByText(text)).toBeTruthy();
-    await fireEvent.press(screen.getByRole('button', { name: 'Sign in again' }));
+    ['session_before_codes', 'Two-step sign-in is on. Sign in again with your code.'],
+  ] as const)('%s: signs out at once, and the ordinary sign-in page says why', async (reason, text) => {
+    const store = signedIn();
+    const signOut = signOutTo(store);
+    const { router } = await renderApp('/dashboard', fakePortalApi({ me: staffMe({ state: 'staff_reauth_required', reason }) }), { signOut, store });
+    await waitFor(() => { expect(router.getPathname()).toBe('/sign-in'); });
     expect(signOut).toHaveBeenCalledTimes(1);
+    expect(signOut).toHaveBeenCalledWith(text);
+    expect(await screen.findByText(text)).toBeTruthy();
+    expect(screen.queryByText('Sign in again to use the staff console')).toBeNull();
+  });
+
+  test('a sign-out that fails says so, and Try again signs out', async () => {
+    const store = signedIn();
+    const signOut = signOutTo(store, true);
+    await renderApp('/admin', fakePortalApi({ me: staffMe(ACCESS.staffReauth) }), { signOut, store });
+    expect(await screen.findByText('Couldn’t sign out. Check your connection and try again.')).toBeTruthy();
+    await fireEvent.press(screen.getByRole('button', { name: 'Try again' }));
+    await waitFor(() => { expect(signOut).toHaveBeenCalledTimes(2); });
+  });
+
+  test('two-step settings stay open, so a session that must sign in again is not cut off there', async () => {
+    const store = signedIn();
+    const signOut = signOutTo(store);
+    const { router } = await renderApp('/settings/security', fakePortalApi({ me: staffMe(ACCESS.staffReauth) }), { signOut, store });
+    expect(await screen.findByRole('heading', { name: 'Two-step sign-in' })).toBeTruthy();
+    expect(router.getPathname()).toBe('/settings/security');
+    expect(signOut).not.toHaveBeenCalled();
   });
 
   test('staff in setup: the notice above two-step settings, in the gate frame, and Sign in again after the codes', async () => {

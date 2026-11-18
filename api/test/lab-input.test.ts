@@ -37,7 +37,7 @@ function history(from: string, to: string, skip: readonly string[] = []): SalesD
 function note(overrides: Partial<NoteRecord> & Pick<NoteRecord, 'kind' | 'startDate'>): NoteRecord {
   return {
     id: 'b2'.repeat(12), endDate: overrides.startDate, weekdays: null, effect: 'unknown', expectedGuests: null,
-    detail: 'sentinel-note-detail', startTime: null, endTime: null, createdBy: 'c3'.repeat(12), byStaff: false, source: null, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
+    detail: 'sentinel-note-detail', title: null, startTime: null, endTime: null, createdBy: 'c3'.repeat(12), byStaff: false, source: null, fromEvent: null, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
   };
 }
 
@@ -246,6 +246,24 @@ describe('labInputOf', () => {
     expect(flags('2026-06-06')).toEqual({ closed: false, privateEvent: true, booked: false });
     expect(withRules.days.filter((each) => each.closed && each.date > '2026-05-31')).toEqual([]);
     expect(JSON.stringify(withRules)).not.toContain('1'.repeat(24));
+  });
+
+  it('a yearly season across the new year (D46) closes its months and days on history days with no guests, and no others', () => {
+    const holidays: ScheduledRule = {
+      id: '8'.repeat(24),
+      schedule: {
+        kind: 'closure', startDate: '2025-06-01', endDate: null, weekdays: null, effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+        season: { repeat: 'yearly', from: '11-25', to: '01-05' },
+      },
+    };
+    const days = history('2025-01-02', '2026-05-31', ['2025-12-31', '2026-01-03', '2026-01-07']);
+    const input = inputOf(days, [], null, [holidays]);
+    expect(['2025-12-31', '2026-01-03'].map((date) => dayOf(input, date).closed)).toEqual([true, true]);
+    // Outside the season, with no row, and inside it with real guests: not closed by the rule.
+    expect(dayOf(input, '2026-01-07').closed).toBe(false);
+    expect(dayOf(input, '2026-01-02')).toMatchObject({ closed: false, guests: expect.any(Number) as number });
+    // After dataThrough a closure is left to the forecast read, as any closure is (estimates.int.test.ts pins the read).
+    expect([dayOf(input, '2026-11-24').closed, dayOf(input, '2026-11-25').closed]).toEqual([false, false]);
   });
 
   it('a past day’s real guests beat a rule’s closure, which closes only a day with few or no guests; a closure note still closes it (spec D31, D32)', () => {

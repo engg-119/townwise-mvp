@@ -9,13 +9,14 @@ import { PlaceSearch } from '../onboarding/PlaceSearch';
 import { placeChanged, placesUnavailable, townInputOf, type UsablePlace } from '../onboarding/places';
 import { usePlaceSearchAvailability } from '../onboarding/usePlaceSearch';
 import { PLACE_SETTINGS_COPY } from '../locations/LocationSettings';
+import { defaultLocationName } from '../locations/naming';
 import { GOOGLE_SOURCE, PlaceSummary } from '../places/PlaceCard';
 import { usePortal } from '../PortalProvider';
 import { Actions, Button } from '../ui/Button';
 import { DataTable } from '../ui/DataTable';
-import { ErrorNotice, LoadingLine, Messages } from '../ui/feedback';
+import { ErrorNotice, LoadingLine, Notice, useNoticeState } from '../ui/feedback';
 import { FormField } from '../ui/FormField';
-import { Section, Stack } from '../ui/layout';
+import { Columns, Section, Stack } from '../ui/layout';
 import { useFocusMessage } from '../ui/messageFocus';
 import { Heading, Small } from '../ui/text';
 import { checkTown, TOWN_COPY, TownFields, townValueOf, type TownMessages, type TownValue } from '../ui/TownFields';
@@ -73,11 +74,23 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
   const { api } = usePortal();
   const [mode, setMode] = useState<RenameMode>({ kind: 'form', place: null });
   const [name, setName] = useState(location.name);
+  /** D47: a picked place fills Name with its default (D29) unless staff typed in Name in this dialog. */
+  const [nameTyped, setNameTyped] = useState(false);
+  const [prefilled, setPrefilled] = useState<string | null>(null);
   const [town, setTown] = useState<TownValue>(() => townValueOf(location.town));
   const [messages, setMessages] = useState<RenameMessages>({});
   const [placeLine, setPlaceLine] = useState<string | null>(null);
+  /** The place leaves the dialog: a name it filled in goes back, a name staff typed stays, and so does the helper's end. */
+  const leavePlace = useCallback((): void => {
+    if (prefilled !== null) setName((current) => (current === prefilled ? location.name : current));
+    setPrefilled(null);
+  }, [prefilled, location.name]);
   // Google stopped answering in this dialog: the search isn't offered again.
   const [down, setDown] = useState(false);
+  /** D47: with the search on, the Town fields open only on “Enter the town yourself”, as on P16. */
+  const [townOpen, setTownOpen] = useState(false);
+  const placeFirst = placeSearch && !down;
+  const linked = location.hasPlace === true;
 
   const save = useAction(useCallback(async (patch: { name: string; town: TownInput; placeId?: string }, place: UsablePlace | null) => {
     try {
@@ -87,16 +100,17 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
       if (hasCode(error, 409, 'location_name_taken')) { setMessages({ name: LOCATION_COPY.taken }); return; }
       if (hasCode(error, 400, 'unknown_town')) { setMessages({ town: { choice: TOWN_COPY.choice } }); return; }
       if (place !== null && placesUnavailable(error)) {
+        leavePlace();
         setDown(true);
         setMode({ kind: 'form', place: null });
         setPlaceLine(PLACE_SETTINGS_COPY.unavailable);
         return;
       }
-      if (place !== null && placeChanged(error)) { setMode({ kind: 'search' }); setPlaceLine(PLACE_SETTINGS_COPY.changed); return; }
+      if (place !== null && placeChanged(error)) { leavePlace(); setMode({ kind: 'search' }); setPlaceLine(PLACE_SETTINGS_COPY.changed); return; }
       throw error;
     }
     await onDone('Saved.');
-  }, [api, org.id, location, settle, onDone]));
+  }, [api, org.id, location, settle, onDone, leavePlace]));
 
   function submit(): void {
     if (mode.kind !== 'form') return;
@@ -123,10 +137,18 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
         note={(place) => (place.town === null || townLabel(place.town) === townLabel(location.town)
           ? null
           : `Using this place moves ${location.name} to ${townLabel(place.town)}.`)}
-        onConfirm={(place) => { setPlaceLine(null); setMode({ kind: 'form', place }); }}
+        onConfirm={(place) => {
+          setPlaceLine(null);
+          if (!nameTyped) {
+            const suggested = defaultLocationName(place, org.name);
+            setName(suggested);
+            setPrefilled(suggested);
+          }
+          setMode({ kind: 'form', place });
+        }}
         manualLabel="Enter the town yourself"
-        onManual={() => { setPlaceLine(null); setMode({ kind: 'form', place: null }); }}
-        onUnavailable={() => { setDown(true); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); setMode({ kind: 'form', place: null }); }}
+        onManual={() => { leavePlace(); setPlaceLine(null); setTownOpen(true); setMode({ kind: 'form', place: null }); }}
+        onUnavailable={() => { leavePlace(); setDown(true); setPlaceLine(PLACE_SETTINGS_COPY.unavailable); setMode({ kind: 'form', place: null }); }}
       />
     );
   } else {
@@ -136,20 +158,43 @@ function RenameDialog(props: DialogProps & { placeSearch: boolean }): React.JSX.
         <FormField
           label="Name"
           value={name}
-          onChangeText={setName}
+          onChangeText={(text) => { setName(text); setNameTyped(true); }}
           autoCapitalize="words"
           maxLength={80}
+          {...(prefilled !== null && name === prefilled ? { helper: PLACE_SETTINGS_COPY.prefilled } : {})}
           messages={messages.name === undefined ? [] : [messages.name]}
         />
-        {place === null ? (
+        {place === null && placeFirst ? (
+          <>
+            {/* D47: the place leads, as on P16; the town by hand is behind its link. */}
+            <Stack gap={12}>
+              <Small>{linked ? PLACE_SETTINGS_COPY.linked : PLACE_SETTINGS_COPY.unlinked}</Small>
+              <Actions>
+                <Button
+                  variant="outline"
+                  label={linked ? 'Change this location’s place' : 'Find this location’s place'}
+                  onPress={() => { setPlaceLine(null); setMode({ kind: 'search' }); }}
+                />
+              </Actions>
+            </Stack>
+            {townOpen ? (
+              <>
+                <TownFields autoFocus value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} />
+                {linked ? <Small>{PLACE_SETTINGS_COPY.byHand}</Small> : null}
+              </>
+            ) : (
+              <Stack gap={4}>
+                <Small>{`Town: ${townLabel(location.town)}`}</Small>
+                <Actions>
+                  <Button variant="link" label={PLACE_SETTINGS_COPY.townByHand} onPress={() => { setTownOpen(true); }} />
+                </Actions>
+              </Stack>
+            )}
+          </>
+        ) : place === null ? (
           <>
             <TownFields value={town} onChange={setTown} {...(messages.town === undefined ? {} : { messages: messages.town })} />
             <Small>Changing the town takes off the location’s Google Maps place, if it has one.</Small>
-            {placeSearch && !down ? (
-              <Actions>
-                <Button variant="link" label="Search Google Maps instead" onPress={() => { setPlaceLine(null); setMode({ kind: 'search' }); }} />
-              </Actions>
-            ) : null}
           </>
         ) : (
           <PlaceSummary places={[place]} source={GOOGLE_SOURCE} focusOnMount>
@@ -300,18 +345,18 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
   // One check for the panel, as P3 makes it: the add form and each Rename read it.
   const search = usePlaceSearchAvailability(api, { readOnly: false });
   const [acting, setActing] = useState<Acting | null>(null);
-  const [done, setDone] = useState<string | null>(null);
+  const [done, setDone] = useNoticeState();
   /** Bumped once the form has added all it had, so it starts empty for the next location. */
   const [added, setAdded] = useState(0);
 
   /** A write went through: read the organization again, then say how it ended where focus can find it. */
-  const finish = useCallback(async (text: string): Promise<boolean> => {
+  const finish = useCallback(async (text: string, stays = false): Promise<boolean> => {
     if (!await onChanged()) return false;
     focusMessage();
     setActing(null);
-    setDone(text);
+    setDone(text, stays);
     return true;
-  }, [onChanged, focusMessage]);
+  }, [onChanged, focusMessage, setDone]);
 
   const settle = useCallback<Settle>(async (error, location) => {
     if (hasCode(error, 409, 'org_not_in_setup')) {
@@ -322,7 +367,8 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
     // organization's page shows its 404 state.
     if (hasCode(error, 404, 'not_found')) {
       if (location === undefined) await onChanged();
-      else await finish(`${location.name} was deleted meanwhile.`);
+      // The write did not happen: that stays in the section, never a toast.
+      else await finish(`${location.name} was deleted meanwhile.`, true);
       return true;
     }
     return false;
@@ -358,13 +404,16 @@ export function SetupPanel(props: SetupPanelProps): React.JSX.Element {
     <Section kicker="Staff setup" title="Set up before anyone joins">
       <Stack gap={20}>
         <Small>{`Nobody has joined ${org.name} yet. You can add its locations and upload their daily totals so its first admin finds a ready page. Use this only with ${org.name}’s consent. Each change is listed in ${org.name}’s Townwise staff activity, and setup closes for good when the first person joins.`}</Small>
-        {done === null ? null : <Messages live="status" takesFocus items={[done]} />}
+        {done === null ? null : <Notice text={done.text} result={done} stays={done.stays} />}
         {locations.length === 0 ? null : <SetupTable locations={locations} onAct={(verb, location) => { setDone(null); setActing({ verb, location }); }} />}
         <Stack gap={12}>
           <Heading level={3}>Add a location</Heading>
-          {search === 'checking'
-            ? <LoadingLine text="Checking for the Google Maps search…" />
-            : <AddLocationForm key={added} target={target} />}
+          {/* P10's column, so the search, its list and the checked places line up as an org admin sees them. */}
+          <Columns
+            main={search === 'checking'
+              ? <LoadingLine text="Checking for the Google Maps search…" />
+              : <AddLocationForm key={added} target={target} />}
+          />
         </Stack>
         <SetupUpload org={org} locations={locations} settled={settle} onSaved={onChanged} />
       </Stack>

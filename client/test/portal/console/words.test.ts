@@ -28,6 +28,7 @@ test('the action filter covers every action the API records (api/src/stores/audi
     'file.ai_read_requested', 'file.ai_read', 'file.ai_undone', 'org.originals_deleted',
     'note.created', 'note.updated', 'note.deleted', 'chat.turn_completed', 'chat.conversation_deleted',
     'agent.question_answered', 'agent.suggestion_accepted', 'agent.suggestion_dismissed', 'org.weekly_suggestions_changed',
+    'org.calendar_titles_ai_changed',
     'order.setup_saved', 'order.item_sales_uploaded', 'order.item_sales_deleted', 'order.count_saved', 'order.decision_saved',
     'order.rule_saved', 'order.rule_turned_off', 'order.card_saved', 'order.card_dismissed', 'order.setup_read',
     'forecast.imported', 'forecast.published', 'forecast.withdrawn', 'forecast.deleted',
@@ -56,7 +57,21 @@ test.each<[string, Record<string, string | number | boolean | null>, string]>([
   ['agent.question_answered', { locationId: 'l1', questionId: 'gap_2026-12-24_2026-12-26', answer: 'other' }, 'Answered in the chat'],
   ['agent.suggestion_accepted', { locationId: 'l1', suggestionId: 's1', type: 'note' }, 'Note'],
   ['agent.suggestion_dismissed', { locationId: 'l1', suggestionId: 's1', type: 'rule' }, 'Business rule'],
+  // D46: a suggested closure rule's source, and whether it was edited; a read's and an undo's counts of them.
+  ['agent.suggestion_accepted', { locationId: 'l1', suggestionId: 's1', type: 'rule', source: 'file', edited: true }, 'Business rule, from a file, edited'],
+  ['agent.suggestion_accepted', { locationId: 'l1', suggestionId: 's1', type: 'rule', source: 'sales', edited: false }, 'Business rule, from the sales history'],
+  ['agent.suggestion_dismissed', { locationId: 'l1', suggestionId: 's1', type: 'rule', source: 'sales' }, 'Business rule, from the sales history'],
+  ['file.ai_read', { locationId: 'l1', kind: 'calendar', events: 2, days: 0, notes: 1, daysWritten: 0, rulesSuggested: 2 }, '2 suggested rules'],
+  ['file.ai_read', { locationId: 'l1', kind: 'calendar', events: 2, days: 0, notes: 1, daysWritten: 0, rulesSuggested: 0 }, ''],
+  ['file.ai_undone', { locationId: 'l1', notes: 1, days: 0, items: 1, suggestions: 1 }, '1 suggested rule removed'],
+  ['file.ai_undone', { locationId: 'l1', notes: 1, days: 0, items: 1 }, ''],
   ['org.weekly_suggestions_changed', { on: false }, 'Off'],
+  // calendar-event-suggestions: the titles switch, and the three kinds from the location's calendars.
+  ['org.calendar_titles_ai_changed', { on: true }, 'On'],
+  ['org.calendar_titles_ai_changed', { on: false }, 'Off'],
+  ['agent.suggestion_accepted', { locationId: 'l1', suggestionId: 's1', type: 'event' }, 'Private event spotted on a calendar'],
+  ['agent.suggestion_accepted', { locationId: 'l1', suggestionId: 's1', type: 'move' }, 'Moving a note with its calendar event'],
+  ['agent.suggestion_dismissed', { locationId: 'l1', suggestionId: 's1', type: 'remove' }, 'Deleting a note whose calendar event went'],
   ['forecast.published', { locationId: 'l1', modelVersion: 'v9', from: '2026-05-01', to: '2026-05-14', dayCount: 14 }, 'Model v9, May 1, 2026 to May 14, 2026, 14 days'],
 ])('details for %s', (action, details, expected) => {
   expect(auditDetails({ action, details })).toBe(expected);
@@ -129,4 +144,8 @@ test('links: a request on its tab, and a notice that shows only on one path', ()
   expect(noticeShowsAt('/admin/orgs/a.b', '/admin/orgs/aXb')).toBe(false);
   expect(noticeShowsAt(/^\/admin$/, '/admin')).toBe(true);
   expect(noticeShowsAt(null, '/anywhere')).toBe(true);
+});
+
+test('calendar-event-suggestions: the titles switch has a label', () => {
+  expect(AUDIT_ACTIONS).toContainEqual({ value: 'org.calendar_titles_ai_changed', label: 'Calendar event titles to TownwiseAI switched' });
 });

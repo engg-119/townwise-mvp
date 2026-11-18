@@ -10,8 +10,8 @@ import { historyMaxHeight } from '../../src/chat/ui/HistoryMenu';
 afterEach(() => { cleanup(); });
 
 const CONVERSATIONS: ConversationSummary[] = [
-  { id: 'c1', title: 'Earlier chat', updatedAt: '2026-11-02T15:00:00.000Z', turnCount: 2 },
-  { id: 'c2', title: 'Another chat', updatedAt: '2026-11-03T15:00:00.000Z', turnCount: 1 },
+  { id: 'c1', title: 'Earlier chat', updatedAt: '2026-11-02T15:00:00.000Z', turnCount: 2, running: false },
+  { id: 'c2', title: 'Another chat', updatedAt: '2026-11-03T15:00:00.000Z', turnCount: 1, running: false },
 ];
 
 type Props = React.ComponentProps<typeof ChatHeader>;
@@ -20,7 +20,7 @@ function props(over: Partial<Props> = {}): Props {
   return {
     conversations: CONVERSATIONS, openId: 'c1', streaming: false, readOnlyId: null, panelOpen: false,
     openQuestions: null, onOpen: jest.fn(), onNew: jest.fn(), onDelete: jest.fn(() => Promise.resolve()),
-    onRename: jest.fn(() => Promise.resolve()), onTogglePanel: jest.fn(), ...over,
+    onRename: jest.fn(() => Promise.resolve()), onTogglePanel: jest.fn(), panel: true, ...over,
   };
 }
 
@@ -165,20 +165,22 @@ it('Cancel in the delete dialog gives focus back to the row’s Delete', async (
   await waitFor(() => { expect(document.activeElement).toBe(remove); });
 });
 
-it('History and New chat are aria-disabled while a reply streams; the panel button is not', () => {
+it('History and New chat work while a reply streams (owner request, 2026-11-18); Rename and Delete wait for it', () => {
   const p = props({ streaming: true });
   render(<ChatHeader {...p} />);
   const history = screen.getByRole('button', { name: 'History' });
   const fresh = screen.getByRole('button', { name: 'New chat' });
-  const panel = screen.getByRole('button', { name: 'Questions and activity' });
-  expect(history.getAttribute('aria-disabled')).toBe('true');
-  expect(fresh.getAttribute('aria-disabled')).toBe('true');
-  expect(panel.getAttribute('aria-disabled')).toBeNull();
+  expect(history.getAttribute('aria-disabled')).toBeNull();
+  expect(fresh.getAttribute('aria-disabled')).toBeNull();
   fireEvent.click(history);
+  const list = screen.getByRole('region', { name: 'History' });
+  expect(within(list).getByRole('button', { name: 'Rename Another chat' }).getAttribute('aria-disabled')).toBe('true');
+  expect(within(list).getByRole('button', { name: 'Delete Another chat' }).getAttribute('aria-disabled')).toBe('true');
+  fireEvent.click(within(list).getByRole('button', { name: 'Another chat, Nov 3, 2026' }));
+  expect(p.onOpen).toHaveBeenCalledWith('c2');
   fireEvent.click(fresh);
-  expect(screen.queryByRole('region', { name: 'History' })).toBeNull();
-  expect(p.onNew).not.toHaveBeenCalled();
-  fireEvent.click(panel);
+  expect(p.onNew).toHaveBeenCalledTimes(1);
+  fireEvent.click(screen.getByRole('button', { name: 'Questions and activity' }));
   expect(p.onTogglePanel).toHaveBeenCalledTimes(1);
 });
 
@@ -189,4 +191,129 @@ it('the panel button names the open questions and reports aria-expanded', () => 
   view.rerender(<ChatHeader {...props({ openQuestions: 0, panelOpen: false })} />);
   const closed = screen.getByRole('button', { name: 'Questions and activity' });
   expect(closed.getAttribute('aria-expanded')).toBe('false');
+});
+
+describe('icon buttons (owner, 2026-11-18: “use icons for the new chat and history buttons and the questions and activity instead of just saying them”)', () => {
+  it('History, New chat and Questions and activity are 44px icons named by their words, with no words drawn', () => {
+    render(<ChatHeader {...props()} />);
+    for (const name of ['History', 'New chat', 'Questions and activity']) {
+      const button = screen.getByRole('button', { name });
+      expect(button.querySelector('svg')?.getAttribute('aria-hidden')).toBe('true');
+      expect(button.textContent).toBe('');
+      const box = window.getComputedStyle(button);
+      expect([box.width, box.height]).toEqual(['44px', '44px']);
+    }
+  });
+
+  it('hover or focus shows the words in a tooltip under the button, never over it, hidden from screen readers; leaving or blur hides it', () => {
+    render(<ChatHeader {...props()} />);
+    const history = screen.getByRole('button', { name: 'History' });
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+    fireEvent.mouseEnter(history);
+    const tip = screen.getByTestId('chat-tooltip');
+    expect(tip.textContent).toBe('History');
+    expect(tip.getAttribute('aria-hidden')).toBe('true');
+    // Under the button (its anchor's full height down), so it never covers the icon it names.
+    expect([window.getComputedStyle(tip).position, window.getComputedStyle(tip).top]).toEqual(['absolute', '100%']);
+    expect(tip.parentElement?.contains(history)).toBe(true);
+    fireEvent.mouseLeave(history);
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+    const fresh = screen.getByRole('button', { name: 'New chat' });
+    act(() => { fresh.focus(); });
+    expect(screen.getByTestId('chat-tooltip').textContent).toBe('New chat');
+    act(() => { fresh.blur(); });
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+  });
+
+  it('a click leaves no tooltip once the pointer goes; keyboard focus (:focus-visible) shows it', () => {
+    render(<ChatHeader {...props()} />);
+    const history = screen.getByRole('button', { name: 'History' });
+    const visible = jest.spyOn(history, 'matches').mockImplementation((selector) => selector !== ':focus-visible');
+    fireEvent.mouseEnter(history);
+    act(() => { history.focus(); });
+    fireEvent.mouseLeave(history);
+    expect(screen.queryByTestId('chat-tooltip')).toBeNull();
+    act(() => { history.blur(); });
+    visible.mockImplementation(() => true);
+    act(() => { history.focus(); });
+    expect(screen.getByTestId('chat-tooltip').textContent).toBe('History');
+  });
+
+  it('the open questions show as a badge on the icon, which the name carries; none at 0', () => {
+    const view = render(<ChatHeader {...props({ openQuestions: 5 })} />);
+    const panel = screen.getByRole('button', { name: 'Questions and activity (5)' });
+    const badge = within(panel).getByTestId('chat-badge');
+    expect(badge.textContent).toBe('5');
+    expect(badge.getAttribute('aria-hidden')).toBe('true');
+    fireEvent.mouseEnter(panel);
+    expect(screen.getByTestId('chat-tooltip').textContent).toBe('Questions and activity');
+    view.rerender(<ChatHeader {...props({ openQuestions: 0 })} />);
+    expect(screen.queryByTestId('chat-badge')).toBeNull();
+  });
+
+  it('Questions and activity comes first, only where the page asks for it, so History and New chat keep their places', () => {
+    const view = render(<ChatHeader {...props()} />);
+    const names = (): (string | null)[] => within(screen.getByTestId('chat-header-controls')).getAllByRole('button').map((button) => button.getAttribute('aria-label'));
+    expect(names()).toEqual(['Questions and activity', 'History', 'New chat']);
+    expect(screen.getByRole('button', { name: 'Questions and activity' }).getAttribute('aria-controls')).toBe('chat-panel');
+    view.rerender(<ChatHeader {...props({ panel: false })} />);
+    expect(names()).toEqual(['History', 'New chat']);
+  });
+
+  it('New chat under view-as stays in place, aria-disabled and described by the read-only line', () => {
+    const p = props({ readOnlyId: 'chat-ro' });
+    render(<ChatHeader {...p} />);
+    const fresh = screen.getByRole('button', { name: 'New chat' });
+    expect(fresh.getAttribute('aria-disabled')).toBe('true');
+    expect(fresh.getAttribute('aria-describedby')).toBe('chat-ro');
+    fireEvent.click(fresh);
+    expect(p.onNew).not.toHaveBeenCalled();
+  });
+});
+
+function reduceMotion(reduce: boolean): void {
+  Object.defineProperty(window, 'matchMedia', {
+    configurable: true,
+    writable: true,
+    value: (query: string) => ({
+      media: query, matches: query === '(prefers-reduced-motion: reduce)' && reduce, onchange: null,
+      addListener: () => undefined, removeListener: () => undefined, addEventListener: () => undefined, removeEventListener: () => undefined,
+      dispatchEvent: () => false,
+    }),
+  });
+}
+
+describe('a conversation TownwiseAI is still replying in (owner request, 2026-11-18)', () => {
+  afterEach(() => { Reflect.deleteProperty(window, 'matchMedia'); });
+
+  it('shows Replying with a turning ring, read with its row, and the list tells the page it is open; the mark goes once the list says it ended', async () => {
+    reduceMotion(false);
+    const onListOpen = jest.fn();
+    const running = CONVERSATIONS.map((item) => (item.id === 'c2' ? { ...item, running: true } : item));
+    const view = render(<ChatHeader {...props({ conversations: running, onListOpen })} />);
+    expect(onListOpen).toHaveBeenLastCalledWith(false);
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    expect(onListOpen).toHaveBeenLastCalledWith(true);
+    const list = screen.getByRole('region', { name: 'History' });
+    const row = within(list).getByRole('button', { name: 'Another chat, Replying, Nov 3, 2026' });
+    expect(within(row).getByText('Replying')).toBeTruthy();
+    await waitFor(() => { expect(within(row).queryByTestId('chat-replying-spinner')).not.toBeNull(); });
+    expect(within(list).getAllByText('Replying')).toHaveLength(1);
+    view.rerender(<ChatHeader {...props({ conversations: CONVERSATIONS, onListOpen })} />);
+    expect(screen.queryByText('Replying')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Another chat, Nov 3, 2026' })).toBeTruthy();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onListOpen).toHaveBeenLastCalledWith(false);
+  });
+
+  it('under reduced motion the ring is a still square', async () => {
+    reduceMotion(true);
+    const running = CONVERSATIONS.map((item) => ({ ...item, running: true }));
+    render(<ChatHeader {...props({ conversations: running })} />);
+    fireEvent.click(screen.getByRole('button', { name: 'History' }));
+    // Once the system has answered (the spinner test waits for the same answer to turn it).
+    await act(() => new Promise((resolve) => { setTimeout(resolve, 20); }));
+    expect(screen.getAllByTestId('chat-replying-still')).toHaveLength(2);
+    expect(screen.queryByTestId('chat-replying-spinner')).toBeNull();
+  });
 });

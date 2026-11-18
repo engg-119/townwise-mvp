@@ -455,6 +455,86 @@ describe('GET /api/org/locations/:locationId/data/:ref', () => {
   });
 });
 
+// D49: the single item's view carries the events a calendar read found, each with the note it made while that exists.
+describe('ai.events on one item', () => {
+  afterEach(async () => { await removeStaffFactor(server); });
+
+  const EVENTS = [
+    { title: 'Rehearsal dinner', startDate: '2026-12-12', endDate: '2026-12-12', kind: 'private_event', effect: 'closed', expectedGuests: 60, detail: '' },
+    { title: 'Harvest fair', startDate: '2026-10-03', endDate: '2026-10-04', kind: 'other', effect: 'more', expectedGuests: null, detail: 'Main street' },
+    { title: 'Winter break', startDate: '2026-12-24', endDate: '2027-01-02', kind: 'closure', effect: 'closed', expectedGuests: null, detail: '' },
+  ];
+
+  /** A kept file whose read found EVENTS: the first two became notes (the second since deleted), the third was skipped. */
+  async function calendarRead(): Promise<{ l1: string; fileId: string; noteIds: string[] }> {
+    const l1 = await newLocation();
+    const noteIds = [0, 1, 2].map(() => new Types.ObjectId().toHexString());
+    const now = server.clock.now();
+    await server.connection.collection('tw_notes').insertOne({
+      _id: new Types.ObjectId(noteIds[0]), orgId: new Types.ObjectId(team.orgId), locationId: new Types.ObjectId(l1), kind: 'private_event',
+      startDate: '2026-12-12', endDate: '2026-12-12', weekdays: null, effect: 'closed', expectedGuests: 60, detail: null, title: 'Rehearsal dinner',
+      createdBy: team.member.userId, source: { via: 'ai_file', fileId: new Types.ObjectId() }, createdAt: now, updatedAt: now,
+    });
+    const fileId = await seedFile(l1, {
+      ai: {
+        status: 'done', requestedBy: team.member.userId, requestedByRole: 'member', requestedByStaff: false, requestedGrantId: null,
+        requestedAt: now, attempts: 1, leaseUntil: null, startedAt: now, finishedAt: now, reason: null, partial: false, costMicroUsd: 1000,
+        result: {
+          kind: 'calendar', confidence: 'high', summary: 'Fall and winter events.', facts: [], events: EVENTS, days: [], daysCut: false,
+          eventCount: 3, dayCount: 0, daysBorneOut: null,
+        },
+        actions: {
+          plan: { noteIds, uploadId: new Types.ObjectId().toHexString(), itemId: new Types.ObjectId().toHexString(), calibrationId: new Types.ObjectId().toHexString() },
+          outcome: {
+            notes: noteIds.slice(0, 2), notesSkipped: { duplicate: 0, cap: 0, invalid: 0, guard: 1 }, uploadId: null, daysWritten: 0, daysAlreadyHad: 0,
+            daysReason: 'not_sales', itemId: null, itemReason: 'no_summary', calibration: { status: 'not_admin', id: null },
+          },
+        },
+      },
+    });
+    return { l1, fileId, noteIds };
+  }
+
+  function getItem(session: TestSession, locationId: string, ref: string): Promise<Response> {
+    return call(server, `/api/org/locations/${locationId}/data/${ref}`, { session });
+  }
+
+  async function itemAt(session: TestSession, locationId: string, ref: string): Promise<DataItemView> {
+    const res = await getItem(session, locationId, ref);
+    expect(res.status).toBe(200);
+    return (await res.json() as { item: DataItemView }).item;
+  }
+
+  it('lists every event in the read’s order, with noteId only while the note it made exists; the list answer leaves them out', async () => {
+    const { l1, fileId, noteIds } = await calendarRead();
+    const item = await itemAt(team.member, l1, `f_${fileId}`);
+    expect(item.ai?.events).toEqual([
+      { title: 'Rehearsal dinner', startDate: '2026-12-12', endDate: '2026-12-12', kind: 'private_event', effect: 'closed', expectedGuests: 60, noteId: noteIds[0] },
+      { title: 'Harvest fair', startDate: '2026-10-03', endDate: '2026-10-04', kind: 'other', effect: 'more', expectedGuests: null, noteId: null },
+      { title: 'Winter break', startDate: '2026-12-24', endDate: '2027-01-02', kind: 'closure', effect: 'closed', expectedGuests: null, noteId: null },
+    ]);
+    const row = await listed(team.member, l1, `f_${fileId}`);
+    expect(row?.ai).not.toBeNull();
+    expect(row?.ai).not.toHaveProperty('events');
+  });
+
+  it('is empty once the original is deleted, has no titles under view-as, and another organization’s path answers 404', async () => {
+    const { l1, fileId } = await calendarRead();
+    const staff = await signInStaff(server);
+    await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: team.member.userId, orgId: team.orgId });
+    const text = await (await getItem(staff, l1, `f_${fileId}`)).text();
+    expect(text).not.toMatch(/Rehearsal|Harvest|Winter break/);
+    const hidden = (JSON.parse(text) as { item: DataItemView }).item.ai?.events;
+    expect(hidden?.map((event) => [event.title, event.startDate])).toEqual([[null, '2026-12-12'], [null, '2026-10-03'], [null, '2026-12-24']]);
+
+    const t = await newTeam('Events Kitchen');
+    expect(await errorOf(await getItem(t.admin, l1, `f_${fileId}`))).toEqual({ status: 404, error: 'not_found' });
+
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(fileId) }, { $set: { 'ai.result.events': [] } });
+    expect((await itemAt(team.member, l1, `f_${fileId}`)).ai?.events).toEqual([]);
+  });
+});
+
 describe('PATCH /api/org/locations/:locationId/data/:ref', () => {
   it('the uploader turns their upload off and on; its days leave and return', async () => {
     const l1 = await newLocation();

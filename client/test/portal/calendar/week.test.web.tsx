@@ -177,20 +177,34 @@ describe('the day columns at 1280', () => {
     expect(head('2026-11-25').textContent).toContain('Wed 25');
   });
 
+  test('across the outlook boundary (D52): an outlook day’s head says Outlook over its figure and its range line', () => {
+    const forecast = forecastOf([
+      forecastDay({ date: '2026-11-20' }),
+      forecastDay({ date: SATURDAY, low: 150, mid: 212, high: 290, outlook: true }),
+    ]) as ForecastWindow;
+    renderWeek({ reads: input({ forecast }) });
+    expect(head(SATURDAY).textContent).toContain('Outlook');
+    expect(head(SATURDAY).textContent).toContain('212');
+    expect(head(SATURDAY).textContent).toContain('150 to 290');
+    expect(cell(SATURDAY).getAttribute('aria-label')).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
+    expect(head('2026-11-20').textContent).not.toContain('Outlook');
+    expect(head('2026-11-20').textContent).toContain('180 to 240');
+  });
+
   test('today’s column has a Today tag', () => {
     renderWeek({ selected: TODAY });
     expect(within(head(TODAY)).getByText('Today')).toBeTruthy();
     expect(within(head('2026-11-12')).queryByText('Today')).toBeNull();
   });
 
-  test('the cards, all day first and then by time, each with its hours, title and kind words', () => {
+  test('the cards in the entries’ order (D49), each with its hours, title and kind words', () => {
     renderWeek();
     expect(cardTexts(SATURDAY)).toEqual([
-      'Dartmouth home football Town event',
       'Other Your note',
-      'Patio closes at 8 pm Saturdays from Nov 1, 2026',
-      '9 am to 10 am Wine delivery Your calendar',
       '6 pm to 9 pm Private event, 70 Your note',
+      'Patio closes at 8 pm Saturdays from Nov 1, 2026',
+      'Dartmouth home football Town event',
+      '9 am to 10 am Wine delivery Your calendar',
     ]);
     // Cards are not focusable; the panel keeps the actions.
     expect(cell(SATURDAY).querySelectorAll('[tabindex]:not([data-date])')).toHaveLength(0);

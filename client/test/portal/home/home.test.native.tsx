@@ -9,15 +9,21 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+
 import * as SecureStore from 'expo-secure-store';
-import { cleanup, fireEvent, screen } from 'expo-router/testing-library';
+import { StyleSheet } from 'react-native';
+import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
 
 import type { Calendar } from '../../../src/portal/analytics/api';
 import type { DayRecord } from '../../../src/portal/analytics/history';
 import { LAST_YEAR_FOOTNOTE } from '../../../src/portal/analytics/week';
+import { REORDER_OVERVIEW } from '../../../src/portal/home/beside';
 import { forecastLine } from '../../../src/portal/home/Home';
 import { PEOPLE_HEAD } from '../../../src/portal/home/ThisMonth';
 import type { LocationSummary, MeResponse } from '../../../src/portal/schemas';
+import { theme } from '../../../src/theme';
 import { ACCESS, deferred, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { analyticsFake, calendarBody, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
@@ -84,9 +90,13 @@ const BOARD = {
   ],
 };
 const QUESTIONS = [
-  { id: 'weekday_1_2026-03-01_2026-05-31', kind: 'weekday', weekday: 1, from: '2026-03-01', to: '2026-05-31', noSalesCount: 13, weekdayCount: 13 },
+  { id: 'likely_closed_2026-05-23', kind: 'likely_closed', date: '2026-05-23', guests: 1, typicalGuests: 100 },
   GAP('2026-05-12', '2026-05-13', 2),
 ];
+
+/** Two suggested closure rules (D46), in GET .../agent's shape (client/test/chat/agent-panel.json). */
+const RULE_SUGGESTIONS = (JSON.parse(readFileSync(join(__dirname, '../../chat/agent-panel.json'), 'utf8')) as { panel: { ruleSuggestions: unknown[] } })
+  .panel.ruleSuggestions;
 
 function portal(options: {
   me?: MeResponse;
@@ -147,8 +157,9 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getAllByText('Sample game')).toHaveLength(2);
   expect(screen.getByText('Sat, Nov 7, 2026, in 2 days')).toBeTruthy();
   expect(screen.getByText('+10% against the same week last year (740), over all 7 days.')).toBeTruthy();
-  expect(screen.getByText('Your note: Private event, more guests than usual')).toBeTruthy();
-  expect(screen.getByText('A rehearsal dinner.')).toBeTruthy();
+  // Friday's compact entry (D49): the note's words and its kind; its detail is in the Calendar and the day detail.
+  expect(screen.getByText('Private event')).toBeTruthy();
+  expect(screen.getAllByText('Your note').length).toBeGreaterThan(0);
   expect(screen.getByText('Sat, Nov 8, 2025: 140 guests')).toBeTruthy();
   expect(screen.getByText('Sample game last year')).toBeTruthy();
   expect(screen.getByText('Sat, Nov 9, 2024: 140 guests')).toBeTruthy();
@@ -219,12 +230,12 @@ test('with history: the lead, this week with the calendar and past years, bar or
   expect(screen.getByText('Upload from a computer at townwise.tech.')).toBeTruthy();
 
   // Three reads in parallel, then the questions, the business rules, the month's forecast, Last week's forecast (D42),
-  // its people in town and the next orders on their own: the board once, for Bar order and the selected day's Reorder
-  // part (#68 review C6); no write, nothing stored.
+  // its people in town, the next orders and the location's calendars' events over the forecast's range (D49) on their
+  // own: the board once, for Bar order and the selected day's Reorder part (#68 review C6); no write, nothing stored.
   const reads = api.calls.filter((call) => call.path.startsWith(PATH)).map((call) => call.path);
   expect(reads.sort()).toEqual([
     AGENT, CALENDAR, FORECAST, `${PATH}/forecast?from=2026-10-29&to=2026-11-04`, PEOPLE, `${PATH}/notes`, `${PATH}/rules`, `${PATH}/sales/history`,
-    `${PATH}/orders`,
+    `${PATH}/orders`, `${PATH}/owner-calendars/events?from=2026-11-01&to=2026-11-30`,
   ].sort());
   expect(api.calls.filter((call) => call.method !== 'GET')).toEqual([]);
   for (const name of NO_STORE) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
@@ -235,7 +246,7 @@ test('tapping a day opens the calendar at that day', async () => {
   expect(await screen.findByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
   expect(screen.getByText('Tap a day to open it in the Calendar.')).toBeTruthy();
   expect(screen.getByRole('link', { name: 'Open the calendar' })).toBeTruthy();
-  await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. This week. Veterans Day.'));
+  await fireEvent.press(screen.getByLabelText('Wed, Nov 11, 2026. This week. No forecast. Veterans Day.'));
   expect(router.getPathname()).toBe('/locations/l1/calendar');
   expect(router.getSearchParams()).toMatchObject({ day: '2026-11-11' });
 });
@@ -244,7 +255,7 @@ test('with a published forecast, each day from today shows its figure and the le
   const days = [];
   for (let day = 5; day <= 30; day += 1) days.push(forecastDay({ date: `2026-11-${String(day).padStart(2, '0')}` }));
   await renderApp('/locations/l1', portal({ forecast: forecastOf(days) }));
-  expect(await screen.findByLabelText('Wed, Nov 11, 2026. This week. Forecast about 212 guests, 180 to 240. Veterans Day.')).toBeTruthy();
+  expect(await screen.findByLabelText('Wed, Nov 11, 2026. This week. 212 guests, forecast, likely 180 to 240. Veterans Day.')).toBeTruthy();
   expect(screen.queryByText(FORECAST_LINE)).toBeNull();
   expect(screen.queryByText('In progress')).toBeNull();
   // The selected day (today) gives its forecast.
@@ -276,6 +287,11 @@ test('the questions link counts what GET .../agent asks, and shows nothing with 
   // A question kind this client doesn't know is not counted.
   await renderApp('/locations/l1', portal({ agent: { questions: [...QUESTIONS, { id: 'later_1', kind: 'unusual_night' }], activity: [] } }));
   expect(await screen.findByRole('link', { name: '2 questions from TownwiseAI' })).toBeTruthy();
+  await cleanup();
+  // D46: suggested closure rules count too, and a weekday question from an API before them is left out.
+  const weekday = { id: 'weekday_1_2026-03-01_2026-05-31', kind: 'weekday', weekday: 1, from: '2026-03-01', to: '2026-05-31', noSalesCount: 13, weekdayCount: 13 };
+  await renderApp('/locations/l1', portal({ agent: { questions: [...QUESTIONS, weekday], activity: [], ruleSuggestions: RULE_SUGGESTIONS } }));
+  expect(await screen.findByRole('link', { name: '4 questions from TownwiseAI' })).toBeTruthy();
   await cleanup();
 
   for (const agent of [{ questions: [], activity: [] }, offline()]) {
@@ -468,4 +484,33 @@ test('with one location the loading line names the organization (D29)', async ()
   await renderApp('/locations/l1', portal({ pending: true, locations: LOCATIONS.slice(0, 1) }));
   expect(await screen.findByText('Loading Test Group')).toBeTruthy();
   expect(screen.queryByText('Loading Main Street Bar')).toBeNull();
+});
+
+// D49 (design decision 9c): the Reorder part's explanation is behind a disclosure, closed by default, opened by a tap.
+test('the day detail’s Reorder explanation opens from “How Townwise builds an order”', async () => {
+  await renderApp('/locations/l1', portal());
+  const how = await screen.findByRole('button', { name: 'How Townwise builds an order' });
+  expect(how.props.accessibilityState).toMatchObject({ expanded: false });
+  expect(screen.queryByText(REORDER_OVERVIEW)).toBeNull();
+  await fireEvent.press(how);
+  expect(screen.getByRole('button', { name: 'How Townwise builds an order' }).props.accessibilityState).toMatchObject({ expanded: true });
+  expect(screen.getByText(REORDER_OVERVIEW)).toBeTruthy();
+});
+
+test('on native too, This month marks a forecast and an actual apart, keys both, and says how the month’s forecast did (D49)', async () => {
+  const days = [forecastDay({ date: '2026-11-04', low: 90, mid: 100, high: 120, actual: 110, inRange: true, scored: true, madeAt: '2026-11-02' })];
+  for (let day = 5; day <= 30; day += 1) days.push(forecastDay({ date: `2026-11-${String(day).padStart(2, '0')}` }));
+  await renderApp('/locations/l1', portal({ forecast: forecastOf(days) }));
+  const today = await screen.findByLabelText(/^Thu, Nov 5, 2026\. Today\. This week\. 212 guests, forecast/);
+  const past = screen.getByLabelText('Wed, Nov 4, 2026. 110 guests, actual.');
+  expect(screen.getByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  const key = screen.getByTestId('month-key', { includeHiddenElements: true });
+  expect(within(key).getByText('Actual guests', { includeHiddenElements: true })).toBeTruthy();
+  expect(within(key).getByText('~82', { includeHiddenElements: true })).toBeTruthy();
+  // The forecast's figure, after its “~”, is lighter than the actual's, with “forecast” under it.
+  const colorOf = (node: { props: { style?: unknown } }): unknown => (StyleSheet.flatten(node.props.style as never) as { color?: unknown }).color;
+  expect(colorOf(within(today).getByText('~212'))).toBe(theme.color.text2);
+  expect(within(today).getByText('forecast')).toBeTruthy();
+  expect(colorOf(within(past).getByText('110'))).toBe(theme.color.white);
+  expect(within(past).queryByText('forecast')).toBeNull();
 });

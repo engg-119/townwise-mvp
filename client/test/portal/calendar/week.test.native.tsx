@@ -78,19 +78,30 @@ test('a row is one accessible element, so its hint reads its cards, a timed one�
   expect(rows[0]?.props.accessibilityHint).toBeUndefined();
 });
 
-test('each row is its head line over the day’s full cards, all day first, then by time', async () => {
+test('each row is its head line over the day’s full cards, in the entries’ order (D49)', async () => {
   await renderWeek(375);
   const saturday = screen.getAllByRole('button')[3];
   if (saturday === undefined) throw new Error('no Saturday');
   expect(within(saturday).getByText('Sat 21')).toBeTruthy();
-  expect(within(saturday).getByText('212')).toBeTruthy();
-  expect(within(saturday).getByText('180 to 240')).toBeTruthy();
+  expect(within(saturday).getByText('~212')).toBeTruthy();
+  expect(within(saturday).getByText('forecast, 180 to 240')).toBeTruthy();
   const texts = within(saturday).getAllByText(/./).map((each) => each.props.children as unknown);
-  const order = ['Dartmouth home football', '9 am to 10 am', 'Wine delivery', '6 pm to 9 pm', 'Private event, 70'].map((text) => texts.indexOf(text));
+  const order = ['6 pm to 9 pm', 'Private event, 70', 'Dartmouth home football', '9 am to 10 am', 'Wine delivery'].map((text) => texts.indexOf(text));
   expect(order.every((at) => at >= 0)).toBe(true);
   expect([...order].sort((a, b) => a - b)).toEqual(order);
   expect(within(saturday).getAllByText('Your note')).toHaveLength(1);
   expect(within(saturday).getByText('Your calendar')).toBeTruthy();
+});
+
+test('an outlook day’s row (D52): Outlook over its figure and its range, and its label says outlook', async () => {
+  const forecast = forecastOf([forecastDay({ date: SATURDAY, low: 150, mid: 212, high: 290, outlook: true })]) as ForecastWindow;
+  await renderWeek(375, jest.fn(), input({ forecast }));
+  const saturday = screen.getAllByRole('button')[3];
+  if (saturday === undefined) throw new Error('no Saturday');
+  expect(within(saturday).getByText('Outlook')).toBeTruthy();
+  expect(within(saturday).getByText('~212')).toBeTruthy();
+  expect(within(saturday).getByText('forecast, 150 to 290')).toBeTruthy();
+  expect(saturday.props.accessibilityLabel).toContain('Outlook: 212 guests, forecast, likely 150 to 290.');
 });
 
 test('a term card shows its whole title, wrapping: no text in the row is cut to a number of lines', async () => {

@@ -2,7 +2,9 @@
 // under 5 scored days, misses kept, and a week compared only when all its open days have passed. Synthetic numbers.
 import { describe, expect, it } from 'vitest';
 
-import { inRangeOf, liveAccuracy, MIN_SCORED_DAYS, scoredDay, weekActual, type ScoredDay } from '../src/forecasts/score.ts';
+import {
+  inRangeOf, liveAccuracy, MIN_SCORED_DAYS, sawDay, scoredDay, weekActual, writtenForRun, type ScoredDay,
+} from '../src/forecasts/score.ts';
 
 function open(date: string, actual: number | null): ScoredDay {
   return { date, status: 'open', low: 80, mid: 100, high: 120, actual };
@@ -63,6 +65,47 @@ describe('live accuracy', () => {
     const three = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100)];
     expect(liveAccuracy(three)).toBeNull();
     expect(three.map(scoredDay)).toEqual([true, true, true]);
+  });
+
+  it('never scores a day its run could have known (D49 as amended): a late day is left out, whenever the run was made', () => {
+    const days = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100), open('2026-05-04', 100), open('2026-05-05', 100)];
+    const late: ScoredDay = { ...open('2026-05-06', 100), late: true };
+    expect(scoredDay(late)).toBe(false);
+    expect(scoredDay({ ...late, late: false })).toBe(true);
+    expect(liveAccuracy([...days, late])).toMatchObject({ days: 5, to: '2026-05-05' });
+    expect(liveAccuracy([...days.slice(1), late])).toBeNull();
+  });
+
+  it('a run saw a day only when its data reaches it: dataThrough on or after the day, never its made-at day', () => {
+    const run = { dataThrough: '2026-10-21', madeAt: '2026-11-17' };
+    // Sawtooth uploads in arrears: made Nov 17 from sales through Oct 21, it never saw Oct 22 on.
+    expect(['2026-10-20', '2026-10-21', '2026-10-22', '2026-11-16'].map((date) => sawDay(run, date))).toEqual([true, true, false, false]);
+  });
+
+  it('a note written once the day began, by the time its run was made, may have fed the run; one before or after may not', () => {
+    const run = { madeAt: '2026-11-17' };
+    const at = (iso: string): Date => new Date(iso);
+    // Written on Oct 25 (UTC) or later, about Oct 25, by the day after the run was made: the run could have read it.
+    expect(writtenForRun(run, '2026-10-25', at('2026-10-25T15:00:00.000Z'))).toBe(true);
+    expect(writtenForRun(run, '2026-10-25', at('2026-11-10T15:00:00.000Z'))).toBe(true);
+    // Late on the made-at day in Hanover is the next day in UTC: it still counts.
+    expect(writtenForRun(run, '2026-10-25', at('2026-11-18T03:30:00.000Z'))).toBe(true);
+    // Before the day began, or once the run had been made: no.
+    expect(writtenForRun(run, '2026-10-25', at('2026-10-24T15:00:00.000Z'))).toBe(false);
+    expect(writtenForRun(run, '2026-10-25', at('2026-11-19T15:00:00.000Z'))).toBe(false);
+    // A run made before the day could not have read anything written on it.
+    expect(writtenForRun({ madeAt: '2026-10-20' }, '2026-10-25', at('2026-10-25T15:00:00.000Z'))).toBe(false);
+  });
+
+  it('outlook days are not scored (D52): a stale run’s outlook day keeps its actual but no accuracy counts it', () => {
+    const days = [open('2026-05-01', 100), open('2026-05-02', 100), open('2026-05-03', 100), open('2026-05-04', 100), open('2026-05-05', 110)];
+    const outlook: ScoredDay = { ...open('2026-05-06', 300), outlook: true };
+    expect(scoredDay(outlook)).toBe(false);
+    expect(scoredDay({ ...outlook, outlook: false })).toBe(true);
+    expect(liveAccuracy([...days, outlook])).toEqual(liveAccuracy(days));
+    expect(liveAccuracy([outlook, outlook, outlook, outlook, outlook])).toBeNull();
+    // A 91-day run's days carry no outlook, so its accuracy is today's.
+    expect(liveAccuracy(days.map((day) => ({ ...day, outlook: false })))).toEqual(liveAccuracy(days));
   });
 
   it('counts a day in range at either end of it', () => {

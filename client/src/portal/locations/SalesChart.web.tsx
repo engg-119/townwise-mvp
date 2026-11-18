@@ -78,7 +78,8 @@ export function SalesChart(props: SalesChartProps): React.JSX.Element | null {
         {at === null ? null : (
           <ChartTooltip
             tip={{ title: shortDate(at.date), lines: [at.value === null ? 'No data' : metricText(at.value, props.series)] }}
-            x={(at.x / WIDTH) * hover.width}
+            from={(at.x / WIDTH) * hover.width}
+            to={(at.x / WIDTH) * hover.width}
             alignRight={at.x > WIDTH / 2}
           />
         )}

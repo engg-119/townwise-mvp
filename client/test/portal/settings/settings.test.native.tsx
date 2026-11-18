@@ -176,7 +176,7 @@ describe('P18 Settings: an org admin', () => {
     expect(screen.getByLabelText('Name').props.value).toBe('Test Group');
     expect(screen.getByText('Your team sees this name at the top of every page. Townwise staff see it in the staff console.')).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Save name' })).toBeTruthy();
-    expect(screen.getByText(/Rename one or change its town from Location settings on that location’s page\./)).toBeTruthy();
+    expect(screen.getByText(/Rename one or change its town from Location settings, under More\./)).toBeTruthy();
   });
 
   test('with one location, Add location opens Add location, since Locations opens that location’s Home', async () => {
@@ -240,9 +240,10 @@ describe('P18 Settings: an org admin', () => {
     await waitFor(() => { expect(screen.queryByText('Test Group')).toBeNull(); });
     expect(screen.getAllByText('Harbor Group').length).toBeGreaterThanOrEqual(3);
     expect(api.calls.filter((call) => call.path === '/api/me').length).toBe(reads + 1);
-    // Editing again clears the notice.
+    // Editing again shows no second notice: the one toast is still up and leaves by itself (D55).
     await fireEvent.changeText(screen.getByLabelText('Name'), 'Harbor Group 2');
-    expect(screen.queryByText('Saved.')).toBeNull();
+    expect(screen.getAllByText('Saved.')).toHaveLength(1);
+    expect(screen.getAllByTestId('toast')).toHaveLength(1);
   });
 
   test('a save Townwise refuses shows the shared copy, and Try again saves', async () => {

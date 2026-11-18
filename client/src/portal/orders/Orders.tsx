@@ -17,6 +17,7 @@ import { Heading, Small } from '../ui/text';
 import { dayInOrder, orderCoverSentence, orderForDay, REORDER_OVERVIEW } from '../home/beside';
 import { fetchOrderBoard, type LiveBoard, type OrderBoard, type OrderLine, type SupplierOrder } from './api';
 import { CountForm } from './CountForm';
+import { CoverChart } from './CoverChart';
 import { LineEditor } from './LineEditor';
 import { amount, orderQuantity } from './words';
 
@@ -73,8 +74,9 @@ export function Orders(): React.JSX.Element {
   const { location } = useLocation();
   const { readOnly, line: readOnlyLine } = useReadOnly();
   const [preview, setPreview] = useState(false);
-  // Held here, so the line outlives the board's reload after the count.
-  const [counted, setCounted] = useState<number | null>(null);
+  // Held here, so the notice outlives the board's reload after the count. One object per count: it is the notice's
+  // `result`, so each count toasts once, however often the board mounts again.
+  const [counted, setCounted] = useState<{ items: number } | null>(null);
   const load = useCallback(
     () => fetchOrderBoard(api, location.id, preview),
     [api, location.id, preview],
@@ -101,7 +103,7 @@ export function Orders(): React.JSX.Element {
           counted={counted}
           onPreview={() => { setPreview(true); }}
           onSaved={() => { setCounted(null); board.reload(); }}
-          onCounted={(itemCount) => { setCounted(itemCount); board.reload(); }}
+          onCounted={(itemCount) => { setCounted({ items: itemCount }); board.reload(); }}
         />
       ) : (
         <View style={styles.stack}>
@@ -137,7 +139,7 @@ function Board(props: {
   preview: boolean;
   readOnly: boolean;
   readOnlyId: string | null;
-  counted: number | null;
+  counted: { items: number } | null;
   onPreview: () => void;
   onSaved: () => void;
   onCounted: (itemCount: number) => void;
@@ -147,7 +149,7 @@ function Board(props: {
   const described = props.readOnlyId === null ? {} : { describedBy: props.readOnlyId };
   return (
     <View style={styles.stack}>
-      {counted === null ? null : <Notice text={`Saved today’s count for ${plural(counted, 'item', 'items')}.`} />}
+      {counted === null ? null : <Notice text={`Saved today’s count for ${plural(counted.items, 'item', 'items')}.`} result={counted} />}
       {data.sample ? (
         <Small>Sample bar. These lines are not {props.locationName}’s stock, and nothing here can be saved.</Small>
       ) : null}
@@ -179,6 +181,7 @@ function Board(props: {
           <Heading>{order.supplier}</Heading>
           <Small white>{order.deadline}</Small>
           <DataTable label={`${order.supplier} order`} columns={COLUMNS} rows={rows(order, props.locationId)} />
+          <CoverChart order={order} />
           {data.sample ? null : (
             <Actions>
               <LinkButton

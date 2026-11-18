@@ -56,7 +56,7 @@ describe('storing a connection', () => {
     const stored = await connect(scope, 'user-0001');
     expect(stored).toEqual({
       id: expect.any(String) as string, userId: 'user-0001', scopes: SCOPES, agreedAt: now, connectedAt: now, updatedAt: now, revokedAt: null,
-      checkAt: new Date(now.getTime() + CHECK_INTERVAL_MS), leaseUntil: null,
+      checkAt: new Date(now.getTime() + CHECK_INTERVAL_MS), leaseUntil: null, titlesNotice: false,
     });
     expect(CHECK_INTERVAL_MS).toBe(24 * 60 * MINUTE);
     expect(await connections.find(scope, stored.id)).toEqual(stored);
@@ -87,6 +87,20 @@ describe('storing a connection', () => {
     });
     expect(await connections.sealedToken(scope, first.id)).toBe(RESEALED);
     expect(await rows({ orgId: new Types.ObjectId(orgId) })).toHaveLength(1);
+  });
+
+  it('records the weekly titles notice when a connect carries it, and nothing but a connect that carries it sets it', async () => {
+    const { scope } = await orgScope();
+    const first = await connect(scope, 'user-0001');
+    expect(first.titlesNotice).toBe(false);
+    const noticed = await connections.upsert(scope, 'user-0001', { sealedRefreshToken: RESEALED, scopes: SCOPES, now: server.clock.now(), titlesNotice: true });
+    expect(noticed?.titlesNotice).toBe(true);
+    expect((await connections.upsert(scope, 'user-0001', { sealedRefreshToken: null, scopes: SCOPES, now: server.clock.now() }))?.titlesNotice).toBe(true);
+    expect(await connections.replaceToken(scope, first.id, SEALED, server.clock.now())).toBe(true);
+    expect(await connections.markRevoked(scope, first.id, server.clock.now())).toBe(true);
+    expect((await connections.find(scope, first.id))?.titlesNotice).toBe(true);
+    const fresh = await connections.upsert(scope, 'user-0002', { sealedRefreshToken: SEALED, scopes: SCOPES, now: server.clock.now(), titlesNotice: true });
+    expect(fresh?.titlesNotice).toBe(true);
   });
 
   it('a null token keeps the stored one and updates only a row that is there', async () => {

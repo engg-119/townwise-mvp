@@ -11,7 +11,7 @@ import { MONTH_NAMES } from '../analytics/words';
 import { hasCode } from '../errors';
 import { fetchForecast } from '../estimates/api';
 import { useAction, useBreakpoint, useLoad } from '../hooks';
-import { createNote, deleteNote, fetchNotes, fetchSalesDays, updateNote, type Note, type NoteInput } from '../locations/api';
+import { createNote, deleteNote, fetchNotes, fetchSalesDays, updateNote, type NewNoteInput, type Note, type NoteInput } from '../locations/api';
 import { addDays, localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
 import { NoteForm } from '../locations/NoteForm';
@@ -23,8 +23,9 @@ import { fetchRules } from '../rules/api';
 import { useLocation } from '../shell/LocationShell';
 import { CalendarSkeleton } from '../skeleton';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { ErrorNotice, Notice } from '../ui/feedback';
+import { ErrorNotice, InlineNotice } from '../ui/feedback';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
+import { Small } from '../ui/text';
 import { Popover, type PopoverAnchor, type PopoverProps } from '../ui/Popover';
 import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
@@ -35,10 +36,11 @@ import {
 } from './grid';
 import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
-  ALL_FILTERS, dayView, monthBounds, monthLabel, savedNotice, selectedDay, stepMonth, tooltipLines,
+  ALL_FILTERS, dayView, monthBounds, monthCheckLine, monthLabel, outlookKey, savedNotice, selectedDay, stepMonth, tooltipLines,
   type CalendarInput, type FilterKey, type Filters, type ImportedEvent,
 } from './model';
 import { YourCalendars } from './YourCalendars';
+import { FigureKey } from './FigureKey';
 
 // P28 Calendar (/locations/[locationId]/calendar, members; spec 16.3, D30): a month grid of 6 weeks (grid.ts), each
 // day with the published forecast's guests, what drives each day, and the location's notes, which a member adds,
@@ -72,7 +74,9 @@ import { YourCalendars } from './YourCalendars';
 // and 17, D33, D39) are kept by the API, each an imported .ics file, a link or a Google calendar, and their events show
 // as "Your calendar" on web and native; after one is added the list and the range's stored events read again (never
 // the forecast: stored events change it only through notes), and "Your calendar" turns on. Make a note opens the form from one of their
-// events with its dates and hours but never its title; it is disabled under view-as. "Today" is the device's date.
+// events with its dates and hours but never its title, and the saved note is linked to that event by its calendar id and
+// uid (calendar-event-suggestions), so the day panel says "Made from a calendar event" on it; it is disabled under view-as.
+// "Today" is the device's date.
 
 const READ_ONLY_ID = 'calendar-ro';
 /** The grid's slot: on web, focus that was on a cell the last render removed goes to the selected cell. */
@@ -84,9 +88,10 @@ const sticky = (Platform.OS === 'web' ? { position: 'sticky', top: 16 } : {}) as
 
 /**
  * A new note's `source` keys its form, so the form starts again from each stored event (`{calendarId}:{uid}`); 'add' is
- * Add an event's.
+ * Add an event's. A note made from a stored event sends that event's `fromEvent` with it, so the API links the note
+ * to the event (calendar-event-suggestions).
  */
-type FormState = { mode: 'new'; draft: NoteDraft; source: string } | { mode: 'edit'; note: Note } | null;
+type FormState = { mode: 'new'; draft: NoteDraft; source: string; fromEvent?: NonNullable<NewNoteInput['fromEvent']> } | { mode: 'edit'; note: Note } | null;
 
 /** The note form popover's heading, which names it: by the button that opened it. */
 function formLabel(form: NonNullable<FormState>): string {
@@ -139,7 +144,7 @@ function sameRange(read: DateRange | undefined, range: DateRange): boolean {
 }
 
 /** The panel's notice: words, or the note just saved, whose notice waits for the forecast read again (savedNotice). */
-type PanelNotice = string | { savedId: string } | null;
+type PanelNotice = { text: string; stays?: true } | { savedId: string } | null;
 
 /**
  * The note form's popover. It sits with the day panel inside a MessageFocus of their own, so once it has gone with its
@@ -258,6 +263,9 @@ function CalendarView(): React.JSX.Element {
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
   const week = useMemo(() => (input === null || view !== 'week' ? [] : buildWeek(selected, today, input, bounds)), [input, view, selected, today, bounds]);
+  // The key line under the grid while a shown day is an outlook day (D52).
+  const outlook = useMemo(() => outlookKey((view === 'week' ? week : rows.flat())
+    .flatMap((slot) => (slot.kind === 'day' && !slot.pending && !slot.outside ? [slot] : []))), [view, week, rows]);
   // The days the kept reads cover: their own range, which lags the shown one while a new range reads.
   const covered = input?.covered ?? null;
   const covers = useCallback((date: string) => covered !== null && date >= covered.from && date <= covered.to, [covered]);
@@ -286,15 +294,18 @@ function CalendarView(): React.JSX.Element {
   const gone = useCallback((text: string) => {
     setForm(null);
     setDeleting(null);
-    setNotice(text);
+    // The note is gone and the write did not happen: that stays in the panel, never a toast.
+    setNotice({ text, stays: true });
     reloadDay();
   }, [reloadDay]);
 
   const editing = form?.mode === 'edit' ? form.note : null;
+  const fromEvent = form?.mode === 'new' ? form.fromEvent : undefined;
   const save = useCallback(async (body: NoteInput): Promise<Note | null> => {
     setSaving(true);
     try {
-      return editing === null ? await createNote(api, location.id, body) : await updateNote(api, location.id, editing.id, body);
+      if (editing === null) return await createNote(api, location.id, fromEvent === undefined ? body : { ...body, fromEvent });
+      return await updateNote(api, location.id, editing.id, body);
     } catch (error) {
       if (!hasCode(error, 404, 'not_found')) throw error;
       // The note's Edit goes with it once the notes read again.
@@ -304,7 +315,7 @@ function CalendarView(): React.JSX.Element {
     } finally {
       setSaving(false);
     }
-  }, [api, location.id, editing, gone]);
+  }, [api, location.id, editing, fromEvent, gone]);
 
   const onSaved = useCallback((note: Note) => {
     // An edit that moved the note off the selected day: its Edit goes once the notes read again.
@@ -323,7 +334,7 @@ function CalendarView(): React.JSX.Element {
     }
     setDeleting(null);
     if (editing?.id === note.id) setForm(null);
-    setNotice('Deleted the note.');
+    setNotice({ text: 'Deleted the note.' });
     reloadDay();
   }, [api, location.id, editing, gone, reloadDay]));
 
@@ -351,6 +362,8 @@ function CalendarView(): React.JSX.Element {
   const toggle = useCallback((key: FilterKey) => { setFilters((current) => ({ ...current, [key]: !current[key] })); }, []);
   // None over a pending day: the kept reads would word it from reads that don't cover it.
   const tooltip = useCallback((date: string) => (input === null || !covers(date) ? null : tooltipLines(date, input)), [input, covers]);
+  // How the month's forecast did (D49, design decision 11): the month view only, from the forecast read it already has.
+  const monthLine = useMemo(() => (input === null || view === 'week' ? null : monthCheckLine(month, input)), [input, view, month]);
 
   const failure = notes.error ?? monthData.error;
   if (failure !== null) {
@@ -364,7 +377,7 @@ function CalendarView(): React.JSX.Element {
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const busy = monthData.busy || notes.busy || forecast.busy || !sameRange(shown.range, range);
   // After a save the forecast reads again; until it answers, the old read can't say what the note did.
-  const noticeText = notice === null || typeof notice === 'string' ? notice
+  const noticeText = notice === null ? null : 'text' in notice ? notice.text
     : forecast.busy || !sameRange(input.covered, range) ? 'Saved.' : savedNotice(selected, input, notice.savedId);
   const unpublished = forecastWindow !== null && !forecastWindow.available && forecastWindow.reason === 'no_published_forecast';
   // The week view's Previous and Next move the day a week, disabled in place once that block is past the 25 months;
@@ -412,7 +425,10 @@ function CalendarView(): React.JSX.Element {
         view={dayPanel}
         locationName={locationName}
         rulesHref={locationHref(location.id, 'rules')}
+        locationId={location.id}
         notice={noticeText}
+        noticeResult={notice}
+        noticeStays={notice !== null && 'stays' in notice}
         readOnlyId={readOnlyId}
         readOnlyText={line}
         onAdd={(pressed) => {
@@ -421,7 +437,10 @@ function CalendarView(): React.JSX.Element {
         onEdit={(note, pressed) => { openForm({ mode: 'edit', note }, pressed); }}
         onDelete={(note) => { setStaleError(remove.error); setDeleting(note); }}
         onMakeNote={(event: ImportedEvent, pressed) => {
-          openForm({ mode: 'new', draft: draftOfImported(event), source: `${event.calendarId}:${event.uid}` }, pressed);
+          openForm({
+            mode: 'new', draft: draftOfImported(event), source: `${event.calendarId}:${event.uid}`,
+            fromEvent: { calendarId: event.calendarId, uid: event.uid },
+          }, pressed);
         }}
       />
       <NotePopover
@@ -446,7 +465,7 @@ function CalendarView(): React.JSX.Element {
   return (
     <View style={styles.page}>
       {unpublished ? (
-        <Notice
+        <InlineNotice
           text={`Townwise hasn’t published a forecast for ${locationName} yet. Days show your history, your notes and ${location.town.name}’s calendar. Notes you add now count as soon as a forecast is published.`}
         />
       ) : null}
@@ -501,6 +520,9 @@ function CalendarView(): React.JSX.Element {
               />
             )}
           </View>
+          <FigureKey />
+          {monthLine === null ? null : <Small>{monthLine}</Small>}
+          {outlook === null ? null : <Small>{outlook}</Small>}
         </View>
         {phone ? filtersNode : null}
         <View style={desktop ? [styles.narrow, sticky] : null}>{panel}</View>

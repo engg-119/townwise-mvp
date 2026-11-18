@@ -5,8 +5,9 @@ import { shortDate } from '../analytics/words';
 import { formatDate } from '../format';
 import { addDays, daysBetween, monthRange } from '../locations/dates';
 import { hoursLine } from '../locations/noteRules';
+import { compactEntries, dayEntries, type DayEntry } from './entries';
 import {
-  dayCell, dayView, eventsOn, noteChip, rangeWords, stepMonth, type CalendarCell, type CalendarDayView, type CalendarInput, type monthBounds,
+  captionOf, dayCell, dayView, rangeWords, stepMonth, type CalendarCell, type CalendarInput, type monthBounds,
 } from './model';
 
 // The Calendar's grid (P28, spec 16.3), pure: the one place that says which dates a month view and a week view show
@@ -183,63 +184,53 @@ export function buildGrid(month: string, input: CalendarInput, bounds: MonthBoun
 /** What a week card is: a holiday, town event, term or season, a note, a business rule, or an imported event. */
 export type WeekCardKind = TownEvent['kind'] | 'note' | 'rule' | 'imported';
 
-/** One item of a day in the week view: every item gets a card, all-day ones first (weekCards). */
+/** One entry of a day in the week view: every compact entry gets a card, in the entries' order (weekCards). */
 export interface WeekCard {
   key: string;
   kind: WeekCardKind;
   /** “9 am to 10 am” on a timed item; null all day. */
   hours: string | null;
-  /** A note's chip words, a rule's text, an event's title, in full. */
+  /** A note's title or chip words, a rule's text, an event's title, in full. */
   title: string;
   /** The kind words (“Town event”, “Federal holiday”, “Your note”, “Your calendar”, a rule's schedule summary), with a multi-day item's span. */
   sub: string;
 }
 
-/** A day of the week view: the month cell's words, its cards, and its head's range, or “No forecast” once the read answered without it. */
+/** A day of the week view: the month cell's words, its cards, and its head's range. */
 export interface WeekDay extends DayCell {
   cards: WeekCard[];
   /** “180 to 240” on an open forecast day, as the tooltip's parenthesis and the panel's “Likely 180 to 240” word it. */
   range: string | null;
-  /** The forecast read answered and doesn't cover the day; false while it loads or after a failure. */
-  noForecast: boolean;
 }
 
 export type WeekSlot = WeekDay | InertCell;
-
-/** All-day cards in this order; then the timed ones by start time, end time and title. */
-const ALL_DAY_ORDER: Readonly<Record<WeekCardKind, number>> = { holiday: 0, event: 1, note: 2, rule: 3, imported: 4, term: 5, season: 6 };
 
 function withSpan(words: string, start: string, end: string | null): string {
   return end === null || end === start ? words : `${words}, ${dayMonthRange(start, end)}`;
 }
 
-interface Timed extends WeekCard { start: string; end: string }
+/** A card of one entry (entries.ts): its words in full, its kind words and span, and its hours when timed. */
+function cardOf(entry: DayEntry): WeekCard {
+  const card = { key: entry.key, title: entry.words };
+  switch (entry.kind) {
+    case 'note': return { ...card, kind: 'note', hours: hoursLine(entry.note), sub: withSpan('Your note', entry.note.startDate, entry.note.endDate) };
+    // A rule's end date may be null, so its schedule summary says when it runs rather than a span.
+    case 'rule': return { ...card, kind: 'rule', hours: hoursLine(entry.rule.schedule ?? {}), sub: entry.rule.scheduleSummary ?? 'Your rule' };
+    case 'imported': return { ...card, kind: 'imported', hours: hoursLine(entry.imported), sub: withSpan('Your calendar', entry.imported.startDate, entry.imported.endDate) };
+    default: {
+      const { event } = entry;
+      return { ...card, kind: event.kind, hours: null, sub: withSpan(event.kind === 'holiday' && event.scope === 'national' ? 'Federal holiday' : EVENT_WORDS[event.kind], event.start, event.end) };
+    }
+  }
+}
 
 /**
- * The day's cards. Events come from eventsOn, not the panel's list, which leaves out the holidays and town events Why
- * names: those are what move the forecast. Notes, rules (whatever the filters) and imported events are the panel's.
+ * The day's cards: every compact entry (entries.ts, D49) in the one order, each title once across sources, with terms
+ * and seasons last. Events come from the full list, not the panel's, which leaves out the holidays and town events Why
+ * names: those are what move the forecast.
  */
-function weekCards(date: string, input: CalendarInput, view: CalendarDayView): WeekCard[] {
-  const timed = (card: WeekCard, times: { startTime?: string | null | undefined; endTime?: string | null | undefined }): WeekCard | Timed => {
-    const hours = hoursLine(times);
-    return hours === null ? card : { ...card, hours, start: times.startTime ?? '', end: times.endTime ?? '' };
-  };
-  const cards: (WeekCard | Timed)[] = [
-    ...eventsOn(date, input).map((event, at): WeekCard => ({
-      key: `event:${String(at)}:${event.id}`, kind: event.kind, hours: null, title: event.title,
-      sub: withSpan(event.kind === 'holiday' && event.scope === 'national' ? 'Federal holiday' : EVENT_WORDS[event.kind], event.start, event.end),
-    })),
-    ...view.notes.map((note) => timed({ key: `note:${note.id}`, kind: 'note', hours: null, title: noteChip(note), sub: withSpan('Your note', note.startDate, note.endDate) }, note)),
-    // A rule's end date may be null, so its schedule summary says when it runs rather than a span.
-    ...view.rules.map((rule) => timed({ key: `rule:${rule.id}`, kind: 'rule', hours: null, title: rule.text, sub: rule.scheduleSummary ?? 'Your rule' }, rule.schedule ?? {})),
-    ...view.imported.map((event, at) => timed({
-      key: `imported:${String(at)}:${event.uid}`, kind: 'imported', hours: null, title: event.title, sub: withSpan('Your calendar', event.startDate, event.endDate),
-    }, event)),
-  ];
-  const allDay = cards.filter((card) => !('start' in card)).sort((a, b) => ALL_DAY_ORDER[a.kind] - ALL_DAY_ORDER[b.kind]);
-  const byTime = cards.filter((card): card is Timed => 'start' in card)
-    .sort((a, b) => a.start.localeCompare(b.start) || a.end.localeCompare(b.end) || a.title.localeCompare(b.title));
-  return [...allDay, ...byTime].map(({ key, kind, hours, title, sub }) => ({ key, kind, hours, title, sub }));
+function weekCards(date: string, input: CalendarInput): WeekCard[] {
+  return compactEntries(dayEntries(date, input, { periods: true })).map(cardOf);
 }
 
 /** A card's 2px left rule, a theme token: a holiday or town event `white`, a note or rule `text2`, an imported event `mint`, a period `line`. */
@@ -272,11 +263,15 @@ export function weekHead(date: string): string {
   return `${shortDate(date).slice(0, 3)} ${day === 1 ? formatDate(date).replace(/, \d{4}$/, '') : String(day)}`;
 }
 
-/** The head's last line: the range, “guests” under a past figure, “No forecast” once the read answered without it, or nothing. */
-export function headLine(day: Pick<WeekDay, 'range' | 'figure' | 'noForecast'>): string | null {
-  if (day.range !== null) return day.range;
-  if (day.figure?.kind === 'actual') return 'guests';
-  return day.noForecast ? 'No forecast' : null;
+/**
+ * The head's last line under a forecast's figure: “forecast”, with the range when the day has one (“forecast, 180 to
+ * 240”); nothing under an actual (D49, design decision 10). A day the forecast read doesn't cover says so in its status
+ * word (“No forecast”).
+ */
+export function headLine(day: Pick<WeekDay, 'range' | 'figure'>): string | null {
+  const tag = captionOf(day);
+  if (tag === null) return null;
+  return day.range === null ? tag : `${tag}, ${day.range}`;
 }
 
 /**
@@ -288,12 +283,10 @@ export function buildWeek(selected: string, today: string, input: CalendarInput,
   return weekDays(weekStartFor(selected, today)).map((date): WeekSlot => {
     const slot = slotFor(date, null, input, bounds);
     if (slot.kind === 'inert') return slot;
-    if (slot.pending) return { ...slot, cards: [], range: null, noForecast: false };
-    const view = dayView(date, input);
-    const { forecast } = view;
+    if (slot.pending) return { ...slot, cards: [], range: null };
+    const { forecast } = dayView(date, input);
     return {
-      ...slot, cards: weekCards(date, input, view), range: forecast.kind === 'open' ? rangeWords(forecast.low, forecast.high) : null,
-      noForecast: forecast.kind === 'none' && forecast.why === 'not_covered',
+      ...slot, cards: weekCards(date, input), range: forecast.kind === 'open' ? rangeWords(forecast.low, forecast.high) : null,
     };
   });
 }

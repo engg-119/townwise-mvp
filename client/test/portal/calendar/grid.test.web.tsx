@@ -134,7 +134,29 @@ test('at 1280 the grid is 42 days, each 104px tall, with the days either side ma
   expect(rowsOf('2026-12-03')[0]?.firstElementChild?.getAttribute('style')).toContain(`color: ${C.text3}`);
   expect(cell('2026-11-20').style.backgroundColor).toBe(C.raised);
   // Its label starts with the full date.
-  expect(cell('2026-12-03').getAttribute('aria-label')).toBe('Thu, Dec 3, 2026. Tree lighting.');
+  expect(cell('2026-12-03').getAttribute('aria-label')).toBe('Thu, Dec 3, 2026. No forecast. Tree lighting.');
+});
+
+test('a past day shows its data over its forecast, its forecast with no data, and “No data” with neither (owner request, 2026-11-17)', () => {
+  const reads = input({
+    forecast: forecastOf([
+      forecastDay({ date: '2026-11-02', status: 'closed', low: null, mid: null, high: null }),
+      forecastDay({ date: '2026-11-03', low: 80, mid: 90.4, high: 110 }),
+      forecastDay({ date: '2026-10-31', low: 80, mid: 90, high: 110 }),
+    ]) as ForecastWindow,
+  });
+  renderGrid({ reads });
+  // Oct 31 has stored guests: they win over the run's 90.
+  expect(cell('2026-10-31').textContent).toContain('140');
+  expect(cell('2026-10-31').textContent).not.toContain('90');
+  // Nov 3: no stored guests, so the run's figure, captioned “forecast”.
+  expect(cell('2026-11-03').textContent).toContain('90');
+  expect(cell('2026-11-03').textContent).toContain('forecast');
+  // Nov 2: the run had it closed.
+  expect(cell('2026-11-02').textContent).toContain('Closed');
+  // Nov 4: neither.
+  expect(cell('2026-11-04').textContent).toContain('No');
+  expect(cell('2026-11-04').getAttribute('aria-label')).toBe('Wed, Nov 4, 2026. No data.');
 });
 
 test('clicking a trailing day selects it, and the selected outside day is outlined mint', () => {
@@ -151,11 +173,12 @@ test('clicking a trailing day selects it, and the selected outside day is outlin
 test('three entries show as three lines; four show the first two and “+2 more”', () => {
   renderGrid();
   const three = rowsOf('2026-11-21')[2];
-  expect([...(three?.children ?? [])].map((line) => line.textContent)).toEqual(['Dartmouth home football', 'Private event, 70', 'Wine delivery']);
+  // Notes first (D49).
+  expect([...(three?.children ?? [])].map((line) => line.textContent)).toEqual(['Private event, 70', 'Dartmouth home football', 'Wine delivery']);
   const four = rowsOf('2026-11-22')[2];
-  expect([...(four?.children ?? [])].map((line) => line.textContent)).toEqual(['Craft fair', 'Choir concert', '+2 more']);
+  expect([...(four?.children ?? [])].map((line) => line.textContent)).toEqual(['Other', 'Craft fair', '+2 more']);
   // The figure sits centered in the middle row with the notes' guests inline.
-  expect(rowsOf('2026-11-21')[1]?.textContent).toBe('282+70');
+  expect(rowsOf('2026-11-21')[1]?.textContent).toBe('~282+70');
 });
 
 test('a likely-closed day shows its status word where the figure goes, and no figure', () => {
@@ -166,9 +189,9 @@ test('a likely-closed day shows its status word where the figure goes, and no fi
   expect(cell('2026-11-07').textContent).toBe('7Likely closed');
   // A booked day says so in its top row, over its party.
   expect(rowsOf('2026-11-14')[0]?.textContent).toBe('14Booked');
-  expect(rowsOf('2026-11-14')[1]?.textContent).toBe('70');
+  expect(rowsOf('2026-11-14')[1]?.textContent).toBe('~70');
   // A past figure says “guests” in the top row.
-  expect(rowsOf('2026-10-31')[0]?.textContent).toBe('31guests');
+  expect(rowsOf('2026-10-31')[0]?.textContent).toBe('31');
 });
 
 test('today keeps its own number style in a trailing cell', () => {
@@ -191,7 +214,7 @@ test('at 800 cells are 64px with corner marks and no entry lines', () => {
   const { grid } = renderGrid();
   const cells = [...grid.querySelectorAll<HTMLElement>('[role="gridcell"][data-date]')];
   expect(new Set(cells.map((each) => each.style.height))).toEqual(new Set(['64px']));
-  expect(cell('2026-11-21').textContent).toBe('21282+70');
+  expect(cell('2026-11-21').textContent).toBe('21forecast~282+70');
   expect(cell('2026-11-21').textContent).not.toContain('Dartmouth home football');
   expect(marks('2026-11-21')).toBe(3);
   // The status word takes two lines where the figure goes; a booked day keeps BOOKED in its top row.
@@ -206,7 +229,7 @@ test('at 375 cells are 52px, every status takes the figure’s place, and “+70
   expect(new Set(cells.map((each) => each.style.height))).toEqual(new Set(['52px']));
   expect(rowsOf('2026-11-14').map((part) => part.textContent)).toEqual(['14', 'Booked']);
   expect(rowsOf('2026-11-07').map((part) => part.textContent)).toEqual(['7', 'Likely closed']);
-  expect(rowsOf('2026-11-21').map((part) => part.textContent)).toEqual(['21', '282']);
+  expect(rowsOf('2026-11-21').map((part) => part.textContent)).toEqual(['21', '~282']);
   expect(rowsOf('2026-10-31').map((part) => part.textContent)).toEqual(['31', '140']);
   expect(grid.textContent).not.toContain('+70');
   expect(grid.textContent).not.toContain('guests');
@@ -278,4 +301,30 @@ test('after a key move the new cell has focus and is the one tab stop', () => {
   expect(cell('2026-11-19').getAttribute('tabindex')).toBe('0');
   fireEvent.keyDown(cell('2026-11-19'), { key: 'Home', ctrlKey: true });
   expect(document.activeElement).toBe(cell('2026-11-01'));
+});
+
+test('a forecast’s figure is lighter after a “~” with “forecast” beside it, today, ahead or past; an actual is solid and plain (D49)', () => {
+  const reads = input({
+    forecast: forecastOf([
+      forecastDay({ date: TODAY, low: 180, mid: 212, high: 240 }), forecastDay({ date: '2026-11-21', low: 250, mid: 282, high: 310 }),
+      forecastDay({ date: '2026-11-03', low: 80, mid: 90, high: 110 }),
+    ]) as ForecastWindow,
+  });
+  renderGrid({ reads });
+  const figure = (date: string): HTMLElement | null => cell(date).querySelector<HTMLElement>('[data-figure]');
+  for (const [date, text] of [[TODAY, '~212'], ['2026-11-21', '~282'], ['2026-11-03', '~90']] as const) {
+    expect({ date, kind: figure(date)?.getAttribute('data-figure'), text: figure(date)?.textContent, color: figure(date)?.style.color })
+      .toEqual({ date, kind: 'forecast', text, color: figure('2026-11-03')?.style.color });
+    expect(rowsOf(date)[0]?.textContent).toMatch(/forecast$/);
+  }
+  expect(figure(TODAY)?.style.color).not.toBe(figure('2026-10-31')?.style.color);
+  expect({ kind: figure('2026-10-31')?.getAttribute('data-figure'), text: figure('2026-10-31')?.textContent, top: rowsOf('2026-10-31')[0]?.textContent })
+    .toEqual({ kind: 'actual', text: '140', top: '31' });
+  expect(cell(TODAY).getAttribute('aria-label')).toContain('212 guests, forecast');
+  expect(cell('2026-11-03').getAttribute('aria-label')).toContain('No data. 90 guests, forecast');
+  expect(cell('2026-10-31').getAttribute('aria-label')).toContain('140 guests, actual');
+  // A phone cell has no room for the word, so the “~” carries it.
+  setWidth(375);
+  expect(figure('2026-11-21')?.textContent).toBe('~282');
+  expect(figure('2026-10-31')?.textContent).toBe('140');
 });

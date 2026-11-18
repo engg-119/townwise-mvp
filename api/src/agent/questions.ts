@@ -6,11 +6,12 @@
 // - The window is the last 365 days of coverage, from max(first day, last day - 364) to the last day with sales.
 //   Questions look only from the first day with sales in the window: before it the window holds no data at all. The
 //   days read reach 56 days further back, so each day in the window has its 8 same weekdays before it (spec D32).
-// - A weekday question asks "closed on Mondays?" when at least 60% of that weekday's counted days have no sales and
-//   are not explained (by a closure note, or by an earlier answer), with at least 4 counted days. A day counts only
-//   when its week (Monday to Sunday) has sales on another day, so a week with no data at all, a long hole in the data
-//   or a seasonal closure, never makes a weekday look closed. The question runs from the first day with sales. Its
-//   counts are its evidence.
+// - D46: a weekday is usually closed when at least 60% of its counted days have no sales, with at least 4 counted days.
+//   A day counts only when its week (Monday to Sunday) has sales on another day, so a week with no data at all, a long
+//   hole in the data or a seasonal closure, never makes a weekday look closed. It is no longer asked as a question:
+//   weekdayEvidence adds a recency bar (its last 4 counted days have no sales) and salesSuggestionsFor makes it a
+//   suggested standing closure rule (agent/rule-suggestion-views.ts) starting after its last day with sales. Weekday
+//   questions answered before stay answered, and their ids still parse.
 // - A day is usually busy when its weekday had guests on at least 5 of the 8 same weekdays before it and its typical
 //   guests (D32, closed-days.ts) are at least 10. Gap and likely-closed questions ask only about usually busy days that
 //   are not on a weekday the location is usually closed on, so a location with no guest counts is asked weekday
@@ -25,13 +26,15 @@
 //   closure schedule (isClosure) explains the days it covers as a closure note does (a likely-closed day too, which D32
 //   then reads as closed); one with more or fewer guests explains only a likely-closed day, which D32 then reads as open,
 //   since no sales under "busy Fridays" is more suspicious, not less; any other schedule explains nothing.
-// - An answered question's days are never asked about again, whatever the answer. At most 5 questions: weekdays first,
-//   then gaps and likely-closed days together, newest first by their last day.
+// - An answered question's days are never asked about again, whatever the answer. At most 5 questions: gaps and
+//   likely-closed days together, newest first by their last day.
 // - A day a turned-off upload holds (D28) is explained, as a covering note makes it: turning data off never asks
 //   "Were you closed?" about it.
 import { closureOf, isClosure, TYPICAL_WEEKS, typicalGuests } from '../closed-days.ts';
 import { daysBetween, isCalendarDate } from '../dates.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import type { SalesEvidence } from '../stores/agent-suggestions.ts';
+import type { BusinessRuleRecord, RuleSchedule, RuleSeason } from '../stores/business-rules.ts';
+import { closureKeyOf, isSuggestable } from './closure-suggestions.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import type { SalesDay } from '../stores/sales-days.ts';
 
@@ -47,9 +50,14 @@ export type QuestionAnswer = (typeof QUESTION_ANSWERS)[number];
 export const MAX_QUESTIONS = 5;
 /** The window: the last 365 days of coverage. */
 const WINDOW_DAYS = 365;
-/** A weekday is asked about when this share of its days in the window have no sales. [CONFIRM: 60%, at least 4] */
+/**
+ * A weekday is usually closed when this share of its days in the window have no sales, and suggested as closed (D46)
+ * when its last WEEKDAY_RECENT_DAYS counted days have none too. [CONFIRM: 60% of at least 4 days, and the last 4 counted
+ * days without sales]
+ */
 const WEEKDAY_SHARE = 0.6;
 const WEEKDAY_MIN_DAYS = 4;
+const WEEKDAY_RECENT_DAYS = 4;
 /**
  * A day is usually busy when its weekday had guests on at least this many of the 8 same weekdays before it, and its
  * typical guests (spec D32) are at least BUSY_TYPICAL_GUESTS, compared before rounding. [CONFIRM: a day is asked about
@@ -174,13 +182,27 @@ function asksAbout(asked: AskedQuestion, day: string): boolean {
   return day >= asked.from && day <= asked.to && (asked.kind === 'gap' || weekdayOf(day) === asked.weekday);
 }
 
+/** Whether `day`'s month and day fall in the yearly season (D46), `to` before `from` crossing the new year. */
+function inSeason(season: RuleSeason, day: string): boolean {
+  const monthDay = day.slice(5);
+  return season.from <= season.to
+    ? monthDay >= season.from && monthDay <= season.to
+    : monthDay >= season.from || monthDay <= season.to;
+}
+
 /**
  * Whether `note` covers `day`: inside its dates and, when it names weekdays, on one of them. A business rule's schedule
- * (D31) is read the same way, its `endDate` null meaning no end.
+ * (D31) is read the same way, its `endDate` null meaning no end, and, with a yearly season (D46), only on the season's
+ * months and days.
  */
-export function noteCovers(note: Pick<NoteContent, 'startDate' | 'weekdays'> & { readonly endDate: string | null }, day: string): boolean {
+export function noteCovers(
+  note: Pick<NoteContent, 'startDate' | 'weekdays'> & { readonly endDate: string | null; readonly season?: RuleSeason | null },
+  day: string,
+): boolean {
+  const season = note.season ?? null;
   return day >= note.startDate && (note.endDate === null || day <= note.endDate)
-    && (note.weekdays === null || note.weekdays.includes(weekdayOf(day)));
+    && (note.weekdays === null || note.weekdays.includes(weekdayOf(day)))
+    && (season === null || inSeason(season, day));
 }
 
 // A closure note, or any note whose effect is closed: closed-days.ts keeps the one definition.
@@ -191,7 +213,7 @@ export function closureNoteOf(asked: AskedQuestion): NoteContent {
   const [startDate, endDate] = asked.kind === 'likely_closed' ? [asked.date, asked.date] : [asked.from, asked.to];
   return {
     kind: 'closure', startDate, endDate, weekdays: asked.kind === 'weekday' ? [asked.weekday] : null,
-    effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null,
+    effect: 'closed', expectedGuests: null, detail: null, title: null, startTime: null, endTime: null,
   };
 }
 
@@ -204,7 +226,7 @@ export function noteFor(asked: AskedQuestion, answer: QuestionAnswer): NoteConte
   if (answer !== 'open' || asked.kind !== 'likely_closed') return null;
   return {
     kind: 'other', startDate: asked.date, endDate: asked.date, weekdays: null, effect: 'fewer_guests', expectedGuests: null,
-    detail: OPEN_DAY_DETAIL, startTime: null, endTime: null,
+    detail: OPEN_DAY_DETAIL, title: null, startTime: null, endTime: null,
   };
 }
 
@@ -216,45 +238,127 @@ export function answerOfNote(asked: AskedQuestion, note: Pick<NoteContent, 'kind
   return asked.kind === 'likely_closed' && !isClosure(note) ? 'open' : 'closed';
 }
 
-export function questionsFor(input: QuestionInput): Question[] {
+/** D46: a weekday the sales history shows closed, with the counts and the dates that show it. */
+export interface WeekdayEvidence {
+  readonly weekday: number;
+  /** The first day with sales in the window, and the window's last day. */
+  readonly from: string;
+  readonly to: string;
+  readonly noSalesCount: number;
+  readonly weekdayCount: number;
+  /** The last counted day of the weekday with sales (guests or net sales), or null when it had none. */
+  readonly lastSalesDate: string | null;
+}
+
+/** The window's days from the first with sales, the days with sales, and which days count for a weekday. */
+interface Counted {
+  readonly from: string;
+  readonly to: string;
+  readonly withSales: ReadonlySet<string>;
+  /** Every day from `from` to `to`. */
+  readonly dates: readonly string[];
+  /** Each weekday's counted days, oldest first: in a week with sales on another day, and not turned off. */
+  readonly byWeekday: readonly (readonly string[])[];
+}
+
+function countedDays(input: QuestionInput): Counted | null {
   const window = questionWindow(input.coverage);
-  if (window === null) return [];
+  if (window === null) return null;
   const withSales = new Set(input.days
     .filter((day) => day.guests !== null || day.netSalesCents !== null)
     .map((day) => day.date));
-  const answered = input.answered.flatMap((id) => {
-    const asked = parseQuestionId(id);
-    return asked === null ? [] : [asked];
-  });
-  const rules = input.rules ?? [];
-  const closures = [...input.notes, ...rules].filter(isClosure);
-  const ruleClosures = rules.filter(isClosure);
   const turnedOff = new Set(input.turnedOff);
   const all = datesIn(window.from, window.to);
   const firstWithSales = all.findIndex((day) => withSales.has(day));
   const dates = firstWithSales < 0 ? [] : all.slice(firstWithSales);
   const from = dates[0];
-  if (from === undefined) return [];
-  const answeredAbout = (day: string): boolean => answered.some((asked) => asksAbout(asked, day));
+  if (from === undefined) return null;
   const salesInWeek = new Map<string, number>();
   for (const day of dates) if (withSales.has(day)) salesInWeek.set(weekOf(day), (salesInWeek.get(weekOf(day)) ?? 0) + 1);
   /** Whether the location had sales on another day of `day`'s week. */
   const weekHasSales = (day: string): boolean => (salesInWeek.get(weekOf(day)) ?? 0) > (withSales.has(day) ? 1 : 0);
+  // A turned-off day counts as no data, like a week with no sales: it never makes a weekday look usually closed.
+  const byWeekday = Array.from({ length: 7 }, (_, weekday) => dates.filter((day) => weekdayOf(day) === weekday && weekHasSales(day) && !turnedOff.has(day)));
+  return { from, to: window.to, withSales, dates, byWeekday };
+}
 
-  // Weekdays: the share of each weekday's counted days with no sales, over all of them and over those still unexplained.
-  const weekdayQuestions: Question[] = [];
-  const closedWeekdays = new Set<number>();
-  for (let weekday = 0; weekday < 7; weekday += 1) {
-    // A turned-off day counts as no data, like a week with no sales: it never makes a weekday look usually closed.
-    const ofWeekday = dates.filter((day) => weekdayOf(day) === weekday && weekHasSales(day) && !turnedOff.has(day));
-    if (ofWeekday.length < WEEKDAY_MIN_DAYS) continue;
-    const noSales = ofWeekday.filter((day) => !withSales.has(day));
-    if (noSales.length >= WEEKDAY_SHARE * ofWeekday.length) closedWeekdays.add(weekday);
-    const unexplained = noSales.filter((day) => !closures.some((note) => noteCovers(note, day)) && !answeredAbout(day));
-    if (unexplained.length < WEEKDAY_SHARE * ofWeekday.length) continue;
-    const asked: AskedQuestion = { kind: 'weekday', weekday, from, to: window.to };
-    weekdayQuestions.push({ id: questionId(asked), ...asked, noSalesCount: noSales.length, weekdayCount: ofWeekday.length });
-  }
+/**
+ * D46: the weekdays the sales history shows closed: at least 60% of at least 4 counted days with no sales, as a usually
+ * closed weekday, and no day of the weekday with sales on or after the first of its last 4 counted days, so a past or
+ * seasonal pattern never becomes a standing rule. The last day with sales is read over every day of the weekday in the
+ * window, counted or not (a Monday alone in its week, as an export that ends on a Monday leaves it, still had sales), so
+ * the rule never covers a past day with recorded sales.
+ */
+export function weekdayEvidence(input: QuestionInput): WeekdayEvidence[] {
+  const counted = countedDays(input);
+  if (counted === null) return [];
+  return counted.byWeekday.flatMap((days, weekday): WeekdayEvidence[] => {
+    if (days.length < WEEKDAY_MIN_DAYS) return [];
+    const noSales = days.filter((day) => !counted.withSales.has(day));
+    if (noSales.length < WEEKDAY_SHARE * days.length) return [];
+    const lastSalesDate = counted.dates.findLast((day) => weekdayOf(day) === weekday && counted.withSales.has(day)) ?? null;
+    const recentFrom = days[days.length - WEEKDAY_RECENT_DAYS] ?? '';
+    if (lastSalesDate !== null && lastSalesDate >= recentFrom) return [];
+    return [{ weekday, from: counted.from, to: counted.to, noSalesCount: noSales.length, weekdayCount: days.length, lastSalesDate }];
+  });
+}
+
+/** A suggested standing closure from the sales history (D46). */
+export interface SalesSuggestion { readonly weekday: number; readonly schedule: RuleSchedule; readonly evidence: SalesEvidence }
+
+/** Earlier weekday answers that say the weekday is not closed: they suppress its suggestion. A `closed` answer does not. */
+const NOT_CLOSED: readonly QuestionAnswer[] = ['open', 'not_sure', 'other'];
+
+/**
+ * D46: each weekday's evidence as a standing closure, "Closed on Mondays", starting the day after its last day with
+ * sales (or the first day with sales when it had none), so it never covers a past day with recorded sales; no end.
+ * Suppressed when the weekday's earlier question was answered open, not sure or something else, when a suggestion row
+ * already holds its closure key (in any status), or when the location's rules already make it pointless (isSuggestable).
+ */
+export function salesSuggestionsFor(input: {
+  readonly evidence: readonly WeekdayEvidence[];
+  readonly answers: readonly { readonly questionId: string; readonly answer: QuestionAnswer }[];
+  readonly rules: readonly Pick<BusinessRuleRecord, 'text' | 'schedule'>[];
+  readonly takenKeys: ReadonlySet<string>;
+}): SalesSuggestion[] {
+  const notClosed = new Set(input.answers.flatMap(({ questionId, answer }) => {
+    const asked = parseQuestionId(questionId);
+    return asked?.kind === 'weekday' && NOT_CLOSED.includes(answer) ? [asked.weekday] : [];
+  }));
+  return input.evidence.flatMap((each): SalesSuggestion[] => {
+    if (notClosed.has(each.weekday)) return [];
+    const schedule: RuleSchedule = {
+      kind: 'closure', startDate: each.lastSalesDate === null ? each.from : plusDays(each.lastSalesDate, 1), endDate: null,
+      weekdays: [each.weekday], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+    };
+    if (input.takenKeys.has(closureKeyOf(schedule)) || !isSuggestable(schedule, { rules: input.rules })) return [];
+    return [{
+      weekday: each.weekday, schedule,
+      evidence: { noSalesCount: each.noSalesCount, weekdayCount: each.weekdayCount, lastSalesDate: each.lastSalesDate },
+    }];
+  });
+}
+
+export function questionsFor(input: QuestionInput): Question[] {
+  const counted = countedDays(input);
+  if (counted === null) return [];
+  const { withSales } = counted;
+  const answered = input.answered.flatMap((id) => {
+    const asked = parseQuestionId(id);
+    return asked === null ? [] : [asked];
+  });
+  const rules = input.rules ?? [];
+  const ruleClosures = rules.filter(isClosure);
+  const turnedOff = new Set(input.turnedOff);
+  const { dates } = counted;
+  const answeredAbout = (day: string): boolean => answered.some((asked) => asksAbout(asked, day));
+
+  // Weekdays usually closed (60% of their counted days with no sales, at least 4): never asked about (D46), but they
+  // bridge gaps and are left out of likely-closed days.
+  const closedWeekdays = new Set(counted.byWeekday.flatMap((days, weekday) => {
+    if (days.length < WEEKDAY_MIN_DAYS) return [];
+    return days.filter((day) => !withSales.has(day)).length >= WEEKDAY_SHARE * days.length ? [weekday] : [];
+  }));
 
   // Any covering note explains a day; of the rule schedules, only a closure does (a likely-closed day's are read below).
   const explained = (day: string): boolean => input.notes.some((note) => noteCovers(note, day))
@@ -318,5 +422,5 @@ export function questionsFor(input: QuestionInput): Question[] {
   dayQuestions.reverse();
 
   const asked = new Set(input.answered);
-  return [...weekdayQuestions, ...dayQuestions].filter((question) => !asked.has(question.id)).slice(0, MAX_QUESTIONS);
+  return dayQuestions.filter((question) => !asked.has(question.id)).slice(0, MAX_QUESTIONS);
 }

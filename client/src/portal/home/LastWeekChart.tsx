@@ -1,3 +1,4 @@
+import type { ChartTip } from '../analytics/barTips';
 import type { ComparedDay } from '../analytics/week';
 import type { Metric } from '../analytics/words';
 
@@ -17,6 +18,10 @@ export interface LastWeekChartProps {
   metric: Metric;
   /** Forecast-only days, drawn outlined with their range and keyed "Forecast"; never summed with the stored days. */
   forecast: readonly ForecastBar[];
+  /** Web: each day's hover words, in `days`' order (the same words as its row in Show the numbers). */
+  tips: readonly ChartTip[];
+  /** Web: a click on a day's slot opens it (in the Calendar). */
+  onOpen: (date: string) => void;
 }
 
 export const LastWeekChart: (props: LastWeekChartProps) => React.JSX.Element | null = () => null;

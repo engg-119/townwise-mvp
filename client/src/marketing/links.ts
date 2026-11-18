@@ -20,6 +20,9 @@ export const EARLY_ACCESS_HREF = '/request-access';
 export const CONTACT_EMAIL = 'hello@townwise.tech';
 export const CONTACT_HREF = `mailto:${CONTACT_EMAIL}`;
 
+// The open-source notices: a plain-text file the site serves (public/licenses/), not an app route.
+export const NOTICES_HREF = '/licenses/NOTICE.txt';
+
 export const navLinks: readonly MarketingLink[] = [
   { label: 'The map', href: '/#map' },
   { label: 'How it works', href: '/#how' },
@@ -42,6 +45,7 @@ export const footerGroups: readonly LinkGroup[] = [
       { label: 'Privacy', href: '/privacy' },
       { label: 'Terms', href: '/terms' },
       { label: 'Security', href: '/security' },
+      { label: 'Open-source notices', href: NOTICES_HREF },
     ],
   },
   {

@@ -40,6 +40,7 @@ import type { TownwiseContext } from '../app.ts';
 import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
 import { SCHEDULE_START_HOUR } from '../calibration.ts';
 import { daysBetween, utcDay } from '../dates.ts';
+import { FORECAST_TIER_DAYS, forecastThrough, tierEnd } from '../forecasts/tiers.ts';
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
 import type { ChatModel } from '../chat/model.ts';
 import {
@@ -71,8 +72,6 @@ export const SCHEDULE_PASS_BUDGET_MS = 8 * 60_000;
  * the pass's own end); a suggestions location needs SUGGESTIONS_TIME_MS more, the call's whole time.
  */
 export const SCHEDULE_STEP_MS = 60_000;
-/** A lab run reaches its calibration's today plus this many days, when its data reaches that far (forecast.REACH_DAYS). */
-export const RUN_REACH_DAYS = 91;
 /** How far back the staff console looks for each location's latest week row. */
 export const WEEK_ROWS_LOOKBACK_DAYS = 56;
 /**
@@ -122,6 +121,8 @@ export interface SuggestionsCounts {
   budget: number;
   /** Calls that failed, locations whose turn threw, and pass rows a dead pass left running with a reservation. */
   failed: number;
+  /** Owner-calendar events the calls sent, summed (calendar-event-suggestions): a count, never a title. */
+  ownerEvents: number;
 }
 
 export interface SuggestionsResult extends SuggestionsCounts { state: SuggestionsState; ms: number }
@@ -191,8 +192,8 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
 
   /**
    * Whether unchanged data should still be refit this `week` (D42: a published forecast reaching 91 days past today): no
-   * published run will be current (28 days ahead) at next Monday's pass, and the run `reference` published ended at its
-   * today plus 91 days, so a refit on the same days ends later. A run that ended where its data or its backtest stops
+   * published run will be current (its forecast tier 28 days ahead, D52) at next Monday's pass, and the forecast tier of
+   * the run `reference` published reached its today plus 91 days, so a refit on the same days ends later. A run that ended where its data or its backtest stops
    * (forecast.run_end) would end there again, and a draft the gate held is left for staff, so neither is refit.
    */
   async function refitExtends(scope: OrgScope, locationId: string, runId: string | null, week: string): Promise<boolean> {
@@ -202,7 +203,9 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     if (currentChampion(published, nextWeek) !== null) return false;
     const run = published.find((each) => each.id === runId);
     if (run === undefined) return false;
-    return run.range.to === utcDay(new Date(`${run.madeAt}T00:00:00.000Z`), RUN_REACH_DAYS);
+    // Its forecast tier was full (D52): it reached the run's tierEnd, and that was its today plus 91.
+    const end = tierEnd(run);
+    return forecastThrough(run) === end && end === utcDay(new Date(`${run.madeAt}T00:00:00.000Z`), FORECAST_TIER_DAYS);
   }
 
   /** A pass's running tally: its counts, the live scheduled calibrations and each week's counted rows. */
@@ -331,6 +334,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
         const week = suggestionsWeek(localDay(at, timeZone), localMinutes(at, timeZone), SCHEDULE_START_HOUR);
         if (week === null || await stores.agentSuggestions.findPass(scope, location.id, week) !== null) continue;
         const outcome = await suggestFor({ config: ctx.config, now: ctx.now, stores, chat: model }, scope, location, week);
+        counts.ownerEvents += outcome.ownerEvents ?? 0;
         if (outcome.status === 'suggested') {
           counts.passes += 1;
           counts.suggested += outcome.suggested;
@@ -350,7 +354,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       const began = performance.now();
       const deadline = ctx.now().getTime() + SCHEDULE_PASS_BUDGET_MS;
       const counts: PassCounts = { started: 0, failed: 0, skipped: 0, capped: 0 };
-      const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0 };
+      const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0, ownerEvents: 0 };
       const model = ctx.config.weeklySuggestions ? ctx.chat ?? null : null;
       const refreshOn = ctx.labRunner !== null && ctx.config.weeklyForecasts;
       let suggestionsBegan = performance.now();

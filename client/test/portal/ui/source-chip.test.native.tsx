@@ -1,7 +1,8 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
-import { Linking, StyleSheet } from 'react-native';
+import { renderRouter, screen as routerScreen } from 'expo-router/testing-library';
+import { Linking, StyleSheet, Text } from 'react-native';
 
-import { SourceChips } from '../../../src/portal/ui/SourceChip';
+import { AppChip, SourceChips } from '../../../src/portal/ui/SourceChip';
 
 // The source chip on native (source-chips: "Every source is a round chip with the site's logo and name" and "A chip is
 // named by what it shows"): a 44px pressable around the pill, named by what it shows, with the logo hidden from screen
@@ -59,4 +60,24 @@ test('the logo is hidden from screen readers; a host no manifest entry shows the
   expect(logo.types.some((type) => /svg/i.test(type))).toBe(false);
   expect(globe.types.some((type) => /svg/i.test(type))).toBe(true);
   expect(globe.types).not.toContain('Image');
+});
+
+// The in-app mode (calendar-sources "On native"): a tap opens the page with the app's router, never Linking.
+test('an in-app chip opens its page inside the app, and never opens a URL', async () => {
+  const opened = jest.spyOn(Linking, 'openURL').mockResolvedValue(undefined);
+  opened.mockClear();
+  const page = '/locations/l1/data/c_0123456789abcdef01234567';
+  const router = await renderRouter({
+    index: () => <AppChip href={page} name="US holidays" label="US holidays. Opens this calendar in Your data" glyph="calendar" />,
+    'locations/[locationId]/data/[ref]': () => <Text>Calendar page</Text>,
+  }, { initialUrl: '/' });
+  const link = await routerScreen.findByRole('link', { name: 'US holidays. Opens this calendar in Your data' });
+  expect(routerScreen.getByText('US holidays')).toBeTruthy();
+  // It hugs its pill rather than stretching across its column (UI review S1).
+  expect((StyleSheet.flatten(link.props.style as never) as { alignSelf?: string }).alignSelf).toBe('flex-start');
+  expect(hiddenPart(link).types.some((type) => /svg/i.test(type))).toBe(true);
+  await fireEvent.press(link);
+  expect(await routerScreen.findByText('Calendar page')).toBeTruthy();
+  expect(router.getPathname()).toBe(page);
+  expect(opened).not.toHaveBeenCalled();
 });

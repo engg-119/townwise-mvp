@@ -25,6 +25,8 @@ export interface ConfirmDialogProps {
   pending?: boolean;
   /** What the action threw, shown in the dialog with the shared copy. */
   error?: unknown;
+  /** Words for that error in place of the shared copy, when the page knows better ones. */
+  errorMessage?: string;
   /** The name to type: the field reads “Type {name} to confirm.” */
   typedName?: string;
   onConfirm: () => void;
@@ -66,7 +68,7 @@ function DialogBody(props: ConfirmDialogProps): React.JSX.Element {
         {typedName === undefined ? null : (
           <FormField label={`Type ${typedName} to confirm.`} value={typed} onChangeText={setTyped} autoComplete="off" autoCorrect={false} />
         )}
-        {hasError ? <ErrorNotice error={props.error} /> : null}
+        {hasError ? <ErrorNotice error={props.error} {...(props.errorMessage === undefined ? {} : { message: props.errorMessage })} /> : null}
         <Actions>
           <Button
             label={pending ? (props.pendingLabel ?? props.confirmLabel) : props.confirmLabel}

@@ -7,11 +7,13 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { cleanup, fireEvent, screen, within } from 'expo-router/testing-library';
+import { cleanup, fireEvent, screen, waitFor, within } from 'expo-router/testing-library';
 
 import { ACCESS, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
+import { noteOf } from '../locations/fakes';
+import { ruleOf } from '../rules/fakes';
 import {
   CALENDARS_PATH, calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake,
 } from './fakes';
@@ -43,7 +45,7 @@ const SATURDAY = '2026-11-21';
 /** The list here answers without `google` (Google calendars off), so the line names no Google connect. */
 const NATIVE_LINE = 'To add events from your own calendar file, open Townwise on the web.';
 const URL = 'https://calendar.google.com/calendar/ical/sample/private-0a1b2c/basic.ics';
-const LABEL = 'Sat, Nov 21, 2026. Forecast about 212 guests, 180 to 240. Dartmouth home football.';
+const LABEL = 'Sat, Nov 21, 2026. 212 guests, forecast, likely 180 to 240. Dartmouth home football.';
 
 function november(guests = 0): unknown {
   const days = [];
@@ -62,7 +64,7 @@ function november(guests = 0): unknown {
 }
 
 function setup(
-  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents'>> = {}, me = meOf(ACCESS.member),
+  init: Partial<Pick<CalendarFake, 'calendars' | 'ownerEvents' | 'notes' | 'rules'>> = {}, me = meOf(ACCESS.member),
 ): { api: FakePortalApi; fake: CalendarFake } {
   const fake = calendarFake({ events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': november() }, ...init });
   return { api: fakePortalApi({ me, org: orgOf(me.access.state === 'member' ? me.access.role : 'member'), fallback: fake }), fake };
@@ -128,8 +130,8 @@ test('Your calendars: no file import, the line points to the web, and a link can
   expect(await screen.findByText('No calendars yet.')).toBeTruthy();
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
   expect(writes(api)).toEqual([
-    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } },
-    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL } },
+    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL, titlesNotice: 1 } },
+    { method: 'POST', path: CALENDARS_PATH, body: { kind: 'link', label: 'Bookings', url: URL, titlesNotice: 1 } },
     { method: 'POST', path: `${CALENDARS_PATH}/c2/refresh`, body: undefined },
     { method: 'DELETE', path: `${CALENDARS_PATH}/c2`, body: undefined },
   ]);
@@ -216,7 +218,7 @@ test('adds a note from the day and reloads the forecast', async () => {
     method: 'POST', path: NOTES_PATH,
     body: {
       kind: 'private_event', startDate: SATURDAY, endDate: SATURDAY, weekdays: null, effect: 'more_guests', expectedGuests: 70, detail: null,
-      startTime: null, endTime: null,
+      title: null, startTime: null, endTime: null,
     },
   }]);
 });
@@ -248,4 +250,64 @@ test('the Month and Week switch: Week shows the agenda of the block from today t
   expect(await screen.findByLabelText('November 2026')).toBeTruthy();
   expect(screen.queryByLabelText('Nov 18 to 24, 2026')).toBeNull();
   expect(fake.paths.slice(reads)).toEqual([]);
+});
+
+test('a closed-by-rule day with a named event: its label names both, its panel shows the name, and an imported event’s chip opens its calendar’s page (D49)', async () => {
+  const tuesday = '2026-11-24';
+  const id = 'fedcba9876543210fedcba98';
+  const { api } = setup({
+    notes: [noteOf('n1', { kind: 'private_event', startDate: tuesday, endDate: tuesday, effect: 'more_guests', expectedGuests: 40, title: 'Holiday party' })],
+    rules: [ruleOf('r1', 'Closed Tuesdays in winter', {
+      schedule: { kind: 'closure', startDate: '2026-11-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    })],
+    calendars: [ownerCalendar({ id, label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 1 })],
+    ownerEvents: [ownerEvent({ calendarId: id, calendar: 'US holidays', uid: 'e1', title: 'Wine dinner', startDate: tuesday })],
+  });
+  const { router } = await renderApp(`/locations/l1/calendar?day=${tuesday}`, api);
+  const day = await screen.findByLabelText(/^Tue, Nov 24, 2026\./);
+  expect(day.props.accessibilityLabel).toContain('Holiday party. Closed Tuesdays in winter. From your calendar: Wine dinner.');
+  expect(within(panel()).getByText('Your note: Holiday party')).toBeTruthy();
+  expect(within(panel()).getByText('Your rule: Closed Tuesdays in winter')).toBeTruthy();
+  await fireEvent.press(within(panel()).getByRole('link', { name: 'US holidays. Opens this calendar in Your data' }));
+  await waitFor(() => { expect(router.getPathname()).toBe(`/locations/l1/data/c_${id}`); });
+});
+
+test('on native too: the key names an actual and a forecast, and a past day says how its forecast did (D49)', async () => {
+  const past = forecastDay({ date: '2026-11-07', low: 120, mid: 135, high: 150, actual: 138, inRange: true, scored: true, madeAt: '2026-11-02' });
+  const forecast = november() as { days: ReturnType<typeof forecastDay>[] };
+  const fake = calendarFake({
+    events: [townEvent({ start: SATURDAY, title: 'Dartmouth home football' })], forecasts: { '2026-11': forecastOf([past, ...forecast.days]) },
+    days: [{ date: '2026-11-07', guests: 138, netSalesCents: 276_000 }],
+  });
+  const me = meOf(ACCESS.member);
+  await renderApp('/locations/l1/calendar?day=2026-11-07', fakePortalApi({ me, org: orgOf('member'), fallback: fake }));
+  expect(await screen.findByText('Sat, Nov 7, 2026')).toBeTruthy();
+  // The key is hidden from screen readers: each cell's label says it.
+  const key = screen.getByTestId('figure-key', { includeHiddenElements: true });
+  expect(within(key).getByText('Actual guests', { includeHiddenElements: true })).toBeTruthy();
+  expect(within(key).getByText('~82', { includeHiddenElements: true })).toBeTruthy();
+  expect(within(panel()).getByText('Actual guests')).toBeTruthy();
+  expect(await screen.findByText('So far this month: 1 of 1 day inside the forecast range.')).toBeTruthy();
+  expect(screen.getByLabelText('Sat, Nov 7, 2026. 138 guests, actual.')).toBeTruthy();
+  expect(within(screen.getByLabelText(LABEL)).getByText('~212')).toBeTruthy();
+  expect(within(panel()).getByText('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.')).toBeTruthy();
+});
+
+test('an outlook day on native (D52): its cell’s label says outlook, its panel is headed Outlook with no 8 in 10, and the key line shows', async () => {
+  const days = [];
+  for (let day = 11; day <= 30; day += 1) {
+    const date = `2026-11-${String(day)}`;
+    days.push(day < 20 ? forecastDay({ date }) : forecastDay({ date, low: 150, mid: 212, high: 290, model: { status: 'open', low: 150, mid: 212, high: 290 }, outlook: true }));
+  }
+  const fake = calendarFake({ events: [], forecasts: { '2026-11': forecastOf(days) } });
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
+  await renderApp('/locations/l1/calendar', api);
+  expect(await screen.findByText('Today, Wed, Nov 11')).toBeTruthy();
+  const label = 'Sat, Nov 21, 2026. Outlook: 212 guests, forecast, likely 150 to 290.';
+  expect(screen.getByText('Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.')).toBeTruthy();
+  await fireEvent.press(screen.getByLabelText(label));
+  expect(within(panel()).getByText('Outlook')).toBeTruthy();
+  expect(within(panel()).getByText('About 212 guests')).toBeTruthy();
+  expect(within(panel()).getByText('Likely 150 to 290. This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.')).toBeTruthy();
+  expect(within(panel()).queryByText(/8 in 10/)).toBeNull();
 });

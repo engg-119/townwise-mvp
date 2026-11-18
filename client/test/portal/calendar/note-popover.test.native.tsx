@@ -13,7 +13,7 @@ import { Dimensions, Keyboard, StyleSheet, type KeyboardEvent } from 'react-nati
 import { ACCESS, deferred, fakePortalApi, meOf, orgOf, writes, type FakePortalApi } from '../../helpers/portal';
 import { renderApp } from '../../helpers/renderApp';
 import { townEvent } from '../analytics/fakes';
-import { calendarFake, forecastDay, forecastOf, NOTES_PATH, savedNote } from './fakes';
+import { calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote } from './fakes';
 
 // The note form's popover on native (calendar-views' "The note form opens in a popover", its Native scenario): on a
 // phone, Add an event opens the note form in a Modal pinned to the top of the window, a keyboard that shows keeps the
@@ -129,4 +129,24 @@ test('the back button closes it, but not while a save runs', async () => {
   await fireEvent(modal(), 'requestClose');
   expect(screen.queryByLabelText('Add an event')).toBeNull();
   expect(writes(api)).toHaveLength(1);
+});
+
+test('Make a note sends the event’s calendar id and uid, never its title, and the saved note says “Made from a calendar event”', async () => {
+  const days = Array.from({ length: 20 }, (_, at) => forecastDay({ date: `2026-11-${String(11 + at)}` }));
+  const fake = calendarFake({
+    forecasts: { '2026-11': forecastOf(days) }, calendars: [ownerCalendar({ id: 'c1', label: 'kitchen', eventCount: 1 })],
+    ownerEvents: [ownerEvent({ calendarId: 'c1', uid: 'i1', title: 'Smith rehearsal dinner', startDate: SATURDAY })],
+  });
+  const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: fake });
+  api.answers[NOTES_PATH] = (body) => {
+    const saved = savedNote('n9', body);
+    fake.notes = [saved.note];
+    return saved;
+  };
+  await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  await fireEvent.press(await within(await screen.findByLabelText('Selected day')).findByRole('button', { name: 'Make a note from Smith rehearsal dinner' }));
+  await fireEvent.press(within(screen.getByLabelText('Make a note')).getByRole('button', { name: 'Save note' }));
+  expect(await within(panel()).findByText('Made from a calendar event')).toBeTruthy();
+  expect(writes(api).map((call) => (call.body as { fromEvent?: unknown }).fromEvent)).toEqual([{ calendarId: 'c1', uid: 'i1' }]);
+  expect(JSON.stringify(writes(api))).not.toContain('Smith');
 });

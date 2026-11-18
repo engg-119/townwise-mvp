@@ -78,7 +78,7 @@ const SECOND = ics(
 );
 const JUNE = '?from=2026-06-01&to=2026-06-30';
 /** The list's `google` while Google calendars are off (connect-google-calendar): no Google client is passed here. */
-const GOOGLE_OFF = { available: false, connected: false, clientId: null };
+const GOOGLE_OFF = { available: false, connected: false, clientId: null, canConnect: false };
 
 /** FIRST padded to exactly `bytes` bytes with lines of 40 to 79 bytes that the parser passes over: about 26,000 CRLFs. */
 function padded(bytes: number): string {
@@ -224,7 +224,7 @@ describe('with the calendar key', () => {
     const calendar = calendarOf(added);
     expect(calendar).toEqual({
       id: expect.any(String) as string, label: LABEL, kind: 'file', host: null, eventCount: 2, skippedRepeating: 1, status: 'ok',
-      lastSuccessAt: now, lastAttemptAt: now, createdAt: now,
+      lastSuccessAt: now, lastAttemptAt: now, createdAt: now, mine: false,
     });
     expect(sent).toEqual([]);
     expect((await send(base(t), t.admin)).body).toEqual({ calendars: [calendar], google: GOOGLE_OFF });
@@ -232,7 +232,7 @@ describe('with the calendar key', () => {
     // An event keeps its UID, title, dates and hours: never its description, location, attendees or organizer.
     const rows = await eventRows(calendar.id);
     expect(rows).toHaveLength(2);
-    for (const row of rows) expect(Object.keys(row).sort()).toEqual(['_id', 'endDate', 'endTime', 'generation', 'locationId', 'orgId', 'sourceId', 'startDate', 'startTime', 'title', 'uid']);
+    for (const row of rows) expect(Object.keys(row).sort()).toEqual(['_id', 'endDate', 'endTime', 'generation', 'keyed', 'locationId', 'orgId', 'sourceId', 'startDate', 'startTime', 'title', 'uid']);
     for (const text of ['Gate code', 'Back room', 'guest@example.test', 'host@example.test']) expect(JSON.stringify(rows)).not.toContain(text);
 
     const read = await send(`${base(t)}/events${JUNE}`, t.member);
@@ -271,6 +271,24 @@ describe('with the calendar key', () => {
     expect(sent).toEqual([]);
   });
 
+  it('stores the weekly titles notice on a file or link only when the add says it showed it (titlesNotice: 1), and refuses any other value', async () => {
+    const t = await tenant('Notice Grill');
+    const shown = calendarOf(await send(base(t), t.member, { json: { kind: 'file', label: LABEL, ics: FIRST, titlesNotice: 1 } }));
+    const unshown = calendarOf(await addFile(t, LABEL));
+    const link = calendarOf(await send(base(t), t.member, { json: { kind: 'link', label: LABEL, url: ADDRESS, titlesNotice: 1 } }));
+    const raw = async (id: string) => server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(id) });
+    expect(await raw(shown.id)).toMatchObject({ titlesNotice: 1 });
+    expect(await raw(unshown.id)).not.toHaveProperty('titlesNotice');
+    expect(await raw(link.id)).toMatchObject({ kind: 'link', titlesNotice: 1 });
+    // The answer is the calendar as before: the notice is not part of it.
+    expect(Object.keys(shown)).not.toContain('titlesNotice');
+    for (const titlesNotice of [2, 0, true, '1', null]) {
+      expect(await send(base(t), t.member, { json: { kind: 'file', label: LABEL, ics: FIRST, titlesNotice } }))
+        .toMatchObject({ status: 400, body: { error: 'invalid_request' } });
+    }
+    expect(await sourceCount(t)).toBe(3);
+  });
+
   it('imports a file of exactly 1 MB, whose JSON body is larger still, and refuses one byte more with 400 too_large', async () => {
     const t = await tenant('Big File Inn');
     const atLimit = padded(MAX_ICS_BYTES);
@@ -290,7 +308,7 @@ describe('with the calendar key', () => {
     const calendar = calendarOf(added);
     expect(calendar).toEqual({
       id: expect.any(String) as string, label: LABEL, kind: 'link', host: 'calendar.google.com', eventCount: 2, skippedRepeating: 1,
-      status: 'ok', lastSuccessAt: now.toISOString(), lastAttemptAt: now.toISOString(), createdAt: now.toISOString(),
+      status: 'ok', lastSuccessAt: now.toISOString(), lastAttemptAt: now.toISOString(), createdAt: now.toISOString(), mine: false,
     });
     // One request, to the address's path, naming itself only as the calendar reader.
     expect(sent.map((options) => [options.hostname, options.path, options.headers])).toEqual([
@@ -611,17 +629,19 @@ describe('with Google calendars on', () => {
     const added = await send(base(t), t.member, { json: { kind: 'google', googleCalendarId: SHARED_ID } });
     expect(added.status).toBe(201);
     const calendar = calendarOf(added);
-    expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok' });
-    // Connected is the caller's own: the admin, who never connected, reads false.
-    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID } });
-    expect((await send(base(t), t.admin)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID } });
+    expect(calendar).toMatchObject({ kind: 'google', host: null, eventCount: 1, skippedRepeating: 0, status: 'ok', mine: true });
+    // Connected and mine are the caller's own: the admin, who never connected and added no Google calendar, reads false.
+    expect((await send(base(t), t.member)).body).toEqual({ calendars: [file, calendar], google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true } });
+    expect((await send(base(t), t.admin)).body).toEqual({
+      calendars: [file, { ...calendar, mine: false }], google: { available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: true },
+    });
 
     google.state.events[SHARED_ID] = [allDay('shared-2', 'Book club', '2026-06-15'), allDay('shared-3', 'Graduation lunch', '2026-06-27')];
     server.clock.advance(MINUTE);
     const refreshed = await send(`${base(t)}/${calendar.id}/refresh`, t.admin, { method: 'POST' });
     const at = server.clock.now().toISOString();
     expect(refreshed.status).toBe(200);
-    expect(calendarOf(refreshed)).toEqual({ ...calendar, eventCount: 2, lastSuccessAt: at, lastAttemptAt: at });
+    expect(calendarOf(refreshed)).toEqual({ ...calendar, eventCount: 2, lastSuccessAt: at, lastAttemptAt: at, mine: false });
     expect(await titles(t)).toEqual(['Rehearsal dinner', 'Book club', 'Office party', 'Graduation lunch']);
     expect((await auditOf(calendar.id)).map((event) => [event.action, event.details])).toEqual([
       ['owner_calendar.added', { locationId: t.locationId, calendarId: calendar.id, kind: 'google', eventCount: 1, status: 'ok' }],

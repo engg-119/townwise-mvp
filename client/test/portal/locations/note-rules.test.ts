@@ -122,3 +122,33 @@ describe('hours and buyouts in words', () => {
     expect(noteWords({ kind: 'closure', effect: 'closed' })).toBe('Closure');
   });
 });
+
+describe('the event name (D49, note-titles)', () => {
+  test('checkNote sends the name with its white space collapsed, null when empty, and refuses over 120 characters', () => {
+    expect(checkNote(draft({ title: '  Holiday \u00A0  party ' }), TODAY)).toMatchObject({ input: { title: 'Holiday party' } });
+    expect(checkNote(draft({ title: '   ' }), TODAY)).toMatchObject({ input: { title: null } });
+    // 120 code points pass, the API's limit; an emoji is one.
+    expect(checkNote(draft({ title: '🎉'.repeat(120) }), TODAY)).toMatchObject({ input: { title: '🎉'.repeat(120) } });
+    expect(checkNote(draft({ title: 'a'.repeat(121) }), TODAY)).toEqual({ messages: { title: NOTE_COPY.titleLong } });
+    expect(NOTE_COPY.titleLong).toBe('Keep the event name to 120 characters or fewer.');
+  });
+
+  test('a hidden format character is refused, as the API refuses it', () => {
+    expect(checkNote(draft({ title: 'Holiday‮party' }), TODAY)).toEqual({ messages: { title: NOTE_COPY.titleHidden } });
+    expect(checkNote(draft({ title: 'Holiday​party' }), TODAY)).toEqual({ messages: { title: NOTE_COPY.titleHidden } });
+  });
+
+  test('an Other note needs an event name or details', () => {
+    expect(checkNote(draft({ kind: 'other', effect: 'unknown', title: 'Wine tasting' }), TODAY)).toMatchObject({ input: { title: 'Wine tasting', detail: null } });
+    expect(checkNote(draft({ kind: 'other', effect: 'unknown' }), TODAY)).toEqual({ messages: { detail: NOTE_COPY.detailOther } });
+    expect(NOTE_COPY.detailOther).toBe('Add an event name or details for an Other note.');
+  });
+
+  test('Edit fills the name from the note; Make a note never copies an imported event’s title', () => {
+    expect(draftOf(noteOf('n1', { title: 'Holiday party' })).title).toBe('Holiday party');
+    expect(draftOf(noteOf('n2')).title).toBe('');
+    expect(emptyDraft().title).toBe('');
+    const made = draftOfImported({ startDate: '2026-12-24', endDate: '2026-12-24', startTime: null, endTime: null });
+    expect(made.title).toBe('');
+  });
+});

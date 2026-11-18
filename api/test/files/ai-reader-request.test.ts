@@ -21,6 +21,9 @@ function answer(over: Record<string, unknown> = {}): Record<string, unknown> {
   return { kind: 'calendar', confidence: 'high', summary: 'Events for June.', facts: ['Open 5 to 10'], events: [EVENT], days: [DAY], ...over };
 }
 
+/** The read's check, on the request's today. */
+const read = (raw: unknown) => readerResult(raw, CONTEXT.today);
+
 describe('the request', () => {
   it('sends a PDF as a document block before the words, with today’s date and the time zone', () => {
     const request = readerRequest({ type: 'pdf', base64: 'JVBERi0=' }, CONTEXT);
@@ -91,21 +94,22 @@ describe('a picture, by its bytes', () => {
 
 describe('the answer, checked again', () => {
   it('keeps a good answer as it is, with its counts', () => {
-    expect(readerResult(answer())).toEqual({
+    expect(read(answer())).toEqual({
       kind: 'calendar', confidence: 'high', summary: 'Events for June.', facts: ['Open 5 to 10'], events: [EVENT], days: [DAY],
-      daysCut: false, eventCount: 1, dayCount: 1,
+      daysCut: false, eventCount: 1, dayCount: 1, closedPatterns: [],
     });
   });
 
   it('answers null only for an answer that is not an object', () => {
-    for (const raw of [null, 'text', 3, [answer()]]) expect(readerResult(raw)).toBeNull();
-    expect(readerResult({})).toEqual({
+    for (const raw of [null, 'text', 3, [answer()]]) expect(read(raw)).toBeNull();
+    expect(read({})).toEqual({
       kind: 'other', confidence: 'low', summary: '', facts: [], events: [], days: [], daysCut: false, eventCount: 0, dayCount: 0,
+      closedPatterns: [],
     });
   });
 
   it('replaces email addresses and phone numbers in the summary, the facts, and the events’ titles and details', () => {
-    const result = readerResult(answer({
+    const result = read(answer({
       summary: 'Bookings from ana.p+events@example.co.uk and (603) 555-0123.',
       facts: ['Call +1 603 555 0123 or +44 20 7946 0958', 'Open 5 to 10 on 2026-06-14, $3,456.50 on 120 covers'],
       events: [{ ...EVENT, title: 'Party, call 603-555-0123', detail: 'Contact host@example.com or 603.555.0123' }],
@@ -119,14 +123,14 @@ describe('the answer, checked again', () => {
   });
 
   it('reads an unknown kind as other and an unknown confidence as low, and cuts the summary at 600 characters', () => {
-    expect(readerResult(answer({ kind: 'payroll', confidence: 'certain', summary: 'x'.repeat(700) }))).toMatchObject({
+    expect(read(answer({ kind: 'payroll', confidence: 'certain', summary: 'x'.repeat(700) }))).toMatchObject({
       kind: 'other', confidence: 'low', summary: 'x'.repeat(600),
     });
   });
 
   it('drops facts that are not short text, and keeps at most 20', () => {
-    expect(readerResult(answer({ facts: ['ok', '', '  ', 'y'.repeat(201), 4, null, ' trimmed '] }))?.facts).toEqual(['ok', 'trimmed']);
-    expect(readerResult(answer({ facts: Array.from({ length: 30 }, (_, i) => `fact ${String(i)}`) }))?.facts).toHaveLength(FACTS_MAX);
+    expect(read(answer({ facts: ['ok', '', '  ', 'y'.repeat(201), 4, null, ' trimmed '] }))?.facts).toEqual(['ok', 'trimmed']);
+    expect(read(answer({ facts: Array.from({ length: 30 }, (_, i) => `fact ${String(i)}`) }))?.facts).toHaveLength(FACTS_MAX);
   });
 
   it('drops malformed events, and keeps at most 50', () => {
@@ -135,8 +139,8 @@ describe('the answer, checked again', () => {
       { ...EVENT, expectedGuests: -1 }, { ...EVENT, expectedGuests: 2.5 }, { ...EVENT, title: '' }, { ...EVENT, title: 't'.repeat(121) },
       { ...EVENT, detail: 'd'.repeat(281) }, { ...EVENT, extra: 'field' }, 'event', null,
     ];
-    expect(readerResult(answer({ events: [...bad, { ...EVENT, expectedGuests: null }] }))?.events).toEqual([{ ...EVENT, expectedGuests: null }]);
-    expect(readerResult(answer({ events: Array.from({ length: 60 }, () => EVENT) }))?.events).toHaveLength(EVENTS_MAX);
+    expect(read(answer({ events: [...bad, { ...EVENT, expectedGuests: null }] }))?.events).toEqual([{ ...EVENT, expectedGuests: null }]);
+    expect(read(answer({ events: Array.from({ length: 60 }, () => EVENT) }))?.events).toHaveLength(EVENTS_MAX);
   });
 
   it('drops malformed days and a second day for the same date, newest first', () => {
@@ -144,18 +148,86 @@ describe('the answer, checked again', () => {
       { ...DAY, date: '05/01/2026' }, { ...DAY, guests: null, netSales: null }, { ...DAY, guests: -3 }, { ...DAY, guests: 1.5 },
       { ...DAY, netSales: -10 }, { ...DAY, netSales: '3456.50' }, { ...DAY, extra: 1 },
     ];
-    const kept = readerResult(answer({ days: [...bad, DAY, { ...DAY, guests: 1 }, { date: '2026-05-02', guests: null, netSales: 10 }] }));
+    const kept = read(answer({ days: [...bad, DAY, { ...DAY, guests: 1 }, { date: '2026-05-02', guests: null, netSales: 10 }] }));
     expect(kept).toMatchObject({ days: [{ date: '2026-05-02', guests: null, netSales: 10 }, DAY], daysCut: false, dayCount: 2 });
   });
 
   it('keeps the newest 1,500 days and marks the answer cut when it had more, or said the file did', () => {
     expect(DAYS_MAX).toBe(1500);
     const many = Array.from({ length: DAYS_MAX + 10 }, (_, i) => ({ date: new Date(Date.UTC(2010, 0, 1 + i)).toISOString().slice(0, 10), guests: i, netSales: null }));
-    const cut = readerResult(answer({ days: many }));
+    const cut = read(answer({ days: many }));
     expect(cut).toMatchObject({ daysCut: true, dayCount: DAYS_MAX });
     expect(cut?.days[0]).toEqual(many.at(-1));
     expect(cut?.days.at(-1)).toEqual(many[10]);
-    expect(readerResult(answer({ daysCut: true }))).toMatchObject({ daysCut: true, dayCount: 1 });
-    expect(readerResult(answer({ daysCut: 'yes' }))).toMatchObject({ daysCut: false });
+    expect(read(answer({ daysCut: true }))).toMatchObject({ daysCut: true, dayCount: 1 });
+    expect(read(answer({ daysCut: 'yes' }))).toMatchObject({ daysCut: false });
+  });
+});
+
+describe('closed patterns (D46)', () => {
+  const TODAY = CONTEXT.today;
+  const CLOSED = { kind: 'closure', effect: 'closed', expectedGuests: null, startTime: null, endTime: null } as const;
+  const pattern = (over: Record<string, unknown> = {}) => ({ weekdays: [1], startDate: null, endDate: null, yearly: false, ...over });
+
+  it('the prompt asks for them as the design states, Sunday 0, never from service hours or missing days', () => {
+    const flat = READER_SYSTEM_PROMPT.replace(/\n\s*/g, ' ');
+    expect(flat).toContain([
+      '- closedPatterns: the days the restaurant is regularly closed, only when the file states them. Give one when the file',
+      'says the restaurant is closed on a weekday ("Closed Mondays"), when it lists the restaurant\'s own opening hours for',
+      'every day of the week (the days with no hours are closed), or when it states a closed season. Never from a meal,',
+      'kitchen, bar, brunch, happy hour or menu section\'s hours, never from days missing in a sales table, and never a',
+      'one-off date (that is an event). weekdays are numbers from 0 (Sunday) to 6 (Saturday), so Monday is 1, or null for',
+      'every day. A season has startDate and endDate, the next time it happens or the current one if it is under way;',
+      'yearly is true only when the file says it happens every year ("closed every winter, January to March"), else false.',
+      'A weekly closure with no season has null dates.',
+    ].join(' '));
+  });
+
+  it('builds "Closed Mondays" into a standing closure from the read’s today, Monday being 1', () => {
+    expect(read(answer({ closedPatterns: [pattern()] }))?.closedPatterns).toEqual([
+      { ...CLOSED, weekdays: [1], startDate: TODAY, endDate: null },
+    ]);
+  });
+
+  it('keeps a dated season’s dates, and makes a yearly one a season from today with no end', () => {
+    const winter = { weekdays: null, startDate: '2027-01-01', endDate: '2027-03-31' };
+    expect(read(answer({ closedPatterns: [pattern(winter), pattern({ ...winter, yearly: true })] }))?.closedPatterns).toEqual([
+      { ...CLOSED, weekdays: null, startDate: '2027-01-01', endDate: '2027-03-31' },
+      { ...CLOSED, weekdays: null, startDate: TODAY, endDate: null, season: { repeat: 'yearly', from: '01-01', to: '03-31' } },
+    ]);
+    // A season under way keeps its start.
+    expect(read(answer({ closedPatterns: [pattern({ ...winter, startDate: '2026-05-01', endDate: '2026-08-31' })] }))?.closedPatterns)
+      .toEqual([{ ...CLOSED, weekdays: null, startDate: '2026-05-01', endDate: '2026-08-31' }]);
+  });
+
+  it('drops a pattern that is not one: every weekday ongoing, no weekday nor dates, repeated weekdays, past, too long, backwards', () => {
+    const dropped = [
+      pattern({ weekdays: [0, 1, 2, 3, 4, 5, 6] }),
+      pattern({ weekdays: null }),
+      pattern({ weekdays: [] }),
+      pattern({ weekdays: [1, 1] }),
+      pattern({ weekdays: [7] }),
+      pattern({ weekdays: [1.5] }),
+      pattern({ weekdays: null, startDate: '2027-01-01' }),
+      pattern({ weekdays: null, startDate: '2026-01-01', endDate: '2026-03-31' }),
+      pattern({ weekdays: null, startDate: '2026-06-01', endDate: '2027-07-06' }),
+      pattern({ weekdays: null, startDate: '2027-03-31', endDate: '2027-01-01' }),
+      pattern({ weekdays: null, startDate: '2028-01-01', endDate: '2028-02-29', yearly: true }),
+      pattern({ weekdays: null, startDate: '2027-01-01', endDate: '2027-12-31', yearly: true }),
+      pattern({ weekdays: null, startDate: '2029-01-01', endDate: '2029-01-31' }),
+      pattern({ weekdays: [1], note: 'Smith family' }),
+      'Closed Mondays',
+    ];
+    expect(read(answer({ closedPatterns: dropped }))?.closedPatterns).toEqual([]);
+    // Every weekday with dates is a season, kept.
+    expect(read(answer({ closedPatterns: [pattern({ weekdays: [0, 1, 2, 3, 4, 5, 6], startDate: '2027-01-01', endDate: '2027-01-31' })] }))
+      ?.closedPatterns).toHaveLength(1);
+  });
+
+  it('keeps at most 5, and an answer with none, or saved before them, reads as empty', () => {
+    const many = [0, 1, 2, 3, 4, 5].map((day) => pattern({ weekdays: [day] }));
+    expect(read(answer({ closedPatterns: many }))?.closedPatterns).toHaveLength(5);
+    expect(read(answer())?.closedPatterns).toEqual([]);
+    expect(read(answer({ closedPatterns: 'Mondays' }))?.closedPatterns).toEqual([]);
   });
 });

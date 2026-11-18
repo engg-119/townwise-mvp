@@ -33,6 +33,23 @@ const engineFiguresSchema = z.strictObject({ weeks: count, weeklyWape: error, we
 /** Backtest weeks forecast at least 91 days (or the run's longest lead) before their Monday: reported, never gated. */
 const horizonReportSchema = z.strictObject({ weeks: count, weeklyWape: error, coverage80: coverage }).nullable();
 
+/** The outlook horizons the lab backtests (D52): 182 and 365 days of lead. */
+export const OUTLOOK_HORIZONS = [182, 365] as const;
+
+/**
+ * One outlook horizon's backtest and the ratio it gives the outlook's ranges (D52 decision 5): reported, never gated.
+ * `basis` says what set the ratio: the square-root-of-lead growth alone (under 8 backtest weeks), the larger of that
+ * and the backtest (8 to 25), or the backtest (26 or more). weeklyWape is null with no backtest week.
+ */
+const outlookReportSchema = z.strictObject({
+  horizon: z.union([z.literal(OUTLOOK_HORIZONS[0]), z.literal(OUTLOOK_HORIZONS[1])]),
+  weeks: count,
+  weeklyWape: error.nullable(),
+  coverage80: coverage,
+  ratio: z.number().min(1),
+  basis: z.enum(['growth', 'growth_or_backtest', 'backtest']),
+});
+
 export const metricsSchema = z.strictObject({
   weeklyWape: error,
   dailyWape: error,
@@ -70,6 +87,28 @@ const backtestSchema = z.strictObject({
 /** Each engine's figures on the same weeks; the model's null when it did not run (a span under 595 days). */
 const enginesSchema = z.strictObject({ model: engineFiguresSchema.nullable(), baseline: engineFiguresSchema });
 
+/** Rounds a learning curve may hold: the model's 400 (model.py XGB_PARAMS), with room for a longer fit. */
+const MAX_ROUNDS = 2000;
+const losses = z.array(error).min(1).max(MAX_ROUNDS);
+
+/**
+ * How a model run's trees learned (pipeline.py _learning): their loss after each boosting round on the days before the
+ * latest half-year fold (train) and on that fold's days, which they never saw (valid). The loss is the mean absolute
+ * log residual, a ratio and never a guest figure (D7), so staff may read it in the console.
+ */
+export const learningSchema = z
+  .strictObject({
+    trainThrough: isoDate,
+    from: isoDate,
+    to: isoDate,
+    trainDays: count,
+    validDays: count,
+    metric: z.literal('mae_log'),
+    train: losses,
+    valid: losses,
+  })
+  .refine((value) => value.train.length === value.valid.length, { message: 'train and valid differ in rounds' });
+
 /** A scorecard as stored: one from before lab-input/2 has no engine fields. */
 export const scorecardSchema = z.strictObject({
   horizonDays: z.literal(28),
@@ -101,6 +140,10 @@ export const scorecardSchema = z.strictObject({
   engines: enginesSchema.optional(),
   horizon91: horizonReportSchema.optional(),
   horizonReach: horizonReportSchema.optional(),
+  /** The outlook horizons' reports (D52), in order; absent before runs reach a year (release B makes it required). */
+  horizonOutlook: z.array(outlookReportSchema).max(OUTLOOK_HORIZONS.length).optional(),
+  /** Absent on a baseline run and on any run made before the lab recorded it; null when no fold was long enough. */
+  learning: learningSchema.nullable().optional(),
 });
 
 /** The scorecard a lab result is posted with (lab-input/2): every engine field present, since the gate reads them. */
@@ -114,4 +157,5 @@ export const labScorecardSchema = scorecardSchema.extend({
 
 export type Scorecard = z.infer<typeof scorecardSchema>;
 export type LabScorecard = z.infer<typeof labScorecardSchema>;
+export type Learning = z.infer<typeof learningSchema>;
 export type Metrics = z.infer<typeof metricsSchema>;

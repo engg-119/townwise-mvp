@@ -70,7 +70,7 @@ export function NoteForm(props: {
     <Stack gap={20}>
       <NoteFields draft={draft} set={set} messages={messages} idPrefix="note" endHelper="Leave it empty for one day." noun="note" />
       <FormField
-        label={draft.kind === 'other' ? 'Details' : 'Details (optional)'}
+        label={draft.kind === 'other' && draft.title.trim() === '' ? 'Details' : 'Details (optional)'}
         helper={NOTE_COPY.detailHelp}
         value={draft.detail}
         onChangeText={(detail) => { set({ detail }); }}

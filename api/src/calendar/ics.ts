@@ -12,6 +12,10 @@
 // town's today are kept, at most 2,000, the first by start. An event keeps its UID, its title (cut at 200 characters),
 // its dates and its hours, nothing else: DESCRIPTION, LOCATION, ATTENDEE and ORGANIZER are never read. The callers cap
 // the file at 1 MB. [CONFIRM: 1 MB and 2,000 events for a calendar file]
+// An event is keyed (openspec change calendar-event-suggestions, design decision 1) when its stored UID is the one the
+// file stated, stated by no other event the file keeps, and at most 1,024 characters: only such a key survives a
+// refresh, so only such an event is ever linked to a note. A made-up `event-{n}` and a suffixed `{UID}#{n}` are
+// numbered by position and are never keyed.
 // Google calendars (openspec change connect-google-calendar, design decision 7) share these rules through the exports
 // townClock, spanOf, titleOf and keepWindow (calendar/google-events.ts): the same town clock, dates, hours, title cut,
 // 400-day window and 2,000 events, except that a Google calendar keeps the events ahead of the town's today first
@@ -26,6 +30,8 @@ export const MAX_EVENTS = 2_000;
 export const WINDOW_DAYS = 400;
 /** A title is cut to this many characters. */
 export const MAX_TITLE_CHARS = 200;
+/** A stated UID longer than this is never keyed (a note's link holds at most this many characters). */
+export const MAX_KEY_CHARS = 1_024;
 
 /** One single event as Townwise keeps it. */
 export interface IcsEvent {
@@ -40,6 +46,8 @@ export interface IcsEvent {
    */
   readonly startTime: string | null;
   readonly endTime: string | null;
+  /** True when `uid` survives a refresh: a Google id, or a UID the file stated once, at most 1,024 characters. */
+  readonly keyed: boolean;
 }
 
 export type IcsResult = { events: IcsEvent[]; skippedRepeating: number } | { error: 'not_calendar' };
@@ -166,7 +174,11 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
   const uids = new Set<string>();
   /** Each clashing base's next suffix to try. */
   const nextSuffix = new Map<string, number>();
-  const events: IcsEvent[] = [];
+  /** Each event's stated UID ('' for none), by position in `drafts`. */
+  const stated: string[] = [];
+  /** How many kept events state each UID. */
+  const statedCount = new Map<string, number>();
+  const drafts: Omit<IcsEvent, 'keyed'>[] = [];
 
   const finish = (props: Map<string, string>): void => {
     seen += 1;
@@ -184,7 +196,9 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
     for (; uids.has(uid); suffix += 1) uid = `${base}#${String(suffix)}`;
     if (uid !== base) nextSuffix.set(base, suffix);
     uids.add(uid);
-    events.push({ uid, title: titleOf(unescaped(props.get('SUMMARY'))), ...spanOf(start, momentOf(props.get('DTEND'), clock)) });
+    stated.push(given);
+    if (given !== '') statedCount.set(given, (statedCount.get(given) ?? 0) + 1);
+    drafts.push({ uid, title: titleOf(unescaped(props.get('SUMMARY'))), ...spanOf(start, momentOf(props.get('DTEND'), clock)) });
   };
 
   for (const line of lines) {
@@ -204,6 +218,10 @@ export function parseIcs(text: string, town: IcsTown): IcsResult {
     }
   }
   if (!calendar) return { error: 'not_calendar' };
+  const events = drafts.map((draft, index): IcsEvent => {
+    const given = stated[index] ?? '';
+    return { ...draft, keyed: given !== '' && draft.uid === given && statedCount.get(given) === 1 && given.length <= MAX_KEY_CHARS };
+  });
   return { events: keepWindow(events, town.today), skippedRepeating };
 }
 

@@ -3,11 +3,19 @@
 // daily totals it states per day (at most 1,500, the newest, saying when the file had more). The schema sent asks for
 // the limits below (the SDK moves the ones the API does not enforce into the schema's descriptions); readerResult
 // checks the answer again here, because the model's output is data like the file is: every list is capped, a malformed
-// entry is dropped, the read never fails for one, and an email address or phone number in its words is replaced.
+// entry is dropped, the read never fails for one, and an email address or phone number in its words is replaced. D46:
+// it also answers the closed patterns the file states (at most 5), which Townwise builds into closure schedules and
+// keeps no words of.
 import { z } from 'zod';
 
-import { isCalendarDate } from '../../dates.ts';
+import { daysBetween, isCalendarDate } from '../../dates.ts';
+import { readRuleSchedule } from '../../handlers/notes.ts';
+import type { RuleSchedule } from '../../stores/business-rules.ts';
+import { entries, isRecord, oneOf, redacted } from '../../model-answer.ts';
 import type { AiEventEffect, AiEventKind, AiFileKind, AiReadDay, AiReadEvent, AiReadResult } from '../../stores/files.ts';
+
+/** The checks every model answer gets (model-answer.ts), re-exported for the file code that reads them from here. */
+export { entries, isRecord, oneOf, redacted } from '../../model-answer.ts';
 
 export const READER_MODEL = 'claude-opus-5-5';
 /** Streamed, so a long answer (1,500 days at about 25 tokens each, and the thinking before it) fits. */
@@ -21,6 +29,10 @@ export const EVENTS_MAX = 50;
 export const EVENT_TITLE_CHARS = 120;
 export const EVENT_DETAIL_CHARS = 280;
 export const DAYS_MAX = 1500;
+/** D46. [CONFIRM: 5 suggested rules a file read, 10 open per location from files] */
+export const CLOSED_PATTERNS_MAX = 5;
+/** A dated closed pattern spans at most this many days after its start, as a note does. */
+const PATTERN_SPAN_DAYS = 366;
 
 export const AI_FILE_KINDS = ['sales', 'calendar', 'inventory', 'menu', 'staffing', 'other'] as const satisfies readonly AiFileKind[];
 export const AI_EVENT_KINDS = ['closure', 'private_event', 'opening', 'other'] as const satisfies readonly AiEventKind[];
@@ -60,6 +72,14 @@ export const READER_SYSTEM_PROMPT = [
   '  Never estimate, add up, average or fill in a day or a figure. A file with no such table or list has no days.',
   '  Give at most 1,500 days: when the file states more, give its newest 1,500 dates.',
   '- daysCut: true only when the file states daily totals for more dates than the days you gave.',
+  '- closedPatterns: the days the restaurant is regularly closed, only when the file states them. Give one when the file',
+  '  says the restaurant is closed on a weekday ("Closed Mondays"), when it lists the restaurant\'s own opening hours for',
+  '  every day of the week (the days with no hours are closed), or when it states a closed season. Never from a meal,',
+  '  kitchen, bar, brunch, happy hour or menu section\'s hours, never from days missing in a sales table, and never a',
+  '  one-off date (that is an event). weekdays are numbers from 0 (Sunday) to 6 (Saturday), so Monday is 1, or null for',
+  '  every day. A season has startDate and endDate, the next time it happens or the current one if it is under way;',
+  '  yearly is true only when the file says it happens every year ("closed every winter, January to March"), else false.',
+  '  A weekly closure with no season has null dates.',
   '',
   'Never write a person\'s name, email address or phone number anywhere in your answer: guests, customers and staff',
   'are never named. Say "a private party of 40", not who booked it.',
@@ -89,6 +109,12 @@ export const readerAnswer = z.object({
     netSales: z.number().nullable(),
   })).max(DAYS_MAX),
   daysCut: z.boolean(),
+  closedPatterns: z.array(z.object({
+    weekdays: z.array(z.number().int()).nullable(),
+    startDate: z.iso.date().nullable(),
+    endDate: z.iso.date().nullable(),
+    yearly: z.boolean(),
+  })).max(CLOSED_PATTERNS_MAX),
 });
 
 /** Checked here, strictly, one entry at a time. */
@@ -111,52 +137,39 @@ const dayEntry = z.strictObject({
 
 const factEntry = z.string().trim().min(1).max(FACT_CHARS);
 
-/** The entries of `raw` that pass `entry`, in order, at most `max`; anything that is not a list has none. */
-export function entries<T>(raw: unknown, entry: z.ZodType<T>, max: number): T[] {
-  if (!Array.isArray(raw)) return [];
-  const kept: T[] = [];
-  for (const item of raw) {
-    if (kept.length >= max) break;
-    const parsed = entry.safeParse(item);
-    if (parsed.success) kept.push(parsed.data);
+/** A closed pattern as answered, checked strictly: weekdays unique, 0 to 6, at least one, or null. */
+const patternEntry = z.strictObject({
+  weekdays: z.array(z.number().int().min(0).max(6)).min(1).max(7).refine((days) => new Set(days).size === days.length).nullable(),
+  startDate: z.string().refine(isCalendarDate).nullable(),
+  endDate: z.string().refine(isCalendarDate).nullable(),
+  yearly: z.boolean(),
+});
+
+/**
+ * D46: a closed pattern as a closure schedule, checked against the read's `today`, or null when it is not one: every
+ * weekday with no dates, neither a weekday nor both dates, a start after its end or more than 366 days before it, an end
+ * before today, a yearly season starting or ending on Feb 29 or lasting a year or more, or a schedule the rule schedule
+ * rules refuse. A weekly pattern starts today with no end; a dated season keeps its dates; a yearly one starts today with
+ * no end and the season of its dates' months and days.
+ */
+function patternSchedule(raw: unknown, today: string): RuleSchedule | null {
+  const parsed = patternEntry.safeParse(raw);
+  if (!parsed.success) return null;
+  const { weekdays, startDate, endDate, yearly } = parsed.data;
+  const closed = { kind: 'closure', effect: 'closed', expectedGuests: null, startTime: null, endTime: null, weekdays } as const;
+  if (startDate === null && endDate === null) {
+    if (weekdays === null || weekdays.length === 7) return null;
+    return readRuleSchedule({ ...closed, startDate: today, endDate: null }, today);
   }
-  return kept;
-}
-
-export function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-export function oneOf<T extends string>(value: unknown, allowed: readonly T[], otherwise: T): T {
-  return allowed.find((candidate) => candidate === value) ?? otherwise;
-}
-
-/** An email address. */
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
-/**
- * A formatted phone number: ten digits in groups apart by a space, dot or dash (the first in brackets too), with an
- * optional country code. Without a +country code it is a North American number, 3, 3 and 4 digits whose first and
- * second groups don't start with 0 or 1 (603-555-0123, (603) 555-0123, 1-800-555-0199); with one, 3, 3 and 4 or 2, 4
- * and 4 digits (+1 603 555 0123, +44 20 7946 0958). Anything else is never one, so a name's sizes, counts and codes
- * keep their digits (Lager 12 16 24, IPA 1/2 BBL 15.5 gal, Item 12 750 1000, SKU 1234-5678-9012), as do a date
- * (2026-06-14), an amount, and digits run together or of another length (6035550142, 555-0142). No digit, letter or
- * number part may touch either end (a full stop or comma after one ends a sentence).
- */
-const PHONE = /(?<![\w$.,/-])(?:(?:1[\s.-])?(?:\([2-9]\d{2}\)[\s.-]?|[2-9]\d{2}[\s.-])[2-9]\d{2}[\s.-]\d{4}|\+\d{1,3}[\s.-]?(?:(?:\(\d{3}\)[\s.-]?|\d{3}[\s.-])\d{3}[\s.-]\d{4}|(?:\(\d{2}\)[\s.-]?|\d{2}[\s.-])\d{4}[\s.-]\d{4}))(?![\w/-]|[.,]\d)/g;
-
-/**
- * `text` with each email address as "[email]" and each phone number as "[phone]", within `max` characters (never
- * between the two halves of a surrogate pair). The prompt forbids them; this keeps one the model wrote anyway.
- */
-export function redacted(text: string, max: number): string {
-  const out = text.replace(EMAIL, '[email]').replace(PHONE, '[phone]');
-  if (out.length <= max) return out;
-  const code = out.charCodeAt(max - 1);
-  return out.slice(0, code >= 0xd800 && code <= 0xdbff ? max - 1 : max);
+  if (startDate === null || endDate === null || startDate > endDate || endDate < today) return null;
+  if (daysBetween(startDate, endDate) > PATTERN_SPAN_DAYS) return null;
+  if (!yearly) return readRuleSchedule({ ...closed, startDate, endDate }, today);
+  // readRuleSchedule refuses Feb 29 and a season of a year or more.
+  return readRuleSchedule({ ...closed, startDate: today, endDate: null, season: { repeat: 'yearly', from: startDate.slice(5), to: endDate.slice(5) } }, today);
 }
 
 /** The answer as readerResult keeps it; the reader adds which days the file's text bears out (AiReadResult). */
-export type AiAnswer = Omit<AiReadResult, 'daysBorneOut'>;
+export type AiAnswer = Omit<AiReadResult, 'daysBorneOut' | 'closedPatterns'> & { readonly closedPatterns: readonly RuleSchedule[] };
 
 /**
  * The model's answer as Townwise keeps it, or null when it is not an object at all. An unknown kind reads as `other`
@@ -164,9 +177,10 @@ export type AiAnswer = Omit<AiReadResult, 'daysBorneOut'>;
  * is dropped, a day whose date an earlier day already gave is dropped, and each list keeps at most its cap: the days
  * their 1,500 newest, newest first, `daysCut` when the answer had more or said the file did. Email addresses and phone
  * numbers in the summary, the facts and the events' titles and details are replaced (redacted). `eventCount` and
- * `dayCount` stay when the lists are cleared (once acted on, and when the original is deleted).
+ * `dayCount` stay when the lists are cleared (once acted on, and when the original is deleted). D46: the closed patterns
+ * that pass patternSchedule against the read's `today`, at most 5, as closure schedules; none when the answer has none.
  */
-export function readerResult(raw: unknown): AiAnswer | null {
+export function readerResult(raw: unknown, today: string): AiAnswer | null {
   if (!isRecord(raw)) return null;
   const kind: AiFileKind = oneOf(raw.kind, AI_FILE_KINDS, 'other');
   const confidence = oneOf(raw.confidence, ['high', 'medium', 'low'] as const, 'low');
@@ -182,8 +196,14 @@ export function readerResult(raw: unknown): AiAnswer | null {
   });
   const days = unique.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0)).slice(0, DAYS_MAX);
   const facts = entries(raw.facts, factEntry, FACTS_MAX).map((fact) => redacted(fact, FACT_CHARS));
+  const closedPatterns: RuleSchedule[] = [];
+  for (const pattern of Array.isArray(raw.closedPatterns) ? raw.closedPatterns as unknown[] : []) {
+    if (closedPatterns.length >= CLOSED_PATTERNS_MAX) break;
+    const schedule = patternSchedule(pattern, today);
+    if (schedule !== null) closedPatterns.push(schedule);
+  }
   return {
     kind, confidence, summary, facts, events, days, daysCut: raw.daysCut === true || unique.length > DAYS_MAX,
-    eventCount: events.length, dayCount: days.length,
+    eventCount: events.length, dayCount: days.length, closedPatterns,
   };
 }

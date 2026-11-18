@@ -2,10 +2,13 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
+import { FORECAST_TAG, markedFigure } from '../calendar/model';
 import { plainOf, strong, type Phrase } from '../analytics/phrase';
 import {
-  EVENT_WORDS, everyDayForecastOnly, lastYearDayPhrase, nextEventWhen, summaryLabel, vsUsualPhrase, type LastWeek, type NextEvent, type ThisWeek,
+  EVENT_WORDS, everyDayForecastOnly, forecastDayPhrase, lastYearBesidePhrase, lastYearDayPhrase, nextEventWhen, summaryLabel, todayForecastPhrase,
+  vsUsualPhrase, weekForecast, weekForecastLabel, weekRangePhrase, type LastWeek, type NextEvent, type ThisWeek, type WeekForecast,
 } from '../analytics/week';
+import type { ForecastWindow } from '../estimates/api';
 import { METRIC_NOUN, metricNumber, shortDate, signedPercent, type Metric } from '../analytics/words';
 import { formatCount, plural } from '../format';
 import { UploadAction } from '../locations/parts';
@@ -17,7 +20,9 @@ import { BlockRow } from './Block';
 
 // At a glance (spec P11): the three answers Home leads with on a Monday, each a tile with one big figure or title.
 // This week, last year: the total of the same 7 days last year (This week's days, today first), against that year's
-// usual, and their busiest and quietest days.
+// usual, and their busiest and quietest days. With a published forecast for at least 5 of the seven days it is This
+// week's forecast (D43): the days' figures added up with the run's weekly 80% range when all 7 count, today's figure
+// and range, the busiest and quietest days, and last year beside them.
 // Last week: its total against the same days last year, after the published forecast's error when the Last week card
 // shows one (D42). Next on the calendar: the next holiday or town event from today. Every figure is history or a
 // published run's, never an unpublished guess; the cards below carry the detail, the chart and the tables.
@@ -31,10 +36,10 @@ function Tile(props: { eyebrow: string; children: React.ReactNode }): React.JSX.
   );
 }
 
-function Figure(props: { value: string; unit: string }): React.JSX.Element {
+function Figure(props: { value: string; unit: string; forecast?: boolean }): React.JSX.Element {
   return (
     <View style={styles.figure}>
-      <Text style={styles.value}>{props.value}</Text>
+      <Text style={props.forecast === true ? [styles.value, styles.forecastValue] : styles.value}>{props.value}</Text>
       {props.unit === '' ? null : <Text style={styles.unit}>{props.unit}</Text>}
     </View>
   );
@@ -42,7 +47,28 @@ function Figure(props: { value: string; unit: string }): React.JSX.Element {
 
 const unitOf = (metric: Metric): string => (metric === 'guests' ? 'guests' : METRIC_NOUN[metric]);
 
-function ThisWeekTile(props: { week: ThisWeek; metric: Metric }): React.JSX.Element {
+function ForecastWeekTile(props: { found: WeekForecast; week: ThisWeek; metric: Metric }): React.JSX.Element {
+  const { found } = props;
+  const { summary } = props.week;
+  return (
+    <Tile eyebrow="This week’s forecast">
+      <Figure value={markedFigure(formatCount(found.total), { kind: 'forecast' })} unit={`guests, ${FORECAST_TAG}`} forecast />
+      <View style={styles.lines}>
+        {found.range === null ? null : <Small white><PhraseParts phrase={weekRangePhrase(found.range)} /></Small>}
+        <Small white>{weekForecastLabel(found)}</Small>
+        <Small white><PhraseParts phrase={todayForecastPhrase(found.today)} /></Small>
+        {found.busiest === null ? null : <Small><PhraseParts phrase={forecastDayPhrase('Busiest', found.busiest)} /></Small>}
+        {found.quietest === null ? null : <Small><PhraseParts phrase={forecastDayPhrase('Quietest', found.quietest)} /></Small>}
+        {summary === null ? null : <Small><PhraseParts phrase={lastYearBesidePhrase(summary, props.metric)} /></Small>}
+        {found.range === null ? <Small>Each day’s range is in This week.</Small> : null}
+      </View>
+    </Tile>
+  );
+}
+
+function ThisWeekTile(props: { week: ThisWeek; metric: Metric; forecast: ForecastWindow | null }): React.JSX.Element {
+  const found = weekForecast(props.week, props.forecast, props.metric);
+  if (found !== null) return <ForecastWeekTile found={found} week={props.week} metric={props.metric} />;
   const { summary } = props.week;
   if (summary === null) {
     return (
@@ -82,7 +108,7 @@ export function lastWeekErrorGlancePhrase(comparison: LastWeek): Phrase | null {
 
 /** The tile's short line for each state of the comparison, the change strong; the Last week card says it in full. */
 export function lastWeekGlancePhrase(comparison: LastWeek, metric: Metric): Phrase {
-  if (everyDayForecastOnly(comparison)) return ['No guest count uploaded yet; Last week shows Townwise’s forecast.'];
+  if (everyDayForecastOnly(comparison)) return ['No guest counts for these days yet. Upload your sales to see how Townwise’s forecast did.'];
   switch (comparison.state) {
     case 'no_history': return ['No sales history yet.'];
     case 'uploads_off': return ['Every sales upload is turned off.'];
@@ -142,6 +168,8 @@ function NextTile(props: { next: NextEvent | null; calendar: Calendar; until: st
 
 export function Glance(props: {
   week: ThisWeek;
+  /** This month's published forecast read, or null; the first tile adds up This week's days from it (D43). */
+  forecast: ForecastWindow | null;
   lastWeek: LastWeek;
   next: NextEvent | null;
   calendar: Calendar;
@@ -157,7 +185,7 @@ export function Glance(props: {
       <BlockRow
         tablet
         items={[
-          { key: 'week', span: 4, node: <ThisWeekTile week={props.week} metric={metric} /> },
+          { key: 'week', span: 4, node: <ThisWeekTile week={props.week} metric={metric} forecast={props.forecast} /> },
           { key: 'last', span: 4, node: <LastWeekTile comparison={props.lastWeek} metric={metric} locationId={props.locationId} readOnlyId={props.readOnlyId} /> },
           { key: 'next', span: 4, node: <NextTile next={props.next} calendar={props.calendar} until={props.until} /> },
         ]}
@@ -172,6 +200,7 @@ const styles = StyleSheet.create({
   tile: { flexGrow: 1, gap: theme.space[3] },
   figure: { flexDirection: 'row', alignItems: 'baseline', flexWrap: 'wrap', columnGap: theme.space[2] },
   value: { ...theme.type.valuePhone, color: c.white, fontVariant: ['tabular-nums'] },
+  forecastValue: { color: c.text2 },
   unit: { ...theme.type.mono, color: c.text2 },
   title: { ...theme.type.h3, color: c.white },
   lines: { gap: 2 },

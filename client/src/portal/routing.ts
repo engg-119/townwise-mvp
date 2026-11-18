@@ -5,11 +5,14 @@ import type { AccessState, MeResponse, Role } from './schemas';
 // The portal layout (app/(gate)/(app)/_layout.tsx) redirects any path isAllowed refuses to homeFor. A new page
 // adds its path here, in the state or role that may open it, or it redirects.
 
-/** Each access state's own route (4.3). Staff in view-as are routed by the target's access. */
-export const HOME: Readonly<Record<AccessState, string>> = {
-  staff: '/admin',
+/**
+ * Each access state's own route (4.3). Staff in view-as are routed by the target's access. `staff_reauth_required` has
+ * none: the guard signs the session out instead, so staff sign in again on the ordinary sign-in page.
+ */
+export const HOME: Readonly<Record<AccessState, string | null>> = {
+  staff: '/admin/overview',
   staff_setup_required: '/settings/security',
-  staff_reauth_required: '/staff/sign-in-again',
+  staff_reauth_required: null,
   member: '/dashboard',
   invited: '/joining',
   pending: '/waiting',
@@ -25,12 +28,14 @@ const GATE_PAGES: Readonly<Record<string, readonly AccessState[]>> = {
   '/waiting': ['pending'],
   '/no-access': ['rejected', 'removed', 'org_suspended'],
   '/joining': ['invited'],
-  '/staff/sign-in-again': ['staff_reauth_required'],
 };
 
 const ID = '[^/]+';
-/** A Your data item's ref (D28): `u_` for an upload or `f_` for a stored file, then its 24-hex id. */
-const ITEM_REF = '[uf]_[0-9a-f]{24}';
+/**
+ * A Your data item's ref (D28): `u_` for an upload or `f_` for a stored file, then its 24-hex id; or `c_` for one of
+ * the location's calendars (D49), a client-only ref whose page reads the calendar routes, never the data item's.
+ */
+const ITEM_REF = '[ufc]_[0-9a-f]{24}';
 const ITEM_REF_ONLY = new RegExp(`^${ITEM_REF}$`);
 /**
  * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P26 Your data and P27 an
@@ -44,7 +49,8 @@ const MEMBER_PAGES = new RegExp(
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
 const CONSOLE_PAGES = /^\/admin(\/.*)?$/;
 
-export function homeFor(me: MeResponse): string {
+/** The access's own route, or null when the session has to sign in again first. */
+export function homeFor(me: MeResponse): string | null {
   return HOME[me.access.state];
 }
 
@@ -105,18 +111,18 @@ const TAB_SUFFIX: Readonly<Record<TabKey, string>> = {
   upload: '/sales/upload', data: '/data', notes: '/notes', town: '/town', agent: '/agent', rules: '/rules', settings: '/settings',
 };
 
-/** The location's sections in the top bar, in order (15.3). Sales data and Location settings are reached from pages. */
+/** The location's sections in the top bar, in order (15.3). Sales data is reached from pages; Location settings is for org admins. */
 const SECTIONS: readonly (readonly [TabKey, string])[] = [
-  ['home', 'Home'], ['calendar', 'Calendar'], ['orders', 'Orders'], ['analytics', 'Analytics'], ['agent', 'TownwiseAI'], ['notes', 'Notes'],
-  ['rules', 'Rules'], ['town', 'Town'], ['data', 'Your data'],
+  ['home', 'Home'], ['agent', 'TownwiseAI'], ['calendar', 'Calendar'], ['orders', 'Orders'], ['analytics', 'Analytics'], ['notes', 'Notes'],
+  ['rules', 'Rules'], ['town', 'Town'], ['data', 'Your data'], ['settings', 'Location settings'],
 ];
 
 /** The sections under More (D38): what the forecast reads, set up once or now and then. */
-const MORE: ReadonlySet<TabKey> = new Set(['notes', 'rules', 'town', 'data']);
+const MORE: ReadonlySet<TabKey> = new Set(['notes', 'rules', 'town', 'data', 'settings']);
 
 /**
- * The client app's top bar (15.3): the sections of `locationId` (Home, Calendar, Orders, Analytics, TownwiseAI, Notes, Rules,
- * Town, Your data, the last four under More), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
+ * The client app's top bar (15.3): the sections of `locationId` (Home, TownwiseAI, Calendar, Orders, Analytics, Notes, Rules,
+ * Town, Your data, and Location settings for org admins, all from Notes on under More), then Team for org admins (not while staff open the organization as admin) and Settings. With no location (none yet, or not known yet) only Team and Settings.
  * Analytics also marks Sales data, which lives under it, and Orders its Ordering setup. Rules opens Business rules (P29), for every member.
  */
 export function clientNav(role: Role, pathname: string, locationId: string | null, openAsAdmin = false): NavItem[] {
@@ -124,6 +130,7 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
   const items: NavItem[] = [];
   if (locationId !== null) {
     for (const [key, label] of SECTIONS) {
+      if (key === 'settings' && role !== 'org_admin') continue;
       const href = locationHref(locationId, key);
       // Analytics also marks Sales data, which lives under it; Orders its Ordering setup; Your data also marks Upload,
       // which is reached from it, and an item's page, which lives under it.
@@ -139,10 +146,11 @@ export function clientNav(role: Role, pathname: string, locationId: string | nul
   return [...items, ...account.map((item, index) => (index === 0 ? { ...item, end: true } : item))];
 }
 
-/** The staff console's top bar (15.4). */
+/** The staff console's top bar (15.4): Overview (P32), where staff land, first. */
 export function consoleNav(pathname: string, pendingCount: number | null): NavItem[] {
   const path = normalize(pathname);
   return [
+    { label: 'Overview', href: '/admin/overview', current: currentFor(path, '/admin/overview', null) },
     { label: 'Requests', href: '/admin', current: currentFor(path, '/admin', null), count: pendingCount },
     { label: 'Organizations', href: '/admin/orgs', current: currentFor(path, '/admin/orgs', /^\/admin\/orgs\//) },
     { label: 'People', href: '/admin/people', current: currentFor(path, '/admin/people', null) },

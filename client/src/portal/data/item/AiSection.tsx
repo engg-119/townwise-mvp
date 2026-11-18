@@ -7,22 +7,25 @@ import { usePortal } from '../../PortalProvider';
 import { itemHref, locationHref } from '../../routing';
 import { Actions, Button, LinkButton } from '../../ui/Button';
 import { ConfirmDialog } from '../../ui/ConfirmDialog';
-import { Messages, Notice } from '../../ui/feedback';
+import { InlineNotice, Messages } from '../../ui/feedback';
 import { Panel, Stack } from '../../ui/layout';
 import { useFocusMessage } from '../../ui/messageFocus';
 import { Heading, Small } from '../../ui/text';
 import {
-  AI, aiError, cantReadLine, daysLine, forecastLine, guardLine, itemLine, kindFoundLine, noteLine, notesLine, settledLine, undidLine,
-  undoBody,
+  AI, aiError, cantReadLine, daysLine, forecastLine, guardLine, itemLine, kindFoundLine, noteLine, notesLine, rulesSuggestedLine, settledLine,
+  undidLine, undoBody,
 } from '../aiCopy';
 import { readWithAi, undoAiRead, type AiRead, type DataItem } from '../api';
+import { agendaMonths, fileEventItem } from './agenda';
+import { CalendarAgenda } from './CalendarAgenda';
 
 // The TownwiseAI section of an item's page (P27, D34, spec 11A.9), on web and native, for an item with a stored file
 // (an `f_` item, or an upload read from one). Before a read, or after one that failed, was skipped or was undone, the
 // people who may ask (`canAiRead`) get what reading sends and does, the privacy link and “Let TownwiseAI read this
 // file”; a kind TownwiseAI can't read says why instead. While it reads, the item is read again every 3 seconds until
 // the read settles; leaving the page stops that. A done read shows what TownwiseAI found and what it added, each with
-// its link or why not, and, for the person who asked or an org admin, Undo behind a confirm dialog; so does a read that
+// its link or why not (D46: how many closure rules it suggested, linked to Business rules), and, for the person who
+// asked or an org admin, Undo behind a confirm dialog; so does a read that
 // failed or was skipped after it began adding (`canUndo`), with a line that it may have added some. Under view-as the
 // API sends no summary, facts or note titles and no rights, so only the statuses show. The line that says how an
 // action ended takes focus (ui/messageFocus.tsx), since each action takes its button away.
@@ -112,7 +115,7 @@ export function AiSection(props: {
   return (
     <Panel label={AI.heading}>
       <Heading level={3}>{AI.heading}</Heading>
-      {announced === null ? null : <Notice text={announced} />}
+      {announced === null ? null : <InlineNotice text={announced} />}
       {line === null ? null : <Small>{line}</Small>}
       {failure === null ? null : <Messages live="alert" takesFocus items={[failure]} />}
       {ai?.status === 'done' ? <Done ai={ai} locationId={item.locationId} onUndo={() => { setFailure(null); setConfirming(true); }} /> : null}
@@ -155,6 +158,7 @@ function Done(props: { ai: AiRead; locationId: string; onUndo: () => void }): Re
   const kind = kindFoundLine(ai.kind);
   const forecast = forecastLine(ai.calibration);
   const guard = guardLine(ai.notesSkipped);
+  const rules = rulesSuggestedLine(ai.rulesSuggested);
   return (
     <Stack gap={theme.space[3]}>
       {kind === null ? null : <Small white>{kind}</Small>}
@@ -163,11 +167,21 @@ function Done(props: { ai: AiRead; locationId: string; onUndo: () => void }): Re
       {ai.partial ? <Small>{AI.partial}</Small> : null}
       {ai.daysCut ? <Small>{AI.daysCut}</Small> : null}
       <Small white>{AI.added}</Small>
+      {ai.kind === 'calendar' && ai.events !== undefined && ai.events.length > 0 ? (
+        // What the read found in a calendar file (D49): its events by month, each one that made a note linked to its day.
+        <CalendarAgenda months={agendaMonths(ai.events.map((event, at) => fileEventItem(locationId, event, at)))} label="Events TownwiseAI read" />
+      ) : null}
       {ai.notes.length === 0 ? <Small>{AI.noNotes}</Small> : (
         <Stack gap={theme.space[2]}>
           <Small>{notesLine(ai.notes.length)}</Small>
           <Lines label={AI.notesList} items={ai.notes.map(noteLine)} />
           <LinkButton href={locationHref(locationId, 'notes')} label={AI.notesLink} />
+        </Stack>
+      )}
+      {rules === null ? null : (
+        <Stack gap={theme.space[2]}>
+          <Small>{rules}</Small>
+          <LinkButton href={locationHref(locationId, 'rules')} label={AI.rulesLink} />
         </Stack>
       )}
       {guard === null ? null : <Small>{guard}</Small>}

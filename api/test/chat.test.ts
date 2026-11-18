@@ -100,6 +100,49 @@ describe('the request', () => {
   });
 });
 
+describe('text written before a tool call', () => {
+  const turnInput = (model: ReturnType<typeof scriptedModel>) => ({
+    model, tools: {} as unknown as ToolContext, history: [], userMessage: { role: 'user' as const, content: 'Hello' }, expanded: null,
+    nodes: { user: { id: 'u1', parentId: null }, reply: { id: 'a1', parentId: 'u1' } }, signal: new AbortController().signal,
+    now: () => new Date('2026-06-01T12:00:00.000Z'), charge: () => Promise.resolve(), budgetSpent: () => Promise.resolve(false),
+  });
+
+  it('is followed by an aside event before the call’s own, so the client files it with the work', async () => {
+    const model = scriptedModel();
+    model.script({ kind: 'message', message: message([text('Next week, presumably.'), toolUse('t1', 'list_notes', {})]) });
+    const events: { type: string; data: unknown }[] = [];
+    await runTurn({ ...turnInput(model), emit: (event) => { events.push(event); } });
+    const kinds = events.map((event) => event.type);
+    const aside = kinds.indexOf('aside');
+    expect(aside).toBe(kinds.lastIndexOf('text') + 1);
+    expect(aside).toBeLessThan(kinds.indexOf('tool'));
+    expect(kinds.filter((kind) => kind === 'aside')).toHaveLength(1);
+    expect(events[aside]?.data).toEqual({});
+  });
+
+  it('is not an aside before a card or a visual, or in a reply cut off before its call ran', async () => {
+    for (const script of [
+      { kind: 'message' as const, message: message([text('Here it is.'), toolUse('v1', 'show_visual', {})]) },
+      { kind: 'message' as const, message: message([text('You have two notes.'), toolUse('p1', 'propose_note', {})]) },
+      { kind: 'message' as const, message: { ...message([text('Cut off'), toolUse('m1', 'list_notes', {})]), stop_reason: 'max_tokens' as const } },
+    ]) {
+      const model = scriptedModel();
+      model.script(script);
+      const events: { type: string; data: unknown }[] = [];
+      await runTurn({ ...turnInput(model), emit: (event) => { events.push(event); } });
+      expect(events.map((event) => event.type)).not.toContain('aside');
+    }
+  });
+
+  it('is not an aside before suggest_next alone, which ends the reply', async () => {
+    const model = scriptedModel();
+    model.script({ kind: 'message', message: message([text('You have no notes.'), toolUse('n1', 'suggest_next', { prompts: ['A?', 'B?', 'C?'] })]) });
+    const events: { type: string; data: unknown }[] = [];
+    await runTurn({ ...turnInput(model), emit: (event) => { events.push(event); } });
+    expect(events.map((event) => event.type)).not.toContain('aside');
+  });
+});
+
 describe('thinking summaries', () => {
   it('asks for adaptive thinking with a summarized display, and keeps the effort', () => {
     const params = requestParams([{ role: 'user', content: 'One' }]);
@@ -228,7 +271,7 @@ describe('the history view', () => {
     detail: null,
   } as const;
 
-  it('folds a reply’s messages and tool results into one entry whose parts keep their order: text, tool, text, proposal', () => {
+  it('folds a reply’s messages and tool results into one entry whose parts keep their order, text written before a working tool call as thinking', () => {
     const views = chatMessageViews(nodesOf(stored([
       { role: 'user', content: 'Were we closed?' },
       { role: 'assistant', content: [thinking('s1'), text('Let me '), text('look. '), toolUse('t1', 'list_notes', {})] },
@@ -241,13 +284,13 @@ describe('the history view', () => {
     expect(views).toEqual([
       { nodeId: 'legacy-0', role: 'user', at: at.toISOString(), endedAt: at.toISOString(), text: 'Were we closed?', proposals: [], parts: [], feedback: null, next: null, attachments: [], sources: [] },
       {
-        nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), endedAt: later.toISOString(), text: 'Let me look. \n\nYou have two notes.\n\nI proposed it.',
-        proposals: [{ ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null }],
+        nodeId: 'legacy-1', role: 'assistant', at: later.toISOString(), endedAt: later.toISOString(), text: 'You have two notes.\n\nI proposed it.',
+        proposals: [{ ...note, title: null, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null }],
         parts: [
-          { type: 'text', text: 'Let me look. ' },
+          { type: 'thinking', text: 'Let me look. ' },
           { type: 'tool', id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 2 } },
           { type: 'text', text: 'You have two notes.' },
-          { type: 'proposal', proposal: { ...note, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null } },
+          { type: 'proposal', proposal: { ...note, title: null, startTime: null, endTime: null, id: 'p1', status: 'open', noteId: null } },
           { type: 'text', text: 'I proposed it.' },
         ],
         feedback: null, next: null, attachments: [], sources: [],
@@ -476,6 +519,10 @@ describe('the system prompt, orders', () => {
       '- Before discussing an order, call get_order_board.',
       '- For what is set up or missing for orders (suppliers and their days, items, counts, item sales), call get_order_setup, and point the owner to Ordering setup on the Orders page to add or change it.',
       'Never state a quantity no tool returned.',
+      'To say whether an item will last, compare what is on hand plus the order (the quantity of the owner\'s saved edit when the line has one, else the recommended quantity) with the line\'s expectedUse and withCushion',
+      'call read_data_item with the file\'s ref first when its content is not in this reply; call get_order_setup, and write a supplier or item that is already there exactly as the setup spells it; then call propose_order_setup with the file\'s ref and at most sixty items, never with a person\'s name, a register name, a par or whether an item may run out.',
+      'propose_order_setup only shows a card that opens Ordering setup with the suggestions unsaved, where the owner sets each par and saves; never say anything was saved.',
+      'For a longer list, a file you cannot read or text pasted into this chat, point them to Read a file with TownwiseAI. Files are attached to a message on the web, so say that when you ask for one.',
       'A remembered change applies to every later order of that item until the owner turns it off',
       'Never say an order was placed or sent, or that a change or rule was saved.',
     ]) expect(SYSTEM_PROMPT).toContain(rule);
@@ -497,7 +544,7 @@ describe('the saved turn, an item’s text (D28)', () => {
     );
     const tools = {
       ctx: { items: { on: true, readText: () => Promise.resolve(read) } }, scope: {}, location: { id: 'l1' }, today: '2026-06-01',
-      timeZone: 'America/New_York', turn: { readUntrusted: false, readWeb: false },
+      timeZone: 'America/New_York', turn: { readUntrusted: false, readWeb: false }, files: { sent: new Map() },
     } as unknown as ToolContext;
     const result = await runTurn({
       model, tools, history: [], userMessage: { role: 'user', content: 'What is on the catering list?' }, expanded: null,

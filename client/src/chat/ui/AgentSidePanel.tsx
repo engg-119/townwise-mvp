@@ -5,6 +5,9 @@ import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { trainedOnWords, type EstimatesAbout } from '../../portal/estimates/api';
 import { formatDate } from '../../portal/format';
 import type { LoadState } from '../../portal/hooks';
+import { locationHref } from '../../portal/routing';
+import { RuleSuggestionCard } from '../../portal/rules/RuleSuggestionCard';
+import { SUGGESTED_COPY, toDecideLine } from '../../portal/rules/suggestionWords';
 import { Button } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine, StatusTag } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
@@ -12,17 +15,18 @@ import { theme } from '../../theme';
 import type { ActivityItem, Budget } from '../api';
 import { dayText, formatCount, KIND_LABEL, rangeText, weekdayName } from '../format';
 import { readsLine, type ToolContext } from '../tools';
-import { openQuestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
+import { openQuestions, openRuleSuggestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
 import { ModelCardSheet } from './ModelCardSheet';
 import { QuestionCard, type QuestionChat } from './QuestionCard';
 import { SuggestionsSection } from './SuggestionCard';
 
-// The side panel (spec P25): Questions for you, Suggested for the next 3 months (TownwiseAI's weekly suggestions,
+// The side panel (spec P25): Suggested rules (D46: suggested closure rules from files and the sales history, shown only
+// while there are some, and in the column beside the landing too), Questions for you, Suggested for the next 3 months (TownwiseAI's weekly suggestions,
 // openspec change weekly-forecast-suggestions, shown in the column beside the landing too, which lists only questions),
 // What it's been doing, this month's budget, and How TownwiseAI works. Beside an empty conversation's landing, which lists the questions under its chips, the column leaves Questions
 // for you out (owner request, 2026-11-15), so they aren't drawn twice. Every activity item is a real, dated event the server read from the location's own records; a kind this
-// client doesn't know shows as nothing. The page shows the four as Questions and activity: a column from 1024px, a
-// sheet below. How TownwiseAI works says whether Townwise has a forecast for the location from
+// client doesn't know shows as nothing. The page shows the four as Questions and activity on the new chat page only: a column
+// beside the landing from 641px, a row under its chips that opens in place at 640px and below. How TownwiseAI works says whether Townwise has a forecast for the location from
 // GET .../estimates/about (F10), and opens the model card in a sheet.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
@@ -109,6 +113,32 @@ function QuestionsSection(props: {
         <StatusTag label="Planned" kind="planned" />
         <Text style={styles.muted}>TownwiseAI’s own research (unusual nights, town events it finds) is planned.</Text>
       </View>
+    </View>
+  );
+}
+
+/** D46: the open suggested closure rules, each with Confirm, Edit (a link to P29's form) and Dismiss; nothing when none. */
+function RuleSuggestionsSection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null }): React.JSX.Element | null {
+  const { panel, locationId } = props;
+  const { state } = panel;
+  if (state.status !== 'ready' || state.data.ruleSuggestions.length === 0) return null;
+  const open = openRuleSuggestions(panel) ?? 0;
+  return (
+    <View style={styles.section}>
+      <View style={styles.head}>
+        <Eyebrow>{toDecideLine(open)}</Eyebrow>
+        <Heading>{SUGGESTED_COPY.panelHeading}</Heading>
+      </View>
+      {state.data.ruleSuggestions.map((suggestion) => (
+        <RuleSuggestionCard
+          key={suggestion.id}
+          suggestion={suggestion}
+          locationId={locationId}
+          decisions={panel.rules}
+          readOnlyId={props.readOnlyId}
+          edit={{ href: `${locationHref(locationId, 'rules')}?suggestion=${encodeURIComponent(suggestion.id)}` }}
+        />
+      ))}
     </View>
   );
 }
@@ -208,7 +238,8 @@ function HowItWorks(props: {
       {open ? (
         <View style={styles.list}>
           <Text style={styles.body}>{`It reads ${readsLine(props.ctx)}, and shows you each thing it reads.`}</Text>
-          <Text style={styles.body}>It can’t see the weather, your staffing, your bookings unless you add them as notes, or guest names.</Text>
+          <Text style={styles.body}>It can search the web for public facts about the town, such as an event’s dates or the weather, and lists the pages it used.</Text>
+          <Text style={styles.body}>It can’t see your staffing, your bookings unless you add them as notes, or guest names.</Text>
           <Text style={styles.body}>It suggests notes; it never saves one without you.</Text>
           {forecast === null ? null : <Text style={styles.body}>{forecast}</Text>}
           {props.about.status === 'failed' ? <Button variant="link" label="Try again" onPress={props.onRetryAbout} /> : null}
@@ -242,6 +273,7 @@ export function AgentSidePanel(props: {
 }): React.JSX.Element {
   return (
     <View style={styles.panel}>
+      <RuleSuggestionsSection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
       {props.showQuestions === false ? null : (
         <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
       )}

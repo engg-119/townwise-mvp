@@ -1,11 +1,16 @@
-import { guestsFromWords, yoursDid, type ForecastDay, type ForecastWindow, type LiveAccuracy } from '../estimates/api';
+import { compactEntries, dayEntries, type DayEntry } from '../calendar/entries';
+import {
+  ALL_FILTERS, captionOf, dayCell, FORECAST_TAG, INSIDE_RANGE, markedFigure, statusTakesFigure, statusWord, type CalendarCell, type CalendarInput, type ImportedEvent,
+} from '../calendar/model';
+import { yoursDid, type ForecastDay, type ForecastWindow, type LiveAccuracy } from '../estimates/api';
 import { formatCount, formatDate, plural } from '../format';
 import type { Note } from '../locations/api';
+import type { Rule } from '../rules/api';
 import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/dates';
 import { valueOf } from '../locations/sales';
 import type { Calendar, TownEvent } from './api';
 import { usual, type Usual } from './baseline';
-import { rowOf } from './cells';
+import { mondayOf, weekDates } from './cells';
 import { dayFlags, eventsOf, likelyClosedWords, notesOf, type DayContext } from './days';
 import type { DayRecord } from './history';
 import { plainOf, strong, type Phrase } from './phrase';
@@ -18,10 +23,15 @@ import { METRIC_NOUN, MONTH_NAMES, metricNumber, metricText, shortDate, signedPe
 // month grid's cells from today on, which show a published forecast day's own figures when Home passes the month's
 // forecast read (spec 16.3 P11 and 14.5), as the API leaves them after the notes: nothing here adds a
 // note's guests itself. Last week also carries the published forecast's own days for its seven days, with the read's
-// `scored`, `inRange` and `accuracy` (D42, home-last-week): nothing here scores, sums or adjusts a forecast figure, so
-// every forecast figure Home shows is a published run's, never an unpublished guess.
+// `scored`, `inRange` and `accuracy` (D42, home-last-week): nothing here scores or adjusts a forecast figure, so
+// every forecast figure Home shows is a published run's, never an unpublished guess. The one sum is weekForecast's
+// (D43): This week's figures as its Forecast row shows them, added up. Daily ranges don't add, so its range is the
+// run's own weekly 80% band from its backtest, applied to the estimated part of the total.
 // "Last year" is the same weekday 52 weeks (364 days) earlier; "usual" is baseline.ts's, with every day allowed by
 // the filters.
+
+// The week's dates live in cells.ts, which the Calendar's model imports without importing this file back.
+export { mondayOf, weekDates };
 
 /** 52 weeks: the same weekday a year earlier. */
 export const YEAR_DAYS = 364;
@@ -34,15 +44,6 @@ const EVERY_DAY = (): boolean => true;
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 export const LAST_YEAR_FOOTNOTE = 'Last year means the same weekday 52 weeks earlier. Usual is your average for that weekday in the 4 weeks either side, leaving out closed days, days with a note, and holiday and event days.';
-
-export function mondayOf(date: string): string {
-  return addDays(date, -rowOf(date));
-}
-
-/** Seven days from `start`, in order: Monday to Sunday from a Monday. */
-export function weekDates(start: string): string[] {
-  return Array.from({ length: 7 }, (_, index) => addDays(start, index));
-}
 
 export function sameWeekdayYearsAgo(date: string, years: number): string {
   return addDays(date, -YEAR_DAYS * years);
@@ -147,6 +148,11 @@ export interface WeekRow {
   /** The day's holidays and town events; term and season periods are in ThisWeek.periods. */
   events: readonly TownEvent[];
   notes: readonly Note[];
+  /**
+   * The day's compact entries (calendar/entries.ts, D49: notes, rules, holidays and town events, imported events, each
+   * title once across sources): three, or the first two and “+N more”, as the Calendar's week cards order them.
+   */
+  entries: { lines: DayEntry[]; more: string | null };
   /** This week's own stored figure; null for any day after the last day of data. */
   value: number | null;
   /** The day's figure was so few guests for its weekday that it was likely closed (spec D32), as monthDay says. */
@@ -212,15 +218,29 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
   };
 }
 
-export function thisWeek(input: HomeInput): ThisWeek {
+/** A Home day's compact entries: three, or the first two and “+N more” (D49). */
+export function weekEntries(date: string, calendar: Pick<CalendarInput, 'notes' | 'rules' | 'events' | 'imported' | 'filters'>): WeekRow['entries'] {
+  const compact = compactEntries(dayEntries(date, calendar));
+  if (compact.length <= 3) return { lines: compact, more: null };
+  return { lines: compact.slice(0, 2), more: `+${String(compact.length - 2)} more` };
+}
+
+/**
+ * The week. `calendar` is the one CalendarInput Home builds (D49), with its rules and imported events; without it, a
+ * day's entries are its notes and town events from `input.context`.
+ */
+export function thisWeek(input: HomeInput, calendar?: CalendarInput): ThisWeek {
   const dates = weekDates(input.today);
   const rows = dates.map((date): WeekRow => {
     const value = figureOf(date, input);
+    const notes = notesOf(input.context, date);
+    const sources = calendar ?? { notes, rules: [], events: eventsOf(input.context, date), imported: [], filters: ALL_FILTERS };
     return {
       date,
       isToday: date === input.today,
       events: dayEventsOf(input.context, date),
-      notes: notesOf(input.context, date),
+      notes,
+      entries: weekEntries(date, sources),
       value,
       likelyClosed: value !== null && dayFlags(date, input.byDate.get(date), input.context).likelyClosed,
       lastYear: pastDay(sameWeekdayYearsAgo(date, 1), input),
@@ -264,20 +284,141 @@ export function summaryLabel(summary: WeekSummary): string {
 }
 
 /**
- * A day's published forecast in This week (owner request, 2026-11-15), as This month's grid reads it, the figure strong:
- * "About 90 guests, 68 to 112", "Closed", "Booked: a private buyout, 40 guests"; null when the run has no figure for it.
+ * A day's published forecast in This week (owner request, 2026-11-15), as This month's grid reads it, the figure strong
+ * and marked as a forecast (D49, decision 10): "~90 guests, forecast, likely 68 to 112", "Closed", "Booked: a private
+ * buyout, ~40 guests, forecast"; null when the run has no figure for it.
  */
 export function forecastPhrase(day: ForecastDay | undefined): Phrase | null {
   if (day === undefined) return null;
   if (day.status === 'closed') return ['Closed'];
   if (day.status === 'booked') {
     if (!yoursDid(day, 'booked')) return ['Booked for a private event'];
-    return day.noteGuests > 0 ? ['Booked: a private buyout, ', strong(plural(day.noteGuests, 'guest', 'guests'))] : ['Booked: a private buyout'];
+    if (day.noteGuests === 0) return ['Booked: a private buyout'];
+    return ['Booked: a private buyout, ', strong(markedFigure(plural(day.noteGuests, 'guest', 'guests'), { kind: 'booked' })), `, ${FORECAST_TAG}`];
   }
   if (day.low === null || day.mid === null || day.high === null) return null;
   const mid = Math.round(day.mid);
   // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
-  return [strong(`About ${plural(mid, 'guest', 'guests')}`), `, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`];
+  const range = `likely ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}`;
+  const figure = strong(markedFigure(plural(mid, 'guest', 'guests'), { kind: 'forecast' }));
+  // An outlook day (D52) says so: “Outlook: ~90 guests, forecast, likely 67 to 113”.
+  if (day.outlook) return ['Outlook: ', figure, `, ${FORECAST_TAG}, ${range}`];
+  return [figure, `, ${FORECAST_TAG}, ${range}`];
+}
+
+/** A day's guests as This week's Forecast row shows them: closed is 0, your buyout its party; null when it shows none. */
+function forecastGuests(day: ForecastDay): number | null {
+  if (day.status === 'closed') return 0;
+  if (day.status === 'booked') return yoursDid(day, 'booked') && day.noteGuests > 0 ? day.noteGuests : null;
+  // forecastPhrase's own check, so a day the row shows no figure for never counts.
+  return day.low === null || day.mid === null || day.high === null ? null : Math.round(day.mid);
+}
+
+/** This week's published forecast, added up for At a glance's first tile (D43). */
+export interface WeekForecast {
+  from: string;
+  to: string;
+  /** The figures of the days that have one, added up as the Forecast row rounds them, so the row adds up to it. */
+  total: number;
+  /** The days with no figure in the Forecast row, left out of the total; at most 7 - SUMMARY_MIN_DAYS. */
+  missing: string[];
+  /**
+   * The week's 80% range, only when all 7 days count and the run that gave today has a backtest band: the estimated
+   * part (open days' figures less the guests notes and rules add) times the band, plus those guests and buyouts' parties,
+   * which are exact. The low rounds down and the high up.
+   */
+  range: { low: number; high: number } | null;
+  /** Null when today has no figure. */
+  today: ForecastDay | null;
+  /** `booked`: a buyout's party, an exact count, not an estimate. */
+  busiest: { date: string; value: number; booked: boolean } | null;
+  /** The quietest open day; closed and booked days are left out. */
+  quietest: { date: string; value: number; booked: boolean } | null;
+}
+
+/**
+ * The total of This week's published forecast (D43), or null, which keeps the tile on last year: with nothing
+ * published, for a metric other than guests (forecasts are guests), and when fewer than 5 of the seven days have a
+ * figure in the Forecast row (not covered, booked for a private event that isn't your buyout, or your buyout with no
+ * party), the same 5 of 7 the last-year summary needs. With 5 or 6, the total says which days it leaves out.
+ */
+export function weekForecast(week: Pick<ThisWeek, 'from' | 'to' | 'rows'>, forecast: ForecastWindow | null, metric: Metric): WeekForecast | null {
+  if (forecast === null || !forecast.available || metric !== 'guests') return null;
+  const byDay = new Map(forecast.days.map((day) => [day.date, day]));
+  const days: { date: string; value: number; open: boolean; booked: boolean; exact: number }[] = [];
+  const missing: string[] = [];
+  for (const row of week.rows) {
+    const day = byDay.get(row.date);
+    const value = day === undefined ? null : forecastGuests(day);
+    if (day === undefined || value === null) {
+      missing.push(row.date);
+      continue;
+    }
+    // A buyout's party and the guests notes and rules add to an open day are fixed numbers, not estimates.
+    const exact = day.status === 'booked' ? value : day.status === 'open' ? day.noteGuests : 0;
+    days.push({ date: row.date, value, open: day.status === 'open', booked: day.status === 'booked', exact });
+  }
+  if (days.length < SUMMARY_MIN_DAYS) return null;
+  const todayDay = byDay.get(week.from);
+  const today = todayDay !== undefined && forecastGuests(todayDay) !== null ? todayDay : null;
+  const total = sum(days.map((each) => each.value));
+  const band = today === null ? null : forecast.runs.find((run) => run.id === today.runId)?.backtest?.weeklyRangePct ?? null;
+  let range: WeekForecast['range'] = null;
+  if (missing.length === 0 && band !== null) {
+    const exact = sum(days.map((each) => each.exact));
+    const estimated = Math.max(0, total - exact);
+    range = { low: exact + Math.floor(estimated * (1 - band.below / 100)), high: exact + Math.ceil(estimated * (1 + band.above / 100)) };
+  }
+  const counted = days.filter((each) => each.value > 0);
+  const busiest = counted.reduce<(typeof days)[number] | null>((best, each) => (best === null || each.value > best.value ? each : best), null);
+  const quietest = days.filter((each) => each.open).reduce<(typeof days)[number] | null>((best, each) => (best === null || each.value < best.value ? each : best), null);
+  return {
+    from: week.from, to: week.to, total, missing, range, today,
+    busiest: busiest === null ? null : { date: busiest.date, value: busiest.value, booked: busiest.booked },
+    quietest: quietest === null || quietest.date === busiest?.date ? null : { date: quietest.date, value: quietest.value, booked: false },
+  };
+}
+
+/**
+ * "Tue, Nov 17 to Mon, Nov 23, 2026: the 7 days’ forecasts added up.", or with days left out "…: 6 of the 7 days’
+ * forecasts added up. Sat, Nov 21 has no forecast figure." ("Sat, Nov 21 and Sun, Nov 22 have …").
+ */
+export function weekForecastLabel(found: Pick<WeekForecast, 'from' | 'to' | 'missing'>): string {
+  const span = `${shortDate(found.from).replace(/, \d{4}$/, '')} to ${shortDate(found.to)}`;
+  if (found.missing.length === 0) return `${span}: the 7 days’ forecasts added up.`;
+  const days = found.missing.map((date) => shortDate(date).replace(/, \d{4}$/, ''));
+  const named = days.length === 1 ? `${days[0] ?? ''} has` : `${days.slice(0, -1).join(', ')} and ${days.at(-1) ?? ''} have`;
+  return `${span}: ${formatCount(7 - found.missing.length)} of the 7 days’ forecasts added up. ${named} no forecast figure.`;
+}
+
+/** "Likely 600 to 900 guests: 8 in 10 of this forecast’s backtest weeks landed in a range this wide.", the range strong. */
+export function weekRangePhrase(range: { low: number; high: number }): Phrase {
+  return ['Likely ', strong(`${formatCount(range.low)} to ${formatCount(range.high)} guests`), ': 8 in 10 of this forecast’s backtest weeks landed in a range this wide.'];
+}
+
+/** "Today: ~110 guests, forecast, 90 to 130.", "Today: closed.", "Today: a private buyout, ~40 guests, forecast."; the figure strong and marked (D49). */
+export function todayForecastPhrase(day: ForecastDay | null): Phrase {
+  if (day === null) return ['Today: no forecast figure.'];
+  if (day.status === 'closed') return ['Today: closed.'];
+  if (day.status === 'booked') return ['Today: a private buyout, ', strong(markedFigure(plural(day.noteGuests, 'guest', 'guests'), { kind: 'booked' })), `, ${FORECAST_TAG}.`];
+  // weekForecast only passes an open today with all three figures; the range's low rounds down and its high up
+  // (spec 14.4), as forecastPhrase gives it.
+  const { low, mid, high } = day;
+  if (low === null || mid === null || high === null) return ['Today: no forecast.'];
+  return ['Today: ', strong(markedFigure(plural(Math.round(mid), 'guest', 'guests'), { kind: 'forecast' })), `, ${FORECAST_TAG}, ${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}.`];
+}
+
+/** "Busiest: Sat, Nov 21, 2026 (~220 guests, forecast).", the figure strong and marked (D49); a buyout's party is "a private buyout, ~40 guests". */
+export function forecastDayPhrase(which: 'Busiest' | 'Quietest', found: { date: string; value: number; booked: boolean }): Phrase {
+  const guests = markedFigure(plural(found.value, 'guest', 'guests'), { kind: 'forecast' });
+  return [`${which}: ${shortDate(found.date)} (`, strong(found.booked ? `a private buyout, ${guests}` : guests), `, ${FORECAST_TAG}).`];
+}
+
+/** "Same 7 days last year: 757 guests, −19% against that year’s usual.", the total strong; "From 6 of its 7 days." when short. */
+export function lastYearBesidePhrase(summary: WeekSummary, metric: Metric): Phrase {
+  const usualPart = summary.vsUsual === null ? '.' : `, ${signedPercent(summary.vsUsual.change)} against that year’s usual.`;
+  const short = summary.days === 7 ? '' : ` From ${formatCount(summary.days)} of its 7 days.`;
+  return ['Same 7 days last year: ', strong(metricText(summary.total, metric)), `${usualPart}${short}`];
 }
 
 /** "Busiest last year: Sat, Nov 22, 2025 (253 guests).", the figure strong. */
@@ -509,20 +650,21 @@ function wholePercent(value: number): string {
 }
 
 /**
- * "Townwise’s forecast was off by 12% over 6 days. 5 of 6 days landed in its range." from the read's `accuracy`, or,
- * under 5 scored days, "2 of 3 days landed in Townwise’s range."; the percentage and counts strong. Null with no scored day.
+ * "Townwise’s forecast was off by 12% over 6 days. 5 of 6 days inside the forecast range." from the read's `accuracy`,
+ * or, under 5 scored days, "2 of 3 days inside the forecast range."; the percentage and counts strong. Null with no
+ * scored day.
  */
 function forecastErrorPhrase(part: LastWeekForecast): Phrase | null {
   const { accuracy } = part;
   if (accuracy !== null && accuracy.typicalErrorPct !== null) {
     return [
       'Townwise’s forecast was off by ', strong(wholePercent(accuracy.typicalErrorPct)), ' over ', strong(plural(accuracy.days, 'day', 'days')), '. ',
-      strong(`${formatCount(accuracy.inRange)} of ${plural(accuracy.days, 'day', 'days')}`), ' landed in its range.',
+      strong(`${formatCount(accuracy.inRange)} of ${plural(accuracy.days, 'day', 'days')}`), ` ${INSIDE_RANGE}.`,
     ];
   }
   const days = accuracy?.days ?? part.scored;
   if (days === 0) return null;
-  return [strong(`${formatCount(accuracy?.inRange ?? part.inRange)} of ${plural(days, 'day', 'days')}`), ' landed in Townwise’s range.'];
+  return [strong(`${formatCount(accuracy?.inRange ?? part.inRange)} of ${plural(days, 'day', 'days')}`), ` ${INSIDE_RANGE}.`];
 }
 
 /** "these days" for all seven, "Sat, Nov 21" for one, "Sat and Sun" or "Thu, Fri and Sat" for a few. */
@@ -574,14 +716,14 @@ export function lastWeekForecastCell(day: ForecastDay): string | null {
 }
 
 /**
- * "Forecast, no guest count uploaded yet: about 150 guests, 120 to 180" (or "…: closed", "…: booked"): a forecast-only
+ * "Forecast, no guest count uploaded yet: ~150 guests, 120 to 180" (or "…: closed", "…: booked"): a forecast-only
  * day's row and label, so it never reads like a sales figure.
  */
 export function lastWeekForecastOnly(day: ForecastDay): string | null {
   const own = runDay(day);
   if (own === null) return null;
   const what = own.status !== 'open' ? own.status
-    : `about ${plural(Math.round(own.mid), 'guest', 'guests')}, ${formatCount(Math.floor(own.low))} to ${formatCount(Math.ceil(own.high))}`;
+    : `${markedFigure(plural(Math.round(own.mid), 'guest', 'guests'), { kind: 'forecast' })}, ${formatCount(Math.floor(own.low))} to ${formatCount(Math.ceil(own.high))}`;
   return `Forecast, no guest count uploaded yet: ${what}`;
 }
 
@@ -673,123 +815,94 @@ export function monthFactsHead(today: string): string {
   return `Your ${MONTH_NAMES[Number(today.slice(5, 7)) - 1] ?? ''} in past years`;
 }
 
-export interface MonthCell {
-  date: string;
-  /** A holiday or town event (term and season periods span months, so they mark no day). */
-  event: boolean;
-  note: boolean;
+/**
+ * A day of Home's month grid (D49, design decision 9): the Calendar's own cell (calendar/model.ts dayCell, so the
+ * figure, its caption and the status are the Calendar's, from one rule), with Home's "This week" outline (the seven
+ * days from today) and its figure printed in Home's metric.
+ */
+export interface MonthCell extends Omit<CalendarCell, 'inWeek'> {
+  /** In This week in {Town}: the seven days from today. */
   inWeek: boolean;
-  isToday: boolean;
   /**
-   * Before today, the stored figure in the location's metric; from today on, a published forecast day's rounded
-   * middle figure, or a buyout's party on a booked day. Null otherwise, and always without the month's figures.
+   * The figure as printed: a stored value in Home's metric, every other figure a guest count, a forecast's after its
+   * “~” (calendar/model.ts markedFigure, D49 decision 10); null with none.
    */
-  figure: { value: number; kind: 'forecast' | 'actual' | 'booked'; text: string } | null;
-  /** From today on, a day the published forecast has closed or booked; before today, a likely-closed day (closed). */
-  status: 'closed' | 'booked' | null;
+  figureText: string | null;
   /**
-   * Before today, a day whose guests were near zero for its weekday (spec D32): status closed, and no figure. monthGrid
-   * always sets it; optional so a cell built elsewhere (a test's) reads as not likely closed.
+   * The figure's word, under it in a narrow cell and beside the day in a wide one: “forecast” for every forecast,
+   * “sales” for a stored net-sales figure; null otherwise.
    */
-  likelyClosed?: boolean;
-  /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
-  noteGuests: number;
-  /** What a screen reader hears for the cell: everything its number, figure and marks show, in words. */
-  label: string;
+  caption: string | null;
 }
 
-/** The word a cell shows for its status: “Likely closed”, “Closed” or “Booked”; null for an open day. */
-export function monthStatusWord(cell: Pick<MonthCell, 'status' | 'likelyClosed'>): string | null {
-  if (cell.likelyClosed === true) return 'Likely closed';
-  return cell.status === 'closed' ? 'Closed' : cell.status === 'booked' ? 'Booked' : null;
+/** A Home cell at least 88px wide shows its entries in 96px (D49, design decision 9). */
+export const WIDE_CELL = 88;
+export const WIDE_CELL_HEIGHT = 96;
+
+/**
+ * A wide Home cell's rows in px (UI review B1). As in the Calendar's cell, the top row holds the day with the status
+ * or the caption, and the figure row the figure with its “+40”, or the status in its place, each at a fixed height, so
+ * the entry lines get what is left: the cell less its padding and border (10px), the two rows, and the gaps between.
+ * MonthGrid.web.tsx and MonthGrid.tsx draw with these.
+ */
+export const WIDE_ROWS = { inner: WIDE_CELL_HEIGHT - 10, top: 16, figure: 24, entry: 14, gap: 2, entryGap: 1 } as const;
+
+/** How many entry lines fit under the two rows, “+N more” counting as one: 2. */
+export const WIDE_LINES = Math.floor(
+  (WIDE_ROWS.inner - WIDE_ROWS.top - WIDE_ROWS.figure - 2 * WIDE_ROWS.gap + WIDE_ROWS.entryGap) / (WIDE_ROWS.entry + WIDE_ROWS.entryGap),
+);
+
+/** A cell's entry lines within `budget` lines: every entry when they fit, else the first ones and “+N more” on the last line. */
+export function monthEntryLines(cell: Pick<MonthCell, 'chips' | 'more'>, budget: number): { lines: string[]; more: string | null } {
+  const total = cell.chips.length + cell.more;
+  if (total <= budget) return { lines: cell.chips.slice(0, budget), more: null };
+  const shown = Math.max(0, budget - 1);
+  return { lines: cell.chips.slice(0, shown), more: `+${String(total - shown)} more` };
 }
 
-/** A likely-closed day's stored figure, for “Likely closed (1 guest recorded)”: “1 guest”, “3 guests” or “$12”. */
-function recordedText(value: number, metric: Metric): string {
-  return metric === 'guests' ? plural(value, 'guest', 'guests') : metricText(value, metric);
+/** What a wide Home cell shows in each row (WIDE_ROWS). */
+export interface WideCell {
+  /** Beside the day: a booked or outlook day's status word, else the figure's caption (“forecast”, “sales”). */
+  topRight: string | null;
+  /** The figure row: the figure and its “+40”, or the status word in its place (“Closed”, “Likely closed”); null for neither. */
+  middle: 'figure' | 'status' | null;
+  lines: string[];
+  more: string | null;
 }
 
-/** The figures Home's month grid shows: the location's history, and the month's published forecast days by date. */
-export interface MonthFigures {
-  input: HomeInput;
-  forecast: ReadonlyMap<string, ForecastDay>;
+export function wideCell(cell: Pick<MonthCell, 'status' | 'figure' | 'caption' | 'chips' | 'more'>): WideCell {
+  const topRight = cell.status === 'booked' || cell.status === 'outlook' ? statusWord(cell.status) : cell.caption;
+  const middle = statusTakesFigure(cell.status, false) ? 'status' : cell.figure === null ? null : 'figure';
+  return { topRight, middle, ...monthEntryLines(cell, WIDE_LINES) };
 }
 
-interface CellFigure {
-  figure: MonthCell['figure'];
-  status: MonthCell['status'];
-  likelyClosed: boolean;
-  noteGuests: number;
-  /** The figure in the cell's label. */
-  words: string | null;
-}
-
-const NO_FIGURE: CellFigure = { figure: null, status: null, likelyClosed: false, noteGuests: 0, words: null };
-
-/** A day's figure: stored before today (figureOf), the published forecast's own from today on. */
-function cellFigure(date: string, figures: MonthFigures | undefined): CellFigure {
-  if (figures === undefined) return NO_FIGURE;
-  const { input } = figures;
-  if (date < input.today) {
-    const value = figureOf(date, input);
-    if (value === null) return NO_FIGURE;
-    if (dayFlags(date, input.byDate.get(date), input.context).likelyClosed) {
-      return { ...NO_FIGURE, status: 'closed', likelyClosed: true, words: `${likelyClosedWords(recordedText(value, input.metric))}.` };
-    }
-    return { ...NO_FIGURE, figure: { value, kind: 'actual', text: metricNumber(value, input.metric) }, words: `${metricText(value, input.metric)}.` };
-  }
-  const day = figures.forecast.get(date);
-  if (day === undefined) return NO_FIGURE;
-  if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: 'Closed.' };
-  if (day.status === 'booked') {
-    const words = !yoursDid(day, 'booked') ? 'Booked for a private event.'
-      : day.noteGuests > 0 ? `Booked: a private buyout, ${plural(day.noteGuests, 'guest', 'guests')}.` : 'Booked: a private buyout.';
-    const figure = day.noteGuests > 0 ? { value: day.noteGuests, kind: 'booked' as const, text: formatCount(day.noteGuests) } : null;
-    return { ...NO_FIGURE, status: 'booked', figure, words };
-  }
-  if (day.low === null || day.mid === null || day.high === null) return NO_FIGURE;
-  const mid = Math.round(day.mid);
-  const words = [
-    // The range's low rounds down and its high up (spec 14.4), as the Calendar and TownwiseAI give it.
-    `Forecast about ${plural(mid, 'guest', 'guests')}, ${formatCount(Math.floor(day.low))} to ${formatCount(Math.ceil(day.high))}.`,
-    day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : null,
-  ].filter((part) => part !== null).join(' ');
-  return { figure: { value: mid, kind: 'forecast', text: formatCount(mid) }, status: null, likelyClosed: false, noteGuests: day.noteGuests, words };
-}
-
-/** "Wed, Nov 11, 2026. Today. This week. Forecast about 212 guests, 180 to 240. Veterans Day. 1 note." */
-function monthCellLabel(date: string, events: readonly TownEvent[], notes: number, inWeek: boolean, isToday: boolean, figure: string | null): string {
-  return [
-    `${shortDate(date)}.`,
-    isToday ? 'Today.' : null,
-    inWeek ? 'This week.' : null,
-    figure,
-    ...events.map((event) => `${event.title}.`),
-    notes === 0 ? null : `${plural(notes, 'note', 'notes')}.`,
-  ].filter((part) => part !== null).join(' ');
+/** A narrow cell's caption: none for a forecast on a phone, where “forecast” is wider than the cell and the “~” marks it (UI review S4). */
+export function narrowCaption(cell: Pick<MonthCell, 'caption'>, phone: boolean): string | null {
+  return phone && cell.caption === FORECAST_TAG ? null : cell.caption;
 }
 
 /**
- * This month as week rows, Monday first; null where a row's day is in another month. Without `figures` no cell has a
- * figure; with them, a day before today has its stored figure and a day from today on only the published forecast's.
- * "This week" marks This week in {Town}'s days: the seven from today.
+ * This month as week rows, Monday first; null where a row's day is in another month. Each cell is the Calendar's
+ * (dayCell over the one CalendarInput Home builds, D49), so Home keeps no copy of the figure rule; "This week" marks
+ * This week in {Town}'s days, the seven from today.
  */
-export function monthGrid(today: string, context: DayContext, figures?: MonthFigures): (MonthCell | null)[][] {
+export function monthGrid(today: string, input: CalendarInput, metric: Metric = 'guests'): (MonthCell | null)[][] {
   const { from, to } = monthRange(today.slice(0, 7));
   const last = addDays(today, 6);
   const rows: (MonthCell | null)[][] = [];
   for (let start = mondayOf(from); start <= to; start = addDays(start, 7)) {
     rows.push(weekDates(start).map((date) => {
       if (date < from || date > to) return null;
-      const events = dayEventsOf(context, date);
-      const notes = notesOf(context, date).length;
+      const cell = dayCell(date, input, metric);
       const inWeek = date >= today && date <= last;
-      const isToday = date === today;
-      const found = cellFigure(date, figures);
+      const head = `${shortDate(date)}.${cell.isToday ? ' Today.' : ''}`;
+      const actual = cell.figure?.kind === 'actual';
       return {
-        date, event: events.length > 0, note: notes > 0, inWeek, isToday, figure: found.figure, status: found.status, likelyClosed: found.likelyClosed,
-        noteGuests: found.noteGuests,
-        label: monthCellLabel(date, events, notes, inWeek, isToday, found.words),
+        ...cell,
+        inWeek,
+        figureText: cell.figure === null ? null : actual ? metricNumber(cell.figure.value, metric) : markedFigure(formatCount(cell.figure.value), cell.figure),
+        caption: actual && metric === 'netSales' ? 'sales' : captionOf(cell),
+        label: inWeek && cell.label.startsWith(head) ? `${head} This week.${cell.label.slice(head.length)}` : cell.label,
       };
     }));
   }
@@ -851,6 +964,11 @@ export function monthDay(date: string, input: HomeInput): MonthDay {
   };
 }
 
+/** A likely-closed day's stored figure, for “Likely closed (1 guest recorded)”: “1 guest”, “3 guests” or “$12”. */
+function recordedText(value: number, metric: Metric): string {
+  return metric === 'guests' ? plural(value, 'guest', 'guests') : metricText(value, metric);
+}
+
 /** The day detail's “This day” and This week's own day: “241 guests”, “Likely closed (1 guest recorded)”, or that nothing is stored. */
 /** A day's own figure, strong, or what stands in for it. */
 export function thisDayPhrase(day: Pick<MonthDay, 'value' | 'likelyClosed'>, metric: Metric): Phrase {
@@ -889,20 +1007,36 @@ export function nextEventWhen(next: NextEvent): string {
 
 export type MonthItem =
   | { kind: 'event'; key: string; first: string; dates: string; event: TownEvent }
-  | { kind: 'note'; key: string; first: string; dates: string; note: Note };
+  | { kind: 'note'; key: string; first: string; dates: string; note: Note }
+  | { kind: 'rule'; key: string; first: string; dates: string; rule: Rule }
+  | { kind: 'imported'; key: string; first: string; dates: string; imported: ImportedEvent };
 
-/** Every event and note on the calendar this month, by the first day of the month each covers. */
-export function monthItems(today: string, context: DayContext): MonthItem[] {
+/** One key per item across the month's days: an event, a note, a rule, or an event of one of the location's calendars. */
+function itemOf(entry: DayEntry, date: string): MonthItem {
+  switch (entry.kind) {
+    case 'note': return { kind: 'note', key: `note:${entry.note.id}`, first: date, dates: dayMonthRange(entry.note.startDate, entry.note.endDate), note: entry.note };
+    // A rule can repeat with no end, so it is dated by its first day this month; its summary says when it runs.
+    case 'rule': return { kind: 'rule', key: `rule:${entry.rule.id}`, first: date, dates: dayMonth(date), rule: entry.rule };
+    case 'imported': {
+      const { imported } = entry;
+      return { kind: 'imported', key: `imported:${imported.calendarId}:${imported.uid}`, first: date, dates: dayMonthRange(imported.startDate, imported.endDate), imported };
+    }
+    default: return { kind: 'event', key: `event:${entry.event.id}`, first: date, dates: dayMonthRange(entry.event.start, entry.event.end), event: entry.event };
+  }
+}
+
+/**
+ * Every event, note, business rule and event of the location's calendars on this month (D49), each once by the first
+ * day of the month it covers, in date order: each day's entries from the one helper (calendar/entries.ts), periods
+ * included, a title shown once across sources on a day (compactEntries).
+ */
+export function monthItems(today: string, calendar: Pick<CalendarInput, 'notes' | 'rules' | 'events' | 'imported' | 'filters'>): MonthItem[] {
   const { from, to } = monthRange(today.slice(0, 7));
   const items = new Map<string, MonthItem>();
   for (let date = from; date <= to; date = addDays(date, 1)) {
-    for (const event of eventsOf(context, date)) {
-      const key = `event:${event.id}`;
-      if (!items.has(key)) items.set(key, { kind: 'event', key, first: date, dates: dayMonthRange(event.start, event.end), event });
-    }
-    for (const note of notesOf(context, date)) {
-      const key = `note:${note.id}`;
-      if (!items.has(key)) items.set(key, { kind: 'note', key, first: date, dates: dayMonthRange(note.startDate, note.endDate), note });
+    for (const entry of compactEntries(dayEntries(date, calendar, { periods: true }))) {
+      const item = itemOf(entry, date);
+      if (!items.has(item.key)) items.set(item.key, item);
     }
   }
   return [...items.values()].sort((a, b) => a.first.localeCompare(b.first));

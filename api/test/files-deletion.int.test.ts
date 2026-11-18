@@ -107,16 +107,32 @@ describe('deleting a location’s sales data', () => {
 });
 
 describe('deleting a location', () => {
-  it('counts stored files as data: the location goes only once its sales data (and so its files) is deleted', async () => {
+  // D44: one press deletes the location with its stored files, but never while Townwise is reading one of them.
+  it('deletes the location with its stored files and blobs; while a file is being read it is 409 import_running and nothing goes', async () => {
     const { orgId, admin, member } = await team('Location Delete Grill');
     const locationId = await addLocation(server, { orgId, name: 'Annex' });
     await seedReadFile(server, blobs, { orgId, locationId, uploadedBy: member.userId, name: 'a.csv', raw: Buffer.from('r'), clean: 'date\r\n' });
-    const first = await call(server, base(locationId), { session: admin, method: 'DELETE' });
-    expect([first.status, ((await first.json()) as { error: string }).error]).toEqual([409, 'location_has_data']);
-    expect((await call(server, `${base(locationId)}/sales`, { session: admin, method: 'DELETE' })).status).toBe(200);
+    await addSalesDay(server, { orgId, locationId, date: '2025-01-01', guests: 1, netSalesCents: 100 });
+    const reading = new Types.ObjectId();
+    await server.connection.collection('tw_imports').insertOne({
+      _id: reading, orgId: oid(orgId), locationId: oid(locationId), activeLocation: oid(locationId), createdBy: member.userId,
+      createdAt: server.clock.now(), lastDropAt: server.clock.now(), status: 'reading', startedAt: server.clock.now(), finishedAt: null,
+      question: null, appliedVersion: 0, drops: 0, lease: null, claimedAt: null, bytesRead: 0, msRead: 0,
+    });
+    const refused = await call(server, base(locationId), { session: admin, method: 'DELETE' });
+    expect([refused.status, ((await refused.json()) as { error: string }).error]).toEqual([409, 'import_running']);
+    expect({ files: await count('tw_files', { locationId: oid(locationId) }), days: await count('tw_sales_days', { locationId: oid(locationId) }) })
+      .toEqual({ files: 1, days: 1 });
+
+    await server.connection.collection('tw_imports').updateOne({ _id: reading }, { $set: { status: 'open' } });
     expect((await call(server, base(locationId), { session: admin, method: 'DELETE' })).status).toBe(204);
-    expect(await count('tw_imports', { locationId: oid(locationId) })).toBe(0);
+    for (const collection of ['tw_files', 'tw_imports', 'tw_sales_days', 'tw_locations']) {
+      const filter = collection === 'tw_locations' ? { _id: oid(locationId) } : { locationId: oid(locationId) };
+      expect({ collection, n: await count(collection, filter) }).toEqual({ collection, n: 0 });
+    }
     expect(blobsUnder(`${orgId}/${locationId}/`)).toEqual([]);
+    const event = (await auditEvents(server)).find((e) => e.action === 'location.deleted' && (e.target as { id: string }).id === locationId);
+    expect(event?.details).toEqual({ name: 'Annex', townId: 'hanover-nh', deletedDays: 1, deletedFiles: 1, deletedNotes: 0 });
   });
 });
 

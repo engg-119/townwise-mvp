@@ -12,7 +12,7 @@ import { NotesSkeleton } from '../skeleton';
 import { Actions, Button } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { DataTable } from '../ui/DataTable';
-import { EmptyState, Notice, ReadOnlyLine, StatusTag } from '../ui/feedback';
+import { EmptyState, Notice, ReadOnlyLine, useNoticeState } from '../ui/feedback';
 import { Columns, Section, Stack } from '../ui/layout';
 import { Body } from '../ui/text';
 import { createNote, deleteNote, fetchNotes, updateNote, type Note, type NoteInput } from './api';
@@ -46,8 +46,10 @@ function NoteCell(props: { note: Note; selected: boolean }): React.JSX.Element {
     <View style={styles.cell}>
       <View style={styles.kind}>
         {selected ? <View style={styles.square} /> : null}
-        <Text style={[styles.who, selected ? styles.whoOn : null]}>{KIND_LABEL[note.kind]}</Text>
+        <Text style={[styles.who, selected ? styles.whoOn : null]}>{note.title ?? KIND_LABEL[note.kind]}</Text>
       </View>
+      {/* A named note (D49): its name, then its kind, then its detail. */}
+      {note.title === null || note.title === undefined ? null : <Text style={styles.note}>{KIND_LABEL[note.kind]}</Text>}
       {note.detail === null ? null : <Text style={styles.note}>{note.detail}</Text>}
     </View>
   );
@@ -141,7 +143,7 @@ export function Notes(): React.JSX.Element {
     // A query (`?new=`) may have opened it; drop that, so a reload or Back shows the list, not an empty form again.
     if (params.new !== undefined) router.setParams({ new: undefined });
   }, [params.new, router]);
-  const [notice, setNotice] = useState<string | null>(null);
+  const [notice, setNotice] = useNoticeState();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [deleting, setDeleting] = useState<Note | null>(null);
   // useAction keeps its last error until the next run; a dialog opened again starts without it.
@@ -162,10 +164,11 @@ export function Notes(): React.JSX.Element {
     closeForm();
     setDeleting(null);
     setSelectedId(null);
-    setNotice(text);
+    // The note is gone and the save or delete did not happen: that stays in the page, never a toast.
+    setNotice(text, true);
     markStale();
     reload();
-  }, [closeForm, markStale, reload]);
+  }, [closeForm, markStale, reload, setNotice]);
 
   const editing = form?.mode === 'edit' ? form.note : null;
   const save = useCallback(async (input: NoteInput): Promise<Note | null> => {
@@ -185,7 +188,7 @@ export function Notes(): React.JSX.Element {
     closeForm();
     setSelectedId(note.id);
     setNotice('Saved.');
-  }, [change, closeForm, markStale]);
+  }, [change, closeForm, markStale, setNotice]);
 
   const remove = useAction(useCallback(async (note: Note) => {
     try {
@@ -200,7 +203,7 @@ export function Notes(): React.JSX.Element {
     setSelectedId(null);
     if (editing?.id === note.id) setForm(null);
     setNotice('Deleted the note.');
-  }, [api, location.id, change, markStale, editing, gone]));
+  }, [api, location.id, change, markStale, editing, gone, setNotice]));
 
   function open(next: FormState): void {
     setNotice(null);
@@ -239,7 +242,7 @@ export function Notes(): React.JSX.Element {
 
   return (
     <View>
-      {notice === null ? null : <View style={styles.notice}><Notice text={notice} /></View>}
+      {notice === null ? null : <Notice text={notice.text} result={notice} stays={notice.stays} style={styles.notice} />}
       <Columns
         main={(
           <Stack>
@@ -248,10 +251,6 @@ export function Notes(): React.JSX.Element {
               days, and upcoming ones for the dates ahead. Townwise keeps them with this location. From today on, a private event with a
               guest count, a buyout or a closure changes Townwise’s forecast for its days. TownwiseAI reads every note.
             </Body>
-            <View style={styles.tagline}>
-              <StatusTag kind="planned" label="Planned" />
-              <Text style={styles.taglineText}>Talking to your model is planned.</Text>
-            </View>
           </Stack>
         )}
       />
@@ -293,8 +292,6 @@ const c = theme.color;
 
 const styles = StyleSheet.create({
   notice: { marginBottom: theme.space[8] },
-  tagline: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: 12, rowGap: 8 },
-  taglineText: { ...theme.type.small, color: c.text2 },
   body: { marginTop: theme.space[8], paddingTop: theme.space[8], borderTopWidth: 1, borderTopColor: c.border, gap: theme.space[8] },
   cell: { gap: 2, paddingVertical: 4, minWidth: 0 },
   kind: { flexDirection: 'row', alignItems: 'center', columnGap: 8 },

@@ -221,6 +221,44 @@ export async function readSetupWithAi(api: ApiClient, locationId: string, source
   return body.read;
 }
 
+// The ordering setup card of a TownwiseAI chat (D56): suggestions TownwiseAI wrote from a file attached to the
+// conversation, checked again by the server (api/src/chat/tools/order-setup.ts). The card is open or set aside, never
+// saved: the owner saves on Ordering setup. These live here, not in src/chat/api.ts, with the setup they preview against.
+
+export const setupProposalSchema = z.object({
+  kind: z.literal('setup'),
+  status: z.enum(['open', 'dismissed']),
+  /** As a read on Ordering setup answers them; never a par, a never run out or a point-of-sale name. Absent under view-as. */
+  read: setupReadSchema.optional(),
+  /** Under view-as, in place of `read`: how many suppliers and items were suggested, and nothing from the file. */
+  counts: z.object({ suppliers: z.number(), items: z.number() }).optional(),
+  /** The conversation had read web pages when the card was shown. */
+  readWeb: z.boolean(),
+});
+export type SetupProposal = z.infer<typeof setupProposalSchema>;
+
+function setupProposalPath(locationId: string, conversationId: string, proposalId: string): `/${string}` {
+  return `/api/org/locations/${encodeURIComponent(locationId)}/chat/${encodeURIComponent(conversationId)}/order-proposals/${encodeURIComponent(proposalId)}`;
+}
+
+/**
+ * GET .../chat/{conversationId}/order-proposals/{proposalId} for a setup card. Rejects with ApiError 404 once the card
+ * is not served: the file it came from was turned off or deleted, or is not the caller's to read.
+ */
+export async function fetchSetupProposal(api: ApiClient, locationId: string, conversationId: string, proposalId: string): Promise<SetupProposal> {
+  const body = await api.json(setupProposalPath(locationId, conversationId, proposalId), z.object({ proposal: setupProposalSchema }));
+  return body.proposal;
+}
+
+/** POST the same path { action: 'dismiss' }: sets the card aside. It is the card's only action. */
+export async function dismissSetupProposal(api: ApiClient, locationId: string, conversationId: string, proposalId: string): Promise<void> {
+  await api.json(
+    setupProposalPath(locationId, conversationId, proposalId),
+    z.object({ proposal: z.object({ kind: z.literal('setup'), status: z.literal('dismissed') }) }),
+    { method: 'POST', body: { action: 'dismiss' } },
+  );
+}
+
 /** A supplier as PUT sends it: a stored one by its `id`, a new one with a `key` its items name it by. */
 export interface SetupSupplierInput {
   readonly id?: string;

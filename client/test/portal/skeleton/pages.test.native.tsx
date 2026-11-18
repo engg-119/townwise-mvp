@@ -72,7 +72,6 @@ test('P14 Notes: its skeleton under the intro', async () => {
   const api = hang(fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member'), fallback: locationsFake() }), '/api/org/locations/l1/notes');
   await renderApp('/locations/l1/notes', api);
   await expectSkeleton('notes', 'Loading notes');
-  expect(screen.getByText('Talking to your model is planned.')).toBeTruthy();
 });
 
 test('P12 Sales data: its skeleton while the sales load', async () => {

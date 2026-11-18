@@ -113,6 +113,21 @@ test('the route table matches the frozen HTTP contract', () => {
       body: ['code', 'recoveryCode'],
       success: [204],
       errors: ['invalid_code', 'unauthenticated', 'origin_not_allowed', 'reauth_required', 'totp_not_enabled', 'rate_limited'],
+    },    {
+      method: 'POST',
+      path: '/totp/reset',
+      auth: 'recent',
+      body: ['code', 'recoveryCode'],
+      success: [200],
+      errors: ['invalid_code', 'unauthenticated', 'origin_not_allowed', 'reauth_required', 'totp_not_enabled', 'rate_limited'],
+    },
+    {
+      method: 'POST',
+      path: '/totp/reset/confirm',
+      auth: 'recent',
+      body: ['code'],
+      success: [200],
+      errors: ['invalid_code', 'enrollment_expired', 'unauthenticated', 'origin_not_allowed', 'reauth_required', 'rate_limited'],
     },
   ]);
 });

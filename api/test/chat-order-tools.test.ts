@@ -94,7 +94,7 @@ function context(fakes: Fakes = {}): ToolContext {
     role: 'member',
     actor: { actorUserId: 'user-1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
     turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
-    files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined } },
+    files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
   };
 }
 
@@ -166,8 +166,12 @@ describe('get_order_board', () => {
     const lines = orders[0]?.lines as Record<string, unknown>[];
     expect(lines.map((line) => line.itemId)).toEqual([LAGER, CIDER]);
     expect(Object.keys(lines[0] ?? {}).sort()).toEqual([
-      'alternative', 'confidence', 'countAgeDays', 'edit', 'itemId', 'name', 'neverRunOut', 'onHand', 'par', 'recommended', 'rules', 'unit', 'why',
+      'alternative', 'confidence', 'countAgeDays', 'edit', 'expectedUse', 'itemId', 'name', 'neverRunOut', 'onHand', 'par', 'recommended', 'rules',
+      'unit', 'why', 'withCushion',
     ]);
+    // What "will it last" needs, on every line: the window's expected use and that use with the cushion, to 2 places.
+    const line = json(await run('get_order_line', { itemId: LAGER }, context())).line as Record<string, unknown>;
+    expect(lines[0]).toMatchObject({ expectedUse: line.mu, withCushion: line.orderUpTo });
     expect(lines[0]).toMatchObject({ name: 'Sentinel Lager', unit: 'cases', par: 3, onHand: 1.5, countAgeDays: 2, edit: null, rules: [] });
     expect(typeof lines[0]?.recommended).toBe('number');
   });

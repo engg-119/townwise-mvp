@@ -2,17 +2,16 @@ import { useMemo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
-import type { Calendar, TownEvent } from '../analytics/api';
-import { noteWords } from '../analytics/panel';
+import type { Calendar } from '../analytics/api';
 import {
   calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, forecastPhrase, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase,
   vsUsualDayPhrase,
   type PastDay, type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
+import type { DayEntry } from '../calendar/entries';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { useBreakpoint } from '../hooks';
-import type { Note } from '../locations/api';
 import { ShowNumbers } from '../locations/parts';
 import { DataTable, type Column } from '../ui/DataTable';
 import { SourceChips } from '../ui/SourceChip';
@@ -29,50 +28,45 @@ import { Block } from './Block';
 // with their whole span and sources, not in each day.
 //
 // With a published forecast, the first row is each day's Forecast, as This month's grid gives it (owner request,
-// 2026-11-15): "About 90 guests, 68 to 112", Closed or Booked, or "No forecast" for a day the run doesn't cover; with
+// 2026-11-15): "~90 guests, forecast, likely 68 to 112", Closed or Booked, or "No forecast" for a day the run doesn't cover; with
 // none published there is no Forecast row, so Home still never shows a guess of its own.
 // From 1024px the week is a strip, one column a day, with today's column, the first, raised: the day (and its own figure), then
 // rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
 // figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
 // day-by-day table, which stacks at 640px and below.
 
-function EventLines(props: { events: readonly TownEvent[] }): React.JSX.Element {
-  return (
-    <>
-      {props.events.map((event) => (
-        <View key={event.id} style={styles.item}>
-          <Text style={styles.title}>{event.title}</Text>
-          <Mono tone="text3">{EVENT_WORDS[event.kind]}</Mono>
-          <SourceChips sources={event.sources} />
-        </View>
-      ))}
-    </>
-  );
+/** An entry's kind words under its words: “Your note”, “Your rule”, “Holiday”, “Town event” or “Your calendar”. */
+function entryKind(entry: DayEntry): string {
+  if (entry.kind === 'note') return 'Your note';
+  if (entry.kind === 'rule') return 'Your rule';
+  if (entry.kind === 'imported') return 'Your calendar';
+  return EVENT_WORDS[entry.kind];
 }
 
-function NoteLines(props: { notes: readonly Note[] }): React.JSX.Element {
-  return (
-    <>
-      {props.notes.map((note) => (
-        <View key={note.id} style={styles.item}>
-          <Text style={styles.title}>{`Your note: ${noteWords(note)}`}</Text>
-          {note.detail === null ? null : <Small>{note.detail}</Small>}
-        </View>
-      ))}
-    </>
-  );
-}
-
+/**
+ * A day's compact entries (D49, week.ts weekEntries): three, or the first two and “+N more”, in the Calendar's order,
+ * with no source links (the Calendar's day panel and This month's day detail hold them).
+ */
 function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
-  const { row } = props;
-  if (row.events.length === 0 && row.notes.length === 0) return <Mono tone="text3">Nothing listed</Mono>;
-  return <View style={styles.cell}><EventLines events={row.events} /><NoteLines notes={row.notes} /></View>;
+  const { lines, more } = props.row.entries;
+  if (lines.length === 0) return <Mono tone="text3">Nothing listed</Mono>;
+  return (
+    <View style={styles.cell}>
+      {lines.map((entry) => (
+        <View key={entry.key} style={styles.item}>
+          <Text style={styles.title}>{entry.words}</Text>
+          <Mono tone="text3">{entryKind(entry)}</Mono>
+        </View>
+      ))}
+      {more === null ? null : <Mono tone="text3">{more}</Mono>}
+    </View>
+  );
 }
 
-/** A day's published forecast, its figure bold, or "No forecast". */
+/** A day's published forecast, its figure bold in a forecast's lighter tone (D49, design decision 10), or "No forecast". */
 function ForecastCell(props: { day: ForecastDay | undefined }): React.JSX.Element {
   const phrase = forecastPhrase(props.day);
-  return phrase === null ? <Mono tone="text3">No forecast</Mono> : <Mono tone="white"><PhraseParts phrase={phrase} /></Mono>;
+  return phrase === null ? <Mono tone="text3">No forecast</Mono> : <Mono tone="text2"><PhraseParts phrase={phrase} /></Mono>;
 }
 
 /** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */

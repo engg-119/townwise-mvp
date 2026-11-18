@@ -1,12 +1,18 @@
 // A server-sent events parser (the WHATWG "event stream" format), pure so it can be tested without a network.
-// Text goes in as it arrives, in chunks of any size; whole events come out. Only `event` and `data` are read:
-// the tuning chat sends no `id` or `retry`, and a comment line (`: ping`) only keeps the connection open.
+// Text goes in as it arrives, in chunks of any size; whole events come out. `event`, `data` and `id` are read (a
+// TownwiseAI turn numbers its events with `id`, so a reader resumes after the last one); `retry` is not, and a comment
+// line (`: ping`) only keeps the connection open.
 
 export interface SseEvent {
   /** The `event:` field, or `message` when the event had none. */
   readonly event: string;
   /** Every `data:` line of the event, joined with a newline. */
   readonly data: string;
+  /**
+   * The last `id:` the stream set, at or before this event (WHATWG's last event ID, which outlives its event); absent
+   * while none is set, or after an empty `id:` cleared it.
+   */
+  readonly id?: string;
 }
 
 export interface SseParser {
@@ -24,9 +30,13 @@ export function createSseParser(): SseParser {
   let first = true;
   let eventType = '';
   let data: string[] = [];
+  let lastId = '';
 
   function dispatch(out: SseEvent[]): void {
-    if (data.length > 0) out.push({ event: eventType === '' ? 'message' : eventType, data: data.join('\n') });
+    if (data.length > 0) {
+      const event = { event: eventType === '' ? 'message' : eventType, data: data.join('\n') };
+      out.push(lastId === '' ? event : { ...event, id: lastId });
+    }
     eventType = '';
     data = [];
   }
@@ -43,6 +53,8 @@ export function createSseParser(): SseParser {
     if (value.startsWith(' ')) value = value.slice(1);
     if (field === 'event') eventType = value;
     else if (field === 'data') data.push(value);
+    // An id holding NULL is ignored, as the WHATWG rules say.
+    else if (field === 'id' && !value.includes('\u0000')) lastId = value;
   }
 
   return {
@@ -73,6 +85,7 @@ export function createSseParser(): SseParser {
       buffer = '';
       eventType = '';
       data = [];
+      lastId = '';
       return out;
     },
   };

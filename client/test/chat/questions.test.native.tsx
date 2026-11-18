@@ -24,9 +24,10 @@ import { ACCESS, fakePortalApi, meOf, orgOf } from '../helpers/portal';
 import { renderApp } from '../helpers/renderApp';
 import { serveAbout } from './about-fakes';
 
-// TownwiseAI's questions on native (spec P25; contract section 7): ?panel=questions (Home's link) opens the sheet on
-// phones and the column from 1024px, the questions show inline on the landing, and Something else… sends its message to
-// the chat before answering `other`. Nothing goes to device storage.
+// TownwiseAI's questions on native (spec P25; contract section 7): ?panel=questions (Home's link) opens the row under the chips
+// on phones and the column from 641px, the questions show inline on the landing, and Something else… sends its message
+// to the chat before answering `other`. Device storage holds at most the conversation the page closed on (an id and a
+// time, src/chat/lastChat.ts), never the words.
 
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: { questions: unknown[]; activity: unknown[] } };
 
@@ -64,41 +65,50 @@ function turn(api: FakeChatApi): LiveTurn {
   return live;
 }
 
-test('?panel=questions opens the sheet on a phone, Questions for you first, and drops the parameter', async () => {
+// An independent browser review, 2026-11-18: on a phone Home's link opened the row with the panel's sections above
+// the questions, which sat off screen.
+test('?panel=questions opens the row under the chips on a phone, Questions for you first, then Suggested rules (D46), and drops the parameter', async () => {
   at(375);
   const { router } = await renderAgent('/locations/l1/agent?panel=questions');
-  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
-  const side = screen.getByTestId('agent-side');
-  expect(within(side).getAllByRole('heading')[0]?.props.children).toBe('Questions for you');
+  const side = await screen.findByTestId('agent-side');
+  expect(screen.getByRole('button', { name: 'Questions and activity (9)' }).props.accessibilityState).toMatchObject({ expanded: true });
+  await within(side).findByRole('heading', { name: 'Questions for you (2)' });
+  const headings = within(side).getAllByRole('heading').map((heading) => heading.props.children as unknown);
+  expect(headings[0]).toBe('Questions for you (2)');
+  expect(headings).toContain('Suggested rules');
+  // Drawn once: the landing's own questions, in the row instead of under it; the panel still leaves them out.
+  expect(screen.getAllByRole('heading', { name: /^Questions for you/ })).toHaveLength(1);
+  expect(headings).not.toContain('Questions for you');
   await waitFor(() => { expect(router.getSearchParams().panel).toBeUndefined(); });
   expect(router.getPathname()).toBe('/locations/l1/agent');
 });
 
-test('?panel=questions opens the column from 1024px', async () => {
+test('?panel=questions opens the column from 641px', async () => {
   at(1280);
   await renderAgent('/locations/l1/agent?panel=questions');
   expect(await screen.findByTestId('agent-side')).toBeTruthy();
   expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull();
-  expect(screen.getByRole('button', { name: 'Questions and activity (5)' }).props.accessibilityState).toMatchObject({ expanded: true });
+  expect(screen.getByRole('button', { name: 'Questions and activity (9)' }).props.accessibilityState).toMatchObject({ expanded: true });
 });
 
-test('Something else… from the sheet on a phone closes it once the turn starts, not before', async () => {
+test('a card’s message from the new chat page opens the conversation, and the open row goes with the landing', async () => {
   at(375);
   const { chat } = await renderAgent('/locations/l1/agent?panel=questions');
-  expect(await screen.findByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
-  const side = screen.getByTestId('agent-side');
-  const gapOther = within(side).getAllByRole('button', { name: 'Something else…' })[2];
+  const landing = await screen.findByTestId('chat-landing');
+  await within(landing).findByRole('heading', { name: 'Questions for you (2)' });
+  expect(screen.getByTestId('agent-side')).toBeTruthy();
+  const gapOther = within(landing).getAllByRole('button', { name: 'Something else…' })[1];
   if (gapOther === undefined) throw new Error('no Something else… on the gap');
   await fireEvent.press(gapOther);
-  await fireEvent.changeText(within(side).getByLabelText('Tell TownwiseAI in your own words'), WORDS);
-  await fireEvent.press(within(side).getByRole('button', { name: 'Send to TownwiseAI' }));
+  await fireEvent.changeText(within(landing).getByLabelText('Tell TownwiseAI in your own words'), WORDS);
+  await fireEvent.press(within(landing).getByRole('button', { name: 'Send to TownwiseAI' }));
   await waitFor(() => { expect(chat.turns).toHaveLength(1); });
-  expect(screen.getByRole('heading', { name: 'Questions and activity' })).toBeTruthy();
   await act(() => {
     turn(chat).emit('conversation', { id: 'c9', title: 'A party', userNodeId: 'u9', replyNodeId: 'a9', parentId: null });
   });
-  await waitFor(() => { expect(screen.queryByRole('heading', { name: 'Questions and activity' })).toBeNull(); });
   expect(screen.getByText(MESSAGE)).toBeTruthy();
+  expect(screen.queryByTestId('chat-panel-row')).toBeNull();
+  expect(screen.queryByTestId('agent-side')).toBeNull();
   await act(() => {
     turn(chat).emit('done', { stopReason: 'end_turn', leafId: 'a9' });
     turn(chat).end();
@@ -110,14 +120,14 @@ test('the landing shows the questions under the chips, and Something else… sen
   at(375);
   const { chat } = await renderAgent();
   const landing = await screen.findByTestId('chat-landing');
-  expect(await within(landing).findByRole('heading', { name: 'Questions for you (3)' })).toBeTruthy();
+  expect(await within(landing).findByRole('heading', { name: 'Questions for you (2)' })).toBeTruthy();
   expect(within(landing).getByText('Only 1 guest was recorded. Saturdays usually have about 100.')).toBeTruthy();
-  // The cards in the API's order: the weekday, the likely-closed day, then the gap.
-  expect(within(landing).getAllByRole('heading').map((heading) => heading.props.children as unknown).slice(-3)).toEqual([
-    'Are you closed on Mondays?', 'Were you open on Sat, May 23, 2026?', GAP_HEADING,
+  // The cards in the API's order: the likely-closed day, then the gap.
+  expect(within(landing).getAllByRole('heading').map((heading) => heading.props.children as unknown).slice(-2)).toEqual([
+    'Were you open on Sat, May 23, 2026?', GAP_HEADING,
   ]);
   const gapOther = () => {
-    const button = within(landing).getAllByRole('button', { name: 'Something else…' })[2];
+    const button = within(landing).getAllByRole('button', { name: 'Something else…' })[1];
     if (button === undefined) throw new Error('no Something else… on the gap');
     return button;
   };
@@ -140,6 +150,13 @@ test('the landing shows the questions under the chips, and Something else… sen
   await waitFor(() => {
     expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/questions/gap_2026-05-12_2026-05-13', body: { answer: 'other' } }]);
   });
-  expect(screen.getByRole('button', { name: 'Questions and activity (4)' })).toBeTruthy();
-  for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) expect(jest.mocked(SecureStore[name])).not.toHaveBeenCalled();
+  // Back on the new chat page, the row counts one fewer.
+  await fireEvent.press(screen.getByRole('button', { name: 'New chat' }));
+  expect(await screen.findByRole('button', { name: 'Questions and activity (8)' })).toBeTruthy();
+  for (const name of ['setItemAsync', 'getItemAsync', 'deleteItemAsync'] as const) {
+    for (const call of jest.mocked(SecureStore[name]).mock.calls) {
+      expect(call[0]).toMatch(/^townwise\.chatReturn\./);
+      expect(JSON.stringify(call)).not.toContain(WORDS);
+    }
+  }
 });

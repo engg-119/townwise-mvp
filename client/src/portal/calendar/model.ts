@@ -1,22 +1,25 @@
-import { formatCount, plural } from '../format';
+import { formatCount, formatDate, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
+import { mondayOf, weekDates } from '../analytics/cells';
 import { closureOf, likelyClosedWords, noteCovers, typicalGuests } from '../analytics/days';
-import { mondayOf, weekDates } from '../analytics/week';
-import { MONTH_NAMES, shortDate } from '../analytics/words';
+import { metricText, MONTH_NAMES, shortDate, type Metric } from '../analytics/words';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
 import { addDays, isCalendarDate, monthRange } from '../locations/dates';
-import { KIND_LABEL } from '../locations/noteRules';
 import type { Rule } from '../rules/api';
+import { compactEntries, dayEntries, filterOf, fitLines, noteChip, notNamed, type DayEntry } from './entries';
 import type { DateRange } from './grid';
+
+export { filterOf, noteChip };
 
 // The Calendar's pure model (P28, spec 16.3): the month as week rows with each day's figure,
 // status, chips, corner marks and screen-reader label; the selected day's panel (its forecast, the reasons, and what
 // is on the calendar); the hover tooltip's lines; the filters; and the 25 months the page can show. Every figure
 // from today on is the published forecast's own, as the API's read leaves it after the location's notes (spec
 // 14.5): this file never adds a note's guests, so the rule lives once, in api/src/forecasts/adjust.ts. A day before
-// today shows its stored guests, never a forecast, or “Likely closed” when they were under a tenth of its weekday's
-// typical guests (spec D32, analytics/days.ts). Forecast figures are rounded here, the middle figure to the nearest
+// today shows its stored guests, or “Likely closed” when they were under a tenth of its weekday's typical guests (spec
+// D32, analytics/days.ts); with none stored, the forecast made for it, captioned “forecast”. Data wins over a forecast
+// and every day shows something: “No data” or “No forecast” once the forecast read answered (figureOf). Forecast figures are rounded here, the middle figure to the nearest
 // guest and a range's low down and high up (spec 14.4, as TownwiseAI's get_forecast); the range always goes with the
 // middle figure in the label, the tooltip and the panel ([CONFIRM] in spec 14.2), and the "8 in 10" sentence only
 // with the model's own range, since a range a note moved is no longer the model's 80% one. Business rules with a
@@ -29,6 +32,12 @@ import type { DateRange } from './grid';
 // never stands alone. A day before today has no sizes and keeps the read's order. On the calendar leaves out a holiday,
 // event or term Why already names. The tooltip and Home's day detail take the three largest either way, in Why's order
 // and short words (shortReasons).
+// An outlook day (D52: after its run's forecast tier, more than 3 months after the run was made or 6 months after its
+// last sales) shows its middle figure marked "Outlook", says "Outlook about ..." in its label and tooltip, heads its
+// panel part "Outlook" and never claims 8 in 10, since no location's outlook has had that measured; a key line under the grid says what an
+// outlook is whenever a shown day is one (outlookKey). [CONFIRM: the outlook's words on the Calendar, Home and
+// TownwiseAI's visuals: a cell's middle figure marked "Outlook", its range in the day panel, and no "8 in 10" claim
+// for an outlook day]
 
 /** The filter chips, in toolbar order. `imported` ("Your calendar") shows only when the location has a calendar. */
 export const FILTER_KEYS = ['holidays', 'events', 'terms', 'notes', 'imported'] as const;
@@ -45,6 +54,8 @@ export const ALL_FILTERS: Filters = { holidays: true, events: true, terms: true,
  */
 export interface ImportedEvent {
   calendarId: string;
+  /** Its calendar's name, which the events read always carries (“Google calendar” under view-as, D39). */
+  calendar?: string | undefined;
   uid: string;
   title: string;
   startDate: string;
@@ -74,34 +85,15 @@ export interface CalendarInput {
   filters: Filters;
 }
 
-/** Holidays, town events, and term and season periods ("Term dates"). */
-export function filterOf(event: Pick<TownEvent, 'kind'>): FilterKey {
-  if (event.kind === 'holiday') return 'holidays';
-  if (event.kind === 'event') return 'events';
-  return 'terms';
-}
-
-/** Term and season periods span weeks or months, so they mark no cell; the day panel lists them. */
-function marksCell(event: Pick<TownEvent, 'kind'>): boolean {
-  return event.kind === 'holiday' || event.kind === 'event';
-}
 
 /** The day's holidays, town events and term periods as the filters allow, including those the day's Why names. */
 export function eventsOn(date: string, input: CalendarInput): TownEvent[] {
   return input.events.filter((event) => event.start <= date && date <= event.end && input.filters[filterOf(event)]);
 }
 
-function notesOn(date: string, input: CalendarInput): Note[] {
-  return input.filters.notes ? input.notes.filter((note) => noteCovers(note, date)) : [];
-}
-
 /** The rules whose schedule covers the day, oldest first. */
 function rulesOn(date: string, input: CalendarInput): Rule[] {
   return (input.rules ?? []).filter((rule) => rule.schedule !== null && rule.schedule !== undefined && noteCovers(rule.schedule, date));
-}
-
-function importedOn(date: string, input: CalendarInput): ImportedEvent[] {
-  return input.filters.imported ? input.imported.filter((event) => event.startDate <= date && date <= event.endDate) : [];
 }
 
 function forecastDayOf(date: string, input: CalendarInput): ForecastDay | null {
@@ -110,6 +102,12 @@ function forecastDayOf(date: string, input: CalendarInput): ForecastDay | null {
 
 function storedGuests(date: string, input: CalendarInput): number | null {
   return input.salesDays.find((day) => day.date === date)?.guests ?? null;
+}
+
+/** A stored day's figure in `metric`: its guests, or its net sales in cents (Home, for a location with no stored guests). */
+function storedValue(date: string, input: CalendarInput, metric: Metric): number | null {
+  if (metric === 'guests') return storedGuests(date, input);
+  return input.salesDays.find((day) => day.date === date)?.netSalesCents ?? null;
 }
 
 /**
@@ -136,19 +134,16 @@ export function rangeWords(low: number, high: number): string {
   return `${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}`;
 }
 
-/** A note in a cell's chip: “Private event, 70”, “Private buyout”, “Closure”. */
-export function noteChip(note: Pick<Note, 'kind' | 'effect' | 'expectedGuests'>): string {
-  const kind = note.kind === 'private_event' && note.effect === 'closed' ? 'Private buyout' : KIND_LABEL[note.kind];
-  return note.expectedGuests === null ? kind : `${kind}, ${formatCount(note.expectedGuests)}`;
-}
-
 
 // Cells
 
 export interface CellFigure {
   value: number;
-  /** forecast: the published day's middle figure; actual: stored guests; booked: a buyout's party. */
-  kind: 'forecast' | 'actual' | 'booked';
+  /**
+   * forecast: the published day's middle figure; actual: stored guests; booked: a buyout's party; past_forecast: a day
+   * before today with no stored guests, the run's middle figure for it.
+   */
+  kind: 'forecast' | 'actual' | 'booked' | 'past_forecast';
 }
 
 export interface CalendarCell {
@@ -156,15 +151,24 @@ export interface CalendarCell {
   isToday: boolean;
   /** In today's week, which the grid outlines. */
   inWeek: boolean;
-  /** From today on, a day the forecast has closed or booked; before today, a likely-closed day (spec D32). */
-  status: 'closed' | 'booked' | 'likely_closed' | null;
+  /**
+   * A day the forecast has closed or booked (before today, only when no guests were stored); before today, a
+   * likely-closed day (spec D32); no_data, a day before today with neither stored guests nor a forecast; no_forecast,
+   * from today on, a day the answered forecast read doesn't cover; outlook, from today on, an open day in its run's
+   * outlook (D52), which keeps its figure.
+   */
+  status: 'closed' | 'booked' | 'likely_closed' | 'no_data' | 'no_forecast' | 'outlook' | null;
   figure: CellFigure | null;
   /** Guests the location's notes add to a forecast figure (“+70”); 0 when none. */
   noteGuests: number;
-  /** The first three entries of the day: holidays and town events, then notes, then imported events (grid.ts entryLines). */
+  /**
+   * The first three of the day's compact entries (entries.ts: notes, rules, holidays and town events, imported events,
+   * each title once across sources; grid.ts entryLines).
+   */
   chips: string[];
   /** Entries past the chips. */
   more: number;
+  /** event: a holiday or town event; note: one of yours, a note or a business rule; imported: from the location's calendars. */
   marks: { event: boolean; note: boolean; imported: boolean };
   /** What a screen reader hears: everything the cell shows, in words. */
   label: string;
@@ -172,51 +176,115 @@ export interface CalendarCell {
 
 const MAX_CHIPS = 3;
 
-interface FigureOf { status: CalendarCell['status']; figure: CellFigure | null; noteGuests: number; words: string | null }
+export interface FigureOf { status: CalendarCell['status']; figure: CellFigure | null; noteGuests: number; words: string | null }
 
 function bookedWords(day: ForecastDay): string {
   if (!yoursDid(day, 'booked')) return 'Booked for a private event';
   return day.noteGuests > 0 ? `Booked: a private buyout, ${plural(day.noteGuests, 'guest', 'guests')}` : 'Booked: a private buyout';
 }
 
-function figureOf(date: string, input: CalendarInput): FigureOf {
+const NO_FIGURE: FigureOf = { status: null, figure: null, noteGuests: 0, words: null };
+
+// Actual or forecast (D49, design decision 10, owner 2026-11-18): every surface that shows a day's figure marks a
+// forecast and leaves an actual plain, from these, so a future day and a past day with only the run's figure look the
+// same. [CONFIRM: a forecast's figure is lighter with a leading "~" and the word "forecast"; an actual is a plain solid
+// figure] The "~" is text, so the mark never rests on color alone and fits a phone cell where no word does.
+
+export type FigureSource = 'actual' | 'forecast';
+
+/** Stored data is the actual; a published day's figure, a past day's run figure and a buyout's expected party are forecasts. */
+export function figureSource(figure: Pick<CellFigure, 'kind'>): FigureSource {
+  return figure.kind === 'actual' ? 'actual' : 'forecast';
+}
+
+/** A figure as printed: “~82” for a forecast, “94” for an actual. */
+export function markedFigure(text: string, figure: Pick<CellFigure, 'kind'>): string {
+  return figureSource(figure) === 'forecast' ? `~${text}` : text;
+}
+
+/** The figure's theme color: an actual solid `white`, a forecast the lighter `text2`. */
+export function figureTone(figure: Pick<CellFigure, 'kind'>): 'white' | 'text2' {
+  return figureSource(figure) === 'forecast' ? 'text2' : 'white';
+}
+
+/** The word a surface prints beside a forecast's figure where it has room; an actual has none. */
+export const FORECAST_TAG = 'forecast';
+
+/** Each grid's key: its two entries, shown with a sample figure each (“94”, “~82”). */
+export const FIGURE_KEY = { actual: 'Actual guests', forecast: 'Forecast' } as const;
+
+/** What a screen reader hears for a figure, and the tooltip's words: “82 guests, forecast”, “94 guests, actual”. */
+export function figureLabel(value: number, figure: Pick<CellFigure, 'kind'>, metric: Metric = 'guests'): string {
+  if (figureSource(figure) === 'forecast') return `${plural(value, 'guest', 'guests')}, forecast`;
+  return metric === 'guests' ? `${metricText(value, metric)}, actual` : `${metricText(value, metric)} in net sales, actual`;
+}
+
+/**
+ * A day's figure: its stored data first, else the forecast made for it, else a word saying there is neither (owner
+ * request, 2026-11-17: data wins over a forecast, and every day shows something). Before today that is the stored
+ * guests or “Likely closed”, else the run's own figures for the day (the API leaves a past day as the run made it,
+ * adjust.ts), else “No data”; from today on, the published forecast, else “No forecast”. The words wait for the
+ * forecast read: while it loads or after it failed, a day with no data shows nothing rather than a word that may be wrong.
+ * `metric` is Home's (D49, design decision 9): with net sales, a past day's stored value is its net sales in cents; the
+ * fallbacks are the same guest figures, and likely closed stays guest-based. The Calendar always shows guests.
+ */
+export function figureOf(date: string, input: CalendarInput, metric: Metric = 'guests'): FigureOf {
+  const day = forecastDayOf(date, input);
   if (date < input.today) {
     const likely = likelyClosedGuests(date, input);
     if (likely !== null) return { status: 'likely_closed', figure: null, noteGuests: 0, words: `${likelyClosedWords(plural(likely, 'guest', 'guests'))}.` };
-    const guests = storedGuests(date, input);
-    return { status: null, figure: guests === null ? null : { value: guests, kind: 'actual' }, noteGuests: 0, words: guests === null ? null : `${plural(guests, 'guest', 'guests')}.` };
+    const stored = storedValue(date, input, metric);
+    if (stored !== null) return { ...NO_FIGURE, figure: { value: stored, kind: 'actual' }, words: `${figureLabel(stored, { kind: 'actual' }, metric)}.` };
+    if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_data', words: 'No data.' };
+    if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: 'No data. Forecast closed.' };
+    if (day.status === 'booked') return { ...NO_FIGURE, status: 'booked', words: `No data. ${bookedWords(day)}.` };
+    if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_data', words: 'No data.' };
+    return {
+      ...NO_FIGURE, figure: { value: Math.round(day.mid), kind: 'past_forecast' },
+      words: `No data. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })}, likely ${rangeWords(day.low, day.high)}.`,
+    };
   }
-  const day = forecastDayOf(date, input);
-  if (day === null) return { status: null, figure: null, noteGuests: 0, words: null };
+  if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_forecast', words: 'No forecast.' };
   if (day.status === 'closed') return { status: 'closed', figure: null, noteGuests: 0, words: 'Closed.' };
   if (day.status === 'booked') {
     const figure: CellFigure | null = day.noteGuests > 0 ? { value: day.noteGuests, kind: 'booked' } : null;
-    return { status: 'booked', figure, noteGuests: 0, words: `${bookedWords(day)}.` };
+    // A buyout's party is an expected count, so it is a forecast (decision 10).
+    return { status: 'booked', figure, noteGuests: 0, words: `${bookedWords(day)}${figure === null ? '' : ', forecast'}.` };
   }
-  if (day.mid === null || day.low === null || day.high === null) return { status: null, figure: null, noteGuests: 0, words: null };
+  if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_forecast', words: 'No forecast.' };
   const words = [
-    `Forecast about ${plural(Math.round(day.mid), 'guest', 'guests')}, ${rangeWords(day.low, day.high)}.`,
+    // An outlook day (D52) says so before its figure: “Outlook: 82 guests, forecast, likely 70 to 95.”
+    `${day.outlook ? 'Outlook: ' : ''}${figureLabel(Math.round(day.mid), { kind: 'forecast' })}, likely ${rangeWords(day.low, day.high)}.`,
     day.noteGuests > 0 ? `Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}.` : null,
   ].filter((part) => part !== null).join(' ');
-  return { status: null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
+  return { status: day.outlook ? 'outlook' : null, figure: { value: Math.round(day.mid), kind: 'forecast' }, noteGuests: day.noteGuests, words };
 }
 
-/** One day's cell from the reads in `input`, whichever range they were made for; today's week comes from `input.today`. */
-export function dayCell(date: string, input: CalendarInput): CalendarCell {
+function withStop(words: string): string {
+  return /[.!?]$/.test(words) ? words : `${words}.`;
+}
+
+/** An entry as a screen reader hears it in a cell's label: its words, an imported event after “From your calendar”. */
+export function entryLabel(entry: Pick<DayEntry, 'kind' | 'words'>): string {
+  return withStop(entry.kind === 'imported' ? `From your calendar: ${entry.words}` : entry.words);
+}
+
+/**
+ * One day's cell from the reads in `input`, whichever range they were made for; today's week comes from `input.today`.
+ * Home's month grid builds its cells here too, in its own metric (figureOf).
+ */
+export function dayCell(date: string, input: CalendarInput, metric: Metric = 'guests'): CalendarCell {
   const monday = mondayOf(input.today);
-  const events = eventsOn(date, input).filter(marksCell);
-  const notes = notesOn(date, input);
-  const imported = importedOn(date, input);
-  const entries = [...events.map((event) => event.title), ...notes.map(noteChip), ...imported.map((event) => event.title)];
-  const found = figureOf(date, input);
+  const all = dayEntries(date, input);
+  const entries = compactEntries(all).map((entry) => entry.words);
+  const found = figureOf(date, input, metric);
   const isToday = date === input.today;
+  // The label says the status and every entry, with no dedupe.
   const label = [
     `${shortDate(date)}.`,
     isToday ? 'Today.' : null,
     found.words,
-    ...events.map((event) => `${event.title}.`),
-    notes.length === 0 ? null : `${plural(notes.length, 'note', 'notes')}.`,
-    ...imported.map((event) => `From your calendar: ${event.title}.`),
+    ...all.map(entryLabel),
   ].filter((part) => part !== null).join(' ');
   return {
     date,
@@ -227,7 +295,11 @@ export function dayCell(date: string, input: CalendarInput): CalendarCell {
     noteGuests: found.noteGuests,
     chips: entries.slice(0, MAX_CHIPS),
     more: Math.max(0, entries.length - MAX_CHIPS),
-    marks: { event: events.length > 0, note: notes.length > 0, imported: imported.length > 0 },
+    marks: {
+      event: all.some((entry) => entry.kind === 'holiday' || entry.kind === 'event'),
+      note: all.some((entry) => entry.kind === 'note' || entry.kind === 'rule'),
+      imported: all.some((entry) => entry.kind === 'imported'),
+    },
     label,
   };
 }
@@ -242,11 +314,9 @@ export function calendarMonth(month: string, input: CalendarInput): (CalendarCel
   return rows;
 }
 
-/** The word under a figure: stored guests read "guests", a buyout's party "booked". */
-export function captionOf(cell: CalendarCell): string | null {
-  if (cell.figure?.kind === 'actual') return 'guests';
-  if (cell.figure?.kind === 'booked') return 'booked';
-  return null;
+/** The word beside a figure: “forecast” for every forecast, past or future, booked or open; none for an actual (decision 10). */
+export function captionOf(cell: Pick<CalendarCell, 'figure'>): string | null {
+  return cell.figure === null || figureSource(cell.figure) === 'actual' ? null : FORECAST_TAG;
 }
 
 export function statusWord(status: CalendarCell['status']): string | null {
@@ -254,8 +324,33 @@ export function statusWord(status: CalendarCell['status']): string | null {
     case 'closed': return 'Closed';
     case 'booked': return 'Booked';
     case 'likely_closed': return 'Likely closed';
+    case 'no_data': return 'No data';
+    case 'no_forecast': return 'No forecast';
+    case 'outlook': return 'Outlook';
     case null: return null;
   }
+}
+
+/**
+ * Whether a cell shows its status word in its figure's place: every status but an outlook day's, which keeps its figure
+ * (D52), and, from 641px, a booked day's, which says so in its top row over its party.
+ */
+export function statusTakesFigure(status: CalendarCell['status'], phone: boolean): boolean {
+  if (status === null || status === 'outlook') return false;
+  return phone || status !== 'booked';
+}
+
+/** The word in a cell's top row from 641px: a booked or outlook day's status word, else its figure's caption. */
+export function topRightOf(cell: Pick<CalendarCell, 'status' | 'figure'>): string | null {
+  return cell.status === 'booked' || cell.status === 'outlook' ? statusWord(cell.status) : captionOf(cell);
+}
+
+/** The key line under the grid when a shown day is an outlook day (D52). */
+export const OUTLOOK_KEY = 'Days more than 3 months after Townwise’s forecast was made, or 6 months after the sales it learned from, show its outlook: a wider range that firms up as the weeks pass and your new sales come in.';
+
+/** OUTLOOK_KEY when any of the shown cells is an outlook day; null otherwise. */
+export function outlookKey(cells: readonly Pick<CalendarCell, 'status'>[]): string | null {
+  return cells.some((cell) => cell.status === 'outlook') ? OUTLOOK_KEY : null;
 }
 
 // The day panel
@@ -264,6 +359,8 @@ export function statusWord(status: CalendarCell['status']): string | null {
 export type ForecastPart =
   | {
     kind: 'open'; low: number; mid: number; high: number; noteGuests: number;
+    /** An outlook day (D52): its part is headed “Outlook” and makes no 8 in 10 claim. */
+    outlook: boolean;
     /** Whose those guests are: “your notes”, “your rules” or “your notes and rules”. */
     from: string;
     /** The model's own range when notes changed the day; null otherwise. */
@@ -280,8 +377,11 @@ export type ForecastPart =
    * range and verdict when one covered the day.
    */
   | {
-    kind: 'past'; actual: number | null; likelyClosed: boolean; model: { low: number; high: number } | null; modelClosed: boolean;
-    inRange: boolean | null;
+    kind: 'past'; actual: number | null; likelyClosed: boolean; model: { low: number; mid: number | null; high: number } | null; modelClosed: boolean;
+    /** How the forecast did (forecastCheck); null otherwise. */
+    check: ForecastCheck | null;
+    /** The run may have read a note or rule written on or after the day, so it isn't compared with it (D49 as amended). */
+    laterNote: boolean;
   }
   /** unavailable: the forecast read is loading or failed. */
   | { kind: 'none'; why: 'no_published_forecast' | 'not_covered' | 'unavailable' };
@@ -340,10 +440,10 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
   if (date < input.today) {
     const low = day?.model.low ?? null;
     const high = day?.model.high ?? null;
-    const model = low !== null && high !== null ? { low, high } : null;
+    const model = low !== null && high !== null ? { low, mid: day?.model.mid ?? null, high } : null;
     return {
       kind: 'past', actual: storedGuests(date, input) ?? day?.actual ?? null, likelyClosed: likelyClosedGuests(date, input) !== null, model,
-      modelClosed: day?.model.status === 'closed', inRange: day?.inRange ?? null,
+      modelClosed: day?.model.status === 'closed', check: forecastCheck(day, input.today, input.forecast?.runs), laterNote: day?.laterNote === true,
     };
   }
   if (input.forecast === null) return { kind: 'none', why: 'unavailable' };
@@ -358,7 +458,7 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
   if (day.low === null || day.mid === null || day.high === null) return { kind: 'none', why: 'not_covered' };
   const model = day.noteGuests > 0 && day.model.low !== null && day.model.high !== null ? { low: day.model.low, high: day.model.high } : null;
   return {
-    kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, from: guestsFromWords(day), model,
+    kind: 'open', low: day.low, mid: day.mid, high: day.high, noteGuests: day.noteGuests, outlook: day.outlook, from: guestsFromWords(day), model,
     modelClosed: day.model.status === 'closed',
   };
 }
@@ -506,12 +606,18 @@ function inOrder(day: Pick<ForecastDay, 'reasons' | 'model'>, past: boolean): Si
   ];
 }
 
-function reasonLines(day: ForecastDay | null, past: boolean): ReasonLine[] {
+/**
+ * Why's lines. A note reason's label stays made in code, with its note's title after it as the person's own words
+ * (D30 as D49 amends it), joined by the reason's note id against `notes`.
+ */
+function reasonLines(day: ForecastDay | null, past: boolean, notes: readonly Note[]): ReasonLine[] {
   if (day === null) return [];
   return inOrder(day, past).map(({ reason, index, size }): ReasonLine => {
     const applied = appliedOf(reason);
     const effect = effectOf(reason, past);
-    const line = { key: `${String(index)}:${reason.kind}`, label: reason.label, sources: reason.sources, ...markOf(size, applied === null) };
+    const title = noteTitleOf(reason, notes);
+    const label = title === null ? reason.label : `${reason.label}: ${title}`;
+    const line = { key: `${String(index)}:${reason.kind}`, label, sources: reason.sources, ...markOf(size, applied === null) };
     if (applied !== null) return { ...line, detail: reasonOutcomeWords(applied.outcome, applied.guests, size ?? 0) };
     if (effect !== null) return { ...line, detail: effectWords(reason.kind, effect) };
     return { ...line, detail: !past && AGAINST.has(reason.kind) ? NO_HISTORY : null };
@@ -558,22 +664,24 @@ export function reasonShortLines(day: Pick<ForecastDay, 'reasons' | 'model'>, pa
 export function dayView(date: string, input: CalendarInput): CalendarDayView {
   const day = forecastDayOf(date, input);
   const short = shortDate(date);
+  // Every entry, with its source and no dedupe (entries.ts), periods included.
+  const all = dayEntries(date, input, { periods: true });
   // A holiday, town event or term the run's reasons name is in Why with its sources, so On the calendar doesn't repeat it.
   const inWhy = new Set((day?.reasons ?? []).filter((reason) => appliedOf(reason) === null).map((reason) => reason.label));
-  const listed = eventsOn(date, input);
+  const listed = all.flatMap((entry) => ('event' in entry ? [entry.event] : []));
   const events = listed.filter((event) => !inWhy.has(event.title));
   return {
     date,
     heading: date === input.today ? `Today, ${short.replace(/, \d{4}$/, '')}` : short,
     forecast: forecastPart(date, input),
-    reasons: reasonLines(day, date < input.today),
+    reasons: reasonLines(day, date < input.today, input.notes),
     moreNotes: day?.moreNotes ?? 0,
     moreRules: day?.moreRules ?? 0,
     events,
     shownInWhy: listed.length - events.length,
-    notes: notesOn(date, input),
-    rules: rulesOn(date, input),
-    imported: importedOn(date, input),
+    notes: all.flatMap((entry) => (entry.kind === 'note' ? [entry.note] : [])),
+    rules: all.flatMap((entry) => (entry.kind === 'rule' ? [entry.rule] : [])),
+    imported: all.flatMap((entry) => (entry.kind === 'imported' ? [entry.imported] : [])),
   };
 }
 
@@ -583,26 +691,41 @@ function sentence(words: string): string {
 }
 
 export interface ForecastWords {
-  /** The day's headline figure: “About **212** guests”, or the actual “**138** guests”. */
-  figure: { before: string; value: string; after: string } | null;
+  /** The day's headline figure: “About **212** guests”, or the actual “**138** guests”; `source` marks it (decision 10). */
+  figure: { before: string; value: string; after: string; source: FigureSource } | null;
   lines: string[];
+}
+
+/** An outlook day's sentence in place of the 8 in 10 one (D52). */
+export const OUTLOOK_RANGE = 'This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.';
+
+/**
+ * The Forecast part's heading: “Actual guests” for a past day with stored guests (UI review S2), “Outlook” for an
+ * outlook day (D52), “Forecast” otherwise.
+ */
+export function forecastLabel(part: ForecastPart): 'Forecast' | 'Outlook' | typeof FIGURE_KEY.actual {
+  if (part.kind === 'past' && part.actual !== null) return FIGURE_KEY.actual;
+  return part.kind === 'open' && part.outlook ? 'Outlook' : 'Forecast';
 }
 
 /** The Forecast part's words. `locationName` is the shown name (shownLocationName). */
 export function forecastWords(part: ForecastPart, locationName: string): ForecastWords {
   switch (part.kind) {
     case 'open': {
-      const figure = { before: 'About', value: whole(part.mid), after: 'guests' };
+      const figure = { before: 'About', value: whole(part.mid), after: 'guests', source: 'forecast' as const };
       if (part.modelClosed) {
         return { figure, lines: [`Townwise’s model expects you closed. ${sentence(part.from)} open the day with ${plural(part.noteGuests, 'guest', 'guests')}.`] };
       }
       const likely = `Likely ${rangeWords(part.low, part.high)}.`;
-      if (part.model === null) return { figure, lines: [`${likely} About 8 in 10 days land in the range.`] };
+      // An outlook day's range has had no 8 in 10 measured live, so it says why it is wider instead (D52).
+      const claim = part.outlook ? OUTLOOK_RANGE : 'About 8 in 10 days land in the range.';
+      if (part.model === null) return { figure, lines: [`${likely} ${claim}`] };
+      const modelClaim = part.outlook ? '' : ' About 8 in 10 days land in that range.';
       return {
         figure,
         lines: [
-          likely,
-          `Townwise’s model: ${rangeWords(part.model.low, part.model.high)}. About 8 in 10 days land in that range. ${sentence(part.from)} add ${plural(part.noteGuests, 'guest', 'guests')}.`,
+          part.outlook ? `${likely} ${OUTLOOK_RANGE}` : likely,
+          `Townwise’s model: ${rangeWords(part.model.low, part.model.high)}.${modelClaim} ${sentence(part.from)} add ${plural(part.noteGuests, 'guest', 'guests')}.`,
         ],
       };
     }
@@ -622,12 +745,19 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
         if (part.model !== null) lines.push(`Townwise’s model forecast ${rangeWords(part.model.low, part.model.high)}.`);
         return { figure: null, lines };
       }
-      const figure = part.actual === null ? null : { before: '', value: whole(part.actual), after: part.actual === 1 ? 'guest' : 'guests' };
+      // With no stored guests the run's figure shows as a forecast, as the cell shows it (figureOf).
+      const runMid = part.model?.mid ?? null;
+      const figure = part.actual !== null ? { before: '', value: whole(part.actual), after: part.actual === 1 ? 'guest' : 'guests', source: 'actual' as const }
+        : runMid !== null && !part.modelClosed ? { before: 'About', value: whole(runMid), after: Math.round(runMid) === 1 ? 'guest' : 'guests', source: 'forecast' as const }
+          : null;
       const lines = part.actual === null ? ['No guests stored for this day.'] : [];
       if (part.modelClosed) lines.push('Townwise’s model expected you closed.');
+      else if (part.check !== null) lines.push(`${checkWords(part.check)}.`);
       else if (part.model !== null) {
-        const range = `Townwise’s model forecast ${rangeWords(part.model.low, part.model.high)}`;
-        lines.push(part.inRange === null ? `${range}.` : `${range}, and the day landed ${part.inRange ? 'in that range' : 'outside it'}.`);
+        const range = rangeWords(part.model.low, part.model.high);
+        lines.push(part.laterNote && part.actual !== null
+          ? `Townwise’s model forecast ${range}, but it may have used a note or rule written on or after this day, so it isn’t scored.`
+          : `Townwise’s model forecast ${range}.`);
       }
       return { figure, lines };
     }
@@ -645,10 +775,24 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
 export interface TooltipLines { date: string; lines: string[] }
 
 const TOOLTIP_REASONS = 3;
+const TOOLTIP_ENTRIES = 3;
 
 /**
- * The hover tooltip: the day's figure and range, the notes' guests, and the three reasons with the largest effect either
- * way in short words (shortReasons), or with no reasons the first three entries.
+ * The title of the note a note reason comes from (D49), joined by its id against the notes already read; null for a
+ * run's or a rule's reason, an untitled note, or a note this read doesn't hold. Shown after the reason's label, never
+ * in its place (D30).
+ */
+export function noteTitleOf(reason: Pick<ForecastReason, 'note'>, notes: readonly Pick<Note, 'id' | 'title'>[]): string | null {
+  const id = reason.note?.id;
+  if (id === undefined) return null;
+  return notes.find((note) => note.id === id)?.title ?? null;
+}
+
+/**
+ * The hover tooltip: the day's figure and range, the notes' guests, the three reasons with the largest effect either
+ * way in short words (shortReasons), a note reason followed by its note's title as the person's own words (D30 as D49
+ * amends it, joined by the reason's note id), then the day's compact entries no shown reason names (entries.ts
+ * notNamed), three, or the first two and “+N more”. A day's status never hides an entry.
  */
 export function tooltipLines(date: string, input: CalendarInput): TooltipLines | null {
   const day = forecastDayOf(date, input);
@@ -657,23 +801,127 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
     const guests = storedGuests(date, input);
     const likely = likelyClosedGuests(date, input);
     if (likely !== null) lines.push(likelyClosedWords(plural(likely, 'guest', 'guests')));
-    else if (guests !== null) lines.push(plural(guests, 'guest', 'guests'));
-  } else if (day !== null) {
-    if (day.status === 'closed') lines.push('Closed');
-    else if (day.status === 'booked') lines.push(bookedWords(day));
+    else if (guests !== null) {
+      lines.push(figureLabel(guests, { kind: 'actual' }));
+      const check = forecastCheck(day, input.today, input.forecast?.runs);
+      if (check !== null) lines.push(checkWords(check));
+    }
+    // No stored guests: the forecast made for the day, as the cell shows it (figureOf).
+    else if (day === null) {
+      if (input.forecast !== null) lines.push('No data');
+    } else if (day.status === 'closed') lines.push('No data. Forecast closed');
+    else if (day.status === 'booked') lines.push(`No data. ${bookedWords(day)}`);
     else if (day.mid !== null && day.low !== null && day.high !== null) {
-      lines.push(`About ${plural(Math.round(day.mid), 'guest', 'guests')} (${rangeWords(day.low, day.high)})`);
+      lines.push(`No data. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })} (likely ${rangeWords(day.low, day.high)})`);
+    } else lines.push('No data');
+  } else if (day === null) {
+    if (input.forecast !== null) lines.push('No forecast');
+  } else {
+    if (day.status === 'closed') lines.push('Closed');
+    else if (day.status === 'booked') lines.push(day.noteGuests > 0 ? `${bookedWords(day)}, forecast` : bookedWords(day));
+    else if (day.mid !== null && day.low !== null && day.high !== null) {
+      const figure = `${figureLabel(Math.round(day.mid), { kind: 'forecast' })} (likely ${rangeWords(day.low, day.high)})`;
+      lines.push(day.outlook ? `Outlook: ${figure}` : figure);
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }
-  const reasons = day === null ? [] : reasonShortLines(day, date < input.today, TOOLTIP_REASONS);
-  const entries = reasons.length > 0 ? reasons : [
-    ...eventsOn(date, input).filter(marksCell).map((event) => event.title),
-    ...notesOn(date, input).map(noteChip),
-    ...importedOn(date, input).map((event) => event.title),
-  ];
-  lines.push(...entries.slice(0, TOOLTIP_REASONS));
+  const reasons = day === null ? [] : shortReasons(day, date < input.today, TOOLTIP_REASONS);
+  const names: string[] = [];
+  // A note or rule whose reason is shown is already named, whatever its words.
+  const shownIds = new Set<string>();
+  for (const { reason, line } of reasons) {
+    const title = noteTitleOf(reason, input.notes);
+    names.push(reason.label, ...(title === null ? [] : [title]));
+    for (const id of [reason.note?.id, reason.rule?.id]) if (id !== undefined) shownIds.add(id);
+    lines.push(title === null ? line : `${line}: ${title}`);
+  }
+  const unnamed = notNamed(compactEntries(dayEntries(date, input)), names, shownIds);
+  const entries = fitLines(unnamed.map((entry) => entry.words), TOOLTIP_ENTRIES);
+  lines.push(...entries.lines, ...(entries.more === null ? [] : [entries.more]));
   return lines.length === 0 ? null : { date: shortDate(date), lines };
+}
+
+// How the forecast did (D49, design decision 11, owner 2026-11-18; amended the same day)
+
+/**
+ * A past day's forecast against what happened, from the run's own figures. `dataThrough` is the run's last day of sales
+ * when the run was made after the day (it never saw the day's sales, so it is compared all the same), else null.
+ */
+export interface ForecastCheck {
+  mid: number; low: number; high: number; actual: number; verdict: 'inside' | 'above' | 'below'; dataThrough: string | null;
+}
+
+/** The day's run was made after the day (its made-at day is later); a run made on the day, before service, is not. */
+function madeAfterDay(day: Pick<ForecastDay, 'date' | 'madeAt'>): boolean {
+  return day.madeAt !== undefined && day.madeAt > day.date;
+}
+
+/**
+ * How a past day's forecast did, only when the read scored the day (open in the model, not closed or likely closed,
+ * with stored guests, and no note or rule written on or after it that its run may have read; api/src/forecasts/score.ts)
+ * and says whether it landed in range; null otherwise. The run's own figures, which are the day's before today. `runs`
+ * are the read's, for the data end of a run made after the day.
+ */
+export function forecastCheck(
+  day: ForecastDay | null | undefined, today: string, runs: readonly Pick<ForecastWindow['runs'][number], 'id' | 'dataThrough'>[] = [],
+): ForecastCheck | null {
+  if (day === null || day === undefined || day.date >= today || day.scored !== true || day.inRange === null || day.actual === null) return null;
+  const { low, mid, high } = day.model;
+  if (low === null || mid === null || high === null) return null;
+  const verdict = day.inRange ? 'inside' : day.actual > high ? 'above' : 'below';
+  const dataThrough = madeAfterDay(day) ? runs.find((run) => run.id === day.runId)?.dataThrough ?? null : null;
+  return { mid, low, high, actual: day.actual, verdict, dataThrough };
+}
+
+/**
+ * “Forecast was about 82 (likely 70 to 95); 94 guests came: inside the range”, or for a run made after the day
+ * “Forecast from sales through Oct 21, 2026: about 82 (likely 70 to 95); 94 guests came: inside the range”.
+ */
+export function checkWords(check: ForecastCheck): string {
+  const forecast = check.dataThrough === null ? 'Forecast was about' : `Forecast from sales through ${formatDate(check.dataThrough)}: about`;
+  return `${forecast} ${whole(check.mid)} (likely ${rangeWords(check.low, check.high)}); ${plural(check.actual, 'guest', 'guests')} came: ${check.verdict} the range`;
+}
+
+/** The words after a count of days in range, on the month line, the model card and Last week. */
+export const INSIDE_RANGE = 'inside the forecast range';
+
+/** “5 of 6 days inside the forecast range”. */
+export function insideWords(inside: number, days: number): string {
+  return `${formatCount(inside)} of ${plural(days, 'day', 'days')} ${INSIDE_RANGE}`;
+}
+
+/**
+ * The month's line: how many of its passed days with a comparison (forecastCheck) landed inside the forecast range.
+ * “So far this month: …” for today's month, “In October: …” for an earlier one; for a month that has begun with none,
+ * that none can be compared yet. Null for a later month, and while the read loads, failed or has nothing published.
+ */
+export function monthCheckLine(month: string, input: CalendarInput): string | null {
+  const thisMonth = input.today.slice(0, 7);
+  if (input.forecast === null || !input.forecast.available || month > thisMonth) return null;
+  const checks = input.forecast.days.filter((day) => day.date.startsWith(month)).flatMap((day) => {
+    const check = forecastCheck(day, input.today, input.forecast?.runs);
+    return check === null ? [] : [check];
+  });
+  const current = month === thisMonth;
+  if (checks.length === 0) {
+    if (current && input.today.endsWith('-01')) return null;
+    return current ? 'No day this month can be compared with its forecast yet.'
+      : `No day in ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''} could be compared with its forecast.`;
+  }
+  const words = insideWords(checks.filter((check) => check.verdict === 'inside').length, checks.length);
+  return current ? `So far this month: ${words}.` : `In ${MONTH_NAMES[Number(month.slice(5, 7)) - 1] ?? ''}: ${words}.`;
+}
+
+/**
+ * A past day's forecast in Home's day detail, in the Calendar's words: how it did (forecastCheck), or with no stored
+ * data the run's figure for it, as a forecast (figureOf); none from today on or with neither.
+ */
+export function pastForecastLines(date: string, input: CalendarInput): string[] {
+  if (date >= input.today) return [];
+  const check = forecastCheck(forecastDayOf(date, input), input.today, input.forecast?.runs);
+  if (check !== null) return [`${checkWords(check)}.`];
+  const found = figureOf(date, input);
+  return found.figure?.kind === 'past_forecast' && found.words !== null ? [found.words] : [];
 }
 
 // Months

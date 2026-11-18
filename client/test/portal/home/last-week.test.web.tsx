@@ -121,7 +121,7 @@ function openNumbers(card: HTMLElement): HTMLElement {
 test('a mix of scored and forecast-only days: the error, the forecast-only sentence, the last-year sentence, and no total over forecast days', async () => {
   const api = portal(UP_TO_FRIDAY, MIXED);
   const card = await renderHome(api);
-  expect(await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.'))).toBeTruthy();
+  expect(await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days inside the forecast range.'))).toBeTruthy();
   // The percentage and the counts are bold.
   for (const bold of ['10%', '5 days', '4 of 5 days']) expect(within(card).getByText(bold).tagName).not.toBe('DIV');
   expect(within(card).getByText('No guest count uploaded for Sat and Sun yet; this is Townwise’s forecast.')).toBeTruthy();
@@ -141,8 +141,8 @@ test('a mix of scored and forecast-only days: the error, the forecast-only sente
   const table = openNumbers(card);
   expect(within(table).getByText('Forecast')).toBeTruthy();
   expect(within(table).getByText('In range')).toBeTruthy();
-  expect(rowOf(table, 'Sat, Nov 21, 2026')).toContain('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245');
-  expect(rowOf(table, 'Sun, Nov 22, 2026')).toContain('Forecast, no guest count uploaded yet: about 170 guests, 150 to 190');
+  expect(rowOf(table, 'Sat, Nov 21, 2026')).toContain('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245');
+  expect(rowOf(table, 'Sun, Nov 22, 2026')).toContain('Forecast, no guest count uploaded yet: ~170 guests, 150 to 190');
   // Scored rows keep their guests, with the forecast and whether it landed in range beside them.
   const monday = rowOf(table, 'Mon, Nov 16, 2026');
   expect(monday).toContain('110');
@@ -168,17 +168,17 @@ test('no uploads since last Sunday: the forecast for these days replaces “Your
   expect(card.querySelectorAll('[data-series="forecast"]')).toHaveLength(7);
   const table = openNumbers(card);
   for (const date of ['Mon, Nov 16, 2026', 'Sun, Nov 22, 2026']) {
-    expect(rowOf(table, date)).toContain('Forecast, no guest count uploaded yet: about 210 guests, 180 to 245');
+    expect(rowOf(table, date)).toContain('Forecast, no guest count uploaded yet: ~210 guests, 180 to 245');
   }
   // No weekly total: 7 x 210.
   expect(card.textContent).not.toMatch(/1,470/);
-  expect(within(glance()).getByText('No guest count uploaded yet; Last week shows Townwise’s forecast.')).toBeTruthy();
+  expect(within(glance()).getByText('No guest counts for these days yet. Upload your sales to see how Townwise’s forecast did.')).toBeTruthy();
   expect(within(glance()).queryByText(/Your sales stop at/)).toBeNull();
 });
 
 test('few scored days: only the in-range count, with no percentage', async () => {
   const card = await renderHome(portal(HISTORY, published([scored('2026-11-16'), scored('2026-11-17', false), scored('2026-11-18')], null)));
-  expect(await within(card).findByText(sentence('2 of 3 days landed in Townwise’s range.'))).toBeTruthy();
+  expect(await within(card).findByText(sentence('2 of 3 days inside the forecast range.'))).toBeTruthy();
   expect(within(card).queryByText(/off by/)).toBeNull();
   expect(within(glance()).queryByText(/against the forecast/)).toBeNull();
 });
@@ -228,7 +228,7 @@ test('from 1024px, with a published forecast Last week takes a line of its own u
   // join, so the card takes the full width; history only, it stays a third beside This month.
   await renderHome(portal(UP_TO_FRIDAY, MIXED));
   const card = await screen.findByRole('region', { name: 'Last week' });
-  await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days landed in its range.'));
+  await within(card).findByText(sentence('Townwise’s forecast was off by 10% over 5 days. 4 of 5 days inside the forecast range.'));
   const month = screen.getByRole('region', { name: /^This month in / });
   expect(basisOf(screen.getByRole('region', { name: 'Last week' }))).toBe('100%');
   expect(basisOf(month)).toBe('100%');
@@ -239,4 +239,42 @@ test('from 1024px, with a published forecast Last week takes a line of its own u
   await within(history).findByText(sentence('Last week: 770 guests, 10% more than the same week last year (700), compared over 7 days.'));
   expect(basisOf(history)).not.toBe('100%');
   expect(basisOf(screen.getByRole('region', { name: /^This month in / }))).not.toBe('100%');
+});
+
+// At a glance's This week's forecast (D43): the Forecast row's figures added up, with the run's weekly 80% band when
+// all seven days count; 5 or 6 days are totalled and the rest named; under 5 the tile stays on last year.
+test('This week adds up the forecast for the seven days from today, with its weekly range, today and last year', async () => {
+  const next = weekDates(TODAY).map((date, index) => forecastDay({ date, low: 90 + index * 10, mid: 110.4 + index * 10, high: 130 + index * 10 }));
+  const window = {
+    available: true, reason: null, days: next, accuracy: null, weeks: [],
+    runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, engine: 'model', madeAt: '2026-11-09', live: null, backtest: { weeklyRangePct: { below: 20, above: 25 } } }],
+  };
+  await renderHome(portal(HISTORY, offline(), window));
+  expect(await within(glance()).findByText('This week’s forecast')).toBeTruthy();
+  const panel = glance();
+  // 110 + 120 + ... + 170, each rounded first; 980 less 20% is 784, plus 25% is 1,225.
+  expect(within(panel).getByText('~980')).toBeTruthy();
+  expect(within(panel).getByText(sentence('Likely 784 to 1,225 guests: 8 in 10 of this forecast’s backtest weeks landed in a range this wide.'))).toBeTruthy();
+  expect(within(panel).getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.')).toBeTruthy();
+  expect(within(panel).getByText(sentence('Today: ~110 guests, forecast, 90 to 130.'))).toBeTruthy();
+  expect(within(panel).getByText(sentence('Busiest: Sun, Nov 29, 2026 (~170 guests, forecast).'))).toBeTruthy();
+  expect(within(panel).getByText(/^Same 7 days last year: /)).toBeTruthy();
+  expect(within(panel).queryByText('Each day’s range is in This week.')).toBeNull();
+  expect(within(glance()).queryByText('This week, last year')).toBeNull();
+});
+
+test('6 of the 7 days with a forecast: their total, the missing day named, no weekly range', async () => {
+  const six = weekDates(TODAY).slice(0, 6).map((date) => forecastDay({ date, low: 90, mid: 110, high: 130 }));
+  await renderHome(portal(HISTORY, offline(), published(six, null)));
+  expect(await within(glance()).findByText('~660')).toBeTruthy();
+  expect(within(glance()).getByText('Mon, Nov 23 to Sun, Nov 29, 2026: 6 of the 7 days’ forecasts added up. Sun, Nov 29 has no forecast figure.')).toBeTruthy();
+  expect(within(glance()).getByText('Each day’s range is in This week.')).toBeTruthy();
+  expect(within(glance()).queryByText(/^Likely /)).toBeNull();
+});
+
+test('under 5 of the 7 days with a forecast: the tile stays on last year', async () => {
+  const four = weekDates(TODAY).slice(0, 4).map((date) => forecastDay({ date, low: 90, mid: 110, high: 130 }));
+  await renderHome(portal(HISTORY, offline(), published(four, null)));
+  expect(await within(glance()).findByText('This week, last year')).toBeTruthy();
+  expect(within(glance()).queryByText(/forecasts added up/)).toBeNull();
 });

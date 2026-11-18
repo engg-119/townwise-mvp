@@ -30,12 +30,14 @@ function typeOf(type: SkeletonType, phone: boolean): { fontSize: number; lineHei
 /**
  * A loading page or section: the status line screen readers hear (`label`, the page's loading words, polite), then
  * the shapes, hidden from assistive tech and pulsing in opacity unless motion is reduced. `name` marks it for tests.
+ * `fill`: it and its shapes take the parent's height, for a page laid out to fill the screen (TownwiseAI).
  */
-export function Skeleton(props: { name: string; label: string; children: React.ReactNode }): React.JSX.Element {
+export function Skeleton(props: { name: string; label: string; children: React.ReactNode; fill?: boolean }): React.JSX.Element {
+  const fill = props.fill === true;
   return (
-    <View testID={`skeleton-${props.name}`}>
+    <View testID={`skeleton-${props.name}`} style={fill ? styles.page : null}>
       <Text role="status" aria-live="polite" style={styles.unseen}>{props.label}</Text>
-      <Pulse>{props.children}</Pulse>
+      <Pulse fill={fill}>{props.children}</Pulse>
     </View>
   );
 }
@@ -67,6 +69,15 @@ export function SkeletonText(props: { lines?: number; type?: SkeletonType; width
       ))}
     </View>
   );
+}
+
+/**
+ * Words known before the page loads (a heading, a chip's label), as bars: put inside the text that will hold them, in
+ * its own type, they take the lines the words will take at any width, drawn as a `raised` bar along each line and never
+ * as glyphs, so the page replaces them without moving. Hidden from assistive tech with the rest of the shapes.
+ */
+export function SkeletonWords(props: { children: string }): React.JSX.Element {
+  return <Text selectable={false} style={styles.words}>{props.children}</Text>;
 }
 
 /**
@@ -148,14 +159,14 @@ export function SkeletonTable(props: {
   columns: readonly SkeletonColumn[];
   rows?: number;
   rowHeight?: number;
-  /** False for a table that stays one table on phones, as By month does. */
-  stack?: boolean;
+  /** False for a table that stays one table on phones, as By month does; `belowDesktop` for one that stacks below 1024px. */
+  stack?: boolean | 'belowDesktop';
 }): React.JSX.Element {
   const { phone, desktop } = useBreakpoint();
   const { columns } = props;
   const rows = Array.from({ length: props.rows ?? 3 }, (_, index) => index);
   const last = rows.length - 1;
-  if (phone && props.stack !== false) {
+  if (props.stack === 'belowDesktop' ? !desktop : phone && props.stack !== false) {
     return (
       <View>
         {rows.map((row) => (
@@ -220,7 +231,9 @@ export function SkeletonDefinitions(props: { rows: number }): React.JSX.Element 
 const styles = StyleSheet.create({
   // Read by screen readers, but takes no space and shows nothing (as the copy buttons' result line).
   unseen: { position: 'absolute', width: 1, height: 1, overflow: 'hidden', opacity: 0 },
+  page: { flex: 1, minHeight: 0 },
   fill: { backgroundColor: c.raised, borderRadius: 0 },
+  words: { color: 'transparent', backgroundColor: c.raised },
   outline: { borderWidth: 1, borderColor: c.line, borderRadius: 0 },
   line: { justifyContent: 'center' },
   head: { gap: theme.space[2] },

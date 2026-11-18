@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import type { ApiClient } from '../../api/client';
+import type { WEEKLY_TITLES_NOTICE } from './calendars';
 
 // The owner calendar routes (spec 10.18, api/src/handlers/owner-calendars.ts; connect-owner-calendar design decision
 // 11), through the portal ApiClient: a location's own calendars, each an imported .ics file, a subscription link or a
@@ -39,6 +40,11 @@ export const ownerCalendarSchema = z.object({
   lastSuccessAt: z.string().nullable(),
   lastAttemptAt: z.string().nullable(),
   createdAt: z.string(),
+  /**
+   * The person's own Google calendar, added through their own connection, which they can reconnect; false for a file,
+   * a link, a teammate's Google calendar, under view-as, and from an API older than it.
+   */
+  mine: z.boolean().default(false),
 });
 export type OwnerCalendar = z.infer<typeof ownerCalendarSchema>;
 
@@ -57,18 +63,21 @@ export type OwnerCalendarEvent = z.infer<typeof ownerCalendarEventSchema>;
 
 /**
  * The list's `google`: whether Google calendars are on (`available`), whether the caller has a Google connection that
- * is not revoked (`connected`, false under view-as), and the public OAuth client id the browser asks Google with
- * (`clientId`, null unless available).
+ * is not revoked (`connected`, false under view-as), the public OAuth client id the browser asks Google with
+ * (`clientId`, null unless available, and open as admin), and whether the caller may connect one (`canConnect`: false
+ * for staff, under view-as or open as admin, who see the option disabled; true from an API older than it, which never
+ * answered staff `available`).
  */
 export const googleCalendarsSchema = z.object({
   available: z.boolean(),
   connected: z.boolean(),
   clientId: z.string().nullable(),
+  canConnect: z.boolean().default(true),
 });
 export type GoogleCalendars = z.infer<typeof googleCalendarsSchema>;
 
 /** Google calendars off: what an API without `google` in its list answer means. */
-export const GOOGLE_OFF: GoogleCalendars = { available: false, connected: false, clientId: null };
+export const GOOGLE_OFF: GoogleCalendars = { available: false, connected: false, clientId: null, canConnect: false };
 
 /**
  * One calendar the person could add, from their own Google calendar list: Google's id (only ever posted back in an add's
@@ -90,11 +99,12 @@ const choicesSchema = z.object({ calendars: z.array(googleChoiceSchema) });
 
 /**
  * A calendar file's text (at most 1 MB, parsed by the API), a link the API fetches before it stores anything, or one of
- * the person's Google calendars by its Google id, which the API checks and reads before it stores anything.
+ * the person's Google calendars by its Google id, which the API checks and reads before it stores anything. A file or
+ * link carries `titlesNotice` only when sent from the screen that says its titles are read weekly.
  */
 export type NewOwnerCalendar =
-  | { kind: 'file'; label: string; ics: string }
-  | { kind: 'link'; label: string; url: string }
+  | { kind: 'file'; label: string; ics: string; titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
+  | { kind: 'link'; label: string; url: string; titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
   | { kind: 'google'; googleCalendarId: string };
 
 /** 200: the location's calendars, oldest first, and `google`, which an older API leaves out (read as off). */
@@ -142,12 +152,15 @@ export async function removeOwnerCalendar(api: ApiClient, locationId: string, ca
 
 /**
  * Connects the person's own Google account with the code Google's window gave (connect-google-calendar design decision
- * 3), posting `{ code, agreed: true }`: pressing "Continue to Google" after the explainer is the agreement. 200 with the
+ * 3), posting `{ code, agreed: true }`: pressing "Continue to Google" after the explainer is the agreement, and
+ * `titlesNotice` says that explainer said titles are read weekly (calendar-event-suggestions). 200 with the
  * choices. 503 google_calendar_unavailable; 400 google_code_invalid or google_scope_missing; 409 google_other_account,
  * google_connect_again or google_reconnect; 503 google_unavailable; 429 rate_limited.
  */
-export async function connectGoogleCalendars(api: ApiClient, locationId: string, code: string): Promise<GoogleChoice[]> {
-  const body = await api.json(`${googleCalendarsPath(locationId)}/connect`, choicesSchema, { method: 'POST', body: { code, agreed: true } });
+export async function connectGoogleCalendars(
+  api: ApiClient, locationId: string, code: string, titlesNotice: typeof WEEKLY_TITLES_NOTICE,
+): Promise<GoogleChoice[]> {
+  const body = await api.json(`${googleCalendarsPath(locationId)}/connect`, choicesSchema, { method: 'POST', body: { code, agreed: true, titlesNotice } });
   return body.calendars;
 }
 

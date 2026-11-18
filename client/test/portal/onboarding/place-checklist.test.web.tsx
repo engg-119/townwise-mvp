@@ -310,3 +310,186 @@ test('an address suggestion’s line starts with Street address, and its option 
   expect(within(screen.getByRole('group', { name: named })).getByText('12 S Main St, Hanover, NH 03755, USA')).toBeTruthy();
   expect(screen.getByRole('button', { name: `Remove ${named}` })).toBeTruthy();
 });
+
+function chips(): HTMLElement[] {
+  const list = screen.queryByRole('list', { name: 'Chosen places' });
+  return list === null ? [] : within(list).getAllByRole('button');
+}
+
+function chip(index: number): HTMLElement {
+  const found = chips()[index];
+  if (found === undefined) throw new Error(`no chip ${String(index)}`);
+  return found;
+}
+
+test('each checked place is a chip in the field, in check order and out of the tab order, and typing searches for more (D57)', async () => {
+  setup();
+  const box = await search('Lou');
+  expect(chips()).toEqual([]);
+  fireEvent.click(option(0));
+  await settle();
+  fireEvent.click(option(1));
+  await settle();
+  expect(chips().map((button) => button.getAttribute('aria-label'))).toEqual([RESTAURANT, BAKERY]);
+  for (const button of chips()) expect(button.getAttribute('tabindex')).toBe('-1');
+  // The chips sit before the text in the same box, and the text is still the combobox.
+  expect(chip(1).compareDocumentPosition(box) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(document.activeElement).toBe(box);
+  // Searching again keeps them, and its answer can add another.
+  await search('Lou Lebanon');
+  expect(chips()).toHaveLength(2);
+  fireEvent.click(option(0));
+  await settle();
+  expect(chips()).toHaveLength(3);
+  // Unchecking in the list takes its chip away.
+  fireEvent.click(option(0));
+  await settle();
+  expect(chips()).toHaveLength(2);
+});
+
+test('Left or Backspace at the start of the text moves to the last chip; Left and Right move between chips and back to the text', async () => {
+  setup();
+  const box = await search('Lou');
+  fireEvent.click(option(0));
+  await settle();
+  fireEvent.click(option(1));
+  await settle();
+  // With the caret after text, Left and Backspace are the text's own.
+  box.setSelectionRange(3, 3);
+  expect(fireEvent.keyDown(box, { key: 'ArrowLeft' })).toBe(true);
+  expect(fireEvent.keyDown(box, { key: 'Backspace' })).toBe(true);
+  expect(document.activeElement).toBe(box);
+  box.setSelectionRange(0, 0);
+  expect(fireEvent.keyDown(box, { key: 'ArrowLeft' })).toBe(false);
+  expect(document.activeElement).toBe(chip(1));
+  fireEvent.keyDown(chip(1), { key: 'ArrowLeft' });
+  expect(document.activeElement).toBe(chip(0));
+  // The first chip is the end of the line.
+  fireEvent.keyDown(chip(0), { key: 'ArrowLeft' });
+  expect(document.activeElement).toBe(chip(0));
+  fireEvent.keyDown(chip(0), { key: 'ArrowRight' });
+  fireEvent.keyDown(chip(1), { key: 'ArrowRight' });
+  expect(document.activeElement).toBe(box);
+  // Backspace at the start goes to the last chip too, and removes nothing yet.
+  fireEvent.keyDown(box, { key: 'Backspace' });
+  expect(document.activeElement).toBe(chip(1));
+  expect(chips()).toHaveLength(2);
+  // A typed character goes back to the end of the text.
+  fireEvent.keyDown(chip(1), { key: 'p' });
+  expect(document.activeElement).toBe(box);
+  expect([box.selectionStart, box.selectionEnd]).toEqual([3, 3]);
+});
+
+test('a key held down never crosses from the text to the chips or removes one, so holding Backspace stops at the start of the text', async () => {
+  setup();
+  const box = await search('Lou');
+  fireEvent.click(option(0));
+  await settle();
+  fireEvent.click(option(1));
+  await settle();
+  box.setSelectionRange(0, 0);
+  expect(fireEvent.keyDown(box, { key: 'Backspace', repeat: true })).toBe(true);
+  expect(fireEvent.keyDown(box, { key: 'ArrowLeft', repeat: true })).toBe(true);
+  expect(document.activeElement).toBe(box);
+  // On a chip a held Delete or Backspace removes nothing.
+  fireEvent.keyDown(box, { key: 'Backspace' });
+  expect(document.activeElement).toBe(chip(1));
+  fireEvent.keyDown(chip(1), { key: 'Backspace', repeat: true });
+  fireEvent.keyDown(chip(1), { key: 'Delete', repeat: true });
+  await settle();
+  expect(chips()).toHaveLength(2);
+});
+
+test('the chips are one line beside the text, so the box keeps its height and the list never moves', async () => {
+  setup();
+  const box = await search('Lou');
+  const frame = box.parentElement;
+  if (frame === null) throw new Error('no box');
+  expect(frame.style.height).toBe('44px');
+  fireEvent.click(option(0));
+  await settle();
+  fireEvent.click(option(1));
+  await settle();
+  expect(frame.style.height).toBe('44px');
+  const list = screen.getByRole('list', { name: 'Chosen places' });
+  expect(list.style.overflowX).toBe('auto');
+  expect(list.style.flexWrap).toBe('');
+  // The text keeps at least 160px beside them.
+  expect(box.style.minWidth).toBe('160px');
+});
+
+test('a chip in focus whose place leaves by itself hands focus to the text', async () => {
+  const { places } = setup();
+  const box = await search('Lou');
+  // The cantina is outside a US town: its details answer refuses it.
+  places.holdingDetails = true;
+  fireEvent.click(option(2));
+  await settle();
+  expect(chips()).toHaveLength(1);
+  chip(0).focus();
+  expect(document.activeElement).toBe(chip(0));
+  places.holdingDetails = false;
+  await act(async () => {
+    for (const release of places.heldDetails.splice(0)) release();
+    for (let i = 0; i < 20; i += 1) await Promise.resolve();
+  });
+  expect(chips()).toEqual([]);
+  expect(document.activeElement).toBe(box);
+});
+
+test('Delete or Backspace on a chip removes its place and moves to its neighbor, then to the text; the × removes by mouse', async () => {
+  setup();
+  const box = await search('Lou');
+  fireEvent.click(option(0));
+  await settle();
+  fireEvent.click(option(1));
+  await settle();
+  chip(0).focus();
+  fireEvent.keyDown(chip(0), { key: 'Delete' });
+  await settle();
+  expect(chips().map((button) => button.getAttribute('aria-label'))).toEqual([BAKERY]);
+  expect(screen.queryByRole('group', { name: RESTAURANT })).toBeNull();
+  expect(option(0).getAttribute('aria-selected')).toBe('false');
+  expect(document.activeElement).toBe(chip(0));
+  fireEvent.keyDown(chip(0), { key: 'Backspace' });
+  await settle();
+  expect(chips()).toEqual([]);
+  expect(document.activeElement).toBe(box);
+  // By mouse: the drawn ×, hidden from assistive technology, beside the chip's button.
+  fireEvent.click(option(1));
+  await settle();
+  const cross = chip(0).nextElementSibling;
+  if (cross === null) throw new Error('no ×');
+  expect(cross.getAttribute('aria-hidden')).toBe('true');
+  fireEvent.click(cross);
+  await settle();
+  expect(chips()).toEqual([]);
+  expect(document.activeElement).toBe(box);
+});
+
+test('the map’s pins are lettered in check order, and each chip and row carries its letter while the map shows', async () => {
+  const { places } = setup();
+  await search('Lou');
+  // The bakery first, so it is A.
+  fireEvent.click(option(1));
+  await settle();
+  fireEvent.click(option(0));
+  await settle();
+  // No letters before the map answers.
+  expect(chips().map((button) => button.textContent)).toEqual(['Lou’s Bakery', 'Lou’s Restaurant']);
+  await later(400);
+  // The ids go in check order, not sorted, as the letters follow them.
+  expect(places.mapCalls).toEqual([['ChIJTestPlace0002', 'ChIJTestPlace0001']]);
+  expect(chips().map((button) => button.textContent)).toEqual(['ALou’s Bakery', 'BLou’s Restaurant']);
+  expect(within(screen.getByRole('group', { name: BAKERY })).getByText('A')).toBeTruthy();
+  expect(within(screen.getByRole('group', { name: RESTAURANT })).getByText('B')).toBeTruthy();
+  // After a Remove the map on screen is still the old set's until the new one answers: no letters beside it meanwhile.
+  fireEvent.click(screen.getByRole('button', { name: `Remove ${BAKERY}` }));
+  await settle();
+  expect(mapImages()).toEqual([mapOf(['ChIJTestPlace0002', 'ChIJTestPlace0001']).url]);
+  expect(chips().map((button) => button.textContent)).toEqual(['Lou’s Restaurant']);
+  expect(within(screen.getByRole('group', { name: RESTAURANT })).queryByText('B')).toBeNull();
+  await later(400);
+  expect(chips().map((button) => button.textContent)).toEqual(['ALou’s Restaurant']);
+  expect(within(screen.getByRole('group', { name: RESTAURANT })).getByText('A')).toBeTruthy();
+});

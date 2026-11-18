@@ -111,8 +111,9 @@ describe('rename', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findByRole('heading', { level: 2, name: 'Winter hours.txt' }, SLOW)).toBeTruthy();
     expect(fake.patches).toEqual([{ ref, body: { title: 'Winter hours' } }]);
-    expect(screen.getByText('Renamed to Winter hours.txt.')).toBeTruthy();
-    await waitFor(() => { expect(focusedText()).toContain('Renamed to Winter hours.txt.'); });
+    // The Save button went with the form: the notice is a toast, so the page's h1 takes focus (spec 15.7, D55).
+    expect(screen.getByText('Renamed to Winter hours.txt.').closest('[data-testid="toast"]')).not.toBeNull();
+    await waitFor(() => { expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 })); });
     expect(screen.queryByRole('textbox', { name: 'Name' })).toBeNull();
     expect(fake.files.calls.filter((call) => call.path.endsWith('/raw'))).toHaveLength(1);
   });
@@ -184,8 +185,8 @@ describe('editing text', () => {
 
     const text = await screen.findByRole('region', { name: 'Text of notes.txt' }, SLOW);
     expect(text.textContent).toBe('Closed Mondays in January and February.');
-    expect(screen.getByText('Saved.')).toBeTruthy();
-    await waitFor(() => { expect(focusedText()).toContain('Saved.'); });
+    expect(screen.getByText('Saved.').closest('[data-testid="toast"]')).not.toBeNull();
+    await waitFor(() => { expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1 })); });
     expect(screen.getByText('Edited Nov 11, 2026 by owner@example.com')).toBeTruthy();
     expect(api.calls.some((call) => call.path === `/api/org/locations/l1/data/f_${fileId}`)).toBe(true);
     await waitFor(() => { expect(window.location.pathname).toBe(`/locations/l1/data/f_${fileId}`); });

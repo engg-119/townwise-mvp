@@ -5,6 +5,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import type { z } from 'zod';
 
 import { ApiError, type RequestOptions } from '../../../src/api/client';
+import type { Auth } from '../../../src/auth/auth';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
@@ -70,8 +71,8 @@ export function consoleApi(me: MeResponse = staffMe()): ConsoleApi {
   });
 }
 
-export function renderAt(path: string, api: FakePortalApi): void {
-  const auth = fakeAuth({ status: 'signedIn', user: { id: 's1', email: STAFF_EMAIL } }, { api });
+export function renderAt(path: string, api: FakePortalApi, overrides?: Partial<Auth>): void {
+  const auth = fakeAuth({ status: 'signedIn', user: { id: 's1', email: STAFF_EMAIL } }, { api, ...overrides });
   window.history.replaceState(null, '', path);
   render(
     <Head.Provider>

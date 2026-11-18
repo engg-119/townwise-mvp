@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
@@ -22,18 +22,20 @@ import {
   checkDraft, draftOf, fieldId, newItem, newSupplier, normalizeName, SETUP_LIMITS, type ItemDraft, type SetupDraft, type SetupProblems,
   type SupplierDraft,
 } from './setupDraft';
+import { SetupProposal } from './SetupProposal';
 import { itemHasHistory, ItemPanel, SupplierPanel } from './SetupRows';
 
 // P31 Ordering setup (/locations/[id]/orders/setup, members; design Decisions 3, 4 and 8; the order-setup and
 // item-sales specs): the location's suppliers with their deliveries, its items, and the item sales coverage, read with
 // GET .../orders/setup and saved whole with PUT over the version it loaded. Someone else's save in between answers
 // 409 `setup_changed`: the page says so and offers their changes, which replace the draft after a confirm. Shared by
-// both platforms; the web adds the template, the sheet import, reading a file with TownwiseAI (D41, only while the
-// GET's `canReadWithAi` holds) and the item sales upload through the slots (Setup.web.tsx). Removing an item with
-// history (item sales, counts, saved edits or rules, as the GET's `itemsWithHistory` names them) asks first, in the
-// page. Under view-as every field and write is disabled in place, described by the read-only line. A read's marks
+// both platforms; both add reading a file with TownwiseAI (D41, only while the GET's `canReadWithAi` holds) and the
+// web adds the template, the sheet import and the item sales upload, through the slots (Setup.tsx, Setup.web.tsx).
+// Removing an item with history (item sales, counts, saved edits or rules, as the GET's `itemsWithHistory` names them)
+// asks first, in the page. Under view-as every field and write is disabled in place, described by the read-only line. A read's marks
 // (an estimated servings value, a name not in the file) replace their field's helper until the field changes or a
-// save goes through.
+// save goes through. Opened from a TownwiseAI card (`?proposal=`, D56), the card's suggestions merge into the draft
+// once (SetupProposal.tsx), again after "Load their changes", and no more once a save goes through.
 
 const READ_ONLY_ID = 'setup-ro';
 
@@ -47,7 +49,7 @@ export interface SheetSlot {
   readonly readOnlyId: string | null;
 }
 
-/** What reading with TownwiseAI (web, D41) works on: the draft its suggestions merge into, before anything saves. */
+/** What reading with TownwiseAI (D41) works on: the draft its suggestions merge into, before anything saves. */
 export interface ReadSlot {
   readonly draft: SetupDraft;
   /** Puts a read's merge in the draft, with its marks. */
@@ -120,6 +122,11 @@ function Editor(props: {
   const [confirmError, setConfirmError] = useState<unknown>(null);
   /** The key of an item with history that Remove this item asked about. */
   const [removing, setRemoving] = useState<string | null>(null);
+  /** For SetupProposal (D56): how often their changes replaced the draft, and how many saves went through. */
+  const [loads, setLoads] = useState(0);
+  const [saves, setSaves] = useState(0);
+  /** SetupProposal keeps this true while an open card's suggestions are in play. */
+  const cardOpen = useRef(false);
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const locked = readOnly || saving;
   const lock = { locked, readOnlyId };
@@ -134,6 +141,14 @@ function Editor(props: {
   const applyRead = (result: ProposalImport): void => {
     edit(result.draft);
     setMarks((current) => withMarks(current, result.marks));
+  };
+  /**
+   * A TownwiseAI card's merge (SetupProposal, D56). It runs by itself, on load and again after "Load their changes", so
+   * unlike a person's edit it leaves the notice alone: what the load just said still shows.
+   */
+  const applyProposal = (result: ProposalImport): void => {
+    setDraft(result.draft);
+    setMarks((current) => withMarks(pruneMarks(current, result.draft), result.marks));
   };
   const setSupplier = (key: string, next: SupplierDraft): void => {
     edit({ ...draft, suppliers: draft.suppliers.map((supplier) => (supplier.key === key ? next : supplier)) });
@@ -179,6 +194,7 @@ function Editor(props: {
       setMarks({});
       setConflict(false);
       setNotice('Saved the ordering setup.');
+      setSaves((count) => count + 1);
     } catch (caught) {
       if (hasCode(caught, 409, 'setup_changed')) setConflict(true);
       else setSaveError(caught);
@@ -209,7 +225,10 @@ function Editor(props: {
         setProblems({});
         setProblemCount(0);
         setConflict(false);
-        setNotice('Loaded the setup as it was last saved.');
+        setNotice(cardOpen.current
+          ? 'Loaded the setup as it was last saved, then added TownwiseAI’s suggestions again.'
+          : 'Loaded the setup as it was last saved.');
+        setLoads((count) => count + 1);
       } else {
         const { removed } = await deleteItemSales(api, location.id);
         await refreshStatus();
@@ -251,14 +270,9 @@ function Editor(props: {
           </Actions>
         ) : null}
       </View>
+      <SetupProposal draft={draft} saved={saved} apply={applyProposal} readOnly={readOnly} loads={loads} saves={saves} onOpen={(open) => { cardOpen.current = open; }} />
       {props.sheet === undefined
-        ? (
-          <Small>
-            {status.canReadWithAi
-              ? 'Use a computer to download the template, import a sheet, read a file with TownwiseAI or upload item sales.'
-              : 'Use a computer to download the template, import a sheet or upload item sales.'}
-          </Small>
-        )
+        ? <Small>Use a computer to download the template, import a sheet or upload item sales.</Small>
         : props.sheet({ draft, setDraft: edit, locked, readOnlyId })}
       {status.canReadWithAi && props.read !== undefined
         ? props.read({ draft, apply: applyRead, locked, readOnlyId })

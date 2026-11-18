@@ -50,21 +50,32 @@ describe('forecastWindowSchema', () => {
     const parsed = forecastWindowSchema.parse(WINDOW);
     expect(parsed).toEqual({
       available: true, reason: null,
-      runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-05-01', live: RUN.live }],
+      runs: [{ id: 'r1', model: { label: 'Townwise demand model v9' }, madeAt: '2026-05-01', dataThrough: '2026-04-30', live: RUN.live, backtest: null }],
       days: [
         {
           date: '2026-05-01', status: 'open', low: 80, mid: 100, high: 120,
           model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 0, moreNotes: 0,
-          reasons: PAST_DAY.reasons, runId: 'r1', actual: 100, inRange: true,
+          reasons: PAST_DAY.reasons, runId: 'r1', madeAt: '2026-05-01', actual: 100, inRange: true, outlook: false,
         },
         {
           date: '2026-05-09', status: 'open', low: 150, mid: 170, high: 190,
           model: { status: 'open', low: 80, mid: 100, high: 120 }, noteGuests: 70, moreNotes: 2,
-          reasons: NOTED_DAY.reasons, runId: 'r1', actual: null, inRange: null,
+          reasons: NOTED_DAY.reasons, runId: 'r1', madeAt: '2026-05-01', actual: null, inRange: null, outlook: false,
         },
       ],
-      weeks: [{ from: '2026-05-04', to: '2026-05-10', openDays: 6, low: 600, mid: 670, high: 740, runId: 'r1', noteGuests: 70 }],
+      weeks: [{ from: '2026-05-04', to: '2026-05-10', openDays: 6, low: 600, mid: 670, high: 740, runId: 'r1', noteGuests: 70, outlook: false }],
     });
+  });
+
+  test('a day’s and a week’s outlook (D52), and false from an API before it', () => {
+    const outlook = forecastWindowSchema.parse({
+      ...WINDOW, days: [{ ...NOTED_DAY, outlook: true }, { ...PAST_DAY, outlook: false }], weeks: [{ ...WINDOW.weeks[0], outlook: true }],
+    });
+    expect(outlook.days.map((day) => day.outlook)).toEqual([true, false]);
+    expect(outlook.weeks[0]?.outlook).toBe(true);
+    const before = forecastWindowSchema.parse(WINDOW);
+    expect(before.days.map((day) => day.outlook)).toEqual([false, false]);
+    expect(before.weeks[0]?.outlook).toBe(false);
   });
 
   test('a booked or closed day, a reason kind this client doesn’t know, and a week from an API before notes', () => {

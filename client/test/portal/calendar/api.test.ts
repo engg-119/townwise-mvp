@@ -2,6 +2,7 @@ import {
   addOwnerCalendar, connectGoogleCalendars, dropGoogleConnection, fetchGoogleChoices, fetchOwnerCalendarEvents, fetchOwnerCalendars,
   GOOGLE_OFF, refreshOwnerCalendar, removeOwnerCalendar,
 } from '../../../src/portal/calendar/api';
+import { WEEKLY_TITLES_NOTICE } from '../../../src/portal/calendar/calendars';
 import { ACCESS, fakePortalApi, meOf, refusal, writes } from '../../helpers/portal';
 import { noContent, withRoutes } from '../team/fixtures';
 import { calendarFake, ownerCalendar, ownerEvent } from './fakes';
@@ -25,7 +26,7 @@ function api() {
 const FILE = ownerCalendar({ id: 'c1', label: 'Kitchen', kind: 'file', host: null, eventCount: 12 });
 const LINK = ownerCalendar({ id: 'c2', label: 'Bookings', kind: 'link', host: 'calendar.google.com', eventCount: 1 });
 const GOOGLE = ownerCalendar({ id: 'c4', label: 'Google calendar', kind: 'google', host: null, eventCount: 40 });
-const GOOGLE_ON = { available: true, connected: true, clientId: CLIENT_ID };
+const GOOGLE_ON = { available: true, connected: true, clientId: CLIENT_ID, canConnect: true };
 
 describe('owner calendar calls (spec 10.18)', () => {
   test('GET .../owner-calendars returns the calendars and `google`, a status the client has no words for included, stripping other keys', async () => {
@@ -43,10 +44,29 @@ describe('owner calendar calls (spec 10.18)', () => {
     expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [GOOGLE, later], google: GOOGLE_OFF });
   });
 
+  test('a calendar’s `mine` parses, and a calendar without it, from an API older than Reconnect, reads as not mine', async () => {
+    const { fake, routes } = api();
+    const older: Record<string, unknown> = { ...GOOGLE };
+    delete older.mine;
+    routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: true }, { ...older, id: 'c5' }], google: GOOGLE_ON });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [{ ...GOOGLE, mine: true }, { ...GOOGLE, id: 'c5', mine: false }], google: GOOGLE_ON });
+    routes.gets[BASE] = () => ({ calendars: [{ ...GOOGLE, mine: 'yes' }] });
+    await expect(fetchOwnerCalendars(fake, 'l1')).rejects.toThrow();
+  });
+
+  test('`google.canConnect` parses, false for staff, and reads as true from an API older than it', async () => {
+    const { fake, routes } = api();
+    const staff = { available: true, connected: false, clientId: null, canConnect: false };
+    routes.gets[BASE] = () => ({ calendars: [], google: staff });
+    expect((await fetchOwnerCalendars(fake, 'l1')).google).toEqual(staff);
+    routes.gets[BASE] = () => ({ calendars: [], google: { available: true, connected: false, clientId: CLIENT_ID } });
+    expect((await fetchOwnerCalendars(fake, 'l1')).google).toEqual({ available: true, connected: false, clientId: CLIENT_ID, canConnect: true });
+  });
+
   test('an answer without `google`, from an API older than Google calendars, reads as Google calendars off', async () => {
     const { fake, routes } = api();
     routes.gets[BASE] = () => ({ calendars: [FILE] });
-    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE], google: { available: false, connected: false, clientId: null } });
+    expect(await fetchOwnerCalendars(fake, 'l1')).toEqual({ calendars: [FILE], google: { available: false, connected: false, clientId: null, canConnect: false } });
   });
 
   test('a calendar or a `google` the client can’t read is an invalid response', async () => {
@@ -139,7 +159,7 @@ describe('owner calendar calls (spec 10.18)', () => {
     await refreshOwnerCalendar(fake, 'a/b', 'c?1');
     await removeOwnerCalendar(fake, 'a/b', 'c?1');
     await fetchGoogleChoices(fake, 'a/b');
-    await connectGoogleCalendars(fake, 'a/b', CODE);
+    await connectGoogleCalendars(fake, 'a/b', CODE, WEEKLY_TITLES_NOTICE);
     expect(fake.calls.map((call) => `${call.method} ${call.path}`)).toEqual([
       `GET ${base}`,
       `GET ${base}/events?from=2026-11-01&to=2026-11-30`,
@@ -156,15 +176,15 @@ describe('Google calendar calls (connect-google-calendar design decision 8)', ()
   const PRIMARY = { id: ['owner', 'example.com'].join('@'), name: 'Owner', primary: true, added: true };
   const SHARED = { id: 'c_fake0123@group.calendar.google.com', name: 'Bookings', primary: false, added: false };
 
-  test('connect posts the code and the agreement in the body, never the path, and returns the choices', async () => {
+  test('connect posts the code, the agreement and the weekly notice in the body, never the path, and returns the choices', async () => {
     const { fake } = api();
     fake.answers[`${GOOGLE_BASE}/connect`] = () => ({ calendars: [{ ...PRIMARY, accessRole: 'owner' }, SHARED] });
-    expect(await connectGoogleCalendars(fake, 'l1', CODE)).toEqual([PRIMARY, SHARED]);
+    expect(await connectGoogleCalendars(fake, 'l1', CODE, WEEKLY_TITLES_NOTICE)).toEqual([PRIMARY, SHARED]);
     fake.answers[`${GOOGLE_BASE}/connect`] = () => refusal(409, 'google_other_account');
-    await expect(connectGoogleCalendars(fake, 'l1', CODE)).rejects.toMatchObject({ status: 409, code: 'google_other_account' });
+    await expect(connectGoogleCalendars(fake, 'l1', CODE, WEEKLY_TITLES_NOTICE)).rejects.toMatchObject({ status: 409, code: 'google_other_account' });
     expect(writes(fake)).toEqual([
-      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true } },
-      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true } },
+      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true, titlesNotice: 1 } },
+      { method: 'POST', path: `${GOOGLE_BASE}/connect`, body: { code: CODE, agreed: true, titlesNotice: 1 } },
     ]);
     for (const call of fake.calls) expect(call.path).not.toContain(CODE);
   });

@@ -18,7 +18,7 @@ import { nextOf } from './tools/next.ts';
 import { inputViewOf, resultViewOf, toolNamed, type ToolView } from './tools/registry.ts';
 import { visualOf, type Visual } from './tools/visual.ts';
 import type { ChatNode } from './tree.ts';
-import { NOT_RUN } from './turn.ts';
+import { isAside, NOT_RUN, ran } from './turn.ts';
 import { isContextBlock } from './user-message.ts';
 import { citedSources, searchCard, WEB_SEARCH, type SourceLink } from './web-search.ts';
 
@@ -137,6 +137,14 @@ function entry(
 }
 
 /**
+ * The person's message of a turn still running (resumable-chat-turns), as an entry of `messages`: written at `at`, with
+ * the files it carries joined with Your data as the saved message's are.
+ */
+export function personMessageView(nodeId: string, at: Date, text: string, attachments: AttachmentView[]): ChatMessageView {
+  return entry(nodeId, 'user', at, at, [{ type: 'text', text }], null, null, attachments);
+}
+
+/**
  * `path` is the nodes shown, root to leaf. `today` (the day the caller's tools read dates against) re-reads each call's
  * input, which was valid when it ran, through the same rules. `stateOf` says what became of each proposal; without it
  * every proposal reads as open. `feedbackOf` says how the author rated a reply (default: unrated). `fileOf` says what
@@ -180,13 +188,22 @@ export function chatMessageViews(
     for (const { param } of items) {
       if (param.role !== 'assistant') continue;
       written.push(...blocksOf(param));
-      for (const block of blocksOf(param)) {
+      // Text written ahead of a tool call is replayed as thinking, as the stream's `aside` event files it (turn.ts), and
+      // so is text ahead of the message's last web search (D37), which the stream files when that search starts.
+      const blocks = blocksOf(param);
+      const aside = isAside(blocks, (id) => ran(results.get(id)));
+      const lastSearch = blocks.findLastIndex((block) => (block.type === 'server_tool_use' && block.name === WEB_SEARCH) || block.type === 'web_search_tool_result');
+      let asideText: { type: 'thinking'; text: string } | null = null;
+      for (const [index, block] of blocks.entries()) {
         const last = parts.at(-1);
         if (block.type === 'thinking') {
           if (block.thinking !== '') parts.push({ type: 'thinking', text: block.thinking });
         } else if (block.type === 'text') {
           if (block.text === '') continue;
-          if (last?.type === 'text') last.text += block.text;
+          const ahead = aside || index < lastSearch;
+          if (ahead && last !== undefined && last === asideText) last.text += block.text;
+          else if (ahead) parts.push(asideText = { type: 'thinking', text: block.text });
+          else if (last?.type === 'text') last.text += block.text;
           else parts.push({ type: 'text', text: block.text });
         } else if (block.type === 'tool_use') {
           const result = results.get(block.id);

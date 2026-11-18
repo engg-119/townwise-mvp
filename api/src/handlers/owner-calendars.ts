@@ -11,6 +11,8 @@
 // (Google's rule on people reading its users' data). Every use of a Google token goes through
 // calendar/google-access.ts, which logs each Google failure; nothing else here logs, and the audit events carry ids,
 // the kind, the event count and the status only, never a label, host, address, Google calendar id or title.
+// Where Refresh now or an add switches in a calendar's events, notes linked to them follow (calendar/follow-up.ts,
+// openspec change calendar-event-suggestions), which never fails the request.
 import type { KeyObject } from 'node:crypto';
 
 import { objectId } from '@ckeith26/mongo';
@@ -23,6 +25,7 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
+import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
   readConnectedCalendar, readGoogleSource, type GoogleCalendarRead,
@@ -30,11 +33,12 @@ import {
 import { GoogleCalendarError, type GoogleCalendarEntry } from '../calendar/google.ts';
 import { MAX_ICS_BYTES, parseIcs, WINDOW_DAYS, type IcsTown } from '../calendar/ics.ts';
 import { open, seal } from '../calendar/secret.ts';
+import { WEEKLY_TITLES_NOTICE } from '../calendar/titles-notice.ts';
 import { daysBetween, isoDate } from '../dates.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import {
-  MANUAL_REFRESH_INTERVAL_MS, MAX_CALENDARS, MAX_LABEL_CHARS,
+  ADDED_REPLACE, MANUAL_REFRESH_INTERVAL_MS, MAX_CALENDARS, MAX_LABEL_CHARS,
   type CalendarFailure, type CalendarKind, type CalendarStatus, type NewCalendar, type OwnerCalendarEvent, type OwnerCalendarRecord, type ParsedCalendar,
 } from '../stores/owner-calendars.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
@@ -60,13 +64,22 @@ export interface OwnerCalendarView {
   lastSuccessAt: string | null;
   lastAttemptAt: string | null;
   createdAt: string;
+  /**
+   * The caller's own Google calendar, which they can reconnect: true only for a Google calendar the caller added, so
+   * read through their own connection; false for a file or a link, and for staff under view-as or open as admin.
+   */
+  mine: boolean;
 }
 
-/** Whether Google calendars are on, whether the caller has a connection that is not revoked, and the public client id. */
+/**
+ * Whether Google calendars are on, whether the caller has a connection that is not revoked, the public client id, and
+ * whether the caller may connect one: false for staff, who see the option but never use it (owner decision, 2026-11-17).
+ */
 export interface GoogleCalendarsView {
   available: boolean;
   connected: boolean;
   clientId: string | null;
+  canConnect: boolean;
 }
 
 /** A link's address, as pasted. */
@@ -86,13 +99,15 @@ export const LINK_ADD_BUDGET = { name: 'townwise:calendar-links', limit: 12, win
 const linkAddBudgets = new WeakMap<TownwiseContext['redis'], RateLimiter>();
 
 const labelSchema = z.string().trim().min(1).max(MAX_LABEL_CHARS);
+/** Sent only by the add screen that says TownwiseAI reads the titles weekly (calendar-event-suggestions design decision 11). */
+const titlesNoticeSchema = z.literal(WEEKLY_TITLES_NOTICE).optional();
 /**
  * A calendar file as its text (the handler holds it to 1 MB; the route's body limit leaves room for JSON escaping), a
  * link, or a Google calendar by the id the picker answered (its label comes from Google).
  */
 const calendarBody = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('file'), label: labelSchema, ics: z.string() }),
-  z.object({ kind: z.literal('link'), label: labelSchema, url: z.string().trim().min(1).max(MAX_LINK_CHARS) }),
+  z.object({ kind: z.literal('file'), label: labelSchema, ics: z.string(), titlesNotice: titlesNoticeSchema }),
+  z.object({ kind: z.literal('link'), label: labelSchema, url: z.string().trim().min(1).max(MAX_LINK_CHARS), titlesNotice: titlesNoticeSchema }),
   z.object({ kind: z.literal('google'), googleCalendarId: z.string().min(1).max(MAX_GOOGLE_ID_CHARS) }),
 ]);
 const rangeQuery = z.strictObject({ from: isoDate, to: isoDate });
@@ -118,7 +133,7 @@ function calendarLimit(): AppError {
   return new AppError(409, 'calendar_limit', `This location already has ${String(MAX_CALENDARS)} calendars`);
 }
 
-export function ownerCalendarView(calendar: OwnerCalendarRecord): OwnerCalendarView {
+export function ownerCalendarView(calendar: OwnerCalendarRecord, mine: boolean): OwnerCalendarView {
   return {
     id: calendar.id,
     label: calendar.label,
@@ -130,6 +145,7 @@ export function ownerCalendarView(calendar: OwnerCalendarRecord): OwnerCalendarV
     lastSuccessAt: calendar.lastSuccessAt?.toISOString() ?? null,
     lastAttemptAt: calendar.lastAttemptAt?.toISOString() ?? null,
     createdAt: calendar.createdAt.toISOString(),
+    mine,
   };
 }
 
@@ -204,37 +220,47 @@ function recordCalendar(ctx: TownwiseContext, caller: MemberPrincipal, action: C
  * Whether the caller is Townwise staff, under view-as or with the organization open as its admin (D25, which outlasts
  * the first join): either way they read no Google calendar's name or event title (design decision 12).
  */
-function staffReads(caller: MemberPrincipal): boolean {
+export function staffReads(caller: MemberPrincipal): boolean {
   return caller.viewAs !== null || caller.openAsAdmin !== null;
 }
 
-/** A calendar as the caller may see it: to staff a Google calendar is "Google calendar" (design decision 12). */
-function shownView(calendar: OwnerCalendarRecord, staff: boolean): OwnerCalendarView {
-  const view = ownerCalendarView(calendar);
+/**
+ * A calendar as the caller may see it: to staff a Google calendar is "Google calendar" (design decision 12). It is
+ * `mine` when it is a Google calendar the caller added: a Google add stores the adder's own connection (one per person
+ * per organization, kept across a reconnect) and ending a connection removes its calendars, so the adder's connection
+ * is the one that reads it. Never for staff: under view-as `userId` is the target's.
+ */
+function shownView(calendar: OwnerCalendarRecord, caller: MemberPrincipal): OwnerCalendarView {
+  const staff = staffReads(caller);
+  const view = ownerCalendarView(calendar, !staff && calendar.kind === 'google' && calendar.createdBy === caller.userId);
   return staff && calendar.kind === 'google' ? { ...view, label: GOOGLE_CALENDAR_LABEL } : view;
 }
 
 /**
- * The list's `google`: under view-as `connected` is the staff member's own state, which is never a connection here.
- * Open as admin it is unavailable, as when off: staff never connect, and every Google route and add refuses them.
+ * The list's `google`. Staff see that Google calendars are on but can't connect one (`canConnect` false; owner decision,
+ * 2026-11-17), and every Google route and add still refuses them: under view-as `connected` is the staff member's own
+ * state, which is never a connection here, and open as admin there is no client id either, so nothing can start
+ * Google's window.
  */
 async function googleView(ctx: TownwiseContext, caller: MemberPrincipal): Promise<GoogleCalendarsView> {
-  const off = ctx.googleCalendar === null || ctx.calendarKey === null || caller.openAsAdmin !== null;
-  const clientId = off ? null : ctx.googleCalendarClientId;
-  if (clientId === null) return { available: false, connected: false, clientId: null };
-  const connection = caller.viewAs === null ? await ctx.stores.googleConnections.findForUser(caller.scope, caller.userId) : null;
-  return { available: true, connected: connection !== null && connection.revokedAt === null, clientId };
+  const clientId = ctx.googleCalendar === null || ctx.calendarKey === null ? null : ctx.googleCalendarClientId;
+  if (clientId === null) return { available: false, connected: false, clientId: null, canConnect: false };
+  if (caller.openAsAdmin !== null) return { available: true, connected: false, clientId: null, canConnect: false };
+  if (caller.viewAs !== null) return { available: true, connected: false, clientId, canConnect: false };
+  const connection = await ctx.stores.googleConnections.findForUser(caller.scope, caller.userId);
+  return { available: true, connected: connection !== null && connection.revokedAt === null, clientId, canConnect: true };
 }
 
 /**
- * GET /api/org/locations/:locationId/owner-calendars: the location's calendars, oldest first, and `google`: whether
- * Google calendars are on, whether the caller has a connection that is not revoked, and the public client id.
+ * GET /api/org/locations/:locationId/owner-calendars: the location's calendars, oldest first, each with `mine` (a Google
+ * calendar the caller added, which they can reconnect), and `google`: whether Google calendars are on, whether the
+ * caller has a connection that is not revoked, and the public client id.
  */
 export async function listOwnerCalendars(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const calendars = await ctx.stores.ownerCalendars.list(caller.scope, location.id);
-  res.status(200).json({ calendars: calendars.map((calendar) => shownView(calendar, staffReads(caller))), google: await googleView(ctx, caller) });
+  res.status(200).json({ calendars: calendars.map((calendar) => shownView(calendar, caller)), google: await googleView(ctx, caller) });
 }
 
 function googleNotFound(): AppError {
@@ -340,7 +366,7 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     if (Buffer.byteLength(body.ics, 'utf8') > MAX_ICS_BYTES) throw new AppError(400, 'too_large', READ_FAILURES.too_large);
     const read = parseIcs(body.ics, town);
     if ('error' in read) throw new AppError(400, read.error, READ_FAILURES[read.error]);
-    calendar = { kind: 'file', label: body.label };
+    calendar = { kind: 'file', label: body.label, ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }) };
     parsed = read;
   } else if (body.kind === 'link') {
     const key = linksKey(ctx);
@@ -349,7 +375,10 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     await spendLinkAdd(ctx, caller.userId, linksUnavailable);
     const read = await readLink(ctx, body.url, town);
     if (!read.ok) throw new AppError(400, read.code, READ_FAILURES[read.code]);
-    calendar = { kind: 'link', label: body.label, sealedAddress: seal(key, body.url), host: read.host };
+    calendar = {
+      kind: 'link', label: body.label, sealedAddress: seal(key, body.url), host: read.host,
+      ...(body.titlesNotice === undefined ? {} : { titlesNotice: body.titlesNotice }),
+    };
     parsed = read.parsed;
   } else {
     ({ calendar, parsed } = await googleToAdd(ctx, caller, location, body.googleCalendarId, town));
@@ -361,8 +390,10 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
     await calendars.remove(scope, location.id, added.id);
     throw googleNotConnected();
   }
+  // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
+  await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
-  res.status(201).json({ calendar: ownerCalendarView(added) });
+  res.status(201).json({ calendar: shownView(added, caller) });
 }
 
 /** 429 rate_limited until 5 minutes after the calendar's last "Refresh now". */
@@ -425,12 +456,17 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
     ? await refreshGoogle(ctx, scope, location, found.id, now)
     : await refreshLink(ctx, scope, location, found.id, key, now);
   // A replace that loses to a concurrent one leaves that one's events, which are as new.
-  if (read.ok) await calendars.replaceEvents(scope, location.id, found.id, read.parsed, now);
-  else await calendars.recordFailure(scope, location.id, found.id, read.code, now);
+  if (read.ok) {
+    const replaced = await calendars.replaceEvents(scope, location.id, found.id, read.parsed, now);
+    // Notes linked to its events follow them (calendar-event-suggestions); never fails the refresh.
+    if (replaced.switched) await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+  } else {
+    await calendars.recordFailure(scope, location.id, found.id, read.code, now);
+  }
   const refreshed = await calendars.find(scope, location.id, found.id);
   if (refreshed === null) throw notFound();
   await recordCalendar(ctx, caller, 'owner_calendar.refreshed', refreshed, now);
-  res.status(200).json({ calendar: shownView(refreshed, staffReads(caller)) });
+  res.status(200).json({ calendar: shownView(refreshed, caller) });
 }
 
 /**

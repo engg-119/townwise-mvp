@@ -93,6 +93,27 @@ describe('the attachments block', () => {
     expect(turnAttachments([{ ref: A, kind: 'text', read: { status: 'files_off' } }]).block).toContain(`- ${A}: a text file, not read: stored files are off`);
   });
 
+  it('turnAttachments\' sent holds the text and cut flag of each document it sends and a mark for each picture, and nothing for a file listed not read', () => {
+    const { sent, content } = turnAttachments([
+      read(A, textRead('Fall menu', true)),
+      read(B, PICTURE),
+      read(C, docRead('pdf', 'Order guide')),
+      read(D, { status: 'turned_off', kind: 'word' }),
+      read(E, textRead(' \n ')),
+    ]);
+    expect([...sent]).toEqual([
+      [A, { text: 'Fall menu', truncated: true }],
+      [B, { picture: true }],
+      [C, { text: 'Order guide', truncated: false }],
+    ]);
+    // Exactly the files whose content the turn carries.
+    expect(content.filter((block) => block.type === 'document' || block.type === 'image')).toHaveLength(3);
+    // A file past the token cap is listed "too much at once" and is not sent.
+    const big = 'x'.repeat(ATTACHMENT_TOKEN_CAP * 5);
+    expect([...turnAttachments([read(A, textRead(big)), read(B, textRead('Small'))]).sent.keys()]).toEqual([]);
+    expect(turnAttachments([]).sent.size).toBe(0);
+  });
+
   it('reads back as refs and kinds, and only from a block before the person\'s text', () => {
     const { block } = turnAttachments([read(A, PICTURE), read(B, { status: 'not_readable', kind: 'pdf' })]);
     const stored: BetaMessageParam = { role: 'user', content: [textBlock(block), textBlock('What is on these?')] };
@@ -407,7 +428,7 @@ describe('read_data_item reading an attached file again (D36)', () => {
     const tc = {
       ctx: { items }, scope: {}, location: { id: 'l1' }, role: 'org_admin', actor: { actorUserId: 'u1' },
       turn: { readUntrusted: false, readWeb: false, pictureBytes: opts.pictureBytes ?? 0 },
-      files: { attached: new Set(attached), by: opts.by ?? Date.now() + 120_000, bytes: gate },
+      files: { attached: new Set(attached), by: opts.by ?? Date.now() + 120_000, bytes: gate, sent: new Map() },
     } as unknown as ToolContext;
     return { tc, viewers, gate };
   }
@@ -453,6 +474,30 @@ describe('read_data_item reading an attached file again (D36)', () => {
     expect(tc.turn.readUntrusted).toBe(true);
     expect(savedResultOf('read_data_item', result).content)
       .toBe(JSON.stringify({ ref: A, chars: 15, truncated: true, elided: true, reason: 'Read in an earlier turn; call read_data_item again for its current text.' }));
+  });
+
+  it('read_data_item adds what it hands back to the turn\'s sent, and a refusal adds nothing', async () => {
+    const pdf = toolsFor(readsAs({ status: 'text', kind: 'pdf', text: 'Events for June', truncated: true }), [A]);
+    await runTool(pdf.tc, call(A));
+    expect([...pdf.tc.files.sent]).toEqual([[A, { text: 'Events for June', truncated: true }]]);
+    const shot = toolsFor(picture(10), [A]);
+    await runTool(shot.tc, call(A));
+    expect([...shot.tc.files.sent]).toEqual([[A, { picture: true }]]);
+    // A text item, attached or not, is read through readText.
+    const item = toolsFor({ status: 'not_found' }, []);
+    (item.tc.ctx.items as { readText: unknown }).readText = () => Promise.resolve({ status: 'ok', text: 'Fall menu', truncated: false });
+    await runTool(item.tc, call(B));
+    expect([...item.tc.files.sent]).toEqual([[B, { text: 'Fall menu', truncated: false }]]);
+    for (const refusedBy of [
+      toolsFor({ status: 'not_allowed' }, [A]),
+      toolsFor(readsAs({ status: 'busy', kind: 'pdf' }), [A]),
+      toolsFor(readsAs({ status: 'text', kind: 'pdf', text: '\n\n', truncated: false }), [A]),
+      toolsFor(readsAs({ status: 'text', kind: 'pdf', text: 'Sentinel', truncated: false }), [B]),
+    ]) {
+      await runTool(refusedBy.tc, call(A));
+      expect(refusedBy.tc.files.sent.size).toBe(0);
+      expect(refusedBy.tc.turn.readUntrusted).toBe(false);
+    }
   });
 
   it('reads no file the path didn\'t attach, and refuses one it can\'t send with its reason, without marking the turn read', async () => {
@@ -567,7 +612,7 @@ describe('a turn with attachments', () => {
         },
       },
       scope: {}, location: { id: 'l1' }, today: '2026-06-01', timeZone: 'America/New_York',
-      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 }, files: { attached: new Set(), by: 0, bytes: createByteGate(0) },
+      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 }, files: { attached: new Set(), by: 0, bytes: createByteGate(0), sent: new Map() },
     } as unknown as ToolContext;
     const model = scriptedModel();
     model.script({ kind: 'message', message: message([toolUse('r1', 'read_data_item', { ref: A }), toolUse('r2', 'read_data_item', { ref: B })]) });

@@ -18,6 +18,10 @@ export const ITEM = {
   deletes: 'Delete this item',
   loading: 'Loading this item',
   gone: 'This item isn’t here anymore. It may have been deleted, or replaced when someone saved an edit of it.',
+  /** A calendar's page (`c_`) for a calendar that isn't there: calendars are removed, never replaced by an edit. */
+  calendarGone: 'This calendar isn’t here anymore. It may have been removed.',
+  /** Under a calendar's status: Refresh and Remove live in the Calendar's Your calendars. */
+  manageCalendars: 'Manage it on the Calendar',
   show: 'Show',
   days: 'Days',
   original: 'Original file',

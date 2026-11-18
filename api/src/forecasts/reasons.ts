@@ -8,7 +8,7 @@
 import { termEntries, termStateOn, type TermDay, type TermEntry } from '../people-in-town/term.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
 import { townCalendarCovers, townEvents, type TownEvent, type TownEventSource } from '../town-calendar.ts';
-import type { RuleSchedule } from '../stores/business-rules.ts';
+import type { RuleSchedule, RuleSeason } from '../stores/business-rules.ts';
 import type { NoteRecord } from '../stores/notes.ts';
 import type { NoteOutcome, ScheduledRule } from './adjust.ts';
 import type { ReasonEffect, ReasonEffectOf } from './effects.ts';
@@ -105,17 +105,49 @@ function wordsFor(kind: ReasonKind, ref: string | null, date: string, calendar: 
   return { label: PLAIN[kind], sources: [] };
 }
 
-/** A day's reasons in words, in the run's order, each with its effect when `effectOf` is given (a day from today on). */
+/** A run reason's recorded effect for choosing between two with one label: its size, and none below any. */
+function effectSize(view: ReasonView): number {
+  return view.effectPct === null ? -1 : Math.abs(view.effectPct);
+}
+
+/**
+ * D49: one run reason per label on a day, the label compared in lower case with each run of white space one space: the
+ * one with the larger recorded effect (else the first) stands where the first did, with both reasons' sources, so Why
+ * never says "Veterans Day" twice. Note and rule reasons never come here (reader.ts adds them), so they never merge.
+ */
+function onePerLabel(views: readonly ReasonView[]): ReasonView[] {
+  const kept: ReasonView[] = [];
+  const at = new Map<string, number>();
+  for (const view of views) {
+    const key = view.label.toLowerCase().replace(/\s+/g, ' ').trim();
+    const index = at.get(key);
+    const earlier = index === undefined ? undefined : kept[index];
+    if (index === undefined || earlier === undefined) {
+      at.set(key, kept.length);
+      kept.push(view);
+      continue;
+    }
+    const [winner, other] = effectSize(view) > effectSize(earlier) ? [view, earlier] : [earlier, view];
+    const sources = new Map([...winner.sources, ...other.sources].map((source) => [source.url, source] as const));
+    kept[index] = { ...winner, sources: [...sources.values()] };
+  }
+  return kept;
+}
+
+/**
+ * A day's reasons in words, in the run's order, one per label (onePerLabel), each with its effect when `effectOf` is
+ * given (a day from today on).
+ */
 export function reasonViews(
   date: string,
   reasons: readonly { kind: ReasonKind; ref: string | null; effectPct: number | null }[],
   calendar: DayCalendar,
   effectOf?: ReasonEffectOf,
 ): ReasonView[] {
-  return reasons.map((reason) => ({
+  return onePerLabel(reasons.map((reason) => ({
     kind: reason.kind, effectPct: reason.effectPct, effect: effectOf?.(date, reason, calendar) ?? null,
     ...wordsFor(reason.kind, reason.ref, date, calendar), note: null, rule: null,
-  }));
+  })));
 }
 
 /** A local 'HH:MM' in words: '18:30' is "6:30 pm", '18:00' is "6 pm", '12:00' is "noon" and '00:00' is "midnight". */
@@ -159,7 +191,7 @@ const WEEKDAY_PLURAL = ['Sundays', 'Mondays', 'Tuesdays', 'Wednesdays', 'Thursda
 const MONDAY_FIRST = [1, 2, 3, 4, 5, 6, 0];
 
 /** "Mondays", "Saturdays and Sundays", "Tuesdays, Wednesdays and Thursdays", Monday first; null for every day. */
-function weekdayList(weekdays: readonly number[] | null): string | null {
+export function weekdayList(weekdays: readonly number[] | null): string | null {
   if (weekdays === null || weekdays.length >= 7) return null;
   const names = MONDAY_FIRST.filter((day) => weekdays.includes(day)).map((day) => WEEKDAY_PLURAL[day] ?? '');
   return names.length === 1 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names.at(-1) ?? ''}`;
@@ -192,14 +224,29 @@ function hoursWords(schedule: Pick<RuleSchedule, 'startTime' | 'endTime'>): stri
   return schedule.startTime === null || schedule.endTime === null ? '' : `, ${clockWords(schedule.startTime)} to ${clockWords(schedule.endTime)}`;
 }
 
+/** 'MM-DD' in words: "Jan 1". */
+export function monthDayWords(monthDay: string): string {
+  const [month = '', day = ''] = monthDay.split('-');
+  return `${SHORT_MONTHS[Number(month) - 1] ?? ''} ${String(Number(day))}`;
+}
+
+/** A yearly season (D46) and its weekdays: "Jan 1 to Mar 31 every year", "on Mondays, Dec 20 to Jan 5 every year". */
+function seasonWords(season: RuleSeason, days: string | null): string {
+  const span = `${monthDayWords(season.from)} to ${monthDayWords(season.to)} every year`;
+  return days === null ? span : `on ${days}, ${span}`;
+}
+
 /**
  * A rule's schedule in plain words, built from its fields only (the rules page's "Changes the forecast" line and the
  * business_rules block TownwiseAI reads): what it does, its weekdays, its dates and its hours. "Closed on Mondays from
- * Jan 5, 2027", "Adds 40 guests on Fridays from Jan 2, 2026, 6 pm to 9 pm", "Closed on Dec 24, 2026".
+ * Jan 5, 2027", "Adds 40 guests on Fridays from Jan 2, 2026, 6 pm to 9 pm", "Closed on Dec 24, 2026". A yearly season
+ * (D46): "Closed Jan 1 to Mar 31 every year, from Nov 17, 2026".
  */
 export function scheduleSummary(schedule: RuleSchedule): string {
   const { startDate, endDate } = schedule;
   const days = weekdayList(schedule.weekdays);
+  const season = schedule.season ?? null;
+  if (season !== null) return `${scheduleWhat(schedule)} ${seasonWords(season, days)}, from ${dateWords(startDate)}${hoursWords(schedule)}`;
   const oneDay = endDate === startDate;
   const dates = endDate === null ? `from ${dateWords(startDate)}`
     : oneDay ? `on ${dateWords(startDate)}` : `from ${dateWords(startDate)} to ${dateWords(endDate)}`;
@@ -212,9 +259,11 @@ export function ruleReasonView(rule: ScheduledRule, outcome: NoteOutcome): Reaso
   const { schedule } = rule;
   const what = scheduleWhat(schedule);
   const days = weekdayList(schedule.weekdays);
+  const season = schedule.season ?? null;
+  const which = season !== null ? ` ${seasonWords(season, days)}` : days === null ? '' : ` on ${days}`;
   return {
     kind: 'rule',
-    label: `Your rule: ${what.charAt(0).toLowerCase()}${what.slice(1)}${days === null ? '' : ` on ${days}`}${hoursWords(schedule)}`,
+    label: `Your rule: ${what.charAt(0).toLowerCase()}${what.slice(1)}${which}${hoursWords(schedule)}`,
     effectPct: null,
     effect: null,
     sources: [],

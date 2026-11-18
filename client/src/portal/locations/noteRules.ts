@@ -7,12 +7,21 @@ import { daysBetween, EARLIEST_DATE, isCalendarDate, plusYears, utcToday } from 
 // readNoteContent (api/src/handlers/notes.ts), so a 400 means a client bug: the start date from 2010-01-01 to
 // today plus two years, the end on or after it and at most 366 days later, unique weekdays, expected guests a whole
 // number from 1 to 20,000 and none when closed except on a buyout (a private event, closed, where they are the
-// party's size), details up to 280 characters and required for Other, and hours (local 24-hour 'HH:MM') both set or
-// both empty, the start before the end, and none on a closure.
+// party's size), details up to 280 characters, an event name (D49) of one line up to 120 characters (NFC, no control or
+// format character, each run of white space one space), an event name or details for Other, and hours (local 24-hour
+// 'HH:MM') both set or both empty, the start before the end, and none on a closure.
 
 export { EFFECT_LABEL, KIND_LABEL };
 
 export const MAX_DETAIL = 280;
+/** An event name's limit in code points, as the API counts it (D49). */
+export const MAX_TITLE = 120;
+/**
+ * The event name field's own limit, in UTF-16 units as a text field counts: room for MAX_TITLE code points even when each
+ * is two units (an emoji), so the field never cuts a name the API would take; checkNote refuses past MAX_TITLE.
+ */
+export const MAX_TITLE_UNITS = MAX_TITLE * 2;
+const CONTROL_OR_FORMAT = /[\p{Cc}\p{Cf}]/u;
 const MAX_SPAN_DAYS = 366;
 const MAX_GUESTS = 20_000;
 /** Local wall-clock time, 24-hour 'HH:MM', as the API takes it. */
@@ -43,7 +52,10 @@ export const NOTE_COPY = {
   endBefore: 'The end date is before the start date.',
   range: 'Pick a range of a year or less.',
   guests: 'Enter a whole number from 1 to 20,000.',
-  detailOther: 'Add details for an Other note.',
+  detailOther: 'Add an event name or details for an Other note.',
+  titleLong: `Keep the event name to ${String(MAX_TITLE)} characters or fewer.`,
+  titleHidden: 'Remove the line breaks, tabs or hidden characters from the event name.',
+  titleHelp: 'Name the event, not the guests.',
   detailLong: `Keep the details to ${String(MAX_DETAIL)} characters or fewer.`,
   saveFailed: 'Couldn’t save the note. Try again.',
   limit: 'This location has 1,000 notes. Delete old ones to add more.',
@@ -55,6 +67,15 @@ export const NOTE_COPY = {
   fromAiFile: 'From a file TownwiseAI read',
   fromAiFileEdit: 'Undoing that file’s read removes this note, even after an edit.',
 } as const;
+
+/** A business rule's Every year box (D46, P29): its helper and why a season is refused. */
+export const SEASON_COPY = {
+  everyYear: 'Closes the same days every year from Starts on, until you delete the rule.',
+  seasonEnd: 'Enter the season’s last day.',
+  season: 'Pick a season shorter than a year that doesn’t start or end on Feb 29.',
+} as const;
+/** A season lasts at most this many days (api/src/handlers/notes.ts validSeason): shorter than a year. */
+const MAX_SEASON_DAYS = 364;
 
 /** “Pick a start date from Jan 1, 2010 to {today plus two years}.” */
 export function startRangeCopy(today: string): string {
@@ -70,17 +91,26 @@ export interface NoteDraft {
   effect: NoteEffect;
   expectedGuests: string;
   detail: string;
+  /** The event's name (D49); empty for none. */
+  title: string;
   /** 'HH:MM' or empty; both empty means all day. */
   startTime: string;
   endTime: string;
+  /**
+   * A rule's Every year box (D46): Starts and Ends are then the first season, which repeats every year with no end.
+   * Absent on a note's draft, which never has one.
+   */
+  yearly?: boolean;
 }
 
 export interface NoteMessages {
-  startDate?: string; endDate?: string; expectedGuests?: string; detail?: string; startTime?: string; endTime?: string;
+  startDate?: string; endDate?: string; expectedGuests?: string; detail?: string; title?: string; startTime?: string; endTime?: string;
 }
 
 export function emptyDraft(kind: NoteKind = 'closure'): NoteDraft {
-  return { kind, startDate: '', endDate: '', weekdays: [], effect: DEFAULT_EFFECT[kind], expectedGuests: '', detail: '', startTime: '', endTime: '' };
+  return {
+    kind, startDate: '', endDate: '', weekdays: [], effect: DEFAULT_EFFECT[kind], expectedGuests: '', detail: '', title: '', startTime: '', endTime: '',
+  };
 }
 
 export function draftOf(note: Note): NoteDraft {
@@ -97,6 +127,7 @@ export function draftOfContent(content: NoteInput): NoteDraft {
     effect: content.effect,
     expectedGuests: content.expectedGuests === null ? '' : String(content.expectedGuests),
     detail: content.detail ?? '',
+    title: content.title ?? '',
     startTime: content.startTime ?? '',
     endTime: content.endTime ?? '',
   };
@@ -106,7 +137,8 @@ export function draftOfContent(content: NoteInput): NoteDraft {
  * The form's draft of a note made from an event in one of the location's own calendars (spec 16.3 P28): a private
  * event, more guests, the event's dates and, for a timed one-day event, its hours. An event running past midnight to
  * 06:00 is its start day's only (api/src/calendar/ics.ts), and its hours are left out, since a note's end comes after
- * its start. The detail starts empty and the title is never copied: calendar titles often name customers.
+ * its start. The detail and the event name start empty, and the title is never copied (D33): calendar titles often
+ * name customers, and a Google event's is never shown to staff (D39).
  */
 export function draftOfImported(event: { startDate: string; endDate: string; startTime: string | null; endTime: string | null }): NoteDraft {
   const { startTime, endTime } = event;
@@ -120,7 +152,7 @@ export function draftOfImported(event: { startDate: string; endDate: string; sta
   };
 }
 
-function guestsOf(text: string): number | null | 'invalid' {
+export function guestsOf(text: string): number | null | 'invalid' {
   const cleaned = text.replace(/[,\s]/g, '');
   if (cleaned === '') return null;
   if (!/^\d+$/.test(cleaned)) return 'invalid';
@@ -151,10 +183,12 @@ function hoursOf(draft: NoteDraft, messages: NoteMessages): { startTime: string 
  * A business rule's schedule as the API takes it (spec 10.16, D31): a note's fields but its detail, with `endDate` null
  * for no end.
  */
-export interface ScheduleInput extends Omit<NoteInput, 'detail' | 'endDate' | 'startTime' | 'endTime'> {
+export interface ScheduleInput extends Omit<NoteInput, 'detail' | 'title' | 'endDate' | 'startTime' | 'endTime'> {
   endDate: string | null;
   startTime: string | null;
   endTime: string | null;
+  /** D46: the months and days it covers every year from `startDate`, with `endDate` null; left out for none. */
+  season?: { repeat: 'yearly'; from: string; to: string };
 }
 
 /**
@@ -192,11 +226,17 @@ function checkFields(draft: NoteDraft, today: string, openEnd: boolean, messages
 export function checkNote(draft: NoteDraft, today: string = utcToday()): { input: NoteInput } | { messages: NoteMessages } {
   const messages: NoteMessages = {};
   const detail = draft.detail.trim();
+  const typed = draft.title.normalize('NFC');
+  const title = typed.replace(/\s+/gu, ' ').trim();
+  if (CONTROL_OR_FORMAT.test(typed)) messages.title = NOTE_COPY.titleHidden;
+  else if (Array.from(title).length > MAX_TITLE) messages.title = NOTE_COPY.titleLong;
   if (detail.length > MAX_DETAIL) messages.detail = NOTE_COPY.detailLong;
-  else if (draft.kind === 'other' && detail === '') messages.detail = NOTE_COPY.detailOther;
+  else if (draft.kind === 'other' && detail === '' && title === '') messages.detail = NOTE_COPY.detailOther;
   const fields = checkFields(draft, today, false, messages);
   if (fields === null || Object.keys(messages).length > 0) return { messages };
-  return { input: { ...fields, endDate: fields.endDate ?? fields.startDate, detail: detail === '' ? null : detail } };
+  return {
+    input: { ...fields, endDate: fields.endDate ?? fields.startDate, detail: detail === '' ? null : detail, title: title === '' ? null : title },
+  };
 }
 
 /**
@@ -205,8 +245,27 @@ export function checkNote(draft: NoteDraft, today: string = utcToday()): { input
  */
 export function checkSchedule(draft: NoteDraft, today: string = utcToday()): { input: ScheduleInput } | { messages: NoteMessages } {
   const messages: NoteMessages = {};
+  if (draft.yearly === true) return checkSeason(draft, today, messages);
   const fields = checkFields(draft, today, true, messages);
   return fields === null ? { messages } : { input: fields };
+}
+
+/**
+ * Every year (D46): Starts and Ends are the first season, so Ends is required, on or after Starts, and the season is
+ * shorter than a year (at most 364 days) and neither starts nor ends on Feb 29. The schedule sends the season's months
+ * and days, `startDate` as Starts and no end, as api/src/handlers/notes.ts validDays takes it.
+ */
+function checkSeason(draft: NoteDraft, today: string, messages: NoteMessages): { input: ScheduleInput } | { messages: NoteMessages } {
+  const end = draft.endDate.trim();
+  if (end === '') messages.endDate = SEASON_COPY.seasonEnd;
+  else if (!isCalendarDate(end)) messages.endDate = NOTE_COPY.date;
+  const fields = checkFields({ ...draft, endDate: '' }, today, true, messages);
+  if (fields === null) return { messages };
+  const start = fields.startDate;
+  if (end < start) messages.endDate = NOTE_COPY.endBefore;
+  else if (daysBetween(start, end) + 1 > MAX_SEASON_DAYS || start.slice(5) === '02-29' || end.slice(5) === '02-29') messages.endDate = SEASON_COPY.season;
+  if (Object.keys(messages).length > 0) return { messages };
+  return { input: { ...fields, endDate: null, season: { repeat: 'yearly', from: start.slice(5), to: end.slice(5) } } };
 }
 
 /** “Mondays only”, “Saturdays and Sundays only”, Monday first; null for every day. */

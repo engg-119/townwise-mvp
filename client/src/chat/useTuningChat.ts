@@ -3,15 +3,19 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { ApiError, type ApiClient } from '../api/client';
 import { describeError } from '../ui';
 import {
-  actOnItemProposal, addNote as postNote, deleteConversation as removeConversation, dismissProposal, loadChat, loadConversation,
-  loadItemProposal, rateReply, renameConversation, saveProposal, sendTurn, setActiveVersion,
+  actOnItemProposal, addNote as postNote, deleteConversation as removeConversation, dismissProposal, endsTurn, followTurn, loadChat,
+  loadConversation, loadItemProposal, rateReply, renameConversation, saveProposal, sendTurn, setActiveVersion, stopTurn, TURN_INTERRUPTED,
   type Budget, type ChatEvent, type ChatSummary, type ConversationLoad, type ConversationSummary, type Feedback, type FeedbackReason,
-  type ItemProposal, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage, type TurnRequest,
+  type ItemProposal, type LiveTurnLoad, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage, type TurnListener,
+  type TurnRequest,
 } from './api';
 import { draftKey, readDraft, writeDraft } from './drafts';
+import { forgetChat, lastChatKey, recallChat, rememberChat, type LastChatStore } from './lastChat';
+import { lastChatStore, onPageLeave } from './lastChatStore';
 import { isHiddenTool, type SourceLink, type ToolStep } from './tools';
 import { siblingAt, withTurn, type TreeNode } from './tree';
 import type { Visual } from './visuals/schema';
+import { onWake } from './wake';
 
 // TownwiseAI's conversation state (spec P25; docs/portal/tuning-chat.md 2 and 3). A reply is an
 // ordered list of parts, in the order they streamed: text, a group of tool calls, more text, a visual, a proposal
@@ -31,6 +35,22 @@ import type { Visual } from './visuals/schema';
 // A message may carry files of Your data (D36): the composer hands them to `send` with a callback for a turn taken
 // back (the files go back to the composer, as the text does); an edit sends the edited message's files again (all
 // but those gone from Your data), Try again sends its message's, and a regenerate sends none.
+//
+// A turn runs on the server whatever its connection does (resumable-chat-turns). Its events are numbered, so a
+// dropped stream is read again from the last number (`followTurn`): at once on a wake (src/chat/wake), else after 1, 2
+// and 4 seconds, then every 4, until the turn's last event or until the conversation shows it no longer live. Opening
+// a conversation with a live turn (on load after a refresh, or in a second tab) shows the person's message and follows
+// the reply from its first event, then reads the conversation again once it is saved. Stop asks the server to stop
+// the turn and waits for its `stopped`; closing the stream never stops it.
+//
+// New chat and History work while a reply streams (owner request, 2026-11-18): leaving the conversation only stops
+// following its turn, which runs on and is saved on the server (D45). A person has one running turn across chats and
+// locations, so a send elsewhere meanwhile answers 409 `chat_turn_in_progress`: the text stays in the composer, the
+// page names the chat still replying (`runningElsewhere`) with a link to it, and reads the list every 3 seconds until
+// that turn ends, when the notice goes and a send can go.
+//
+// Leaving the page on a conversation and coming back within 5 minutes opens it again (lastChat.ts), reattaching to a
+// turn still live in it; after that, or for a conversation the server no longer has, the page opens on a new chat.
 
 export type CardStatus = 'open' | 'editing' | 'saving' | 'saved' | 'dismissed';
 
@@ -62,11 +82,14 @@ export interface ItemCard {
 export const ITEM_TOOL = 'propose_data_item';
 export const ORDER_CHANGE_TOOL = 'propose_order_change';
 export const ORDER_RULE_TOOL = 'propose_order_rule';
+export const ORDER_SETUP_TOOL = 'propose_order_setup';
 
 export interface OrderCard {
   id: string;
   conversationId: string | null;
   stored: 'pending' | 'kept' | 'lost';
+  /** A propose_order_setup card (D56), which says so while it loads. */
+  setup?: true;
 }
 
 export type MessagePart =
@@ -155,6 +178,11 @@ export interface TuningChatState {
   error: string | null;
   draft: string;
   turn: LiveTurn | null;
+  /**
+   * A send was refused because the person's one running turn is in this conversation of the list (409
+   * `chat_turn_in_progress`): the page says so with a link to it, until the list shows that turn ended. Null otherwise.
+   */
+  runningElsewhere: string | null;
 }
 
 type CardPatch = Partial<Pick<ProposalCard, 'status' | 'error' | 'edited' | 'gone'>>;
@@ -164,6 +192,11 @@ export type ChatAction =
   | { type: 'loaded'; summary: ChatSummary }
   | { type: 'loadFailed'; notFound: boolean; error: string }
   | { type: 'summary'; summary: ChatSummary }
+  /**
+   * A send refused with 409 `chat_turn_in_progress`, and the list read after it (null when that read failed): the chat
+   * running names the notice, else `error` shows.
+   */
+  | { type: 'held'; summary: ChatSummary | null; error: string }
   | { type: 'draft'; text: string }
   /** `draft`: the one kept for where it leads. */
   | { type: 'new'; draft: string }
@@ -185,7 +218,13 @@ export type ChatAction =
   | { type: 'switched'; id: string; shown: ShownPath }
   | { type: 'switchFailed'; id: string }
   | { type: 'rated'; key: string; feedback: Feedback | null; error: string | null }
-  | { type: 'renamed'; id: string; title: string };
+  | { type: 'renamed'; id: string; title: string }
+  /**
+   * A conversation opened with a turn live in it: its path, the person's message (null for a regenerate) and the reply
+   * that streams, read back from the turn's events.
+   */
+  | { type: 'reattach'; id: string; shown: ShownPath; asked: ChatMessage | null; replyKey: string; request: TurnRequest | null; live: LiveTurnLoad }
+  | { type: 'stopFailed'; error: string };
 
 export const NOT_SAVED = 'Your message and this reply weren’t saved.';
 export const STOPPED = 'Stopped. Your message and this reply weren’t saved.';
@@ -196,9 +235,15 @@ export const TIMED_OUT = 'The reply took too long. Try asking something shorter.
 export const REGENERATE_FAILED = 'That reply didn’t finish, so your earlier reply is back.';
 export const VERSION_FAILED = 'Couldn’t show that version. Try again.';
 export const RATING_FAILED = 'Couldn’t save your rating. Try again.';
+/** A turn whose server stopped mid-turn (a restart): it is not continued, and the person sends again. */
+export const INTERRUPTED = 'TownwiseAI was interrupted. Your message and this reply weren’t saved. Try again.';
+/** Stop's request didn't reach the server: the reply goes on. */
+export const STOP_FAILED = 'Couldn’t stop the reply. Try again.';
 /** Why a question card's message (Something else…) can't go, once the month's budget is used up. */
 export const TELL_BUDGET = 'This month’s budget is used up, so TownwiseAI can’t answer in the chat.';
 const TELL_WAIT = 'Wait for TownwiseAI’s reply to finish, then try again.';
+/** A question card's message whose conversation the person left before its reply ended: its answer wasn't saved. */
+export const TELL_LEFT = 'You left the conversation before TownwiseAI replied, so your answer wasn’t saved. Try again.';
 
 /** The `done` stop reasons of a turn the server saved; any other (a refusal) saved nothing. */
 const SAVED_STOP_REASONS: readonly string[] = ['end_turn', 'max_tokens', 'tool_limit', 'budget'];
@@ -207,17 +252,41 @@ const SAVED_STOP_REASONS: readonly string[] = ['end_turn', 'max_tokens', 'tool_l
 export const FLUSH_MS = 32;
 
 /**
- * Stop and send: the server lets go of a stopped turn's claim just after the connection closes, so the new turn's
- * 409 `chat_turn_in_progress` is tried again this many times, this far apart.
+ * Stop and send: the server lets go of a stopped turn's claim before its `stopped`, so a 409 `chat_turn_in_progress`
+ * is only a backstop, tried again this many times, this far apart.
  */
 const CLAIM_RETRIES = 3;
 const CLAIM_RETRY_MS = 500;
+
+/** A dropped turn's stream is read again after these waits, then every last one, unless a wake comes first. */
+export const RESUME_MS: readonly number[] = [1000, 2000, 4000];
+
+/**
+ * While a send waits on a turn running in another chat, or History is open with a conversation replying, the list is
+ * read this often until that turn ends.
+ */
+export const LIST_POLL_MS = 3000;
+
+/** The list, with the conversation whose reply streams marked running when the person leaves it for `to`. */
+function leftRunning(state: TuningChatState, to: string | null): TuningChatState['conversations'] {
+  const left = state.conversationId;
+  if (!state.streaming || left === null || left === to) return state.conversations;
+  return state.conversations.map((conversation) => (conversation.id === left ? { ...conversation, running: true } : conversation));
+}
+
+/** The conversation of the list holding the person's running turn at this location, else null. */
+export function runningIn(summary: ChatSummary): string | null {
+  const marked = summary.conversations.find((conversation) => conversation.running)?.id;
+  if (marked !== undefined) return marked;
+  const id = summary.liveTurn?.conversationId ?? null;
+  return id !== null && summary.conversations.some((conversation) => conversation.id === id) ? id : null;
+}
 
 export function initialChatState(): TuningChatState {
   return {
     status: 'loading', loadError: null, enabled: false, budget: null, conversations: [],
     conversationId: null, conversationLoading: false, messages: [], tree: [], leafId: null, streaming: false, switching: false,
-    error: null, draft: '', turn: null,
+    error: null, draft: '', turn: null, runningElsewhere: null,
   };
 }
 
@@ -269,6 +338,8 @@ export function sendErrorText(error: unknown, attached = false): string {
         ? 'You’ve sent a lot of messages. Try again later.'
         : `You’ve sent a lot of messages. Try again in ${minutes(error.retryAfterSeconds)}.`;
     }
+    // resumable-chat-turns: a replica shutting down takes no new turn; TownwiseAI is still on.
+    if (error.code === 'chat_restarting') return 'TownwiseAI is restarting. Try again in a moment.';
     if (error.status === 503) return 'TownwiseAI isn’t turned on yet.';
   }
   return describeError(error);
@@ -368,6 +439,13 @@ function withText(message: ChatMessage, delta: string, key: string): ChatMessage
   return { ...message, parts: [...message.parts, { type: 'text', key, text: delta }] };
 }
 
+/** The reply's last text, written ahead of a tool call, filed as thinking: the stream's `aside` event. */
+function withAside(message: ChatMessage): ChatMessage {
+  const last = message.parts.at(-1);
+  if (last?.type !== 'text') return message;
+  return { ...message, parts: [...message.parts.slice(0, -1), { type: 'thinking', key: last.key, text: last.text }] };
+}
+
 /** Whether anything but its thinking summary arrived: a reply with only that is nothing the person would keep. */
 function hasContent(message: ChatMessage): boolean {
   return message.parts.some((part) => part.type !== 'thinking');
@@ -398,6 +476,30 @@ function shownState(state: TuningChatState, shown: ShownPath): TuningChatState {
   return { ...state, messages: shown.messages, tree: shown.tree, leafId: shown.leafId };
 }
 
+/**
+ * The path read again after a turn (`reread`): a message already on the page keeps its key, and each part the key of
+ * the part of the same type in its place, so the page keeps drawing it rather than drawing it anew (owner request,
+ * 2026-11-17: the reply's "Worked for" never flashes). A message is the same by its node, or, for the reply that
+ * streamed, by the node its turn named.
+ */
+function keptKeys(state: TuningChatState, shown: ShownPath): ShownPath {
+  const nodeOf = (message: ChatMessage): string | null => message.nodeId ?? (message.state === 'streaming' ? state.turn?.nodes?.reply ?? null : null);
+  return {
+    ...shown,
+    messages: shown.messages.map((message) => {
+      const was = message.nodeId === null ? undefined : state.messages.find((item) => nodeOf(item) === message.nodeId);
+      if (was === undefined) return message;
+      return {
+        ...message, key: was.key,
+        parts: message.parts.map((part, index) => {
+          const before = was.parts[index];
+          return before?.type === part.type ? { ...part, key: before.key } : part;
+        }),
+      };
+    }),
+  };
+}
+
 /** `now` (ms since the epoch) stamps when a reply starts and ends. */
 export function chatReducer(state: TuningChatState, action: ChatAction, now: number): TuningChatState {
   switch (action.type) {
@@ -410,29 +512,44 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       };
     case 'loadFailed':
       return { ...state, status: action.notFound ? 'not_found' : 'failed', loadError: action.error };
-    case 'summary':
-      return { ...state, enabled: action.summary.enabled, budget: action.summary.budget, conversations: action.summary.conversations };
+    case 'summary': {
+      // The notice stays only while the list still shows that conversation's turn running.
+      const still = state.runningElsewhere !== null && runningIn(action.summary) === state.runningElsewhere;
+      return {
+        ...state, enabled: action.summary.enabled, budget: action.summary.budget, conversations: action.summary.conversations,
+        runningElsewhere: still ? state.runningElsewhere : null,
+      };
+    }
+    case 'held': {
+      const id = action.summary === null ? null : runningIn(action.summary);
+      const listed = action.summary === null ? {} : {
+        enabled: action.summary.enabled, budget: action.summary.budget, conversations: action.summary.conversations,
+      };
+      return id === null ? { ...state, ...listed, error: action.error } : { ...state, ...listed, error: null, runningElsewhere: id };
+    }
     case 'draft':
       return { ...state, draft: action.text };
+    // Leaving a conversation whose reply streams only stops following it (useTuningChat letGo): the turn runs on, so
+    // the list marks it running (the new chat page's Previous chats, History's Replying) until a read of it says not.
     case 'new':
       return {
-        ...state, conversationId: null, conversationLoading: false, messages: [], tree: [], leafId: null, switching: false, error: null,
-        draft: action.draft,
+        ...state, conversations: leftRunning(state, null), conversationId: null, conversationLoading: false, messages: [], tree: [], leafId: null, switching: false, error: null,
+        draft: action.draft, streaming: false, turn: null, runningElsewhere: null,
       };
     case 'open':
       return {
-        ...state, conversationId: action.id, conversationLoading: true, messages: [], tree: [], leafId: null, switching: false, error: null,
-        draft: action.draft,
+        ...state, conversations: leftRunning(state, action.id), conversationId: action.id, conversationLoading: true, messages: [], tree: [], leafId: null, switching: false, error: null,
+        draft: action.draft, streaming: false, turn: null, runningElsewhere: null,
       };
     case 'opened':
       if (state.conversationId !== action.id) return state;
-      return { ...shownState(state, action.shown), conversationLoading: false };
+      return { ...shownState(state, keptKeys(state, action.shown)), conversationLoading: false };
     case 'openFailed':
       if (state.conversationId !== action.id) return state;
       return { ...state, conversationLoading: false, error: action.error };
     case 'send':
       return {
-        ...state, error: null, streaming: true,
+        ...state, error: null, streaming: true, runningElsewhere: null,
         draft: state.draft.trim() === action.content ? '' : state.draft,
         turn: { kind: 'send', nodes: null, earlier: null },
         messages: [...state.messages, ...turnPair(action, now)],
@@ -442,7 +559,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       const at = state.messages.findIndex((message) => message.key === action.messageKey);
       if (at < 0) return state;
       return {
-        ...state, error: null, streaming: true,
+        ...state, error: null, streaming: true, runningElsewhere: null,
         leafId: 'parentId' in action.request ? action.request.parentId ?? null : null,
         turn: { kind: 'edit', nodes: null, earlier: null },
         messages: [...state.messages.slice(0, at), ...turnPair(action, now)],
@@ -452,7 +569,7 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
       const earlier = state.messages.at(-1);
       if (earlier?.key !== action.replyKey) return state;
       return {
-        ...state, error: null, streaming: true, leafId: earlier.parentId,
+        ...state, error: null, streaming: true, runningElsewhere: null, leafId: earlier.parentId,
         turn: { kind: 'regenerate', nodes: null, earlier: { message: earlier, leafId: state.leafId } },
         messages: [
           ...state.messages.slice(0, -1),
@@ -545,6 +662,24 @@ export function chatReducer(state: TuningChatState, action: ChatAction, now: num
         ...state,
         conversations: state.conversations.map((conversation) => (conversation.id === action.id ? { ...conversation, title: action.title } : conversation)),
       };
+    case 'reattach': {
+      if (state.conversationId !== action.id) return state;
+      const { live } = action;
+      // As a send's pair (turnPair): the message has no node until the turn is saved; a regenerate's reply hangs under
+      // the message it answers from the start.
+      const asked = action.asked === null ? [] : [{ ...action.asked, nodeId: null, parentId: live.parentId }];
+      const reply: ChatMessage = {
+        ...blankMessage(action.replyKey, 'assistant'), state: 'streaming', parentId: live.message === null ? live.parentId : null,
+        request: action.request, startedAt: live.startedAt,
+      };
+      return {
+        ...shownState(state, action.shown), conversationLoading: false, streaming: true, error: null,
+        turn: { kind: live.message === null ? 'regenerate' : 'send', nodes: { user: live.userNodeId, reply: live.replyNodeId, parentId: live.parentId }, earlier: null },
+        messages: [...action.shown.messages, ...asked, reply],
+      };
+    }
+    case 'stopFailed':
+      return { ...state, error: action.error };
   }
 }
 
@@ -578,7 +713,7 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       return {
         ...state,
         conversationId: event.id,
-        conversations: known ? state.conversations : [{ id: event.id, title: event.title, updatedAt: at, turnCount: 0 }, ...state.conversations],
+        conversations: known ? state.conversations : [{ id: event.id, title: event.title, updatedAt: at, turnCount: 0, running: false }, ...state.conversations],
         turn: state.turn === null ? null : { ...state.turn, nodes: { user: event.userNodeId, reply: event.replyNodeId, parentId: event.parentId } },
       };
     }
@@ -586,6 +721,8 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       return { ...state, messages: withLive(state, (message) => withText(message, event.delta, key)) };
     case 'thinking':
       return { ...state, messages: withLive(state, (message) => withThinking(message, event.delta, key)) };
+    case 'aside':
+      return { ...state, messages: withLive(state, withAside) };
     case 'tool':
       // propose_data_item's calls show as their item card once done, if the owner was shown one.
       if (event.name === ITEM_TOOL) {
@@ -593,9 +730,9 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
           ? { ...state, messages: withLive(state, (message) => withItem(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
           : state;
       }
-      if (event.name === ORDER_CHANGE_TOOL || event.name === ORDER_RULE_TOOL) {
+      if (event.name === ORDER_CHANGE_TOOL || event.name === ORDER_RULE_TOOL || event.name === ORDER_SETUP_TOOL) {
         return event.state === 'done' && event.result?.shown === true
-          ? { ...state, messages: withLive(state, (message) => withOrder(message, { id: event.id, conversationId: state.conversationId, stored: 'pending' }, key)) }
+          ? { ...state, messages: withLive(state, (message) => withOrder(message, { id: event.id, conversationId: state.conversationId, stored: 'pending', ...(event.name === ORDER_SETUP_TOOL ? { setup: true as const } : {}) }, key)) }
           : state;
       }
       // propose_note, show_visual and suggest_next show as their card, visual and next questions.
@@ -622,7 +759,13 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
     }
     case 'error':
       if (state.turn?.earlier) return putBack(state, state.turn.earlier, REGENERATE_FAILED);
+      // Its words are the reply's own line, as a stopped reply's are.
+      if (event.code === TURN_INTERRUPTED) return { ...state, turn: null, messages: endLive(state, { state: 'failed', note: INTERRUPTED }, now) };
       return { ...state, error: streamErrorText(event.code), turn: null, messages: endLive(state, { state: 'failed', note: NOT_SAVED }, now) };
+    case 'stopped':
+      // resumable-chat-turns: the turn stopped on the server, and saved nothing.
+      if (state.turn?.earlier) return putBack(state, state.turn.earlier, REGENERATE_FAILED);
+      return { ...state, turn: null, messages: endLive(state, { state: 'stopped', note: STOPPED }, now) };
   }
 }
 
@@ -686,6 +829,11 @@ export interface TuningChat {
   setItemAside: (card: ItemCard) => Promise<ItemProposal>;
   /** Reads the page again after it failed to load. */
   reload: () => void;
+  /**
+   * Whether the page watches the list (History open, or the new chat page in view): while it does and a conversation
+   * is replying, the list is read every 3 seconds.
+   */
+  watchList: (open: boolean) => void;
 }
 
 /** How a question card's message goes (TuningChat.tell). */
@@ -703,6 +851,10 @@ export interface TuningChatOptions {
   readOnly: boolean;
   /** Runs after each note a card saves, so the page can mark the location's notes count stale. */
   onNoteAdded?: () => void;
+  /** The view-as target's user id (spec 15.5), else null: the conversation the page closed on is kept per target. */
+  viewAsId?: string | null;
+  /** Where that is kept (lastChat.ts); the platform's own store by default. */
+  lastChat?: LastChatStore;
 }
 
 export function canSend(state: TuningChatState): boolean {
@@ -724,6 +876,91 @@ function cardOf(state: TuningChatState, cardId: string): ProposalCard | undefine
     for (const part of message.parts) if (part.type === 'proposal' && part.card.id === cardId) return part.card;
   }
   return undefined;
+}
+
+/**
+ * The turn the page follows, from Send (or opening a conversation with a live turn) until it ends
+ * (resumable-chat-turns).
+ */
+interface TurnHandle {
+  /** Aborted only when the page lets go of the turn (it unmounts or reloads): the turn runs on, on the server. */
+  controller: AbortController;
+  /** The open stream's own: a wake closes it, so it is read again from `cursor`. */
+  connection: AbortController | null;
+  conversationId: string | null;
+  /** From its `conversation` event; until then the turn can be neither read back nor stopped. */
+  turnId: string | null;
+  /** The number of the last event read: a stream read again starts after it, so nothing shows twice. */
+  cursor: number;
+  /** Its last event arrived. */
+  ended: boolean;
+  /** It ended with a saved `done`. */
+  saved: boolean;
+  /** Stop was pressed; the request goes once the turn id is known. */
+  stopping: boolean;
+  /** Ends the wait before the stream is read again. */
+  wake: (() => void) | null;
+  /** The person left its conversation (New chat, another one opened): the page stopped following it; it runs on. */
+  left: boolean;
+}
+
+function handleFor(conversationId: string | null): TurnHandle {
+  return {
+    controller: new AbortController(), connection: null, conversationId, turnId: null, cursor: 0, ended: false, saved: false, stopping: false,
+    wake: null, left: false,
+  };
+}
+
+/** A new connection for the turn's stream, closed with the turn's own controller too. */
+function connect(handle: TurnHandle): AbortSignal {
+  const connection = new AbortController();
+  handle.connection = connection;
+  const { signal } = handle.controller;
+  if (signal.aborted) connection.abort();
+  else signal.addEventListener('abort', () => { connection.abort(); }, { once: true });
+  return connection.signal;
+}
+
+/** Waits `ms` before a stream is read again; a wake ends it early, and the page letting go of the turn rejects it. */
+function rest(handle: TurnHandle, ms: number): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const { signal } = handle.controller;
+    const done = (): void => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', stopped);
+      handle.wake = null;
+    };
+    const stopped = (): void => {
+      done();
+      reject(new ApiError('aborted', 'The request was stopped.'));
+    };
+    const timer = setTimeout(() => {
+      done();
+      resolve();
+    }, ms);
+    handle.wake = () => {
+      done();
+      resolve();
+    };
+    if (signal.aborted) stopped();
+    else signal.addEventListener('abort', stopped, { once: true });
+  });
+}
+
+/** A stream closed by the page itself: a wake (the turn's own controller is checked first). */
+function woken(error: unknown): boolean {
+  return error instanceof ApiError && error.kind === 'aborted';
+}
+
+/** A send's stream lost on the way (not the server's refusal, not the page's own stop): the turn may run all the same. */
+function lostOnTheWay(error: unknown): boolean {
+  return error instanceof ApiError && (error.kind === 'network' || error.kind === 'timeout');
+}
+
+/** Whether a conversation's live turn is the one `request` sent: its message, or for a regenerate the message it answers. */
+function isTurnOf(turn: LiveTurnLoad, request: TurnRequest): boolean {
+  if ('replyTo' in request) return turn.message === null && turn.parentId === request.replyTo;
+  return turn.message !== null && turn.message.text === request.content;
 }
 
 function isClaimHeld(error: unknown): boolean {
@@ -748,11 +985,13 @@ function pause(ms: number, signal: AbortSignal): Promise<void> {
 
 export function useTuningChat(api: ApiClient, locationId: string, options: TuningChatOptions): TuningChat {
   const { userId, readOnly, onNoteAdded } = options;
+  const store = options.lastChat ?? lastChatStore;
+  const returnKey = lastChatKey(userId, locationId, options.viewAsId ?? null);
   const [state, setState] = useState(() => ({ ...initialChatState(), draft: readDraft(draftKey(userId, locationId, null)) }));
   const [generation, setGeneration] = useState(0);
   // The state after the last action, ahead of the render that draws it: a send that follows a stop builds on it.
   const latest = useRef(state);
-  const live = useRef<AbortController | null>(null);
+  const live = useRef<TurnHandle | null>(null);
   // The live turn's end, for Stop and send; and the send waiting for it.
   const turnEnd = useRef<Promise<void> | null>(null);
   const waiting = useRef<{ content: string; returned: (() => void) | undefined } | null>(null);
@@ -800,30 +1039,109 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     dispatch({ type: 'event', event: { type: pending.kind, delta }, key: nextKey(), at: '' });
   }
 
+  // The newest render's openConversation, for the load below: the conversation the page closed on, or a turn still
+  // live here, opens.
+  const reopen = useRef<(id: string, recalled: boolean) => void>(() => undefined);
+  useEffect(() => {
+    reopen.current = openConversation;
+  });
+
   useEffect(() => {
     let cancelled = false;
-    void loadChat(api, locationId).then(
-      (summary) => { if (!cancelled) dispatch({ type: 'loaded', summary }); },
+    // The conversation the page closed on within 5 minutes, read beside the list (a store that fails is nothing kept).
+    void Promise.all([loadChat(api, locationId), recallChat(store, returnKey, Date.now()).catch(() => null)]).then(
+      ([summary, recalled]) => {
+        if (cancelled) return;
+        dispatch({ type: 'loaded', summary });
+        // Back within 5 minutes: that conversation, reattached if its turn is live. Else a refresh mid-reply, or a
+        // second tab: the turn's conversation opens and its reply is followed.
+        if (recalled !== null) reopen.current(recalled, true);
+        else if (summary.liveTurn !== null) reopen.current(summary.liveTurn.conversationId, false);
+      },
       (error: unknown) => { if (!cancelled) dispatch({ type: 'loadFailed', notFound: isStatus(error, 404), error: describeError(error) }); },
     );
     const pending = buffer.current;
     return () => {
       cancelled = true;
       waiting.current = null;
-      live.current?.abort();
+      live.current?.controller.abort();
       live.current = null;
       if (pending.timer !== null) clearTimeout(pending.timer);
       pending.timer = null;
       pending.text = '';
     };
-  }, [api, locationId, generation, dispatch]);
+  }, [api, locationId, generation, dispatch, store, returnKey]);
+
+  // The page closing (its unmount, or on web the tab closing or reloading) keeps the conversation it shows, or forgets
+  // the one kept when it shows a new chat; a page that never loaded changes nothing.
+  useEffect(() => {
+    const leave = (): void => {
+      const now = latest.current;
+      if (now.status === 'ready') void rememberChat(store, returnKey, now.conversationId, Date.now());
+    };
+    const stopListening = onPageLeave(leave);
+    return () => {
+      stopListening();
+      leave();
+    };
+  }, [store, returnKey]);
+
+  // A wake reads a dropped stream again at once, and closes an open one to read it again from its cursor (it may be
+  // dead after the app or tab was suspended). A turn without its id yet is left alone: it can't be read back.
+  useEffect(() => onWake(() => {
+    const handle = live.current;
+    if (handle === null || handle.ended || handle.turnId === null) return;
+    if (handle.wake !== null) handle.wake();
+    else handle.connection?.abort();
+  }), []);
 
   function refresh(): void {
     void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
   }
 
+  // The list is read every 3 seconds while a send waits on a turn running in another chat, or while the page watches
+  // it (History open, or the new chat page in view, for its Previous chats) with a conversation replying, until the
+  // list shows none; nothing is read while nothing runs.
+  const [watching, setWatching] = useState(false);
+  const polling = state.runningElsewhere !== null || (watching && state.conversations.some((conversation) => conversation.running));
+  useEffect(() => {
+    if (!polling) return undefined;
+    const timer = setInterval(() => {
+      void loadChat(api, locationId).then((summary) => { dispatch({ type: 'summary', summary }); }, () => undefined);
+    }, LIST_POLL_MS);
+    return () => { clearInterval(timer); };
+  }, [api, locationId, dispatch, polling]);
+
+  /** A send refused because the person's running turn holds the claim: the list says which chat it is in. */
+  function held(error: string): void {
+    void loadChat(api, locationId).then(
+      (summary) => { dispatch({ type: 'held', summary, error }); },
+      () => { dispatch({ type: 'held', summary: null, error }); },
+    );
+  }
+
+  /**
+   * The person leaves the conversation whose turn the page follows (New chat, or another conversation opened): the
+   * page stops following it and draws nothing more of it; the turn runs on, and is saved, on the server (D45). A send
+   * waiting on it (Stop and send) is taken back.
+   */
+  function letGo(): void {
+    const handle = live.current;
+    if (handle === null) return;
+    handle.left = true;
+    live.current = null;
+    turnEnd.current = null;
+    waiting.current?.returned?.();
+    waiting.current = null;
+    handle.controller.abort();
+    const pending = buffer.current;
+    if (pending.timer !== null) clearTimeout(pending.timer);
+    pending.timer = null;
+    pending.text = '';
+  }
+
   /** The turn's stream; with `retries`, a 409 `chat_turn_in_progress` is tried again after a pause. */
-  async function stream(request: TurnRequest, signal: AbortSignal, onEvent: (event: ChatEvent) => void, retries: number): Promise<void> {
+  async function stream(request: TurnRequest, signal: AbortSignal, onEvent: TurnListener, retries: number): Promise<void> {
     try {
       await sendTurn(api, locationId, request, signal, onEvent);
     } catch (error: unknown) {
@@ -834,28 +1152,24 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   }
 
   /**
-   * Streams a turn: `action` puts it on the page, `request` goes to the server. `telling`, for a question card, hears
-   * when it starts and how it ended; `returned`, for the composer's files, runs if a send is taken back.
+   * A turn's events, into the reducer: each one once (by its number), text and thinking drawn in batches. `seen` hears
+   * each event first.
    */
-  function run(
-    action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0, telling?: Telling, returned?: () => void,
-  ): void {
-    const attached = 'attachments' in request && request.attachments.length > 0;
-    const controller = new AbortController();
-    live.current = controller;
-    dispatch(action);
-    // A first turn that saved nothing (an error, Stop, a cut-off stream or a refusal) left no conversation behind.
-    let created: string | null = null;
-    let saved = false;
-    let started = false;
-    // Why it saved nothing, in the words the chat shows for it.
-    let failure: string | null = null;
-    const onEvent = (event: ChatEvent): void => {
-      if (controller.signal.aborted) return;
-      if (!started) {
-        started = true;
-        telling?.started?.();
+  function listener(handle: TurnHandle, seen: (event: ChatEvent) => void): TurnListener {
+    return (event, seq) => {
+      if (handle.controller.signal.aborted) return;
+      if (seq !== null) {
+        if (seq <= handle.cursor) return;
+        handle.cursor = seq;
       }
+      seen(event);
+      if (event.type === 'conversation') {
+        handle.conversationId = event.id;
+        if (event.turnId !== null) handle.turnId = event.turnId;
+        if (handle.stopping) askToStop(handle);
+      }
+      if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) handle.saved = true;
+      if (endsTurn(event)) handle.ended = true;
       if (event.type === 'text' || event.type === 'thinking') {
         // Text and thinking keep their order: a change from one to the other draws what the first had gathered.
         if (buffer.current.kind !== event.type) flush();
@@ -866,19 +1180,189 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       }
       // Any other event draws the text before it first, so the parts keep their order.
       flush();
+      dispatch({ type: 'event', event, key: nextKey(), at: new Date().toISOString() });
+    };
+  }
+
+  /**
+   * Reads a turn's events after its cursor until its last one. `dropped`: its stream just dropped, so the first read
+   * waits too. Each read after a drop waits the RESUME_MS waits (cut short by a wake), and first checks that the
+   * conversation still shows the turn live; a read after a wake closed the stream, or after one that brought something
+   * (it ends on its own after 200 seconds), goes at once. Resolves true once the turn's last event arrived, false once
+   * the turn is no longer live (its read answers 404, or the conversation shows no live turn of it); rejects when the
+   * page lets go of it.
+   */
+  async function follow(handle: TurnHandle, ids: { conversationId: string; turnId: string }, onEvent: TurnListener, dropped: boolean): Promise<boolean> {
+    let tries = 0;
+    let wait = dropped;
+    for (;;) {
+      if (wait) {
+        if (!(await stillLive(ids))) return false;
+        await rest(handle, RESUME_MS[Math.min(tries, RESUME_MS.length - 1)] ?? 0);
+        tries += 1;
+      }
+      wait = true;
+      const before = handle.cursor;
+      try {
+        await followTurn(api, locationId, ids, handle.cursor, connect(handle), onEvent);
+        if (handle.ended) return true;
+        if (handle.cursor > before) {
+          tries = 0;
+          wait = false;
+        }
+      } catch (error: unknown) {
+        if (handle.controller.signal.aborted) throw error;
+        if (handle.ended) return true;
+        if (isStatus(error, 404)) return false;
+        // A wake closed it.
+        if (woken(error)) {
+          tries = 0;
+          wait = false;
+        }
+      } finally {
+        handle.connection = null;
+      }
+    }
+  }
+
+  /** Whether the conversation still shows the turn as live; a read that fails is no answer, so it may be. */
+  async function stillLive(ids: { conversationId: string; turnId: string }): Promise<boolean> {
+    try {
+      return (await loadConversation(api, locationId, ids.conversationId)).liveTurn?.turnId === ids.turnId;
+    } catch (error: unknown) {
+      return !isStatus(error, 404);
+    }
+  }
+
+  /**
+   * After a turn this page followed without sending it, or one whose end it never saw: the conversation as the server
+   * keeps it now. A turn that ended without saving stays as its stream left it, as in the tab that sent it. Answers
+   * whether the conversation is there; one the server no longer has is let go, so the next send starts a new one.
+   */
+  async function reread(handle: TurnHandle): Promise<boolean> {
+    flush();
+    const id = handle.conversationId;
+    if (id === null) return false;
+    try {
+      const load = await loadConversation(api, locationId, id);
+      if (!handle.ended || handle.saved) dispatch({ type: 'opened', id, shown: shownOf(load, id) });
+      return true;
+    } catch (error: unknown) {
+      if (!isStatus(error, 404)) return true;
+      dispatch({ type: 'discard', id });
+      return false;
+    }
+  }
+
+  /**
+   * After a send's stream was lost before its `conversation` event: the turn the server is running for it, if the
+   * request reached the server. A new conversation's turn is found from the chat's GET; either way the conversation's
+   * GET must show it running with this send's message. Any read that fails is no turn.
+   */
+  async function sentTurn(request: TurnRequest): Promise<{ conversationId: string; turnId: string } | null> {
+    try {
+      const conversationId = request.conversationId ?? (await loadChat(api, locationId)).liveTurn?.conversationId;
+      if (conversationId === undefined) return null;
+      const turn = (await loadConversation(api, locationId, conversationId)).liveTurn;
+      return turn?.state === 'running' && isTurnOf(turn, request) ? { conversationId, turnId: turn.turnId } : null;
+    } catch {
+      return null;
+    }
+  }
+
+  /** Stop: the server stops the turn and every stream of it ends with `stopped`; a turn without its id yet waits for it. */
+  function askToStop(handle: TurnHandle): void {
+    const { conversationId, turnId } = handle;
+    if (conversationId === null || turnId === null || handle.ended) return;
+    void stopTurn(api, locationId, { conversationId, turnId }).then(() => undefined, (error: unknown) => {
+      // A turn that is gone (404) ended already; its stream says how.
+      if (handle.ended || live.current !== handle || isStatus(error, 404)) return;
+      handle.stopping = false;
+      dispatch({ type: 'stopFailed', error: STOP_FAILED });
+    });
+  }
+
+  function stop(): void {
+    const handle = live.current;
+    if (handle === null || handle.ended || handle.stopping) return;
+    handle.stopping = true;
+    askToStop(handle);
+  }
+
+  /**
+   * Streams a turn: `action` puts it on the page, `request` goes to the server. `telling`, for a question card, hears
+   * when it starts and how it ended; `returned`, for the composer's files, runs if a send is taken back.
+   */
+  function run(
+    action: Extract<ChatAction, { type: 'send' | 'edit' | 'regenerate' }>, request: TurnRequest, retries = 0, telling?: Telling, returned?: () => void,
+  ): void {
+    const attached = 'attachments' in request && request.attachments.length > 0;
+    const handle = handleFor(request.conversationId);
+    live.current = handle;
+    dispatch(action);
+    // A first turn that saved nothing (an error, Stop, a cut-off stream or a refusal) left no conversation behind.
+    let created: string | null = null;
+    let saved = false;
+    let started = false;
+    // The conversation read again after a turn whose end this page never saw is still there.
+    let found = false;
+    // Why it saved nothing, in the words the chat shows for it.
+    let failure: string | null = null;
+    // The server refused it because the person's one running turn holds the claim (409 chat_turn_in_progress): its words.
+    let claimHeld: string | null = null;
+    const onEvent = listener(handle, (event) => {
+      if (!started) {
+        started = true;
+        telling?.started?.();
+      }
       if (event.type === 'conversation') created = event.id;
       if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) saved = true;
       else if (event.type === 'done') failure = doneNote(event.stopReason) ?? NOT_SAVED;
-      if (event.type === 'error') failure = streamErrorText(event.code);
-      dispatch({ type: 'event', event, key: nextKey(), at: new Date().toISOString() });
+      if (event.type === 'error') failure = event.code === TURN_INTERRUPTED ? INTERRUPTED : streamErrorText(event.code);
+      if (event.type === 'stopped') failure = STOPPED;
+    });
+    // A stream lost before the turn's `conversation` event may still have started the turn on the server: if the server
+    // runs it for this send, it is followed from its first event; if not, the send failed as before.
+    const recovered = async (): Promise<boolean> => {
+      if (created !== null || handle.ended || handle.controller.signal.aborted) return false;
+      const ids = await sentTurn(request);
+      if (ids === null) return false;
+      handle.conversationId = ids.conversationId;
+      handle.turnId = ids.turnId;
+      return true;
     };
-    turnEnd.current = stream(request, controller.signal, onEvent, retries).then(
+    const follows = async (): Promise<void> => {
+      // A stream that closed without the turn's last event dropped, unless a wake closed it.
+      let dropped = true;
+      try {
+        await stream(request, connect(handle), onEvent, retries);
+        if (handle.turnId === null && (await recovered())) dropped = false;
+      } catch (error: unknown) {
+        // Once the turn has its id, a dropped (or woken) stream is read back from its last number; before that, the
+        // failure is the turn's, unless the server is running it all the same.
+        if (!handle.ended && (handle.turnId === null || handle.controller.signal.aborted)) {
+          if (!lostOnTheWay(error) || !(await recovered())) throw error;
+          dropped = false;
+        } else {
+          dropped = !woken(error);
+        }
+      } finally {
+        handle.connection = null;
+      }
+      const { conversationId, turnId } = handle;
+      if (handle.ended || conversationId === null || turnId === null) return;
+      if (!(await follow(handle, { conversationId, turnId }, onEvent, dropped))) found = await reread(handle);
+    };
+    turnEnd.current = follows().then(
       () => {
+        if (handle.left) return;
         flush();
         dispatch({ type: 'ended' });
         failure ??= CUT_OFF;
       },
       (error: unknown) => {
+        // The person left the conversation: nothing of the turn is drawn.
+        if (handle.left) return;
         flush();
         if (error instanceof ApiError && error.kind === 'aborted') {
           dispatch({ type: 'stopped' });
@@ -890,18 +1374,52 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         // A card's words stay in the card, never in the composer.
         const content = telling === undefined && 'content' in request ? request.content : '';
         const draftBefore = latest.current.draft;
-        dispatch({ type: 'failed', error: exhausted ? null : sendErrorText(error, attached), content, exhausted });
+        // The person's running turn is in another chat: the list read next says which, in place of the error.
+        if (isClaimHeld(error)) claimHeld = sendErrorText(error, attached);
+        dispatch({ type: 'failed', error: exhausted || claimHeld !== null ? null : sendErrorText(error, attached), content, exhausted });
         // The turn was taken back (its message left the page) and its text went back to the composer, so its files go
         // back with it. Text typed meanwhile stays, and so do the composer's files as the person left them.
         const takenBack = action.type === 'send' && !latest.current.messages.some((message) => message.key === action.userKey);
         if (takenBack && draftBefore === '' && content !== '') returned?.();
       },
     ).finally(() => {
-      if (live.current === controller) live.current = null;
-      if (request.conversationId === null && created !== null && !saved) dispatch({ type: 'discard', id: created });
+      if (live.current === handle) live.current = null;
+      // A turn the person left runs on: its conversation stays in the list.
+      if (!handle.left && request.conversationId === null && created !== null && !saved && !found) dispatch({ type: 'discard', id: created });
       // The list, the budget and the off switch may all have changed with this turn.
+      if (claimHeld === null) refresh();
+      else held(claimHeld);
+      // A card whose conversation the person left hears so: its answer waits for a reply the page no longer follows.
+      telling?.ended(saved ? null : handle.left ? TELL_LEFT : failure ?? NOT_SAVED);
+    });
+  }
+
+  /**
+   * Follows a turn live in a conversation just opened (a refresh mid-reply, a second tab): the person's message and the
+   * reply from its first event, through the same reducer, then the conversation read again.
+   */
+  function reattach(id: string, load: ConversationLoad, turn: LiveTurnLoad): void {
+    const handle = handleFor(id);
+    handle.turnId = turn.turnId;
+    live.current = handle;
+    const asked = turn.message === null ? null : toMessage(turn.message, load.tree, undefined, id);
+    // What Try again sends, if the turn doesn't save.
+    let request: TurnRequest | null = null;
+    if (turn.message !== null) request = { conversationId: id, content: turn.message.text, parentId: turn.parentId };
+    else if (turn.parentId !== null) request = { conversationId: id, replyTo: turn.parentId };
+    dispatch({ type: 'reattach', id, shown: shownOf(load, id), asked, replyKey: nextKey(), request, live: turn });
+    const onEvent = listener(handle, () => undefined);
+    turnEnd.current = follow(handle, { conversationId: id, turnId: turn.turnId }, onEvent, false).then(() => reread(handle)).then(
+      () => {
+        if (handle.left) return;
+        flush();
+        dispatch({ type: 'ended' });
+      },
+      // The page let go of it.
+      () => { flush(); },
+    ).finally(() => {
+      if (live.current === handle) live.current = null;
       refresh();
-      telling?.ended(saved ? null : failure ?? NOT_SAVED);
     });
   }
 
@@ -932,19 +1450,34 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     run({ type: 'send', content, attachments: [...attachments], userKey, replyKey, request }, request, retries, telling, returned);
   }
 
-  function openConversation(id: string): void {
-    if (state.streaming) return;
+  /** `recalled`: the conversation the page closed on; one the server no longer has opens a new chat instead. */
+  function openConversation(id: string, recalled = false): void {
+    // The conversation whose reply the page follows is open already.
+    if (live.current !== null && latest.current.conversationId === id) return;
+    const leaving = live.current !== null;
+    letGo();
     opening.current += 1;
     const token = opening.current;
     dispatch({ type: 'open', id, draft: draftFor(id) });
     void loadConversation(api, locationId, id).then(
       (load) => {
-        if (token === opening.current) dispatch({ type: 'opened', id, shown: shownOf(load, id) });
+        if (token !== opening.current) return;
+        if (load.liveTurn !== null && live.current === null) reattach(id, load, load.liveTurn);
+        else dispatch({ type: 'opened', id, shown: shownOf(load, id) });
       },
       (error: unknown) => {
-        if (token === opening.current) dispatch({ type: 'openFailed', id, error: describeError(error) });
+        if (token !== opening.current) return;
+        if (recalled && isStatus(error, 404)) {
+          void forgetChat(store, returnKey);
+          opening.current += 1;
+          dispatch({ type: 'new', draft: draftFor(null) });
+          return;
+        }
+        dispatch({ type: 'openFailed', id, error: describeError(error) });
       },
     );
+    // The list shows the conversation left as it is now.
+    if (leaving) refresh();
   }
 
   function shownOf(load: ConversationLoad, conversationId: string): ShownPath {
@@ -987,9 +1520,9 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
           }
           continue;
         }
-        if (part.name === ORDER_CHANGE_TOOL || part.name === ORDER_RULE_TOOL) {
+        if (part.name === ORDER_CHANGE_TOOL || part.name === ORDER_RULE_TOOL || part.name === ORDER_SETUP_TOOL) {
           if (part.state === 'done' && part.result?.shown === true) {
-            message.parts.push({ type: 'order', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept' } });
+            message.parts.push({ type: 'order', key: nextKey(), card: { id: part.id, conversationId, stored: 'kept', ...(part.name === ORDER_SETUP_TOOL ? { setup: true as const } : {}) } });
           }
           continue;
         }
@@ -999,8 +1532,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         if (last?.type === 'tools') last.steps.push(step);
         else message.parts.push({ type: 'tools', key: nextKey(), steps: [step] });
       } else {
-        const { id, status, kind, startDate, endDate, weekdays, effect, expectedGuests, detail } = part.proposal;
-        const proposal: NoteProposal = { kind, startDate, endDate, weekdays, effect, expectedGuests, detail };
+        const { id, status, kind, startDate, endDate, weekdays, effect, expectedGuests, detail, title } = part.proposal;
+        const proposal: NoteProposal = { kind, startDate, endDate, weekdays, effect, expectedGuests, detail, title };
         message.parts.push({
           type: 'proposal', key: nextKey(), card: { id, proposal, status, stored: 'kept', edited: false, gone: false, error: null },
         });
@@ -1130,12 +1663,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       start(content, 0, undefined, attachments, returned);
       return;
     }
-    // The send waits for the stopped turn to end, so it goes after the leaf as the stop left it. A second press
+    // The send waits for the stopped turn's last event, so it goes after the leaf as the stop left it. A second press
     // meanwhile takes its place, and the first one's files go back.
     const queued = { content, returned };
     waiting.current?.returned?.();
     waiting.current = queued;
-    live.current.abort();
+    stop();
     void ending.then(() => {
       if (waiting.current !== queued) return;
       waiting.current = null;
@@ -1149,14 +1682,18 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     send: (attachments = [], returned) => { start(state.draft.trim(), 0, undefined, attachments, returned); },
     ask: (text) => { start(text.trim()); },
     tell: (text, telling) => { start(text.trim(), 0, telling); },
-    stop: () => { live.current?.abort(); },
+    stop,
     stopAndSend,
     newConversation: () => {
-      if (state.streaming) return;
+      const leaving = live.current !== null;
+      // New chat forgets the conversation kept for coming back.
+      void forgetChat(store, returnKey);
+      letGo();
       opening.current += 1;
       dispatch({ type: 'new', draft: draftFor(null) });
+      if (leaving) refresh();
     },
-    openConversation,
+    openConversation: (id) => { openConversation(id); },
     deleteConversation: async (id) => {
       await removeConversation(api, locationId, id);
       if (latest.current.conversationId === id) opening.current += 1;
@@ -1188,6 +1725,12 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       const asked = state.messages[at - 1];
       if (at < 1 || asked?.role !== 'user' || !canStart(state)) return;
       const request = state.messages[at]?.request ?? null;
+      // A regenerate followed from another tab or a refresh: asked again in the failed reply's place, which comes back
+      // if this one doesn't save either.
+      if (request !== null && 'replyTo' in request) {
+        if (live.current === null) run({ type: 'regenerate', replyKey, newKey: nextKey(), request }, request);
+        return;
+      }
       dispatch({ type: 'drop', replyKey });
       // A question card's message goes again as the card sent it: its words never reach the composer, and once saved
       // the card answers its question.
@@ -1205,5 +1748,6 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     loadItem,
     keepItem,
     setItemAside,
+    watchList: setWatching,
   };
 }

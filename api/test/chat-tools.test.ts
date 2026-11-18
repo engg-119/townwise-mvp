@@ -38,7 +38,7 @@ const FROZEN_NAMES = [
   // The owner's own calendars.
   'get_owner_calendar',
   // Orders.
-  'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule',
+  'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule', 'propose_order_setup',
 ];
 
 describe('the tool registry', () => {
@@ -93,6 +93,10 @@ describe('the views on a tool call’s card', () => {
       from: '2026-05-01', to: '2026-05-31',
       days: [{ date: '2026-05-01', guests: 140, netSalesUsd: 5123.45 }, { date: '2026-05-02', guests: 90, netSalesUsd: null }],
     }))).toEqual({ from: '2026-05-01', to: '2026-05-31', dayCount: 2, guestsDayCount: 2, netSalesDayCount: 1 });
+    // The Your data items holding the range, by ref only (spec P25), when the result names them.
+    const refs = ['u_0123456789abcdef01234567', 'u_89abcdef0123456789abcdef'];
+    expect(resultViewOf('get_sales_days', ok({ from: '2026-05-01', to: '2026-05-01', days: [], uploadRefs: refs })))
+      .toEqual({ from: '2026-05-01', to: '2026-05-01', dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, uploadRefs: refs });
   });
 
   it('list_notes: how many notes, never their text', () => {
@@ -150,6 +154,24 @@ describe('the views on a tool call’s card', () => {
     expect(resultViewOf('propose_note', ok('Shown to the owner as a proposal. They decide whether to add it.'))).toBeNull();
   });
 
+  it('propose_note takes the event’s name (D49): required, a string of at most 120 characters naming no person, or null', () => {
+    const tool = toolNamed('propose_note');
+    if (tool === undefined) throw new Error('no propose_note');
+    const schema = tool.definition.input_schema as { properties: Record<string, unknown>; required: string[] };
+    expect(schema.properties.title).toEqual({ type: ['string', 'null'], maxLength: 120 });
+    expect(schema.required).toContain('title');
+    expect(tool.definition.description).toContain('title names the event in at most 120 characters, never a person, or is null');
+    const note = {
+      kind: 'private_event', startDate: '2026-06-20', endDate: '2026-06-20', weekdays: null, effect: 'closed', expectedGuests: 70, detail: null,
+    };
+    expect(tool.parse({ ...note, title: 'Alumni weekend dinner' }, today)).toMatchObject({ title: 'Alumni weekend dinner' });
+    expect(tool.parse({ ...note, title: null }, today)).toMatchObject({ title: null });
+    // A call stored before titles reads as untitled.
+    expect(tool.parse(note, today)).toMatchObject({ title: null });
+    expect(tool.parse({ ...note, title: 'x'.repeat(121) }, today)).toBeNull();
+    expect(tool.parse({ ...note, title: 'Alumni\ndinner' }, today)).toBeNull();
+  });
+
   it('a result that is an error, unreadable or for an unknown tool has no view', () => {
     expect(resultViewOf('list_notes', { ...ok({ notes: [] }), is_error: true })).toBeNull();
     expect(resultViewOf('list_notes', ok('not json'))).toBeNull();
@@ -192,7 +214,7 @@ describe('get_day', () => {
   function note(fields: Partial<NoteRecord>): NoteRecord {
     return {
       id: '000000000000000000000002', kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null,
-      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, source: null,
+      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail', title: null, startTime: null, endTime: null, createdBy: SENTINEL_USER, byStaff: false, source: null, fromEvent: null,
       createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'), ...fields,
     };
   }
@@ -216,6 +238,9 @@ describe('get_day', () => {
           return Promise.resolve((opts.days ?? []).filter((day) => day.date >= range.from && day.date <= range.to)
             .map(({ date, guests, netSalesCents }) => ({ date, guests, netSalesCents })));
         },
+        uploadIdsIn: (_scope: OrgScope, _location: string, range: { from: string; to: string }) => Promise.resolve([
+          ...new Set((opts.days ?? []).filter((day) => day.date >= range.from && day.date <= range.to).map((day) => day.uploadId)),
+        ].sort()),
       } as unknown as SalesDayStore,
       notes: { list: () => Promise.resolve(opts.notes ?? []) } as unknown as NoteStore,
       businessRules: { scheduled: () => Promise.resolve(opts.rules ?? []) } as unknown as BusinessRuleStore,
@@ -238,7 +263,7 @@ describe('get_day', () => {
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
       turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
-      files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined } },
+      files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
     };
     return { tc, byIds, ranges };
   }
@@ -290,20 +315,21 @@ describe('get_day', () => {
   });
 
   it('list_notes includes startTime and endTime, and get_day\'s notes carry them in the same shape (contract S5)', async () => {
-    const timed = note({ startTime: '18:00', endTime: '21:00' });
+    const timed = note({ startTime: '18:00', endTime: '21:00', title: 'Sentinel-day-title' });
     const { tc } = context({ notes: [timed] });
     const tool = toolNamed('list_notes');
     if (tool === undefined) throw new Error('no list_notes');
     const listed = JSON.parse((await tool.run(tc, {})).content) as { notes: Record<string, unknown>[] };
     const shape = {
       kind: 'private_event', startDate: '2026-11-21', endDate: '2026-11-21', weekdays: null, startTime: '18:00', endTime: '21:00',
-      effect: 'more_guests', expectedGuests: 60, detail: 'Sentinel-day-detail',
+      effect: 'more_guests', expectedGuests: 60, title: 'Sentinel-day-title', detail: 'Sentinel-day-detail',
     };
     expect(listed.notes).toEqual([shape]);
     expect(Object.keys(listed.notes[0] ?? {})).toEqual(Object.keys(shape));
     expect(tool.definition.description).toBe(
-      'The notes already recorded for this location, by start date: kind, dates, weekdays, hours, effect, expected guests and detail.',
+      'The notes already recorded for this location, by start date: kind, dates, weekdays, hours, effect, expected guests, title (the event’s name, or null) and detail.',
     );
+    expect(toolNamed('get_day')?.definition.description).toContain('the notes that cover it (each with its title, the event’s name, or null)');
     const day = (await run({ date: '2026-11-21' }, tc)).parsed.notes as Record<string, unknown>[];
     expect(day).toEqual([shape]);
     expect(Object.keys(day[0] ?? {})).toEqual(Object.keys(shape));
@@ -382,8 +408,9 @@ describe('get_day', () => {
     expect(await sales([])).toEqual([{ date: '2026-11-21', guests: 1, netSalesUsd: 25, likelyClosed: true }]);
   });
 
-  it('get_sales_days reads the 8 weeks before the range too, gives only the range, and marks likely-closed days (spec D32)', async () => {
-    const days = [...saturdays, nearEmpty('2026-11-21'), nearEmpty('2026-11-28')];
+  it('get_sales_days reads the 8 weeks before the range too, gives only the range, marks likely-closed days (spec D32) and names the range’s uploads by ref (P25)', async () => {
+    const OTHER_UPLOAD = '0000000000000000000000c2';
+    const days = [...saturdays, nearEmpty('2026-11-21'), { ...nearEmpty('2026-11-28'), uploadId: OTHER_UPLOAD }];
     const slow = note({ kind: 'other', startDate: '2026-11-28', endDate: '2026-11-28', effect: 'fewer_guests', expectedGuests: null, detail: null });
     const { tc, ranges } = context({ today: AFTER, days, notes: [slow] });
     const tool = toolNamed('get_sales_days');
@@ -398,7 +425,12 @@ describe('get_day', () => {
         { date: '2026-11-21', guests: 1, netSalesUsd: 25, likelyClosed: true },
         { date: '2026-11-28', guests: 1, netSalesUsd: 25 },
       ],
+      // Only the uploads holding the range's days, not the 8 weeks read before it (every saturday is UPLOAD_ID's too).
+      uploadRefs: [`u_${UPLOAD_ID}`, `u_${OTHER_UPLOAD}`],
     });
+    const before = tool.parse({ from: '2026-10-03', to: '2026-10-10' }, TODAY);
+    if (before === null) throw new Error('invalid input');
+    expect(JSON.parse((await tool.run(tc, before)).content)).toMatchObject({ uploadRefs: [`u_${UPLOAD_ID}`] });
     expect(tool.definition.description).toContain('likelyClosed');
     expect(toolNamed('get_day')?.definition.description).toContain('likelyClosed');
   });

@@ -9,9 +9,6 @@ import type { Note } from '../../src/portal/locations/api';
 
 const LOCATION = 'Main Street Bar';
 
-const WEEKDAY: Question = {
-  id: 'weekday_1_2025-11-03_2026-11-02', kind: 'weekday', weekday: 1, from: '2025-11-03', to: '2026-11-02', noSalesCount: 41, weekdayCount: 52,
-};
 // Mon, Oct 19, 2026.
 const ONE_DAY: Question = {
   id: 'gap_2026-10-19_2026-10-19', kind: 'gap', from: '2026-10-19', to: '2026-10-19', dayCount: 1, typicalGuestsLow: 95, typicalGuestsHigh: 95,
@@ -38,14 +35,6 @@ function labels(question: Question, chat = true): string[] {
 }
 
 describe('each kind’s card', () => {
-  test('a weekday says the counts, never “usually”', () => {
-    const copy = questionCopy(WEEKDAY, LOCATION, true);
-    expect(copy.heading).toBe('Are you closed on Mondays?');
-    expect(copy.context).toBe('Main Street Bar has no sales on 41 of the 52 Mondays in weeks with sales on other days.');
-    expect(labels(WEEKDAY)).toEqual(['closed: Yes, closed Mondays', 'open: No, the data is missing', 'not_sure: Not sure', 'other: Something else…']);
-    expect(copy.help).toBe('Yes saves a closure note for Mondays from Nov 3, 2025 to Nov 2, 2026. Something else lets you tell TownwiseAI in the chat. Any answer stops this question.');
-  });
-
   test('a one-day gap weighs the day against its weekday’s usual guests', () => {
     const copy = questionCopy(ONE_DAY, LOCATION, true);
     expect(copy.heading).toBe('Were you closed on Mon, Oct 19, 2026?');
@@ -88,13 +77,12 @@ describe('each kind’s card', () => {
   });
 
   test('with TownwiseAI’s chat off there is no Something else…, and the help doesn’t offer it', () => {
-    for (const question of [WEEKDAY, ONE_DAY, TWO_DAYS, likely(1)]) {
+    for (const question of [ONE_DAY, TWO_DAYS, likely(1)]) {
       const copy = questionCopy(question, LOCATION, false);
       expect(copy.answers.map((answer) => answer.value)).not.toContain('other');
       expect(copy.answers).toHaveLength(3);
       expect(copy.help).not.toMatch(/Something else/);
     }
-    expect(questionCopy(WEEKDAY, LOCATION, false).help).toBe('Yes saves a closure note for Mondays from Nov 3, 2025 to Nov 2, 2026. Any answer stops this question.');
     expect(questionCopy(likely(1), LOCATION, false).help).toBe('Townwise treats this day as likely closed until you say. Yes saves a note that you were open with fewer guests, so the day counts. No saves a closure note for it.');
   });
 });
@@ -102,7 +90,7 @@ describe('each kind’s card', () => {
 describe('the line once answered (the stored answer’s)', () => {
   test('closed shows the closure note it saved, or says so without one', () => {
     const weekdayNote = noteOf({ startDate: '2025-11-03', endDate: '2026-11-02', weekdays: [1] });
-    expect(answeredLine(WEEKDAY, { answer: 'closed', note: weekdayNote })).toBe('Saved a note: Closure, Mondays, Nov 3, 2025 to Nov 2, 2026. TownwiseAI treats those days as closed.');
+    expect(answeredLine(TWO_DAYS, { answer: 'closed', note: weekdayNote })).toBe('Saved a note: Closure, Mondays, Nov 3, 2025 to Nov 2, 2026. TownwiseAI treats those days as closed.');
     expect(answeredLine(likely(1), { answer: 'closed', note: noteOf({}) })).toBe('Saved a note: Closure, Sat, May 23, 2026. TownwiseAI treats that day as closed.');
     expect(answeredLine(TWO_DAYS, { answer: 'closed', note: null })).toBe('Saved. TownwiseAI treats those days as closed.');
   });
@@ -114,7 +102,7 @@ describe('the line once answered (the stored answer’s)', () => {
   });
 
   test('an answer that saves nothing says the question won’t come back', () => {
-    for (const question of [WEEKDAY, ONE_DAY, TWO_DAYS]) {
+    for (const question of [ONE_DAY, TWO_DAYS]) {
       expect(answeredLine(question, { answer: 'open', note: null })).toBe('Got it. TownwiseAI won’t ask about these days again.');
       expect(answeredLine(question, { answer: 'not_sure', note: null })).toBe('Got it. TownwiseAI won’t ask about these days again.');
       expect(answeredLine(question, { answer: 'other', note: null })).toBe('Sent to TownwiseAI in the chat. It won’t ask about these days again.');
@@ -128,8 +116,6 @@ describe('Something else…’s message', () => {
   test('is the question and its evidence, then the person’s words, trimmed', () => {
     expect(otherMessage(ONE_DAY, '  We closed early for a burst pipe and the export missed the day.\n'))
       .toBe('About Mon, Oct 19, 2026 (no sales; Mondays usually have about 95 guests): We closed early for a burst pipe and the export missed the day.');
-    expect(otherMessage(WEEKDAY, 'We open Mondays in summer only.'))
-      .toBe('About Mondays from Nov 3, 2025 to Nov 2, 2026 (no sales on 41 of the 52 Mondays in weeks with sales on other days): We open Mondays in summer only.');
     expect(otherMessage(TWO_DAYS, 'Renovation.'))
       .toBe('About May 12 to May 13, 2026 (no sales on these 2 days; those days of the week usually have about 80 to 120 guests): Renovation.');
     expect(otherMessage(TWO_DAYS_EVEN, 'Renovation.'))
@@ -140,7 +126,7 @@ describe('Something else…’s message', () => {
   });
 
   test('the field holds at most what fits in a chat message (4,000 characters) after that prefix', () => {
-    for (const question of [WEEKDAY, ONE_DAY, TWO_DAYS, likely(0)]) {
+    for (const question of [ONE_DAY, TWO_DAYS, likely(0)]) {
       const longest = 'x'.repeat(otherMaxLength(question));
       expect(otherMessage(question, longest)).toHaveLength(4000);
     }

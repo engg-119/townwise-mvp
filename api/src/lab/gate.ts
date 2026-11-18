@@ -5,6 +5,7 @@
 // held-out weeks as before; then the jump guard, then G1. The new values are [CONFIRM]s in spec D42.
 import { daysBetween, utcDay } from '../dates.ts';
 import { engineOf } from '../forecasts/reader.ts';
+import { forecastThrough } from '../forecasts/tiers.ts';
 import type { ForecastRow, ForecastRunRecord } from '../stores/forecasts.ts';
 import type { Engine, LabScorecard, Scorecard } from './scorecard.ts';
 
@@ -90,14 +91,14 @@ export type GateDecision =
   | { publish: false; reason: Refusal };
 
 /**
- * The newest published run whose forecast reaches at least 28 days past `today`, or null. `published` is
+ * The newest published run whose forecast tier (tiers.forecastThrough, D52) reaches at least 28 days past `today`, or null. `published` is
  * ForecastStore.published()'s answer, newest dataThrough first and, within one, newest published first: of two runs with
  * the same dataThrough the first wins. A run of any other status is skipped.
  */
 export function currentChampion(published: readonly ForecastRunRecord[], today: string): ForecastRunRecord | null {
   let best: ForecastRunRecord | null = null;
   for (const run of published) {
-    if (run.status !== 'published' || daysBetween(today, run.range.to) < GATE.currentHorizonDays) continue;
+    if (run.status !== 'published' || daysBetween(today, forecastThrough(run)) < GATE.currentHorizonDays) continue;
     if (best === null || run.dataThrough > best.dataThrough) best = run;
   }
   return best;
@@ -190,7 +191,7 @@ export function decideGate(input: GateInput): GateDecision {
 
 /**
  * The current run's streak (D42): it and the published runs after it in `published` (ForecastStore.published()'s
- * order, newest first) that are lab runs of its engine and still reach 28 days past `today` (as the current run must),
+ * order, newest first) that are lab runs of its engine whose forecast tier still reaches 28 days past `today` (as the current run must),
  * up to the first one of another engine, imported or lapsed. Empty when the current run is not in the list or is
  * imported. Bounding it to runs still current keeps a best that has lapsed from holding every later refit (a ratchet):
  * after a lasting rise in backtest error, refits are held only while the run before it is current.
@@ -202,7 +203,7 @@ export function streakOf(published: readonly ForecastRunRecord[], currentId: str
   const engine = engineOf(head.model.family);
   const streak: ForecastRunRecord[] = [];
   for (const run of published.slice(start)) {
-    if (run.lab === null || engineOf(run.model.family) !== engine || daysBetween(today, run.range.to) < GATE.currentHorizonDays) break;
+    if (run.lab === null || engineOf(run.model.family) !== engine || daysBetween(today, forecastThrough(run)) < GATE.currentHorizonDays) break;
     streak.push(run);
   }
   return streak;

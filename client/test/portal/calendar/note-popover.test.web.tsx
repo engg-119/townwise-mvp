@@ -6,7 +6,7 @@ import { getMockContext } from 'expo-router/testing-library';
 import type { MeResponse } from '../../../src/portal/schemas';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
-import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
+import { ACCESS, deferred, EMAIL, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi } from '../../helpers/portal';
 import { townEvent } from '../analytics/fakes';
 import { noteOf } from '../locations/fakes';
 import { calendarFake, forecastDay, forecastOf, NOTES_PATH, ownerCalendar, ownerEvent, savedNote, type CalendarFake } from './fakes';
@@ -136,6 +136,11 @@ function guests(card: HTMLElement): HTMLInputElement {
 }
 
 /** Whether focus is on the panel's notice that says `text`, a line that takes focus from script (tabIndex -1). */
+/** The toasts on screen, top to bottom. */
+function toasts(): string[] {
+  return screen.queryAllByTestId('toast-text').map((line) => line.textContent);
+}
+
 function focusOnNotice(text: string): boolean {
   const line = within(panel()).queryByText(text);
   const active = document.activeElement;
@@ -186,7 +191,7 @@ test('a press outside keeps the popover open with what was typed and focus in it
   expect(writes(api)).toEqual([]);
 });
 
-test('a save closes it with focus on Add an event, and the panel says “Saved.” until the forecast reads again, then what the note did', async () => {
+test('a save closes it with focus on Add an event, and a toast says “Saved.” until the forecast reads again, then what the note did', async () => {
   const { api, fake } = setup();
   await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
   const button = press('Add an event');
@@ -202,9 +207,11 @@ test('a save closes it with focus on Add an event, and the panel says “Saved.�
   fireEvent.click(within(card).getByRole('button', { name: 'Save note' }));
   await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
   expect(document.activeElement).toBe(button);
-  expect(await within(panel()).findByText('Saved.')).toBeTruthy();
+  // The save's notice is a toast (spec 15.7, D55): "Saved." at once, and the same toast then says what the note did.
+  expect(toasts()).toEqual(['Saved.']);
+  expect(within(panel()).queryByText('Saved.')).toBeNull();
   await act(async () => { release(); await Promise.resolve(); });
-  expect(await within(panel()).findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
+  await waitFor(() => { expect(toasts()).toEqual(['Saved. The forecast for Sat, Nov 21 now includes its 70 guests.']); });
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`POST ${NOTES_PATH}`]);
 });
 
@@ -230,8 +237,57 @@ test('Make a note opens a dialog “Make a note” from the event, without its t
   expect(within(card).getAllByRole('heading').map((heading) => heading.textContent)).toEqual(['Make a note']);
   expect(within(card).getByLabelText<HTMLInputElement>('Starts at').value).toBe('18:00');
   expect(within(card).getByLabelText<HTMLInputElement>('Details (optional)').value).toBe('');
+  // Nor as its event name (D33, D49): the dialog never copies an imported event's title.
+  expect(within(card).getByLabelText<HTMLInputElement>('Event name (optional)').value).toBe('');
   escape();
   expect(document.activeElement).toBe(make);
+});
+
+test('staff open as admin: Make a note on a Google event leaves Event name empty and never saves “Google calendar event” as its title', async () => {
+  // To staff the API names a Google calendar's events "Google calendar event" (D39); D49's event name and D53's link
+  // must not turn that placeholder, or the real title, into the note's title.
+  const google = ownerCalendar({ id: 'g1', label: 'Google calendar', kind: 'google', eventCount: 1 });
+  const placeholder = ownerEvent({
+    calendarId: 'g1', calendar: 'Google calendar', uid: 'gid1', title: 'Google calendar event', startDate: SATURDAY, startTime: '18:00', endTime: '21:00',
+  });
+  const { api } = setup({ calendars: [google], ownerEvents: [placeholder] }, openAsAdminMe());
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  api.answers[NOTES_PATH] = (body) => savedNote('n9', body);
+  press('Make a note from Google calendar event');
+  const card = dialog('Make a note');
+  expect(within(card).getByLabelText<HTMLInputElement>('Event name (optional)').value).toBe('');
+  fireEvent.click(within(card).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  const sent = writes(api);
+  expect(sent.map((call) => `${call.method} ${call.path}`)).toEqual([`POST ${NOTES_PATH}`]);
+  const body = sent[0]?.body as { title?: unknown; fromEvent?: unknown };
+  expect(body.title ?? null).toBeNull();
+  expect(body.fromEvent).toEqual({ calendarId: 'g1', uid: 'gid1' });
+  expect(JSON.stringify(body)).not.toContain('Google calendar event');
+});
+
+test('a note made from an event sends the event’s calendar id and uid; Add an event and an edit send none', async () => {
+  const { api } = setup({ calendars: [KITCHEN], ownerEvents: [DINNER], notes: [PARTY] });
+  await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
+  api.answers[NOTES_PATH] = (body) => savedNote('n9', body);
+  api.answers[`${NOTES_PATH}/n1`] = (body) => savedNote('n1', body);
+  press('Make a note from Smith rehearsal dinner');
+  fireEvent.click(within(dialog('Make a note')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  press('Add an event');
+  fireEvent.click(within(dialog('Add an event')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  press(EDIT);
+  fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
+  await waitFor(() => { expect(screen.queryByRole('dialog')).toBeNull(); });
+  const sent = writes(api).map((call) => ({ path: call.path, fromEvent: (call.body as { fromEvent?: unknown }).fromEvent }));
+  expect(sent).toEqual([
+    { path: NOTES_PATH, fromEvent: { calendarId: 'c1', uid: 'i1' } },
+    { path: NOTES_PATH, fromEvent: undefined },
+    { path: `${NOTES_PATH}/n1`, fromEvent: undefined },
+  ]);
+  // Never the title.
+  expect(JSON.stringify(writes(api))).not.toContain('Smith');
 });
 
 type Measured = HTMLElement & { measureInWindow: (callback: (...box: number[]) => void) => void };
@@ -289,7 +345,7 @@ test('a 404 on an edit closes the popover, the panel says so, and focus moves to
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`]);
 });
 
-test('a saved edit gives focus back to its Edit, or to the panel’s “Saved.” when the note no longer covers the day', async () => {
+test('a saved edit gives focus back to its Edit, or to the day panel when the note no longer covers the day', async () => {
   const { api, fake } = setup({ notes: [PARTY], forecasts: { '2026-11': november({ guests: 40, id: 'n1' }) } });
   await renderAt(`/locations/l1/calendar?day=${SATURDAY}`, api);
   api.answers[`${NOTES_PATH}/n1`] = (body) => {
@@ -302,17 +358,19 @@ test('a saved edit gives focus back to its Edit, or to the panel’s “Saved.�
   const edit = press(EDIT);
   fireEvent.change(guests(dialog('Edit note')), { target: { value: '70' } });
   fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
-  expect(await within(panel()).findByText('Saved. The forecast for Sat, Nov 21 now includes its 70 guests.')).toBeTruthy();
+  await waitFor(() => { expect(toasts()).toEqual(['Saved. The forecast for Sat, Nov 21 now includes its 70 guests.']); });
   expect(screen.queryByRole('dialog')).toBeNull();
   expect(within(panel()).getByRole('button', { name: EDIT })).toBe(edit);
   expect(document.activeElement).toBe(edit);
-  // Moved to Nov 22: its Edit goes from this day once the notes read again, so focus moves to the notice instead.
+  // Moved to Nov 22: its Edit goes from this day once the notes read again, so focus moves to the day panel: the
+  // notice is a toast, which never takes focus.
   press(EDIT);
   fireEvent.change(within(dialog('Edit note')).getByLabelText('Starts'), { target: { value: '2026-11-22' } });
   fireEvent.click(within(dialog('Edit note')).getByRole('button', { name: 'Save note' }));
   await waitFor(() => { expect(within(panel()).queryByRole('button', { name: EDIT })).toBeNull(); });
   expect(screen.queryByRole('dialog')).toBeNull();
-  await waitFor(() => { expect(focusOnNotice('Saved.')).toBe(true); });
+  await waitFor(() => { expect(document.activeElement).toBe(panel()); });
+  expect(toasts().at(0)).toBe('Saved.');
   expect(writes(api).map((call) => `${call.method} ${call.path}`)).toEqual([`PATCH ${NOTES_PATH}/n1`, `PATCH ${NOTES_PATH}/n1`]);
 });
 

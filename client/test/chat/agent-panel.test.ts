@@ -1,7 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-import { answerQuestion, decideSuggestion, loadAgentPanel, setWeeklySuggestions, type QuestionAnswer } from '../../src/chat/api';
+import { answerQuestion, decideSuggestion, loadAgentPanel, setCalendarTitles, setWeeklySuggestions, type QuestionAnswer } from '../../src/chat/api';
+import { alreadyDecidedRule, decideRuleSuggestion, fetchRules } from '../../src/portal/rules/api';
+import { ApiError } from '../../src/api/client';
 import { fakeChatApi } from '../helpers/chat';
 
 // The side panel's answers exactly as the API sends them: agent-panel.json is a byte-for-byte copy of
@@ -9,12 +11,13 @@ import { fakeChatApi } from '../helpers/chat';
 // POST .../agent/questions/:questionId answer (and that the two files are identical). A change to the server's shapes
 // or to these schemas fails one side until both agree.
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as {
-  panel: { questions: unknown[]; activity: unknown[]; suggestions: unknown[]; weeklySuggestions: unknown };
+  panel: { questions: unknown[]; activity: unknown[]; suggestions: unknown[]; weeklySuggestions: unknown; ruleSuggestions: unknown[] };
   answer: { questionId: string; body: { answer: QuestionAnswer }; response: unknown };
 };
 
 test('the fixture holds every question kind and every activity kind the API sends', () => {
-  expect(fixture.panel.questions.map((q) => (q as { kind: string }).kind)).toEqual(['weekday', 'likely_closed', 'gap']);
+  // D46: the sales history's weekday question became a suggested rule, so the API sends no weekday question.
+  expect(fixture.panel.questions.map((q) => (q as { kind: string }).kind)).toEqual(['likely_closed', 'gap']);
   expect(fixture.panel.activity.map((a) => (a as { kind: string }).kind)).toEqual([
     'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'question_answered',
   ]);
@@ -49,15 +52,21 @@ test('Something else… answers `other` with that one key and reads it back', as
   expect(api.writes).toEqual([{ method: 'POST', path, body: { answer: 'other' } }]);
 });
 
-test('the fixture holds a weekly suggestion of each type and the organization’s switch', () => {
-  expect(fixture.panel.suggestions.map((s) => (s as { type: string }).type)).toEqual(['rule', 'note']);
-  expect(fixture.panel.weeklySuggestions).toEqual({ on: true, available: false, canChange: false });
+test('the fixture holds a weekly suggestion of each type and the organization’s switches', () => {
+  expect(fixture.panel.suggestions.map((s) => (s as { type: string }).type)).toEqual(['rule', 'note', 'event', 'move', 'remove']);
+  expect(fixture.panel.weeklySuggestions).toEqual({ on: true, available: false, canChange: false, calendarTitles: true });
+});
+
+test('an API from before calendar titles reads the switch without them', async () => {
+  const api = fakeChatApi();
+  api.panel = { ...fixture.panel, weeklySuggestions: { on: true, available: true, canChange: true } };
+  expect((await loadAgentPanel(api, 'l1')).weeklySuggestions).toEqual({ on: true, available: true, canChange: true });
 });
 
 test('an API from before weekly suggestions reads as none, and a suggestion this client does not know is left out', async () => {
   const api = fakeChatApi();
   api.panel = { questions: [], activity: [], suggestions: [{ id: 's9', type: 'reminder', why: 'x', calendar: [], createdAt: '' }] };
-  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [], activity: [], suggestions: [], weeklySuggestions: null });
+  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [], activity: [], suggestions: [], weeklySuggestions: null, ruleSuggestions: [] });
 });
 
 test('accepting or dismissing a suggestion sends an empty body to its route', async () => {
@@ -71,6 +80,39 @@ test('accepting or dismissing a suggestion sends an empty body to its route', as
   expect(api.writes).toEqual([{ method: 'POST', path: accept, body: {} }, { method: 'POST', path: dismiss, body: {} }]);
 });
 
+test('accepting a spotted event sends the admin’s choice and count; its dismiss and every other accept send {}', async () => {
+  const api = fakeChatApi();
+  const accept = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c4/accept';
+  const dismiss = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c4/dismiss';
+  const move = '/api/org/locations/l1/agent/suggestions/0000000000000000000000c5/accept';
+  const answer = (id: string, status: string) => () => ({ suggestion: { id, status }, note: null, rule: null });
+  api.respond[accept] = answer('0000000000000000000000c4', 'accepted');
+  api.respond[dismiss] = answer('0000000000000000000000c4', 'dismissed');
+  api.respond[move] = answer('0000000000000000000000c5', 'accepted');
+  await decideSuggestion(api, 'l1', '0000000000000000000000c4', 'accept', { effect: 'closed', expectedGuests: null });
+  await decideSuggestion(api, 'l1', '0000000000000000000000c4', 'accept', { effect: 'more_guests', expectedGuests: 40 });
+  await decideSuggestion(api, 'l1', '0000000000000000000000c4', 'dismiss');
+  await decideSuggestion(api, 'l1', '0000000000000000000000c5', 'accept');
+  expect(api.writes).toEqual([
+    { method: 'POST', path: accept, body: { effect: 'closed', expectedGuests: null } },
+    { method: 'POST', path: accept, body: { effect: 'more_guests', expectedGuests: 40 } },
+    { method: 'POST', path: dismiss, body: {} },
+    { method: 'POST', path: move, body: {} },
+  ]);
+});
+
+test('the titles switch sends { on }, and the tab’s orgId in open as admin', async () => {
+  const api = fakeChatApi();
+  const path = '/api/org/weekly-suggestions/calendar-titles';
+  api.respond[path] = (body) => ({ calendarTitles: { on: (body as { on: boolean }).on } });
+  expect(await setCalendarTitles(api, false, null)).toBe(false);
+  expect(await setCalendarTitles(api, false, 'o1')).toBe(false);
+  expect(api.writes).toEqual([
+    { method: 'PATCH', path, body: { on: false } },
+    { method: 'PATCH', path, body: { on: false, orgId: 'o1' } },
+  ]);
+});
+
 test('the switch sends { on }, and the tab’s orgId in open as admin', async () => {
   const api = fakeChatApi();
   api.respond['/api/org/weekly-suggestions'] = (body) => ({ weeklySuggestions: { on: (body as { on: boolean }).on } });
@@ -80,4 +122,56 @@ test('the switch sends { on }, and the tab’s orgId in open as admin', async ()
     { method: 'PATCH', path: '/api/org/weekly-suggestions', body: { on: false } },
     { method: 'PATCH', path: '/api/org/weekly-suggestions', body: { on: true, orgId: 'o1' } },
   ]);
+});
+
+test('the fixture holds a suggested rule from a file and one from the sales history (D46)', () => {
+  expect(fixture.panel.ruleSuggestions.map((s) => (s as { source: string }).source)).toEqual(['file', 'sales']);
+});
+
+test('a weekday question from an API before D46, and a suggested rule from a source this client does not know, are left out', async () => {
+  const api = fakeChatApi();
+  const weekday = { id: 'weekday_1_2026-03-01_2026-05-31', kind: 'weekday', weekday: 1, from: '2026-03-01', to: '2026-05-31', noSalesCount: 13, weekdayCount: 13 };
+  const [file] = fixture.panel.ruleSuggestions;
+  api.panel = { ...fixture.panel, questions: [weekday], ruleSuggestions: [file, { ...(file as object), id: 'x', source: 'weekly' }] };
+  const panel = await loadAgentPanel(api, 'l1');
+  expect(panel.questions).toEqual([]);
+  expect(panel.ruleSuggestions).toEqual([file]);
+});
+
+test('GET .../rules reads `suggested` with the same schema, and an API before D46 reads as none', async () => {
+  const api = fakeChatApi();
+  api.reads['/api/org/locations/l1/rules'] = () => ({ rules: [], limit: 30, suggested: fixture.panel.ruleSuggestions });
+  expect(await fetchRules(api, 'l1')).toEqual({ rules: [], limit: 30, suggested: fixture.panel.ruleSuggestions });
+  api.reads['/api/org/locations/l1/rules'] = () => ({ rules: [], limit: 30 });
+  expect(await fetchRules(api, 'l1')).toEqual({ rules: [], limit: 30, suggested: [] });
+});
+
+test('Confirm and Dismiss send an empty body, and Edit sends the rule, to the suggested rules’ own routes', async () => {
+  const api = fakeChatApi();
+  const base = '/api/org/locations/l1/agent/rule-suggestions';
+  api.respond[`${base}/sales_weekday_1/accept`] = () => ({ suggestion: { id: 'n1', status: 'accepted' }, rule: null });
+  api.respond[`${base}/d1/accept`] = () => ({ suggestion: { id: 'd1', status: 'accepted' }, rule: null });
+  api.respond[`${base}/d2/dismiss`] = () => ({ suggestion: { id: 'd2', status: 'dismissed' }, rule: null });
+  expect(await decideRuleSuggestion(api, 'l1', 'sales_weekday_1', 'accept')).toEqual({ suggestion: { id: 'n1', status: 'accepted' }, rule: null });
+  const schedule = {
+    kind: 'closure' as const, startDate: '2027-01-01', endDate: null, weekdays: null, effect: 'closed' as const, expectedGuests: null,
+    startTime: null, endTime: null, season: { repeat: 'yearly' as const, from: '01-01', to: '03-31' },
+  };
+  await decideRuleSuggestion(api, 'l1', 'd1', 'accept', { text: 'Closed in winter', schedule });
+  await decideRuleSuggestion(api, 'l1', 'd2', 'dismiss');
+  expect(api.writes).toEqual([
+    { method: 'POST', path: `${base}/sales_weekday_1/accept`, body: {} },
+    { method: 'POST', path: `${base}/d1/accept`, body: { rule: { text: 'Closed in winter', schedule } } },
+    { method: 'POST', path: `${base}/d2/dismiss`, body: {} },
+  ]);
+});
+
+test('409 already_decided carries the stored rule', () => {
+  const rule = {
+    id: 'd1', text: 'Closed on Tuesdays', addedVia: 'townwise_ai', createdByEmail: 'owner@example.com', createdAt: '2026-11-17T15:00:00.000Z',
+    updatedAt: '2026-11-17T15:00:00.000Z', canEdit: true,
+  };
+  expect(alreadyDecidedRule(new ApiError('http', 'x', { status: 409, code: 'already_decided', detail: { rule } }))).toEqual(rule);
+  expect(alreadyDecidedRule(new ApiError('http', 'x', { status: 409, code: 'rule_exists', detail: { rule } }))).toBeNull();
+  expect(alreadyDecidedRule(new Error('x'))).toBeNull();
 });

@@ -1,6 +1,9 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { ExpoRoot } from 'expo-router';
+import { getMockContext } from 'expo-router/testing-library';
+import { Text } from 'react-native';
 
-import { SourceChips } from '../../../src/portal/ui/SourceChip';
+import { AppChip, SourceChips } from '../../../src/portal/ui/SourceChip';
 
 // The source chip on web (source-chips: "Every source is a round chip with the site's logo and name" and "A chip is
 // named by what it shows"): an <a href> 44px tall around a 24px pill with the site's logo (hidden from screen readers)
@@ -122,4 +125,46 @@ test('no sources, no row', () => {
   const { container } = render(<SourceChips sources={[]} />);
   expect(container.textContent).toBe('');
   expect(screen.queryAllByRole('link')).toEqual([]);
+});
+
+// The in-app mode (calendar-sources, D49): a chip to a page inside the app, such as a calendar's page in Your data.
+// It navigates with expo-router's Link, so the page never reloads, and it holds only an app path.
+describe('an in-app chip', () => {
+  const PAGE = '/locations/l1/data/c_0123456789abcdef01234567';
+
+  function renderAt(chip: React.JSX.Element): void {
+    render(
+      <ExpoRoot
+        context={getMockContext({
+          index: () => chip,
+          'locations/[locationId]/data/[ref]': () => <Text>Calendar page</Text>,
+        })}
+        location="/"
+      />,
+    );
+  }
+
+  test('is a link to the app path, drawn as the same pill with a glyph hidden from screen readers', async () => {
+    renderAt(<AppChip href={PAGE} name="US holidays" label="US holidays. Opens this calendar in Your data" glyph="calendar" />);
+    const link = await screen.findByRole('link', { name: 'US holidays. Opens this calendar in Your data' });
+    expect(link.tagName).toBe('A');
+    expect(link.getAttribute('href')).toBe(PAGE);
+    expect(link.textContent).toBe('US holidays');
+    expect(window.getComputedStyle(link).minHeight).toBe('44px');
+    // It hugs its pill in a column, as the town chips do in their row, rather than stretching across the panel (UI review S1).
+    expect(window.getComputedStyle(link).alignSelf).toBe('flex-start');
+    const pill = link.firstElementChild;
+    if (!(pill instanceof HTMLElement)) throw new Error('no pill');
+    expect(window.getComputedStyle(pill).borderTopLeftRadius).toBe('12px');
+    expect(pill.firstElementChild?.getAttribute('aria-hidden')).toBe('true');
+    expect(pill.querySelector('svg')).not.toBeNull();
+    // No target or rel: it stays in the app.
+    expect(link.getAttribute('target')).toBeNull();
+  });
+
+  test('a press opens the page inside the app', async () => {
+    renderAt(<AppChip href={PAGE} name="Your file" label="Your file. Opens it in Your data" glyph="file" />);
+    fireEvent.click(await screen.findByRole('link', { name: 'Your file. Opens it in Your data' }));
+    expect(await screen.findByText('Calendar page')).toBeTruthy();
+  });
 });

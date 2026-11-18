@@ -52,6 +52,11 @@ export interface PlacesClient {
   autocomplete(input: string, sessionToken: string): Promise<PlaceSuggestion[]>;
   /** Null when Google has no place with this id. Throws PlacesUnavailableError. */
   details(placeId: string, sessionToken: string): Promise<PlaceDetails | null>;
+  /**
+   * D47: the place's latitude and longitude (Place Details Essentials, `location` only, no session), for Settings'
+   * map; null when Google has no such place. Throws PlacesUnavailableError.
+   */
+  locate(placeId: string): Promise<{ lat: number; lng: number } | null>;
 }
 
 export type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -65,6 +70,10 @@ const placePredictionSchema = z.object({
   }),
 });
 const autocompleteSchema = z.object({ suggestions: z.array(z.unknown()).optional() });
+/** D47: only the place's point. */
+const LOCATE_FIELD_MASK = 'id,location';
+const locateSchema = z.object({ location: z.object({ latitude: z.number(), longitude: z.number() }).optional() });
+
 const detailsSchema = z.object({
   id: z.string().optional(),
   formattedAddress: z.string().optional(),
@@ -201,6 +210,29 @@ export function createGooglePlacesClient(
           types: component.types ?? [],
         })),
       };
+    },
+
+    locate: async (placeId) => {
+      const res = await send(`${PLACES_API}/places/${encodeURIComponent(placeId)}`, {
+        method: 'GET',
+        headers: { 'X-Goog-Api-Key': apiKey, 'X-Goog-FieldMask': LOCATE_FIELD_MASK },
+      });
+      if (res.status === 404) {
+        await discard(res);
+        return null;
+      }
+      if (res.status === 400) {
+        if (isUnknownPlaceId(await jsonOf(res))) return null;
+        throw new PlacesUnavailableError('upstream_status', { status: res.status });
+      }
+      if (!res.ok) {
+        await discard(res);
+        throw new PlacesUnavailableError('upstream_status', { status: res.status });
+      }
+      const parsed = locateSchema.safeParse(await jsonOf(res));
+      if (!parsed.success) throw new PlacesUnavailableError('bad_response');
+      const at = parsed.data.location;
+      return at === undefined ? null : { lat: at.latitude, lng: at.longitude };
     },
   };
 }

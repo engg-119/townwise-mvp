@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Link, type Href } from 'expo-router';
-import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
+import { AccessibilityInfo, Platform, StyleSheet, Text, View, type StyleProp, type ViewStyle } from 'react-native';
 
 import { theme } from '../../theme';
 import { errorCopy } from '../errors';
@@ -8,10 +8,14 @@ import { useBreakpoint } from '../hooks';
 import { Button } from './Button';
 import { useMessageTarget } from './messageFocus';
 import { inlineTarget, Mono } from './text';
+import { useToast, type ToastApi } from './toast';
 
 // Messages, notices, errors, loading lines, empty states and status tags (spec 15.6, 15.7; shell.md 7.3, 7.8).
-// No color carries meaning: messages print in white in the numbered, ruled list, with no toast and no
-// auto-dismiss. Loading is one line of text that keeps the content's height. Nothing spins or shimmers.
+// No color carries meaning. What an action the person just took did (<Notice>: "Saved.", "Deleted the note.") is a
+// toast at the bottom of the window that leaves by itself (ui/toast.tsx, D55). Everything else stays in the page, in
+// white in the numbered, ruled list, until the page changes it: errors, field messages, and state that is no
+// action's result (<InlineNotice>). Loading is one line of text that keeps the content's height. Nothing spins or
+// shimmers.
 
 export interface MessageLink { label: string; href: string }
 
@@ -49,8 +53,73 @@ export function Messages(props: {
   );
 }
 
-/** A page notice ("Saved.", "You joined {org}."): `role="status"`, at the top of the content. */
-export function Notice(props: { text: string; link?: MessageLink }): React.JSX.Element {
+/**
+ * What an action the person just took did ("Saved.", "You joined {org}."): a toast, and no row in the page.
+ *
+ * Under a toast host (every signed-in screen: app/(gate)/(app)/_layout.tsx) it renders nothing where it is written
+ * and shows its words as a toast: once as it mounts, in place when the words change, and again for a new `result`.
+ * The toast then lives its own time, whatever the page does with the notice. With no host around it (a component
+ * rendered alone in a test) it is the numbered `role="status"` row at this place in the page, as every notice was
+ * before D55, so those tests still find its words; test/portal/ui/toast.test.web.tsx and the page tests that mount
+ * the whole app cover the toast.
+ */
+export function Notice(props: {
+  text: string;
+  link?: MessageLink;
+  /**
+   * The action result the words are for, when the page keeps one: the same object never toasts twice (a notice that
+   * mounts again with the page), and a new one toasts again though the words are the same.
+   */
+  result?: object;
+  /**
+   * For words that say the action did not happen ("This note isn’t available."): a failure is never a toast, so the
+   * notice stays a row in the page under a host too, and takes focus as an error line does.
+   */
+  stays?: boolean;
+  /** The row's box (its margin) where it is a row: no host mounted, or `stays`. */
+  style?: StyleProp<ViewStyle>;
+}): React.JSX.Element | null {
+  const toast = useToast();
+  if (toast !== null && props.stays !== true) return <Toasted toast={toast} text={props.text} link={props.link} result={props.result} />;
+  const row = <InlineNotice text={props.text} {...(props.link === undefined ? {} : { link: props.link })} />;
+  return props.style === undefined ? row : <View style={props.style}>{row}</View>;
+}
+
+function Toasted(props: { toast: ToastApi; text: string; link: MessageLink | undefined; result: object | undefined }): null {
+  const { toast, text, result } = props;
+  const label = props.link?.label;
+  const href = props.link?.href;
+  const shown = useRef<number | undefined>(undefined);
+  // A layout effect, so the toast is on screen in the same paint as the page's own change, not a frame after it.
+  useLayoutEffect(() => {
+    shown.current = toast.show(
+      { text, ...(label === undefined || href === undefined ? {} : { link: { label, href } }) },
+      { ...(shown.current === undefined ? {} : { replaces: shown.current }), ...(result === undefined ? {} : { result }) },
+    );
+  }, [toast, text, label, href, result]);
+  // When the action took the focused control away, the page's heading takes focus in the toast's place.
+  useMessageTarget(text, true);
+  return null;
+}
+
+/**
+ * A page's notice, kept as one object per action: `<Notice text={notice.text} result={notice} stays={notice.stays} />`.
+ * Each set is a new result, so the same words set twice in a row ("Deleted the note." for a second note) are two
+ * toasts, and a notice that mounts again with its page is not. `stays`: the words say the action did not happen, so
+ * they stay in the page.
+ */
+export interface NoticeState { text: string; stays: boolean }
+
+export function useNoticeState(initial: NoticeState | null = null): [NoticeState | null, (text: string | null, stays?: boolean) => void] {
+  const [notice, setNotice] = useState<NoticeState | null>(initial);
+  return [notice, useCallback((text: string | null, stays = false) => { setNotice(text === null ? null : { text, stays }); }, [])];
+}
+
+/**
+ * A line of standing state that is no action's result ("This location isn’t available.", no forecast published
+ * yet): `role="status"`, a row in the page until the page changes it. Never a toast.
+ */
+export function InlineNotice(props: { text: string; link?: MessageLink }): React.JSX.Element {
   return <Messages live="status" takesFocus items={[props.text]} {...(props.link === undefined ? {} : { link: props.link })} />;
 }
 

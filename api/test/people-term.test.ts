@@ -30,8 +30,9 @@ describe('termEntries', () => {
   });
 
   it('finds every Hanover term entry in the seeded calendar', () => {
-    // 16 from the CSV seed, then winter, spring, summer and fall 2027 classes and finals from the registrar.
-    expect(hanover).toHaveLength(24);
+    // 16 from the CSV seed, then winter, spring, summer and fall 2027 and winter and spring 2028 classes and finals
+    // from the registrar.
+    expect(hanover).toHaveLength(28);
   });
 });
 
@@ -60,8 +61,10 @@ describe('termStateOn, Hanover', () => {
   it('is unknown between classes and finals, before the first entry, and after the last finals with no next classes', () => {
     expect(termStateOn('2026-11-18', hanover).state).toBe('unknown');
     expect(termStateOn('2024-12-15', hanover).state).toBe('unknown');
-    // The calendar has no winter 2028 classes entry yet, so the days after fall 2027 finals are not derived.
-    expect(termStateOn('2027-12-10', hanover)).toEqual({ state: 'unknown', label: null, events: [] });
+    // The calendar has no summer 2028 classes entry yet, so the days after spring 2028 finals are not derived.
+    expect(termStateOn('2028-06-10', hanover)).toEqual({ state: 'unknown', label: null, events: [] });
+    // Between fall 2027 finals and winter 2028 classes (D52) is a break.
+    expect(termStateOn('2027-12-10', hanover).state).toBe('between_terms');
   });
 });
 

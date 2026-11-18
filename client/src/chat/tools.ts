@@ -442,6 +442,11 @@ const TOOLS: Readonly<Record<string, ToolRow>> = {
     object: () => 'a rule to remember',
     hidden: true,
   },
+  // D56: shown as its card (ui/OrderSetupCard.tsx).
+  propose_order_setup: {
+    object: () => 'ordering setup suggestions',
+    hidden: true,
+  },
   // D37: Anthropic's web search (api/src/chat/web-search.ts searchCard), not in the registry: the API runs it, and only
   // while it is turned on, so it adds nothing to what TownwiseAI reads. The card never shows the query (its input is
   // always null), names a failure in general words, never its code, and says when the reply ended before its result.
@@ -510,29 +515,39 @@ export function toolLine(step: ToolStep, ctx: ToolContext, ended = false): ToolL
   };
 }
 
-function list(items: readonly string[]): string {
-  if (items.length <= 1) return items[0] ?? '';
-  if (items.length === 2) return `${items[0] ?? ''} and ${items[1] ?? ''}`;
-  return `${items.slice(0, -1).join(', ')}, and ${items.at(-1) ?? ''}`;
-}
+/** A piece of the Based on line: its words, and where it opens on the location's own pages, if anywhere. */
+export interface BasedOnPiece { text: string; target: DataTarget | null }
 
 /**
  * The line under a finished reply, built only from the calls that read something: "Based on your sales from Oct 1
  * to Oct 31, 2026, your 12 notes, and Hanover’s town profile (bls.gov, dartmouth.edu)." A call that failed read
  * nothing and is left out, as is one that reads nothing (start_calibration); a reply with no reads is "Based on this
- * conversation only."
+ * conversation only." As the words between its pieces and the pieces themselves, each with the page it opens
+ * (`dataTarget`), so a piece that read the team's own data can be a link.
  */
-export function basedOnLine(steps: readonly ToolStep[], ctx: ToolContext): string {
-  const pieces: string[] = [];
+export function basedOnParts(steps: readonly ToolStep[], ctx: ToolContext): (string | BasedOnPiece)[] {
+  const pieces: BasedOnPiece[] = [];
   for (const step of steps) {
     if (step.state !== 'done' || isHiddenTool(step.name)) continue;
     const row = Object.hasOwn(TOOLS, step.name) ? TOOLS[step.name] : undefined;
-    const piece = row === undefined
+    const text = row === undefined
       ? 'something else TownwiseAI looked up'
       : (row.basedOn ?? row.object)(step.input, ctx, step.result);
-    if (piece !== null && !pieces.includes(piece)) pieces.push(piece);
+    if (text !== null && !pieces.some((piece) => piece.text === text)) pieces.push({ text, target: dataTarget(step) });
   }
-  return pieces.length === 0 ? 'Based on this conversation only.' : `Based on ${list(pieces)}.`;
+  if (pieces.length === 0) return ['Based on this conversation only.'];
+  const parts: (string | BasedOnPiece)[] = ['Based on '];
+  pieces.forEach((piece, index) => {
+    if (index > 0) parts.push(pieces.length === 2 ? ' and ' : index === pieces.length - 1 ? ', and ' : ', ');
+    parts.push(piece);
+  });
+  parts.push('.');
+  return parts;
+}
+
+/** The Based on line in words (basedOnParts). */
+export function basedOnLine(steps: readonly ToolStep[], ctx: ToolContext): string {
+  return basedOnParts(steps, ctx).map((part) => (typeof part === 'string' ? part : part.text)).join('');
 }
 
 /**
@@ -597,4 +612,30 @@ export function viewRows(input: ToolView | null, result: ToolView | null, name?:
     }
   }
   return rows;
+}
+
+/**
+ * Where a step that read the team's own uploaded data opens (spec P25 build note, 2026-11-18): a day read (get_day)
+ * opens that day of the Calendar; a sales read (get_sales_days) opens the Your data item that holds its days when one
+ * upload holds them all, and Your data's list when several do (or the result, saved before it named them, doesn't
+ * say); the sales summary (get_location_overview) opens Your data's list. Built only from the call's result view, as the
+ * server returned it (a date, a `u_` or `f_` ref), never from the model's words; nothing for a call that hasn't read,
+ * read nothing, or read anything else (the town's calendar and profile, web pages: those keep their source links).
+ */
+export type DataTarget = { kind: 'day'; date: string } | { kind: 'item'; ref: string } | { kind: 'data' };
+
+const DATA_REF = /^[uf]_[0-9a-f]{24}$/;
+
+export function dataTarget(step: ToolStep): DataTarget | null {
+  const { result } = step;
+  if (step.state !== 'done' || result === null) return null;
+  if (step.name === 'get_day') {
+    const date = text(result, 'date');
+    return date !== null && DATE.test(date) ? { kind: 'day', date } : null;
+  }
+  if (step.name !== 'get_sales_days' && step.name !== 'get_location_overview') return null;
+  if ((count(result, 'dayCount') ?? 0) === 0) return null;
+  const refs: unknown = step.name === 'get_sales_days' ? result.uploadRefs : undefined;
+  const only: unknown = Array.isArray(refs) && refs.length === 1 ? refs[0] : null;
+  return typeof only === 'string' && DATA_REF.test(only) ? { kind: 'item', ref: only } : { kind: 'data' };
 }

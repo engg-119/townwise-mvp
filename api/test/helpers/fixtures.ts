@@ -247,10 +247,32 @@ export async function addLiveTurn(server: Server, opts: { orgId: string; userId:
   });
 }
 
+/** A tw_chat_turns record (openspec change resumable-chat-turns): one running TownwiseAI turn with one stored event. */
+export async function addChatTurn(
+  server: Server, opts: { orgId: string; locationId: string; conversationId: string; userId: string },
+): Promise<string> {
+  const turnId = `turn-${new Types.ObjectId().toHexString()}`;
+  const now = server.clock.now();
+  await server.connection.collection('tw_chat_turns').insertOne({
+    orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId), conversationId: new Types.ObjectId(opts.conversationId),
+    userId: opts.userId, turnId, state: 'running', leaseUntil: new Date(now.getTime() + 30_000), stopRequested: false, startedAt: now,
+    endedAt: null, userNodeId: 'user-node', replyNodeId: 'reply-node', parentId: null, message: { text: 'Sentinel live message', attachments: [] },
+    events: [{ seq: 1, type: 'text', data: { delta: 'Sentinel live reply' } }], eventCount: 1,
+  });
+  return turnId;
+}
+
 /** A tw_chat_usage record: the organization's tuning chat cost for one month. */
 export async function addChatUsage(server: Server, opts: { orgId: string; month: string; costMicroUsd: number }): Promise<void> {
   await server.connection.collection('tw_chat_usage').insertOne({
     orgId: new Types.ObjectId(opts.orgId), month: opts.month, costMicroUsd: opts.costMicroUsd, updatedAt: server.clock.now(),
+  });
+}
+
+/** A tw_activity_days record (openspec change staff-overview): the person used the app in the organization that UTC day. */
+export async function addActivityDay(server: Server, opts: { orgId: string; userId: string; day: string }): Promise<void> {
+  await server.connection.collection<{ _id: string; orgId: Types.ObjectId; userId: string; day: string }>('tw_activity_days').insertOne({
+    _id: `${opts.orgId}:${opts.userId}:${opts.day}`, orgId: new Types.ObjectId(opts.orgId), userId: opts.userId, day: opts.day,
   });
 }
 

@@ -20,12 +20,14 @@ import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_T
 import { AI_READS_IN_FLIGHT } from '../files/limits.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type {
-  AiActionsOutcome, AiCalibration, AiDaysReason, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord, FileStatus,
+  AiActionsOutcome, AiCalibration, AiDaysReason, AiEventEffect, AiEventKind, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord,
+  FileStatus,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
+import { finishAccepted } from './rule-suggestions.ts';
 import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
 
@@ -85,7 +87,8 @@ export interface DataItemView {
  * summary item, as codes), and `calibration` (the model update's status, and the calibration's id when one started);
  * `[]`, null, 0, 0, null, null, null, null and null before that and once undone. `canUndo`: the read ended (done,
  * failed or skipped) after its actions began, and made something or stopped before saying what (DELETE .../ai), and the
- * caller asked for it or is an org admin, not under view-as.
+ * caller asked for it or is an org admin, not under view-as. D46: `rulesSuggested`, the suggested closure rules the read
+ * stored, and `rulesWaiting`, those still open (what an undo removes); 0 and 0 before that and once undone.
  */
 export interface DataItemAiView {
   status: AiReadStatus;
@@ -105,6 +108,20 @@ export interface DataItemAiView {
   itemReason: AiItemReason | null;
   calibration: AiCalibration | null;
   canUndo: boolean;
+  rulesSuggested: number;
+  rulesWaiting: number;
+  /**
+   * D49: on one item's view only (GET .../data/:ref), never the list's, the events the read found, in its order, as it
+   * read them; `noteId` is the note the read made from the event while that note exists, else null; `title` is null
+   * under view-as; [] before the read is done and once the original is deleted.
+   */
+  events?: DataItemAiEvent[];
+}
+
+/** An event a read found (DataItemAiView.events). */
+export interface DataItemAiEvent {
+  title: string | null; startDate: string; endDate: string; kind: AiEventKind; effect: AiEventEffect; expectedGuests: number | null;
+  noteId: string | null;
 }
 
 /**
@@ -116,6 +133,8 @@ interface AiLinks {
   readonly uploads: ReadonlySet<string>;
   readonly items: ReadonlySet<string>;
   readonly sources: ReadonlyMap<string, string>;
+  /** D46: by file id, how many suggested closure rules its read stored are still open. */
+  readonly waiting: ReadonlyMap<string, number>;
 }
 
 /** Who added an item and who last edited it, each as the list names them. */
@@ -212,10 +231,11 @@ function undoable(file: FileRecord): boolean {
   const ai = file.ai;
   if (ai === null || !ENDED.includes(ai.status) || ai.actions === null) return false;
   const { outcome } = ai.actions;
-  return outcome === null || outcome.notes.length > 0 || outcome.uploadId !== null || outcome.itemId !== null;
+  return outcome === null || outcome.notes.length > 0 || outcome.uploadId !== null || outcome.itemId !== null
+    || (outcome.rulesSuggested?.length ?? 0) > 0;
 }
 
-function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks): DataItemAiView | null {
+function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks, withEvents: boolean): DataItemAiView | null {
   const ai = file?.ai ?? null;
   if (file === null || ai === null) return null;
   const result = ai.status === 'done' ? ai.result : null;
@@ -231,6 +251,15 @@ function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks
   });
   const uploadId = outcome?.uploadId ?? null;
   const itemId = outcome?.itemId ?? null;
+  const events = !withEvents ? {} : {
+    events: (result?.events ?? []).map((event, index): DataItemAiEvent => {
+      const noteId = actions?.plan.noteIds[index];
+      return {
+        title: hidden ? null : event.title, startDate: event.startDate, endDate: event.endDate, kind: event.kind, effect: event.effect,
+        expectedGuests: event.expectedGuests, noteId: noteId !== undefined && links.notes.has(noteId) ? noteId : null,
+      };
+    }),
+  };
   return {
     status: ai.status,
     reason: ai.reason,
@@ -249,6 +278,9 @@ function aiView(member: MemberPrincipal, file: FileRecord | null, links: AiLinks
     itemReason: outcome?.itemReason ?? null,
     calibration: outcome === null ? null : { ...outcome.calibration },
     canUndo: undoable(file) && mayUndo(member, file),
+    rulesSuggested: outcome?.rulesSuggested?.length ?? 0,
+    rulesWaiting: outcome === null ? 0 : links.waiting.get(file.id) ?? 0,
+    ...events,
   };
 }
 
@@ -262,7 +294,7 @@ async function aiLinksFor(ctx: TownwiseContext, scope: OrgScope, items: readonly
   const outcomes = ctx.files === null ? [] : items.flatMap((item) => {
     const ai = item.file?.ai;
     const outcome = ai?.status === 'done' ? ai.actions?.outcome ?? null : null;
-    return outcome === null ? [] : [{ locationId: item.locationId, outcome }];
+    return outcome === null || item.file === null ? [] : [{ locationId: item.locationId, fileId: item.file.id, outcome }];
   });
   const uploadIds = new Map<string, string[]>();
   for (const { locationId, outcome } of outcomes) {
@@ -270,12 +302,17 @@ async function aiLinksFor(ctx: TownwiseContext, scope: OrgScope, items: readonly
   }
   const sourceIds = items.flatMap((item) => aiSourceOf(item) ?? []);
   const itemIds = outcomes.flatMap(({ outcome }) => outcome.itemId ?? []);
-  const [notes, uploads, files] = await Promise.all([
+  const [notes, uploads, files, waiting] = await Promise.all([
     ctx.stores.notes.byIds(scope, outcomes.flatMap(({ outcome }) => outcome.notes)),
     Promise.all([...uploadIds].map(([locationId, ids]) => ctx.stores.uploads.byIds(scope, locationId, ids))),
     ctx.files === null || sourceIds.length + itemIds.length === 0 ? [] : ctx.stores.files.byIds(scope, [...new Set([...sourceIds, ...itemIds])]),
+    // D46: only a read that suggested rules is looked up.
+    Promise.all(outcomes.filter(({ outcome }) => (outcome.rulesSuggested?.length ?? 0) > 0).map(async ({ locationId, fileId }) => (
+      [fileId, (await ctx.stores.agentSuggestions.openFromFile(scope, locationId, fileId)).length] as const
+    ))),
   ]);
   return {
+    waiting: new Map(waiting),
     notes: new Map(notes.map((note) => [note.id, note])),
     uploads: new Set(uploads.flat().map((upload) => upload.id)),
     items: new Set(files.map((file) => file.id)),
@@ -285,6 +322,7 @@ async function aiLinksFor(ctx: TownwiseContext, scope: OrgScope, items: readonly
 
 function dataItemView(
   member: MemberPrincipal, item: DataItemRecord, emails: ItemEmails, filesOn: boolean, aiOn: boolean, now: Date, links: AiLinks,
+  withEvents = false,
 ): DataItemView {
   const viewAs = member.viewAs !== null;
   const file = filesOn ? item.file : null;
@@ -313,7 +351,7 @@ function dataItemView(
     editedAt: edited === null ? null : edited.toISOString(),
     editedByEmail: edited === null ? null : emails.edited,
     canAiRead: aiReadable(member, item, file, aiOn),
-    ai: aiView(member, file, links),
+    ai: aiView(member, file, links, withEvents),
     fromAiRead: links.sources.get(aiSourceOf(item) ?? '') ?? null,
   };
 }
@@ -339,10 +377,15 @@ async function itemViews(ctx: TownwiseContext, member: MemberPrincipal, items: r
   return items.map((item) => dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, now, links));
 }
 
-/** One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts). */
-export async function itemView(ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord): Promise<DataItemView> {
+/**
+ * One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts);
+ * with `events`, its read's events too (DataItemAiView.events, D49).
+ */
+export async function itemView(
+  ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord, opts: { events?: boolean } = {},
+): Promise<DataItemView> {
   const [emails, links] = await Promise.all([emailsFor(ctx, [item]), aiLinksFor(ctx, member.scope, [item])]);
-  return dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links);
+  return dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links, opts.events === true);
 }
 
 const listQuery = z.object({ locationId: objectId.optional(), after: z.string().max(64).optional() });
@@ -375,10 +418,10 @@ export async function listData(ctx: TownwiseContext, req: Request, res: Response
 }
 
 /**
- * GET /locations/:locationId/data/:ref: one item exactly as the list shows it (P26's item page). An item the list leaves
- * out answers 404 like an unknown one: every stored file while files are off, a stored file that wrote days (its
- * upload is the item), a file being deleted and someone else's unfinished upload. A read: it logs nothing and records
- * nothing.
+ * GET /locations/:locationId/data/:ref: one item exactly as the list shows it, plus its read's `ai.events` (D49) (P26's
+ * item page). An item the list leaves out answers 404 like an unknown one: every stored file while files are off, a
+ * stored file that wrote days (its upload is the item), a file being deleted and someone else's unfinished upload. A
+ * read: it logs nothing and records nothing.
  */
 export async function getDataItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -386,7 +429,7 @@ export async function getDataItem(ctx: TownwiseContext, req: Request, res: Respo
   const location = await loadLocation(ctx, member.scope, req.params.locationId);
   const item = await loadDataItem(ctx, member.scope, location.id, ref, member.userId);
   if (item === null) throw notFound();
-  res.status(200).json({ item: await itemView(ctx, member, item) });
+  res.status(200).json({ item: await itemView(ctx, member, item, { events: true }) });
 }
 
 /** The location, then the item by its ref; a stored file answers 503 files_unavailable while files are off. */
@@ -696,7 +739,10 @@ function nothingToUndo(): AppError {
  * compare-and-set marks the read `undoing`; the notes, uploads and summary items that carry this file as their source
  * are removed (each step by filter, so it runs twice harmlessly); then a compare-and-set marks it `undone` and clears
  * its actions and its answer, and only the call that does records file.ai_undone (counts of what it removed). Answers
- * 200 { item, calibrationKept }.
+ * 200 { item, calibrationKept }. D46: the read's suggested closure rules still open go one at a time, each by
+ * compare-and-set, except one whose rule a confirm already wrote under its id, which is finished as accepted; accepted
+ * and dismissed ones stay. [CONFIRM: undoing a read removes its suggested rules still waiting and keeps rules already
+ * confirmed]
  */
 export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -730,6 +776,12 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
     return;
   }
   const notes = await ctx.stores.notes.removeFromAiRead(scope, location.id, file.id);
+  let suggestions = 0;
+  for (const open of await ctx.stores.agentSuggestions.openFromFile(scope, location.id, file.id)) {
+    const rule = await ctx.stores.businessRules.find(scope, location.id, open.id);
+    if (rule !== null && open.type === 'rule') await finishAccepted(ctx, member, location, open, rule);
+    else if (await ctx.stores.agentSuggestions.removeOpen(scope, location.id, open.id)) suggestions += 1;
+  }
   let days = 0;
   for (const upload of await ctx.stores.uploads.fromAiRead(scope, location.id, file.id)) {
     days += (await removeUpload(ctx, scope, location.id, upload.id)).deletedDays;
@@ -743,9 +795,9 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
   if (await ctx.stores.files.finishAiUndo(scope, location.id, file.id)) {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.ai_undone',
-      target: { type: 'file', id: file.id }, details: { locationId: location.id, notes, days, items },
+      target: { type: 'file', id: file.id }, details: { locationId: location.id, notes, days, items, suggestions },
     });
-    ctx.logger.info({ fileId: file.id, notes, days, items }, 'townwise.ai_read_undone');
+    ctx.logger.info({ fileId: file.id, notes, days, items, suggestions }, 'townwise.ai_read_undone');
   }
   const after = await loadDataItem(ctx, scope, location.id, item.ref, member.userId);
   if (after === null) throw notFound();

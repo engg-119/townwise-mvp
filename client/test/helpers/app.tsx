@@ -15,7 +15,6 @@ import RequestAccess from '../../app/(gate)/(app)/(access)/request-access';
 import Waiting from '../../app/(gate)/(app)/(access)/waiting';
 import NoAccess from '../../app/(gate)/(app)/(access)/no-access';
 import Joining from '../../app/(gate)/(app)/(access)/joining';
-import StaffSignInAgain from '../../app/(gate)/(app)/(access)/staff/sign-in-again';
 import AccountLayout from '../../app/(gate)/(app)/(account)/_layout';
 import Security from '../../app/(gate)/(app)/(account)/settings/security';
 import ClientLayout from '../../app/(gate)/(app)/(client)/_layout';
@@ -41,6 +40,7 @@ import Rules from '../../app/(gate)/(app)/(client)/locations/[locationId]/rules'
 import Chat from '../../app/(gate)/(app)/(client)/locations/[locationId]/chat';
 import ConsoleLayout from '../../app/(gate)/(app)/(console)/_layout';
 import Requests from '../../app/(gate)/(app)/(console)/admin/index';
+import Overview from '../../app/(gate)/(app)/(console)/admin/overview';
 import Orgs from '../../app/(gate)/(app)/(console)/admin/orgs/index';
 import Org from '../../app/(gate)/(app)/(console)/admin/orgs/[orgId]';
 import People from '../../app/(gate)/(app)/(console)/admin/people';
@@ -81,7 +81,6 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(access)/waiting': Waiting,
     '(gate)/(app)/(access)/no-access': NoAccess,
     '(gate)/(app)/(access)/joining': Joining,
-    '(gate)/(app)/(access)/staff/sign-in-again': StaffSignInAgain,
     '(gate)/(app)/(account)/_layout': AccountLayout,
     '(gate)/(app)/(account)/settings/security': Security,
     '(gate)/(app)/(client)/_layout': ClientLayout,
@@ -107,6 +106,7 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/[locationId]/chat': Chat,
     '(gate)/(app)/(console)/_layout': ConsoleLayout,
     '(gate)/(app)/(console)/admin/index': Requests,
+    '(gate)/(app)/(console)/admin/overview': Overview,
     '(gate)/(app)/(console)/admin/orgs/index': Orgs,
     '(gate)/(app)/(console)/admin/orgs/[orgId]': Org,
     '(gate)/(app)/(console)/admin/people': People,
