@@ -15,8 +15,10 @@ import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import { createTurnSweeper, type TurnSweeper } from '../src/chat/turn-sweeper.ts';
 import type { SettleStores } from '../src/chat/turn-runner.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
-import { addChatTurn, addConversation, addGrant, addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
-import { eventsOf, message, scriptedModel, text, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
+import {
+  addChatTurn, addConversation, addGrant, addLocation, addNote, addSalesDay, addSeat, auditEvents, createOrg,
+} from './helpers/fixtures.ts';
+import { eventsOf, message, messagesOf, scriptedModel, text, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
 import {
   call, removeStaffFactor, sharedAuthKeys, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -695,6 +697,71 @@ describe('the sweep', () => {
     expect(main).toMatch(/^turnSweeper\.start\(\);$/m);
     const shutdown = main.slice(main.indexOf('onShutdown: ['), main.indexOf('redis, mongo,', main.indexOf('onShutdown: [')));
     expect(shutdown).toMatch(/\bturnSweeper,/);
+  });
+});
+
+describe('privacy', () => {
+  it('no message, reply, tool result or visual reaches a log line or an audit event of a turn, a tail, a stop or the sweep', async () => {
+    await addNote(server, { orgId, locationId, detail: 'Sentinel-note-text', startDate: '2026-05-03' });
+    // A figure only the visual shows.
+    await addSalesDay(server, { orgId, locationId, date: '2026-05-02', guests: 86421, netSalesCents: 7531900 });
+    server.logs.length = 0;
+    other.logs.length = 0;
+
+    // A turn on the other instance, read back on this one while it runs.
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    for (const each of [server, other]) each.clock.advance(1000);
+    const may = { kind: 'daily', metric: 'guests', from: '2026-05-01', to: '2026-05-05', by: null, compare: null };
+    otherModel.script(
+      { kind: 'message', message: message([text('Sentinel-reply-one. '), toolUse('p1', 'list_notes', {}), toolUse('v1', 'show_visual', may)]) },
+      { kind: 'message', message: message([text('Sentinel-reply-two.')]), gate },
+    );
+    const res = await call(other, turnsPath(), { session, json: { content: 'Sentinel-question one' } });
+    expect(res.status).toBe(200);
+    const posted = res.text();
+    let running: (StoredTurn & { conversationId: Types.ObjectId }) | null = null;
+    await until(async () => {
+      running = await server.connection.collection<StoredTurn & { conversationId: Types.ObjectId }>('tw_chat_turns')
+        .findOne({ userId: session.userId, state: 'running' });
+      return running?.events.some((each) => each.type === 'visual') ?? false;
+    });
+    const { turnId, conversationId } = running as unknown as StoredTurn & { conversationId: Types.ObjectId };
+    const id = conversationId.toHexString();
+    const tailed = tail(server, tailPath(id, turnId, '0'));
+    release();
+    const shown = await posted;
+    // The stream showed the figure through the visual, and the reply; list_notes's result (its view is a count) took the
+    // note's text to the model.
+    for (const sentinel of ['86421', 'Sentinel-reply-two']) expect(shown).toContain(sentinel);
+    expect(JSON.stringify(messagesOf(otherModel.calls[1]))).toContain('Sentinel-note-text');
+    expect((await tailed).at(-1)?.event).toBe('done');
+
+    // A stopped turn in the same conversation, stopped from this instance.
+    otherModel.script({ kind: 'hang', before: eventsOf(message([text('Sentinel-reply-stopped')], { usage: { input: 1000 } })).slice(0, 3) });
+    const stopped = await call(other, turnsPath(), { session, json: { conversationId: id, content: 'Sentinel-question two' } });
+    expect(stopped.status).toBe(200);
+    const stoppedBody = stopped.text();
+    let second: StoredTurn | null = null;
+    await until(async () => {
+      second = await server.connection.collection<StoredTurn>('tw_chat_turns').findOne({ userId: session.userId, state: 'running' });
+      return (second?.eventCount ?? 0) >= 2;
+    });
+    expect((await call(server, stopPath(id, (second as unknown as StoredTurn).turnId), { session, json: {} })).status).toBe(202);
+    expect(await stoppedBody).toContain('event: stopped');
+
+    // A turn whose replica died, settled by the sweep.
+    await crashedTurn();
+    await sweeperOn().sweep();
+
+    const lines = [...server.logs, ...other.logs].join('\n');
+    for (const logged of ['townwise.chat_turn"', 'townwise.chat_turn_aborted', 'townwise.chat_turns_swept']) expect(lines).toContain(logged);
+    const audit = JSON.stringify(await auditEvents(server));
+    expect(audit).toContain('chat.turn_completed');
+    for (const sentinel of ['Sentinel', '86421', '75319']) {
+      expect(lines).not.toContain(sentinel);
+      expect(audit).not.toContain(sentinel);
+    }
   });
 });
 
