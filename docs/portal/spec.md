@@ -2554,7 +2554,7 @@ The location's standing facts, which TownwiseAI reads with every message the per
 
 | State | Shows |
 |---|---|
-| Loading | The skeleton of the table and the request’s panel (15.7), with “Loading requests” |
+| Loading | The skeleton of the table and the request’s panel (15.7), with “Loading requests”. A change of tab shows no skeleton (owner request, 2026-11-17): the list on the page stays, dimmed and busy, until the new tab's list arrives, and Pending keeps its count, so the tabs keep their places |
 | Empty | Pending: “No requests are waiting.” Other tabs: “No approved requests.”, “No rejected requests.”, “No withdrawn requests.” |
 | Error | 409 `request_not_pending`: “Someone already decided this request.” and the list reloads. 409 `requester_has_org`: the warning copy. Network copy. |
 | Success | The request moves to its tab. After approval: “Approved. {org} is set up, and {email} is its admin.” with a link “Open {org}”. |

@@ -7,7 +7,7 @@ import { Dialog } from '../../../../../src/portal/console/Dialog';
 import { orgHref, requestHref } from '../../../../../src/portal/console/links';
 import { CellLink, FilterTabs, RowName, Split } from '../../../../../src/portal/console/parts';
 import { problemOf } from '../../../../../src/portal/console/problems';
-import { REQUEST_STATUSES, type AdminRequest, type RequestStatus } from '../../../../../src/portal/console/schemas';
+import { REQUEST_STATUSES, type AdminRequest, type RequestList, type RequestStatus } from '../../../../../src/portal/console/schemas';
 import { ViewAsDialog, type ViewAsTarget } from '../../../../../src/portal/console/ViewAsDialog';
 import { hasCode } from '../../../../../src/portal/errors';
 import { formatCount, formatDate, townLabel } from '../../../../../src/portal/format';
@@ -344,7 +344,15 @@ export default function RequestsPage(): React.JSX.Element {
     reload();
   }, [focusMessage, reload, status]);
 
-  const pendingCount = state.status === 'ready' ? state.data.pendingCount : null;
+  /**
+   * The last list that arrived, with its tab. While another tab's list loads it stays on the page, so a tab change
+   * swaps one list for the next with no skeleton between, and Pending keeps its count, so the tabs keep their places.
+   */
+  const [held, setHeld] = useState<{ status: RequestStatus; data: RequestList } | null>(null);
+  if (state.status === 'ready' && held?.data !== state.data) setHeld({ status, data: state.data });
+  const shown = state.status === 'ready' ? { status, data: state.data } : state.status === 'loading' && held !== null && held.status !== status ? held : null;
+
+  const pendingCount = state.status === 'ready' ? state.data.pendingCount : held?.data.pendingCount ?? null;
   const reportPending = useReportPendingCount();
   useEffect(() => { if (pendingCount !== null) reportPending(pendingCount); }, [pendingCount, reportPending]);
   const tabs = REQUEST_STATUSES.map((value) => ({
@@ -354,21 +362,21 @@ export default function RequestsPage(): React.JSX.Element {
   }));
 
   let body: React.ReactNode;
-  if (state.status === 'loading') {
-    body = <RequestsSkeleton label="Loading requests" />;
-  } else if (state.status === 'failed') {
+  if (state.status === 'failed') {
     body = <ErrorNotice error={state.error} onRetry={reload} />;
+  } else if (shown === null) {
+    body = <RequestsSkeleton label="Loading requests" />;
   } else {
-    const { requests } = state.data;
+    const { requests } = shown.data;
     // A link to a request this list doesn't have says so, rather than showing another request as if it were it.
     const selected = typeof params.request === 'string' ? requests.find((request) => request.id === params.request) : requests[0];
     body = requests.length === 0 ? (
-      <EmptyState text={EMPTY[status]}>
-        {status === 'pending' ? <LinkButton href={listHref('approved')} label="See approved requests" /> : null}
+      <EmptyState text={EMPTY[shown.status]}>
+        {shown.status === 'pending' ? <LinkButton href={listHref('approved')} label="See approved requests" /> : null}
       </EmptyState>
     ) : (
       <Split
-        table={<RequestTable status={status} requests={requests} selected={selected} />}
+        table={<RequestTable status={shown.status} requests={requests} selected={selected} />}
         detail={selected === undefined ? <EmptyState text={`${GONE} Choose one from the list.`} /> : <RequestDetail request={selected} onOpen={setOpen} />}
       />
     );
@@ -379,7 +387,10 @@ export default function RequestsPage(): React.JSX.Element {
       <Stack gap={24}>
         <FilterTabs label="Requests by status" tabs={tabs} />
         {stale === null ? null : <ErrorNotice key={stale.id} message={stale.text} />}
-        {body}
+        {/* Another tab's list, held while this tab's loads: dimmed and busy, so it never reads as this tab's. */}
+        {state.status === 'loading' && shown !== null
+          ? <View testID="requests-held" aria-busy pointerEvents="none" style={styles.busy}>{body}</View>
+          : body}
       </Stack>
       {open?.kind === 'approve' ? <ApproveDialog request={open.request} onApproved={done} onStale={onStale} onRefresh={reload} onClose={close} /> : null}
       {open?.kind === 'reject' ? <RejectDialog request={open.request} onRejected={done} onStale={onStale} onClose={close} /> : null}
@@ -389,6 +400,7 @@ export default function RequestsPage(): React.JSX.Element {
 }
 
 const styles = StyleSheet.create({
+  busy: { opacity: 0.6 },
   head: { gap: 8 },
   place: { gap: 8 },
 });
