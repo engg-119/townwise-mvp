@@ -45,7 +45,7 @@ export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
   const row = rowLines(calendar);
   const status = statusWords(calendar.status, calendar.kind);
   const shown = events.state.status === 'ready'
-    ? agendaMonths(events.state.data.filter((event) => event.calendarId === calendar.id).map((event) => calendarEventItem(location.id, event)))
+    ? agendaMonths(events.state.data.filter((event) => event.calendarId === calendar.id).map((event) => calendarEventItem(location.id, event)), month)
     : [];
   return (
     <Section title={calendar.label}>

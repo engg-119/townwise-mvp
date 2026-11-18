@@ -82,11 +82,15 @@ export function fileEventItem(locationId: string, event: FileEvent, index: numbe
   };
 }
 
-/** The items by month, in date order; a month with none is left out (the `c_` page says it is empty). */
-export function agendaMonths(items: readonly AgendaItem[]): AgendaMonth[] {
+/**
+ * The items by month, in date order; a month with none is left out (the `c_` page says it is empty). The `c_` page reads
+ * one month (`shown`, "YYYY-MM"), so an event that began before it, and runs into it, lists under that month.
+ */
+export function agendaMonths(items: readonly AgendaItem[], shown?: string): AgendaMonth[] {
   const months = new Map<string, AgendaItem[]>();
   for (const item of [...items].sort((a, b) => a.startDate.localeCompare(b.startDate))) {
-    const month = item.startDate.slice(0, 7);
+    const start = item.startDate.slice(0, 7);
+    const month = shown !== undefined && start < shown ? shown : start;
     months.set(month, [...(months.get(month) ?? []), item]);
   }
   return [...months].map(([month, list]) => ({ month, label: monthLabel(month), items: list }));

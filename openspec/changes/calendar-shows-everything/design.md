@@ -152,7 +152,7 @@ Every cell's screen reader label says the status and every entry, as today, with
 - **The Calendars group.** Your data (P26) gains a "Calendars" group above the list, from `GET .../owner-calendars` (at most 5 rows, no paging). Each row shows the name, kind ("File", "Link, calendar.google.com", "Google calendar"), event count and last refresh, and opens `/locations/[id]/data/c_<calendarId>`. The group is hidden when the location has none, and shows with stored files off, since calendars are not stored files.
 - **The `c_` page.** `c_<calendarId>` is a client-only ref on P27's route. `ItemPage` sees the prefix and renders the calendar page instead of reading `org.data.get`, which keeps answering 400 for a malformed ref.
   - The page shows the calendar's name, kind, host as text, event count, repeating events not imported, status and last refresh, then an agenda of its events for one month at a time ("Earlier" and "Later", today's month first).
-  - It reads the existing events route over that month and keeps the events whose `calendarId` matches. A month with none reads "No events in {Month}." (stored events reach 400 days each way, so many months are empty).
+  - It reads the existing events route over that month and keeps the events whose `calendarId` matches. An event that began the month before and runs into it lists under the month shown (code review nit 8). A month with none reads "No events in {Month}." (stored events reach 400 days each way, so many months are empty).
   - Each event shows its dates and hours and links to `/locations/[id]/calendar?day=<startDate>`.
   - An unknown or removed calendar shows P27's not-found state.
   - The page has no Refresh or Remove, which stay in the Your calendars popover, so one place manages calendars.

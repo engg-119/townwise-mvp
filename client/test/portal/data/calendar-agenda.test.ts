@@ -22,6 +22,12 @@ test('a calendar’s events group by month in date order, each with its day, hou
   expect(months[1]?.items[0]).toMatchObject({ hours: '6 pm to 9 pm', kind: 'imported' });
 });
 
+test('on a calendar’s page, an event that began the month before lists under the month shown (D49)', () => {
+  const across = { ...VETERANS, uid: 'a1', title: 'Harvest weekend', startDate: '2026-10-30', endDate: '2026-11-02' };
+  const months = agendaMonths([FAIR, across].map((event) => calendarEventItem('l1', event)), '2026-11');
+  expect(months.map((month) => [month.label, month.items.map((item) => item.title)])).toEqual([['November 2026', ['Harvest weekend', 'Craft fair']]]);
+});
+
 test('a file’s read: an event that became a note links to its day, marked Note made; any other reads No note made', () => {
   const made = { title: 'Rehearsal dinner', startDate: '2026-12-12', endDate: '2026-12-12', kind: 'private_event', effect: 'closed', expectedGuests: 60, noteId: 'n1' } as const;
   const skipped = { ...made, title: 'Staff party', startDate: '2026-12-03', endDate: '2026-12-03', kind: 'other', effect: 'unknown', expectedGuests: null, noteId: null } as const;
