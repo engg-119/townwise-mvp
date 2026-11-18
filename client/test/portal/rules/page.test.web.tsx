@@ -555,21 +555,37 @@ describe('Suggested by TownwiseAI (D46)', () => {
     }]);
   });
 
-  test('focus moves to the notice after Confirm, Dismiss, Edit’s Save, a 409 already_decided and a 404 (UI review S1)', async () => {
+  // D55: what a decision did is a toast, which never takes focus, so the page's h1 takes it; a decision that did not
+  // happen (409 already_decided, 404) stays a line in the page and takes focus itself.
+  test('after Confirm, Dismiss and Edit’s Save focus moves to the heading as a toast says so; after a 409 already_decided and a 404, to their line (UI review S1)', async () => {
     const { api, fake } = setup(meOf(ACCESS.member), RULES, [MONDAYS, WINTER, SALES]);
     renderAt('/locations/l1/rules', api);
     await screen.findByText('Closed on Mondays');
-    // The notice's message list takes focus: its counter, then the line.
+    // A line that stays in the page: its message list takes focus, its counter, then the line.
     const focusedOn = async (text: string): Promise<void> => {
       await waitFor(() => { expect(document.activeElement?.textContent).toBe(`01${text}`); });
     };
-    fireEvent.click(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
-    await focusedOn('Added the rule “Closed on Mondays”.');
-    fireEvent.click(within(cardOf('Closed on Tuesdays')).getByRole('button', { name: 'Dismiss “Closed on Tuesdays”' }));
-    await focusedOn('Dismissed. TownwiseAI won’t suggest it again.');
+    // The pressed button has focus first, so each move to the heading is a move.
+    const pressFocused = (button: HTMLElement): void => {
+      button.focus();
+      expect(document.activeElement).toBe(button);
+      fireEvent.click(button);
+    };
+    const toastedAndHeadingFocused = async (text: string): Promise<void> => {
+      await waitFor(() => {
+        // The newest toast is on top.
+        expect(screen.getAllByTestId('toast-text').at(0)?.textContent).toBe(text);
+        expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Business rules' }));
+      });
+      expect(within(screen.getByRole('main')).queryByText(text)).toBeNull();
+    };
+    pressFocused(within(cardOf('Closed on Mondays')).getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
+    await toastedAndHeadingFocused('Added the rule “Closed on Mondays”.');
+    pressFocused(within(cardOf('Closed on Tuesdays')).getByRole('button', { name: 'Dismiss “Closed on Tuesdays”' }));
+    await toastedAndHeadingFocused('Dismissed. TownwiseAI won’t suggest it again.');
     fireEvent.click(within(cardOf('Closed Jan 1 to Mar 31 every year')).getByRole('button', { name: 'Edit “Closed Jan 1 to Mar 31 every year”' }));
-    fireEvent.click(within(group()).getByRole('button', { name: 'Save' }));
-    await focusedOn('Added the rule “Closed Jan 1 to Mar 31 every year”.');
+    pressFocused(within(group()).getByRole('button', { name: 'Save' }));
+    await toastedAndHeadingFocused('Added the rule “Closed Jan 1 to Mar 31 every year”.');
     cleanup();
 
     const again = setup(meOf(ACCESS.member), RULES, [MONDAYS, SALES]);

@@ -76,7 +76,7 @@ export default function WaitingPage(): React.JSX.Element {
       )}
       side={side}
     >
-      {still ? <View style={styles.notice}><Notice text={STILL_WAITING} /></View> : null}
+      {still ? <Notice text={STILL_WAITING} style={styles.notice} /> : null}
       {check.error === null ? null : <View style={styles.notice}><ErrorNotice error={check.error} onRetry={check.run} /></View>}
       {signOut.error === null ? null : <View style={styles.notice}><ErrorNotice message={COPY.signOutFailed} /></View>}
       <Section first>

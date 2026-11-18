@@ -357,10 +357,11 @@ describe('P6 Joining', () => {
     expect(writes(api)).toHaveLength(1);
     await fireEvent.press(screen.getByText('Leave Test Group'));
     expect(router.getPathname()).toBe('/settings');
-    // Shown once.
+    // Shown once: back on the page it showed on, the toast still up is the only one (it leaves by itself, D55).
     await fireEvent.press(screen.getByRole('link', { name: 'Home' }));
     await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1'); });
-    expect(screen.queryByText(/You joined Test Group/)).toBeNull();
+    expect(screen.getAllByText(/You joined Test Group/)).toHaveLength(1);
+    expect(screen.getAllByTestId('toast')).toHaveLength(1);
   });
 
   test('with a pending request, nothing joins until Join; Not my team keeps the request and returns to Waiting', async () => {

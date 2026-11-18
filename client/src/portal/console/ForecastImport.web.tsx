@@ -6,7 +6,7 @@ import { hasCode } from '../errors';
 import { useAction } from '../hooks';
 import { usePortal } from '../PortalProvider';
 import { Actions, Button } from '../ui/Button';
-import { Messages } from '../ui/feedback';
+import { Messages, Notice } from '../ui/feedback';
 import { Stack } from '../ui/layout';
 import { Select } from '../ui/Select';
 import { Heading, Small } from '../ui/text';
@@ -125,7 +125,7 @@ export function ForecastImport(props: ForecastImportProps): React.JSX.Element {
           </Actions>
         </Stack>
       ) : null}
-      {done === null ? null : <Messages live="status" items={[done]} />}
+      {done === null ? null : <Notice text={done} />}
     </Stack>
   );
 }

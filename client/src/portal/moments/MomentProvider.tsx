@@ -1,10 +1,11 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { AccessibilityInfo, Platform, StyleSheet, Text, View } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
 import { useOptionalPortal } from '../PortalProvider';
 import type { MeResponse } from '../schemas';
 import { momentFor, spokenStatement, type MomentKind, type Statement } from './moments';
+import { useToast } from '../ui/toast';
 import { StatementOverlay } from './StatementOverlay';
 
 // The one player of statement moments (spec 15.8). It plays one at a time, a play while one is up is dropped, and
@@ -137,6 +138,16 @@ export function MomentProvider(props: { children: React.ReactNode }): React.JSX.
   }, []);
 
   const moment = useMemo<MomentApi>(() => ({ playing: current !== null, play }), [current, play]);
+
+  // Toasts wait while a moment covers the frame (ui/toast.tsx), so "You joined {org}." never draws over the welcome.
+  // A layout effect, so the hold is in place before the frame with the layer is painted.
+  const holdToasts = useToast()?.hold;
+  const playing = current !== null;
+  useLayoutEffect(() => {
+    if (!playing) return undefined;
+    holdToasts?.(true);
+    return () => { holdToasts?.(false); };
+  }, [playing, holdToasts]);
 
   let overlay: React.ReactNode = null;
   if (current !== null) {

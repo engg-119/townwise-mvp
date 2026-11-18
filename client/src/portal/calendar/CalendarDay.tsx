@@ -11,6 +11,7 @@ import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/not
 import { itemHref } from '../routing';
 import { Actions, Button, LinkButton, type ButtonProps } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
+import { useFocusFallback } from '../ui/messageFocus';
 import type { PopoverAnchor } from '../ui/Popover';
 import { AppChip, SourceChips } from '../ui/SourceChip';
 import { Heading, Mono, Small } from '../ui/text';
@@ -104,6 +105,10 @@ export function CalendarDay(props: {
   /** For the chips to a calendar's page and a file's item in Your data. */
   locationId: string;
   notice: string | null;
+  /** The action the notice is for (Notice's `result`): one object per save or delete. */
+  noticeResult?: object | null;
+  /** The notice says a write did not happen, so it stays in the panel (Notice's `stays`). */
+  noticeStays?: boolean;
   readOnlyId: string | null;
   readOnlyText: string;
   /** Opens the note form for a new note, anchored to "Add an event". */
@@ -115,17 +120,19 @@ export function CalendarDay(props: {
   onMakeNote: (event: ImportedEvent, anchor: PopoverAnchor) => void;
 }): React.JSX.Element {
   const { view, readOnlyId } = props;
+  // When a save took the focused control away, the panel takes focus in place of the notice, which is a toast.
+  const fallback = useFocusFallback<React.ComponentRef<typeof View>>();
   if (view === null) {
-    return <View role="region" aria-label="Selected day" nativeID={PANEL_ID} style={styles.root}><Loading text="Loading the day" minHeight={120} /></View>;
+    return <View role="region" aria-label="Selected day" nativeID={PANEL_ID} {...fallback} style={styles.root}><Loading text="Loading the day" minHeight={120} /></View>;
   }
   const words = forecastWords(view.forecast, props.locationName);
   const ro = readOnlyId === null ? null : { disabled: true, describedBy: readOnlyId };
   const nothing = view.events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
   const nothingWords = view.shownInWhy > 0 ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.';
   return (
-    <View role="region" aria-label="Selected day" nativeID={PANEL_ID} style={styles.root}>
+    <View role="region" aria-label="Selected day" nativeID={PANEL_ID} {...fallback} style={styles.root}>
       <Heading>{view.heading}</Heading>
-      {props.notice === null ? null : <Notice text={props.notice} />}
+      {props.notice === null ? null : <Notice text={props.notice} stays={props.noticeStays === true} {...(props.noticeResult == null ? {} : { result: props.noticeResult })} />}
       <Part label={forecastLabel(view.forecast)}>
         {words.figure === null ? null : (
           <View style={styles.item}>

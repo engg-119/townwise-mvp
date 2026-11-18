@@ -12,7 +12,7 @@ import { useOptionalPortal } from '../../../../../src/portal/PortalProvider';
 import { Page } from '../../../../../src/portal/shell/Page';
 import { SecuritySkeleton } from '../../../../../src/portal/skeleton';
 import { Actions, Button, LinkButton } from '../../../../../src/portal/ui/Button';
-import { ErrorNotice, Notice } from '../../../../../src/portal/ui/feedback';
+import { ErrorNotice, InlineNotice, Notice } from '../../../../../src/portal/ui/feedback';
 import { FormField } from '../../../../../src/portal/ui/FormField';
 import { Columns, Panel, Stack } from '../../../../../src/portal/ui/layout';
 import { Body, Eyebrow, Heading, Small } from '../../../../../src/portal/ui/text';
@@ -230,7 +230,8 @@ export default function SecurityScreen(): React.JSX.Element {
     const scan = <Image key="qr" source={{ uri: qr }} accessibilityLabel="Authentication QR code" style={styles.qr} />;
     steps = (
       <>
-        {reset === 'pending' ? <Notice text="Your current authenticator app keeps working until you confirm a code from the new one." /> : null}
+        {/* Standing guidance while the reset is pending, not an action's result: a row in the page, never a toast (D55). */}
+        {reset === 'pending' ? <InlineNotice text="Your current authenticator app keeps working until you confirm a code from the new one." /> : null}
         <Panel>
           <View style={styles.head}><Eyebrow>Step 1</Eyebrow><Heading>{reset === 'pending' ? 'Add Townwise to your new authenticator app' : 'Add Townwise to your authenticator app'}</Heading></View>
           <Small>

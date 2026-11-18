@@ -1,6 +1,7 @@
 import { useLayoutEffect } from 'react';
 
 import { theme } from '../../theme';
+import { TOASTS_ID } from '../ui/toast';
 import { useThemeMode } from './themeMode';
 
 // The focus ring for every portal control (spec 15.7: a 2px `mint` outline offset 2px), scoped to the portal's
@@ -15,6 +16,10 @@ const css = [
   '#tw-portal :focus:not(:focus-visible){outline:none}',
   `[aria-modal="true"] :focus-visible{outline:2px solid ${theme.color.focusRing};outline-offset:2px}`,
   '[aria-modal="true"] :focus:not(:focus-visible){outline:none}',
+  // The toast region (ui/toast.tsx) is drawn beside #tw-portal, not in it: the same ring and antialiasing.
+  `#${TOASTS_ID}{-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale}`,
+  `#${TOASTS_ID} :focus-visible{outline:2px solid ${theme.color.focusRing};outline-offset:2px}`,
+  `#${TOASTS_ID} :focus:not(:focus-visible){outline:none}`,
   // A control inside a box that draws its own ring (the chat composer's rounded box) opts out with data-ring="box",
   // or a square ring is drawn inside the round one.
   '#tw-portal [data-ring="box"]:focus-visible{outline:none}',

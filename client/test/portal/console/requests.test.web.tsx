@@ -100,7 +100,8 @@ test('a tab change keeps the list and the Pending count on the page until the ne
   // The held list is dimmed and busy, so it never reads as the new tab's.
   expect(screen.getByTestId('requests-held').getAttribute('aria-busy')).toBe('true');
   expect(screen.getByTestId('requests-held').hasAttribute('inert')).toBe(true);
-  expect(screen.getByRole('status').textContent).toBe('Loading approved requests…');
+  // The page's one status line; the toast region outside <main> is a status too (spec 15.7, D55).
+  expect(within(screen.getByRole('main')).getByRole('status').textContent).toBe('Loading approved requests…');
   expect(within(tabs).getAllByRole('link').map((link) => link.textContent)).toEqual(['Pending 0', 'Approved', 'Rejected', 'Withdrawn']);
   await act(async () => { answer.resolve({ requests: [], pendingCount: 0 }); await answer.promise; });
   expect(await screen.findByText('No approved requests.')).toBeTruthy();
@@ -598,7 +599,7 @@ function expectFocusOn(text: RegExp): void {
   expect(active?.textContent).toMatch(text);
 }
 
-test('a decision takes its opener off the page, so focus moves to the notice; after a 409, to its line', async () => {
+test('a decision takes its opener off the page, so focus moves to the page’s heading as the toast says so; after a 409, to its line', async () => {
   const api = consoleApi();
   let pending: unknown[] = [TAVERN, PUB];
   api.routes['GET /api/admin/requests?status=pending'] = () => ({ requests: pending, pendingCount: pending.length });
@@ -613,7 +614,9 @@ test('a decision takes its opener off the page, so focus moves to the notice; af
   fireEvent.click(approve);
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Approve Sample Mountain Tavern' })).getByRole('button', { name: 'Approve' }));
   await screen.findByRole('region', { name: 'Request: Sample Campus Pub' });
-  expectFocusOn(/^\d+Approved\. Mountain Tavern is set up/);
+  // The approval is a toast, which never takes focus (spec 15.7, D55): the h1 has it.
+  expect((await screen.findByText(/^Approved\. Mountain Tavern is set up/)).closest('[data-testid="toast"]')).not.toBeNull();
+  expect(document.activeElement).toBe(screen.getByRole('heading', { level: 1, name: 'Requests' }));
 
   const reject = screen.getByRole('button', { name: 'Reject' });
   reject.focus();
@@ -621,7 +624,7 @@ test('a decision takes its opener off the page, so focus moves to the notice; af
   fireEvent.click(within(screen.getByRole('dialog', { name: 'Reject Sample Campus Pub?' })).getByRole('button', { name: 'Reject' }));
   await screen.findByText('Someone already decided this request.');
   await screen.findByRole('region', { name: 'Pending requests' });
-  // The newer line, not the approval notice still above it.
+  // The error line in the page, not the heading again for the approval's toast.
   expectFocusOn(/^\d+Someone already decided this request\.$/);
 
   // A second late decision with the same words is a new line, and takes focus again.

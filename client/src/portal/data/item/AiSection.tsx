@@ -7,7 +7,7 @@ import { usePortal } from '../../PortalProvider';
 import { itemHref, locationHref } from '../../routing';
 import { Actions, Button, LinkButton } from '../../ui/Button';
 import { ConfirmDialog } from '../../ui/ConfirmDialog';
-import { Messages, Notice } from '../../ui/feedback';
+import { InlineNotice, Messages } from '../../ui/feedback';
 import { Panel, Stack } from '../../ui/layout';
 import { useFocusMessage } from '../../ui/messageFocus';
 import { Heading, Small } from '../../ui/text';
@@ -115,7 +115,7 @@ export function AiSection(props: {
   return (
     <Panel label={AI.heading}>
       <Heading level={3}>{AI.heading}</Heading>
-      {announced === null ? null : <Notice text={announced} />}
+      {announced === null ? null : <InlineNotice text={announced} />}
       {line === null ? null : <Small>{line}</Small>}
       {failure === null ? null : <Messages live="alert" takesFocus items={[failure]} />}
       {ai?.status === 'done' ? <Done ai={ai} locationId={item.locationId} onUndo={() => { setFailure(null); setConfirming(true); }} /> : null}
