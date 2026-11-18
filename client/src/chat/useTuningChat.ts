@@ -368,6 +368,13 @@ function withText(message: ChatMessage, delta: string, key: string): ChatMessage
   return { ...message, parts: [...message.parts, { type: 'text', key, text: delta }] };
 }
 
+/** The reply's last text, written ahead of a tool call, filed as thinking: the stream's `aside` event. */
+function withAside(message: ChatMessage): ChatMessage {
+  const last = message.parts.at(-1);
+  if (last?.type !== 'text') return message;
+  return { ...message, parts: [...message.parts.slice(0, -1), { type: 'thinking', key: last.key, text: last.text }] };
+}
+
 /** Whether anything but its thinking summary arrived: a reply with only that is nothing the person would keep. */
 function hasContent(message: ChatMessage): boolean {
   return message.parts.some((part) => part.type !== 'thinking');
@@ -586,6 +593,8 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       return { ...state, messages: withLive(state, (message) => withText(message, event.delta, key)) };
     case 'thinking':
       return { ...state, messages: withLive(state, (message) => withThinking(message, event.delta, key)) };
+    case 'aside':
+      return { ...state, messages: withLive(state, withAside) };
     case 'tool':
       // propose_data_item's calls show as their item card once done, if the owner was shown one.
       if (event.name === ITEM_TOOL) {

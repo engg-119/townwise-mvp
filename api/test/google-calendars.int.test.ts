@@ -253,6 +253,30 @@ describe('connecting exchanges the code on the server for the person’s own acc
     for (const id of [first.id, second.id]) expect((await sourceRow(id))?.nextRefreshAt).toEqual(server.clock.now());
   });
 
+  it('mine marks a Google calendar its adder can reconnect: true for them, also while revoked, false for a teammate’s, a teammate and a link', async () => {
+    const t = await tenant('Reconnect Diner');
+    const own = await connectedWith(t, t.member, SHARED_ID);
+    expect(own.mine).toBe(true);
+    const theirs = await connectedWith(t, t.teammate, PRIMARY_ID);
+    const linkId = await insertSource(t, { slot: 4, kind: 'link', label: 'Trivia nights' });
+    const mineOf = async (p: Person) => Object.fromEntries(((await send(calendarsPath(t), p.session)).body.calendars as OwnerCalendarView[])
+      .map((calendar) => [calendar.id, calendar.mine]));
+    expect(await mineOf(t.member)).toEqual({ [own.id]: true, [theirs.id]: false, [linkId]: false });
+    expect(await mineOf(t.teammate)).toEqual({ [own.id]: false, [theirs.id]: true, [linkId]: false });
+    expect(await mineOf(t.admin)).toEqual({ [own.id]: false, [theirs.id]: false, [linkId]: false });
+    // Revoked, the adder still reads mine (the Reconnect is theirs), and the connection is not connected.
+    await server.connection.collection('tw_google_connections').updateOne(
+      { orgId: new Types.ObjectId(t.orgId), userId: t.member.session.userId }, { $set: { revokedAt: server.clock.now() } },
+    );
+    const listed = await send(calendarsPath(t), t.member.session);
+    expect(listed.body.google).toEqual({ available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: true });
+    expect(await mineOf(t.member)).toEqual({ [own.id]: true, [theirs.id]: false, [linkId]: false });
+    // Refresh now answers mine as the list does, to whoever presses it.
+    server.clock.advance(MINUTE);
+    expect(calendarOf(await refreshNow(t, t.member, own.id))).toMatchObject({ id: own.id, status: 'google_revoked', mine: true });
+    expect(calendarOf(await refreshNow(t, t.member, theirs.id))).toMatchObject({ id: theirs.id, status: 'ok', mine: false });
+  });
+
   it('a dead connection reconnected without a refresh token: revoked, or one the key no longer opens, stays as it is and answers 409 google_connect_again', async () => {
     const t = await tenant('Dead Token Deli');
     expect((await connect(t, t.member)).status).toBe(200);
@@ -312,7 +336,7 @@ describe('Google’s access is sealed and never shown', () => {
     expect(JSON.stringify(listed.body)).not.toContain(PRIMARY_ID);
     expect(listed.body).toEqual({
       calendars: [{ ...calendar }],
-      google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID },
+      google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true },
     });
   });
 });
@@ -388,7 +412,7 @@ describe('the picker lists the person’s own Google calendars', () => {
     expect((await connectionRow(t, t.member))?.revokedAt).toEqual(server.clock.now());
   });
 
-  it('under view-as the choices answer 403 view_as_read_only and Google is not called; open as admin, every Google route answers 403 open_as_admin_refused and the list answers google.available false', async () => {
+  it('under view-as the choices answer 403 view_as_read_only and Google is not called; open as admin, every Google route answers 403 open_as_admin_refused ; staff see Google calendars on but canConnect false, open as admin with no client id', async () => {
     const t = await tenant('Watched Wine Bar');
     expect((await connect(t, t.member)).status).toBe(200);
     google.calls.length = 0;
@@ -397,6 +421,8 @@ describe('the picker lists the person’s own Google calendars', () => {
     expect(await send(choicesPath(t), viewing)).toMatchObject({ status: 403, body: { error: 'view_as_read_only' } });
     expect(await send(`${choicesPath(t)}/connect`, viewing, { json: { code: AUTH_CODE, agreed: true } }))
       .toMatchObject({ status: 403, body: { error: 'view_as_read_only' } });
+    // They see the option, read-only, and can't connect (owner decision, 2026-11-17).
+    expect((await send(calendarsPath(t), viewing)).body.google).toEqual({ available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: false });
     expect(google.calls).toEqual([]);
     await removeStaffFactor(server);
 
@@ -411,9 +437,10 @@ describe('the picker lists the person’s own Google calendars', () => {
     ] as const) {
       expect(await send(path, staff, init)).toMatchObject({ status: 403, body: { error: 'open_as_admin_refused' } });
     }
-    // So the list offers them no Google calendars at all, as when they are off.
+    // The list shows them Google calendars are on, with no way to connect: canConnect false and no client id to ask
+    // Google with (owner decision, 2026-11-17, "staff see it disabled"); the routes above still refuse them.
     expect(await send(calendarsPath({ locationId }), staff)).toMatchObject({
-      status: 200, body: { calendars: [], google: { available: false, connected: false, clientId: null } },
+      status: 200, body: { calendars: [], google: { available: true, connected: false, clientId: null, canConnect: false } },
     });
     expect(google.calls).toEqual([]);
     await removeStaffFactor(server);
@@ -693,11 +720,12 @@ describe('staff never connect, and read no Google calendar’s name or event tit
     google.calls.length = 0;
     const listed = await send(calendarsPath(t), staff);
     expect(listed.status).toBe(200);
-    expect((listed.body.calendars as OwnerCalendarView[]).map(({ id, label, kind, host }) => ({ id, label, kind, host }))).toEqual([
-      { id: calendar.id, label: 'Google calendar', kind: 'google', host: null },
-      { id: linkId, label: 'Trivia nights', kind: 'link', host: 'calendar.example.test' },
+    // Never mine to staff, though under view-as `userId` is the person who added it.
+    expect((listed.body.calendars as OwnerCalendarView[]).map(({ id, label, kind, host, mine }) => ({ id, label, kind, host, mine }))).toEqual([
+      { id: calendar.id, label: 'Google calendar', kind: 'google', host: null, mine: false },
+      { id: linkId, label: 'Trivia nights', kind: 'link', host: 'calendar.example.test', mine: false },
     ].sort((a, b) => (a.id === calendar.id ? -1 : b.id === calendar.id ? 1 : 0)));
-    expect(listed.body.google).toEqual({ available: true, connected: false, clientId: GOOGLE_CLIENT_ID });
+    expect(listed.body.google).toEqual({ available: true, connected: false, clientId: GOOGLE_CLIENT_ID, canConnect: false });
     const events = await send(`${calendarsPath(t)}/events?from=2026-06-01&to=2026-06-30`, staff);
     expect(events.body.events).toEqual(expect.arrayContaining([
       expect.objectContaining({ calendarId: calendar.id, calendar: 'Google calendar', title: 'Google calendar event', startDate: '2026-06-05', endDate: '2026-06-05' }),
@@ -726,9 +754,11 @@ describe('staff never connect, and read no Google calendar’s name or event tit
     google.calls.length = 0;
     const listed = await send(calendarsPath(t), staff);
     expect(listed.status).toBe(200);
-    expect((listed.body.calendars as OwnerCalendarView[]).map(({ id, label, kind }) => ({ id, label, kind })).sort((a, b) => a.id.localeCompare(b.id)))
-      .toEqual([{ id: calendar.id, label: 'Google calendar', kind: 'google' }, { id: linkId, label: 'Trivia nights', kind: 'link' }].sort((a, b) => a.id.localeCompare(b.id)));
-    expect(listed.body.google).toEqual({ available: false, connected: false, clientId: null });
+    expect((listed.body.calendars as OwnerCalendarView[]).map(({ id, label, kind, mine }) => ({ id, label, kind, mine })).sort((a, b) => a.id.localeCompare(b.id)))
+      .toEqual([
+        { id: calendar.id, label: 'Google calendar', kind: 'google', mine: false }, { id: linkId, label: 'Trivia nights', kind: 'link', mine: false },
+      ].sort((a, b) => a.id.localeCompare(b.id)));
+    expect(listed.body.google).toEqual({ available: true, connected: false, clientId: null, canConnect: false });
     const events = await send(`${calendarsPath(t)}/events?from=2026-06-01&to=2026-06-30`, staff);
     expect(events.status).toBe(200);
     expect(events.body.events).toEqual(expect.arrayContaining([
@@ -739,7 +769,7 @@ describe('staff never connect, and read no Google calendar’s name or event tit
     // Staff may refresh it (it runs open as admin), and its answer names it "Google calendar" too.
     server.clock.advance(MINUTE);
     const refreshed = await refreshNow(t, { ...t.member, session: staff }, calendar.id);
-    expect(refreshed).toMatchObject({ status: 200, body: { calendar: { id: calendar.id, label: 'Google calendar', kind: 'google', status: 'ok' } } });
+    expect(refreshed).toMatchObject({ status: 200, body: { calendar: { id: calendar.id, label: 'Google calendar', kind: 'google', status: 'ok', mine: false } } });
     for (const text of [JSON.stringify(listed.body), JSON.stringify(events.body), JSON.stringify(refreshed.body)]) {
       expect(text).not.toContain('Bookings');
       expect(text).not.toContain(TITLE);

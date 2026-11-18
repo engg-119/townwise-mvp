@@ -161,6 +161,22 @@ test('text deltas are drawn at most every 32ms, and any other event draws them f
   }
 });
 
+test('an aside files the text before a tool call with the thinking, and the answer after the call stays text', async () => {
+  const api = fakeChatApi();
+  const chat = await ready(api);
+  await send(chat, 'Hello');
+  const live = turn(api);
+  await act(() => {
+    live.emit('text', { delta: 'Next week, presumably.' });
+    live.emit('aside', {});
+    live.emit('tool', { id: 't1', name: 'list_notes', state: 'done', input: null, result: { count: 0 } });
+    live.emit('text', { delta: 'You have no notes.' });
+  });
+  await waitFor(() => { expect(reply(chat).parts.map((part) => part.type)).toEqual(['thinking', 'tools', 'text']); });
+  expect(reply(chat).parts[0]).toMatchObject({ type: 'thinking', text: 'Next week, presumably.' });
+  expect(messageText(reply(chat))).toBe('You have no notes.');
+});
+
 test('thinking deltas join one thinking part before the text, stamp the reply’s start and end, and are not message text', async () => {
   const api = fakeChatApi();
   const chat = await ready(api);
