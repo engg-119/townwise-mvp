@@ -126,6 +126,9 @@ export function CalendarDay(props: {
     return <View role="region" aria-label="Selected day" nativeID={PANEL_ID} {...fallback} style={styles.root}><Loading text="Loading the day" minHeight={120} /></View>;
   }
   const words = forecastWords(view.forecast, props.locationName);
+  const label = forecastLabel(view.forecast);
+  // The figure's kind in words, unless the part's label already says it (UI review S2): an outlook keeps “Forecast”.
+  const figureKey = words.figure === null || FIGURE_KEY[words.figure.source] === label ? null : FIGURE_KEY[words.figure.source];
   const ro = readOnlyId === null ? null : { disabled: true, describedBy: readOnlyId };
   const nothing = view.events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
   const nothingWords = view.shownInWhy > 0 ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.';
@@ -133,11 +136,11 @@ export function CalendarDay(props: {
     <View role="region" aria-label="Selected day" nativeID={PANEL_ID} {...fallback} style={styles.root}>
       <Heading>{view.heading}</Heading>
       {props.notice === null ? null : <Notice text={props.notice} stays={props.noticeStays === true} {...(props.noticeResult == null ? {} : { result: props.noticeResult })} />}
-      <Part label={forecastLabel(view.forecast)}>
+      <Part label={label}>
         {words.figure === null ? null : (
           <View style={styles.item}>
             {/* Actual or forecast, in words, over the figure in its tone (D49, design decision 10). */}
-            <Mono>{FIGURE_KEY[words.figure.source]}</Mono>
+            {figureKey === null ? null : <Mono>{figureKey}</Mono>}
             <Text style={[styles.lead, words.figure.source === 'forecast' ? styles.forecast : null]}>
               {words.figure.before === '' ? '' : `${words.figure.before} `}
               <Text style={[styles.value, words.figure.source === 'forecast' ? styles.forecast : null]}>{words.figure.value}</Text>

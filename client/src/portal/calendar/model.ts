@@ -699,8 +699,12 @@ export interface ForecastWords {
 /** An outlook day's sentence in place of the 8 in 10 one (D52). */
 export const OUTLOOK_RANGE = 'This day is more than 3 months after this forecast was made, or 6 months after the sales it learned from, so its range is wider.';
 
-/** The Forecast part's heading: “Outlook” for an outlook day (D52), “Forecast” otherwise. */
-export function forecastLabel(part: ForecastPart): 'Forecast' | 'Outlook' {
+/**
+ * The Forecast part's heading: “Actual guests” for a past day with stored guests (UI review S2), “Outlook” for an
+ * outlook day (D52), “Forecast” otherwise.
+ */
+export function forecastLabel(part: ForecastPart): 'Forecast' | 'Outlook' | typeof FIGURE_KEY.actual {
+  if (part.kind === 'past' && part.actual !== null) return FIGURE_KEY.actual;
   return part.kind === 'open' && part.outlook ? 'Outlook' : 'Forecast';
 }
 

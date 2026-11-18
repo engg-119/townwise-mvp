@@ -893,11 +893,21 @@ test('the key names an actual and a forecast, a past day says how its forecast d
   expect(cell('2026-11-07').getAttribute('aria-label')).toBe('Sat, Nov 7, 2026. 138 guests, actual.');
   expect(cell('2026-11-21').querySelector('[data-figure]')?.textContent).toBe('~212');
   const day = panel();
-  expect(within(day).getByText('Actual guests')).toBeTruthy();
+  // Its part is headed by what it is, once: never “Forecast” over an actual (UI review S2).
+  expect(within(day).getAllByText('Actual guests')).toHaveLength(1);
+  expect(within(day).queryByText('Forecast')).toBeNull();
   expect(within(day).getByText('Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.')).toBeTruthy();
   // The tooltip says it too.
   fireEvent.pointerOver(cell('2026-11-07'), { pointerType: 'mouse' });
   expect(screen.getByTestId('calendar-tooltip').textContent).toContain('138 guests, actualForecast was about 135 (likely 120 to 150); 138 guests came: inside the range');
+});
+
+test('a forecast day’s panel says “Forecast” once, over “About 82 guests” (UI review S2)', async () => {
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': november() } });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const day = panel();
+  expect(await within(day).findAllByText('Forecast')).toHaveLength(1);
+  expect(within(day).queryByText('Actual guests')).toBeNull();
 });
 
 /** November with a stale run: days from the 20th are its outlook (D52), the 20th with mid 212, low 150, high 290. */

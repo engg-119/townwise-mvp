@@ -313,6 +313,10 @@ test('the day panel words a forecast; the 8 in 10 sentence goes with the model�
     figure: { before: '', value: '138', after: 'guests', source: 'actual' },
     lines: ['Forecast was about 135 (likely 120 to 150); 138 guests came: inside the range.'],
   });
+  // A day with stored guests is headed by what it is, never “Forecast” (UI review S2); every other part is the forecast.
+  expect(forecastLabel(dayView('2026-11-07', input()).forecast)).toBe('Actual guests');
+  expect(forecastLabel(dayView('2026-11-21', input()).forecast)).toBe('Forecast');
+  expect(forecastLabel(dayView('2026-11-14', input()).forecast)).toBe('Forecast');
   expect(forecastWords(dayView('2026-11-21', input({ forecast: NONE })).forecast, 'Sawtooth').lines).toEqual([
     'No forecast for this day.', 'Townwise hasn’t published a forecast for Sawtooth yet.',
   ]);
