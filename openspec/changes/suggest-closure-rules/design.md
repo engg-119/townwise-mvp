@@ -339,6 +339,17 @@ TownwiseAI's `business_rules` block carries `scheduleSummary` as its "Forecast s
 - [A yearly rule changes every coverage check] → One function changes (`noteCovers`, plus its client mirror). Rules with no season are pinned unchanged by the existing forecast, lab input and questions tests.
 - [The new member routes sit beside admin routes over one collection] → Each pair 404s the other's rows before any write, pinned by tests.
 
+### Known limits (code review, 2026-11-17)
+
+The branch review's should-fixes S1 to S3 and nits N3 and N4 are fixed (the last day with sales read over every day of the weekday; the weekly pass drops a rule the sales history already suggests; API tests of a season across the new year; a Dismiss that lands after a racing Confirm wrote its rule answers accepted; an edit with no `season` key keeps the stored season). These stay as known limits:
+
+- **N1, undo against an in-flight Confirm.** If undo deletes an open suggestion after a Confirm read it but before that Confirm wrote its rule, the rule stands with no suggestion row and no `agent.suggestion_accepted` event; `rule.created` still records it. The rule then blocks any new suggestion of the same closure (isSuggestable).
+- **N2, who undo names.** When undo finishes as accepted a suggestion whose rule a Confirm already wrote, `agent.suggestion_accepted` names the person undoing; `rule.created` names the person who confirmed.
+- **N4, an older client's dated edit of a yearly rule.** An edit with no `season` key keeps the stored season, so such an edit that also sets an end date is refused (400 `invalid_request`) rather than silently dropping the season.
+- **N5, extra reads.** GET .../agent and GET .../rules each read the sales window again for the sales source, plus up to 7 lookups by closure key, and the weekly pass reads it once more. Fine at this scale; the reads could be shared later.
+- **N6, the client's Every year check in a leap year.** The P29 form counts real days between Starts and Ends, so in a leap year it refuses a 364-day season the API accepts. It is never looser than the API.
+- **N7, closed patterns after the original is deleted.** Deleting a file's original clears the answer's text but keeps `closedPatterns`, which are Townwise's schedules with no words of the file.
+
 ## Migration Plan
 
 None. The fields are optional (absent `source` is `weekly`, absent `season` is none) and the partial index builds at boot. Weekday questions already answered keep their notes.
