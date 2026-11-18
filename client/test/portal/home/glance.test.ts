@@ -79,9 +79,9 @@ describe('weekForecast', () => {
     expect(found.total).toBe(910);
     expect(found.busiest).toEqual({ date: '2026-11-29', value: 160, booked: false });
     expect(found.quietest).toEqual({ date: '2026-11-23', value: 100, booked: false });
-    expect(plainOf(todayForecastPhrase(found.today))).toBe('Today: about 100 guests, 80 to 121.');
+    expect(plainOf(todayForecastPhrase(found.today))).toBe('Today: ~100 guests, forecast, 80 to 121.');
     expect(weekForecastLabel(found)).toBe('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.');
-    expect(forecastDayPhrase('Busiest', { date: '2026-11-29', value: 160, booked: false })).toEqual(['Busiest: Sun, Nov 29, 2026 (', { strong: 'about 160 guests' }, ').']);
+    expect(forecastDayPhrase('Busiest', { date: '2026-11-29', value: 160, booked: false })).toEqual(['Busiest: Sun, Nov 29, 2026 (', { strong: '~160 guests' }, ', forecast).']);
   });
 
   test('a closed day counts 0 and is never the quietest; your buyout counts its party and is never the quietest', () => {
@@ -95,12 +95,12 @@ describe('weekForecast', () => {
     expect(found?.busiest).toEqual({ date: NEXT[6], value: 106, booked: false });
   });
 
-  test('a buyout as the busiest day reads as its party, with no “about”', () => {
+  test('a buyout as the busiest day reads as its party, marked as a forecast', () => {
     const days = NEXT.map((date) => open(date, 100));
     days[5] = forecastDay({ date: NEXT[5] ?? '', status: 'booked', low: null, mid: null, high: null, noteGuests: 140, reasons: [booked] });
     const found = weekForecast(week, published(days, null), 'guests');
     expect(found?.busiest).toEqual({ date: NEXT[5], value: 140, booked: true });
-    expect(plainOf(forecastDayPhrase('Busiest', found?.busiest ?? { date: '', value: 0, booked: true }))).toBe('Busiest: Sat, Nov 28, 2026 (a private buyout, 140 guests).');
+    expect(plainOf(forecastDayPhrase('Busiest', found?.busiest ?? { date: '', value: 0, booked: true }))).toBe('Busiest: Sat, Nov 28, 2026 (a private buyout, ~140 guests, forecast).');
   });
 
   test('a week running into next month reads its last days from the same read', () => {
@@ -167,6 +167,7 @@ describe('weekForecast', () => {
   });
 
   test('today closed or booked, and last year beside the total', () => {
+    expect(plainOf(todayForecastPhrase(forecastDay({ date: MONDAY, status: 'booked', low: null, mid: null, high: null, noteGuests: 40 })))).toBe('Today: a private buyout, ~40 guests, forecast.');
     expect(todayForecastPhrase(forecastDay({ date: MONDAY, status: 'closed', low: null, mid: null, high: null }))).toEqual(['Today: closed.']);
     const summary = week.summary;
     expect(summary).not.toBeNull();

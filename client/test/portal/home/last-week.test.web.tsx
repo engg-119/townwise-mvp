@@ -256,8 +256,8 @@ test('This week adds up the forecast for the seven days from today, with its wee
   expect(within(panel).getByText('980')).toBeTruthy();
   expect(within(panel).getByText(sentence('Likely 784 to 1,225 guests: 8 in 10 of this forecast’s backtest weeks landed in a range this wide.'))).toBeTruthy();
   expect(within(panel).getByText('Mon, Nov 23 to Sun, Nov 29, 2026: the 7 days’ forecasts added up.')).toBeTruthy();
-  expect(within(panel).getByText(sentence('Today: about 110 guests, 90 to 130.'))).toBeTruthy();
-  expect(within(panel).getByText(sentence('Busiest: Sun, Nov 29, 2026 (about 170 guests).'))).toBeTruthy();
+  expect(within(panel).getByText(sentence('Today: ~110 guests, forecast, 90 to 130.'))).toBeTruthy();
+  expect(within(panel).getByText(sentence('Busiest: Sun, Nov 29, 2026 (~170 guests, forecast).'))).toBeTruthy();
   expect(within(panel).getByText(/^Same 7 days last year: /)).toBeTruthy();
   expect(within(panel).queryByText('Each day’s range is in This week.')).toBeNull();
   expect(within(glance()).queryByText('This week, last year')).toBeNull();

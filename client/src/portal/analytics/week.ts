@@ -394,22 +394,22 @@ export function weekRangePhrase(range: { low: number; high: number }): Phrase {
   return ['Likely ', strong(`${formatCount(range.low)} to ${formatCount(range.high)} guests`), ': 8 in 10 of this forecast’s backtest weeks landed in a range this wide.'];
 }
 
-/** "Today: about 110 guests, 90 to 130.", "Today: closed.", "Today: a private buyout, 40 guests."; the figure strong. */
+/** "Today: ~110 guests, forecast, 90 to 130.", "Today: closed.", "Today: a private buyout, ~40 guests, forecast."; the figure strong and marked (D49). */
 export function todayForecastPhrase(day: ForecastDay | null): Phrase {
   if (day === null) return ['Today: no forecast figure.'];
   if (day.status === 'closed') return ['Today: closed.'];
-  if (day.status === 'booked') return ['Today: a private buyout, ', strong(plural(day.noteGuests, 'guest', 'guests')), '.'];
+  if (day.status === 'booked') return ['Today: a private buyout, ', strong(markedFigure(plural(day.noteGuests, 'guest', 'guests'), { kind: 'booked' })), `, ${FORECAST_TAG}.`];
   // weekForecast only passes an open today with all three figures; the range's low rounds down and its high up
   // (spec 14.4), as forecastPhrase gives it.
   const { low, mid, high } = day;
   if (low === null || mid === null || high === null) return ['Today: no forecast.'];
-  return ['Today: ', strong(`about ${plural(Math.round(mid), 'guest', 'guests')}`), `, ${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}.`];
+  return ['Today: ', strong(markedFigure(plural(Math.round(mid), 'guest', 'guests'), { kind: 'forecast' })), `, ${FORECAST_TAG}, ${formatCount(Math.floor(low))} to ${formatCount(Math.ceil(high))}.`];
 }
 
-/** "Busiest: Sat, Nov 21, 2026 (about 220 guests).", the figure strong; a buyout's party has no "about". */
+/** "Busiest: Sat, Nov 21, 2026 (~220 guests, forecast).", the figure strong and marked (D49); a buyout's party is "a private buyout, ~40 guests". */
 export function forecastDayPhrase(which: 'Busiest' | 'Quietest', found: { date: string; value: number; booked: boolean }): Phrase {
-  const guests = plural(found.value, 'guest', 'guests');
-  return [`${which}: ${shortDate(found.date)} (`, strong(found.booked ? `a private buyout, ${guests}` : `about ${guests}`), ').'];
+  const guests = markedFigure(plural(found.value, 'guest', 'guests'), { kind: 'forecast' });
+  return [`${which}: ${shortDate(found.date)} (`, strong(found.booked ? `a private buyout, ${guests}` : guests), `, ${FORECAST_TAG}).`];
 }
 
 /** "Same 7 days last year: 757 guests, −19% against that year’s usual.", the total strong; "From 6 of its 7 days." when short. */
