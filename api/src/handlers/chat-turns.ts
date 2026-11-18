@@ -1,6 +1,7 @@
 // A running TownwiseAI turn's own routes (openspec change resumable-chat-turns, design decision 3): its events, read back
 // from its record in tw_chat_turns by any replica, so a page that lost its stream (a refresh, a dropped network, a
-// second tab) picks the turn up where it left it. Only the conversation's author reads it, or staff in view-as of them.
+// second tab) picks the turn up where it left it, and its stop, which any replica can ask for: the replica running the
+// turn reads the flag every second. Only the conversation's author reads or stops it; staff in view-as of them read it.
 // The record's text, tool views and visuals never reach a log from here: only ids and an error's type do.
 import { objectId } from '@ckeith26/mongo';
 import { parseInput } from '@ckeith26/server-core';
@@ -21,6 +22,14 @@ const TAIL_MS = 200_000;
 const TURN_ID = /^[\w-]{1,64}$/;
 
 const tailQuery = z.strictObject({ after: z.string().regex(/^(0|[1-9]\d{0,8})$/).optional() });
+const stopBody = z.strictObject({});
+
+/** The turn id from the path, or 404 for one that cannot be a turn's. */
+function turnIdOf(req: Request): string {
+  const { turnId } = req.params;
+  if (typeof turnId !== 'string' || !TURN_ID.test(turnId)) throw notFound();
+  return turnId;
+}
 
 /** The last event of a turn that ended without one stored here: its record is gone, or its lease passed. */
 function interrupted(seq: number): TurnRecordEvent {
@@ -46,8 +55,7 @@ export async function getTurnEvents(ctx: TownwiseContext, req: Request, res: Res
   const after = Number(parseInput(tailQuery, req.query).after ?? '0');
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const conversationId = parseInput(objectId, req.params.conversationId);
-  const { turnId } = req.params;
-  if (typeof turnId !== 'string' || !TURN_ID.test(turnId)) throw notFound();
+  const turnId = turnIdOf(req);
   // The record names its author and location: the author's conversation is the only one that holds it.
   const first = await ctx.stores.chatTurns.readAfter(scope, conversationId, turnId, after);
   if (first?.userId !== caller.userId || first.locationId !== location.id) throw notFound();
@@ -95,4 +103,22 @@ export async function getTurnEvents(ctx: TownwiseContext, req: Request, res: Res
     clearInterval(ping);
     if (!res.writableEnded) res.end();
   }
+}
+
+/**
+ * POST /api/org/locations/:locationId/chat/:conversationId/turns/:turnId/stop, an empty body: sets the stop flag on the
+ * author's running turn and answers 202 `{ state: "running" }`; the replica running it aborts it within about a second,
+ * saves nothing but its cost and ends every stream with `stopped`. A turn that already ended answers 200 with the state
+ * it ended in, so a repeat is harmless. 404 when it is not the caller's turn of that conversation. The view-as guard
+ * refuses it, as every write.
+ */
+export async function stopTurn(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const caller = memberOf(principal);
+  parseInput(stopBody, req.body ?? {});
+  const location = await loadLocation(ctx, caller.scope, req.params.locationId);
+  const conversationId = parseInput(objectId, req.params.conversationId);
+  const turnId = turnIdOf(req);
+  const state = await ctx.stores.chatTurns.requestStop(caller.scope, { locationId: location.id, conversationId, userId: caller.userId }, turnId);
+  if (state === null) throw notFound();
+  res.status(state === 'running' ? 202 : 200).json({ state });
 }

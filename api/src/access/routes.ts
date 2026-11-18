@@ -14,7 +14,7 @@ import { getLocationCalendar } from '../handlers/calendar.ts';
 import { listCalibrations, setForecastSchedule, startCalibration, switchForecasts } from '../handlers/calibrations.ts';
 import { deleteConversation, getChat, getConversation, postTurn, renameConversation, showVersion } from '../handlers/chat.ts';
 import { rateReply } from '../handlers/chat-feedback.ts';
-import { getTurnEvents } from '../handlers/chat-turns.ts';
+import { getTurnEvents, stopTurn } from '../handlers/chat-turns.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnOrderProposal, getOrderProposal } from '../handlers/chat-order-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
@@ -60,7 +60,7 @@ export interface TownwiseRoute {
   readonly path: `/${string}`;
   readonly policy: Policy;
   /**
-   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
+   * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a TownwiseAI turn's stop, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
    * edit, an order rule's turn-off and open as admin's start (its reason);
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
    * switch, the weekly suggestions switch, (D31) a business rule, the order decisions and rules, the item and order change cards, and connecting a
@@ -362,6 +362,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.chat.turn_events', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId',
     policy: 'member', bodyLimit: 'none', limiter: 'chat_tail', openAsAdmin: true, handler: getTurnEvents,
+  },
+  // resumable-chat-turns: stopping a running turn, from any replica; an empty body, the writes limiter only.
+  {
+    id: 'org.chat.turn_stop', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId/stop',
+    policy: 'member', bodyLimit: '1kb', openAsAdmin: true, handler: stopTurn,
   },
   {
     id: 'org.chat.remove', method: 'DELETE', path: '/org/locations/:locationId/chat/:conversationId', policy: 'member',

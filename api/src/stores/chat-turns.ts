@@ -154,10 +154,11 @@ export interface ChatTurnStore {
   /** The record's state and how many events it holds, else null (deleted, or another organization's). */
   progress(scope: OrgScope, turnId: string): Promise<{ state: TurnState; eventCount: number } | null>;
   /**
-   * Sets the stop flag on the author's running turn of this conversation. Resolves the record's state (`running` when
-   * the flag is set, else the state it ended in), or null when it is not the author's turn of that conversation.
+   * Sets the stop flag on the author's running turn of this conversation at this location. Resolves the record's state
+   * (`running` when the flag is set, else the state it ended in), or null when it is not the author's turn of that
+   * conversation there.
    */
-  requestStop(scope: OrgScope, owner: { conversationId: string; userId: string }, turnId: string): Promise<TurnState | null>;
+  requestStop(scope: OrgScope, owner: { locationId: string; conversationId: string; userId: string }, turnId: string): Promise<TurnState | null>;
   /** True while the record is running with its stop flag set. */
   stopRequested(scope: OrgScope, turnId: string): Promise<boolean>;
   /**
@@ -232,7 +233,8 @@ export function createChatTurnStore(connection: Connection): ChatTurnStore {
     },
     async requestStop(scope, owner, turnId) {
       const mine = {
-        ...org(scope), turnId, conversationId: new Types.ObjectId(owner.conversationId), userId: owner.userId,
+        ...org(scope), turnId, locationId: new Types.ObjectId(owner.locationId), conversationId: new Types.ObjectId(owner.conversationId),
+        userId: owner.userId,
       };
       const set = await Turn.updateOne({ ...mine, state: 'running' }, { $set: { stopRequested: true } });
       if (set.matchedCount === 1) return 'running';

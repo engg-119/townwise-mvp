@@ -369,7 +369,7 @@ describe('route table', () => {
     expect(TOWNWISE_ROUTES.filter((r) => r.limiter === 'google_calendars').map((r) => r.id)).toEqual(rows.map((r) => r.id));
   });
 
-  it('resumable-chat-turns: a turn\'s events are a member GET, open as admin, with the chat_tail limiter, which allows when its store is down', () => {
+  it('resumable-chat-turns: a turn\'s events are a member GET with the chat_tail limiter, which allows when its store is down; its stop a member POST with a 1kb body and the writes limiter only', () => {
     const rows = TOWNWISE_ROUTES.filter((r) => r.id.startsWith('org.chat.turn'))
       .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
     expect(rows).toEqual([
@@ -377,6 +377,10 @@ describe('route table', () => {
       {
         id: 'org.chat.turn_events', method: 'GET', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId', policy: 'member',
         bodyLimit: 'none', limiter: 'chat_tail', openAsAdmin: true,
+      },
+      {
+        id: 'org.chat.turn_stop', method: 'POST', path: '/org/locations/:locationId/chat/:conversationId/turns/:turnId/stop', policy: 'member',
+        bodyLimit: '1kb', limiter: undefined, openAsAdmin: true,
       },
     ]);
     expect(ROUTE_LIMITS.chat_tail).toEqual({ name: 'townwise:chat-tail', limit: 300, windowSeconds: 3600, whenStoreDown: 'allow' });

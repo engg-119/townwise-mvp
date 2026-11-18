@@ -101,7 +101,7 @@ describe('tw_chat_turns', () => {
     expect(await turns.renew(scope, turn.turnId, lease(30))).toBe(false);
     expect(await turns.end(scope, turn.turnId, { from: 1, events: events(1, 'done'), state: 'done', endedAt: server.clock.now() })).toBe(false);
     // Stop on an ended turn answers its state and sets nothing.
-    expect(await turns.requestStop(scope, { conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBe('interrupted');
+    expect(await turns.requestStop(scope, { locationId: turn.locationId, conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBe('interrupted');
     expect(await turns.stopRequested(scope, turn.turnId)).toBe(false);
     expect(await turns.readAfter(scope, turn.conversationId, turn.turnId, 0)).toMatchObject({ state: 'interrupted', eventCount: 1, stopRequested: false });
   });
@@ -113,13 +113,14 @@ describe('tw_chat_turns', () => {
     expect(await turns.renew(scope, turn.turnId, lease(45))).toBe(true);
     expect((await turns.readAfter(scope, turn.conversationId, turn.turnId, 0))?.leaseUntil).toEqual(lease(45));
     expect(await turns.stopRequested(scope, turn.turnId)).toBe(false);
-    expect(await turns.requestStop(scope, { conversationId: turn.conversationId, userId: 'someone-else' }, turn.turnId)).toBeNull();
-    expect(await turns.requestStop(scope, { conversationId: new Types.ObjectId().toHexString(), userId: turn.userId }, turn.turnId)).toBeNull();
+    expect(await turns.requestStop(scope, { locationId: turn.locationId, conversationId: turn.conversationId, userId: 'someone-else' }, turn.turnId)).toBeNull();
+    expect(await turns.requestStop(scope, { locationId: turn.locationId, conversationId: new Types.ObjectId().toHexString(), userId: turn.userId }, turn.turnId)).toBeNull();
+    expect(await turns.requestStop(scope, { locationId: new Types.ObjectId().toHexString(), conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBeNull();
     expect(await turns.stopRequested(scope, turn.turnId)).toBe(false);
-    expect(await turns.requestStop(scope, { conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBe('running');
+    expect(await turns.requestStop(scope, { locationId: turn.locationId, conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBe('running');
     expect(await turns.stopRequested(scope, turn.turnId)).toBe(true);
     // Asking again is harmless.
-    expect(await turns.requestStop(scope, { conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBe('running');
+    expect(await turns.requestStop(scope, { locationId: turn.locationId, conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBe('running');
   });
 
   it('a write to a deleted record matches nothing, whether it went with its conversation, its location or its organization', async () => {
@@ -158,7 +159,7 @@ describe('tw_chat_turns', () => {
     expect(await turns.append(other, turn.turnId, { from: 0, events: events(0, 'conversation'), leaseUntil: lease(30) })).toBe(false);
     expect(await turns.renew(other, turn.turnId, lease(30))).toBe(false);
     expect(await turns.end(other, turn.turnId, { from: 0, events: events(0, 'done'), state: 'done', endedAt: server.clock.now() })).toBe(false);
-    expect(await turns.requestStop(other, { conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBeNull();
+    expect(await turns.requestStop(other, { locationId: turn.locationId, conversationId: turn.conversationId, userId: turn.userId }, turn.turnId)).toBeNull();
     expect(await turns.stopRequested(other, turn.turnId)).toBe(false);
     expect(await turns.removeForConversation(other, turn.conversationId)).toBe(0);
     // A turn of the right organization but another conversation is not found either.

@@ -137,6 +137,8 @@ async function holdTurn(json: unknown, reply: string): Promise<Held> {
 const tailPath = (conversationId: string, turnId: string, after?: string): string =>
   `${chatPath()}/${conversationId}/turns/${turnId}${after === undefined ? '' : `?after=${after}`}`;
 
+const stopPath = (conversationId: string, turnId: string): string => `${chatPath()}/${conversationId}/turns/${turnId}/stop`;
+
 /** A tail read to its end. */
 async function tail(on: TownwiseTestServer, path: string, as: TestSession = session): Promise<SseEvent[]> {
   const res = await call(on, path, { session: as });
@@ -459,6 +461,92 @@ describe('reading a turn back', () => {
         await removeStaffFactor(server);
         await server.connection.collection('tw_view_as_grants').deleteMany({});
       }
+    } finally {
+      await server.connection.collection('tw_chat_turns').deleteMany({ turnId });
+    }
+  });
+});
+
+describe('stop', () => {
+  it('a stop sent to the other instance ends the turn within about a second: nothing saved, its cost recorded, every reader sees stopped', async () => {
+    for (const each of [server, other]) each.clock.advance(1000);
+    otherModel.script(
+      { kind: 'message', message: message([text('Let me check. '), toolUse('s1', 'list_notes', {})], { usage: { input: 1000, output: 200 } }) },
+      { kind: 'hang', before: eventsOf(message([text('Sentinel-stopped reply')], { usage: { input: 1000 } })).slice(0, 3) },
+    );
+    const res = await call(other, turnsPath(), { session, json: { content: 'Stop me' } });
+    expect(res.status).toBe(200);
+    const posted = res.text().then(parseSse);
+    let running: (StoredTurn & { conversationId: Types.ObjectId }) | null = null;
+    await until(async () => {
+      running = await server.connection.collection<StoredTurn & { conversationId: Types.ObjectId }>('tw_chat_turns')
+        .findOne({ userId: session.userId, state: 'running' });
+      return (running?.eventCount ?? 0) >= 5;
+    });
+    const { turnId, conversationId } = running as unknown as StoredTurn & { conversationId: Types.ObjectId };
+    const id = conversationId.toHexString();
+    const tailed = tail(server, tailPath(id, turnId, '0'));
+    other.logs.length = 0;
+
+    const started = Date.now();
+    const stop = await call(server, stopPath(id, turnId), { session, json: {} });
+    expect(stop.status).toBe(202);
+    expect(await stop.json()).toEqual({ state: 'running' });
+    const all = await posted;
+    expect(Date.now() - started).toBeLessThan(2000);
+    expect(all.at(-1)).toEqual({ id: all.length, event: 'stopped', data: {} });
+    expect(await tailed).toEqual(all);
+    // The second model call was the one in flight: the turn's signal aborted it.
+    expect(otherModel.calls).toHaveLength(2);
+    expect(otherModel.calls[1]?.signal.aborted).toBe(true);
+    expect((await record(turnId))?.state).toBe('stopped');
+    // Nothing saved: the turn created the conversation, so it is gone, and both claims are released.
+    expect(await conversationDoc(id)).toBeNull();
+    expect(await liveTurns()).toBe(0);
+    const usage = await server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(orgId) });
+    expect(usage?.costMicroUsd).toBeGreaterThan(0);
+    expect(other.logs.join('\n')).toContain('"reason":"stop"');
+
+    // Asking again answers the state it ended in.
+    const again = await call(other, stopPath(id, turnId), { session, json: {} });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ state: 'stopped' });
+  });
+
+  it('404 for a colleague’s, another organization’s or an unknown turn; refused under view-as; 400 for a body with fields', async () => {
+    const { id, turnId } = await lapsedTurn();
+    const colleagueEmail = `colleague-${randomUUID().slice(0, 8)}@example.test`;
+    const colleague = await signIn(server, colleagueEmail);
+    await addSeat(server, { orgId, userId: colleague.userId, email: colleagueEmail });
+    const elsewhereOrg = await createOrg(server, { name: 'Elsewhere Inn' });
+    const strangerEmail = `stranger-${randomUUID().slice(0, 8)}@example.test`;
+    const stranger = await signIn(server, strangerEmail);
+    await addSeat(server, { orgId: elsewhereOrg, userId: stranger.userId, email: strangerEmail });
+    const strangerLocation = await addLocation(server, { orgId: elsewhereOrg, name: 'Elsewhere Bar' });
+    const stopAs = async (path: string, as: TestSession, json: unknown = {}): Promise<{ status: number; error: unknown }> => {
+      const res = await call(other, path, { session: as, json });
+      return { status: res.status, error: ((await res.json()) as { error?: unknown }).error };
+    };
+    try {
+      const notFound = { status: 404, error: 'not_found' };
+      expect(await stopAs(stopPath(id, turnId), colleague)).toEqual(notFound);
+      expect(await stopAs(stopPath(id, turnId), stranger)).toEqual(notFound);
+      expect(await stopAs(`/api/org/locations/${strangerLocation}/chat/${id}/turns/${turnId}/stop`, stranger)).toEqual(notFound);
+      expect(await stopAs(stopPath(id, randomUUID()), session)).toEqual(notFound);
+      expect(await stopAs(stopPath(id, turnId), session, { now: true })).toEqual({ status: 400, error: 'invalid_request' });
+      const staff = await signInStaff(server);
+      try {
+        await addGrant(server, { actorUserId: staff.userId, sessionId: staff.sessionId, targetUserId: session.userId, orgId });
+        expect(await stopAs(stopPath(id, turnId), staff)).toEqual({ status: 403, error: 'view_as_read_only' });
+      } finally {
+        await removeStaffFactor(server);
+        await server.connection.collection('tw_view_as_grants').deleteMany({});
+      }
+      expect(await record(turnId)).toMatchObject({ stopRequested: false });
+      // The author's stop sets the flag; with no replica running the turn, the sweep settles it.
+      const res = await call(other, stopPath(id, turnId), { session, json: {} });
+      expect(res.status).toBe(202);
+      expect(await record(turnId)).toMatchObject({ stopRequested: true, state: 'running' });
     } finally {
       await server.connection.collection('tw_chat_turns').deleteMany({ turnId });
     }
