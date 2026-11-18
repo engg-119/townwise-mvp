@@ -52,7 +52,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 - [x] 2.3 `handlers/rule-suggestions.ts`: a `sales_weekday_[0-6]` id recomputes its evidence (404 when it no longer holds), then inserts the row (`source: 'sales'`, `closureKey`, `evidence`), or finds it by `closureKey` on a duplicate key, before the decision.
 - [x] 2.4 `handlers/sales.ts`: deleting a location's sales data deletes its sales rows that are not accepted.
 - [x] 2.5 Client: the card's sales origin line ("No sales on any Monday since Sep 7", then "{n} of {m} Mondays"). The panel no longer receives weekday questions; the question card still ignores unknown kinds.
-- [ ] 2.6 Docs: spec 10.12 and `tuning-chat.md` section 8 (the weekday question replaced, its evidence, the start rule).
+- [x] 2.6 Docs: spec 10.12 and `tuning-chat.md` section 8 (the weekday question replaced, its evidence, the start rule).
 - [x] 2.7 Tests:
   - unit, in `api/test/agent-questions.test.ts`:
     - no weekday question;
@@ -108,7 +108,7 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
 
 ## 5. Docs and privacy
 
-- [ ] 5.1 `docs/portal/spec.md`:
+- [x] 5.1 `docs/portal/spec.md`:
   - section 2: the D46 row, after D44 (D43 and D45 are other changes'), covering the file source, the sales source and yearly seasons, with every `[CONFIRM]` of design decisions 2, 4, 6, 8 and 12;
   - 6.24 (`season`), 6.27 (fields, index), 9.2 (details; line 885's "`townwise_ai` is reserved" corrected);
   - 10.12 and 10.14;
@@ -116,13 +116,13 @@ Start after session d6 closes `weekly-forecast-suggestions` tasks 4.2 and 4.3, r
   - 11A.9 (the prompt bullet, the check, the actions' new step, the counts), 12 (notes refuse a season), 14.5 (a yearly schedule covers its months and days), 17;
   - P11, P25, P27 (the opt-in quote), and P29 (the group, the Every year box, and the lead's sentence "Until TownwiseAI can propose rules, no copy says it suggests or saves them." rewritten);
   - section 22 entries and a section 23 changelog entry for 2026-11-17.
-- [ ] 5.2 `api/README.md`: Reading with TownwiseAI (items 7 and 8), Business rules (the season), the side panel, the two new routes, the audit table, `tw_agent_suggestions` fields.
-- [ ] 5.3 Privacy and copy (owner approved the update on 2026-11-17):
+- [x] 5.2 `api/README.md`: Reading with TownwiseAI (items 7 and 8), Business rules (the season), the side panel, the two new routes, the audit table, `tw_agent_suggestions` fields.
+- [x] 5.3 Privacy and copy (owner approved the update on 2026-11-17):
   - apply design decision 10's exact sentences to `client/app/(marketing)/privacy.tsx` ("Files you let TownwiseAI read"), `docs/portal/estimates.md` section 5 and `aiCopy.ts` `explain`;
   - update `client/test/marketing/pages.test.web.tsx` and `client/test/portal/data/item-ai.test.web.tsx`;
   - check the marketing FAQ (`client/src/marketing/Home.web.tsx`) again and change any sentence the change makes untrue.
-- [ ] 5.4 `docs/portal/tuning-chat.md`: section 3 (a rule's "Forecast schedule" line can say "every year") and section 9 (the closure-key drop, `alreadySuggested` without file and sales rows, the season sentence). The chat sees confirmed rules only; no tool changes.
-- [ ] 5.5 `infra/README.md`: the two rollback cleanup lines (design Migration Plan).
+- [x] 5.4 `docs/portal/tuning-chat.md`: section 3 (a rule's "Forecast schedule" line can say "every year") and section 9 (the closure-key drop, `alreadySuggested` without file and sales rows, the season sentence). The chat sees confirmed rules only; no tool changes.
+- [x] 5.5 `infra/README.md`: the two rollback cleanup lines (design Migration Plan).
 - [ ] 5.6 The coordinator records the D46 claim in the shared spec-number reservations.
 
 ## 6. Tests

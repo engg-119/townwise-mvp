@@ -316,6 +316,11 @@ az containerapp update -n ca-townwise-api -g rg-townwise-prod --container-name a
 
 List revisions with `az containerapp revision list -n ca-townwise-api -g rg-townwise-prod -o table`. The web app rolls back by re-running the deploy workflow on an earlier commit.
 
+**Rolling back past suggested closure rules** (spec D46, OpenSpec change `suggest-closure-rules`). An image from before it reads a rule's schedule without its yearly `season`, and its weekly suggestions list could show an open file suggestion as a weekly one. So, before the revision is moved back, in the `townwise` database:
+
+1. Take the season off each yearly rule, or delete those rules: find them with `db.tw_business_rules.find({ 'schedule.season': { $exists: true } })`. Taking off only `schedule.season` leaves a closure with no end that covers every day from its start, so either remove the whole schedule (`updateMany({ 'schedule.season': { $exists: true } }, { $unset: { schedule: '' } })`, which keeps the rule's words and changes no forecast) or delete them.
+2. Delete the open file and sales suggestions: `db.tw_agent_suggestions.deleteMany({ source: { $in: ['file', 'sales'] }, status: 'open' })`.
+
 ### 14. Backups and restore
 
 - **Schedule.** `caj-townwise-backup` runs at 07:17 UTC. Its init container dumps `townwise` with `mongodump` (the kit's pinned `mongo:8.0.32`, imported into the registry) into the job's EmptyDir; then the pinned Azure CLI uploads `townwise-<UTC time>.archive.gz` to container `mongodump` in `sttwbackup2d2c15bf` as one Put Blob with `If-None-Match: *`. Recovery point: up to 24 hours.
