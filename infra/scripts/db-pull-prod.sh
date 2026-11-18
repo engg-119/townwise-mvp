@@ -104,10 +104,12 @@ kept() {
   chmod 600 "$keep/$dump"
   die "$1; the dump is kept at $keep/$dump"
 }
-docker exec -i "$mongo" mongorestore --archive --gzip --nsFrom 'townwise.*' --nsTo "$target.*" \
+# DocumentDB stamps each collection with options MongoDB refuses (statsEnabled), so they stay behind; the API builds
+# its indexes at boot. The dump's version warning (7.0.0 to 8.x) is expected.
+docker exec -i "$mongo" mongorestore --noOptionsRestore --archive --gzip --nsFrom 'townwise.*' --nsTo "$target.*" \
   --nsExclude 'townwise.auth_sessions' --nsExclude 'townwise.auth_refresh_retired' \
-  --nsExclude 'townwise.auth_magic_links' --nsExclude 'townwise.auth_totp' < "$work/dump.archive.gz" \
-  || kept "mongorestore failed (above)"
+  --nsExclude 'townwise.auth_magic_links' --nsExclude 'townwise.auth_totp' < "$work/dump.archive.gz" > "$work/restore.log" 2>&1 \
+  || { grep -v 'reading metadata' "$work/restore.log" >&2; kept "mongorestore failed (above)"; }
 collections="$(docker exec "$mongo" mongosh --quiet "$target" --eval 'db.getCollectionNames().length')"
-[ "$collections" -gt 0 ] || kept "mongorestore restored nothing into $target"
+[ "$collections" -gt 0 ] || { grep -v 'reading metadata' "$work/restore.log" >&2; kept "mongorestore restored nothing into $target"; }
 echo "done: $target holds $dump ($collections collections). Stop your usual API, then: npm run dev:prod-copy -w @townwise/api"
