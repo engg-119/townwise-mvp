@@ -277,22 +277,43 @@ export function isAside(content: readonly { type: string; name?: string; id?: st
 }
 
 /**
- * Whether the turn wrote text the owner sees after its last tool call other than suggest_next: the answer. Text before
- * that call is an aside written ahead of the work ("Next week, presumably."), not an answer to it, and Opus 5.5
- * returns text written before a tool call in the same message as thinking, which the owner never sees as a reply.
+ * The tools that show the owner something in the reply: a visual or a proposal card. They are part of the answer, so
+ * text written before one is too. suggest_next is neither these nor work (it ends the reply).
+ */
+export const DISPLAY_TOOLS: ReadonlySet<string> = new Set([
+  'show_visual', 'propose_note', 'propose_data_item', 'propose_order_change', 'propose_order_rule',
+]);
+
+/**
+ * Whether a tool call is work (a lookup) that turns the text before it into working notes (tuning-chat.md section 3,
+ * "Working notes"): a registered tool other than suggest_next and the display tools, that ran. A call that never ran
+ * (no result, or a NOT_RUN one) streamed no card, so it moves nothing.
+ */
+export function isWork(name: string, result: BetaToolResultBlockParam | undefined): boolean {
+  if (name === 'suggest_next' || DISPLAY_TOOLS.has(name) || toolNamed(name) === undefined || result === undefined) return false;
+  return !(result.is_error === true && typeof result.content === 'string' && result.content.startsWith(NOT_RUN));
+}
+
+/**
+ * Whether the turn wrote an answer: text that no lookup followed. Text that one did is working notes, shown in the
+ * reply's "Worked for" timeline, not as the answer ("Let me check your May sales."). In the order the turn streamed: a
+ * web search (D37) follows the text before its block in the same message, and a message's tool calls run after all of
+ * its text. The saved view (view.ts) and the client mark working notes by the same rule.
  */
 function wroteText(turn: readonly BetaMessageParam[]): boolean {
-  for (let index = turn.length - 1; index >= 0; index -= 1) {
-    const param = turn[index];
-    if (param?.role !== 'assistant' || typeof param.content === 'string') continue;
-    // A message that calls a tool other than suggest_next did work after any text it holds: that text came first.
-    if (param.content.some((block) => block.type === 'tool_use' && block.name !== 'suggest_next')) return false;
-    // D37: a web search is work done inside the message, so only text after its last search block answers it.
-    const searched = param.content.findLastIndex((block) => block.type === 'server_tool_use' || block.type === 'web_search_tool_result');
-    if (param.content.some((block, at) => at > searched && block.type === 'text' && block.text.trim() !== '')) return true;
-    if (searched !== -1) return false;
+  const results = new Map(turn.flatMap((param) => (param.role === 'user' && typeof param.content !== 'string'
+    ? param.content.flatMap((block) => (block.type === 'tool_result' ? [[block.tool_use_id, block] as const] : []))
+    : [])));
+  let answered = false;
+  for (const param of turn) {
+    if (param.role !== 'assistant' || typeof param.content === 'string') continue;
+    for (const block of param.content) {
+      if (block.type === 'text' && block.text.trim() !== '') answered = true;
+      else if (block.type === 'server_tool_use' || block.type === 'web_search_tool_result') answered = false;
+    }
+    if (param.content.some((block) => block.type === 'tool_use' && isWork(block.name, results.get(block.id)))) answered = false;
   }
-  return false;
+  return answered;
 }
 
 /** A suggest_next result that also asks for the answer the turn has not written; an error result stays as it is. */
@@ -510,8 +531,8 @@ export async function runTurn(input: TurnInput): Promise<TurnResult> {
       }
       // suggest_next is a reply's last step: a message that called only it is answered and ends the turn without
       // another model call, valid or not (the client then picks its own three). The saved reply ends with its results.
-      // The model often calls it right after thinking out its answer, having written no text: the owner sees none of
-      // its thinking, so then its result asks for the answer and the loop goes on.
+      // The model often calls it right after thinking out its answer, or with only working notes written (wroteText):
+      // the owner sees none of its thinking, so then its result asks for the answer and the loop goes on.
       const onlyNext = toolUses.every((block) => block.name === 'suggest_next');
       const unanswered = onlyNext && !wroteText(turn);
       append({ role: 'user', content: unanswered ? results.map(askForAnswer) : results });
