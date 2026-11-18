@@ -120,6 +120,7 @@ Azure, with Terraform in two stacks: `bootstrap` (applied by the subscription ow
 
 - PRs target `develop`. `main` is production: a merge there deploys.
 - Pushing to `develop` needs no one's go: the owner gave every session standing permission on 2026-11-17 ("you have permission to push anything to develop"). Push straight to `develop` or merge a PR into it, after the checks your change needs, and hold off while a release PR's CI is running. `main` still needs the owner's go, through a release PR.
+- Commit as you go (owner, 2026-11-17): commit each finished, checked piece of work on your branch when it's done, in Conventional Commits, rather than leaving work uncommitted until the end of a task.
 - `data/` holds a partner restaurant's private Toast exports and is gitignored, as is `modeling/outputs/`. Never commit either, and never print customer or group names that appear in Toast item names.
 - `modeling/forecasts/` holds frozen forecasts, committed before their outcomes existed so they can be scored honestly; the commit is the timestamp. Never edit or regenerate them (`demand_model_v0.ipynb` refuses to overwrite them).
 - Everything is pinned: exact dependency versions, container images by digest, GitHub Actions by commit SHA. Keep new additions pinned the same way.
