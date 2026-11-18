@@ -1393,6 +1393,17 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(within(sealedRow).getByText('Townwise can’t open this Google connection any more. Remove the calendar and add it again.')).toBeTruthy();
   });
 
+  test('while a revoked Google calendar refreshes, its Reconnect waits disabled in place, as its Remove does', async () => {
+    const { api } = await renderGoogle({ calendars: [MINE_REVOKED] });
+    const panel = openPopover();
+    const answer = deferred<unknown>();
+    api.answers[`${CALENDARS_PATH}/c3/refresh`] = () => answer.promise;
+    fireEvent.click(within(panel).getByRole('button', { name: 'Refresh now: Bookings' }));
+    expect(await within(panel).findByRole('button', { name: 'Refreshing…: Bookings' })).toBeTruthy();
+    expect(within(panel).getByRole('button', { name: 'Reconnect Bookings' }).getAttribute('aria-disabled')).toBe('true');
+    expect(within(panel).getByRole('button', { name: 'Remove Bookings' }).getAttribute('aria-disabled')).toBe('true');
+  });
+
   test('with Google calendars off, a revoked Google calendar the person added offers no Reconnect and names none', async () => {
     await renderGoogle({ calendars: [MINE_REVOKED], google: { available: false, connected: false, clientId: null, canConnect: false } });
     const panel = openPopover();
@@ -1525,6 +1536,9 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     const line = within(panel).getByText('Members of this organization connect their own Google calendars. Staff can’t connect one.');
     expect(GOOGLE_COPY.staffLine).toBe(line.textContent);
     expect(action.getAttribute('aria-describedby')).toBe(line.id);
+    // The help names no Google option staff can't use.
+    expect(within(panel).getByText(helpText(false))).toBeTruthy();
+    expect(within(panel).queryByText(helpText(true))).toBeNull();
     // Under the actions: after the button, before the help.
     expect(action.compareDocumentPosition(line) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(line.compareDocumentPosition(within(panel).getByRole('button', { name: 'How importing works' })) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -1542,6 +1556,7 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     const panel = openPopover();
     expect(within(panel).getByRole('button', { name: 'Add a Google calendar' }).getAttribute('aria-disabled')).toBeNull();
     expect(within(panel).queryByText(GOOGLE_COPY.staffLine)).toBeNull();
+    expect(within(panel).getByText(helpText(true))).toBeTruthy();
   });
 
   test('view-as: “Add a Google calendar” stays in place, disabled and described by the read-only line and the staff line; no choices are read and nothing is sent', async () => {

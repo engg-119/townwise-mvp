@@ -246,7 +246,7 @@ function CalendarRow(props: {
             label={GOOGLE_COPY.reconnectAction}
             accessibilityLabel={`${GOOGLE_COPY.reconnectAction} ${calendar.label}`}
             focusOnMount={props.focusReconnect}
-            {...(ro ?? { disabled: props.reading })}
+            {...(ro ?? { disabled: props.reading || props.refreshing })}
             onPress={() => { onReconnect(calendar); }}
           />
         )}
@@ -831,7 +831,7 @@ function Calendars(props: YourCalendarsProps): React.JSX.Element {
           </View>
         )}
         <Button variant="link" label="How importing works" expanded={helpOpen} controls={HELP_ID} onPress={() => { setHelpOpen((value) => !value); }} />
-        <Small nativeID={HELP_ID} style={helpOpen ? null : styles.hidden}>{helpText(props.google.available)}</Small>
+        <Small nativeID={HELP_ID} style={helpOpen ? null : styles.hidden}>{helpText(props.google.available && props.google.canConnect)}</Small>
         {readOnlyId === null ? null : <ReadOnlyLine text={line} nativeID={readOnlyId} />}
         <ConfirmDialog
           visible={removing !== null}
