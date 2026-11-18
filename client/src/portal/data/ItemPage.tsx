@@ -16,7 +16,7 @@ import { itemHref, locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
-import { ErrorNotice, InlineNotice, LoadingLine, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
+import { ErrorNotice, InlineNotice, LoadingLine, Messages, Notice, ReadOnlyLine, useNoticeState, type NoticeState } from '../ui/feedback';
 import { Section, Stack } from '../ui/layout';
 import { MessageFocus, useFocusMessage } from '../ui/messageFocus';
 import { Small } from '../ui/text';
@@ -102,7 +102,12 @@ function ItemOfPath(): React.JSX.Element {
   const ref = refOf(usePathname());
   const params = useLocalSearchParams<{ saved?: string }>();
   // How the save that opened this page ended, read once: the address loses it below.
-  const [saved] = useState(() => savedLine(params.saved));
+  // One object for the arrival (Notice's `result`): the item drawing again, as after a failed reload and Try again,
+  // never toasts it twice.
+  const [saved] = useState<NoticeState | null>(() => {
+    const text = savedLine(params.saved);
+    return text === null ? null : { text, stays: false };
+  });
   useEffect(() => { if (params.saved !== undefined) router.setParams({ saved: undefined }); }, [params.saved, router]);
   const { state, reload } = useLoad(useCallback(() => getItem(api, location.id, ref), [api, location.id, ref]));
   // The item as last read, kept on screen while `reload` reads it again, so the content stays mounted.
@@ -153,7 +158,7 @@ function Item(props: {
   showItem: (item: DataItem) => void;
   openRef: (ref: string, saved?: Saved) => void;
   /** “Saved.” when a save opened this page. */
-  saved: string | null;
+  saved: NoticeState | null;
   /** Reads the organization again once the page closes: the item's days changed. */
   markStale: () => void;
   /** Leaves the page after a delete, saying `text` on Your data. */
@@ -169,7 +174,7 @@ function Item(props: {
   // What opened can be edited (FileView reports it), and a rename or an edit being saved.
   const [editable, setEditable] = useState<Editable | null>(null);
   const [busy, setBusy] = useState(false);
-  const [notice, setNotice] = useState<string | null>(saved);
+  const [notice, setNotice] = useNoticeState(saved);
   // A Turn off or on running, and the delete being asked about or run.
   const [toggling, setToggling] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
@@ -309,7 +314,7 @@ function Item(props: {
   return (
     <Section title={shownName(item)}>
       <Stack>
-        {notice === null ? null : <Notice text={notice} />}
+        {notice === null ? null : <Notice text={notice.text} result={notice} />}
         {props.back}
         <View style={styles.lines}>
           <Small>{kindLine(item)}</Small>

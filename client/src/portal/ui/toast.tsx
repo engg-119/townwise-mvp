@@ -14,8 +14,12 @@ import { inlineTarget } from './text';
 //
 // - One polite live region, there before the first toast, so a screen reader says each one as it arrives; iOS is
 //   told too, since the toast arrives away from focus. A toast never takes focus.
-// - Each leaves by itself: 6 seconds, 10 with a link. The time waits while the pointer is over it or focus is in
-//   it, and starts over after. Its Dismiss button, or Escape with focus in it, takes it away at once.
+// - Each leaves by itself after 6 seconds. The time waits while the pointer is over it or focus is in it, and starts
+//   over after. A toast with a link never leaves by itself: the region is last on the page, so a keyboard or a
+//   screen reader may need longer than any timer to reach the link. Its Dismiss button, or Escape with focus in it,
+//   takes a toast away at once; if focus was in it, focus goes to the page's heading (or <main>), not to the body.
+// - While a statement moment plays over the frame (moments/MomentProvider.tsx holds them), toasts wait unseen and
+//   show, each with its full time, once it ends.
 // - The newest is on top. Three show at most; the rest wait, and each waiting one gets its full time once it shows.
 // - The same words again within a second are ignored (a double effect, a double press). The same words again while
 //   their toast is still up keep the one toast and start its time over, so two identical toasts never stack.
@@ -46,6 +50,8 @@ export interface ToastApi {
    * again only when they change.
    */
   show: (notice: ToastNotice, from?: { replaces?: number; result?: object }) => number;
+  /** While held, toasts are kept but not drawn (a statement moment covers the frame); they show once it lets go. */
+  hold: (held: boolean) => void;
 }
 
 const ToastContext = createContext<ToastApi | null>(null);
@@ -57,7 +63,6 @@ export function useToast(): ToastApi | null {
 
 const MAX_SHOWN = 3;
 const SHOWN_MS = 6000;
-const SHOWN_WITH_LINK_MS = 10000;
 const REPEAT_MS = 1000;
 /** On the screens that fill the window (TownwiseAI), the toasts sit above the composer docked at its bottom. */
 const RAISED = 144;
@@ -69,6 +74,16 @@ const EASE_OUT = Easing.bezier(x1, y1, x2, y2);
 // `role="status"` is atomic unless told otherwise: every toast up would be read again with each new one. Web only,
 // and by the older name: react-native-web 0.21 drops `aria-atomic` (createDOMProps reads the wrong variable).
 const NOT_ATOMIC = Platform.OS === 'web' ? ({ accessibilityAtomic: false } as object) : {};
+
+/** The region's id: the portal's style sheet gives it the portal's focus ring (shell/PortalStyles.web.tsx). */
+export const TOASTS_ID = 'tw-toasts';
+
+/** Web: focus to the page's h1 where it can take it, or else to <main>. Native has no keyboard focus to lose. */
+function focusPage(): void {
+  if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+  const main = document.querySelector<HTMLElement>('[role="main"]');
+  (main?.querySelector<HTMLElement>('h1[tabindex]') ?? main)?.focus();
+}
 
 function sameNotice(a: ToastNotice, b: ToastNotice): boolean {
   return a.text === b.text && a.link?.href === b.link?.href && a.link?.label === b.link?.label;
@@ -118,13 +133,14 @@ export function ToastHost(props: { children: React.ReactNode; raised?: boolean }
     commit(list.current.filter((toast) => toast.id !== id));
   }, [commit]);
 
-  const api = useMemo<ToastApi>(() => ({ show }), [show]);
+  const [held, setHeld] = useState(false);
+  const api = useMemo<ToastApi>(() => ({ show, hold: setHeld }), [show]);
   const bottom = insets.bottom + theme.space[6] + (props.raised === true ? RAISED : 0);
   return (
     <ToastContext.Provider value={api}>
       {props.children}
-      <View testID="toasts" role="status" aria-live="polite" {...NOT_ATOMIC} style={[styles.region, { bottom }]}>
-        {toasts.slice(0, MAX_SHOWN).reverse().map((toast) => (
+      <View testID="toasts" nativeID={TOASTS_ID} role="status" aria-live="polite" {...NOT_ATOMIC} style={[styles.region, { bottom }]}>
+        {(held ? [] : toasts.slice(0, MAX_SHOWN)).reverse().map((toast) => (
           <ToastCard key={toast.id} toast={toast} reduced={reduced} onDismiss={dismiss} />
         ))}
       </View>
@@ -147,10 +163,18 @@ function ToastCard(props: { toast: Toast; reduced: boolean; onDismiss: (id: numb
   const held = hovered || focused;
   const linked = toast.link !== undefined;
   useEffect(() => {
-    if (held) return undefined;
-    const timer = setTimeout(() => { onDismiss(toast.id); }, linked ? SHOWN_WITH_LINK_MS : SHOWN_MS);
+    // A toast with a link stays until it is dismissed.
+    if (held || linked) return undefined;
+    const timer = setTimeout(() => { onDismiss(toast.id); }, SHOWN_MS);
     return () => { clearTimeout(timer); };
   }, [held, linked, toast.id, toast.version, onDismiss]);
+
+  /** Dismissed by its button or Escape: focus that was in the toast goes to the page, not to the body. */
+  const leave = (): void => {
+    const inside = focused;
+    onDismiss(toast.id);
+    if (inside) focusPage();
+  };
 
   // React Native types these props with its own events; on web react-native-web hands over the DOM's.
   const web = Platform.OS !== 'web' ? {} : ({
@@ -158,7 +182,7 @@ function ToastCard(props: { toast: Toast; reduced: boolean; onDismiss: (id: numb
     onMouseLeave: () => { setHovered(false); },
     onFocus: () => { setFocused(true); },
     onBlur: () => { setFocused(false); },
-    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => { if (event.key === 'Escape') onDismiss(toast.id); },
+    onKeyDown: (event: React.KeyboardEvent<HTMLElement>) => { if (event.key === 'Escape') leave(); },
   } as object);
   const motion = still ? null : { opacity: enter, transform: [{ translateY: enter.interpolate({ inputRange: [0, 1], outputRange: [8, 0] }) }] };
   return (
@@ -174,7 +198,7 @@ function ToastCard(props: { toast: Toast; reduced: boolean; onDismiss: (id: numb
           </>
         )}
       </Text>
-      <Pressable role="button" aria-label="Dismiss" onPress={() => { onDismiss(toast.id); }} style={styles.dismiss}>
+      <Pressable role="button" aria-label="Dismiss" onPress={leave} style={styles.dismiss}>
         <Text aria-hidden style={styles.cross}>×</Text>
       </Pressable>
     </Animated.View>

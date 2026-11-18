@@ -115,6 +115,7 @@ export function useFocusFallback<T extends Focusable>(): { ref?: RefObject<T | n
   const focus = useContext(MessageFocusContext);
   const ref = useRef<T>(null);
   const hold = focus?.holdHeading;
-  useEffect(() => hold?.(ref.current), [hold]);
+  // After every render, not only the first: the element can arrive later than the hook (a panel that loads).
+  useEffect(() => hold?.(ref.current));
   return focus === null ? {} : { ref, tabIndex: -1 };
 }

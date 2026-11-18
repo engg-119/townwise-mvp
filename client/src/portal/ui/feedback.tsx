@@ -110,8 +110,8 @@ function Toasted(props: { toast: ToastApi; text: string; link: MessageLink | und
  */
 export interface NoticeState { text: string; stays: boolean }
 
-export function useNoticeState(): [NoticeState | null, (text: string | null, stays?: boolean) => void] {
-  const [notice, setNotice] = useState<NoticeState | null>(null);
+export function useNoticeState(initial: NoticeState | null = null): [NoticeState | null, (text: string | null, stays?: boolean) => void] {
+  const [notice, setNotice] = useState<NoticeState | null>(initial);
   return [notice, useCallback((text: string | null, stays = false) => { setNotice(text === null ? null : { text, stays }); }, [])];
 }
 

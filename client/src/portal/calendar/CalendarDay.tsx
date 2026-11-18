@@ -117,7 +117,7 @@ export function CalendarDay(props: {
   // When a save took the focused control away, the panel takes focus in place of the notice, which is a toast.
   const fallback = useFocusFallback<React.ComponentRef<typeof View>>();
   if (view === null) {
-    return <View role="region" aria-label="Selected day" nativeID={PANEL_ID} style={styles.root}><Loading text="Loading the day" minHeight={120} /></View>;
+    return <View role="region" aria-label="Selected day" nativeID={PANEL_ID} {...fallback} style={styles.root}><Loading text="Loading the day" minHeight={120} /></View>;
   }
   const words = forecastWords(view.forecast, props.locationName);
   const ro = readOnlyId === null ? null : { disabled: true, describedBy: readOnlyId };
