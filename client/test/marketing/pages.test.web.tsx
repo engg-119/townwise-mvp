@@ -358,7 +358,7 @@ test('Privacy makes the three commitments and no longer says the app has no uplo
   expect(text).toContain('The operator responsible for your data is the Townwise team, a group of students in ENGG 119, AI in the Real World, at Dartmouth’s Thayer School of Engineering in Hanover, NH. Townwise is not an official Dartmouth product.');
   expect(text).toContain('we will delete your account and its data within 30 days');
   expect(text).toContain('sends us only the date, guest count and net sales for each day');
-  expect(text).toContain('Effective November 5, 2026. Last updated November 16, 2026.');
+  expect(text).toContain('Effective November 5, 2026. Last updated November 18, 2026.');
   // D25: open as admin before and after a join, with a reason after (owner call, 2026-11-15); otherwise view-as only.
   expect(text).toContain('Townwise staff helping you, with your consent, can open your organization as its admin, before or after anyone from it joins: they see and change what an admin can, except your team, for at most an hour each time. Once anyone has joined, they must give a reason first. Each time, with its reason, and every change they make is recorded and listed in your organization’s Townwise staff activity.');
   expect(text).toContain('Otherwise, Townwise staff can see the sales figures, your location notes and your calendars with their events only through view-as');
