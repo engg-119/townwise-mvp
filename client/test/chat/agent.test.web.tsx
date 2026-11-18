@@ -348,6 +348,87 @@ describe('the docked composer', () => {
   });
 });
 
+describe('following the reply (owner, 2026-11-18: “as the prompt goes it should scroll down automatically unless the user scrolls up and breaks that”)', () => {
+  const VIEW = 600;
+
+  /** The thread as a browser lays it out: its content `height` tall in a 600px view, scrolled to `top`. */
+  function laidOut(log: HTMLElement): { content: HTMLElement; scrolledTo: jest.Mock<undefined, [ScrollToOptions]>; grow: (height: number) => void; scrollTo: (top: number) => Promise<void> } {
+    const content = first(Array.from(log.children)) as HTMLElement;
+    let height = VIEW;
+    let top = 0;
+    const scrolledTo = jest.fn<undefined, [ScrollToOptions]>();
+    Object.defineProperty(log, 'scroll', { configurable: true, value: scrolledTo });
+    Object.defineProperty(log, 'scrollHeight', { configurable: true, get: () => height });
+    Object.defineProperty(log, 'offsetHeight', { configurable: true, get: () => VIEW });
+    Object.defineProperty(log, 'scrollTop', { configurable: true, get: () => top, set: (value: number) => { top = value; } });
+    Object.defineProperty(content, 'offsetHeight', { configurable: true, get: () => height });
+    return {
+      content,
+      scrolledTo,
+      // The content's new height after a layout: its observers fire before paint, with no timer in between.
+      grow: (next) => {
+        height = next;
+        const watching = observers.filter((observer) => observer.targets.has(content));
+        expect(watching).not.toHaveLength(0);
+        act(() => { for (const observer of watching) observer.callback([{ target: content } as unknown as ResizeObserverEntry], observer); });
+      },
+      // The person (or a jump landing) moves the view: react-native-web reports it, and again when the scroll ends.
+      scrollTo: async (next) => {
+        top = next;
+        fireEvent.scroll(log);
+        await act(() => new Promise((resolve) => { setTimeout(resolve, 120); }));
+      },
+    };
+  }
+
+  function lastScroll(scrolledTo: jest.Mock<undefined, [ScrollToOptions]>): ScrollToOptions | undefined {
+    return scrolledTo.mock.calls.at(-1)?.[0];
+  }
+
+  test('a pinned thread is at its end in the frame its content grows, every frame of an animation; a scroll up stops that until the person comes back; a send goes to the end', async () => {
+    const api = fakeChatApi();
+    renderAt('/locations/l1/agent', api);
+    await openEarlierChat();
+    const thread = laidOut(screen.getByRole('log', { name: 'Conversation with TownwiseAI' }));
+    thread.grow(1000);
+    expect(lastScroll(thread.scrolledTo)).toEqual({ top: 1000, left: 0, behavior: 'auto' });
+    await thread.scrollTo(1000 - VIEW);
+    // The timeline opening over 200ms: each frame's height is followed at once, before it is drawn.
+    for (let height = 1020; height <= 1240; height += 20) {
+      thread.scrolledTo.mockClear();
+      thread.grow(height);
+      expect(thread.scrolledTo).toHaveBeenCalledWith({ top: height, left: 0, behavior: 'auto' });
+    }
+    await thread.scrollTo(1240 - VIEW);
+    // And closing: the browser pulls the view back to the new end, which is no scroll up.
+    thread.grow(1100);
+    await thread.scrollTo(1100 - VIEW);
+    thread.scrolledTo.mockClear();
+    thread.grow(1200);
+    expect(thread.scrolledTo).toHaveBeenCalledWith({ top: 1200, left: 0, behavior: 'auto' });
+    await thread.scrollTo(1200 - VIEW);
+
+    // The person scrolls up: the reply grows below without moving the view, and Latest shows.
+    await thread.scrollTo(300);
+    thread.scrolledTo.mockClear();
+    thread.grow(1400);
+    thread.grow(1500);
+    expect(thread.scrolledTo).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: 'Latest' })).toBeTruthy();
+    // Back down near the end: followed again.
+    await thread.scrollTo(1500 - VIEW - 20);
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    thread.grow(1600);
+    expect(thread.scrolledTo).toHaveBeenCalledWith({ top: 1600, left: 0, behavior: 'auto' });
+
+    // Scrolled up again, a new prompt goes to the end.
+    await thread.scrollTo(200);
+    thread.scrolledTo.mockClear();
+    await send(api, 'And January?');
+    expect(thread.scrolledTo).toHaveBeenCalledWith(expect.objectContaining({ top: 1600 }));
+  });
+});
+
 test('a first turn taken back brings the landing back, with the text and focus in its composer', async () => {
   const api = fakeChatApi();
   renderAt('/locations/l1/agent', api);

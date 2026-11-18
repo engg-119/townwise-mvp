@@ -705,6 +705,42 @@ describe('the docked composer', () => {
     expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
   });
 
+  test('follows every frame of the timeline opening and closing, the shrink heard before its scroll included; a scroll up stops it; a send goes to the end (owner, 2026-11-18)', async () => {
+    const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
+    await renderAgent(meOf(ACCESS.member));
+    await openEarlierChat();
+    await dockAt(120);
+    await contentAt(1120);
+    await scrolled(1120 - VIEW, 1120);
+    for (let height = 1140; height <= 1320; height += 20) {
+      toEnd.mockClear();
+      await contentAt(height);
+      expect(toEnd).toHaveBeenCalledWith({ animated: false });
+      await scrolled(height - VIEW, height);
+    }
+    // Closing: the height is heard first, then the offset pulled back to the new end.
+    for (let height = 1300; height >= 1120; height -= 20) {
+      await contentAt(height);
+      await scrolled(height - VIEW, height);
+    }
+    toEnd.mockClear();
+    await contentAt(1400);
+    expect(toEnd).toHaveBeenCalledWith({ animated: false });
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+    await scrolled(1400 - VIEW, 1400);
+    // A scroll up: nothing pulls the view back as the reply grows.
+    await scrolled(500, 1400);
+    toEnd.mockClear();
+    await contentAt(1500);
+    expect(toEnd).not.toHaveBeenCalled();
+    expect(screen.getByRole('button', { name: 'Latest' })).toBeTruthy();
+    // A send goes to the end.
+    await fireEvent.changeText(screen.getByLabelText(COMPOSER_LABEL), 'And January?');
+    await fireEvent.press(screen.getByRole('button', { name: 'Send' }));
+    expect(toEnd).toHaveBeenCalled();
+    expect(screen.queryByRole('button', { name: 'Latest' })).toBeNull();
+  });
+
   test('the dock shrinking under an unpinned thread leaves it unpinned: a small scroll up near the end is still a scroll up', async () => {
     const toEnd = jest.spyOn(ScrollView.prototype, 'scrollToEnd');
     await renderAgent(meOf(ACCESS.member));

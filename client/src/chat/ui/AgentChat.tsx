@@ -203,6 +203,29 @@ export function AgentChat(props: {
     dockWas.current = dock;
   }, [dock]);
 
+  // The thread's content height, for the pin. On native, onContentSizeChange (below). On web, a ResizeObserver on the
+  // content, whose callback runs after layout and before paint, so a pinned thread is at its end in the frame that grew
+  // it: every frame of the timeline's 200ms open and close, a chart drawn, a reattached turn's first layout. (The
+  // ScrollView's onContentSizeChange measures in a timeout on web, a frame late: each growing frame was drawn short of
+  // the end, then moved.) `heard` is the latest render's, read when the observer fires.
+  const thread = state.status === 'ready' && state.enabled && !landing;
+  const heard = useRef<(height: number) => void>(() => undefined);
+  useLayoutEffect(() => {
+    heard.current = (height) => {
+      measureBar();
+      apply({ type: 'contentGrew', contentHeight: height - dockWas.current });
+    };
+  });
+  useLayoutEffect(() => {
+    if (Platform.OS !== 'web' || !thread || typeof ResizeObserver !== 'function') return undefined;
+    const node = scroll.current?.getScrollableNode() as unknown as HTMLElement | null | undefined;
+    const content = node?.firstElementChild as HTMLElement | null | undefined;
+    if (content == null) return undefined;
+    const observer = new ResizeObserver(() => { heard.current(content.offsetHeight); });
+    observer.observe(content);
+    return () => { observer.disconnect(); };
+  }, [thread]);
+
   function measureBar(): void {
     if (Platform.OS !== 'web') return;
     const node = scroll.current?.getScrollableNode() as unknown as HTMLElement | null | undefined;
@@ -530,11 +553,14 @@ export function AgentChat(props: {
           }
           apply({ type: 'scroll', y, contentHeight: contentSize.height - dock, viewportHeight: layoutMeasurement.height });
         }}
-        // The content's width changes whenever the scrollbar comes or goes, so the bar is measured here.
-        onContentSizeChange={(_width, height) => {
-          measureBar();
-          apply({ type: 'contentGrew', contentHeight: height - dock });
-        }}
+        // Native's content height (web's is the ResizeObserver above). The content's width changes whenever the scrollbar
+        // comes or goes, so the bar is measured with it.
+        {...(Platform.OS === 'web' ? {} : {
+          onContentSizeChange: (_width: number, height: number) => {
+            measureBar();
+            apply({ type: 'contentGrew', contentHeight: height - dock });
+          },
+        })}
       >
         <View testID="chat-column" style={styles.column}>
           {state.conversationLoading ? (
