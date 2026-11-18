@@ -18,6 +18,7 @@ import {
   MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentRefusal, type TurnAttachments,
 } from '../chat/attachments.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
+import { type RunningTurn, type StreamEvent, type TurnAbortReason, type TurnEnding } from '../chat/turn-runner.ts';
 import { newestLeafUnder, newNodeId, nodeIdSchema, nodesOf, pathTo, type ChatNode, type TreeNodeView } from '../chat/tree.ts';
 import { historyForModel, userMessageOf } from '../chat/user-message.ts';
 import {
@@ -49,6 +50,8 @@ const MAX_STORED_BYTES = 1_500_000;
 const STALE_TURN_MS = 3 * 60 * 1000;
 /** Keeps the Container Apps ingress from closing an idle stream. */
 const PING_MS = 15_000;
+/** A turn's stream ends after one of these (resumable-chat-turns: `stopped` for a stopped turn). */
+const TERMINAL_EVENTS = new Set(['done', 'error', 'stopped']);
 const TITLE_CHARS = 60;
 /** D36: the bytes of attached files this replica holds for its turns, from a send's checks to the end of its turn. */
 export const attachmentBytes = createByteGate(ATTACHMENT_BYTES_IN_FLIGHT);
@@ -340,9 +343,10 @@ function attachedToNode(nodes: readonly ChatNode[], nodeId: string): Attached[] 
 
 /**
  * POST /api/org/locations/:locationId/chat/turns (sections 2 and 3). Every refusal is a JSON error before the stream
- * starts; after that the answer is text/event-stream and ends with `done` or `error`. A person has at most one live
- * turn in the organization. The turn is saved once, when it finishes; closing the connection, or running past the time
- * limit, aborts the provider call and saves nothing but the cost.
+ * starts; after that the answer is text/event-stream, each event numbered by its SSE id, and ends with `done`, `error`
+ * or `stopped`. A person has at most one live turn in the organization. The turn runs on this replica's turn runner
+ * (resumable-chat-turns), so closing the connection aborts nothing; running past the time limit, a stop request, a lost
+ * lease or shutdown abort the provider call and save nothing but the cost. The turn is saved once, when it finishes.
  */
 export async function postTurn(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -351,6 +355,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const model = ctx.chat;
   if (model === null) throw new AppError(503, 'chat_unavailable', 'TownwiseAI isn’t turned on yet');
+  // A replica shutting down takes no new turn (resumable-chat-turns).
+  if (ctx.turnRunner.closing) throw new AppError(503, 'chat_unavailable', 'TownwiseAI is restarting. Try again in a moment.');
   const owner = ownerOf(caller, location.id);
   const { timeZone } = timeZoneOf(location.town);
   // D36: a send's files are its body's; a regenerate's are those its stored message carries.
@@ -444,139 +450,170 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   // The turn's time limit runs from its claims, so reading its files counts toward it: a PDF, Word or Excel file (D36)
   // can wait for the parse thread, and the claims go stale at 3 minutes. Every file read of the turn, its message's
   // and read_data_item's, is done ANSWER_TIME_MS before the limit, so the turn has time left to answer.
-  const timeLimit = AbortSignal.timeout(ctx.chatTurnTimeLimitMs);
-  const filesBy = Date.now() + ctx.chatTurnTimeLimitMs - ANSWER_TIME_MS;
+  const deadline = Date.now() + ctx.chatTurnTimeLimitMs;
+  const filesBy = deadline - ANSWER_TIME_MS;
+  // Nothing of the turn is saved: the claims go, and a conversation that never finished a turn is deleted.
+  const releaseClaims = async (): Promise<void> => {
+    releaseBytes();
+    await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
+    await releaseLiveTurn();
+  };
   // D36: the files' bytes, read only now that the turn holds its claims. A failure gives everything back before the stream.
   let attached: TurnAttachments | null = null;
   try {
     if (checks.length > 0) attached = turnAttachments(await readAttachments(checks, filesBy, turnBytes));
   } catch (err) {
-    releaseBytes();
-    await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
-    await releaseLiveTurn();
+    await releaseClaims();
     throw err;
   }
   // D36: a turn's log lines count its message's files by kind, never a name or anything from a file.
   const ids = { orgId: scope.orgId, locationId: location.id, conversationId, ...(attached === null ? {} : { attachments: attached.counts }) };
   // D37: and its web searches, a count only, on a turn that made any: never a query, a URL or anything from a page.
   const searched = (count: number): { webSearches?: number } => (count > 0 ? { webSearches: count } : {});
+  // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
+  const parentId = nodes.user === null ? nodes.reply.parentId : nodes.user.parentId;
+
+  // resumable-chat-turns: the turn runs on this replica's runner whatever its connection does; only its time limit, a
+  // stop request, a lost lease or shutdown abort it (signal.reason says which). Its ending is the stream's last event.
+  const run = async ({ signal, emit }: { signal: AbortSignal; emit: (event: StreamEvent) => void }): Promise<TurnEnding> => {
+    const send = (type: string, data: unknown): void => { emit({ type, data }); };
+    try {
+      // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
+      const blockRules = rules.map((rule) => ({ text: rule.text, summary: rule.schedule === null ? null : scheduleSummary(rule.schedule) }));
+      // D36: the attachments block goes after the rules block, and the files' content only into this turn's requests.
+      const userMessage = 'replyTo' in body
+        ? null : userMessageOf(history, { rules: blockRules, attachments: attached?.block ?? null }, body.content);
+      // Only the newest business_rules block on the path is sent in full; the stored messages keep theirs.
+      const modelHistory = historyForModel(history, userMessage);
+      const person = userMessage ?? modelHistory.at(-1);
+      // Sent in place of the stored message only when it differs: content was read, or a regenerate's files changed.
+      const expanded = attached === null || person === undefined ? null : expandedMessage(person, attached);
+      // D36: the files the path's messages attach, this one's included: read_data_item reads them again beyond text items,
+      // holding their bytes against the same cap as the message's (turnBytes), given back with them when the turn ends.
+      const attachedRefs = new Set([...modelHistory, ...(userMessage === null ? [] : [userMessage])].flatMap((param) => attachedTo(param).map((file) => file.ref)));
+      send('conversation', { id: conversationId, title, userNodeId: nodes.user?.id ?? null, replyNodeId: nodes.reply.id, parentId, turnId });
+      const result = await runTurn({
+        model,
+        // U13A: today is the town's local date, so an evening turn is not already tomorrow.
+        tools: {
+          ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
+          // read_data_item sets readUntrusted too, once it hands back an item's text or a picture; runTurn sets both for
+          // web pages.
+          turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, pictureBytes: attached?.pictureBytes ?? 0 },
+          files: { attached: attachedRefs, by: filesBy, bytes: turnBytes },
+        },
+        history: modelHistory,
+        userMessage,
+        expanded,
+        nodes,
+        signal,
+        now: ctx.now,
+        emit: (event: TurnEvent) => { send(event.type, event.data); },
+        charge: (cost) => ctx.stores.chatUsage.add(scope, monthOf(ctx.now()), cost, ctx.now()),
+        budgetSpent: async () => (await budgetOf(ctx, scope)).exhausted,
+        webSearch: ctx.config.chatWebSearch,
+      });
+      const counts = { calls: result.calls, ...searched(result.webSearches) };
+      if (result.kind !== 'done') {
+        // Nothing of the turn is saved: the claim goes, and a conversation that never finished a turn is deleted.
+        await ctx.stores.chatConversations.release(scope, conversationId, turnId);
+        if (result.kind === 'refused') {
+          ctx.logger.info({ ...ids, ...counts, stopReason: 'refusal', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn');
+          return { state: 'done', event: { type: 'done', data: { stopReason: 'refusal', costUsd: result.costMicroUsd / 1_000_000, leafId: null, sources: [] } } };
+        }
+        if (result.kind === 'aborted') {
+          const reason = signal.reason as TurnAbortReason;
+          if (reason === 'timeout') {
+            ctx.logger.warn({ ...ids, ...counts, code: 'timeout', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_failed');
+            return { state: 'failed', event: { type: 'error', data: { code: 'timeout' } } };
+          }
+          ctx.logger.info({ ...ids, ...counts, reason, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_aborted');
+          // Stop ends with `stopped`; shutdown and a lost lease (the record settled or deleted) with `interrupted`.
+          if (reason === 'stop') return { state: 'stopped', event: { type: 'stopped', data: {} } };
+          return { state: 'interrupted', event: { type: 'error', data: { code: 'interrupted' } } };
+        }
+        ctx.logger.warn({
+          ...ids, ...counts, code: result.code, errType: result.errType, status: result.status,
+          costMicroUsd: result.costMicroUsd,
+        }, 'townwise.chat_turn_failed');
+        return { state: 'failed', event: { type: 'error', data: { code: result.code } } };
+      }
+      const saved = await ctx.stores.chatConversations.finish(scope, conversationId, turnId, {
+        messages: result.messages, now: ctx.now(), leafId: result.leafId,
+      });
+      if (!saved) {
+        // Another turn took over the claim (this one ran past 3 minutes), or the conversation was deleted.
+        ctx.logger.warn({ ...ids, ...counts, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_not_saved');
+        return { state: 'failed', event: { type: 'error', data: { code: 'internal' } } };
+      }
+      await recordAfter(ctx, {
+        ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'chat.turn_completed',
+        target: { type: 'conversation', id: conversationId },
+        details: {
+          locationId: location.id, conversationId, model: result.model, calls: result.calls,
+          inputTokens: result.inputTokens, outputTokens: result.outputTokens, stopReason: result.stopReason,
+          ...(attached === null ? {} : { attachments: checks.length }), ...searched(result.webSearches),
+        },
+      });
+      ctx.logger.info({
+        ...ids, ...counts, stopReason: result.stopReason, costMicroUsd: result.costMicroUsd,
+      }, 'townwise.chat_turn');
+      // D37: the pages the reply's text cites, as the conversation view lists them under it.
+      return {
+        state: 'done',
+        event: { type: 'done', data: { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000, leafId: result.leafId, sources: result.sources } },
+      };
+    } catch (err) {
+      // A store failure while saving: nothing was saved, and the claim goes if it can.
+      ctx.logger.error({ ...ids, code: 'internal', errType: err instanceof Error ? err.constructor.name : typeof err }, 'townwise.chat_turn_failed');
+      await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
+      return { state: 'failed', event: { type: 'error', data: { code: 'internal' } } };
+    } finally {
+      releaseBytes();
+      // Before the turn's last event, so the client's next turn never finds this one still live.
+      await releaseLiveTurn();
+    }
+  };
+
+  // The record goes in after both claims and before the first event; a failure (or a replica shutting down) releases
+  // the claims as any failure before the stream does.
+  let running: RunningTurn;
+  try {
+    running = await ctx.turnRunner.start({
+      scope, deadline, run,
+      turn: {
+        locationId: location.id, conversationId, userId: caller.userId, turnId, userNodeId: nodes.user?.id ?? null,
+        replyNodeId: nodes.reply.id, parentId,
+        message: 'replyTo' in body ? null : { text: body.content, attachments: body.attachments ?? [] },
+      },
+    });
+  } catch (err) {
+    await releaseClaims();
+    throw err;
+  }
 
   res.status(200);
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-store');
   res.setHeader('X-Accel-Buffering', 'no');
   res.flushHeaders();
-  const send = (event: string, data: unknown): void => {
-    if (!res.writableEnded && !res.destroyed) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-  // Either one aborts the provider call. A closed connection sends nothing more; the time limit ends with `timeout`.
-  const closed = new AbortController();
-  res.on('close', () => { closed.abort(); });
-  if (req.socket.destroyed) closed.abort();
-  const signal = AbortSignal.any([closed.signal, timeLimit]);
   const ping = setInterval(() => {
     if (!res.writableEnded && !res.destroyed) res.write(': ping\n\n');
   }, PING_MS);
-
-  try {
-    // Spec 10.16: the location's business rules go before the person's text when they differ from the path's last list.
-    const blockRules = rules.map((rule) => ({ text: rule.text, summary: rule.schedule === null ? null : scheduleSummary(rule.schedule) }));
-    // D36: the attachments block goes after the rules block, and the files' content only into this turn's requests.
-    const userMessage = 'replyTo' in body
-      ? null : userMessageOf(history, { rules: blockRules, attachments: attached?.block ?? null }, body.content);
-    // Only the newest business_rules block on the path is sent in full; the stored messages keep theirs.
-    const modelHistory = historyForModel(history, userMessage);
-    const person = userMessage ?? modelHistory.at(-1);
-    // Sent in place of the stored message only when it differs: content was read, or a regenerate's files changed.
-    const expanded = attached === null || person === undefined ? null : expandedMessage(person, attached);
-    // D36: the files the path's messages attach, this one's included: read_data_item reads them again beyond text items,
-    // holding their bytes against the same cap as the message's (turnBytes), given back with them when the turn ends.
-    const attachedRefs = new Set([...modelHistory, ...(userMessage === null ? [] : [userMessage])].flatMap((param) => attachedTo(param).map((file) => file.ref)));
-    // `parentId` is where the turn's first new node hangs: the person's message, or a regenerate's reply.
-    send('conversation', {
-      id: conversationId, title, userNodeId: nodes.user?.id ?? null, replyNodeId: nodes.reply.id,
-      parentId: nodes.user === null ? nodes.reply.parentId : nodes.user.parentId,
-    });
-    const result = await runTurn({
-      model,
-      // U13A: today is the town's local date, so an evening turn is not already tomorrow.
-      tools: {
-        ctx, scope, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
-        // read_data_item sets readUntrusted too, once it hands back an item's text or a picture; runTurn sets both for
-        // web pages.
-        turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, pictureBytes: attached?.pictureBytes ?? 0 },
-        files: { attached: attachedRefs, by: filesBy, bytes: turnBytes },
-      },
-      history: modelHistory,
-      userMessage,
-      expanded,
-      nodes,
-      signal,
-      now: ctx.now,
-      emit: (event: TurnEvent) => { send(event.type, event.data); },
-      charge: (cost) => ctx.stores.chatUsage.add(scope, monthOf(ctx.now()), cost, ctx.now()),
-      budgetSpent: async () => (await budgetOf(ctx, scope)).exhausted,
-      webSearch: ctx.config.chatWebSearch,
-    });
-    const counts = { calls: result.calls, ...searched(result.webSearches) };
-    if (result.kind !== 'done') {
-      // Nothing of the turn is saved: the claim goes, and a conversation that never finished a turn is deleted.
-      await ctx.stores.chatConversations.release(scope, conversationId, turnId);
-      if (result.kind === 'refused') {
-        ctx.logger.info({ ...ids, ...counts, stopReason: 'refusal', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn');
-        send('done', { stopReason: 'refusal', costUsd: result.costMicroUsd / 1_000_000, leafId: null, sources: [] });
-        return;
-      }
-      if (result.kind === 'aborted') {
-        // Whichever aborted first decides: a closed connection sends nothing, the time limit ends with `timeout`.
-        if (!(timeLimit.aborted && signal.reason === timeLimit.reason)) {
-          ctx.logger.info({ ...ids, ...counts, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_aborted');
-          return;
-        }
-        ctx.logger.warn({ ...ids, ...counts, code: 'timeout', costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_failed');
-        send('error', { code: 'timeout' });
-        return;
-      }
-      ctx.logger.warn({
-        ...ids, ...counts, code: result.code, errType: result.errType, status: result.status,
-        costMicroUsd: result.costMicroUsd,
-      }, 'townwise.chat_turn_failed');
-      send('error', { code: result.code });
-      return;
-    }
-    const saved = await ctx.stores.chatConversations.finish(scope, conversationId, turnId, {
-      messages: result.messages, now: ctx.now(), leafId: result.leafId,
-    });
-    if (!saved) {
-      // Another turn took over the claim (this one ran past 3 minutes), or the conversation was deleted.
-      ctx.logger.warn({ ...ids, ...counts, costMicroUsd: result.costMicroUsd }, 'townwise.chat_turn_not_saved');
-      send('error', { code: 'internal' });
-      return;
-    }
-    await recordAfter(ctx, {
-      ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'chat.turn_completed',
-      target: { type: 'conversation', id: conversationId },
-      details: {
-        locationId: location.id, conversationId, model: result.model, calls: result.calls,
-        inputTokens: result.inputTokens, outputTokens: result.outputTokens, stopReason: result.stopReason,
-        ...(attached === null ? {} : { attachments: checks.length }), ...searched(result.webSearches),
-      },
-    });
-    ctx.logger.info({
-      ...ids, ...counts, stopReason: result.stopReason, costMicroUsd: result.costMicroUsd,
-    }, 'townwise.chat_turn');
-    // D37: the pages the reply's text cites, as the conversation view lists them under it.
-    send('done', { stopReason: result.stopReason, costUsd: result.costMicroUsd / 1_000_000, leafId: result.leafId, sources: result.sources });
-  } catch (err) {
-    // A store failure while saving: nothing was saved, and the claim goes if it can.
-    ctx.logger.error({ ...ids, code: 'internal', errType: err instanceof Error ? err.constructor.name : typeof err }, 'townwise.chat_turn_failed');
-    await ctx.stores.chatConversations.release(scope, conversationId, turnId).catch(() => undefined);
-    send('error', { code: 'internal' });
-  } finally {
+  let unsubscribe = (): void => undefined;
+  // A closed connection only stops this listener: the turn runs on, and a reader can pick it up again from its record.
+  const stopListening = (): void => {
     clearInterval(ping);
-    releaseBytes();
-    // Before the stream ends, so the client's next turn never finds this one still live.
-    await releaseLiveTurn();
-    if (!res.writableEnded) res.end();
-  }
+    unsubscribe();
+  };
+  res.on('close', stopListening);
+  unsubscribe = running.subscribe((event) => {
+    if (res.writableEnded || res.destroyed) return;
+    // Each event's number is its SSE id, so a reader that loses the stream resumes after the last one it had.
+    res.write(`id: ${String(event.seq)}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
+    if (TERMINAL_EVENTS.has(event.type)) {
+      stopListening();
+      res.end();
+    }
+  });
 }

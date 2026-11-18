@@ -255,6 +255,8 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
       if (pending.bytes >= batchBytes) closeBatch();
     };
 
+    // A turn whose time ran out before it started (reading its files took it all) starts aborted, so it makes no call.
+    if (Date.now() >= input.deadline) abort('timeout');
     const deadline = setTimeout(() => { abort('timeout'); }, Math.max(0, input.deadline - Date.now()));
     const heartbeat = setInterval(() => {
       if (finished) return;

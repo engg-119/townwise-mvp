@@ -162,6 +162,8 @@ describe('a plain answer', () => {
     const { userNodeId, replyNodeId } = events[0]?.data as { userNodeId: string; replyNodeId: string };
     expect(events[0]?.data).toEqual({
       id, title: 'What changed in May?', userNodeId: expect.any(String) as unknown, replyNodeId: expect.any(String) as unknown, parentId: null,
+      // resumable-chat-turns: the turn's id, for a reader that resumes it.
+      turnId: expect.stringMatching(/^[0-9a-f-]{36}$/) as unknown,
     });
     expect(streamedText(events)).toBe('May was steady, with two busy Fridays.');
     // 1000 x $4 + 500 x $20 + 10,000 x $0.20 + 2000 x $5 per million tokens.
@@ -602,10 +604,12 @@ describe('provider errors', () => {
 });
 
 describe('closing the connection', () => {
-  it('aborts the provider call and saves nothing but the cost', async () => {
-    // One text delta, so what streamed before the abort is always the same 7 characters.
-    const partial = eventsOf(message([text('A long answer that keeps going and going')], { usage: { input: 1000 } })).slice(0, 3);
-    model.script({ kind: 'hang', before: partial });
+  // resumable-chat-turns: this used to abort the provider call and save nothing. Closing now only stops that listener;
+  // the turn runs on and is saved once, as any turn (chat-resume.int.test.ts covers its record and the other endings).
+  it('aborts nothing: the turn runs on and is saved once', async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    model.script({ kind: 'message', message: message([text('An answer written while nobody watched.')]), gate });
     const controller = new AbortController();
     const res = await fetch(new URL(turnsPath(), server.url), {
       method: 'POST',
@@ -618,7 +622,7 @@ describe('closing the connection', () => {
     if (reader === undefined) throw new Error('no body');
     const decoder = new TextDecoder();
     let received = '';
-    while (!received.includes('event: text')) {
+    while (!received.includes('event: conversation')) {
       const chunk = await reader.read();
       if (chunk.done) break;
       received += decoder.decode(chunk.value);
@@ -626,14 +630,14 @@ describe('closing the connection', () => {
     const id = conversationIdOf(parseSse(received));
     controller.abort();
     await reader.cancel().catch(() => undefined);
+    release();
 
-    await until(() => Promise.resolve(model.calls[0]?.signal.aborted === true));
-    await until(async () => (await conversationDoc(id)) === null);
-    // 7 streamed characters count as 3 output tokens; the test clock did not move, so time adds none.
-    expect(await usedMicroUsd()).toBe(1000 * 4 + 3 * 20);
-    await until(() => Promise.resolve(server.logs.some((line) => line.includes('townwise.chat_turn_aborted'))));
+    await until(async () => (await conversationDoc(id))?.turnCount === 1);
+    expect(model.calls[0]?.signal.aborted).toBe(false);
+    expect((await storedParams(id)).map((m) => m.role)).toEqual(['user', 'assistant']);
     await until(async () => (await server.connection.collection('tw_chat_live_turns').countDocuments({})) === 0);
-    expect(server.logs.join('\n')).not.toContain('"code":"timeout"');
+    await until(() => Promise.resolve(server.logs.some((line) => line.includes('"msg":"townwise.chat_turn"'))));
+    expect(server.logs.join('\n')).not.toContain('townwise.chat_turn_aborted');
   });
 });
 

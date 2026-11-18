@@ -1,0 +1,246 @@
+// Resumable TownwiseAI turns (openspec change resumable-chat-turns) against a scripted model: a turn runs on the
+// replica's turn runner whatever its connection does, its numbered events are kept in tw_chat_turns as the POST streams
+// them, and it ends the same way as before (saved, refused, timed out, out of budget or failed), now also on its record.
+// A replica shutting down takes no new turn and settles its running ones as interrupted.
+import { randomUUID } from 'node:crypto';
+import { readFileSync } from 'node:fs';
+
+import { InternalServerError } from '@anthropic-ai/sdk';
+import { Types } from 'mongoose';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+
+import { addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
+import { eventsOf, message, scriptedModel, text, toolUse, type ScriptedModel } from './helpers/chat-model.ts';
+import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
+
+let server: TownwiseTestServer;
+let model: ScriptedModel;
+let orgId: string;
+let locationId: string;
+let session: TestSession;
+
+beforeAll(async () => {
+  model = scriptedModel();
+  // Long enough for every turn here to finish, short enough for the timeout case.
+  server = await startTownwiseServer({ chat: model, chatTurnTimeLimitMs: 1500 });
+  orgId = await createOrg(server, { name: 'Resume Tavern' });
+  const email = `member-${randomUUID().slice(0, 8)}@example.test`;
+  session = await signIn(server, email);
+  await addSeat(server, { orgId, userId: session.userId, email });
+  locationId = await addLocation(server, { orgId, name: 'Taproom' });
+});
+afterAll(async () => { await server.close(); });
+beforeEach(async () => {
+  await server.redis.flushdb();
+  await server.connection.collection('tw_chat_usage').deleteMany({});
+  model.calls.length = 0;
+});
+afterEach(() => { expect(model.remaining()).toBe(0); });
+
+interface SseEvent { id: number | null; event: string; data: unknown }
+
+function parseSse(body: string): SseEvent[] {
+  return body.split('\n\n').flatMap((chunk) => {
+    const lines = chunk.split('\n').filter((line) => line !== '' && !line.startsWith(':'));
+    const id = lines.find((line) => line.startsWith('id: '))?.slice(4);
+    const event = lines.find((line) => line.startsWith('event: '))?.slice(7);
+    const data = lines.find((line) => line.startsWith('data: '))?.slice(6);
+    return event === undefined || data === undefined ? [] : [{ id: id === undefined ? null : Number(id), event, data: JSON.parse(data) as unknown }];
+  });
+}
+
+const turnsPath = (): string => `/api/org/locations/${locationId}/chat/turns`;
+
+async function until(check: () => Promise<boolean>): Promise<void> {
+  for (let i = 0; i < 200; i += 1) {
+    if (await check()) return;
+    await new Promise((resolve) => { setTimeout(resolve, 25); });
+  }
+  throw new Error('condition not reached');
+}
+
+interface StoredTurn { state: string; turnId: string; eventCount: number; events: { seq: number; type: string; data: unknown }[]; [key: string]: unknown }
+
+async function record(turnId: string): Promise<StoredTurn | null> {
+  return server.connection.collection<StoredTurn>('tw_chat_turns').findOne({ turnId });
+}
+
+async function conversationDoc(id: string): Promise<Record<string, unknown> | null> {
+  return server.connection.collection('tw_chat_conversations').findOne({ _id: new Types.ObjectId(id) });
+}
+
+/** A turn read to its end: its events, numbered. */
+async function turn(json: unknown): Promise<SseEvent[]> {
+  const res = await call(server, turnsPath(), { session, json });
+  expect(res.status).toBe(200);
+  return parseSse(await res.text());
+}
+
+const conversationOf = (events: SseEvent[]): { id: string; turnId: string } => events[0]?.data as { id: string; turnId: string };
+
+/** The record's events as the stream shows them. */
+const asStream = (stored: StoredTurn | null): SseEvent[] => (stored?.events ?? []).map((each) => ({ id: each.seq, event: each.type, data: each.data }));
+
+const liveTurns = (): Promise<number> => server.connection.collection('tw_chat_live_turns').countDocuments({ orgId: new Types.ObjectId(orgId) });
+
+describe('a turn and its record', () => {
+  it('numbers every event of the stream as its record stores it, and keeps the person’s message and the turn’s nodes', async () => {
+    model.script({ kind: 'message', message: message([text('Saturday looks busy.')]) });
+    const events = await turn({ content: 'How busy is Saturday?' });
+    expect(events.map((each) => [each.id, each.event])).toEqual([[1, 'conversation'], [2, 'text'], [3, 'done']]);
+    const { id, turnId } = conversationOf(events);
+    const stored = await record(turnId);
+    expect(stored).toMatchObject({
+      state: 'done', eventCount: 3, stopRequested: false, userId: session.userId, conversationId: new Types.ObjectId(id),
+      locationId: new Types.ObjectId(locationId), message: { text: 'How busy is Saturday?', attachments: [] },
+      userNodeId: (events[0]?.data as { userNodeId: string }).userNodeId, replyNodeId: (events[0]?.data as { replyNodeId: string }).replyNodeId,
+      parentId: null,
+    });
+    expect(stored?.endedAt).toBeInstanceOf(Date);
+    expect(asStream(stored)).toEqual(events);
+    expect(await conversationDoc(id)).toMatchObject({ turnCount: 1, liveTurn: null });
+  });
+
+  it('closing the POST mid-turn aborts nothing: the turn finishes, is saved once, and its record holds every event', async () => {
+    let release = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    model.script(
+      { kind: 'message', message: message([text('Let me check. '), toolUse('r1', 'list_notes', {})]) },
+      { kind: 'message', message: message([text('Nothing on the calendar.')]), gate },
+    );
+    const controller = new AbortController();
+    const res = await fetch(new URL(turnsPath(), server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.accessToken}` },
+      body: JSON.stringify({ content: 'Anything on Friday?' }),
+      signal: controller.signal,
+    });
+    const reader = res.body?.getReader();
+    if (reader === undefined) throw new Error('no body');
+    const decoder = new TextDecoder();
+    let received = '';
+    while (!received.includes('event: tool')) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      received += decoder.decode(chunk.value);
+    }
+    const seen = parseSse(received);
+    const { id, turnId } = conversationOf(seen);
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+    release();
+
+    await until(async () => (await record(turnId))?.state === 'done');
+    const stored = await record(turnId);
+    expect(stored?.events.map((each) => each.type)).toEqual(['conversation', 'text', 'tool', 'tool', 'text', 'done']);
+    // What the closed stream had shown is the record's start, with the same numbers.
+    expect(asStream(stored).slice(0, seen.length)).toEqual(seen);
+    expect(model.calls.map((each) => each.signal.aborted)).toEqual([false, false]);
+    expect(await conversationDoc(id)).toMatchObject({ turnCount: 1, liveTurn: null });
+    expect(await liveTurns()).toBe(0);
+  });
+
+  it('a refusal ends as before, with done refusal, and saves nothing; its record is done', async () => {
+    model.script({ kind: 'message', message: message([], { stopReason: 'refusal' }) });
+    const events = await turn({ content: 'Refuse this.' });
+    expect(events.at(-1)).toMatchObject({ event: 'done', data: { stopReason: 'refusal', leafId: null } });
+    const { id, turnId } = conversationOf(events);
+    expect(await conversationDoc(id)).toBeNull();
+    expect(asStream(await record(turnId))).toEqual(events);
+    expect((await record(turnId))?.state).toBe('done');
+  });
+
+  it('a provider failure ends as before, with its error code, and saves nothing; its record is failed', async () => {
+    const failure = new InternalServerError(500, { type: 'error', error: { type: 'api_error', message: 'no' } }, undefined, new Headers(), 'api_error');
+    model.script({ kind: 'error', error: failure, before: eventsOf(message([text('Partial reply')], { usage: { input: 2000 } })).slice(0, 3) });
+    const events = await turn({ content: 'Will this fail?' });
+    expect(events.at(-1)).toMatchObject({ event: 'error', data: { code: 'provider_unavailable' } });
+    const { id, turnId } = conversationOf(events);
+    expect(await conversationDoc(id)).toBeNull();
+    const stored = await record(turnId);
+    expect(stored?.state).toBe('failed');
+    expect(asStream(stored)).toEqual(events);
+  });
+
+  it('a turn past its time limit ends as before, with error timeout, even with no connection open; its record is failed', async () => {
+    model.script({ kind: 'hang', before: eventsOf(message([text('Still thinking it over')], { usage: { input: 1000 } })).slice(0, 3) });
+    const controller = new AbortController();
+    const res = await fetch(new URL(turnsPath(), server.url), {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${session.accessToken}` },
+      body: JSON.stringify({ content: 'Take your time' }),
+      signal: controller.signal,
+    });
+    const reader = res.body?.getReader();
+    if (reader === undefined) throw new Error('no body');
+    const first = new TextDecoder().decode((await reader.read()).value);
+    const { id, turnId } = conversationOf(parseSse(first));
+    controller.abort();
+    await reader.cancel().catch(() => undefined);
+
+    await until(async () => (await record(turnId))?.state === 'failed');
+    expect((await record(turnId))?.events.at(-1)).toEqual({ seq: 3, type: 'error', data: { code: 'timeout' } });
+    expect(model.calls[0]?.signal.aborted).toBe(true);
+    expect(await conversationDoc(id)).toBeNull();
+    expect(await liveTurns()).toBe(0);
+    expect(server.logs.join('\n')).toContain('"code":"timeout"');
+  });
+
+  it('a budget spent mid-turn ends as before, with done budget, and the turn is saved; its record is done', async () => {
+    await server.connection.collection('tw_chat_usage').insertOne({
+      orgId: new Types.ObjectId(orgId), month: '2026-06', costMicroUsd: 19_990_000, updatedAt: server.clock.now(),
+    });
+    model.script({ kind: 'message', message: message([text('Checking your notes. '), toolUse('b1', 'list_notes', {})], {
+      usage: { input: 1000, output: 500, cacheRead: 10_000, cacheWrite: 2000 },
+    }) });
+    const events = await turn({ content: 'Spend the rest' });
+    expect(events.at(-1)).toMatchObject({ event: 'done', data: { stopReason: 'budget' } });
+    const { id, turnId } = conversationOf(events);
+    expect(await conversationDoc(id)).toMatchObject({ turnCount: 1 });
+    expect(asStream(await record(turnId))).toEqual(events);
+    expect((await record(turnId))?.state).toBe('done');
+  });
+});
+
+describe('shutdown', () => {
+  it('main.ts builds one turn runner, hands it to every context, and closes it first, after the HTTP drain', () => {
+    const main = readFileSync(new URL('../src/main.ts', import.meta.url), 'utf8');
+    expect(main.match(/\bcreateTurnRunner\(/g)).toHaveLength(1);
+    expect(main).toMatch(/^const baseDeps = \{\n[^}]*\bturnRunner\b/m);
+    expect(main).toMatch(/onShutdown: \[\n\s+turnRunner, \{ name: 'mail'/);
+  });
+
+  // Last in the file: the runner stays closed afterwards.
+  it('settles a running turn as interrupted, releases its claims, deletes its new conversation and takes no new turn', async () => {
+    model.script({ kind: 'hang', before: eventsOf(message([text('Sentinel-reply being written')], { usage: { input: 1000 } })).slice(0, 3) });
+    const res = await call(server, turnsPath(), { session, json: { content: 'Sentinel-question asked before a deploy' } });
+    expect(res.status).toBe(200);
+    const body = res.text();
+    let turnId = '';
+    await until(async () => {
+      const running = await server.connection.collection<StoredTurn>('tw_chat_turns').findOne({ state: 'running' });
+      turnId = running?.turnId ?? '';
+      return (running?.eventCount ?? 0) >= 2;
+    });
+    server.logs.length = 0;
+    const started = Date.now();
+    await server.turnRunner.close();
+    expect(Date.now() - started).toBeLessThan(2000);
+
+    const events = parseSse(await body);
+    expect(events.at(-1)).toEqual({ id: 3, event: 'error', data: { code: 'interrupted' } });
+    const stored = await record(turnId);
+    expect(stored?.state).toBe('interrupted');
+    expect(asStream(stored)).toEqual(events);
+    expect(model.calls[0]?.signal.aborted).toBe(true);
+    expect(await conversationDoc(conversationOf(events).id)).toBeNull();
+    expect(await liveTurns()).toBe(0);
+    const lines = server.logs.join('\n');
+    expect(lines).toContain('"reason":"shutdown"');
+    expect(lines).not.toContain('Sentinel');
+
+    const refused = await call(server, turnsPath(), { session, json: { content: 'After the deploy' } });
+    expect(refused.status).toBe(503);
+    expect(await refused.json()).toMatchObject({ error: 'chat_unavailable' });
+  });
+});

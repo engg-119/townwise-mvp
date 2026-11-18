@@ -21,6 +21,7 @@ import { createTownwiseApi, createTownwiseContext, createTownwiseLab, type Townw
 import type { CalendarFetcher } from '../../src/calendar/fetch.ts';
 import type { GoogleCalendarClient, revokeGoogleGrant } from '../../src/calendar/google.ts';
 import type { ChatModel } from '../../src/chat/model.ts';
+import { createTurnRunner, type TurnRunner } from '../../src/chat/turn-runner.ts';
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import { createAiReadActions } from '../../src/files/ai-actions.ts';
 import { createAiReader, type AiReader, type AiReaderDeps, type OnAiRead } from '../../src/files/ai-reader.ts';
@@ -74,6 +75,8 @@ export interface TownwiseTestServer {
   readonly reader: FileWorker | null;
   /** Reading with TownwiseAI, when the server was started with `aiReader`; tests drive it with nudge() and settled(). */
   readonly aiReader: AiReader | null;
+  /** The process's TownwiseAI turn runner, first in onShutdown as in main.ts. */
+  readonly turnRunner: TurnRunner;
   close(): Promise<void>;
 }
 
@@ -215,9 +218,10 @@ export async function startTownwiseServer(opts?: {
       connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
       replicaId: 'test-reader', pollMs: 60_000, ...opts.reader,
     });
+    const turnRunner = createTurnRunner({ stores: createTownwiseStores(mongo.connection), logger, now: clock.now });
     const baseDeps = {
       config, logger, connection: mongo.connection, authStores, auth, redis: redis.client, now: clock.now, chat: opts?.chat,
-      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, places: opts?.places, mailer, placesMap: opts?.placesMap,
+      chatTurnTimeLimitMs: opts?.chatTurnTimeLimitMs, turnRunner, places: opts?.places, mailer, placesMap: opts?.placesMap,
       files, fileWorker: reader ?? undefined, setupReader: opts?.setupReader, setupReadTimeMs: opts?.setupReadTimeMs,
       setupReadText: opts?.setupReadText,
       peopleData: opts?.peopleData, labRunner: opts?.labRunner,
@@ -243,7 +247,7 @@ export async function startTownwiseServer(opts?: {
     if (opts?.probe !== undefined) routes.push({ path: '/probe', router: createTownwiseApi(deps, opts.probe) });
     await ensureIndexes(mongo.connection, { logger, buildAtBoot: () => true });
     const readers = [reader, aiReader].filter((each): each is FileWorker | AiReader => each !== null);
-    const server = createServer({ config, logger, routes, onShutdown: [...readers, redis, mongo], exit: () => undefined });
+    const server = createServer({ config, logger, routes, onShutdown: [turnRunner, ...readers, redis, mongo], exit: () => undefined });
     const listened = await server.listen();
     return {
       url: `http://127.0.0.1:${String(listened.port)}`,
@@ -260,6 +264,7 @@ export async function startTownwiseServer(opts?: {
       mailer,
       reader,
       aiReader,
+      turnRunner,
       close: () => server.shutdown('test'),
     };
   } catch (err) {

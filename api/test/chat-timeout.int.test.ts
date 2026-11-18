@@ -1,6 +1,6 @@
 // The tuning chat's turn time limit (docs/portal/tuning-chat.md section 3), shortened to 300 ms here: a turn that runs
 // past it aborts the provider call, saves nothing but its cost, and ends the stream with error `timeout`, where a
-// closed connection sends nothing more (chat.int.test.ts). A turn that finishes in time is unaffected.
+// closed connection aborts nothing (resumable-chat-turns, chat.int.test.ts). A turn that finishes in time is unaffected.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -38,10 +38,11 @@ describe('the turn time limit', () => {
     const res = await postTurn('Take your time');
     expect(res.status).toBe(200);
     const body = await res.text();
+    // resumable-chat-turns: each event carries its number as its SSE id, and `conversation` names the turn.
     expect(body).toMatch(
-      /^event: conversation\ndata: \{"id":"[0-9a-f]{24}","title":"Take your time","userNodeId":"[0-9a-f-]{36}","replyNodeId":"[0-9a-f-]{36}","parentId":null\}\n\n/,
+      /^id: 1\nevent: conversation\ndata: \{"id":"[0-9a-f]{24}","title":"Take your time","userNodeId":"[0-9a-f-]{36}","replyNodeId":"[0-9a-f-]{36}","parentId":null,"turnId":"[0-9a-f-]{36}"\}\n\n/,
     );
-    expect(body.endsWith('event: text\ndata: {"delta":"Still t"}\n\nevent: error\ndata: {"code":"timeout"}\n\n')).toBe(true);
+    expect(body.endsWith('id: 2\nevent: text\ndata: {"delta":"Still t"}\n\nid: 3\nevent: error\ndata: {"code":"timeout"}\n\n')).toBe(true);
     expect(model.calls[0]?.signal.aborted).toBe(true);
 
     const org = new Types.ObjectId(orgId);

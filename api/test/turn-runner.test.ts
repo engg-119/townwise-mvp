@@ -246,6 +246,17 @@ describe('the turn runner', () => {
     expect(reason).toBe('timeout');
   });
 
+  it('a turn whose deadline passed before it started starts aborted with reason timeout', async () => {
+    const { runner } = setup();
+    let seen: unknown = null;
+    const { turn } = await started(runner, ({ signal }) => {
+      seen = signal.aborted ? signal.reason : 'not aborted';
+      return Promise.resolve({ state: 'failed', event: { type: 'error', data: { code: 'timeout' } } });
+    }, -1);
+    await turn.ended;
+    expect(seen).toBe('timeout');
+  });
+
   it('a write that matches a settled or deleted record aborts the turn with reason lease_lost; its listeners still hear an ending', async () => {
     const { runner, memory } = setup();
     let reason: unknown = null;
