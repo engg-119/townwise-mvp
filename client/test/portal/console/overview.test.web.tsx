@@ -96,7 +96,16 @@ test('Needs attention: each item in words with its link, and “Nothing needs at
   expect(screen.queryByRole('list', { name: 'Needs attention' })).toBeNull();
 });
 
-test('a window change keeps the last answer on screen, with no skeleton, until the next arrives', async () => {
+/** The line under the window tabs, in its kept slot. */
+function windowLine(): HTMLElement {
+  return screen.getByTestId('overview-window');
+}
+
+function figures(): HTMLElement {
+  return screen.getByTestId('overview-figures');
+}
+
+test('a window change keeps the last answer on screen, dimmed and inert under a line that says what loads, with no skeleton', async () => {
   const api = consoleApi();
   answer(api, 28, overviewAnswer(28));
   const next = deferred<unknown>();
@@ -104,15 +113,25 @@ test('a window change keeps the last answer on screen, with no skeleton, until t
   renderAt('/admin/overview', api);
   await screen.findByText('Active people');
   expect(screen.queryByTestId('skeleton-overview')).toBeNull();
+  expect(within(windowLine()).getByRole('status').textContent).toBe('The last 28 days, Oct 21, 2026 to Nov 17, 2026 (UTC).');
+  // The slot's height is kept whatever it says, so nothing under it moves when it changes.
+  expect(getComputedStyle(windowLine()).minHeight).toBe('20px');
+  expect(figures().getAttribute('aria-busy')).not.toBe('true');
+  expect(figures().hasAttribute('inert')).toBe(false);
 
   const tabs = screen.getByRole('navigation', { name: 'Window' });
   fireEvent.click(within(tabs).getByRole('link', { name: '90 days' }));
   await waitFor(() => { expect(gets(api, '/api/admin/overview?days=90')).toBe(1); });
-  // The 28-day figures stay, the tabs say where the page is going, and the skeleton never shows.
+  // The 28-day figures stay, dimmed and inert, the line says what is loading and what is still shown, the tabs say
+  // where the page is going, and the skeleton never shows.
   expect(tile('Active people')).toBe('Active people9of 14Up 3 from the 28 days before');
   expect(screen.queryByTestId('skeleton-overview')).toBeNull();
   expect(within(tabs).getByRole('link', { name: '90 days' }).getAttribute('aria-current')).toBe('page');
-  expect(screen.getByRole('status').textContent).toBe('Loading 90 days');
+  expect(within(windowLine()).getByRole('status').textContent).toBe('Loading the last 90 days… Below: the last 28 days until then.');
+  expect(figures().getAttribute('aria-busy')).toBe('true');
+  expect(figures().hasAttribute('inert')).toBe(true);
+  expect(getComputedStyle(figures()).opacity).toBe('0.6');
+  expect(getComputedStyle(windowLine()).minHeight).toBe('20px');
 
   await act(async () => {
     next.resolve(overviewAnswer(90, { totals: { ...overviewAnswer(90).totals as object, activePeople: { count: 11, previous: null, of: 14 } } }));
@@ -120,7 +139,31 @@ test('a window change keeps the last answer on screen, with no skeleton, until t
   });
   await waitFor(() => { expect(tile('Active people')).toBe('Active people11of 14No earlier days recorded'); });
   expect(tile('Sales uploads')).toBe('Sales uploads3Down 2 from the 90 days before');
-  expect(screen.queryByText('Loading 90 days')).toBeNull();
+  expect(within(windowLine()).getByRole('status').textContent).toBe('The last 90 days, Aug 20, 2026 to Nov 17, 2026 (UTC).');
+  expect(figures().hasAttribute('inert')).toBe(false);
+});
+
+test('a failed change shows the error in place of the old figures, and Try again moves focus to the loading line', async () => {
+  const api = consoleApi();
+  answer(api, 28, overviewAnswer(28));
+  api.routes['GET /api/admin/overview?days=90'] = () => offline();
+  renderAt('/admin/overview', api);
+  await screen.findByText('Active people');
+  fireEvent.click(within(screen.getByRole('navigation', { name: 'Window' })).getByRole('link', { name: '90 days' }));
+  expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
+  // No 28-day figure stays under the 90-day tab as if it were current.
+  expect(screen.queryByText('Active people')).toBeNull();
+  expect(screen.queryByTestId('overview-figures')).toBeNull();
+
+  const next = deferred<unknown>();
+  api.routes['GET /api/admin/overview?days=90'] = () => next.promise;
+  fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  expect(within(windowLine()).getByRole('status').textContent).toBe('Loading the last 90 days… Below: the last 28 days until then.');
+  expect(document.activeElement).toBe(windowLine());
+  expect(figures().hasAttribute('inert')).toBe(true);
+  await act(async () => { next.resolve(overviewAnswer(90)); await next.promise; });
+  await waitFor(() => { expect(within(windowLine()).getByRole('status').textContent).toBe('The last 90 days, Aug 20, 2026 to Nov 17, 2026 (UTC).'); });
+  expect(document.activeElement).toBe(windowLine());
 });
 
 test('the skeleton shows only before the first answer; a failed read shows the error with Try again', async () => {
@@ -130,11 +173,14 @@ test('the skeleton shows only before the first answer; a failed read shows the e
   renderAt('/admin/overview', api);
   const skeleton = await screen.findByTestId('skeleton-overview');
   expect(within(skeleton).getByRole('status').textContent).toBe('Loading the overview');
+  expect(windowLine().textContent).toBe('Loading the last 28 days…');
   await act(async () => { first.resolve(offline()); await first.promise; });
   expect(await screen.findByText('Can’t reach Townwise. Check your connection and try again.')).toBeTruthy();
   expect(screen.queryByTestId('skeleton-overview')).toBeNull();
   answer(api, 28, overviewAnswer(28));
   fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+  // The button went with the error, so focus moves to the line that says what is loading, not to the page body.
+  expect(document.activeElement).toBe(windowLine());
   expect(await screen.findByText('Active people')).toBeTruthy();
   expect(gets(api, '/api/admin/overview?days=28')).toBe(2);
 });

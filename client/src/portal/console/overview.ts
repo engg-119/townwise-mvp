@@ -18,6 +18,16 @@ export function overviewHref(days: OverviewDays): string {
   return `/admin/overview?days=${String(days)}`;
 }
 
+/**
+ * The line under the window tabs: the window the figures below are for, or, while the next window loads, what is
+ * loading and which window the figures still on the page are for. `shown` is the answer on the page, null before one.
+ */
+export function windowLine(days: OverviewDays, shown: Overview['window'] | null, loading: boolean): string {
+  if (shown !== null && !loading) return `The last ${String(shown.days)} days, ${formatDate(shown.from)} to ${formatDate(shown.to)} (UTC).`;
+  const next = `Loading the last ${String(days)} days…`;
+  return shown === null ? next : `${next} Below: the last ${String(shown.days)} days until then.`;
+}
+
 /** “Up 3 from the 28 days before”, “Same as …”, “Down 2 from …”, or “No earlier days recorded” with no previous value. */
 export function changeWords(count: number, previous: number | null, days: number): string {
   if (previous === null) return 'No earlier days recorded';

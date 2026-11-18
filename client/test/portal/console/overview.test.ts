@@ -4,7 +4,7 @@ import type { ApiClient } from '../../../src/api/client';
 import { fetchOverview } from '../../../src/portal/console/api';
 import {
   accuracyWords, activitySummary, attentionLines, changeWords, forecastWords, GROUP_LABEL, overviewDaysOf, overviewHref, recordingLine,
-  spendWords, tilesOf, usd,
+  spendWords, tilesOf, usd, windowLine,
 } from '../../../src/portal/console/overview';
 import { ACTION_GROUPS, overviewSchema, type Overview } from '../../../src/portal/console/schemas';
 import { formatDate } from '../../../src/portal/format';
@@ -84,6 +84,13 @@ describe('the window', () => {
     expect(overviewDaysOf('10')).toBe(28);
     expect(overviewDaysOf(['7', '90'])).toBe(28);
     expect(overviewHref(7)).toBe('/admin/overview?days=7');
+  });
+
+  test('its line says which days the figures are for, and while the next loads, what loads and what is still shown', () => {
+    const shown = overview(28).window;
+    expect(windowLine(28, shown, false)).toBe('The last 28 days, Oct 21, 2026 to Nov 17, 2026 (UTC).');
+    expect(windowLine(90, shown, true)).toBe('Loading the last 90 days… Below: the last 28 days until then.');
+    expect(windowLine(28, null, true)).toBe('Loading the last 28 days…');
   });
 });
 
