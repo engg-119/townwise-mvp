@@ -231,6 +231,10 @@ describe('POST /api/org/locations/:locationId/data/:ref/ai', () => {
       status: 'done', reason: null, partial: false, kind: 'calendar', summary: 'A list of June events.', facts: ['Three events in June'],
       daysCut: false, notes: [], notesSkipped: null, daysWritten: 0, daysAlreadyHad: 0, uploadRef: null, itemRef: null, daysReason: null,
       itemReason: null, calibration: null, canUndo: false, rulesSuggested: 0, rulesWaiting: 0,
+      events: [{
+        title: 'Wedding dinner', startDate: '2026-06-14', endDate: '2026-06-14', kind: 'private_event', effect: 'more',
+        expectedGuests: 80, noteId: null,
+      }],
     });
     expect(await aiOf(fileId)).toMatchObject({ status: 'done', attempts: 1, leaseUntil: null, costMicroUsd: 2500, requestedBy: team.member.userId });
     const readEvent = (await eventsOf('file.ai_read')).at(-1);
