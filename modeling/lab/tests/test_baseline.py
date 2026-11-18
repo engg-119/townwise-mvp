@@ -133,6 +133,26 @@ def test_a_closed_weekday_is_closed_with_no_figures_as_the_models_would_be():
     assert all(d["status"] == by_date[d["date"]] for d in run["days"])
 
 
+def test_a_party_rung_as_a_check_or_two_on_a_closed_weekday_keeps_it_closed():
+    # Sawtooth's shape: Mondays closed for 10 weeks but for two private parties rung as one or two checks
+    through = "2025-08-31"
+    last_mondays = ts(through) - pd.Timedelta(days=70)
+    checks = {ts("2025-08-11"): 1.0, ts("2025-08-18"): 2.0}
+
+    def guests(day: pd.Timestamp) -> float | None:
+        if day.day_name() != "Monday" or day < last_mondays:
+            return weekly(day)
+        return checks.get(day)
+
+    mondays = [d for d in baseline_run(make_input("2024-06-03", through, guests))["days"]
+               if ts(d["date"]).day_name() == "Monday"]
+    assert mondays and all(d["status"] == "closed" for d in mondays)
+    # A Monday with real service among the last 8 still opens the weekday
+    served = ts("2025-08-25")
+    inp = make_input("2024-06-03", through, lambda day: weekly(day) if day == served else guests(day))
+    assert all(d["status"] == "open" for d in baseline_run(inp)["days"] if ts(d["date"]).day_name() == "Monday")
+
+
 def test_a_one_off_event_or_a_group_without_enough_history_has_no_effect():
     through = "2025-08-31"
     parade, one_off = ts("2025-09-06"), ts("2025-09-13")  # Saturdays after the cutoff

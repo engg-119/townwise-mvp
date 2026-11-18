@@ -18,7 +18,8 @@ REACH_DAYS = 91  # a run reaches the calibration's today plus this many days
 MIN_HORIZON_WEEKS = 8  # backtest weeks a longer horizon needs before the run reaches it
 MAX_DAY_GUESTS = 20_000  # the run file's limits: a day's guests, and at most 6 reasons a day
 MAX_REASONS = 6
-CLOSED_WEEKDAY_DATES = 8  # a weekday with no guests on any of its last 8 dates (in weeks open otherwise) is closed
+CLOSED_WEEKDAY_DATES = 8  # a weekday not served on any of its last 8 dates (in weeks open otherwise) is closed
+NEAR_EMPTY_SHARE = 0.1  # a day under this share of its week's median guests was not served (api closed-days.ts's line)
 HOLIDAY_FLAGS = ("hol_big_night", "hol_halloween", "hol_closed", "federal_holiday")
 ONE_OFF = "one_off"  # an event with no calendar group: its reason names none
 STATUS_REASON = {"open": "weekday", "closed": "closure", "booked": "booking"}
@@ -49,11 +50,20 @@ def backtest_predictions(frame: pd.DataFrame, hist: pd.DataFrame, origins: list[
     return preds.assign(lo=lo, mid=mid, hi=hi)
 
 
+def served(frame: pd.DataFrame) -> pd.Series:
+    """Whether each day was open to the public: guests at least a tenth of the median guests over its week's days with
+    guests. A day closed to the public can still ring a private party as one check with a guest or two, and that check
+    says nothing about the weekday's regular service."""
+    typical = frame.guests.where(frame.guests.gt(0)).groupby(_monday(frame.date)).transform("median")
+    return frame.guests.gt(0) & frame.guests.ge(NEAR_EMPTY_SHARE * typical)
+
+
 def closed_weekdays(frame: pd.DataFrame, through: pd.Timestamp) -> set[str]:
-    """Weekdays none of whose last 8 dates on or before `through` had guests, counting only dates in weeks with guests
-    on another day (a week closed throughout says nothing about one weekday). A weekday with no such date stays open."""
+    """Weekdays none of whose last 8 dates on or before `through` were served (see served), counting only dates in weeks
+    served on another day (a week closed throughout says nothing about one weekday). A weekday with no such date stays
+    open."""
     past = frame[frame.date <= through]
-    had = past.guests.gt(0).astype(int)
+    had = served(past).astype(int)
     counted = (had.groupby(_monday(past.date)).transform("sum") - had) > 0
     recent = had[counted].groupby(past.weekday[counted]).tail(CLOSED_WEEKDAY_DATES)
     return {name for name, values in recent.groupby(past.weekday[recent.index]) if values.sum() == 0}
