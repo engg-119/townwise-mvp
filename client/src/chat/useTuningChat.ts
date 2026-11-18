@@ -632,6 +632,10 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
     case 'error':
       if (state.turn?.earlier) return putBack(state, state.turn.earlier, REGENERATE_FAILED);
       return { ...state, error: streamErrorText(event.code), turn: null, messages: endLive(state, { state: 'failed', note: NOT_SAVED }, now) };
+    case 'stopped':
+      // resumable-chat-turns: the turn stopped on the server, and saved nothing.
+      if (state.turn?.earlier) return putBack(state, state.turn.earlier, REGENERATE_FAILED);
+      return { ...state, turn: null, messages: endLive(state, { state: 'stopped', note: STOPPED }, now) };
   }
 }
 
