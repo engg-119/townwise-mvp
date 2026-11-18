@@ -3,7 +3,7 @@
 // stores, a write that applied but reported an error never doubled, and a turn aborted only by its time limit, a stop
 // request, a lost lease or shutdown, never by a listener going away.
 import { createLogger } from '@ckeith26/server-core';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import {
@@ -25,6 +25,8 @@ function memoryTurns() {
     /** Throws the next appends without applying them. */
     throwAppends: 0,
     appends: 0,
+    /** Throws the next renewals without applying them. */
+    throwRenews: 0,
     renewals: 0,
   };
   const running = (turnId: string): FakeRecord | undefined => {
@@ -54,6 +56,10 @@ function memoryTurns() {
     },
     renew: (_scope, turnId, leaseUntil) => {
       hooks.renewals += 1;
+      if (hooks.throwRenews > 0) {
+        hooks.throwRenews -= 1;
+        return Promise.reject(new Error('network'));
+      }
       const record = running(turnId);
       if (record === undefined) return Promise.resolve(false);
       record.leaseUntil = leaseUntil;
@@ -275,18 +281,67 @@ describe('the turn runner', () => {
   });
 
   it('the heartbeat renews the lease while nothing is written, and finds a lost lease', async () => {
-    const { runner, memory } = setup();
+    const { runner, memory, advance } = setup();
     let reason: unknown = null;
     const { turn, turnId } = await started(runner, async ({ signal }) => {
+      // A heartbeat's worth of the lease used: the next tick renews it.
+      advance(1_000);
       await sleep(100);
       expect(memory.hooks.renewals).toBeGreaterThan(0);
       const record = memory.records.get(turnId);
       if (record !== undefined) record.state = 'interrupted';
+      // The next renewal finds it.
+      advance(1_000);
       reason = await abortedWith(signal);
       return { state: 'interrupted', event: { type: 'error', data: { code: 'interrupted' } } };
     });
     await turn.ended;
     expect(reason).toBe('lease_lost');
+  });
+
+  /**
+   * The production lease and heartbeat on fake timers: a write 50 ms after the first heartbeat tick, then a tool step
+   * that writes nothing for 40 seconds. Resolves the least lease the record had left at any second of it.
+   */
+  async function silentStep(failRenewals: number): Promise<{ least: number; state: TurnState | undefined; aborted: boolean }> {
+    vi.useFakeTimers();
+    try {
+      const { runner, memory } = setup({ now: () => new Date(), leaseMs: 30_000, heartbeatMs: 10_000, stopPollMs: 1_000, batchMs: 200 });
+      let aborted = false;
+      const { turn, turnId } = await started(runner, async ({ emit, signal }) => {
+        await sleep(10_050);
+        emit({ type: 'conversation', data: {} });
+        await sleep(200);
+        memory.hooks.throwRenews = failRenewals;
+        await sleep(40_000);
+        aborted = signal.aborted;
+        return DONE;
+      });
+      let least = Infinity;
+      for (let second = 0; second < 52; second += 1) {
+        await vi.advanceTimersByTimeAsync(1_000);
+        const record = memory.records.get(turnId);
+        if (record?.state === 'running' && record.events.length > 0) least = Math.min(least, record.leaseUntil.getTime() - Date.now());
+      }
+      await turn.ended;
+      return { least, state: memory.records.get(turnId)?.state, aborted };
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  it('a write just after a heartbeat tick, then a long silent tool step: the lease never has less than half of it left', async () => {
+    const { least, state, aborted } = await silentStep(0);
+    expect(aborted).toBe(false);
+    expect(state).toBe('done');
+    expect(least).toBeGreaterThanOrEqual(15_000);
+  });
+
+  it('a renewal that fails is tried again at the next tick, and the turn keeps its lease', async () => {
+    const { least, state, aborted } = await silentStep(1);
+    expect(aborted).toBe(false);
+    expect(state).toBe('done');
+    expect(least).toBeGreaterThanOrEqual(10_000);
   });
 
   it('a lease that lapses while writes fail aborts the turn with reason lease_lost', async () => {

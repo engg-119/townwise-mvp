@@ -4,7 +4,7 @@
 // recorder: adjacent text deltas, and adjacent thinking deltas, join into one numbered event per batch (200 ms or 4 KB),
 // every other event closes the batch and goes at once. Each event is handed to every listener as it closes, with the
 // number the record stores, and appended to the turn's record (stores/chat-turns.ts) by a compare-and-set that renews
-// the lease. A 10-second heartbeat renews it while nothing is written, the stop flag is read every second, and the
+// the lease. A heartbeat renews it while nothing is written, the stop flag is read every second, and the
 // terminal event is written with the record's ended state in one update. Only ids reach a log from here.
 import { AppError, type Logger } from '@ckeith26/server-core';
 
@@ -79,7 +79,7 @@ export interface TurnRunnerDeps {
   readonly now: () => Date;
   /** How far ahead each write sets the lease. */
   readonly leaseMs?: number;
-  /** How often the lease is renewed while nothing is written. */
+  /** While nothing is written, the lease is renewed once this much of it is used; the heartbeat ticks twice as often. */
   readonly heartbeatMs?: number;
   /** How often the stop flag is read. */
   readonly stopPollMs?: number;
@@ -155,8 +155,8 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     const unwritten: TurnRecordEvent[] = [];
     let written = 0;
     let confirmedLease = startedAt.getTime() + leaseMs;
-    let lastWriteAt = Date.now();
     let writing: Promise<void> | null = null;
+    let renewing = false;
     let finished = false;
     /** Set once the terminal event was handed out: a later listener gets everything from `delivered` alone. */
     let handedOut = false;
@@ -204,7 +204,6 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
           unwritten.splice(0, batch.length);
           written += batch.length;
           confirmedLease = leaseUntil.getTime();
-          lastWriteAt = Date.now();
           continue;
         }
         const verdict = await reconcile();
@@ -258,29 +257,34 @@ export function createTurnRunner(deps: TurnRunnerDeps): TurnRunner {
     // A turn whose time ran out before it started (reading its files took it all) starts aborted, so it makes no call.
     if (Date.now() >= input.deadline) abort('timeout');
     const deadline = setTimeout(() => { abort('timeout'); }, Math.max(0, input.deadline - Date.now()));
+    // Ticks twice a heartbeat. The lease is renewed once a heartbeat's worth of it is used, whenever it was last set, so
+    // at a tick it has at least the lease less one and a half heartbeats left (15 of 30 seconds); a renewal that fails
+    // is tried again at the next tick. The turn counts its lease lost only once the last confirmed one has passed, or
+    // when a renewal finds the record no longer running.
     const heartbeat = setInterval(() => {
       if (finished) return;
-      if (now().getTime() >= confirmedLease) {
+      const at = now().getTime();
+      if (at >= confirmedLease) {
         // Readers already treat the record as interrupted, and the sweep settles it.
         abort('lease_lost');
         return;
       }
-      if (writing !== null) return;
+      if (writing !== null || renewing) return;
       if (unwritten.length > 0) {
         scheduleWrite();
         return;
       }
-      if (Date.now() - lastWriteAt < heartbeatMs) return;
-      const leaseUntil = new Date(now().getTime() + leaseMs);
-      turns.renew(scope, turnId, leaseUntil).then((renewed) => {
+      if (confirmedLease - at >= leaseMs - heartbeatMs) return;
+      const leaseUntil = at + leaseMs;
+      renewing = true;
+      turns.renew(scope, turnId, new Date(leaseUntil)).then((renewed) => {
         if (!renewed) {
           abort('lease_lost');
           return;
         }
-        confirmedLease = leaseUntil.getTime();
-        lastWriteAt = Date.now();
-      }, () => undefined);
-    }, heartbeatMs);
+        confirmedLease = Math.max(confirmedLease, leaseUntil);
+      }, () => undefined).finally(() => { renewing = false; });
+    }, heartbeatMs / 2);
     const stopPoll = setInterval(() => {
       if (finished || controller.signal.aborted) return;
       turns.stopRequested(scope, turnId).then((stop) => { if (stop) abort('stop'); }, () => undefined);
