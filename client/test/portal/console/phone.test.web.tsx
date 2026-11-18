@@ -152,7 +152,7 @@ test('at 320px the View as dialog sets the email in mono 14px, so it takes its o
   expect(30 * 0.6 * size).toBeLessThanOrEqual(320 - 2 * 16 - 2 * 16 - 2);
 });
 
-test.each([320, 768, 1280])('at %ipx Overview’s tiles take one, two or four to a row, and at 320px its tables stack', async (width) => {
+test.each([320, 768, 1280])('at %ipx Overview’s tiles take one, two or four to a row, and below 1024px its organizations stack', async (width) => {
   setWidth(width);
   const api = consoleApi();
   api.routes['GET /api/admin/overview?days=28'] = () => overviewAnswer(28);
@@ -165,7 +165,8 @@ test.each([320, 768, 1280])('at %ipx Overview’s tiles take one, two or four to
   const attention = screen.getByRole('heading', { name: 'Needs attention' });
   expect(Boolean(attention.compareDocumentPosition(label) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(width === 320);
   const table = screen.getByRole('region', { name: 'Organizations' });
-  if (width === 320) {
+  // Ten columns do not fit below 1024px, so the rows stack there rather than hide columns off to the side.
+  if (width < 1024) {
     expect(within(table).queryByRole('table')).toBeNull();
     expect(within(table).getAllByRole('listitem')).toHaveLength(2);
     expect(within(table).getByRole('link', { name: 'Sample Campus Pub' }).getAttribute('href')).toBe('/admin/orgs/o2');

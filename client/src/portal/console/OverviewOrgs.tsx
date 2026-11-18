@@ -4,26 +4,32 @@ import { formatCount, formatDate } from '../format';
 import { DataTable, RowLink, type Column } from '../ui/DataTable';
 import { Mono } from '../ui/text';
 import { orgHref } from './links';
-import { forecastWords, spendWords } from './overview';
+import { forecastDetail, forecastFigure, spendWords } from './overview';
 import type { OverviewLocation, OverviewOrg } from './schemas';
 import { OUTCOME_WORDS } from './WeeklyRefresh';
 
 // The Overview's organizations (P32, design decision 7): one row per organization, as the server sorts them (actions in
 // the window, most first, then name), each opening its page (P21). Counts, dates, live accuracy and TownwiseAI spend only
-// (D7). A location's forecast is the newest run used on the window's passed days and that window's live accuracy.
+// (D7). Each head says its span: the window, all time, the latest week or this month. A location's forecast leads with
+// its share of scored days in range, the newest run used on the window's passed days and its typical error under it.
+// Ten columns do not fit below 1024px, so there the rows stack as on phones rather than scroll sideways. Status keeps the
+// console's words (“Active” is not suspended); the usage columns say “used the app”, never a bare “active”.
 
-const COLUMNS: readonly Column[] = [
-  { key: 'name', label: 'Organization', flex: 1.6 },
-  { key: 'status', label: 'Status' },
-  { key: 'active', label: 'Last active' },
-  { key: 'people', label: 'People active', numeric: true },
-  { key: 'actions', label: 'Actions', numeric: true },
-  { key: 'days', label: 'Days of sales', numeric: true },
-  { key: 'upload', label: 'Last upload' },
-  { key: 'forecast', label: 'Forecast on these days', flex: 2.6 },
-  { key: 'refresh', label: 'Weekly refresh', flex: 1.6 },
-  { key: 'chat', label: 'TownwiseAI this month', flex: 1.2 },
-];
+function columnsOf(days: number): readonly Column[] {
+  const window = `${String(days)} days`;
+  return [
+    { key: 'name', label: 'Organization', flex: 1.6 },
+    { key: 'status', label: 'Status' },
+    { key: 'active', label: 'Last day used' },
+    { key: 'people', label: `People who used the app (${window})`, numeric: true },
+    { key: 'actions', label: `Actions (${window})`, numeric: true },
+    { key: 'days', label: 'Days of sales (all time)', numeric: true },
+    { key: 'upload', label: 'Last upload' },
+    { key: 'forecast', label: `Forecast (${window})`, flex: 2.6 },
+    { key: 'refresh', label: 'Weekly refresh (latest week)', flex: 1.6 },
+    { key: 'chat', label: 'TownwiseAI (this month, UTC)', flex: 1.2 },
+  ];
+}
 
 /** Lines in the table's mono style, one per location, each named when the organization has more than one. */
 function Lines(props: { lines: readonly string[] }): React.JSX.Element {
@@ -48,7 +54,19 @@ function refreshWords(location: OverviewLocation): string {
 function forecastCell(org: OverviewOrg): React.ReactNode {
   if (!org.forecastsOn) return 'Forecasts off';
   if (org.locations.length === 0) return 'No locations';
-  return <Lines lines={org.locations.map((location) => named(org, location, forecastWords(location)))} />;
+  return (
+    <View style={styles.lines}>
+      {org.locations.map((location) => {
+        const detail = forecastDetail(location);
+        return (
+          <View key={location.id}>
+            <Mono tone="white" style={styles.line}>{named(org, location, forecastFigure(location))}</Mono>
+            {detail === null ? null : <Mono tone="text3" style={styles.line}>{detail}</Mono>}
+          </View>
+        );
+      })}
+    </View>
+  );
 }
 
 function refreshCell(org: OverviewOrg): React.ReactNode {
@@ -61,11 +79,12 @@ function statusWords(org: OverviewOrg): string {
   return org.inSetup ? `${status}, in setup` : status;
 }
 
-export function OverviewOrgs(props: { orgs: readonly OverviewOrg[] }): React.JSX.Element {
+export function OverviewOrgs(props: { orgs: readonly OverviewOrg[]; days: number }): React.JSX.Element {
   return (
     <DataTable
       label="Organizations"
-      columns={COLUMNS}
+      stack="belowDesktop"
+      columns={columnsOf(props.days)}
       rows={props.orgs.map((org) => ({
         key: org.id,
         href: orgHref(org.id),

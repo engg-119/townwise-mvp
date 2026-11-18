@@ -186,25 +186,32 @@ export function spendWords(chat: OverviewOrg['chat']): string {
   return chat.budgetMicroUsd > 0 ? `${usd(chat.spentMicroUsd)} of ${usd(chat.budgetMicroUsd)}` : `${usd(chat.spentMicroUsd)}, no budget`;
 }
 
-/** “Typical error 12.4% over 21 days, 17 in range”, or what stands in its place. */
-export function accuracyWords(accuracy: OverviewLocation['accuracy']): string {
-  if (accuracy === null || accuracy.days === 0) return 'No scored days yet';
-  const inRange = `${formatCount(accuracy.inRange)} in range`;
-  if (accuracy.typicalErrorPct === null) return `${plural(accuracy.days, 'scored day', 'scored days')}, too few for a typical error, ${inRange}`;
-  return `Typical error ${accuracy.typicalErrorPct.toFixed(1)}% over ${plural(accuracy.days, 'day', 'days')}, ${inRange}`;
-}
-
 const ENGINE: Readonly<Record<string, string>> = { model: 'model', baseline: 'baseline' };
 
 /**
- * A location's forecast over the window's passed days. `newestRun` is the newest run used on those days, which may be
- * older than the newest published, so the words say “used”.
+ * A location's forecast over the window's passed days, as its short figure: “81% in range (17 of 21 days)”, or what
+ * stands in its place.
  */
-export function forecastWords(location: OverviewLocation): string {
+export function forecastFigure(location: OverviewLocation): string {
   if (location.newestRun === null) return 'No published forecast on these days';
+  const { accuracy } = location;
+  if (accuracy === null || accuracy.days === 0) return 'No scored days yet';
+  return `${percent(accuracy.inRange, accuracy.days)} in range (${formatCount(accuracy.inRange)} of ${plural(accuracy.days, 'day', 'days')})`;
+}
+
+/**
+ * The words under the figure: the typical error, then the newest run used on those days, which may be older than the
+ * newest published, so they say “used”. Null with no published forecast.
+ */
+export function forecastDetail(location: OverviewLocation): string | null {
   const run = location.newestRun;
+  if (run === null) return null;
   const engine = ENGINE[run.engine] ?? run.engine;
-  return `Newest run used: made ${formatDate(run.madeAt)}, ${engine}, data through ${formatDate(run.dataThrough)}. ${accuracyWords(location.accuracy)}`;
+  const used = `Newest run used: made ${formatDate(run.madeAt)}, ${engine}, data through ${formatDate(run.dataThrough)}.`;
+  const { accuracy } = location;
+  if (accuracy === null || accuracy.days === 0) return used;
+  if (accuracy.typicalErrorPct === null) return `Too few scored days for a typical error. ${used}`;
+  return `Typical error ${accuracy.typicalErrorPct.toFixed(1)}%. ${used}`;
 }
 
 export interface AttentionLine {

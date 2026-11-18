@@ -98,7 +98,7 @@ function OverviewBody(props: { overview: Overview }): React.JSX.Element {
       <Section title="Organizations">
         {overview.orgs.length === 0
           ? <EmptyState text="No organizations yet. Approve a request or create one." />
-          : <OverviewOrgs orgs={overview.orgs} />}
+          : <OverviewOrgs orgs={overview.orgs} days={overview.window.days} />}
       </Section>
     </>
   );

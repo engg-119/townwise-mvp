@@ -59,6 +59,7 @@ export function OverviewSkeleton(props: LabelProps): React.JSX.Element {
           columns={[{ flex: 1.6 }, {}, {}, { numeric: true }, { numeric: true }, { numeric: true }, {}, { flex: 2.6 }, { flex: 1.6 }, { flex: 1.2 }]}
           rows={3}
           rowHeight={ROW}
+          stack="belowDesktop"
         />
       </Section>
     </Skeleton>

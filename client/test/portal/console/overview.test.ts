@@ -3,7 +3,7 @@ import type { z } from 'zod';
 import type { ApiClient } from '../../../src/api/client';
 import { fetchOverview } from '../../../src/portal/console/api';
 import {
-  accuracyWords, activitySummary, attentionLines, changeWords, chartBars, groupWords, forecastWords, GROUP_LABEL, overviewDaysOf, overviewHref, recordingLine,
+  activitySummary, attentionLines, changeWords, chartBars, forecastDetail, forecastFigure, groupWords, GROUP_LABEL, overviewDaysOf, overviewHref, recordingLine,
   spendWords, tilesOf, usd, windowLine,
 } from '../../../src/portal/console/overview';
 import { ACTION_GROUPS, overviewSchema, type Overview } from '../../../src/portal/console/schemas';
@@ -196,20 +196,25 @@ describe('the organizations’ words', () => {
     expect(spendWords({ spentMicroUsd: 0, budgetMicroUsd: 0 })).toBe('$0, no budget');
   });
 
-  test('a published forecast’s live accuracy as a typical error with its day counts, never a guest count', () => {
-    expect(accuracyWords({ days: 21, inRange: 17, typicalErrorPct: 12.4 })).toBe('Typical error 12.4% over 21 days, 17 in range');
-    expect(accuracyWords({ days: 3, inRange: 2, typicalErrorPct: null })).toBe('3 scored days, too few for a typical error, 2 in range');
-    expect(accuracyWords(null)).toBe('No scored days yet');
-  });
-
-  test('a location’s forecast names the newest run used in the window, which may not be the newest published', () => {
+  test('a location’s forecast leads with its share of scored days in range, never a guest count', () => {
     const [org] = overview().orgs;
     const location = org?.locations[0];
     if (location === undefined) throw new Error('no location');
-    expect(forecastWords(location)).toBe(
-      `Newest run used: made ${formatDate('2026-11-09T08:00:00.000Z')}, model, data through Nov 8, 2026. Typical error 12.4% over 21 days, 17 in range`,
-    );
-    expect(forecastWords({ ...location, newestRun: null, accuracy: null })).toBe('No published forecast on these days');
+    expect(forecastFigure(location)).toBe('81% in range (17 of 21 days)');
+    expect(forecastFigure({ ...location, accuracy: { days: 1, inRange: 1, typicalErrorPct: null } })).toBe('100% in range (1 of 1 day)');
+    expect(forecastFigure({ ...location, accuracy: null })).toBe('No scored days yet');
+    expect(forecastFigure({ ...location, newestRun: null, accuracy: null })).toBe('No published forecast on these days');
+  });
+
+  test('under it, the typical error and the newest run used in the window, which may not be the newest published', () => {
+    const [org] = overview().orgs;
+    const location = org?.locations[0];
+    if (location === undefined) throw new Error('no location');
+    const used = `Newest run used: made ${formatDate('2026-11-09T08:00:00.000Z')}, model, data through Nov 8, 2026.`;
+    expect(forecastDetail(location)).toBe(`Typical error 12.4%. ${used}`);
+    expect(forecastDetail({ ...location, accuracy: { days: 3, inRange: 2, typicalErrorPct: null } })).toBe(`Too few scored days for a typical error. ${used}`);
+    expect(forecastDetail({ ...location, accuracy: null })).toBe(used);
+    expect(forecastDetail({ ...location, newestRun: null })).toBeNull();
   });
 });
 

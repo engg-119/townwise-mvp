@@ -224,22 +224,27 @@ test('the organizations: each row opens its page, with its usage, forecast lines
   }));
   renderAt('/admin/overview', api);
   const table = await screen.findByRole('region', { name: 'Organizations' });
+  // Each head says its span: the window, all time, the latest week or this month.
   expect(within(table).getAllByRole('columnheader').map((head) => head.textContent)).toEqual([
-    'Organization', 'Status', 'Last active', 'People active', 'Actions', 'Days of sales', 'Last upload', 'Forecast on these days', 'Weekly refresh',
-    'TownwiseAI this month',
+    'Organization', 'Status', 'Last day used', 'People who used the app (28 days)', 'Actions (28 days)', 'Days of sales (all time)', 'Last upload',
+    'Forecast (28 days)', 'Weekly refresh (latest week)', 'TownwiseAI (this month, UTC)',
   ]);
   const made = formatDate('2026-11-09T08:00:00.000Z');
   const uploaded = formatDate('2026-11-10T15:00:00.000Z');
   expect(rows(table)).toEqual([
     [
       'Sample Mountain Tavern', 'Active', 'Nov 16, 2026', '2', '14', '400', uploaded,
-      `Hanover: Newest run used: made ${made}, model, data through Nov 8, 2026. Typical error 12.4% over 21 days, 17 in rangeLebanon: No published forecast on these days`,
+      `Hanover: 81% in range (17 of 21 days)Typical error 12.4%. Newest run used: made ${made}, model, data through Nov 8, 2026.Lebanon: No published forecast on these days`,
       'Hanover: Week of Nov 16, 2026: couldn’t start; the last scheduled calibration failedLebanon: No weekly refresh yet',
       '$4.10 of $20',
     ],
     ['Sample Campus Pub', 'Suspended', 'None recorded', '0', '0', '400', 'None yet', 'Forecasts off', 'Week of Nov 16, 2026: started', '$0, no budget'],
     ['Sample Inn', 'Active, in setup', 'Nov 16, 2026', '2', '14', '400', uploaded, 'No locations', '', '$4.10 of $20'],
   ]);
+  // The short figure leads, in white; the long sentence is secondary, in text3.
+  const figure = within(table).getByText('Hanover: 81% in range (17 of 21 days)');
+  expect(getComputedStyle(figure).color).toBe('var(--tw-white)');
+  expect(getComputedStyle(within(table).getByText(/^Typical error 12\.4%\./)).color).toBe('var(--tw-text3)');
   expect(within(table).getByRole('link', { name: 'Sample Campus Pub' }).getAttribute('href')).toBe('/admin/orgs/o2');
   fireEvent.click(within(table).getByRole('link', { name: 'Sample Inn' }));
   await waitFor(() => { expect(window.location.pathname).toBe('/admin/orgs/o3'); });
