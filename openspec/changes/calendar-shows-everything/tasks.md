@@ -98,7 +98,7 @@ Run every command from `.worktrees/calendar-everything` under Node 24 (`. "$HOME
   - "Your file" to `data/<source.ref>` while the ref is not null;
   - each imported event's in-app chip to `data/c_<calendarId>`, named by the event's `calendar` label.
   - Test: `client/test/portal/calendar/sources.test.web.tsx` (new), including that no rendered `href` holds anything but an app path.
-- [ ] 3.5 `YourCalendars.tsx`: each row gains "Open". Test: `your-calendars.test.web.tsx`.
+- [x] 3.5 `YourCalendars.tsx`: each row gains "Open". Test: `your-calendars.test.web.tsx`.
 
 ## 4. Client: note form and note lists
 

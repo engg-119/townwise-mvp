@@ -286,12 +286,20 @@ test('the rows are a list in the list’s order: a file’s name, kind, count an
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
   const list = within(openPopover()).getByRole('list');
   expect(within(list).getAllByRole('listitem').map(lines)).toEqual([
-    ['Kitchen', 'File, 12 events', '3 repeating events weren’t imported. Add them as notes with weekdays.'],
-    ['Bookings', 'Link, calendar.google.com, 1 event', 'Couldn’t refresh: the link took too long to answer.', updated],
-    ['Bar', 'Link, calendar.google.com, 4 events', 'Townwise can’t open this link any more. Remove it and add the link again.', updated],
+    ['Kitchen', 'File, 12 events', '3 repeating events weren’t imported. Add them as notes with weekdays.', 'Open'],
+    ['Bookings', 'Link, calendar.google.com, 1 event', 'Couldn’t refresh: the link took too long to answer.', updated, 'Open'],
+    ['Bar', 'Link, calendar.google.com, 4 events', 'Townwise can’t open this link any more. Remove it and add the link again.', updated, 'Open'],
     // An ok link has no status line.
-    ['Patio', 'Link, example.org, 2 events', updated],
+    ['Patio', 'Link, example.org, 2 events', updated, 'Open'],
   ]);
+});
+
+test('each row’s Open goes to the calendar’s page in Your data, an app path that never holds the link (D49)', async () => {
+  const id = 'fedcba9876543210fedcba98';
+  const { api } = setup({ calendars: [ownerCalendar({ id, label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 1 })] });
+  await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+  const open = within(openPopover()).getByRole('link', { name: 'Open US holidays' });
+  expect(open.getAttribute('href')).toBe(`/locations/l1/data/c_${id}`);
 });
 
 test('a failed list read shows the page notice “Couldn’t load your calendars. Try again.” with the popover closed, whose Try again reads the list and the stored events again', async () => {
@@ -1004,10 +1012,10 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     expect(lines(googleRow)).toEqual([
       'Google calendar', 'Google calendar, 40 events',
       'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.',
-      `Updated ${formatDate(at)}, ${formatTime(at)}`,
+      `Updated ${formatDate(at)}, ${formatTime(at)}`, 'Open',
     ]);
     expect(within(googleRow).getAllByRole('button').map((button) => button.textContent)).toEqual(['Refresh now', 'Remove']);
-    expect(lines(laterRow)).toEqual(['Later', 'Calendar, 3 events']);
+    expect(lines(laterRow)).toEqual(['Later', 'Calendar, 3 events', 'Open']);
     expect(within(laterRow).getAllByRole('button').map((button) => button.textContent)).toEqual(['Remove']);
     // The help names Google calendars while they are on.
     expect(within(panel).getByText(helpText(true))).toBeTruthy();
@@ -1352,7 +1360,7 @@ describe('Google calendars (connect-google-calendar design decision 15)', () => 
     const words = 'Couldn’t refresh: Google no longer lets Townwise read this calendar. Whoever added it can connect again with Add a Google calendar, or remove it.';
     await waitFor(() => {
       expect(lines(within(within(panel).getByRole('list')).getByRole('listitem'))).toEqual([
-        'Google calendar', 'Google calendar, 40 events', words, `Updated ${formatDate(at)}, ${formatTime(at)}`,
+        'Google calendar', 'Google calendar, 40 events', words, `Updated ${formatDate(at)}, ${formatTime(at)}`, 'Open',
       ]);
     });
   });
