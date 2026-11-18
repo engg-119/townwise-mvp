@@ -318,6 +318,14 @@ A past day whose run was made after it says so in the panel ("A forecast made af
 - [Live accuracy can drop to "Not scored yet"] → A location whose every past day came from a run made after it has no honest score; the model card and Last week say so rather than score a late run (decision 11).
 - [The `c_` ref shares P27's route] → `ItemPage` branches on the prefix before any read, and a test pins that a `c_` ref never calls `org.data.get`.
 
+### Known limits (code review of 2026-11-18)
+
+The review's should-fix items and nits 1 to 4 and 6 to 8 are fixed. These are left as they are:
+- **The backfill's cost and rolling deploys** (nit 5). The boot pass scans `tw_notes` for `source` set and no `title` key on every boot, with no index; the collection is small (1,000 notes a location at most). During a rolling deploy the old revision can still write an untitled TownwiseAI note after the new one's pass; the next boot names it.
+- **An `other` file event with no detail and a title of only format characters** (nit 3). Nothing is left to save, so the event is skipped as invalid; the cut to 120 code points means a long title no longer drops its event.
+- **The Calendars group ignores the all-locations view** (nit 9). Your data's "All locations" lists every location's items, while the Calendars group above it still shows the current location's calendars. Naming the location there, or hiding the group, is a choice for the UI review.
+- **Home's day detail takes town events from `monthDay`** (nit 10). `home/DayDetail.tsx` reads town events from `dayContext` and notes, rules and imported events from `dayView`. The output matches today, since Home's filters are all on, but it is one more list than the one-helper design.
+
 ## Where Claude departs from the audit
 
 The audit of 2026-11-17 was applied in full (B1, S1 to S14, the nits), with two partial exceptions:
