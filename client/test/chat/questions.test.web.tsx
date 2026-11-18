@@ -585,12 +585,31 @@ describe('?panel=questions (Home’s link)', () => {
     expect(screen.queryByTestId('agent-side')).toBeNull();
   });
 
-  test('at 640px and below opens the row under the chips, Suggested rules (D46) first, and drops the parameter', async () => {
+  // An independent browser review, 2026-11-18: at 390px Home's link opened the row with Suggested rules, the
+  // suggestions, the activity and the budget above the questions, which sat about 1350px down, off screen.
+  test('at 640px and below opens the row under the chips with Questions for you first, then Suggested rules (D46), and drops the parameter', async () => {
     setWidth(390);
     renderAt('/locations/l1/agent?panel=questions', chatApi());
     const row = await screen.findByRole('button', { name: 'Questions and activity (6)' });
     await waitFor(() => { expect(row.getAttribute('aria-expanded')).toBe('true'); });
-    expect(within(within(screen.getByTestId('chat-panel-row')).getByTestId('agent-side')).getAllByRole('heading')[0]?.textContent).toBe('Suggested rules');
+    const wrap = screen.getByTestId('chat-panel-row');
+    await within(wrap).findByRole('heading', { name: 'Questions for you (2)' });
+    const region = within(wrap).getByTestId('agent-side');
+    expect(region.id).toBe(row.getAttribute('aria-controls'));
+    // The questions first in the opened row, drawn once, then the panel's sections from Suggested rules.
+    expect(within(region).getAllByRole('heading')[0]?.textContent).toBe('Questions for you (2)');
+    expect(region.firstElementChild).toBe(screen.getByTestId('chat-landing-questions'));
+    expect(screen.getAllByRole('heading', { name: /^Questions for you/ })).toHaveLength(1);
+    const sections = region.lastElementChild;
+    if (!(sections instanceof HTMLElement)) throw new Error('no panel sections');
+    expect(within(sections).getAllByRole('heading')[0]?.textContent).toBe('Suggested rules');
     await waitFor(() => { expect(window.location.search).toBe(''); });
+    // Once the person closes the row, the questions are back under it, and opening it again is a normal open.
+    fireEvent.click(row);
+    expect(screen.queryByTestId('agent-side')).toBeNull();
+    expect(wrap.nextElementSibling).toBe(screen.getByTestId('chat-landing-questions'));
+    fireEvent.click(row);
+    expect(within(within(wrap).getByTestId('agent-side')).getAllByRole('heading')[0]?.textContent).toBe('Suggested rules');
+    expect(wrap.nextElementSibling).toBe(screen.getByTestId('chat-landing-questions'));
   });
 });

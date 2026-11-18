@@ -65,14 +65,19 @@ function turn(api: FakeChatApi): LiveTurn {
   return live;
 }
 
-test('?panel=questions opens the row under the chips on a phone, Suggested rules (D46) first, and drops the parameter', async () => {
+// An independent browser review, 2026-11-18: on a phone Home's link opened the row with the panel's sections above
+// the questions, which sat off screen.
+test('?panel=questions opens the row under the chips on a phone, Questions for you first, then Suggested rules (D46), and drops the parameter', async () => {
   at(375);
   const { router } = await renderAgent('/locations/l1/agent?panel=questions');
   const side = await screen.findByTestId('agent-side');
   expect(screen.getByRole('button', { name: 'Questions and activity (6)' }).props.accessibilityState).toMatchObject({ expanded: true });
+  await within(side).findByRole('heading', { name: 'Questions for you (2)' });
   const headings = within(side).getAllByRole('heading').map((heading) => heading.props.children as unknown);
-  expect(headings[0]).toBe('Suggested rules');
-  // The landing lists the questions under its chips, so the panel leaves them out.
+  expect(headings[0]).toBe('Questions for you (2)');
+  expect(headings).toContain('Suggested rules');
+  // Drawn once: the landing's own questions, in the row instead of under it; the panel still leaves them out.
+  expect(screen.getAllByRole('heading', { name: /^Questions for you/ })).toHaveLength(1);
   expect(headings).not.toContain('Questions for you');
   await waitFor(() => { expect(router.getSearchParams().panel).toBeUndefined(); });
   expect(router.getPathname()).toBe('/locations/l1/agent');

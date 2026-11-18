@@ -248,6 +248,11 @@ export function AgentChat(props: {
   panelSections: React.ReactNode;
   /** TownwiseAI's questions, also shown on the landing under the chips. */
   panel: AgentPanelState;
+  /**
+   * The panel was opened by `?panel=questions` (Home's link) and the person hasn't opened or closed it since: at 640px
+   * and below the opened row shows the landing's questions first, above the panel's sections, so they are in view.
+   */
+  questionsFirst?: boolean;
   handleRef?: React.Ref<AgentChatHandle>;
 }): React.JSX.Element {
   const { chat, ctx } = props;
@@ -492,9 +497,12 @@ export function AgentChat(props: {
       </Split>
     );
   }
-  const panelRow = (
-    <PanelRow open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel}>{props.panelSections}</PanelRow>
-  );
+  /** The row at 640px and below, opening to `lead` (the landing's questions, or nothing) and the panel's sections. */
+  function panelRow(lead: React.ReactNode = null): React.JSX.Element {
+    return (
+      <PanelRow open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel}>{lead}{props.panelSections}</PanelRow>
+    );
+  }
   // TownwiseAI off or unreadable still has its panel: the questions and activity don't need the chat (spec 10.12).
   function panelOnly(content: React.ReactNode): React.JSX.Element {
     return (
@@ -504,7 +512,7 @@ export function AgentChat(props: {
             <PanelButton open={props.panelOpen} openQuestions={props.openQuestions} onPress={props.onTogglePanel} />
           </View>
         )}
-        {split(<>{phone ? panelRow : null}{content}</>, beside)}
+        {split(<>{phone ? panelRow() : null}{content}</>, beside)}
         {drop}
       </View>
     );
@@ -643,6 +651,26 @@ export function AgentChat(props: {
   const open = openQuestions(props.panel);
   const questionChat = questionChatOf(state);
   const last = state.messages.length - 1;
+  // Home's link at 640px and below: the questions first in the opened row (an independent browser review, 2026-11-18,
+  // found them under the whole panel, off screen at 390px). Otherwise they sit under the row.
+  const questionsInRow = phone && props.panelOpen && props.questionsFirst === true;
+  const questions = asked.length === 0 ? null : (
+    <View testID="chat-landing-questions" style={questionsInRow ? styles.questionsInRow : styles.questions}>
+      <Heading>{`Questions for you${open !== null && open > 0 ? ` (${formatCount(open)})` : ''}`}</Heading>
+      {asked.map((question) => (
+        <QuestionCard
+          key={question.id}
+          question={question}
+          panel={props.panel}
+          locationName={ctx.locationName}
+          readOnlyId={props.readOnlyId}
+          chat={questionChat}
+          send={(message, ended) => { tell(message, { ended }, true); }}
+          place="landing"
+        />
+      ))}
+    </View>
+  );
   const body = landing ? (
     <ScrollView testID="chat-landing" style={styles.fill} contentContainerStyle={styles.landingScroll} keyboardShouldPersistTaps="handled">
       <View testID="chat-landing-column" style={styles.landing}>
@@ -672,24 +700,8 @@ export function AgentChat(props: {
         {previousShown ? (
           <PreviousChats conversations={listed} open={previousOpen} onToggle={setPreviousOpen} onOpen={(id) => { opened(() => { chat.openConversation(id); }, id); }} />
         ) : null}
-        {phone ? panelRow : null}
-        {asked.length === 0 ? null : (
-          <View testID="chat-landing-questions" style={styles.questions}>
-            <Heading>{`Questions for you${open !== null && open > 0 ? ` (${formatCount(open)})` : ''}`}</Heading>
-            {asked.map((question) => (
-              <QuestionCard
-                key={question.id}
-                question={question}
-                panel={props.panel}
-                locationName={ctx.locationName}
-                readOnlyId={props.readOnlyId}
-                chat={questionChat}
-                send={(message, ended) => { tell(message, { ended }, true); }}
-                place="landing"
-              />
-            ))}
-          </View>
-        )}
+        {phone ? panelRow(questionsInRow ? questions : null) : null}
+        {questionsInRow ? null : questions}
       </View>
     </ScrollView>
   ) : (
@@ -860,6 +872,8 @@ const styles = StyleSheet.create({
   warning: { ...theme.type.small, color: c.text2, paddingTop: theme.space[2] },
   noSales: { gap: theme.space[2], alignItems: 'flex-start' },
   questions: { gap: theme.space[3], paddingTop: theme.space[4] },
+  // First in the opened row, whose region has its own top padding: the panel's gap between sections under it.
+  questionsInRow: { gap: theme.space[3], paddingBottom: theme.space[8] },
   latest: { position: 'absolute', right: 0, zIndex: 1, backgroundColor: c.ground },
   // Read by screen readers, not drawn.
   live: { position: 'absolute', width: 1, height: 1, margin: -1, overflow: 'hidden' },

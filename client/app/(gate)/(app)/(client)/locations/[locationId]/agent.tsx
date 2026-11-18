@@ -84,12 +84,17 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   // Open by default beside the landing from 641px, collapsed under the chips at 640px and below, until the person chooses.
   const [chosen, setChosen] = useState<boolean | null>(null);
   const panelOpen = chosen ?? !phone;
-  // ?panel=questions opens the panel once per arrival; the person can close it, and the address drops it.
+  // ?panel=questions opens the panel once per arrival; the person can close it, and the address drops it. At 640px and
+  // below it opens with Questions for you first, until the person opens or closes the row.
   const askedPanel = params.panel === 'questions';
   const [openedFor, setOpenedFor] = useState(false);
+  const [questionsFirst, setQuestionsFirst] = useState(false);
   if (askedPanel !== openedFor) {
     setOpenedFor(askedPanel);
-    if (askedPanel) setChosen(true);
+    if (askedPanel) {
+      setChosen(true);
+      setQuestionsFirst(true);
+    }
   }
   // This screen's own navigation: the router's setParams goes to the focused route, which isn't ready while the page mounts.
   const navigation = useNavigation<{ setParams: (params: { panel: undefined }) => void }>();
@@ -154,10 +159,14 @@ export default function TownwiseAIScreen(): React.JSX.Element {
             readOnlyId={readOnlyId}
             readOnlyLine={line}
             panelOpen={panelOpen}
-            onTogglePanel={() => { setChosen(!panelOpen); }}
+            onTogglePanel={() => {
+              setChosen(!panelOpen);
+              setQuestionsFirst(false);
+            }}
             openQuestions={questions}
             panelSections={sections}
             panel={panel}
+            questionsFirst={questionsFirst}
             handleRef={chatView}
           />
         </Wrap>
