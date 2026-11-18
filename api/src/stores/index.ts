@@ -1,6 +1,7 @@
 import type { Connection } from 'mongoose';
 
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
+import { createActivityDayStore, type ActivityDayStore } from './activity-days.ts';
 import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
 import { createAgentSuggestionStore, type AgentSuggestionStore } from './agent-suggestions.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
@@ -82,6 +83,8 @@ export interface TownwiseStores {
   readonly ownerCalendars: OwnerCalendarStore;
   /** A person's Google access for calendars, one per organization (openspec change connect-google-calendar). */
   readonly googleConnections: GoogleConnectionStore;
+  /** The days each person used the app (openspec change staff-overview). */
+  readonly activityDays: ActivityDayStore;
 }
 
 /** Registers every Townwise model on `connection`; call it before ensureIndexes. */
@@ -130,5 +133,7 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     ownerCalendars: createOwnerCalendarStore(connection),
     // Google access for calendars.
     googleConnections: createGoogleConnectionStore(connection),
+    // The days each person used the app.
+    activityDays: createActivityDayStore(connection),
   };
 }
