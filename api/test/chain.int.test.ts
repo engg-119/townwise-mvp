@@ -8,7 +8,7 @@ import { TOWNWISE_ROUTES, type TownwiseRoute } from '../src/access/routes.ts';
 import { ORDER_CHANGE_RESULT } from '../src/chat/tools/orders.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import {
-  addConversation, addGrant, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
+  addChatTurn, addConversation, addGrant, addInvite, addLocation, addNote, addOpenAsAdminGrant, addRequest, addSalesDay, addSeat, addUpload, createOrg,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
 import { addGoogleConnection, createFakeGoogle, GOOGLE_CLIENT_ID, linkGoogle } from './helpers/google.ts';
@@ -64,6 +64,19 @@ describe('route table', () => {
     expect(await errorOf(await call(server, '/api/nowhere', { session }))).toEqual({ status: 404, error: 'not_found' });
   });
 });
+
+/**
+ * resumable-chat-turns: an ended turn record of `conversationId`, so the turn's events GET answers at once (it replays the
+ * record and stops at its `done`) instead of following a running turn.
+ */
+async function endedTurn(opts: { orgId: string; locationId: string; conversationId: string; userId: string }): Promise<string> {
+  const turnId = await addChatTurn(server, opts);
+  await server.connection.collection('tw_chat_turns').updateOne({ turnId }, {
+    $set: { state: 'done', endedAt: server.clock.now(), eventCount: 2 },
+    $push: { events: { seq: 2, type: 'done', data: { stopReason: 'end_turn', costUsd: 0, leafId: 'reply-node', sources: [] } } },
+  } as Record<string, unknown>);
+  return turnId;
+}
 
 describe('GET is side-effect free (7.3)', () => {
   const WRITES = new Set(['insert', 'update', 'delete', 'findAndModify', 'bulkWrite']);
@@ -156,7 +169,9 @@ describe('GET is side-effect free (7.3)', () => {
     );
     // D28: one item of Your data, the upload's.
     const ref = `u_${uploadId}`;
-    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId, ref };
+    // resumable-chat-turns: the org admin's ended turn in that conversation, so its events GET answers (and must write nothing).
+    const turnId = await endedTurn({ orgId, locationId, conversationId, userId: admin.userId });
+    const ids: Record<string, string> = { orgId, locationId, townId: 'hanover-nh', fileId, importId, conversationId, proposalId, ref, turnId };
     // The member's Google connection, so the picker's choices answer them (connect-google-calendar). The fake's refresh
     // sends no new refresh token, so the list's happy path writes nothing; Google's refusals write nothing either
     // (google-calendars.int.test.ts pins those).
@@ -223,9 +238,10 @@ describe('GET is side-effect free (7.3)', () => {
       { $push: { messages: { $each: proposed.map((param) => ({ at: server.clock.now(), param: JSON.stringify(param) })) } } } as Record<string, unknown>,
     );
     await addOpenAsAdminGrant(server, { actorUserId: opened.userId, sessionId: opened.sessionId, orgId: setupOrgId });
+    const setupTurnId = await endedTurn({ orgId: setupOrgId, locationId: setupLocationId, conversationId: setupConversationId, userId: opened.userId });
     const setupIds = {
       ...ids, orgId: setupOrgId, locationId: setupLocationId, fileId: setupFileId, importId: setupImportId, conversationId: setupConversationId,
-      ref: `u_${setupUploadId}`,
+      ref: `u_${setupUploadId}`, turnId: setupTurnId,
     };
     const openedAnswered: string[] = [];
     for (const route of getRoutes) {
