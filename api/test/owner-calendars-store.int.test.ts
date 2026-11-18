@@ -371,6 +371,19 @@ describe('stable keys (calendar-event-suggestions, design decisions 1 and 12)', 
     expect(await calendars.findEvent(t.scope, t.locationId, added.id, 'lunch@example.test')).toMatchObject({ startDate: '2026-11-08' });
   });
 
+  it('keyedEventsBetween answers the keyed events with their calendar’s id, kind, connection and when it was added, never its name', async () => {
+    const t = await tenant();
+    const added = await addFile(t, 'Sentinel Bookings', [
+      event('party@example.test', '2026-11-05', { title: 'Private party' }), event('event-2', '2026-11-06', { keyed: false }),
+    ]);
+    const read = await calendars.keyedEventsBetween(t.scope, t.locationId, NOVEMBER);
+    expect(read).toEqual([{
+      uid: 'party@example.test', title: 'Private party', startDate: '2026-11-05', endDate: '2026-11-05', startTime: null, endTime: null, keyed: true,
+      calendarId: added.id, kind: 'file', connectionId: null, calendarCreatedAt: server.clock.now(),
+    }]);
+    expect(JSON.stringify(read)).not.toContain('Sentinel Bookings');
+  });
+
   it('eventsByUid answers null when a replace switched the calendar while it read', async () => {
     const t = await tenant();
     const added = await addFile(t, 'Bookings', [event('a@example.test', '2026-11-03')]);

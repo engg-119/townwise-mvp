@@ -7,7 +7,7 @@
 // the $0.30 reservation and its correction, the budget skip, what the request holds and what it never holds, and the
 // checks on the answer. Then the owner-calendar events the call sends while the calendar titles switch is on
 // (calendar-event-suggestions): only keyed ones not linked or spotted before, a Google calendar's only under the new
-// agreement, nothing that identifies them, the reservation unchanged, and sentinel titles in no stored suggestion and no
+// agreement and a file's or link's only when added on or after the notice, nothing that identifies them, the reservation unchanged, and sentinel titles in no stored suggestion and no
 // staff view of the panel. Every number and title is synthetic.
 import { randomUUID } from 'node:crypto';
 
@@ -26,6 +26,7 @@ import { parseIcs } from '../src/calendar/ics.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import {
   SUGGESTIONS_MAX_OWNER_EVENTS, SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_SYSTEM_PROMPT, SUGGESTIONS_TIME_MS, suggestionsReserveMicroUsd,
+  WEEKLY_TITLES_AGREED_FROM,
 } from '../src/lab/suggestions.ts';
 import { message, messagesOf, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { addLocation, addNote, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
@@ -860,13 +861,19 @@ describe('weekly suggestions', () => {
       return parsed;
     }
 
+    /** After the day the add and connect screens began to say titles go weekly (the test clock reads Jun 2026, before it). */
+    const ADDED_AFTER_NOTICE = new Date('2026-11-20T12:00:00.000Z');
+
+    /** A link calendar (a file with `file`, Google with `connectionId`) added at `addedAt`, after the notice unless it says. */
     async function calendarOf(
-      p: Place, events: readonly { uid: string | null; title: string; day: string }[], source: { label: string; connectionId?: string },
+      p: Place, events: readonly { uid: string | null; title: string; day: string }[],
+      source: { label: string; connectionId?: string; file?: true; addedAt?: Date },
     ): Promise<string> {
-      const added = await server.ctx.stores.ownerCalendars.add(p.scope, p.locationId, source.connectionId === undefined
-        ? { kind: 'link', label: source.label, sealedAddress: 'sealed-for-test', host: 'bookings.sentinel-host.test' }
-        : { kind: 'google', label: source.label, sealedAddress: 'sealed-for-test', googleConnectionId: source.connectionId }, parsedOf(events), {
-        createdBy: 'user-sentinel', now: server.clock.now(),
+      const added = await server.ctx.stores.ownerCalendars.add(p.scope, p.locationId, source.connectionId !== undefined
+        ? { kind: 'google', label: source.label, sealedAddress: 'sealed-for-test', googleConnectionId: source.connectionId }
+        : source.file === true ? { kind: 'file', label: source.label }
+          : { kind: 'link', label: source.label, sealedAddress: 'sealed-for-test', host: 'bookings.sentinel-host.test' }, parsedOf(events), {
+        createdBy: 'user-sentinel', now: source.addedAt ?? ADDED_AFTER_NOTICE,
       });
       if (added === 'calendar_limit') throw new Error('calendar_limit');
       return added.id;
@@ -935,6 +942,32 @@ describe('weekly suggestions', () => {
       ]) expect({ absent, found: request.includes(absent) }).toEqual({ absent, found: false });
       expect(passLine()).toMatchObject({ ownerEvents: 2, passes: 0, none: 1 });
       expect(JSON.stringify(logLines(server))).not.toMatch(/Private party|New agreement dinner|sentinel-uid/);
+    });
+
+    it('sends a file’s or link’s events only when it was added on or after the day the add screens said so', async () => {
+      const p = await place();
+      const before = new Date(WEEKLY_TITLES_AGREED_FROM.getTime() - 1);
+      await calendarOf(p, [{ uid: 'old-link-0001@bookings.example.test', title: 'Old link dinner', day: '20260609' }], { label: 'Old link', addedAt: before });
+      await calendarOf(p, [{ uid: 'old-file-0001@bookings.example.test', title: 'Old file dinner', day: '20260610' }], { label: 'Old file', file: true, addedAt: before });
+      await calendarOf(p, [{ uid: 'new-link-0001@bookings.example.test', title: 'New link dinner', day: '20260611' }], { label: 'New link', addedAt: WEEKLY_TITLES_AGREED_FROM });
+      await calendarOf(p, [{ uid: 'new-file-0001@bookings.example.test', title: 'New file dinner', day: '20260612' }], { label: 'New file', file: true });
+      const model = answering([]);
+      await pass({ chat: model });
+      expect((sentOf(model).ownerEvents as { title: string }[]).map((each) => each.title)).toEqual(['New link dinner', 'New file dinner']);
+      expect(JSON.stringify(model.calls[0]?.params)).not.toMatch(/Old link dinner|Old file dinner/);
+      expect(passLine()).toMatchObject({ ownerEvents: 2 });
+    });
+
+    it('sends none of a new file’s or link’s events with the organization’s calendar titles switch off', async () => {
+      const p = await place();
+      await calendarOf(p, [{ uid: 'new-link-0001@bookings.example.test', title: 'New link dinner', day: '20260611' }], { label: 'New link' });
+      await calendarOf(p, [{ uid: 'new-file-0001@bookings.example.test', title: 'New file dinner', day: '20260612' }], { label: 'New file', file: true });
+      await server.ctx.stores.orgs.setCalendarTitlesToAi(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
+      const model = answering([]);
+      await pass({ chat: model });
+      expect(sentOf(model)).not.toHaveProperty('ownerEvents');
+      expect(JSON.stringify(model.calls[0]?.params)).not.toMatch(/New link dinner|New file dinner/);
+      expect(passLine()).toMatchObject({ ownerEvents: 0 });
     });
 
     it('sends none with the organization’s calendar titles switch off, and the request is as before', async () => {

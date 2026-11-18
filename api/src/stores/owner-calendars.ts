@@ -34,8 +34,8 @@
 // eventsByUid read the current generation for a note's link and its follow-up (calendar/follow-up.ts), and a replace
 // that switched answers how many keyed uids of the generation it replaced it kept, read before it writes (the generation
 // it switches from is current until its switch, so no one deletes those rows meanwhile). keyedEventsBetween reads a
-// range's keyed events for TownwiseAI's weekly call (lab/suggestions.ts), with each calendar's kind and Google
-// connection, never its label.
+// range's keyed events for TownwiseAI's weekly call (lab/suggestions.ts), with each calendar's kind, Google connection
+// and when it was added, never its label.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -241,15 +241,17 @@ export type ReplaceResult =
 export const ADDED_REPLACE = { switched: true, generation: 1, keptKeys: 0, hadKeys: 0 } as const satisfies ReplaceResult;
 
 /**
- * A keyed event for the weekly suggestions call (lab/suggestions.ts): with its calendar's id, kind and, for a Google
- * calendar, the connection that reads it, so the call can leave out a Google calendar under an older agreement. Never the
- * calendar's label.
+ * A keyed event for the weekly suggestions call (lab/suggestions.ts): with its calendar's id, kind, when it was added
+ * and, for a Google calendar, the connection that reads it, so the call can leave out a Google calendar under an older
+ * agreement and a file or link added before the notice. Never the calendar's label.
  */
 export interface KeyedOwnerEvent extends StoredEvent {
   readonly calendarId: string;
   readonly kind: CalendarKind;
   /** The tw_google_connections row of a Google calendar; null for a file or a link. */
   readonly connectionId: string | null;
+  /** When the calendar was added (its `createdAt`). */
+  readonly calendarCreatedAt: Date;
 }
 
 /** The keyed events eventsByUid found, read at one generation. */
@@ -459,7 +461,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
    */
   async function readBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }, keyed: boolean) {
     const location = ofLocation(scope, locationId);
-    const current = () => Source.find(location, { label: 1, kind: 1, googleConnectionId: 1, generation: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
+    const current = () => Source.find(location, { label: 1, kind: 1, googleConnectionId: 1, generation: 1, createdAt: 1 }).sort({ createdAt: 1, _id: 1 }).lean();
     const read = (sources: Awaited<ReturnType<typeof current>>) => Promise.all(sources.map((source) => Event.find({
       orgId: location.orgId, sourceId: source._id, generation: source.generation,
       startDate: trusted({ $lte: range.to }), endDate: trusted({ $gte: range.from }), ...(keyed ? { keyed: true } : {}),
@@ -609,7 +611,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       const read = await readBetween(scope, locationId, range, true);
       return byStart(read.flatMap(({ source, rows }) => rows.map((row): KeyedOwnerEvent => ({
         ...storedEvent(row), calendarId: source._id.toHexString(), kind: source.kind,
-        connectionId: source.googleConnectionId === null ? null : source.googleConnectionId.toHexString(),
+        connectionId: source.googleConnectionId === null ? null : source.googleConnectionId.toHexString(), calendarCreatedAt: source.createdAt,
       }))));
     },
     removeForLocation(scope, locationId) {
