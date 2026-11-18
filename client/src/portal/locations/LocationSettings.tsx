@@ -134,15 +134,17 @@ export function LocationSettings(): React.JSX.Element {
   /** D47: a place picked in the search goes into the form with its default name (D29), unsaved. */
   const pick = useCallback((place: UsablePlace): void => {
     const suggested = defaultLocationName(place, org.org.name);
-    setPicked({ place, name: suggested, prefilled: !nameTyped });
-    if (!nameTyped) setName(suggested);
+    // A name that is the last held place's own default came from Google, not the person: the new place's replaces it.
+    const fill = !nameTyped || (picked !== null && name === picked.name);
+    setPicked({ place, name: suggested, prefilled: fill });
+    if (fill) setName(suggested);
     setTown(townValueOf(place.town));
     setTownOpen(false);
     setPlaceLine(null);
     setFinding(false);
     // The linked line comes back after Save or Don't use this place, and takes focus then.
     setClosed((n) => n + 1);
-  }, [org.org.name, nameTyped]);
+  }, [org.org.name, nameTyped, picked, name]);
 
   /** The picked place leaves the form: the name it filled in goes back, a name the person typed stays. */
   const dropPicked = useCallback((): void => {

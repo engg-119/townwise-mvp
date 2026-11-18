@@ -314,7 +314,7 @@ test('Rename with a place on Google Maps sends its id and town, as P16 does', as
   expect(places.checks).toBe(1);
 });
 
-test('Rename keeps a name staff typed before picking a place, and the prefill helper leaves once Name is edited', async () => {
+test('Rename keeps a name staff typed before picking a place, with no prefill helper', async () => {
   const api = consoleApi();
   installPlaces(api, { results: { Lou: [{ placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', detail: 'Norwich, VT, USA', kind: 'business' }] } });
   serve(api, () => inSetup([hanover()]));
@@ -334,6 +334,26 @@ test('Rename keeps a name staff typed before picking a place, and the prefill he
   await searchFor();
   expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Hanover Inn');
   expect(within(dialog).queryByText(helper)).toBeNull();
+});
+
+test('Rename: Enter the town yourself after a place gives back the name it filled in and drops its helper', async () => {
+  const api = consoleApi();
+  installPlaces(api, { results: { Lou: [{ placeId: 'ChIJTestPlace0002', name: 'Lou’s Bakery', detail: 'Norwich, VT, USA', kind: 'business' }] } });
+  serve(api, () => inSetup([hanover()]));
+  renderAt('/admin/orgs/o1', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Rename Hanover' }));
+  const dialog = screen.getByRole('dialog', { name: 'Rename Hanover' });
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Find this location’s place' }));
+  fireEvent.change(within(dialog).getByRole('combobox', { name: 'Search Google Maps for this location' }), { target: { value: 'Lou' } });
+  const option = await within(dialog).findByRole('option', { name: /Lou’s Bakery/ });
+  fireEvent.mouseDown(option);
+  await settle(() => { fireEvent.click(option); });
+  fireEvent.click(await within(dialog).findByRole('button', { name: 'Looks right' }));
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Lou’s Bakery, Norwich');
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Change place' }));
+  fireEvent.click(within(dialog).getByRole('button', { name: 'Enter the town yourself' }));
+  expect(within(dialog).getByRole<HTMLInputElement>('textbox', { name: 'Name' }).value).toBe('Hanover');
+  expect(within(dialog).queryByText('From Google Maps. Change it if you like; it’s saved as this location’s name when you save.')).toBeNull();
 });
 
 test('Rename: the prefill helper leaves when Name is edited', async () => {

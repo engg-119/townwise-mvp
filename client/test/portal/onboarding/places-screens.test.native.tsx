@@ -825,6 +825,24 @@ describe('P16 Change this location’s place', () => {
     expect(sentWrites(api)).toEqual([]);
   });
 
+  test('switching from one held place to another replaces the name the first filled in', async () => {
+    const { api } = setup();
+    await renderApp('/locations/l1/settings', api);
+    await fireEvent.changeText(await screen.findByLabelText('Name'), 'Main St');
+    await fireEvent.press(screen.getByRole('button', { name: 'Find this location’s place' }));
+    await find('Search Google Maps for this location', 'Lou');
+    await pick('Lou’s Bakery, Norwich, VT, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Use “Lou’s Bakery, Norwich” as the name' }));
+    await fireEvent.press(screen.getByRole('button', { name: 'Change place' }));
+    await find('Search Google Maps for this location', 'Lou');
+    await pick('Lou’s Restaurant, Hanover, NH, USA');
+    await fireEvent.press(screen.getByRole('button', { name: 'Use this place' }));
+    expect(screen.getByLabelText('Name').props.value).toBe('Lou’s Restaurant, Hanover');
+    await fireEvent.press(screen.getByRole('button', { name: 'Don’t use this place' }));
+    expect(screen.getByLabelText('Name').props.value).toBe('Main Street Bar');
+  });
+
   test('503 while saving: nothing changed, and the line says so', async () => {
     const { api } = setup({ placeId: 'ChIJTestPlace0009' });
     api.answers['/api/org/locations/l1'] = () => refusal(503, 'places_unavailable');
