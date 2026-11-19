@@ -19,6 +19,13 @@ export function extensionOf(name: string): string {
   return dot <= 0 ? '' : base.slice(dot + 1).toLowerCase();
 }
 
+const CALENDAR_EXTENSIONS: ReadonlySet<string> = new Set(['ics', 'ical']);
+
+/** A name an .ics or .ical calendar file has (D60, D63); sniff keeps such a file as `other`. */
+export function isCalendarFileName(name: string): boolean {
+  return CALENDAR_EXTENSIONS.has(extensionOf(name));
+}
+
 function startsWith(head: Uint8Array, bytes: readonly number[], at = 0): boolean {
   if (head.length < at + bytes.length) return false;
   return bytes.every((byte, index) => head[at + index] === byte);

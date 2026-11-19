@@ -15,7 +15,8 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import {
   ANSWER_TIME_MS, ATTACHMENT_BYTES_IN_FLIGHT, ATTACHMENT_REF, attachedOnPath, attachedTo, bytesToRead, checkAttachments, createByteGate, expandedMessage,
-  MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentRefusal, type TurnAttachments,
+  MAX_ATTACHMENTS, readAttachments, refusalOf, turnAttachments, type Attached, type AttachmentCheck, type AttachmentRefusal, type CalendarNotes,
+  type TurnAttachments,
 } from '../chat/attachments.ts';
 import { runTurn, type TurnEvent, type TurnInput } from '../chat/turn.ts';
 import { type RunningTurn, type StreamEvent, type TurnAbortReason, type TurnEnding } from '../chat/turn-runner.ts';
@@ -26,6 +27,7 @@ import {
   type ShownProposal,
 } from '../chat/view.ts';
 import { loadDataItem, parseRef } from '../data/library.ts';
+import { attachedCalendars, type AttachedCalendar } from '../files/calendar-import.ts';
 import { scheduleSummary } from '../forecasts/reasons.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import type { ConversationOwner, ConversationRecord, ConversationSummary } from '../stores/chat-conversations.ts';
@@ -412,6 +414,18 @@ function attachmentRefused(refusal: AttachmentRefusal): AppError {
   }
 }
 
+/**
+ * D63: the calendar files whose import the turn tells the model, by ref: only those the caller attaches as they are now
+ * (a regenerate's file the caller may no longer attach, or one gone from Your data, is left out).
+ */
+function calendarNotes(locationId: string, checks: readonly AttachmentCheck[], found: ReadonlyMap<string, AttachedCalendar>): CalendarNotes {
+  const byRef = new Map(checks.flatMap(({ ref, check }) => {
+    const note = found.get(ref.slice(2));
+    return note === undefined || !('kind' in check) ? [] : [[ref, note] as const];
+  }));
+  return { locationId, byRef };
+}
+
 /** The files a regenerate's message (the person's node `nodeId`) carries, from its stored attachments block. */
 function attachedToNode(nodes: readonly ChatNode[], nodeId: string): Attached[] {
   const stored = nodes.find((node) => node.id === nodeId)?.messages[0];
@@ -455,10 +469,12 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   if (!('replyTo' in body) && files.length > 0 && !ctx.items.on) throw filesUnavailable();
   // Before any claim, so a store failure has nothing to release. A regenerate resends its stored message as it was,
   // its files checked again as they are now. Only each file's record and first bytes are read here.
-  const [rules, toolLocation, checks] = await Promise.all([
+  // D63: and what importing each attached calendar file did, from its record and the location's calendars.
+  const [rules, toolLocation, checks, calendarFiles] = await Promise.all([
     'replyTo' in body ? [] : ctx.stores.businessRules.list(scope, location.id),
     locationForTools(ctx, scope, location),
     files.length === 0 ? [] : checkAttachments(ctx.items, scope, location.id, { userId: caller.userId, role: caller.role }, files),
+    files.length === 0 || !ctx.items.on ? new Map<string, AttachedCalendar>() : attachedCalendars(ctx, scope, location.id, files.map((file) => file.ref.slice(2)), timeZone),
   ]);
   // A send refuses a file that isn't on Your data here, a sales file, one not kept yet, or one the caller may not
   // attach; one turned off, or whose original is gone, is listed as not read instead. A regenerate refuses none: its
@@ -538,7 +554,7 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
   // D36: the files' bytes, read only now that the turn holds its claims. A failure gives everything back before the stream.
   let attached: TurnAttachments | null = null;
   try {
-    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks, filesBy, turnBytes));
+    if (checks.length > 0) attached = turnAttachments(await readAttachments(checks, filesBy, turnBytes), calendarNotes(location.id, checks, calendarFiles));
   } catch (err) {
     await releaseClaims();
     throw err;

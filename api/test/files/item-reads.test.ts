@@ -166,3 +166,29 @@ describe('a PDF, Word or Excel file attached to a message', () => {
     await expect(readOf(check)).rejects.toThrow('storage down');
   });
 });
+
+// D63: an .ics or .ical file, which sniff keeps as `other`, is a calendar file, read as a text file is.
+describe('a calendar file attached to a message (D63)', () => {
+  const ICS = ['BEGIN:VCALENDAR', 'BEGIN:VEVENT', 'UID:sentinel-1@example.test', 'SUMMARY:Sentinel-title tasting', 'DTSTART:20261212T180000', 'END:VEVENT', 'END:VCALENDAR', ''].join('\r\n');
+
+  it('reads an .ics or .ical file as its text, kind calendar, from its record alone until the read', async () => {
+    const ics = await fileOf('other', Buffer.from(ICS), { name: 'Bookings.ICS' });
+    expect(ics.check).toMatchObject({ status: 'readable', kind: 'calendar', bytes: ICS.length });
+    expect(ics.opens()).toBe(0);
+    expect(await readOf(ics.check)).toEqual({ status: 'text', kind: 'calendar', text: ICS, truncated: false });
+    const ical = await fileOf('other', Buffer.from(ICS), { name: 'master.ical' });
+    expect(await readOf(ical.check)).toMatchObject({ status: 'text', kind: 'calendar' });
+  });
+
+  it('reads at most its first 20,000 characters and says it was cut', async () => {
+    const read = await readOf((await fileOf('other', Buffer.from(ICS.repeat(400)), { name: 'master.ics' })).check);
+    expect(read).toMatchObject({ status: 'text', kind: 'calendar', truncated: true });
+    expect(read.status === 'text' ? read.text.length : 0).toBe(20_000);
+  });
+
+  it('names a turned-off or deleted one a calendar file, and leaves any other unknown file not readable', async () => {
+    expect((await fileOf('other', Buffer.from(ICS), { name: 'a.ics', disabledAt: new Date() })).check).toEqual({ status: 'turned_off', kind: 'calendar' });
+    expect((await fileOf('other', Buffer.from(ICS), { name: 'a.ics', rawDeletedAt: new Date() })).check).toEqual({ status: 'gone', kind: 'calendar' });
+    expect((await fileOf('other', Buffer.from(ICS), { name: 'a.vcs' })).check).toEqual({ status: 'not_readable', kind: 'file' });
+  });
+});

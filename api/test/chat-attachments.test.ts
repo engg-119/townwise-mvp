@@ -504,7 +504,7 @@ describe('read_data_item reading an attached file again (D36)', () => {
     const notAttached = toolsFor(readsAs({ status: 'text', kind: 'pdf', text: 'Sentinel', truncated: false }), [B]);
     expect(JSON.parse((await runTool(notAttached.tc, call(A))).result.content as string)).toEqual({
       available: false,
-      reason: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+      reason: 'TownwiseAI can read text items added for reference, and a picture, calendar (.ics), PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
     });
     expect(notAttached.viewers).toEqual([]);
     const reasons = await Promise.all([
