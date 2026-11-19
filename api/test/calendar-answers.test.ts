@@ -5,7 +5,9 @@
 // title is made up; today is Mon, Jun 1, 2026.
 import { describe, expect, it } from 'vitest';
 
-import { answerablesOf, answerNoteId, daysToCover, planAnswers, UPCOMING_WEEKDAYS, type Answerable } from '../src/calendar/answers.ts';
+import {
+  answerablesOf, answerNoteId, closedAlready, daysToCover, isAnswerChange, planAnswers, UPCOMING_WEEKDAYS, type Answerable,
+} from '../src/calendar/answers.ts';
 import type { CalendarEvent } from '../src/calendar/closed-events.ts';
 import type { PersonsEntries } from '../src/agent/apply.ts';
 import type { SuggestionRecord } from '../src/stores/agent-suggestions.ts';
@@ -98,7 +100,8 @@ describe('planAnswers', () => {
     };
     const plan = planAnswers({ items: [standing], closed: events, persons: NONE, today: TODAY });
     expect(plan.answers.map((each) => each.rule?.text)).toEqual(['Closed on Mondays']);
-    expect(plan.answers[0]?.events).toEqual([]);
+    // The covering events too: the first names the calendar the rule is from.
+    expect(plan.answers[0]?.events.map((each) => each.uid)).toEqual(events.map((each) => each.uid));
     expect(answered([standing], events.slice(0, 7))).toEqual([]);
   });
 
@@ -132,5 +135,32 @@ describe('planAnswers', () => {
     expect(answerNoteId(CAL, 'holidays')).toMatch(/^[0-9a-f]{24}$/);
     expect(answerNoteId(CAL, 'holidays')).toBe(answerNoteId(CAL, 'holidays'));
     expect(answerNoteId(CAL, 'holidays')).not.toBe(answerNoteId(CAL, 'boxing'));
+  });
+});
+
+describe('closedAlready', () => {
+  const event = closed('e', '2026-12-24', '2026-12-26');
+
+  it('is true only when closure notes close every day of the event', () => {
+    expect(closedAlready([note({})], event)).toBe(true);
+    expect(closedAlready([note({ endDate: '2026-12-24' }), note({ startDate: '2026-12-25' })], event)).toBe(true);
+    // A note over one of its days leaves the rest open in the forecast.
+    expect(closedAlready([note({ startDate: '2026-12-24', endDate: '2026-12-24' })], event)).toBe(false);
+  });
+
+  it('reads a note on its weekdays, and never a booking’s note', () => {
+    // Closed on Mondays all year does not close Thursday, Dec 24.
+    expect(closedAlready([note({ startDate: '2026-01-01', endDate: '2026-12-31', weekdays: [1] })], event)).toBe(false);
+    expect(closedAlready([note({ kind: 'private_event', effect: 'closed' })], event)).toBe(false);
+    expect(closedAlready([note({ kind: 'private_event', effect: 'more_guests' })], event)).toBe(false);
+  });
+});
+
+describe('isAnswerChange', () => {
+  it('is a closure note from a calendar, never the sort’s booking notes or labels', () => {
+    expect(isAnswerChange({ sourceKind: 'calendar', action: 'note.add', noteKind: 'closure' })).toBe(true);
+    expect(isAnswerChange({ sourceKind: 'calendar', action: 'note.add', noteKind: 'private_event' })).toBe(false);
+    expect(isAnswerChange({ sourceKind: 'calendar', action: 'booking.label', noteKind: null })).toBe(false);
+    expect(isAnswerChange({ sourceKind: 'file', action: 'note.add', noteKind: 'closure' })).toBe(false);
   });
 });

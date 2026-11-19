@@ -1,7 +1,8 @@
 // A calendar answers TownwiseAI's open closure questions and suggestions (D59 slice 5, openspec change
 // auto-apply-agent-reads design decision 16). Code only: no model call, no budget, nothing leaves Townwise. It runs for a
 // whole location right after followLinkedNotes wherever a calendar's events switch (an add, the refresh loop, Refresh
-// now) and at the end of the location's weekly pass:
+// now), after a file read or a sales upload (which may make a suggestion), and after the location's weekly pass
+// whatever its outcome:
 //   1. The location's closed events (calendar/closed-events.ts: keyed, all day, a title that plainly says closed) are
 //      read across its calendars.
 //   2. planAnswers (pure) finds the open suggestions they answer: a closure rule or closure note with dates every day of
@@ -11,13 +12,21 @@
 //      Gap and likely-closed questions are answered on read (agent/question-input.ts), and need nothing stored.
 //   3. While TownwiseAI works on its own (TOWNWISE_AGENT_AUTO and the organization's agentAuto), the forecast is made to
 //      follow first, through the one writer (agent/apply.ts, `sourceKind: 'calendar'`): a closure note for each answering
-//      event that no note links to or covers yet, linked to its event (D53's follow-up then moves or removes it), with
+//      event whose days no closure notes all close yet, linked to its event (D53's follow-up then moves or removes it), with
 //      an id planned from the calendar and uid so a retry writes one; the same for the events covering days a current
 //      question asks about, so the lab reads what the panel stops asking; and, for a standing weekday, the suggestion's
-//      own rule. At most 20 notes a run. A suggestion is answered only when everything it needs is written (or was
-//      made before, `duplicate`); a conflict, a limit or nothing added leaves it open.
+//      own rule. An event counts as in the forecast already only when closure notes cover every one of its days (a
+//      note over part of it, or a booking's note, does not). At most 20 notes a run. A suggestion is answered only when
+//      everything it needs is written and still applied (or was made before by another source and is still applied,
+//      `duplicate`); a conflict, a limit, a change a person undid or one they changed since leaves it open.
 //   4. The suggestion is marked `answered` by compare-and-set (a computed sales suggestion is stored `answered` under its
-//      closure key). While TownwiseAI does not work on its own, nothing is written before it.
+//      closure key). While TownwiseAI does not work on its own, nothing is written before it, and a standing weekday
+//      stays open: a calendar shows only its next weeks, so it never stands in for the rule a person would confirm.
+//      [CONFIRM: while TownwiseAI does not work on its own, a standing closed weekday a calendar covers stays open]
+// A location deleted while this ran keeps nothing it wrote. When a calendar is removed (or its Google access ends),
+// takeBackAnswers takes back the closure notes its answers saved that nobody changed since, as TownwiseAI. [CONFIRM:
+// removing a calendar, or its Google access ending, takes back the closure notes its answers saved that nobody changed
+// since]
 // Never throws: a failure is logged by the location's id, and the switch it follows stands. Logs and the audit event
 // carry ids and counts only: never a title, a uid or a date.
 import { createHash } from 'node:crypto';
@@ -28,6 +37,7 @@ import { Types } from 'mongoose';
 import type { OrgScope } from '../access/policy.ts';
 import { applyChange, conflictsWith, isAgentRule, TOWNWISE_AI_AUTHOR, type ApplyOutcome, type PersonsEntries } from '../agent/apply.ts';
 import { closureKeyOf, closureRuleText } from '../agent/closure-suggestions.ts';
+import { wantRefitFor } from '../agent/refit.ts';
 import { questionInputAt } from '../agent/question-input.ts';
 import { noteCovers, questionsFor, type Question, type SalesSuggestion } from '../agent/questions.ts';
 import { salesSuggestions } from '../agent/rule-suggestion-views.ts';
@@ -36,6 +46,7 @@ import { isBuyout, isClosure } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
 import { eachDay } from '../forecasts/file.ts';
 import { MAX_NOTES } from '../handlers/notes.ts';
+import type { AgentChangeRecord } from '../stores/agent-changes.ts';
 import type { SalesEvidence, SuggestionRecord } from '../stores/agent-suggestions.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { TownwiseStores } from '../stores/index.ts';
@@ -61,7 +72,10 @@ export interface Answerable {
   readonly content: AnswerableContent;
 }
 
-/** A suggestion the calendars answer: the closed events covering its days (each makes a note), or a standing weekday's rule. */
+/**
+ * A suggestion the calendars answer: the closed events covering its days (for a dated one each makes a note; for a
+ * standing weekday, the first names the calendar its rule is from), and a standing weekday's rule.
+ */
 export interface PlannedAnswer {
   readonly ref: Answerable['ref'];
   readonly events: readonly CalendarEvent[];
@@ -133,13 +147,11 @@ export function planAnswers(input: {
       held += 1;
       continue;
     }
-    if (item.content.type === 'rule' && item.content.schedule.endDate === null) {
-      answers.push({ ref: item.ref, events: [], rule: { text: item.content.text, schedule: item.content.schedule } });
-      continue;
-    }
     const events = new Map<string, CalendarEvent>();
     for (const day of needed) for (const event of days.get(day) ?? []) events.set(`${event.calendarId}\u0000${event.uid}`, event);
-    answers.push({ ref: item.ref, events: [...events.values()], rule: null });
+    const standing = item.content.type === 'rule' && item.content.schedule.endDate === null
+      ? { text: item.content.text, schedule: item.content.schedule } : null;
+    answers.push({ ref: item.ref, events: [...events.values()], rule: standing });
   }
   return { answers, held };
 }
@@ -154,9 +166,21 @@ function answerRuleId(locationId: string, closureKey: string): string {
   return createHash('sha256').update(`calendar-answer-rule\u0000${locationId}\u0000${closureKey}`).digest('hex').slice(0, 24);
 }
 
-/** A closure or private-event note over any of the event's days (lab/suggestions.ts coversEvent, which imports this file's caller). */
-function coversEvent(note: Pick<NoteContent, 'kind' | 'startDate' | 'endDate'>, event: Pick<CalendarEvent, 'startDate' | 'endDate'>): boolean {
-  return (note.kind === 'private_event' || note.kind === 'closure') && note.startDate <= event.endDate && note.endDate >= event.startDate;
+/**
+ * Whether closure notes (not a buyout's or any other kind's) already close every day of the event, each on its own
+ * weekdays: only then is the event in the forecast already, so no note is written for it. Pure.
+ */
+export function closedAlready(notes: readonly NoteContent[], event: Pick<CalendarEvent, 'startDate' | 'endDate'>): boolean {
+  const closing = notes.filter(closesOnly);
+  return eachDay(event.startDate, event.endDate).every((day) => closing.some((note) => noteCovers(note, day)));
+}
+
+/**
+ * Whether a ledger row is one a calendar's answer saved: a closure note from a calendar. Slice 2's sort saves only
+ * private-event notes (handlers/calendar-bookings.ts bookingNote), so its Undo per calendar leaves these alone.
+ */
+export function isAnswerChange(row: Pick<AgentChangeRecord, 'sourceKind' | 'action' | 'noteKind'>): boolean {
+  return row.sourceKind === 'calendar' && row.action === 'note.add' && row.noteKind === 'closure';
 }
 
 /** The days a question asks about. */
@@ -188,6 +212,11 @@ interface AnswerCounts {
 
 const WRITTEN: ReadonlySet<ApplyOutcome> = new Set(['applied', 'duplicate']);
 
+/** Whether applyChange's answer leaves the change in place: written (or made before) and neither undone nor changed since. */
+function inPlace(result: { readonly outcome: ApplyOutcome; readonly change: AgentChangeRecord | null }): boolean {
+  return WRITTEN.has(result.outcome) && result.change?.status === 'applied';
+}
+
 async function answer(deps: AnswerDeps, scope: OrgScope, location: LocationRecord): Promise<AnswerCounts> {
   const { stores } = deps;
   const counts: AnswerCounts = { answered: 0, notes: 0, rules: 0, held: 0 };
@@ -214,19 +243,20 @@ async function answer(deps: AnswerDeps, scope: OrgScope, location: LocationRecor
   const org = deps.agentAuto ? await stores.orgs.findById(scope.orgId) : null;
   const auto = org?.agentAuto.on === true;
 
-  /** Whether an event's note is in place: written now, made before, or a note already links to or covers it. */
+  /** Whether an event's note is in place: written now and still applied, made before, or closure notes close all its days. */
   const noted = new Map<string, boolean>();
+  const adders = auto
+    ? new Map((await stores.ownerCalendars.list(scope, location.id)).map((calendar) => [calendar.id, calendar.createdBy]))
+    : new Map<string, string>();
   if (auto) {
-    const adders = new Map((await stores.ownerCalendars.list(scope, location.id)).map((calendar) => [calendar.id, calendar.createdBy]));
     const keyOf = (event: CalendarEvent): string => `${event.calendarId}\u0000${event.uid}`;
-    const placed = (event: CalendarEvent, all: readonly NoteRecord[]): boolean => all.some((note) => (
-      note.fromEvent !== null && note.fromEvent.calendarId === event.calendarId && note.fromEvent.uid === event.uid) || coversEvent(note, event));
+    const placed = (event: CalendarEvent, all: readonly NoteRecord[]): boolean => closedAlready(all, event);
     // The events covering days a current question asks about (read without the calendar), so the lab reads them too.
     const { input } = await questionInputAt({ stores, now: deps.now }, scope, location);
     const asked = new Set(questionsFor({ ...input, calendarClosed: [] }).flatMap(askedDays));
     const questionEvents = closed.filter((event) => eachDay(event.startDate, event.endDate).some((day) => asked.has(day)));
     const wanted = new Map<string, CalendarEvent>();
-    for (const event of [...plan.answers.flatMap((each) => each.events), ...questionEvents]) wanted.set(keyOf(event), event);
+    for (const event of [...plan.answers.flatMap((each) => (each.rule === null ? each.events : [])), ...questionEvents]) wanted.set(keyOf(event), event);
     let count = notes.length;
     for (const event of [...wanted.values()].sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0))) {
       if (placed(event, notes)) {
@@ -247,8 +277,9 @@ async function answer(deps: AnswerDeps, scope: OrgScope, location: LocationRecor
           linkedAt: deps.now(),
         },
       }, persons);
-      noted.set(keyOf(event), WRITTEN.has(result.outcome));
-      if (result.outcome === 'applied') {
+      // An undone or changed row under this event's planned id (or key) is not in place: what it needs stays open.
+      noted.set(keyOf(event), inPlace(result));
+      if (result.outcome === 'applied' && inPlace(result)) {
         counts.notes += 1;
         count += 1;
       }
@@ -257,15 +288,18 @@ async function answer(deps: AnswerDeps, scope: OrgScope, location: LocationRecor
 
   let resolved = 0;
   for (const each of plan.answers) {
+    // While TownwiseAI does not work on its own, a standing weekday stays open (see the top).
+    if (!auto && each.rule !== null) continue;
     if (auto) {
       if (each.rule !== null) {
         const closureKey = closureKeyOf(each.rule.schedule);
+        const from = each.events[0]?.calendarId ?? null;
         const result = await applyChange(deps, scope, {
-          action: 'rule.add', locationId: location.id, sourceKind: 'calendar', sourceId: closed[0]?.calendarId ?? null,
-          targetId: answerRuleId(location.id, closureKey), confidence: 'high', why: null, onBehalfOf: null, actor: TOWNWISE_AI_ACTOR,
-          text: each.rule.text, schedule: each.rule.schedule,
+          action: 'rule.add', locationId: location.id, sourceKind: 'calendar', sourceId: from,
+          targetId: answerRuleId(location.id, closureKey), confidence: 'high', why: null,
+          onBehalfOf: from === null ? null : adders.get(from) ?? null, actor: TOWNWISE_AI_ACTOR, text: each.rule.text, schedule: each.rule.schedule,
         }, persons);
-        if (!WRITTEN.has(result.outcome)) {
+        if (!inPlace(result)) {
           counts.held += 1;
           continue;
         }
@@ -288,12 +322,16 @@ async function answer(deps: AnswerDeps, scope: OrgScope, location: LocationRecor
     if (stored?.created === true) resolved += 1;
   }
   counts.answered = resolved;
+  if ((await stores.locations.find(scope, location.id)) === null) {
+    // A location deleted while this ran keeps nothing it wrote: its delete may have swept before these writes landed, so
+    // they are swept again (as removeLocation does).
+    await stores.notes.removeForLocation(scope, location.id);
+    await stores.businessRules.removeForLocation(scope, location.id);
+    await suggestions.removeForLocation(scope, location.id);
+    await stores.agentChanges.removeForLocation(scope, location.id);
+    return counts;
+  }
   if (resolved > 0) {
-    // A location deleted while this ran keeps nothing it wrote, as the follow-up does.
-    if ((await stores.locations.find(scope, location.id)) === null) {
-      await suggestions.removeForLocation(scope, location.id);
-      return counts;
-    }
     await recordAfter(deps, {
       ...TOWNWISE_AI_ACTOR, at: deps.now(), orgId: scope.orgId, action: 'agent.calendar_answered', target: { type: 'location', id: location.id },
       details: { locationId: location.id, count: resolved },
@@ -311,5 +349,44 @@ export async function answerFromCalendars(deps: AnswerDeps, scope: OrgScope, loc
     }
   } catch {
     deps.logger.warn({ locationId: location.id }, 'townwise.calendar_answers_failed');
+  }
+}
+
+/**
+ * Takes back, as TownwiseAI, the closure notes a removed calendar's answers saved (isAnswerChange, sourceId the calendar)
+ * that nobody changed since: the note is removed by compare-and-set on its updatedAt and the row reads `undone`, with
+ * `agent.change_undone` and a refit wanted for its days, as an Undo does. One a person changed since reads `adopted`
+ * and stays theirs. So the forecast stops closing days only that calendar said were closed, and the read-time question
+ * comes back. Never throws: a failure is logged by the location's and calendar's ids.
+ */
+export async function takeBackAnswers(deps: Omit<AnswerDeps, 'agentAuto'>, scope: OrgScope, locationId: string, calendarId: string): Promise<void> {
+  const { stores } = deps;
+  try {
+    let undone = 0;
+    for (const row of await stores.agentChanges.listBySource(scope, locationId, { kind: 'calendar', id: calendarId })) {
+      if (!isAnswerChange(row) || (row.status !== 'applied' && row.status !== 'undoing')) continue;
+      const change = row.status === 'applied'
+        ? await stores.agentChanges.markUndoing(scope, locationId, row.id, { by: TOWNWISE_AI_AUTHOR, now: deps.now() })
+        : row;
+      if (change?.status !== 'undoing') continue;
+      const note = await stores.notes.find(scope, locationId, change.targetId);
+      if (note !== null && (change.targetUpdatedAt?.getTime() !== note.updatedAt.getTime()
+        || !(await stores.notes.removeIf(scope, locationId, note.id, note.updatedAt)))) {
+        await stores.agentChanges.markAdopted(scope, locationId, change.id, { now: deps.now() });
+        continue;
+      }
+      if (!(await stores.agentChanges.markUndone(scope, locationId, change.id, { by: TOWNWISE_AI_AUTHOR, now: deps.now() }))) continue;
+      undone += 1;
+      await recordAfter(deps, {
+        ...TOWNWISE_AI_ACTOR, at: deps.now(), orgId: scope.orgId, action: 'agent.change_undone', target: { type: 'location', id: locationId },
+        details: { locationId, action: change.action, sourceKind: change.sourceKind },
+      });
+      if (change.startDate !== null && change.endDate !== null) {
+        await wantRefitFor(deps, scope, locationId, { startDate: change.startDate, endDate: change.endDate });
+      }
+    }
+    if (undone > 0) deps.logger.info({ locationId, calendarId, undone }, 'townwise.calendar_answers_taken_back');
+  } catch {
+    deps.logger.warn({ locationId, calendarId }, 'townwise.calendar_answers_take_back_failed');
   }
 }

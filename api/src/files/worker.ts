@@ -10,6 +10,7 @@ import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
 
 import { scopeForClaimedImport, type OrgScope } from '../access/policy.ts';
+import { answerFromCalendars } from '../calendar/answers.ts';
 import { utcDay } from '../dates.ts';
 import { DELETED_PERSON } from '../people.ts';
 import { claimNextImport, type ClaimedImport } from '../stores/cross-tenant.ts';
@@ -55,6 +56,11 @@ export interface FileWorkerDeps {
    * original is queued for an automatic read (files/ai-auto.ts). Off when left out.
    */
   readonly autoRead?: boolean;
+  /**
+   * D59 slice 5: TOWNWISE_AGENT_AUTO, with which (and the organization's switch) a calendar's answers to the questions a
+   * file's days raise are saved (calendar/answers.ts). Off when left out.
+   */
+  readonly agentAuto?: boolean;
 }
 
 export interface FileWorker {
@@ -216,6 +222,9 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
     await stores.imports.applied(scope, record.id);
     await stores.imports.addThroughput(scope, record.id, file.sizeBytes, readMs);
     await audit(scope, file, { uploadId, dayCount: days.length, ...counts, firstDate, lastDate });
+    // D59 slice 5: the location's calendars answer the sales history's suggestions these days make (it never throws).
+    const location = await stores.locations.find(scope, file.locationId);
+    if (location !== null) await answerFromCalendars({ stores, logger, now, agentAuto: deps.agentAuto ?? false }, scope, location);
     logger.info({
       orgId: scope.orgId, locationId: file.locationId, fileId: file.id, importId: record.id, dayCount: days.length, durationMs: readMs,
     }, 'townwise.file_read');

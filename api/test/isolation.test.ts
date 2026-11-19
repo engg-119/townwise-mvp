@@ -48,11 +48,12 @@ describe('isolation (source)', () => {
     // agent/apply.ts reads the why's length cap from it; stores/cross-tenant.ts clears a deleted person's id from its rows.
     expect(importers).toEqual(['agent/apply.ts', 'stores/cross-tenant.ts', 'stores/index.ts']);
     // The one writer: every change TownwiseAI saves goes through applyChange. Undo moves a row's status
-    // (handlers/agent-changes.ts), and a file's own undo marks its rows (handlers/data.ts).
+    // (handlers/agent-changes.ts), a file's own undo marks its rows (handlers/data.ts), and (D59 slice 5) a removed
+    // calendar's answer notes are taken back as TownwiseAI (calendar/answers.ts takeBackAnswers).
     const writers = sourceFiles().filter((file) => /agentChanges\.(insertApplying|setWritten|markApplied|removeApplying)\(/.test(file.text)).map((file) => file.path);
     expect(writers).toEqual(['agent/apply.ts']);
     const undoers = sourceFiles().filter((file) => /agentChanges\.(markUndoing|markUndone|markAdopted|markSourceUndone)\(/.test(file.text)).map((file) => file.path).sort();
-    expect(undoers.every((path) => ['handlers/agent-changes.ts', 'handlers/data.ts'].includes(path))).toBe(true);
+    expect(undoers.every((path) => ['calendar/answers.ts', 'handlers/agent-changes.ts', 'handlers/data.ts'].includes(path))).toBe(true);
   });
 
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {

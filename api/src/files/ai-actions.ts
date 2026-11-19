@@ -47,6 +47,7 @@ import { closureKeyOf, closureRuleText, isSuggestable } from '../agent/closure-s
 import type { Role } from '../access/resolve.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter, TOWNWISE_AI_ACTOR } from '../audit.ts';
+import { answerFromCalendars } from '../calendar/answers.ts';
 import { utcDay } from '../dates.ts';
 import { MAX_NOTES, readNoteContent, readRuleSchedule } from '../handlers/notes.ts';
 import { checkStart, launch, type StartRefusal, type StartRequest } from '../lab/service.ts';
@@ -623,6 +624,9 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     if (await held() === null) return null;
     const calibration = await calibrate(scope, requester, plan, location, written.notes.length > 0 || days.daysWritten > 0);
     await stores.files.recordAiActions(scope, file.id, attempt, { ...written, ...days, ...item, calibration, ...suggested });
+    // D59 slice 5: the location's calendars answer what the read left open (its note and rule suggestions, and the sales
+    // history's after its days); code only, it never throws.
+    await answerFromCalendars({ stores, logger: ctx.logger, now: ctx.now, agentAuto: ctx.config.agentAuto }, scope, location);
     return null;
   };
 }

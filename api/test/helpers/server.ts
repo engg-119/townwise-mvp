@@ -225,7 +225,8 @@ export async function startTownwiseServer(opts?: {
     const files = opts?.files;
     const reader = files === undefined || opts?.reader === undefined ? null : createFileWorker({
       connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
-      replicaId: 'test-reader', pollMs: 60_000, autoRead: config.TOWNWISE_AGENT_AUTO && opts.aiReader !== undefined, ...opts.reader,
+      replicaId: 'test-reader', pollMs: 60_000, autoRead: config.TOWNWISE_AGENT_AUTO && opts.aiReader !== undefined,
+      agentAuto: config.TOWNWISE_AGENT_AUTO, ...opts.reader,
     });
     const turnRunner = createTurnRunner({ stores: createTownwiseStores(mongo.connection), logger, now: clock.now });
     const baseDeps = {

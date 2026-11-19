@@ -121,7 +121,7 @@ const aiReadsOn = files !== undefined && ANTHROPIC_API_KEY !== undefined && file
 const fileWorker = files === undefined ? undefined : createFileWorker({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
   extract: ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicExtractModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
-  autoRead: config.TOWNWISE_AGENT_AUTO && aiReadsOn,
+  autoRead: config.TOWNWISE_AGENT_AUTO && aiReadsOn, agentAuto: config.TOWNWISE_AGENT_AUTO,
 });
 // The daily sweep (retention, unfinished uploads, orphans) runs while stored files are on; one replica takes it a day.
 const fileSweeper = files === undefined ? undefined : createFileSweeper({

@@ -967,9 +967,22 @@ async function suggestionsOn(stores: SuggestionsContext['stores'], scope: OrgSco
  * date has come; builds the request and reserves its amount of the month (`budget` when less is left), holding it on the
  * row; makes the call; stores what passes the checks; and records the outcome on the row, which hands the reservation
  * back, corrected to what the call cost. When the location was deleted meanwhile, the week's row and what it stored are
- * removed. A store error after the claim records `failed` and is thrown, for the pass to log the location's ids.
+ * removed. A store error after the claim records `failed` and is thrown, for the pass to log the location's ids. Then,
+ * whatever the outcome (D59 slice 5), the location's calendars answer what is open now, this pass's suggestions
+ * included: code only, so it never waits on the switch, the budget or the call (it never throws).
  */
 export async function suggestFor(
+  ctx: SuggestionsContext, scope: OrgScope, location: LocationRecord, week: string,
+): Promise<SuggestionsOutcome> {
+  try {
+    return await suggestPass(ctx, scope, location, week);
+  } finally {
+    await answerFromCalendars({ stores: ctx.stores, logger: ctx.logger, now: ctx.now, agentAuto: ctx.config.agentAuto }, scope, location);
+  }
+}
+
+/** suggestFor's pass, before the calendars answer. */
+async function suggestPass(
   ctx: SuggestionsContext, scope: OrgScope, location: LocationRecord, week: string,
 ): Promise<SuggestionsOutcome> {
   const { stores, chat: model } = ctx;
@@ -1051,10 +1064,7 @@ export async function suggestFor(
     const stored = await stores.agentSuggestions.insert(scope, { locationId: location.id, week, suggestions, now: ctx.now() });
     // Those applied are stored accepted; only the ones left open count as suggested.
     const open = stored.filter((record) => record.status === 'open').length;
-    const outcome = await finish(open > 0 ? { status: 'suggested', suggested: open } : { status: 'none' });
-    // D59 slice 5: the location's calendars answer what is open now, this pass's suggestions included (never throws).
-    await answerFromCalendars({ stores, logger: ctx.logger, now: ctx.now, agentAuto: ctx.config.agentAuto }, scope, location);
-    return outcome;
+    return await finish(open > 0 ? { status: 'suggested', suggested: open } : { status: 'none' });
   } catch (err) {
     if (!row.finished) await finish({ status: 'failed' }).catch(() => undefined);
     throw err;

@@ -27,7 +27,7 @@ import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
 import { queueAutoSort } from '../calendar/auto-sort.ts';
 import { bringPassForward } from '../calendar/early-pass.ts';
-import { answerFromCalendars } from '../calendar/answers.ts';
+import { answerFromCalendars, takeBackAnswers } from '../calendar/answers.ts';
 import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
@@ -608,7 +608,8 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
 }
 
 /**
- * DELETE /api/org/locations/:locationId/owner-calendars/:calendarId: the calendar and all of its events. 204. A Google
+ * DELETE /api/org/locations/:locationId/owner-calendars/:calendarId: the calendar and all of its events, then (D59 slice
+ * 5) the closure notes its answers saved that nobody changed since, taken back as TownwiseAI. 204. A Google
  * calendar's connection is marked for a check first (so a request that stops here leaves it due at once), and ended
  * after when it backs no other calendar of the organization, whoever pressed Remove: an unused grant is a credential
  * Townwise should not hold (audited `google_calendar.disconnected`, reason `last_calendar`).
@@ -623,6 +624,8 @@ export async function removeOwnerCalendar(ctx: TownwiseContext, req: Request, re
   if (!(await ctx.stores.ownerCalendars.remove(scope, location.id, calendar.id))) throw notFound();
   const now = ctx.now();
   await recordCalendar(ctx, caller, 'owner_calendar.removed', calendar, now);
+  // D59 slice 5: the closure notes this calendar's answers saved, that nobody changed since, are taken back.
+  await takeBackAnswers(ctx, scope, location.id, calendar.id);
   const calendarCount = connectionId === null ? null : await endUnusedGoogleAccess(deps, scope, connectionId, 'last_calendar');
   if (connectionId !== null && calendarCount !== null) {
     await recordAfter(ctx, {
