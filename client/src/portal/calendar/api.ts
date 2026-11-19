@@ -22,6 +22,32 @@ function calendarPath(locationId: string, calendarId: string): `/${string}` {
   return `${calendarsPath(locationId)}/${encodeURIComponent(calendarId)}`;
 }
 
+/** A booking label on a file calendar's event (D58): what an org admin or TownwiseAI's sort set. */
+export const BOOKING_LABELS = ['buyout', 'party', 'own_event', 'other'] as const;
+export type BookingLabel = (typeof BOOKING_LABELS)[number];
+
+/**
+ * A file calendar's labels (D58): `state` is `unsorted`, `sorted` (TownwiseAI sorted it, or anyone labeled it, and no
+ * org admin has pressed Use for forecasts) or `confirmed` (the labels are used for forecasts since `confirmedAt`),
+ * parsed as a string so a state a later API adds still parses; `counts` holds each label's events and those with none.
+ */
+export const bookingsSchema = z.object({
+  state: z.string(),
+  sortedAt: z.string().nullable().default(null),
+  confirmedAt: z.string().nullable().default(null),
+  counts: z.object({
+    buyout: z.number().default(0),
+    party: z.number().default(0),
+    own_event: z.number().default(0),
+    other: z.number().default(0),
+    unlabeled: z.number().default(0),
+  }),
+});
+export type CalendarBookings = z.infer<typeof bookingsSchema>;
+
+/** An event's label as the API sends it: a label the client doesn't know reads as none. */
+const bookingLabelSchema = z.enum(BOOKING_LABELS).nullable().catch(null);
+
 /**
  * A calendar, never its address. `kind` is `file`, `link` or `google`, and `status` is `ok` or the code of the last
  * failed refresh, both parsed as strings so a kind or a code a later API adds still parses (calendars.ts gives an
@@ -45,6 +71,10 @@ export const ownerCalendarSchema = z.object({
    * a link, a teammate's Google calendar, under view-as, and from an API older than it.
    */
   mine: z.boolean().default(false),
+  /** A file's format, `ics` or `csv` (D58); null for a link or a Google calendar, and from an API older than it. */
+  format: z.string().nullable().default(null),
+  /** A file calendar's booking labels (D58); null for a link or a Google calendar, and from an API older than them. */
+  bookings: bookingsSchema.nullable().default(null),
 });
 export type OwnerCalendar = z.infer<typeof ownerCalendarSchema>;
 
@@ -58,6 +88,9 @@ export const ownerCalendarEventSchema = z.object({
   endDate: z.string(),
   startTime: z.string().nullable(),
   endTime: z.string().nullable(),
+  /** A file calendar's event's label (D58), and who set it; null for none, any other calendar, and an older API. */
+  booking: bookingLabelSchema,
+  bookingBy: z.string().nullable().default(null),
 });
 export type OwnerCalendarEvent = z.infer<typeof ownerCalendarEventSchema>;
 
@@ -92,9 +125,25 @@ export const googleChoiceSchema = z.object({
 });
 export type GoogleChoice = z.infer<typeof googleChoiceSchema>;
 
-const calendarsSchema = z.object({ calendars: z.array(ownerCalendarSchema), google: googleCalendarsSchema.optional() });
+/** The list's `bookingSort` (D58): whether Sort with TownwiseAI can run (false with no model key, and from an older API). */
+export const bookingSortSchema = z.object({ available: z.boolean() });
+export type BookingSort = z.infer<typeof bookingSortSchema>;
+
+const calendarsSchema = z.object({
+  calendars: z.array(ownerCalendarSchema), google: googleCalendarsSchema.optional(), bookingSort: bookingSortSchema.optional(),
+});
 const eventsSchema = z.object({ events: z.array(ownerCalendarEventSchema) });
 const savedCalendarSchema = z.object({ calendar: ownerCalendarSchema });
+/** An add's answer: `skippedRows` counts a calendar CSV's rows whose start couldn't be read (0 for anything else). */
+const addedCalendarSchema = z.object({ calendar: ownerCalendarSchema, skippedRows: z.number().default(0) });
+const sortedSchema = z.object({ calendar: ownerCalendarSchema, sent: z.number(), labeled: z.number(), batchesFailed: z.number().default(0) });
+const labeledSchema = z.object({ calendar: ownerCalendarSchema, noteMade: z.boolean().default(false), noteKept: z.boolean().default(false) });
+const confirmedSchema = z.object({
+  calendar: ownerCalendarSchema,
+  notesMade: z.number(),
+  notesLeft: z.number().default(0),
+  calibration: z.object({ status: z.string(), id: z.string().nullable().default(null) }).nullable().default(null),
+});
 const choicesSchema = z.object({ calendars: z.array(googleChoiceSchema) });
 
 /**
@@ -107,15 +156,18 @@ export type NewOwnerCalendar =
   | { kind: 'link'; label: string; url: string; titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
   | { kind: 'google'; googleCalendarId: string };
 
-/** 200: the location's calendars, oldest first, and `google`, which an older API leaves out (read as off). */
+/** 200: the location's calendars, oldest first, `google` and `bookingSort`, which an older API leaves out (read as off). */
 export async function fetchOwnerCalendars(
   api: ApiClient, locationId: string,
-): Promise<{ calendars: OwnerCalendar[]; google: GoogleCalendars }> {
+): Promise<{ calendars: OwnerCalendar[]; google: GoogleCalendars; bookingSort: BookingSort }> {
   const body = await api.json(calendarsPath(locationId), calendarsSchema);
-  return { calendars: body.calendars, google: body.google ?? GOOGLE_OFF };
+  return { calendars: body.calendars, google: body.google ?? GOOGLE_OFF, bookingSort: body.bookingSort ?? { available: false } };
 }
 
-/** 200: every stored event overlapping `from` to `to` (inclusive, at most 92 days), by start; 400 bad_range otherwise. */
+/**
+ * 200: every stored event overlapping `from` to `to` (inclusive, at most 92 days, ending at most 400 days ahead), by
+ * start; 400 bad_range otherwise. A file calendar keeps events from up to 1,096 days back (D58).
+ */
 export async function fetchOwnerCalendarEvents(
   api: ApiClient, locationId: string, range: { from: string; to: string },
 ): Promise<OwnerCalendarEvent[]> {
@@ -124,14 +176,16 @@ export async function fetchOwnerCalendarEvents(
 }
 
 /**
- * 201 with the calendar. A file: 400 too_large or not_calendar. A link: 503 calendar_links_unavailable, 429
+ * 201 with the calendar and `skippedRows` (a calendar CSV's rows whose start couldn't be read; 0 otherwise, and from an
+ * older API). A file, an .ics or a calendar CSV in `ics` (D58): 400 too_large or not_calendar. A link: 503 calendar_links_unavailable, 429
  * rate_limited, or 400 with the fetch's failure code. A Google calendar: 503 google_calendar_unavailable, 409
  * google_not_connected or google_reconnect, 429 rate_limited, 400 google_not_found or google_forbidden, 409
  * calendar_already_added, or 503 google_unavailable. 409 calendar_limit for a sixth.
  */
-export async function addOwnerCalendar(api: ApiClient, locationId: string, calendar: NewOwnerCalendar): Promise<OwnerCalendar> {
-  const body = await api.json(calendarsPath(locationId), savedCalendarSchema, { method: 'POST', body: calendar });
-  return body.calendar;
+export async function addOwnerCalendar(
+  api: ApiClient, locationId: string, calendar: NewOwnerCalendar,
+): Promise<{ calendar: OwnerCalendar; skippedRows: number }> {
+  return api.json(calendarsPath(locationId), addedCalendarSchema, { method: 'POST', body: calendar });
 }
 
 /**
@@ -143,6 +197,42 @@ export async function addOwnerCalendar(api: ApiClient, locationId: string, calen
 export async function refreshOwnerCalendar(api: ApiClient, locationId: string, calendarId: string): Promise<OwnerCalendar> {
   const body = await api.json(`${calendarPath(locationId, calendarId)}/refresh`, savedCalendarSchema, { method: 'POST' });
   return body.calendar;
+}
+
+/** The sort runs in the request, within 150 seconds (design decision 8); the wait stays under the ingress's 240. */
+const SORT_TIMEOUT_MS = 180_000;
+
+/**
+ * Sort with TownwiseAI (D58), no body: 200 with the calendar, how many unlabeled events were sent, how many TownwiseAI
+ * labeled and how many batches failed. 403 for a member, under view-as or open as admin (open_as_admin_refused); 404;
+ * 409 not_a_file_calendar or chat_budget_exhausted; 503 chat_unavailable; 429 rate_limited (3 a calendar an hour).
+ */
+export async function sortBookings(
+  api: ApiClient, locationId: string, calendarId: string,
+): Promise<{ calendar: OwnerCalendar; sent: number; labeled: number; batchesFailed: number }> {
+  return api.json(`${calendarPath(locationId, calendarId)}/bookings/sort`, sortedSchema, { method: 'POST', timeoutMs: SORT_TIMEOUT_MS });
+}
+
+/**
+ * One event's label (D58), its uid in the body, never the path or query: 200 with the calendar, whether a note was made
+ * for it (an upcoming buyout or party on a confirmed calendar) and whether its note was kept (an upcoming event's label
+ * moved away from buyout or party). 403 for a member or under view-as; 404 for an unknown calendar or uid.
+ */
+export async function labelBooking(
+  api: ApiClient, locationId: string, calendarId: string, change: { uid: string; booking: BookingLabel | null },
+): Promise<{ calendar: OwnerCalendar; noteMade: boolean; noteKept: boolean }> {
+  return api.json(`${calendarPath(locationId, calendarId)}/bookings`, labeledSchema, { method: 'PATCH', body: change });
+}
+
+/**
+ * Use for forecasts (D58), no body, again after confirming too (it makes any notes still missing): 200 with the
+ * calendar, the notes made for upcoming bookings, those left without one, and the refit it started (`calibration.status`
+ * `started`) or why not. 403 for a member or under view-as; 404; 409 not_a_file_calendar.
+ */
+export async function confirmBookings(
+  api: ApiClient, locationId: string, calendarId: string,
+): Promise<{ calendar: OwnerCalendar; notesMade: number; notesLeft: number; calibration: { status: string; id: string | null } | null }> {
+  return api.json(`${calendarPath(locationId, calendarId)}/bookings/confirm`, confirmedSchema, { method: 'POST' });
 }
 
 /** 204: the calendar and all of its events; 404 not_found when it is already gone. */
