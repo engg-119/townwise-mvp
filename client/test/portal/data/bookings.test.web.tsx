@@ -18,7 +18,8 @@ import { dataFake, type DataFake } from './fakes';
 // decisions 7, 10, 11 and 15): the state and counts per label for everyone; for an org admin outside view-as Sort
 // with TownwiseAI (its words shown before the press) and Use for forecasts, and a label choice under each event that
 // sends the event's uid in the body only; members and view-as read only; staff open as admin may label and confirm but
-// not sort. Today is Tue, Nov 17, 2026. Made-up titles only.
+// not sort. Today is Tue, Nov 17, 2026. Made-up titles only. At a phone's width, where the page keeps the month's
+// agenda, so every event's label choice is in one list (D62); the month grid's own tests are in calendar-month.test.web.tsx.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -26,7 +27,7 @@ class ResizeObserverPolyfill {
   disconnect(): void { return undefined; }
 }
 if (typeof globalThis.ResizeObserver !== 'function') globalThis.ResizeObserver = ResizeObserverPolyfill;
-Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1280 });
+Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 375 });
 
 beforeEach(() => {
   jest.useFakeTimers({

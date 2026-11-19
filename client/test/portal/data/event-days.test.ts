@@ -1,6 +1,6 @@
 import {
   CELL_LINES, cellLines, dayTooltip, defaultDay, emptyDayLine, eventMonthRows, eventsOnDay, type EventDay, type MonthEvent,
-} from '../../../src/portal/data/item/eventMonth';
+} from '../../../src/portal/data/item/eventDays';
 
 // A calendar's events as a month grid on its page in Your data (D62): weeks Monday first, each day's events in order
 // with a start time on the first day, a booking label's tag on a file calendar, and labels that say everything in
