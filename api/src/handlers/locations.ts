@@ -293,6 +293,10 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.forecastWeeks.removeForLocation(scope, locationId);
   // U13B: forecasts staff imported for it, even with no sales data left.
   await ctx.stores.forecasts.removeForLocation(scope, locationId);
+  // D66: its research runs and threads first (a lane's heartbeat then misses and its merge finds no run), then what
+  // research found for it and its people's edits. Town rows stay: they hold no organization's data.
+  await ctx.stores.researchLocations.removeForLocation(scope, locationId);
+  await ctx.stores.researchRevisions.removeForLocation(scope, locationId);
   // The owner's calendars and their events.
   await ctx.stores.ownerCalendars.removeForLocation(scope, locationId);
   // Orders: saved edits, confirmed rules, the setup, item sales and counts go with the location.
@@ -302,6 +306,10 @@ export async function removeLocation(ctx: TownwiseContext, scope: OrgScope, loca
   await ctx.stores.orderCounts.removeForLocation(scope, locationId);
   // A connection that still backs a calendar of another location stays.
   for (const connectionId of connections) await endUnusedGoogleAccess(google, scope, connectionId, 'location_deleted');
+  // D66: a merge or an edit already past its location check can still write after the sweep above, so it runs again
+  // (the merge also removes its own rows once it finds the location gone, design decision 8).
+  await ctx.stores.researchLocations.removeForLocation(scope, locationId);
+  await ctx.stores.researchRevisions.removeForLocation(scope, locationId);
   return true;
 }
 

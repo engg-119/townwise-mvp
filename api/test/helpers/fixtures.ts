@@ -316,3 +316,44 @@ export async function addOrderRecords(
   await db.collection('tw_item_sales').insertOne({ ...where, date: '2026-05-01', items: { [itemId]: 30 }, uploadedAt: at });
   await db.collection('tw_order_counts').insertOne({ ...where, date: '2026-05-02', items: { [itemId]: 3 }, updatedAt: at });
 }
+
+/** D66: the five tenant collections that hold a location's research. */
+export const RESEARCH_COLLECTIONS = [
+  'tw_location_research_runs', 'tw_location_research_threads', 'tw_location_events', 'tw_location_entities', 'tw_research_revisions',
+] as const;
+
+/**
+ * One record in each of research's tenant collections for the location: an ended run, its recorded thread, an event, an
+ * entity and a member's edit of the event. Made-up places; resolves the event's id.
+ */
+export async function addResearchRecords(server: Server, opts: { orgId: string; locationId: string }): Promise<string> {
+  const at = server.clock.now();
+  const where = { orgId: new Types.ObjectId(opts.orgId), locationId: new Types.ObjectId(opts.locationId) };
+  const runId = new Types.ObjectId();
+  const eventId = new Types.ObjectId();
+  const sources = [{ label: 'example.test', url: 'https://example.test/trivia' }];
+  const db = server.connection;
+  await db.collection('tw_location_research_runs').insertOne({
+    _id: runId, ...where, key: 'w:2026-06-01', status: 'done', code: null, threads: ['neighborhood'], trigger: 'weekly', placeId: null,
+    town: 'hanover-nh', counts: { found: 1, added: 1, updated: 0, dropped: 0 }, costMicroUsd: 1_000, createdAt: at, startedAt: at,
+    finishedAt: at, mergeOwner: null, mergeUntil: null,
+  });
+  await db.collection('tw_location_research_threads').insertOne({
+    ...where, runId, thread: 'neighborhood', status: 'recorded', code: null, attempts: 1, notBefore: at, owner: null, leaseUntil: null,
+    reservedMicroUsd: 0, spentMicroUsd: 1_000, month: '2026-06', found: null, drops: null, searches: 1, fetches: 0, createdAt: at, finishedAt: at,
+  });
+  await db.collection('tw_location_events').insertOne({
+    _id: eventId, ...where, placeId: null, town: 'hanover-nh', title: 'Fixture Trivia Night', titleKey: 'fixture trivia night', kind: 'event',
+    category: 'dining', start: '2026-06-10', end: '2026-06-10', weekdays: null, startTime: null, status: 'scheduled', venueId: null,
+    hostId: null, confidence: 'medium', sources, firstRunId: runId, lastRunId: runId, firstSeenAt: at, lastSeenAt: at, seenCount: 1,
+    origin: 'neighborhood', competitorEntityId: null, competitorPlaceId: null,
+  });
+  await db.collection('tw_location_entities').insertOne({
+    ...where, placeId: null, town: 'hanover-nh', type: 'venue', name: 'Fixture Hall', nameKey: 'fixture hall', townEntityId: null, sources, lastSeenAt: at,
+  });
+  await db.collection('tw_research_revisions').insertOne({
+    ...where, eventId: `l-${eventId.toHexString()}`, op: 'hide', fields: null, reverts: null, basedOn: 'base',
+    by: { kind: 'person', userId: null }, createdAt: at,
+  });
+  return eventId.toHexString();
+}

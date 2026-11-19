@@ -12,8 +12,8 @@ import { createLocation, type LocationSummary } from '../src/handlers/locations.
 import type { TownProfile } from '../src/handlers/towns.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
 import {
-  addChatTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg,
-  ORDER_COLLECTIONS,
+  addChatTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar, addRequest, addResearchRecords, addSalesDay, addSeat, addUpload,
+  auditEvents, createOrg, ORDER_COLLECTIONS, RESEARCH_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { fakePlaces, placeDetails, usAddress } from './helpers/places-fetch.ts';
 import {
@@ -286,6 +286,23 @@ describe('DELETE /api/org/locations/:locationId', () => {
       const of = (locationId: string) => server.connection.collection(collection).countDocuments({ locationId: new Types.ObjectId(locationId) });
       expect({ collection, doomed: await of(doomed), kept: await of(kept) }).toEqual({ collection, doomed: 0, kept: collection === 'tw_calendar_sources' ? 1 : 3 });
     }
+  });
+
+  it('deletes the location’s research with it (runs, threads, events, entities, edits), and no other location’s; the town’s rows stay (D66)', async () => {
+    const t = await team('Research Group');
+    const doomed = await addLocation(server, { orgId: t.orgId, name: 'Doomed' });
+    const kept = await addLocation(server, { orgId: t.orgId, name: 'Kept' });
+    for (const locationId of [doomed, kept]) await addResearchRecords(server, { orgId: t.orgId, locationId });
+    const townEvents = server.connection.collection('tw_town_events');
+    const { insertedId } = await townEvents.insertOne({ townKey: 'hanover-nh', title: 'Fixture Town Fair', start: '2026-06-12', end: '2026-06-12' });
+    expect((await remove(t.admin, doomed)).status).toBe(204);
+    for (const name of RESEARCH_COLLECTIONS) {
+      const collection = server.connection.collection(name);
+      expect({ name, doomed: await collection.countDocuments({ locationId: new Types.ObjectId(doomed) }) }).toEqual({ name, doomed: 0 });
+      expect({ name, kept: await collection.countDocuments({ locationId: new Types.ObjectId(kept) }) }).toEqual({ name, kept: 1 });
+    }
+    expect(await townEvents.countDocuments({ _id: insertedId })).toBe(1);
+    await townEvents.deleteOne({ _id: insertedId });
   });
 
   it('deletes the location’s ordering records with it (edits, rules, cards, setup, item sales, counts), and no other location’s', async () => {

@@ -101,6 +101,10 @@ async function undoApproval(ctx: TownwiseContext, scope: OrgScope, requestId: st
   const { stores } = ctx;
   await stores.members.deleteSeat(scope, seatId);
   if (await stores.members.countSeats(scope) > 0) return;
+  // D66: research of those locations, runs and threads first (the weekly planner may have queued a run for the new,
+  // active organization meanwhile).
+  await stores.researchLocations.removeForOrg(scope);
+  await stores.researchRevisions.removeForOrg(scope);
   await stores.locations.removeForOrg(scope);
   await stores.audit.redact({ kind: 'org', orgId: scope.orgId, requestId });
   await stores.orgs.removeFromRequest(scope, requestId);

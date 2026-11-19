@@ -13,7 +13,8 @@ import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
 import {
   addActivityDay, addAuditEvent, addChatTurn, addChatUsage, addConversation, addGrant, addInvite, addLiveTurn, addLocation, addNote, addOrderRecords, addOwnerCalendar,
-  addRemovedSeat, addRequest, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
+  addRemovedSeat, addRequest, addResearchRecords, addSalesDay, addSeat, addUpload, auditEvents, createOrg, ORDER_COLLECTIONS,
+  RESEARCH_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { addGoogleCalendar, addGoogleConnection, createFakeGoogle, REFRESH_TOKEN, SHARED_ID } from './helpers/google.ts';
 import {
@@ -57,6 +58,8 @@ const TENANT_COLLECTIONS = [
   ...ORDER_COLLECTIONS,
   // The days each person used the app (staff-overview).
   'tw_activity_days',
+  // D66: a location's research runs, threads, events, entities and its people's edits.
+  ...RESEARCH_COLLECTIONS,
 ] as const;
 
 /** A tw_chat_proposals record (spec 6.16): the author dismissed a proposal in one of their conversations. */
@@ -170,6 +173,8 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   await addChatTurn(server, { orgId, locationId, conversationId, userId: member.session.userId });
   // Orders: a record in each of its collections, the card in the member's conversation.
   await addOrderRecords(server, { orgId, locationId, conversationId });
+  // D66: a record in each of research's tenant collections.
+  await addResearchRecords(server, { orgId, locationId });
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-03_2026-05-04',

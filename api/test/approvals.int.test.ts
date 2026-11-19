@@ -7,7 +7,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { AdminRequestView } from '../src/handlers/admin.ts';
 import type { MeResponse } from '../src/handlers/me.ts';
 import { AUDIT_DETAIL_KEYS, type AuditAction } from '../src/stores/audit-events.ts';
-import { addRequest, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { addRequest, addResearchRecords, addSeat, auditEvents, createOrg, RESEARCH_COLLECTIONS } from './helpers/fixtures.ts';
 import { createCapturingTransport } from './helpers/mail.ts';
 import {
   call, logLines, MAIL_REPLY_TO, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
@@ -522,6 +522,10 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
     // The request is marked approved; before the organization is made, staff delete the requester, start to finish.
     const spy = vi.spyOn(model, 'updateOne').mockImplementationOnce(async (...args: unknown[]) => {
       deleted = await call(server, '/api/admin/people/delete', { session: staff, json: { email: person.email } });
+      // D66: research rows under the organization the approval is making (this call's filter is its id), as if the
+      // planner queued a run meanwhile.
+      const { _id: orgId } = args[0] as { _id: Types.ObjectId | string };
+      await addResearchRecords(server, { orgId: String(orgId), locationId: new Types.ObjectId().toHexString() });
       return updateOne(...args);
     });
     let res: Response;
@@ -538,6 +542,10 @@ describe('POST /api/admin/requests/:requestId/approve (F3)', () => {
       && (event.target as { id: string }).id === person.requestId);
     const orgId = (approved?.details as { orgId: string }).orgId;
     expect(await server.connection.collection('tw_locations').countDocuments({ orgId: new Types.ObjectId(orgId) })).toBe(0);
+    // D66: no research row of the organization is left.
+    for (const name of RESEARCH_COLLECTIONS) {
+      expect({ name, n: await server.connection.collection(name).countDocuments({ orgId: new Types.ObjectId(orgId) }) }).toEqual({ name, n: 0 });
+    }
     // No event holds their email, or the organization's or location's name; the approval says it didn't apply.
     const events = await eventsAbout(person.requestId, orgId);
     const text = JSON.stringify(await auditEvents(server));
