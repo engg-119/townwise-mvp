@@ -18,6 +18,8 @@ export interface UsageInput {
   iterations?: BetaIterationsUsage;
   /** D37: the web searches the call was billed for, as usage.server_tool_use reports them. */
   searches?: number;
+  /** D66: the page fetches the call made, as usage.server_tool_use reports them. */
+  fetches?: number;
 }
 
 export function usage(u: UsageInput = {}): BetaUsage {
@@ -31,7 +33,9 @@ export function usage(u: UsageInput = {}): BetaUsage {
     inference_geo: null,
     iterations: u.iterations ?? null,
     output_tokens_details: null,
-    server_tool_use: u.searches === undefined ? null : { web_search_requests: u.searches, web_fetch_requests: 0 },
+    server_tool_use: u.searches === undefined && u.fetches === undefined
+      ? null
+      : { web_search_requests: u.searches ?? 0, web_fetch_requests: u.fetches ?? 0 },
     service_tier: 'standard',
     speed: 'standard',
   };

@@ -11,6 +11,8 @@ import type {
 import type { ToolView } from './tools/registry.ts';
 
 export const WEB_SEARCH = 'web_search';
+/** D66: the page fetch tool's name. The chat never sends it; town research may (TOWNWISE_RESEARCH_WEB_FETCH). */
+export const WEB_FETCH = 'web_fetch';
 
 /**
  * Called directly: web_search_20260209 would otherwise run its searches from code execution (dynamic filtering), adding

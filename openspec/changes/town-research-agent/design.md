@@ -138,11 +138,11 @@ Settling: a finished thread charges `messageCostMicroUsd` summed over every mess
 iterations    = S + F + 1 + MAX_CONTINUATIONS          (each continuation resends the whole conversation)
 gather input  <= iterations * (P + S * SEARCH_TOKENS + F * 8_000), the prompt P priced as a cache write
 gather output <= (1 + MAX_CONTINUATIONS) * 16_000
-extract input <= gather output + the ledger's text                     output <= 12_000
+extract input <= gather output + (S + F) * 4_000 + 1_500                output <= 12_000
 reserve = ceilingCostMicroUsd(gather) + ceilingCostMicroUsd(extract) + S * SEARCH_MICRO_USD
 ```
 
-`S` and `F` are the search and fetch limits (F is 0 while fetch is off), `P` the prompt's tokens at 3 characters a token, `SEARCH_TOKENS` 8,000 until the live eval calibrates it from `usage.iterations`. `chat/pricing.ts` `ceilingCostMicroUsd` already takes `cacheWrite` in its `TokenCounts` but ignores it (every caller passes 0 today); it starts counting it at the most expensive model's cache-write price (1.25 times input), with chat's own ceilings unchanged (they pass 0). So the reservation is a true ceiling.
+`S` and `F` are the search and fetch limits (F is 0 while fetch is off), `P` the prompt's tokens at 3 characters a token, `SEARCH_TOKENS` 8,000 until the live eval calibrates it from `usage.iterations`. `chat/pricing.ts` `ceilingCostMicroUsd` already takes `cacheWrite` in its `TokenCounts` but ignores it (every caller passes 0 today); it starts counting it at the most expensive model's cache-write price (1.25 times input), with chat's own ceilings unchanged (they pass 0). The extract's input bound is the gather's whole output, 4,000 tokens of source table rows and cited words for each search or fetch allowed (`LEDGER_TOKENS_PER_CALL`, about 10 rows and their quotes, checked by task 10.1), and 1,500 for its own instructions (`EXTRACT_FRAME_TOKENS`, pinned above the real prompt by `test/research-budget.test.ts`). With a 1,000-token prompt this reserves $5.58 a town thread and $3.55 a location thread (fetch off). The formula leaves out the gather's own earlier output resent by later iterations (at most the 48,000 output tokens); pricing every iteration with every page it may read, at full input price, more than covers that in practice (an early iteration has read few pages, and the probe read every resent prefix from the cache), though not in a contrived worst case. Task 10.1 compares measured cost with the reservation.
 
 **Probe results (task 0.2, 2026-11-19; decision 4 lists the calls):**
 
