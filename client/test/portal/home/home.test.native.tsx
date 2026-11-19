@@ -573,6 +573,8 @@ describe('D65: the first forecast as it builds, and why one wasn’t published',
     )).toBeTruthy();
     expect(screen.getByRole('link', { name: 'See what TownwiseAI did' }).props.href).toBe('/locations/l1/agent?panel=activity');
     expect(screen.queryByText(FORECAST_LINE)).toBeNull();
+    // Nothing runs until the next upload, so the notice is plain words with no In progress tag (15.6).
+    expect(screen.queryByText('In progress')).toBeNull();
   });
 
   test('a first run that timed out reads as a run that couldn’t run', async () => {
@@ -582,6 +584,7 @@ describe('D65: the first forecast as it builds, and why one wasn’t published',
       'The first forecast for Main Street Bar wasn’t published: it couldn’t run. Townwise tries again after your next sales upload.',
     )).toBeTruthy();
     expect(screen.getByRole('link', { name: 'See what TownwiseAI did' })).toBeTruthy();
+    expect(screen.queryByText('In progress')).toBeNull();
   });
 
   test('next that ends with no run (the pass cleared the mark): the plain line, and no notice', async () => {

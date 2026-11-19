@@ -116,7 +116,8 @@ function QuestionsLink(props: { locationId: string }): React.JSX.Element | null 
 
 /**
  * The lead's line while no forecast is published: the first forecast next or building (D65), else why the last one
- * wasn't published with the next step and a link to its run, else the plain In progress line.
+ * wasn't published with the next step and a link to its run, else the plain In progress line. The not-published notice
+ * is plain words with no StatusTag (15.6): nothing runs until the next upload, so "In progress" would contradict it.
  */
 function NoForecast(props: { calibration: Calibration; locationId: string; locationName: string }): React.JSX.Element {
   const { calibration, locationName } = props;
@@ -126,7 +127,7 @@ function NoForecast(props: { calibration: Calibration; locationId: string; locat
   if (notice === null) return <Tagline kind="progress" text={forecastLine(locationName)} />;
   return (
     <View testID="home-not-published" style={styles.notice}>
-      <Tagline kind="progress" text={notice.next === null ? notice.text : `${notice.text} ${notice.next}`} />
+      <Small>{notice.next === null ? notice.text : `${notice.text} ${notice.next}`}</Small>
       <LinkButton href={activityHref(props.locationId)} label="See what TownwiseAI did" />
     </View>
   );
