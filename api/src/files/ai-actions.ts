@@ -522,18 +522,18 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
       const saved = await save();
       return { itemId: saved.itemId, itemReason: saved.itemReason };
     }
-    let refused: AiItemReason | null = null;
+    const kept: { refused: AiItemReason | null } = { refused: null };
     const applied = await applyChange(ctx, scope, {
       action: 'item.add', locationId: file.locationId, sourceKind: 'file', sourceId: file.id, targetId: plan.itemId,
       confidence: result.confidence, why: null, onBehalfOf: ai.requestedBy, actor: await actorOf(requester), key: `file:${file.id}`,
       dates: null, write: async () => {
         const saved = await save();
-        refused = saved.itemReason;
+        kept.refused = saved.itemReason;
         return saved.at;
       },
     });
     if (applied.outcome === 'duplicate') return { itemId: null, itemReason: 'duplicate' };
-    if (applied.outcome === 'invalid') return { itemId: null, itemReason: refused ?? 'storage_full' };
+    if (applied.outcome === 'invalid') return { itemId: null, itemReason: kept.refused ?? 'storage_full' };
     return { itemId: plan.itemId, itemReason: null };
   }
 

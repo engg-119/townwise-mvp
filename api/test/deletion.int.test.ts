@@ -43,6 +43,8 @@ const TENANT_COLLECTIONS = [
   'tw_chat_turns',
   // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
   'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
+  // D59: TownwiseAI's changes.
+  'tw_agent_changes',
   // U13B.
   'tw_forecast_runs', 'tw_forecasts',
   // The forecast lab, and (D42) the weekly refresh's week rows.
@@ -187,6 +189,13 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', status: 'suggested', suggested: 1,
     createdAt: server.clock.now(), updatedAt: server.clock.now(),
   });
+  // D59: a change TownwiseAI saved.
+  await server.connection.collection('tw_agent_changes').insertOne({
+    orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), sourceKind: 'file', sourceId: null, action: 'note.add',
+    targetId: new Types.ObjectId(), dedupeKey: 'sentinel-key', confidence: 'high', why: 'Sentinel why', onBehalfOf: null, status: 'applied',
+    targetUpdatedAt: server.clock.now(), startDate: '2026-07-04', endDate: '2026-07-04', appliedAt: server.clock.now(), statusAt: server.clock.now(),
+    statusBy: 'townwise_ai',
+  });
   // D42: a week row of the weekly refresh.
   await server.connection.collection('tw_forecast_weeks').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), week: '2026-06-01', status: 'unchanged',
@@ -252,12 +261,13 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (staff-overview) active days, (D42)
-    // week rows, the weekly suggestions' pass rows and suggestions, and (U13B) forecast rows, then runs.
-    expect(writes.slice(-17)).toEqual([
+    // week rows, the weekly suggestions' pass rows and suggestions, (D59) TownwiseAI's changes, and (U13B) forecast rows,
+    // then runs.
+    expect(writes.slice(-18)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
       'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
       'delete tw_chat_usage', 'delete tw_activity_days', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_suggestion_passes',
-      'delete tw_agent_suggestions', 'delete tw_forecasts', 'delete tw_forecast_runs',
+      'delete tw_agent_suggestions', 'delete tw_agent_changes', 'delete tw_forecasts', 'delete tw_forecast_runs',
     ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);

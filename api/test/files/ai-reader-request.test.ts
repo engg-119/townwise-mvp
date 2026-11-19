@@ -272,6 +272,6 @@ describe('which stored files TownwiseAI reads on its own (D59)', () => {
       { result: { dayCount: 400 } as FileRecord['result'] }, { outcome: 'calendar_export' }, { aiAutoOff: true }, { addedVia: 'townwise_ai' },
       { source: { via: 'ai_file', fileId: 'f'.repeat(24) } }, { purgeRaw: true }, { ai: { status: 'skipped' } as FileRecord['ai'] },
     ];
-    for (const over of refused) expect(autoReadable({ ...kept, ...over } as FileRecord)).toBe(false);
+    for (const over of refused) expect(autoReadable({ ...kept, ...over })).toBe(false);
   });
 });

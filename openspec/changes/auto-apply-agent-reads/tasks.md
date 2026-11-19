@@ -3,7 +3,9 @@ Spec decision D59 (check develop's spec section 2, the D58 branch and the reserv
 ## 0. Owner and coordination
 
 - [ ] 0.1 Ask the owner design.md's Open Questions 1 and 2, and record the answers here. Slice 1 may be built before the answers. The switch stays off in production (`TOWNWISE_AGENT_AUTO=false` in `api/production.env`) until question 1 is answered yes and the privacy wording is approved.
-- [ ] 0.2 Claim D59 and spec section 6.31 in the reservation memory and on develop's spec, after grepping both and the D58 branch.
+  Not done: the slice-1 build session could not ask the owner; questions 1 and 2 stay open, so `TOWNWISE_AGENT_AUTO=false` stays in api/production.env.
+- [x] 0.2 Claim D59 and spec section 6.31 in the reservation memory and on develop's spec, after grepping both and the D58 branch.
+  Done: D59, 6.31 and CONFIRM items 143 to 158 are written into docs/portal/spec.md in this PR, after checking develop's spec (D58 and item 142 the highest on 2026-11-19, and D58 merged as PR #110). The reservation memory is the coordinator's to update.
 
 ## 1. The switch (design decision 13)
 
@@ -54,9 +56,12 @@ Spec decision D59 (check develop's spec section 2, the D58 branch and the reserv
 
 ## 8. Docs and verification (slice 1)
 
-- [ ] 8.1 `docs/portal/spec.md`: D59 row, 6.31, 10.12, 11A.9, 12, 14.5, 14.6, 17, the CONFIRM items (from design.md), the DECISION NEEDED items in 22.3, and the changelog. `api/README.md`: routes, collection, fields, env var, audit actions, log lines. `docs/portal/tuning-chat.md` section 8 (activity).
-- [ ] 8.2 `npm run lint` on the changed files and `npm run typecheck`. Then the suites above plus `test/isolation.test.ts`, `test/isolation.int.test.ts`, and the view-as and open-as-admin route tests.
+- [x] 8.1 `docs/portal/spec.md`: D59 row, 6.31, 10.12, 11A.9, 12, 14.5, 14.6, 17, the CONFIRM items (from design.md), the DECISION NEEDED items in 22.3, and the changelog. `api/README.md`: routes, collection, fields, env var, audit actions, log lines. `docs/portal/tuning-chat.md` section 8 (activity).
+  Done: as listed: the D59 row, 6.31, 10.12 (the switch, the log and Undo routes, the panel's fields), 11A.9, a Section 12 build note, 14.5, 14.6, 17, CONFIRM items 143 to 158 in 22.2 (157 and 158 are slice 3's, unbuilt), the two DECISION NEEDED items in 22.3, and the changelog; api/README.md (Tuning chat flow, the three routes and the panel's GET, `tw_agent_changes`, `TOWNWISE_AGENT_AUTO`, the three audit actions and the log lines); docs/portal/tuning-chat.md section 8.
+- [x] 8.2 `npm run lint` on the changed files and `npm run typecheck`. Then the suites above plus `test/isolation.test.ts`, `test/isolation.int.test.ts`, and the view-as and open-as-admin route tests.
+  Done: eslint on every changed .ts and .tsx file and `npm run typecheck` pass. Suites run, a few files at a time: the api unit and integration suites listed in groups 1 to 7, plus isolation, isolation.int, view-as-routes, open-as-admin-routes, deletion, chain, locations, notes, business-rules, sales, staff-setup, data, files, file-worker, the weekly worker's, and the client's test/chat, test/app, test/portal (logic, data, files, onboarding) and test/marketing on web and native.
 - [ ] 8.3 Independent UI review on a DB copy with made-up files (memory: UI review without owner sign-in), at web and phone width: add a PDF, see the change with Undo, undo it, edit one and see Undo go, and turn the switch off.
+  Not done: not run by this session: it needs a DB copy and a second pair of servers beside the owner's, which this build was told not to touch. It is the gate before the owner's browser check.
 
 ## 9. Slice 2: calendars (after PR #110 merges)
 

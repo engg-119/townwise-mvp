@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import { adjustDay, flagsAfterData, MAX_NOTE_REASONS, MAX_RULE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
-import type { NoteContent, NoteRecord } from '../src/stores/notes.ts';
+import type { NoteRecord } from '../src/stores/notes.ts';
 
 const TODAY = '2026-06-01';
 const DAY = '2026-06-06';

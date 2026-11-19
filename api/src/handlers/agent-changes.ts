@@ -121,8 +121,8 @@ async function removeTarget(ctx: TownwiseContext, caller: MemberPrincipal, locat
     case 'note.add': {
       const note = await ctx.stores.notes.find(scope, location.id, change.targetId);
       if (note === null) return 'gone';
-      if (change.targetUpdatedAt === null || note.updatedAt.getTime() !== change.targetUpdatedAt.getTime()) return 'changed';
-      if (await ctx.stores.notes.removeIf(scope, location.id, note.id, change.targetUpdatedAt)) return 'removed';
+      if (change.targetUpdatedAt?.getTime() !== note.updatedAt.getTime()) return 'changed';
+      if (await ctx.stores.notes.removeIf(scope, location.id, note.id, note.updatedAt)) return 'removed';
       // Edited or deleted between the read and the delete.
       return (await ctx.stores.notes.find(scope, location.id, change.targetId)) === null ? 'gone' : 'changed';
     }
