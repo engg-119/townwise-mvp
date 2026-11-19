@@ -1,10 +1,11 @@
 {
- "schema": "townwise.lab-input/2",
+ "schema": "townwise.lab-input/3",
  "calibrationId": "0123456789abcdef01234567",
  "metric": "guests",
  "today": "2025-10-23",
  "dataThrough": "2025-10-21",
- "horizonDays": 182,
+ "horizonDays": 400,
+ "termsThrough": null,
  "regimeStart": null,
  "days": [
   {
@@ -8466,6 +8467,2196 @@
    "closed": false,
    "privateEvent": false,
    "booked": false
+  },
+  {
+   "date": "2026-04-22",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-04-23",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-04-24",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-04-25",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": true
+  },
+  {
+   "date": "2026-04-26",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-04-27",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-04-28",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-04-29",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-04-30",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-01",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-02",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-03",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-04",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-05",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-06",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-07",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-08",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-09",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-10",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-11",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-12",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-13",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-14",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-05-15",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-16",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-17",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-18",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-19",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-20",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-21",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-22",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-23",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-24",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-25",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-26",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-27",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-28",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-29",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-30",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-05-31",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-01",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-02",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-06-03",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-04",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-05",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-06",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-07",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-08",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-09",
+   "guests": null,
+   "term": "spring",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-10",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-11",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-12",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-13",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-14",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-15",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-16",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-17",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-18",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-19",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-20",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-21",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": true
+  },
+  {
+   "date": "2026-06-22",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-23",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-24",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-25",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-26",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-27",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-28",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-29",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-06-30",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-01",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-02",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-03",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-04",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-05",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-06",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-07",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-08",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-09",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-10",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-07-11",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-12",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-13",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-14",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-15",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-16",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-17",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-18",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-19",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-20",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-21",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-22",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-23",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-24",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-25",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-26",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-27",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-28",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-29",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-07-30",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-07-31",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-01",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-02",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-03",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-04",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-05",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-06",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-07",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-08",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-09",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-10",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-11",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-12",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-13",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-14",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-15",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-16",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-17",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": true
+  },
+  {
+   "date": "2026-08-18",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-19",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-20",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-21",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-22",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-23",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-24",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-25",
+   "guests": null,
+   "term": "summer",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-26",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-27",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-28",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-29",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-30",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-08-31",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-01",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-02",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-03",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-04",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-05",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-09-06",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-07",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-08",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-09",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-10",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-11",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-12",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-13",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-14",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-15",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-16",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 0,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-17",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-18",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-19",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 1,
+   "events": [
+    "test-town:home-football"
+   ],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-20",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-21",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-22",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-23",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-24",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-09-25",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-26",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-27",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-28",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-29",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-09-30",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 2,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-01",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-02",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-03",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 3,
+   "events": [
+    "test-town:home-football"
+   ],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-04",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-05",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-06",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-07",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 3,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-08",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-09",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-10",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-11",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-12",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-13",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": true
+  },
+  {
+   "date": "2026-10-14",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 4,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-15",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-16",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-17",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 5,
+   "events": [
+    "test-town:home-football"
+   ],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-18",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-19",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-20",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-21",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 5,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-22",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-23",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-24",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-25",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-26",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-27",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-28",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 6,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-29",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-30",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-10-31",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 7,
+   "events": [
+    "test-town:home-football"
+   ],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-01",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-11-02",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-03",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-04",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 7,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-05",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-06",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-07",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-08",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-09",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-10",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-11",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 8,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-12",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-13",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-14",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 9,
+   "events": [
+    "test-town:home-football"
+   ],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-15",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-16",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-17",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-18",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 9,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-19",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-20",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": true,
+   "booked": false
+  },
+  {
+   "date": "2026-11-21",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-22",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-23",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-24",
+   "guests": null,
+   "term": "fall",
+   "weekOfTerm": 10,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
+  },
+  {
+   "date": "2026-11-25",
+   "guests": null,
+   "term": "interim",
+   "weekOfTerm": -1,
+   "events": [],
+   "closed": false,
+   "privateEvent": false,
+   "booked": false
   }
  ],
  "calendar": [
@@ -8859,6 +11050,110 @@
    "kind": "term",
    "start": "2026-03-27",
    "end": "2026-06-09",
+   "confidence": "high"
+  },
+  {
+   "id": "us:memorial-day:2026",
+   "group": "us:memorial-day",
+   "kind": "holiday",
+   "start": "2026-05-25",
+   "end": "2026-05-25",
+   "confidence": null
+  },
+  {
+   "id": "us:juneteenth:2026",
+   "group": "us:juneteenth",
+   "kind": "holiday",
+   "start": "2026-06-19",
+   "end": "2026-06-19",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2026-06-22:summer-term",
+   "group": "test-town:classes:summer",
+   "kind": "term",
+   "start": "2026-06-22",
+   "end": "2026-08-25",
+   "confidence": "high"
+  },
+  {
+   "id": "us:independence-day:2026",
+   "group": "us:independence-day",
+   "kind": "holiday",
+   "start": "2026-07-03",
+   "end": "2026-07-03",
+   "confidence": null
+  },
+  {
+   "id": "us:labor-day:2026",
+   "group": "us:labor-day",
+   "kind": "holiday",
+   "start": "2026-09-07",
+   "end": "2026-09-07",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2026-09-10:fall-term",
+   "group": "test-town:classes:fall",
+   "kind": "term",
+   "start": "2026-09-10",
+   "end": "2026-11-24",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2026-09-19:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2026-09-19",
+   "end": "2026-09-19",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2026-10-03:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2026-10-03",
+   "end": "2026-10-03",
+   "confidence": "high"
+  },
+  {
+   "id": "us:columbus-day:2026",
+   "group": "us:columbus-day",
+   "kind": "holiday",
+   "start": "2026-10-12",
+   "end": "2026-10-12",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2026-10-17:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2026-10-17",
+   "end": "2026-10-17",
+   "confidence": "high"
+  },
+  {
+   "id": "test-town:2026-10-31:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2026-10-31",
+   "end": "2026-10-31",
+   "confidence": "high"
+  },
+  {
+   "id": "us:veterans-day:2026",
+   "group": "us:veterans-day",
+   "kind": "holiday",
+   "start": "2026-11-11",
+   "end": "2026-11-11",
+   "confidence": null
+  },
+  {
+   "id": "test-town:2026-11-14:home-football",
+   "group": "test-town:home-football",
+   "kind": "event",
+   "start": "2026-11-14",
+   "end": "2026-11-14",
    "confidence": "high"
   }
  ],

@@ -313,7 +313,8 @@ def check_outlook(reports, widening) -> None:
         assert set(r) == {"horizon", "weeks", "weeklyWape", "coverage80", "ratio", "basis"}
         assert is_int(r["weeks"]) and (r["weeklyWape"] is None) == (r["weeks"] == 0)
         assert set(r["coverage80"]) == {"inside", "weeks"} and is_num(r["ratio"]) and r["ratio"] >= 1
-        assert r["basis"] == ("growth" if r["weeks"] < 8 else "growth_or_backtest" if r["weeks"] < 26 else "backtest")
+        # Under 8 backtest weeks the growth floor alone; from 8 the backtest may widen it, at any count of weeks
+        assert r["basis"] == ("growth" if r["weeks"] < 8 else "growth_or_backtest")
     assert [r["ratio"] for r in reports] == [w["ratio"] for w in widening[-2:]]  # the anchors are the reports' ratios
 
 
@@ -512,10 +513,12 @@ def test_run_file_obeys_api_rules(engine, sales, results, lagging, lab_input):
         assert w["mid"] == pytest.approx(sum(mids), rel=1e-12)
         ratios = [ratio_by_lead(result, inp, lead) for lead in range((day(w["from"]) - through).days,
                                                                      (day(w["to"]) - through).days + 1)]
-        # A forecast-tier week widened by its first day's lead, an outlook week by its widest day's
-        r = max(ratios) if day(w["to"]) > tier_end else ratios[0]
-        assert w["low"] == pytest.approx(w["mid"] * math.exp(lo * r))
-        assert w["high"] == pytest.approx(w["mid"] * math.exp(hi * r))
+        # A forecast-tier week widened by its first day's lead; an outlook week by its widest day's, the same both sides
+        outlook = day(w["to"]) > tier_end
+        r = max(ratios) if outlook else ratios[0]
+        low, high = (-max(-lo, hi), max(-lo, hi)) if outlook else (lo, hi)
+        assert w["low"] == pytest.approx(w["mid"] * math.exp(low * r))
+        assert w["high"] == pytest.approx(w["mid"] * math.exp(high * r))
     # Sales that lag reach further than 91 days after them: the reach is reported and widens the forecast tier's end
     card = result["scorecard"]
     assert card["horizon91"]["weeks"] >= forecast.MIN_HORIZON_WEEKS
@@ -646,53 +649,139 @@ def test_outlook_week_takes_its_widest_day(lab_input):
     assert straddling == 1
 
 
-# The outlook's range rule (D52 decision 5), on pipeline.outlook_ratios and forecast.outlook_ratio
+def test_an_outlook_week_is_the_same_both_sides_when_a_28_day_side_is_0(lab_input):
+    # A weekly range that held only one way at 28 days (its other side exactly 0) is not carried one way into the
+    # outlook: an outlook week takes the wider side on both, while a forecast-tier week keeps the range as backtested
+    frame = pipeline.frame_of(lab_input)
+    through, today = pd.Timestamp(lab_input["dataThrough"]), pd.Timestamp(lab_input["today"])
+    tier_end = forecast.forecast_end(today, through)
+    rows, status = forecast.window(frame, through, through + pd.Timedelta(days=200))
+    numbers = pd.DataFrame({"low": 8.0, "mid": 10.0, "high": 12.0, "baseline": 10.0}, index=rows.index[status == "open"])
+    ratio = forecast.lead_ratios(rows.date, through, [(29, 1.2), (92, 1.3)], forecast.Outlook(tier_end, 2.0, 3.0))
+    by_date = dict(zip(rows.date, ratio))
+    for log_range in ({"lo": 0.0, "hi": 0.1}, {"lo": -0.1, "hi": 0.0}):
+        _, weeks = forecast.assemble(rows, status, numbers, log_range, ratio, tier_end=tier_end)
+        kinds = set()
+        for w in weeks:
+            ratios = [by_date[d] for d in pd.date_range(w["from"], w["to"])]
+            outlook = pd.Timestamp(w["to"]) > tier_end
+            kinds.add(outlook)
+            if outlook:
+                assert w["low"] == pytest.approx(w["mid"] * math.exp(-0.1 * max(ratios)))
+                assert w["high"] == pytest.approx(w["mid"] * math.exp(0.1 * max(ratios)))
+            else:
+                assert w["low"] == pytest.approx(w["mid"] * math.exp(log_range["lo"] * ratios[0]))
+                assert w["high"] == pytest.approx(w["mid"] * math.exp(log_range["hi"] * ratios[0]))
+                assert w["low"] == pytest.approx(w["mid"]) or w["high"] == pytest.approx(w["mid"])  # one way, as before
+        assert kinds == {True, False}
+
+
+# The outlook's range rule (D52 decision 5, as built in release B), on pipeline._outlook_band, pipeline.outlook_ratios
+# and forecast.outlook_ratio
 
 RANGE28 = {"lo": -0.1, "hi": 0.1}
 
 
-def backtested(weeks: int, lo: float, hi: float) -> tuple[dict, dict]:
-    return ({"weeks": weeks, "weeklyWape": 0.1, "coverage80": {"inside": weeks, "weeks": weeks}}, {"lo": lo, "hi": hi})
+def errors(sizes) -> pd.Series:
+    """Weekly log errors of these sizes, alternately under and over, by week start a week apart."""
+    starts = pd.date_range("2024-01-01", periods=len(sizes), freq="7D")
+    return pd.Series([size if i % 2 else -size for i, size in enumerate(sizes)], index=starts, dtype=float)
+
+
+def backtested(own: pd.Series, every: pd.Series | None = None) -> tuple[dict | None, tuple[pd.Series, pd.Series]]:
+    """An outlook horizon's _horizon report (None with no week) and its (own, every) errors, as calibrate passes them."""
+    every = own if every is None else every
+    report = None if every.empty else {"weeks": len(every), "weeklyWape": 0.1,
+                                       "coverage80": {"inside": len(every), "weeks": len(every)}}
+    return report, (own, every)
+
+
+NONE = errors([])
+
+
+def test_outlook_band_reads_a_conformal_rank_from_nine_windows():
+    # 500 weeks at 365 days of lead are 500 * 7 / 365 = 9.59 windows: the conformal 80% rank ceil(0.8 * 10.59) = 9 of
+    # them, as a share of the weeks the 470th smallest of 500 misses, ceil(9 * 365 / 7); the every-kind weeks unread
+    own = errors(np.arange(1, 501) / 1000)
+    assert pipeline._outlook_band(own, errors(np.full(600, 0.9)), 365) == pytest.approx((-0.47, 0.47))
+    # 234 weeks at 182 are exactly 9 windows: 8 of 9, the 208th of 234 (whole numbers, so no rounding moves it)
+    assert pipeline._outlook_band(errors(np.arange(1, 235) / 1000), NONE, 182) == pytest.approx((-0.208, 0.208))
+    assert pipeline._outlook_band(errors(np.arange(1, 241) / 1000), NONE, 182) == pytest.approx((-0.234, 0.234))
+
+
+def test_outlook_band_takes_the_largest_miss_from_one_window_to_nine():
+    # 26 weeks at 182 days are one window; 233 are 8.96: too few for an 80% rank, so the largest miss
+    assert pipeline._outlook_band(errors([0.1] * 25 + [0.4]), NONE, 182) == (-0.4, 0.4)
+    assert pipeline._outlook_band(errors(np.arange(1, 234) / 1000), NONE, 182) == pytest.approx((-0.233, 0.233))
+    # 53 weeks at 365 are one window (1.02), its every-kind weeks unread
+    assert pipeline._outlook_band(errors([0.2] * 52 + [0.3]), errors([0.9] * 60), 365) == (-0.3, 0.3)
+
+
+def test_outlook_band_reads_every_week_under_one_window():
+    # 25 weeks at 182 days (0.96 windows) and 52 at 365 (0.997) read every week at that lead, of either kind, by its
+    # conformal 80% rank: of 30 weeks the 25th smallest, ceil(0.8 * 31)
+    every = errors(np.arange(1, 31) / 100)
+    assert pipeline._outlook_band(every[-25:], every, 182) == pytest.approx((-0.25, 0.25))
+    assert pipeline._outlook_band(NONE, every, 182) == pytest.approx((-0.25, 0.25))  # none of the run's kind yet
+    assert pipeline._outlook_band(errors([0.2] * 52), every, 365) == pytest.approx((-0.25, 0.25))
+    assert pipeline._outlook_band(NONE, every[:8], 365) == pytest.approx((-0.08, 0.08))  # 8 weeks: the 8th, ceil(7.2)
+
+
+def test_outlook_band_is_none_under_8_weeks():
+    assert pipeline._outlook_band(errors([0.9] * 7), errors([0.9] * 7), 182) is None
+    assert pipeline._outlook_band(NONE, NONE, 365) is None
 
 
 def test_outlook_growth_with_no_year_ahead_backtest():
-    # Spec scenario: 15 weeks at 182 with a backtest ratio of 1.5, none at 365, a 91-day ratio of 1.3
-    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(15, -0.15, 0.15)), (365, None, None)], RANGE28)
+    # Spec scenario: 15 weeks at 182 whose band is 1.5 times the 28-day range's wider side, none at 365, a 91-day ratio
+    # of 1.3. Under one window, the 13th smallest of 15 misses (ceil(0.8 * 16)) is 0.15, over a side of 0.1
+    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.01] * 12 + [0.15, 0.2, 0.3]))),
+                                                  (365, *backtested(NONE))], RANGE28)
     r182 = max(1.3 * math.sqrt(2), 1.5)
     assert [r["ratio"] for r in reports] == pytest.approx([r182, r182 * math.sqrt(365 / 182)])
     assert [r["basis"] for r in reports] == ["growth_or_backtest", "growth"]
     assert reports[1] == {"horizon": 365, "weeks": 0, "weeklyWape": None, "coverage80": {"inside": 0, "weeks": 0},
                           "ratio": reports[1]["ratio"], "basis": "growth"}
     # Under 8 weeks the backtest is not read at all, however wide; the reach (98 days) is the previous horizon
-    wide = pipeline.outlook_ratios((98, 1.3), [(182, *backtested(7, -0.9, 0.9)), (365, *backtested(7, -0.9, 0.9))],
-                                   RANGE28)
+    wide = pipeline.outlook_ratios((98, 1.3), [(182, *backtested(errors([0.9] * 7))),
+                                               (365, *backtested(errors([0.9] * 7)))], RANGE28)
     assert [r["ratio"] for r in wide] == pytest.approx([1.3 * math.sqrt(182 / 98), 1.3 * math.sqrt(365 / 98)])
+    assert [r["basis"] for r in wide] == ["growth", "growth"]
 
 
-def test_outlook_takes_a_wider_backtest_under_26_weeks():
+def test_outlook_backtest_only_widens_the_growth():
     growth = 1.3 * math.sqrt(2)
-    wider = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(25, -0.25, 0.2)), (365, None, None)], RANGE28)
+    # 25 weeks (under one window): the 21st smallest, ceil(0.8 * 26), is 0.25 over a side of 0.1
+    wider = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.01] * 20 + [0.25] * 5))),
+                                                (365, *backtested(NONE))], RANGE28)
     assert wider[0]["ratio"] == pytest.approx(2.5) and wider[0]["basis"] == "growth_or_backtest"
-    narrower = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(8, -0.12, 0.12)), (365, None, None)], RANGE28)
-    assert narrower[0]["ratio"] == pytest.approx(growth)  # under 26 weeks a narrower backtest cannot narrow the growth
+    narrower = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.12] * 8))), (365, *backtested(NONE))],
+                                       RANGE28)
+    assert narrower[0]["ratio"] == pytest.approx(growth) and narrower[0]["basis"] == "growth_or_backtest"
 
 
-def test_outlook_backtest_decides_from_26_weeks():
-    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(26, -0.14, 0.12)),
-                                                  (365, *backtested(40, -0.1, 0.1))], RANGE28)
-    assert [r["ratio"] for r in reports] == pytest.approx([1.4, 1.4])  # under the growth, never under the one before
-    assert [r["basis"] for r in reports] == ["backtest", "backtest"]
-    assert pipeline.outlook_ratios((91, 1.3), [(182, *backtested(30, -0.1, 0.1)), (365, None, None)],
-                                   RANGE28)[0]["ratio"] == pytest.approx(1.3)
+def test_outlook_never_narrows_under_the_growth_however_many_weeks():
+    # The growth floor always holds: 26 narrow weeks (one window) no longer set the ratio alone, nor do 40 at 365
+    reports = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.12] * 26))),
+                                                  (365, *backtested(errors([0.1] * 40)))], RANGE28)
+    r182 = 1.3 * math.sqrt(2)
+    assert [r["ratio"] for r in reports] == pytest.approx([r182, r182 * math.sqrt(365 / 182)])
+    # From one window the largest miss sets the band: 26 weeks with one miss of 0.4 widen 182 to 4 times the side
+    largest = pipeline.outlook_ratios((91, 1.3), [(182, *backtested(errors([0.05] * 25 + [0.4]))),
+                                                  (365, *backtested(NONE))], RANGE28)
+    assert largest[0]["ratio"] == pytest.approx(4.0)
 
 
-def test_outlook_ratio_takes_the_wider_side():
-    # Spec scenario: the low side 3 times the 28-day band's, the high side 1.5 times
-    assert pipeline._backtest_ratio({"lo": -0.3, "hi": 0.3}, {"lo": -0.1, "hi": 0.2}) == pytest.approx(3.0)
-    assert pipeline._backtest_ratio({"lo": -0.15, "hi": 0.6}, {"lo": -0.1, "hi": 0.2}) == pytest.approx(3.0)
-    # A 28-day side of 0 (the range holds zero) takes the width ratio: 0.4 over 0.2
-    assert pipeline._backtest_ratio({"lo": -0.1, "hi": 0.3}, {"lo": 0.0, "hi": 0.2}) == pytest.approx(2.0)
-    assert pipeline._backtest_ratio({"lo": 0.0, "hi": 0.0}, {"lo": 0.0, "hi": 0.0}) == 1.0
+def test_outlook_ratio_reads_the_28_day_ranges_wider_side():
+    # Spec scenario: a 28-day range of -0.1 to 0.2, and misses at 182 whose band is 0.6: the ratio is 0.6 over 0.2
+    band = [(182, *backtested(errors([0.05] * 25 + [0.6]))), (365, *backtested(NONE))]
+    assert pipeline.outlook_ratios((91, 1.3), band, {"lo": -0.1, "hi": 0.2})[0]["ratio"] == pytest.approx(3.0)
+    assert pipeline.outlook_ratios((91, 1.3), band, {"lo": -0.2, "hi": 0.1})[0]["ratio"] == pytest.approx(3.0)
+    # A 28-day side of exactly 0 (the range holds zero): the other side
+    assert pipeline.outlook_ratios((91, 1.3), band, {"lo": 0.0, "hi": 0.2})[0]["ratio"] == pytest.approx(3.0)
+    # A 28-day range of 0 both ways: nothing to scale, so the growth
+    assert pipeline.outlook_ratios((91, 1.3), band, {"lo": 0.0, "hi": 0.0})[0]["ratio"] == pytest.approx(
+        1.3 * math.sqrt(2))
 
 
 def test_outlook_interpolates_between_182_and_365():
@@ -719,13 +808,17 @@ def test_outlook_ratios_never_narrow_with_lead(results, lagging, lab_input):
         tier = [w["ratio"] for w in result["params"]["widening"] if "horizon" not in w]
         assert tier[-1] <= reports[0]["ratio"] <= reports[1]["ratio"]
     rng = np.random.default_rng(5)
-    for _ in range(200):  # any backtest, any count of weeks: each ratio at least the one before
-        previous = (91, float(rng.uniform(1, 2)))
-        weeks = rng.integers(0, 60, 2)
-        reports = pipeline.outlook_ratios(previous, [
-            (h, *backtested(int(n), -float(rng.uniform(0, 0.5)), float(rng.uniform(0, 0.5))))
-            for h, n in zip((182, 365), weeks)], {"lo": -float(rng.uniform(0, 0.2)), "hi": float(rng.uniform(0, 0.2))})
-        assert previous[1] <= reports[0]["ratio"] <= reports[1]["ratio"]
+    for _ in range(200):  # any backtest, any count of weeks of either kind: each ratio at least the one before
+        previous = (int(rng.choice([91, 98, 119])), float(rng.uniform(1, 2)))
+        backtests = []
+        for horizon in (182, 365):
+            every = errors(rng.uniform(0, 0.8, int(rng.integers(0, 600))))
+            backtests.append((horizon, *backtested(every[len(every) - int(rng.integers(0, len(every) + 1)):], every)))
+        reports = pipeline.outlook_ratios(previous, backtests, {"lo": -float(rng.uniform(0, 0.2)),
+                                                                "hi": float(rng.uniform(0, 0.2))})
+        growth = previous[1] * math.sqrt(182 / previous[0])
+        assert previous[1] <= growth <= reports[0]["ratio"] <= reports[1]["ratio"]
+        assert reports[1]["ratio"] >= reports[0]["ratio"] * math.sqrt(365 / 182) - 1e-12  # the floor, at 365 too
 
 
 def test_outlook_reported_not_gated(lab_input, result):
@@ -1324,8 +1417,8 @@ def test_backtest_scores_the_horizon_28_weeks(model_result, lab_input):
 
 def test_forecast_tier_unchanged(result):
     """Days 1 to 91 as D42 made them (D52 decision 4 (a)): the golden history's result as input version 2 gave it
-    (golden/result-v2.json, written by make_golden.py at 14ed2487, the commit before year-long runs, and never
-    regenerated) against version 3's. Its forecast tier's days, reasons and weeks, its scorecard's gate fields and its
+    (golden/result-v2.json, develop's golden result.json at e53aaa53, the commit before year-long runs on this branch,
+    and never regenerated) against version 3's. Its forecast tier's days, reasons and weeks, its scorecard's gate fields and its
     params but the outlook's anchors are the same. The model's figures in `engines` come from XGBoost, whose sampling
     differs between builds, so they are held to the golden tolerance; everything else is the baseline's (pandas)."""
     v2 = json.loads((GOLDEN / "result-v2.json").read_text(encoding="utf-8"))

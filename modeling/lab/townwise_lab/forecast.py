@@ -185,8 +185,10 @@ def assemble(rows: pd.DataFrame, status: pd.Series, numbers: pd.DataFrame, weekl
              ratio: pd.Series, effect_pct=None, tier_end: pd.Timestamp | None = None) -> tuple[list[dict], list[dict]]:
     """A run's days and weeks. `numbers` has low, mid, high and baseline for the open rows; `effect_pct(index, reason)`,
     when given, sets an open day's reason's effectPct. Each week is a Monday-to-Sunday span wholly inside the rows: the
-    sum of its open days' forecasts, and the weekly log range around it, widened by its first day's ratio, or for a
-    week with a day after the forecast tier's last day (`tier_end`, an outlook week) by the largest of its days'."""
+    sum of its open days' forecasts, and the weekly log range around it, widened by its first day's ratio. A week with
+    a day after the forecast tier's last day (`tier_end`, an outlook week) is widened by the largest of its days'
+    ratios instead, and is the same on both sides: the weekly log range's wider side, so a range that held only one
+    way at 28 days is not carried one way a year out (D52, pipeline.outlook_ratios)."""
     table = rows[["date"]].assign(status=status).join(numbers)
     groups = [c for c in rows.columns if c.startswith(EVENT_PREFIX)]
     holiday = rows[list(HOLIDAY_FLAGS)].eq(1).any(axis=1)
@@ -209,8 +211,11 @@ def assemble(rows: pd.DataFrame, status: pd.Series, numbers: pd.DataFrame, weekl
             continue
         in_outlook = tier_end is not None and week.date.max() > tier_end
         widened = float(ratio[week.index].max() if in_outlook else ratio[week.index[0]])
-        lo_factor = np.exp(weekly_log_range["lo"] * widened)
-        hi_factor = np.exp(weekly_log_range["hi"] * widened)
+        lo_side, hi_side = weekly_log_range["lo"], weekly_log_range["hi"]
+        if in_outlook:
+            hi_side = max(-lo_side, hi_side)
+            lo_side = -hi_side
+        lo_factor, hi_factor = np.exp(lo_side * widened), np.exp(hi_side * widened)
         total = float(week.mid.sum())  # open days only: the others have no number
         weeks.append({"from": iso(monday), "to": iso(week.date.max()),
                       "openDays": int((week.status == "open").sum()), "low": float(total * lo_factor), "mid": total,
