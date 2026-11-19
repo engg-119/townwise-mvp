@@ -257,8 +257,8 @@ describe('each event’s confidence (D59)', () => {
 
 describe('which stored files TownwiseAI reads on its own (D59)', () => {
   const kept = {
-    status: 'kept', rawDeletedAt: null, ai: null, aiAutoOff: false, uploadId: null, result: null, outcome: 'reference', addedVia: null,
-    source: null, purgeRaw: false,
+    status: 'kept', rawDeletedAt: null, disabledAt: null, ai: null, aiAutoOff: false, uploadId: null, result: null, outcome: 'reference',
+    addedVia: null, source: null, purgeRaw: false,
   } as unknown as FileRecord;
 
   it('a finished file with its original, never asked about, that wrote no days', () => {
@@ -266,11 +266,12 @@ describe('which stored files TownwiseAI reads on its own (D59)', () => {
     for (const status of ['read', 'failed'] as const) expect(autoReadable({ ...kept, status })).toBe(true);
   });
 
-  it('never a file still uploading or reading, one read into days, a calendar export, one whose box was unchecked, or TownwiseAI’s own', () => {
+  it('never a file still uploading or reading, one read into days, a calendar export, one whose box was unchecked, one turned off, or TownwiseAI’s own', () => {
     const refused: Partial<FileRecord>[] = [
       { status: 'uploading' }, { status: 'reading' }, { status: 'queued' }, { rawDeletedAt: new Date() }, { uploadId: 'u'.repeat(24) },
       { result: { dayCount: 400 } as FileRecord['result'] }, { outcome: 'calendar_export' }, { aiAutoOff: true }, { addedVia: 'townwise_ai' },
       { source: { via: 'ai_file', fileId: 'f'.repeat(24) } }, { purgeRaw: true }, { ai: { status: 'skipped' } as FileRecord['ai'] },
+      { disabledAt: new Date() },
     ];
     for (const over of refused) expect(autoReadable({ ...kept, ...over })).toBe(false);
   });

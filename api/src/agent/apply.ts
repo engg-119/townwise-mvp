@@ -210,7 +210,15 @@ export async function applyChange(
     // Another change took the key between the read and the insert.
     if (!inserted.created && row.targetId !== candidate.targetId) return { outcome: 'duplicate', change: row };
   }
-  if (row.status !== 'applying') return { outcome: 'applied', change: row };
+  const wantRefit = async (): Promise<void> => {
+    const dates = datesOf(candidate);
+    if (dates !== null) await wantRefitFor(ctx, scope, candidate.locationId, candidate.action === 'sales_days.add' ? 'always' : dates);
+  };
+  if (row.status !== 'applying') {
+    // A retry of this change: an earlier attempt may have stopped between marking it applied and marking the refit.
+    if (row.status === 'applied') await wantRefit();
+    return { outcome: 'applied', change: row };
+  }
   let updatedAt: Date | null;
   if (candidate.action === 'note.add') {
     updatedAt = (await writeNote(ctx, scope, candidate, row))?.updatedAt ?? null;
@@ -227,8 +235,7 @@ export async function applyChange(
       ...candidate.actor, at: ctx.now(), orgId: scope.orgId, action: 'agent.change_applied', target: { type: 'location', id: candidate.locationId },
       details: { locationId: candidate.locationId, action: candidate.action, sourceKind: candidate.sourceKind },
     });
-    const dates = datesOf(candidate);
-    if (dates !== null) await wantRefitFor(ctx, scope, candidate.locationId, candidate.action === 'sales_days.add' ? 'always' : dates);
+    await wantRefit();
   }
   const after = await stores.agentChanges.find(scope, candidate.locationId, row.id);
   return { outcome: 'applied', change: after ?? row };

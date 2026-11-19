@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
 import { activityFor, agentChangeSource, ACTIVITY_SOURCES, type ActivityInput } from '../src/agent/activity.ts';
-import { changeView, mayUndo, undoable, type TargetState } from '../src/agent/changes.ts';
+import { changeView, mayUndo, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import type { AgentChangeRecord } from '../src/stores/agent-changes.ts';
 
@@ -39,7 +39,7 @@ function contextWith(changes: readonly AgentChangeRecord[], targets: { notes?: R
       agentChanges: { page: () => Promise.resolve({ changes: [...changes], next: null }) },
       notes: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.flatMap((id) => {
         const updatedAt = targets.notes?.[id];
-        return updatedAt === undefined ? [] : [{ id, updatedAt }];
+        return updatedAt === undefined ? [] : [{ id, updatedAt, createdBy: 'townwise_ai' }];
       })) },
       files: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.filter((id) => targets.items?.includes(id)).map((id) => ({ id, status: 'kept' }))) },
       uploads: { get: (_scope: OrgScope, _location: string, id: string) => Promise.resolve(targets.uploads?.includes(id) === true ? { id } : null) },
@@ -96,19 +96,26 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
 });
 
 describe('who may undo, and the log’s view (D59)', () => {
-  it('any member a note; the file’s adder or an org admin an item; an org admin days; nobody under view-as', () => {
-    expect(mayUndo(MEMBER, change())).toBe(true);
-    expect(mayUndo(MEMBER, change({ action: 'item.add' }))).toBe(false);
-    expect(mayUndo({ ...MEMBER, userId: 'adder' }, change({ action: 'item.add' }))).toBe(true);
-    expect(mayUndo(ADMIN, change({ action: 'item.add' }))).toBe(true);
-    expect(mayUndo(MEMBER, change({ action: 'sales_days.add' }))).toBe(false);
-    expect(mayUndo(ADMIN, change({ action: 'sales_days.add' }))).toBe(true);
-    expect(mayUndo(VIEW_AS, change())).toBe(false);
+  it('any member a note TownwiseAI wrote as itself; the file’s adder or an org admin an item; an org admin days; nobody under view-as', () => {
+    expect(mayUndo(MEMBER, change(), 'townwise_ai')).toBe(true);
+    expect(mayUndo(MEMBER, change({ action: 'item.add' }), null)).toBe(false);
+    expect(mayUndo({ ...MEMBER, userId: 'adder' }, change({ action: 'item.add' }), null)).toBe(true);
+    expect(mayUndo(ADMIN, change({ action: 'item.add' }), null)).toBe(true);
+    expect(mayUndo(MEMBER, change({ action: 'sales_days.add' }), null)).toBe(false);
+    expect(mayUndo(ADMIN, change({ action: 'sales_days.add' }), null)).toBe(true);
+    expect(mayUndo(VIEW_AS, change(), 'townwise_ai')).toBe(false);
+  });
+
+  it('a note a pressed read wrote in a person’s name: only that person or an org admin, as deleting the note', () => {
+    const pressed = change({ onBehalfOf: 'alice' });
+    expect(mayUndo({ ...MEMBER, userId: 'bob' }, pressed, 'alice')).toBe(false);
+    expect(mayUndo({ ...MEMBER, userId: 'alice' }, pressed, 'alice')).toBe(true);
+    expect(mayUndo(ADMIN, pressed, 'alice')).toBe(true);
   });
 
   it('Undo is offered only on an applied change whose target is there, unchanged', () => {
     const row = change();
-    const states = (state: TargetState): Map<string, TargetState> => new Map([[row.id, state]]);
+    const states = (state: TargetState): Map<string, Target> => new Map([[row.id, { state, author: 'townwise_ai' }]]);
     expect(undoable(MEMBER, row, states('there'))).toBe(true);
     expect(undoable(MEMBER, row, states('changed'))).toBe(false);
     expect(undoable(MEMBER, row, states('gone'))).toBe(false);
@@ -117,7 +124,7 @@ describe('who may undo, and the log’s view (D59)', () => {
 
   it('the log carries the why outside view-as only, and points at the file and the target', () => {
     const row = change();
-    const states = new Map<string, TargetState>([[row.id, 'there']]);
+    const states = new Map<string, Target>([[row.id, { state: 'there', author: 'townwise_ai' }]]);
     expect(changeView(MEMBER, row, states)).toEqual({
       id: row.id, at: AT.toISOString(), action: 'note.add', sourceKind: 'file', sourceRef: `f_${'f'.repeat(24)}`, status: 'applied',
       startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', why: SENTINEL, undoable: true, targetId: row.targetId,

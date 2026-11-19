@@ -172,7 +172,8 @@ export async function undoAgentChange(ctx: TownwiseContext, req: Request, res: R
   const location = await loadLocation(ctx, scope, req.params.locationId);
   let change = await ctx.stores.agentChanges.find(scope, location.id, changeId);
   if (change === null) throw notFound();
-  if (!mayUndo(caller, change)) throw new AppError(403, 'forbidden', 'Only an org admin can undo this');
+  const author = change.action === 'note.add' ? (await ctx.stores.notes.find(scope, location.id, change.targetId))?.createdBy ?? null : null;
+  if (!mayUndo(caller, change, author)) throw new AppError(403, 'forbidden', 'Only an org admin can undo this');
   const answer = async (row: AgentChangeRecord): Promise<void> => {
     const states = await targetStates(ctx, scope, location.id, [row]);
     res.status(200).json({ change: changeView(caller, row, states) });
@@ -199,7 +200,9 @@ export async function undoAgentChange(ctx: TownwiseContext, req: Request, res: R
       ...actorOf(caller), at: ctx.now(), orgId: scope.orgId, action: 'agent.change_undone', target: { type: 'location', id: location.id },
       details: { locationId: location.id, action: change.action, sourceKind: change.sourceKind },
     });
-    if (removed === 'removed' && change.startDate !== null && change.endDate !== null) {
+    // A target already gone on a retry may be what an earlier attempt removed: the refit is wanted either way, and the
+    // pass clears the mark when nothing it reads changed.
+    if (change.startDate !== null && change.endDate !== null) {
       await wantRefitFor(ctx, scope, location.id, change.action === 'sales_days.add' ? 'always' : { startDate: change.startDate, endDate: change.endDate });
     }
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, changeId: change.id, action: change.action, removed }, 'townwise.agent_change_undone');

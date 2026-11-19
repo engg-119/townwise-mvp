@@ -161,6 +161,35 @@ describe('POST .../agent/changes/:changeId/undo (D59)', () => {
     expect(await undoneEvents(t)).toHaveLength(2);
   });
 
+  it('a retry after the target went still marks the refit an undo of a training change wants', async () => {
+    const t = await team();
+    await addSalesDay(server, { orgId: t.orgId, locationId: t.locationId, date: '2026-05-31', guests: 90, netSalesCents: null });
+    const { changeId, noteId } = await appliedNote(t);
+    // The first undo removed the note, then stopped before it marked the row undone.
+    await server.ctx.stores.agentChanges.markUndoing(t.scope, t.locationId, changeId, { by: t.member.userId, now: server.clock.now() });
+    await server.ctx.stores.notes.remove(t.scope, t.locationId, noteId);
+    await server.connection.collection('tw_locations').updateOne({ _id: oid(t.locationId) }, { $unset: { refit: 1 } });
+    expect((await undo(t, t.member, changeId)).status).toBe(200);
+    const location = await server.connection.collection('tw_locations').findOne({ _id: oid(t.locationId) });
+    expect((location?.refit as { wantedAt?: Date } | undefined)?.wantedAt).toEqual(server.clock.now());
+  });
+
+  it('a note a pressed read wrote in a person’s name: only that person or an org admin may undo it, as deleting it', async () => {
+    const t = await team();
+    const noteId = id();
+    const result = await applyChange(server.ctx, t.scope, {
+      action: 'note.add', locationId: t.locationId, sourceKind: 'file', sourceId: id(), targetId: noteId, confidence: 'high', why: null,
+      onBehalfOf: t.member.userId, actor: TOWNWISE_AI_ACTOR, note: content(), createdBy: t.member.userId,
+    });
+    const changeId = result.change?.id ?? '';
+    expect((await panel(t, t.other)).activity.find((item) => item.kind === 'agent_change')).toMatchObject({ changeId, undoable: false });
+    expect(await errorOf(await undo(t, t.other, changeId))).toEqual({ status: 403, error: 'forbidden' });
+    expect(await server.connection.collection('tw_notes').findOne({ _id: oid(noteId) })).not.toBeNull();
+    expect((await panel(t, t.member)).activity.find((item) => item.kind === 'agent_change')).toMatchObject({ changeId, undoable: true });
+    expect((await undo(t, t.member, changeId)).status).toBe(200);
+    expect(await server.connection.collection('tw_notes').findOne({ _id: oid(noteId) })).toBeNull();
+  });
+
   it('sales days need an org admin, who removes the upload and the days it added', async () => {
     const t = await team();
     const uploadId = id();

@@ -101,7 +101,7 @@ export interface AiReader {
  */
 export type AiSkipReason =
   | 'budget_spent' | 'too_large' | 'kind_not_read' | 'encrypted' | 'raw_missing' | 'too_complex' | 'not_readable' | 'requester_gone'
-  | 'calendar_export' | 'duplicate' | 'daily_auto_limit' | 'agent_auto_off';
+  | 'calendar_export' | 'duplicate' | 'daily_auto_limit' | 'agent_auto_off' | 'turned_off';
 
 /** D59: automatic reads an organization may start in a UTC day. */
 export const AUTO_READS_PER_DAY = 20;
@@ -198,12 +198,18 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
         await finish('skipped', 'agent_auto_off');
         return null;
       }
+      // Turned off (D28) while it waited: it stays out of TownwiseAI until someone turns it back on and presses.
+      if (file.disabledAt !== null) {
+        await finish('skipped', 'turned_off');
+        return null;
+      }
       if (file.fingerprint !== null && await stores.files.hasReadTwin(scope, file.locationId, file.fingerprint, file.id)) {
         await finish('skipped', 'duplicate');
         return null;
       }
       const dayStart = new Date(`${now().toISOString().slice(0, 10)}T00:00:00.000Z`);
-      if (await stores.files.countAutoReadsSince(scope, dayStart) >= AUTO_READS_PER_DAY) {
+      // A retry of this read (its call gave no answer) is not counted against itself.
+      if (await stores.files.countAutoReadsSince(scope, dayStart, file.id) >= AUTO_READS_PER_DAY) {
         await finish('skipped', 'daily_auto_limit');
         return null;
       }

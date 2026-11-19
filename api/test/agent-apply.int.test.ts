@@ -96,6 +96,17 @@ describe('applyChange', () => {
     expect(await refitOf(p)).toEqual({ wantedAt: server.clock.now() });
   });
 
+  it('a retry of a change applied before its refit mark landed marks the refit', async () => {
+    const p = await place();
+    await addSalesDay(server, { orgId: p.orgId, locationId: p.locationId, date: '2026-05-31', guests: 100, netSalesCents: null });
+    const c = candidate(p, { note: content({ startDate: '2026-05-30', endDate: '2026-05-30' }) });
+    expect((await applyChange(server.ctx, p.scope, c)).outcome).toBe('applied');
+    // As if the first attempt stopped between marking the row applied and marking the refit.
+    await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(p.locationId) }, { $unset: { refit: 1 } });
+    expect((await applyChange(server.ctx, p.scope, c)).outcome).toBe('applied');
+    expect(await refitOf(p)).toEqual({ wantedAt: server.clock.now() });
+  });
+
   it('a retry finishes a change that stopped after its row, or after its note, with one note and one event', async () => {
     const p = await place();
     // Stopped after the row: the retry writes the note under the planned id.

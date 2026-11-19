@@ -12,6 +12,7 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import { dedupeKeyOf } from '../src/agent/apply.ts';
 import type { OnAiRead } from '../src/files/ai-reader.ts';
 import type { FileBlobs } from '../src/files/blobs.ts';
 import type { FileReaderModel, ReaderAnswer, ReaderRequest } from '../src/files/extract/reader.ts';
@@ -1199,13 +1200,107 @@ describe('TownwiseAI works on its own (D59)', () => {
     expect((location?.refit as { wantedAt?: Date } | undefined)?.wantedAt).toEqual(server.clock.now());
   });
 
+  /** Queues an automatic read of the file for `by`, as ai-auto.ts does. */
+  async function queueAuto(fileId: string, by: TestSession, role: 'org_admin' | 'member' = 'member'): Promise<void> {
+    await server.connection.collection('tw_files').updateOne({ _id: oid(fileId) }, {
+      $set: {
+        ai: {
+          status: 'queued', requestedBy: by.userId, requestedByRole: role, requestedByStaff: false, requestedGrantId: null,
+          requestedAt: server.clock.now(), attempts: 0, leaseUntil: null, startedAt: null, finishedAt: null, reason: null, partial: false,
+          costMicroUsd: 0, result: null, auto: true, chargedAt: null,
+        },
+      },
+    });
+  }
+
+  it('an automatic read whose adder has left applies nothing and keeps each event as a suggestion', async () => {
+    const l1 = await newLocation();
+    const days = mayDays(2);
+    const leaver = await newPerson('member');
+    const fileId = await seedStored(l1, { raw: salesCsv(days), by: leaver });
+    await queueAuto(fileId, leaver);
+    await server.connection.collection('tw_members').updateOne(
+      { activeUserId: leaver.userId }, { $set: { status: 'removed', removedAt: server.clock.now() }, $unset: { activeUserId: '' } },
+    );
+    answers = [salesAnswer(days, { events: [{ ...EVENT, confidence: 'high' }] })];
+    await runReader();
+    expect(await aiOf(fileId)).toMatchObject({ status: 'done', reason: null });
+    const outcome = await outcomeOf(fileId);
+    expect(outcome).toMatchObject({ notes: [], daysWritten: 0, daysReason: 'adder_gone', itemId: null, itemReason: 'adder_gone' });
+    expect(await count('tw_notes', { locationId: oid(l1) })).toBe(0);
+    expect(await count('tw_uploads', { 'source.fileId': oid(fileId) })).toBe(0);
+    expect(await changesOf(l1)).toEqual([]);
+    const suggested = await fileNoteSuggestions(l1);
+    expect(suggested.map((row) => [row.status, (row.content as { title: string }).title])).toEqual([['open', 'Wedding dinner']]);
+    expect(outcome.notesSuggested).toEqual(suggested.map((row) => String(row._id)));
+  });
+
+  it('a retried read does not take as its own a note a person wrote by accepting its suggestion', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    answers = [answer({ events: [{ ...EVENT, confidence: 'medium' }] })];
+    await readAs(team.member, l1, fileId);
+    const [suggestion] = await fileNoteSuggestions(l1);
+    const accepted = await call(server, `/api/org/locations/${l1}/agent/rule-suggestions/${String(suggestion?._id)}/accept`, { session: team.other, json: {} });
+    expect(accepted.status).toBeLessThan(300);
+    // As if the first attempt lost its lease before it recorded what it did: the read runs again on its saved answer.
+    await server.connection.collection('tw_files').updateOne(
+      { _id: oid(fileId) }, { $set: { 'ai.status': 'queued', 'ai.actions.outcome': null, 'ai.notBefore': null, 'ai.leaseUntil': null } },
+    );
+    await runReader();
+    expect(await aiOf(fileId)).toMatchObject({ status: 'done' });
+    expect((await changesOf(l1)).filter((row) => row.action === 'note.add')).toEqual([]);
+    const [note] = await server.connection.collection('tw_notes').find({ locationId: oid(l1) }).toArray();
+    expect(note).toMatchObject({ _id: suggestion?._id, createdBy: team.other.userId });
+    expect(note?.agent).toBeUndefined();
+  });
+
+  it('keeps at most 20 open note suggestions from files, and none for an event already over', async () => {
+    const l1 = await newLocation();
+    const fileId = await seedStored(l1);
+    const future = Array.from({ length: 21 }, (_, index) => ({
+      ...EVENT, title: `Party ${String(index)}`, startDate: `2026-07-${String(index + 1).padStart(2, '0')}`,
+      endDate: `2026-07-${String(index + 1).padStart(2, '0')}`, confidence: 'medium',
+    }));
+    const ended = { ...EVENT, title: 'Spring party', startDate: '2026-05-20', endDate: '2026-05-20', confidence: 'medium' };
+    answers = [answer({ events: [ended, ...future] })];
+    await readAs(team.member, l1, fileId);
+    const suggested = await fileNoteSuggestions(l1);
+    expect(suggested).toHaveLength(20);
+    expect(suggested.some((row) => (row.content as { title: string }).title === 'Spring party')).toBe(false);
+    expect((await outcomeOf(fileId)).notesSkipped).toMatchObject({ notKept: 2 });
+  });
+
+  it('a read’s sales days are a sales_days.add change keyed by the file, and never come back once undone', async () => {
+    const l1 = await newLocation();
+    await seedHistory(server, { orgId: team.orgId, locationId: l1, from: '2024-09-01', to: '2026-04-30' });
+    const days = mayDays(2);
+    const fileId = await seedStored(l1, { raw: salesCsv(days) });
+    answers = [salesAnswer(days)];
+    await readAs(team.member, l1, fileId);
+    const outcome = await outcomeOf(fileId);
+    expect(outcome.daysWritten).toBe(2);
+    const row = (await changesOf(l1)).find((change) => change.action === 'sales_days.add');
+    expect(row).toMatchObject({ status: 'applied', sourceKind: 'file', sourceId: fileId, targetId: oid(String(outcome.uploadId)) });
+    expect(row?.dedupeKey).toBe(dedupeKeyOf({ action: 'sales_days.add', key: `file:${fileId}` }));
+    expect((await undo(team.admin, l1, `f_${fileId}`)).status).toBe(200);
+    answers = [salesAnswer(days)];
+    await readAs(team.admin, l1, fileId);
+    expect(await outcomeOf(fileId)).toMatchObject({ daysWritten: 0, daysReason: 'duplicate' });
+    expect(await count('tw_sales_days', { locationId: oid(l1), date: { $gte: '2026-05-01' } })).toBe(0);
+  });
+
   it('undoing the file’s read marks its ledger rows undone and removes its suggestions still waiting, so nothing comes back', async () => {
     const l1 = await newLocation();
     const fileId = await seedStored(l1);
     answers = [answer({ events: [{ ...EVENT, confidence: 'high' }, { ...EVENT, title: 'Unsure brunch', startDate: '2026-06-20', endDate: '2026-06-20', confidence: 'low' }] })];
     await readAs(team.member, l1, fileId);
     expect(await fileNoteSuggestions(l1)).toHaveLength(1);
+    await server.connection.collection('tw_locations').updateOne({ _id: oid(l1) }, { $unset: { refit: 1 } });
     expect((await undo(team.member, l1, `f_${fileId}`)).status).toBe(200);
+    // Undoing a read that wrote a note wants a refit.
+    expect(((await server.connection.collection('tw_locations').findOne({ _id: oid(l1) }))?.refit as { wantedAt?: Date } | undefined)?.wantedAt)
+      .toEqual(server.clock.now());
     expect((await changesOf(l1)).map((row) => row.status)).toEqual(['undone', 'undone']);
     expect(await fileNoteSuggestions(l1)).toEqual([]);
     expect(await count('tw_notes', { locationId: oid(l1) })).toBe(0);

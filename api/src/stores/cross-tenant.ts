@@ -22,6 +22,7 @@ import { trusted, Types, type Connection } from 'mongoose';
 import type { Role } from '../access/resolve.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
 import { activityDayModel } from './activity-days.ts';
+import { agentChangeModel } from './agent-changes.ts';
 import { agentSuggestionModel, suggestionPassModel } from './agent-suggestions.ts';
 import { auditEventModel, type AuditAction } from './audit-events.ts';
 import { calibrationModel, LIVE_STATUSES } from './calibrations.ts';
@@ -352,6 +353,9 @@ export async function deletePersonRecords(
   // D59: who last switched TownwiseAI working on its own; the switch stays. Not counted.
   await orgModel(connection).updateMany({ 'agentAuto.by': userId }, { $set: { 'agentAuto.by': null } });
   await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
+  // D59: the person TownwiseAI made a change for, and who undid or adopted one; the changes stay. Not counted.
+  await agentChangeModel(connection).updateMany({ onBehalfOf: userId }, { $set: { onBehalfOf: null } });
+  await agentChangeModel(connection).updateMany({ statusBy: userId }, { $set: { statusBy: null } });
   // D58: the org admin who confirmed a file calendar's bookings; the confirmation stays. Not counted.
   await calendarSourceModel(connection).updateMany({ 'bookings.confirmedBy': userId }, { $set: { 'bookings.confirmedBy': null } });
   // D42: the staff member who paused the weekly refresh, on its one schedule document; the pause stays. Not counted.
@@ -769,9 +773,17 @@ export async function refitCandidates(connection: Connection, input: { quietBefo
   });
 }
 
-/** D59: how many refits the hourly pass started at or after `since`, across organizations (the weekly cap counts them). */
+/**
+ * D59: how many refits the hourly pass started at or after `since`, across organizations (the weekly cap counts them):
+ * every start each location kept, not its refusals.
+ */
 export async function countRefitStartsSince(connection: Connection, since: Date): Promise<number> {
-  return locationModel(connection).countDocuments({ 'refit.startedAt': trusted({ $gte: since }) });
+  const [total] = await locationModel(connection).aggregate<{ starts: number }>([
+    { $match: { 'refit.starts': trusted({ $gte: since }) } },
+    { $project: { n: { $size: { $filter: { input: '$refit.starts', as: 'at', cond: { $gte: ['$$at', since] } } } } } },
+    { $group: { _id: null, starts: { $sum: '$n' } } },
+  ]);
+  return total?.starts ?? 0;
 }
 
 /**

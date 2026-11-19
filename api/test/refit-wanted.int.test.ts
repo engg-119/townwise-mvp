@@ -81,6 +81,25 @@ describe('refit wanted (D59)', () => {
     expect(await wantedAt(p)).toEqual(server.clock.now());
   });
 
+  it('a rule’s schedule edit and its delete, on a training day, each mark the location', async () => {
+    const p = await place();
+    const tuesdays = { kind: 'closure', startDate: '2026-05-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, startTime: null, endTime: null };
+    const res = await call(server, `/api/org/locations/${p.locationId}/rules`, { session: p.admin, json: { text: 'Closed Tuesdays', schedule: tuesdays } });
+    expect(res.status).toBe(201);
+    const { rule } = await res.json() as { rule: { id: string } };
+    const unmark = (): Promise<unknown> => server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(p.locationId) }, { $unset: { refit: 1 } });
+    await unmark();
+    server.clock.advance(MINUTE);
+    expect((await call(server, `/api/org/locations/${p.locationId}/rules/${rule.id}`, {
+      session: p.admin, method: 'PATCH', json: { schedule: { ...tuesdays, weekdays: [3] } },
+    })).status).toBe(200);
+    expect(await wantedAt(p)).toEqual(server.clock.now());
+    await unmark();
+    server.clock.advance(MINUTE);
+    expect((await call(server, `/api/org/locations/${p.locationId}/rules/${rule.id}`, { session: p.admin, method: 'DELETE' })).status).toBe(204);
+    expect(await wantedAt(p)).toEqual(server.clock.now());
+  });
+
   it('a sales upload marks the location, whatever its days', async () => {
     const p = await place();
     const res = await call(server, `/api/org/locations/${p.locationId}/sales/uploads`, {
@@ -105,7 +124,7 @@ describe('refit wanted (D59)', () => {
     expect((await locations.refitState(p.scope, p.locationId)).wantedAt).toEqual(newest);
     expect(await locations.clearRefitWanted(p.scope, p.locationId, newest)).toBe(true);
     expect(await locations.refitState(p.scope, p.locationId)).toEqual({ wantedAt: null, startedAt: null });
-    expect(await locations.markRefitStarted(p.scope, p.locationId, newest)).toBe(true);
+    expect(await locations.markRefitStarted(p.scope, p.locationId, newest, true)).toBe(true);
     expect((await locations.refitState(p.scope, p.locationId)).startedAt).toEqual(newest);
     // Another organization's scope changes nothing.
     expect(await locations.wantRefit({ orgId: new Types.ObjectId().toHexString() } as unknown as OrgScope, p.locationId, newest)).toBe(false);

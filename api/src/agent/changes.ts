@@ -6,18 +6,31 @@ import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { AgentChangeAction, AgentChangeRecord, AgentChangeStatus, AgentSourceKind } from '../stores/agent-changes.ts';
 import type { NoteKind } from '../stores/notes.ts';
+import { TOWNWISE_AI_AUTHOR } from './apply.ts';
 
 /** What a change's target is now. */
 export type TargetState = 'there' | 'gone' | 'changed';
 
+/** A change's target now: its state, and for a note its author (`createdBy`), else null. */
+export interface Target {
+  readonly state: TargetState;
+  readonly author: string | null;
+}
+
 /**
- * Who may undo an action (design decision 6): any member a note or rule, the source file's adder or an org admin a summary
- * item, an org admin sales days or a label. Never under view-as.
+ * Who may undo an action (design decision 6), as deleting it would be allowed: any member a note TownwiseAI wrote as
+ * itself (an automatic read) or a rule; a note a pressed read wrote in the name of the person who asked, only that person
+ * or an org admin (as the note's own delete); the source file's adder or an org admin a summary item; an org admin
+ * sales days or a label. `author` is the note's `createdBy`, null when the note is not there (an undo then removes
+ * nothing of anyone's, so any member may finish it). Never under view-as.
  */
-export function mayUndo(caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: Pick<AgentChangeRecord, 'action' | 'onBehalfOf'>): boolean {
+export function mayUndo(
+  caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: Pick<AgentChangeRecord, 'action' | 'onBehalfOf'>, author: string | null,
+): boolean {
   if (caller.viewAs !== null) return false;
   switch (change.action) {
     case 'note.add':
+      return author === null || author === TOWNWISE_AI_AUTHOR || caller.role === 'org_admin' || author === caller.userId;
     case 'rule.add':
       return true;
     case 'item.add':
@@ -31,7 +44,7 @@ export function mayUndo(caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewA
 /** Each applied change's target now, by the change's id: a note edited since it was applied reads `changed`. */
 export async function targetStates(
   ctx: Pick<TownwiseContext, 'stores'>, scope: OrgScope, locationId: string, changes: readonly AgentChangeRecord[],
-): Promise<Map<string, TargetState>> {
+): Promise<Map<string, Target>> {
   const applied = changes.filter((change) => change.status === 'applied');
   const ids = (action: AgentChangeAction): string[] => applied.filter((change) => change.action === action).map((change) => change.targetId);
   const [notes, items, uploads] = await Promise.all([
@@ -42,23 +55,25 @@ export async function targetStates(
   const noteById = new Map(notes.map((note) => [note.id, note]));
   const itemIds = new Set(items.filter((file) => file.status !== 'deleting').map((file) => file.id));
   const uploadIds = new Set(uploads.flatMap((upload) => (upload === null ? [] : [upload.id])));
-  return new Map(applied.map((change): [string, TargetState] => {
+  const target = (state: TargetState, author: string | null = null): Target => ({ state, author });
+  return new Map(applied.map((change): [string, Target] => {
     if (change.action === 'note.add') {
       const note = noteById.get(change.targetId);
-      if (note === undefined) return [change.id, 'gone'];
-      return [change.id, note.updatedAt.getTime() === change.targetUpdatedAt?.getTime() ? 'there' : 'changed'];
+      if (note === undefined) return [change.id, target('gone')];
+      return [change.id, target(note.updatedAt.getTime() === change.targetUpdatedAt?.getTime() ? 'there' : 'changed', note.createdBy)];
     }
-    if (change.action === 'item.add') return [change.id, itemIds.has(change.targetId) ? 'there' : 'gone'];
-    if (change.action === 'sales_days.add') return [change.id, uploadIds.has(change.targetId) ? 'there' : 'gone'];
-    return [change.id, 'there'];
+    if (change.action === 'item.add') return [change.id, target(itemIds.has(change.targetId) ? 'there' : 'gone')];
+    if (change.action === 'sales_days.add') return [change.id, target(uploadIds.has(change.targetId) ? 'there' : 'gone')];
+    return [change.id, target('there')];
   }));
 }
 
 /** Whether Undo is offered: applied, its target still there and unchanged, and the caller may undo it. */
 export function undoable(
-  caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: AgentChangeRecord, states: ReadonlyMap<string, TargetState>,
+  caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: AgentChangeRecord, states: ReadonlyMap<string, Target>,
 ): boolean {
-  return change.status === 'applied' && states.get(change.id) === 'there' && mayUndo(caller, change);
+  const now = states.get(change.id);
+  return change.status === 'applied' && now?.state === 'there' && mayUndo(caller, change, now.author);
 }
 
 /** A change as the log lists it. `why` is null under view-as. `noteId`, `fileId` and `uploadId` point at the target. */
@@ -80,7 +95,7 @@ export interface AgentChangeView {
 }
 
 export function changeView(
-  caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: AgentChangeRecord, states: ReadonlyMap<string, TargetState>,
+  caller: Pick<MemberPrincipal, 'role' | 'userId' | 'viewAs'>, change: AgentChangeRecord, states: ReadonlyMap<string, Target>,
 ): AgentChangeView {
   return {
     id: change.id, at: change.appliedAt.toISOString(), action: change.action, sourceKind: change.sourceKind,

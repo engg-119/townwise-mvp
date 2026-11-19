@@ -26,9 +26,10 @@ export interface LocationFields {
   /**
    * D59 (openspec change auto-apply-agent-reads, design decision 12): a change to the days the lab trains on wants a
    * refit: `wantedAt`, the latest such change (set with `$max`, cleared by compare-and-set on the value read), and
-   * `startedAt`, when the hourly pass last started one for it. Absent until the first.
+   * `startedAt`, when the hourly pass last tried one for it (a start or a refusal), and `starts`, when it actually started
+   * one, the last REFIT_STARTS_KEPT (the weekly cap counts them). Absent until the first.
    */
-  refit?: { wantedAt?: Date; startedAt?: Date };
+  refit?: { wantedAt?: Date; startedAt?: Date; starts?: Date[] };
 }
 
 function locationSchema(): Schema<LocationFields> {
@@ -41,7 +42,7 @@ function locationSchema(): Schema<LocationFields> {
     createdAt: { type: Date, required: true },
     createdBy: { type: String, required: true },
     byStaff: { type: Boolean },
-    refit: { type: new Schema({ wantedAt: { type: Date }, startedAt: { type: Date } }, { _id: false, strict: true }) },
+    refit: { type: new Schema({ wantedAt: { type: Date }, startedAt: { type: Date }, starts: { type: [Date], default: undefined } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, nameKey: 1 }, { unique: true });
   schema.index({ orgId: 1, createdAt: 1 });
@@ -99,9 +100,15 @@ export interface LocationStore {
   refitState(scope: OrgScope, locationId: string): Promise<RefitState>;
   /** D59: clears the mark only while it is still `wantedAt` (a compare-and-set), so a change landing meanwhile stays. */
   clearRefitWanted(scope: OrgScope, locationId: string, wantedAt: Date): Promise<boolean>;
-  /** D59: records that the hourly pass started a refit at `at`. */
-  markRefitStarted(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
+  /**
+   * D59: records that the hourly pass tried a refit at `at`, so the next waits a day; `started` when one actually started,
+   * which the weekly cap counts.
+   */
+  markRefitStarted(scope: OrgScope, locationId: string, at: Date, started: boolean): Promise<boolean>;
 }
+
+/** D59: the refit starts a location keeps: at most one a day, so a week's worth and one more. */
+export const REFIT_STARTS_KEPT = 8;
 
 /** D59: when a training change last wanted a refit, and when the hourly pass last started one. */
 export interface RefitState { readonly wantedAt: Date | null; readonly startedAt: Date | null }
@@ -207,8 +214,11 @@ export function createLocationStore(connection: Connection): LocationStore {
       const result = await Location.updateOne({ _id: locationId, orgId: scope.orgId, 'refit.wantedAt': wantedAt }, { $unset: { 'refit.wantedAt': 1 } });
       return result.modifiedCount === 1;
     },
-    async markRefitStarted(scope, locationId, at) {
-      return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $set: { 'refit.startedAt': at } })).matchedCount === 1;
+    async markRefitStarted(scope, locationId, at, started) {
+      return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, {
+        $set: { 'refit.startedAt': at },
+        ...(started ? { $push: { 'refit.starts': { $each: [at], $slice: -REFIT_STARTS_KEPT } } } : {}),
+      })).matchedCount === 1;
     },
   };
 }

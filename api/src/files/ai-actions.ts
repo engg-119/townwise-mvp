@@ -222,7 +222,16 @@ function mondayOf(day: string): string {
  * The person who asked (or, D59, the file's adder an automatic read reads for), and their role now (org_admin for
  * Townwise staff open as admin). `ledger`: TownwiseAI works on its own, so writes go through agent/apply.ts.
  */
-interface Requester { readonly ai: FileAiRead; readonly role: Role; readonly ledger: boolean }
+interface Requester {
+  readonly ai: FileAiRead;
+  readonly role: Role;
+  readonly ledger: boolean;
+  /**
+   * D59: an automatic read whose adder has left (no seat, or their open-as-admin grant ended): nothing is applied, and
+   * each note it would have written waits as a suggestion instead (design decision 13).
+   */
+  readonly adderGone?: true;
+}
 
 /** The read's file, re-read, while the read is still held under this claim with its original; else null. */
 type Held = () => Promise<FileRecord | null>;
@@ -301,16 +310,17 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
       if (id === undefined) break;
       const content = noteContentOf(event, today);
       const closed = content !== null && closes(content) ? spanDays(content.startDate, content.endDate) : 0;
-      if (ids.has(id)) {
-        // An earlier attempt wrote it: its change (D59) is finished too.
-        if (ledger && content !== null) await apply(id, content, event);
-        notes.push(id);
-        closedDays += closed;
+      if (ledger && (await stores.agentSuggestions.find(scope, file.locationId, id))?.type === 'note') {
+        // An earlier attempt kept it as a note suggestion. A note under its id is then a person's, who accepted it: it is
+        // never recorded as TownwiseAI's change.
+        suggested.push(id);
         continue;
       }
-      if (ledger && (await stores.agentSuggestions.find(scope, file.locationId, id))?.type === 'note') {
-        // An earlier attempt kept it as a note suggestion.
-        suggested.push(id);
+      if (ids.has(id)) {
+        // An earlier attempt wrote it: its change (D59) is finished too, for an event that met the bar.
+        if (ledger && content !== null && eventConfidence(event, result) === 'high') await apply(id, content, event);
+        notes.push(id);
+        closedDays += closed;
         continue;
       }
       if (content === null) skipped.invalid += 1;
@@ -321,7 +331,7 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
       else if (existing.length >= MAX_NOTES) skipped.cap += 1;
       else if (ledger) {
         if (await held() === null) break;
-        if (eventConfidence(event, result) !== 'high') {
+        if (eventConfidence(event, result) !== 'high' || requester.adderGone === true) {
           await suggestNote(id, content);
           continue;
         }
@@ -428,6 +438,7 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     );
     const refusal = daysRefusal(file, result);
     if (refusal !== null) return none(refusal);
+    if (requester.adderGone === true) return none('adder_gone');
     const days = (result.daysBorneOut ?? []).flatMap((index) => {
       const day = result.days[index];
       return day === undefined ? [] : [salesDayOf(day)];
@@ -500,6 +511,7 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     const blobs = ctx.files;
     if (blobs === null) throw new Error('stored files are off');
     if (result.summary.trim() === '') return { itemId: null, itemReason: 'no_summary' };
+    if (requester.adderGone === true) return { itemId: null, itemReason: 'adder_gone' };
     const { ai } = requester;
     const save = async (): Promise<Pick<AiActionsOutcome, 'itemId' | 'itemReason'> & { at: Date | null }> => {
       const saved = await saveTextItem(stores, blobs, scope, file.locationId, {
@@ -582,9 +594,12 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     const ai = file.ai;
     if (ai === null || (ai.actions?.outcome ?? null) !== null) return null;
     const role = await roleNow(scope, ai);
-    if (role === null) return 'requester_gone';
-    // D59: through the one writer while TownwiseAI works on its own, and always for a read it started on its own.
-    const requester: Requester = { ai, role, ledger: ai.auto || await agentAutoOn(ctx, scope.orgId) };
+    if (role === null && !ai.auto) return 'requester_gone';
+    // D59: through the one writer while TownwiseAI works on its own, and always for a read it started on its own. An
+    // automatic read whose adder has left applies nothing: its notes wait as suggestions, and no days or summary are kept.
+    const requester: Requester = role === null
+      ? { ai, role: 'member', ledger: true, adderGone: true }
+      : { ai, role, ledger: ai.auto || await agentAutoOn(ctx, scope.orgId) };
     const attempt = ai.attempts;
     const plan = (await stores.files.planAiActions(scope, file.id, attempt, newPlan(read.result.events.length)))?.ai?.actions?.plan;
     if (plan === undefined) return null;

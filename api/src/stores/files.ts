@@ -169,10 +169,11 @@ export interface AiActionPlan {
 /** Why the read wrote no days. `already_had_days`: every verified day was already stored (AI days never replace one). */
 export type AiDaysReason =
   | 'not_sales' | 'no_days' | 'file_wrote_days' | 'picture' | 'not_high_confidence' | 'days_not_verified' | 'already_had_days'
-  // D59: this file's days were added once already (and undone since): TownwiseAI never adds them again.
-  | 'duplicate';
-/** Why the read kept no summary item. */
-export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit' | 'duplicate';
+  // D59: this file's days were added once already (and undone since): TownwiseAI never adds them again. `adder_gone`: an
+  // automatic read whose adder had left by then applies nothing.
+  | 'duplicate' | 'adder_gone';
+/** Why the read kept no summary item (D59 `adder_gone`: as for days). */
+export type AiItemReason = 'no_summary' | 'storage_full' | 'daily_upload_limit' | 'duplicate' | 'adder_gone';
 /**
  * The model update after a read: `started` (with the calibration's id), `not_needed` (no note or day was written),
  * `not_admin` (the person who asked is not an org admin), or the lab's refusal (lab/service.ts StartRefusal, renamed),
@@ -325,8 +326,8 @@ interface FileFields {
   editedByStaff?: boolean;
   /** Reading with TownwiseAI (spec 11A.9); absent until asked for, never stored as null. */
   ai?: StoredAiRead;
-  /** D59: the person unchecked the Add a file box, so TownwiseAI never reads it on its own. Absent otherwise. */
-  aiAuto?: false;
+  /** D59: the person left the box checked as the upload finished, so TownwiseAI may read it on its own. Absent otherwise. */
+  aiAuto?: true;
   /** On the summary item a TownwiseAI read kept: the file it was read from. Absent otherwise. */
   source?: { via: 'ai_file'; fileId: Types.ObjectId };
 }
@@ -374,7 +375,7 @@ function fileSchema(): Schema<FileFields> {
     editedBy: { type: String },
     editedByStaff: { type: Boolean },
     ai: { type: Schema.Types.Mixed },
-    aiAuto: { type: Boolean, enum: [false] },
+    aiAuto: { type: Boolean, enum: [true] },
     source: {
       type: new Schema({
         via: { type: String, required: true, enum: ['ai_file'] }, fileId: { type: Schema.Types.ObjectId, required: true },
@@ -456,7 +457,7 @@ export interface FileRecord {
   readonly ai: FileAiRead | null;
   /** A summary item TownwiseAI kept from a read: the file it was read from; null for anything else. */
   readonly source: AiSource | null;
-  /** D59: kept from TownwiseAI's automatic reads (its Add a file box was unchecked). */
+  /** D59: kept from TownwiseAI's automatic reads: its upload did not finish with the box checked (`aiAuto: true`). */
   readonly aiAutoOff: boolean;
 }
 
@@ -507,7 +508,7 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
       auto: doc.ai.auto === true, chargedAt: doc.ai.chargedAt ?? null,
     },
     source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
-    aiAutoOff: doc.aiAuto === false,
+    aiAutoOff: doc.aiAuto !== true,
   };
 }
 
@@ -526,8 +527,6 @@ export interface NewFile {
   readonly sizeBytes: number;
   readonly chunkSize: number;
   readonly expiresAt: Date;
-  /** D59: the person unchecked the Add a file box: TownwiseAI never reads it on its own. */
-  readonly aiAutoOff?: true;
 }
 
 /** What the reader takes in a started import (nextToRead). */
@@ -596,7 +595,8 @@ export interface FileStore {
   recordChunk(scope: OrgScope, fileId: string, index: number, chunk: ChunkRecord, head: string | null): Promise<FileRecord | null>;
   /** Compare-and-set from uploading: the session ends, the kind and fingerprint are set. Null when another call won. */
   finishUpload(
-    scope: OrgScope, fileId: string, input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' | 'kept'; outcome?: string },
+    scope: OrgScope, fileId: string,
+    input: { fingerprint: string; kind: FileKind; status: 'stored' | 'queued' | 'kept'; outcome?: string; aiAuto?: boolean },
   ): Promise<FileRecord | null>;
   /**
    * A text reference item with its bytes already stored: kept, outcome `reference`, with no upload session. `'exists'`
@@ -688,15 +688,16 @@ export interface FileStore {
   /**
    * D59: queues an automatic read (`auto`, as `input.by`, the file's adder) by compare-and-set, only on a file nobody
    * asked TownwiseAI about yet (no `ai`), finished with its original, which wrote no days, is not a calendar export, a
-   * summary or item TownwiseAI kept, and whose box was not unchecked. The record after, or null when it does not qualify.
+   * summary or item TownwiseAI kept, not turned off, and whose upload finished with its box checked. The record after, or
+   * null when it does not qualify.
    */
   requestAutoRead(scope: OrgScope, locationId: string, fileId: string, input: {
     by: string; role: Role; byStaff: boolean; grantId: string | null; at: Date;
   }): Promise<FileRecord | null>;
   /** D59: under claim `attempt`, marks that the automatic read reserved its call at `at`. */
   markAiCharged(scope: OrgScope, fileId: string, attempt: number, at: Date): Promise<boolean>;
-  /** D59: the organization's automatic reads that reserved a call at or after `since`. */
-  countAutoReadsSince(scope: OrgScope, since: Date): Promise<number>;
+  /** D59: the organization's automatic reads that reserved a call at or after `since`, other than `exceptId`'s. */
+  countAutoReadsSince(scope: OrgScope, since: Date, exceptId?: string): Promise<number>;
   /** D59: whether another file of the location with this fingerprint already had a finished TownwiseAI read (done or undone). */
   hasReadTwin(scope: OrgScope, locationId: string, fingerprint: string, exceptId: string): Promise<boolean>;
   /** The reader's heartbeat: a later `leaseUntil` while the read is `reading` under claim `attempt`. False once it is not. */
@@ -780,7 +781,6 @@ export function createFileStore(connection: Connection): FileStore {
         },
         answers: {}, attempts: 0,
         ...(input.addedVia === undefined ? {} : { addedVia: input.addedVia }),
-        ...(input.aiAutoOff === true ? { aiAuto: false } : {}),
       });
       return toFile(doc.toObject());
     },
@@ -916,7 +916,12 @@ export function createFileStore(connection: Connection): FileStore {
     async finishUpload(scope, fileId, input) {
       const doc = await File.findOneAndUpdate(
         { _id: oid(fileId), orgId: org(scope), status: 'uploading' },
-        { $set: { status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null, ...(input.outcome === undefined ? {} : { outcome: input.outcome }) } },
+        {
+          $set: {
+            status: input.status, fingerprint: input.fingerprint, kind: input.kind, upload: null,
+            ...(input.outcome === undefined ? {} : { outcome: input.outcome }), ...(input.aiAuto === true ? { aiAuto: true } : {}),
+          },
+        },
         after,
       ).lean();
       return doc === null ? null : toFile(doc);
@@ -1072,7 +1077,7 @@ export function createFileStore(connection: Connection): FileStore {
       const doc = await File.findOneAndUpdate(
         {
           _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $in: AI_READABLE }), rawDeletedAt: null,
-          ai: trusted({ $exists: false }), aiAuto: trusted({ $exists: false }), addedVia: trusted({ $exists: false }),
+          ai: trusted({ $exists: false }), aiAuto: true, disabledAt: null, addedVia: trusted({ $exists: false }),
           source: trusted({ $exists: false }), uploadId: null, outcome: trusted({ $ne: 'calendar_export' }),
         },
         { $set: { ai } },
@@ -1083,8 +1088,11 @@ export function createFileStore(connection: Connection): FileStore {
     async markAiCharged(scope, fileId, attempt, at) {
       return (await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.chargedAt': at } })).matchedCount === 1;
     },
-    countAutoReadsSince(scope, since) {
-      return File.countDocuments({ orgId: org(scope), 'ai.auto': true, 'ai.chargedAt': trusted({ $gte: since }) });
+    countAutoReadsSince(scope, since, exceptId) {
+      return File.countDocuments({
+        orgId: org(scope), 'ai.auto': true, 'ai.chargedAt': trusted({ $gte: since }),
+        ...(exceptId === undefined ? {} : { _id: trusted({ $ne: oid(exceptId) }) }),
+      });
     },
     async hasReadTwin(scope, locationId, fingerprint, exceptId) {
       const twin = await File.exists({

@@ -35,7 +35,9 @@ import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord, NoteStore } from '../stores/notes.ts';
 import type { SalesDayStore } from '../stores/sales-days.ts';
 import { weekdayOf, type Weekday } from '../time-zones.ts';
-import { adjustDay, flagsAfterData, orderedReasons, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule } from './adjust.ts';
+import {
+  adjustDay, flagsAfterData, orderedReasons, ownerBeatsAgent, scheduledRules, type AdjustedDay, type ModelDay, type ScheduledRule,
+} from './adjust.ts';
 import { effectHistory, reasonEffects } from './effects.ts';
 import { eachDay, type DayStatus } from './file.ts';
 import { noteReasonView, reasonViews, ruleReasonView, townCalendarOf, townTermEntries, type ReasonView } from './reasons.ts';
@@ -317,16 +319,21 @@ export function createForecastReader(deps: {
     }
     const storedOn = new Map(stored.map((day) => [day.date, day]));
     const typical = typicalByDate(stored);
+    /**
+     * The notes covering a day the lab input reads: D59, a person's note that decides it sets TownwiseAI's aside
+     * (adjust.ts ownerBeatsAgent), as labInputOf does.
+     */
+    const keptOn = (date: string): NoteRecord[] => ownerBeatsAgent(notesOn(date)).kept;
     /** A past day that was closed or likely closed (D32): a closure, not a miss. */
     const closedOn = (date: string): boolean => date < today && closureOf(
-      storedOn.get(date), typical.get(date) ?? null, notesOn(date), { rules: rulesOn(date).map((rule) => rule.schedule), past: true },
+      storedOn.get(date), typical.get(date) ?? null, keptOn(date), { rules: rulesOn(date).map((rule) => rule.schedule), past: true },
     ) !== null;
     /**
      * A past day whose run may have read a private event note or rule, covering it and last written once the day began
      * (D49 as amended): the lab input flags one on a day after the run's data (adjust.ts flagsAfterData).
      */
     const laterNoteOn = (date: string, run: ForecastRunRecord): boolean => date < today && (
-      notesOn(date).some((note) => flagsAfterData(note) && writtenForRun(run, date, note.updatedAt))
+      keptOn(date).some((note) => flagsAfterData(note) && writtenForRun(run, date, note.updatedAt))
       || scheduled.some((rule) => rule.schedule !== null && noteCovers(rule.schedule, date) && flagsAfterData(rule.schedule)
         && writtenForRun(run, date, rule.updatedAt)));
     const scored = (date: string, { run, row }: Chosen): ScoredDay => ({

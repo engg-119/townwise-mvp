@@ -276,6 +276,25 @@ describe('GET /api/org/locations/:locationId/forecast, and the model card’s ru
     expect((await about()).forecast).toMatchObject({ run: { id: first }, live: { days: 6, inRange: 5 } });
   });
 
+  it('D59: a past day a TownwiseAI closure covers stays scored when a person’s own note decides it open, as the lab input reads it', async () => {
+    const id = await addLocation(server, { orgId, name: 'Owner Beats Room' });
+    for (const date of ['2026-05-01', '2026-05-02', '2026-05-03', '2026-05-05', '2026-05-06', '2026-05-07']) {
+      await addSalesDay(server, { orgId, locationId: id, date, guests: 100, netSalesCents: 100_000 });
+    }
+    const run = await staffImport(RUN, id);
+    await staffChange(run, 'publish');
+    const scope = { orgId } as unknown as OrgScope;
+    const day = { startDate: '2026-05-05', endDate: '2026-05-05', weekdays: null, expectedGuests: null, detail: null, title: null, startTime: null, endTime: null };
+    await server.ctx.stores.notes.create(scope, id, { ...day, kind: 'closure', effect: 'closed' }, {
+      createdBy: 'townwise_ai', now: server.clock.now(), agent: { changeId: new Types.ObjectId().toHexString() },
+    });
+    await server.ctx.stores.notes.create(scope, id, { ...day, kind: 'private_event', effect: 'more_guests', expectedGuests: 20 }, {
+      createdBy: member.userId, now: server.clock.now(),
+    });
+    const body = await (await call(server, `/api/org/locations/${id}/forecast?from=2026-05-01&to=2026-05-14`, { session: member })).json() as ForecastWindow;
+    expect(body.days.find((each) => each.date === '2026-05-05')).toMatchObject({ actual: 100, scored: true });
+  });
+
   it('compares a past day with any run whose data ends before it (D49 as amended), unless the run may have read a note written once the day began', async () => {
     async function room(name: string): Promise<{ id: string; read: () => Promise<ForecastWindow> }> {
       const id = await addLocation(server, { orgId, name });

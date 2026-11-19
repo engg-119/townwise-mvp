@@ -84,7 +84,7 @@ export const SCHEDULE_STEP_MS = 60_000;
 export const REFIT_QUIET_MS = 15 * 60_000;
 /** D59: a location's refits start at most once in this long. */
 export const REFIT_EVERY_MS = 24 * 60 * 60_000;
-/** D59: the weekly cap counts the refits started in this long, beside the week's rows. */
+/** D59: the weekly cap counts the refits started in this long, beside the week's rows, on both paths. */
 const REFIT_CAP_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
 /** How far back the staff console looks for each location's latest week row. */
@@ -279,7 +279,8 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     }
     const counted = pass.weekCounts.get(week) ?? await countedWeekRows(ctx.connection, week);
     pass.weekCounts.set(week, counted);
-    if (counted >= ctx.config.weeklyForecastCap) {
+    // D59: the refits started this past week count too.
+    if (counted + await countRefitStartsSince(ctx.connection, new Date(now.getTime() - REFIT_CAP_WINDOW_MS)) >= ctx.config.weeklyForecastCap) {
       if (await record('cap_reached', dataSha256)) counts.capped += 1;
       return;
     }
@@ -380,8 +381,9 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       refits.held += 1;
       return;
     }
-    // A start, or a refusal, waits a day before the next try; a refusal keeps the mark for then.
-    await stores.locations.markRefitStarted(scope, location.id, ctx.now());
+    // A start, or a refusal, waits a day before the next try; a refusal keeps the mark for then, and only a start counts
+    // in the weekly cap.
+    await stores.locations.markRefitStarted(scope, location.id, ctx.now(), launched.ok);
     if (!launched.ok) {
       refits.failed += 1;
       return;

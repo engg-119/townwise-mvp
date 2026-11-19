@@ -633,6 +633,23 @@ describe('POST /api/admin/people/delete', () => {
     expect(doc?.calendarTitlesToAi).toEqual({ on: false, at, by: null });
   });
 
+  it('clears a former member’s id from TownwiseAI’s changes made on their behalf or undone by them, which stay (D59)', async () => {
+    const former = await person('former-member');
+    const orgId = new Types.ObjectId();
+    const row = (over: Record<string, unknown>): Record<string, unknown> => ({
+      orgId, locationId: new Types.ObjectId(), sourceKind: 'file', sourceId: null, action: 'note.add', targetId: new Types.ObjectId(),
+      dedupeKey: randomUUID(), confidence: 'high', why: null, onBehalfOf: null, status: 'applied', targetUpdatedAt: server.clock.now(),
+      startDate: '2026-07-04', endDate: '2026-07-04', appliedAt: server.clock.now(), statusAt: server.clock.now(), statusBy: 'townwise_ai', ...over,
+    });
+    const changes = server.connection.collection('tw_agent_changes');
+    const { insertedIds } = await changes.insertMany([
+      row({ onBehalfOf: former.session.userId }), row({ status: 'undone', statusBy: former.session.userId }),
+    ]);
+    expect((await deletePerson(former.email)).status).toBe(200);
+    const docs = await changes.find({ _id: { $in: Object.values(insertedIds) } }).sort({ _id: 1 }).toArray();
+    expect(docs.map((doc): unknown[] => [doc.status, doc.onBehalfOf, doc.statusBy])).toEqual([['applied', null, 'townwise_ai'], ['undone', null, null]]);
+  });
+
   it('deletes an address that never signed in: its invitations and the events that name it', async () => {
     const orgId = await createOrg(server, { name: 'Inviting Bakery' });
     const email = uniqueEmail('never-signed-in');

@@ -45,8 +45,8 @@ describe('isolation (source)', () => {
         .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'stores/agent-changes.ts'))
       .map((file) => file.path)
       .sort();
-    // agent/apply.ts reads the why's length cap from it.
-    expect(importers).toEqual(['agent/apply.ts', 'stores/index.ts']);
+    // agent/apply.ts reads the why's length cap from it; stores/cross-tenant.ts clears a deleted person's id from its rows.
+    expect(importers).toEqual(['agent/apply.ts', 'stores/cross-tenant.ts', 'stores/index.ts']);
     // The one writer: every change TownwiseAI saves goes through applyChange. Undo moves a row's status
     // (handlers/agent-changes.ts), and a file's own undo marks its rows (handlers/data.ts).
     const writers = sourceFiles().filter((file) => /agentChanges\.(insertApplying|markApplied|removeApplying)\(/.test(file.text)).map((file) => file.path);

@@ -232,8 +232,6 @@ const createBody = z.strictObject({
   name: z.string().max(1024),
   sizeBytes: z.number().int().min(1),
   purpose: z.string().max(32),
-  /** D59: false when the person unchecked the Add a file box, so TownwiseAI never reads the file on its own. */
-  aiAuto: z.boolean().optional(),
 });
 
 /** POST /files: opens an upload session in the location's active import (spec 10.11). */
@@ -274,7 +272,6 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
     importId: record?.id ?? null, purpose, uploadedBy: member.userId, uploaderRole: member.role,
     ...(member.openAsAdmin !== null ? { byStaff: true, openAsAdminGrantId: member.openAsAdmin.grantId } : {}), uploadedAt: now, name,
     kind: kindOfName(name), sizeBytes: body.sizeBytes, chunkSize: CHUNK_BYTES, expiresAt: new Date(now.getTime() + UPLOAD_SESSION_MS),
-    ...(body.aiAuto === false ? { aiAutoOff: true } : {}),
   });
   const chunkCount = file.upload?.chunkCount ?? 0;
   ctx.logger.info({
@@ -284,6 +281,8 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
   res.status(201).json({
     file: fileView(member, file, file.byStaff ? TOWNWISE_STAFF : member.email, null),
     import: record === null ? null : { id: record.id, status: record.status },
+    // D59: whether TownwiseAI reads files here on its own now, so the client sends its box's `aiAuto: true` on complete.
+    autoRead: ctx.config.agentAuto && ctx.aiReads !== null && (await ctx.stores.orgs.findById(scope.orgId))?.agentAuto.on === true,
     limits: {
       maxFileBytes: MAX_FILE_BYTES,
       chunkSize: CHUNK_BYTES,
@@ -361,12 +360,17 @@ async function receive(ctx: TownwiseContext, req: Request, res: Response, princi
   });
 }
 
+const completeBody = z.strictObject({ aiAuto: z.boolean().optional() });
+
 /** POST /files/:fileId/complete: commits the chunks, tells the kind, and queues the file if its import started. */
 export async function completeFile(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);
   const member = memberOf(principal);
   const { scope } = member;
-  parseInput(z.strictObject({}), req.body);
+  // D59: `aiAuto: true` only when the person left the box checked as the upload finished; anything else keeps the file
+  // from TownwiseAI's automatic reads, so an upload with no box (a chat attachment, an item's edit) or from an older
+  // client is never read on its own.
+  const body = parseInput(completeBody, req.body);
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const file = await loadFile(ctx, scope, location.id, req.params.fileId);
   if (file.uploadedBy !== member.userId) throw new AppError(403, 'forbidden', 'Only the person uploading this file can finish it');
@@ -399,7 +403,7 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
   }
   if (file.purpose === 'reference') {
     // Kept as it is: read by no one, in no import.
-    const kept = await ctx.stores.files.finishUpload(scope, file.id, { fingerprint, kind, status: 'kept', outcome: 'reference' });
+    const kept = await ctx.stores.files.finishUpload(scope, file.id, { fingerprint, kind, status: 'kept', outcome: 'reference', aiAuto: body.aiAuto === true });
     if (kept === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
     await recordUploaded(ctx, member, kept);
     // D59: TownwiseAI reads it on its own, unless its box was unchecked or either switch is off.
@@ -411,7 +415,7 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
   }
   const before = await ctx.stores.imports.get(scope, location.id, file.importId ?? '');
   const stored = await ctx.stores.files.finishUpload(scope, file.id, {
-    fingerprint, kind, status: before === null || before.status === 'open' ? 'stored' : 'queued',
+    fingerprint, kind, status: before === null || before.status === 'open' ? 'stored' : 'queued', aiAuto: body.aiAuto === true,
   });
   if (stored === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
   const placed = await place(ctx, member, stored);

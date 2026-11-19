@@ -22,6 +22,7 @@ import {
 } from '../src/lab/schedule.ts';
 import { finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest } from '../src/lab/service.ts';
 import { removeLocation } from '../src/handlers/locations.ts';
+import { countRefitStartsSince } from '../src/stores/cross-tenant.ts';
 import { parseIcs } from '../src/calendar/ics.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import {
@@ -1141,6 +1142,20 @@ describe('refits after training changes (D59)', () => {
     expect(logLines(server).filter((line) => line.msg === 'townwise.refit_pass').at(-1)).toMatchObject({ started: 1 });
     // Nothing more is wanted: the next pass starts nothing.
     expect((await pass()).refits.started).toBe(0);
+  });
+
+  it('the weekly cap counts every refit start, not one per location and not a refusal, and Monday’s pass counts them too', async () => {
+    const { locations } = server.ctx.stores;
+    const now = server.clock.now();
+    const p = await place();
+    // Three refits on three days this past week at one location, and a refusal at another.
+    for (const daysAgo of [3, 2, 1]) expect(await locations.markRefitStarted(p.scope, p.locationId, new Date(now.getTime() - daysAgo * DAY), true)).toBe(true);
+    const q = await place();
+    expect(await locations.markRefitStarted(q.scope, q.locationId, now, false)).toBe(true);
+    expect(await countRefitStartsSince(server.connection, new Date(now.getTime() - 7 * DAY))).toBe(3);
+    // A cap of 4: the three refits leave room for one of Monday's two starts.
+    expect(await pass({ config: { weeklyForecastCap: 4 } })).toMatchObject({ started: 1, capped: 1 });
+    expect(jobs()).toHaveLength(1);
   });
 
   it('a mark whose lab input did not change is cleared, with no start', async () => {

@@ -1,8 +1,10 @@
 // D59 (openspec change auto-apply-agent-reads, design decisions 1, 3 and 4): automatic reads end to end. A file added
-// to Your data is queued `auto` for its adder once Townwise stored it; a sales export read into days, a calendar export,
-// a file whose box was unchecked, and any file while a switch is off are not. The reader skips a duplicate before
-// anything is reserved, the 21st automatic read of a day, and one that would leave $1 or less of the files month, while
-// a press still runs. The model is a scripted fake: no call leaves the test. Every file and figure is made up.
+// to Your data, or dropped on onboarding, with its box checked (`aiAuto: true` on complete) is queued `auto` for its adder
+// once Townwise stored it; a sales export read into days, a calendar export, a file whose box was unchecked or that sent
+// no box at all, a file turned off, and any file while a switch is off are not. The reader skips a duplicate before
+// anything is reserved, the 21st automatic read of a day (not counting a retry of itself), and one that would leave $1
+// or less of the files month, while a press still runs. The model is a scripted fake: no call leaves the test. Every
+// file and figure is made up.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -83,7 +85,7 @@ async function readHistory(): Promise<void> {
 }
 
 async function added(t: Team, name: string, bytes: Buffer, opts: { purpose?: 'history' | 'reference'; aiAuto?: boolean } = {}): Promise<string> {
-  const res = await uploadFile(server, t.locationId, t.member, name, bytes, { purpose: 'reference', ...opts });
+  const res = await uploadFile(server, t.locationId, t.member, name, bytes, { purpose: 'reference', aiAuto: true, ...opts });
   expect(res.status).toBe(200);
   const id = res.body.file?.id;
   if (id === undefined) throw new Error('no file');
@@ -146,11 +148,44 @@ describe('automatic reads are queued when a file is stored (D59)', () => {
     const t = await team();
     const id = await added(t, 'kept back.pdf', pdf('Kept back'), { aiAuto: false });
     expect(await aiOf(id)).toBeNull();
-    expect((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(id) }))?.aiAuto).toBe(false);
+    expect((await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(id) }))?.aiAuto).toBeUndefined();
     expect((await call(server, `/api/org/locations/${t.locationId}/data/f_${id}/ai`, { session: t.member, json: {} })).status).toBe(202);
     await read();
     expect(await aiOf(id)).toMatchObject({ status: 'done' });
     expect((await aiOf(id))?.auto).toBeUndefined();
+  });
+
+  it('an upload that sends no box (a chat attachment, an item’s edit, an older client) is never queued', async () => {
+    const t = await team();
+    const res = await uploadFile(server, t.locationId, t.member, 'attachment.pdf', pdf('Attached'), { purpose: 'reference' });
+    expect(res.status).toBe(200);
+    expect(await aiOf(String(res.body.file?.id))).toBeNull();
+    await read();
+    expect(requests).toHaveLength(0);
+  });
+
+  it('the upload’s create says whether TownwiseAI reads files here on its own, so the client knows to send its box', async () => {
+    const t = await team();
+    const open = (): Promise<Response> => call(server, `/api/org/locations/${t.locationId}/files`, {
+      session: t.member, json: { name: 'menu.pdf', sizeBytes: 10, purpose: 'reference' },
+    });
+    expect(await (await open()).json()).toMatchObject({ autoRead: true });
+    // The box's choice now goes on complete, not on create.
+    expect((await call(server, `/api/org/locations/${t.locationId}/files`, {
+      session: t.member, json: { name: 'menu.pdf', sizeBytes: 10, purpose: 'reference', aiAuto: false },
+    })).status).toBe(400);
+    expect((await call(server, '/api/org/agent-auto', { method: 'PATCH', session: t.admin, json: { on: false } })).status).toBe(200);
+    expect(await (await open()).json()).toMatchObject({ autoRead: false });
+  });
+
+  it('a file dropped on onboarding with its box checked is queued once the file reader keeps it', async () => {
+    const t = await team();
+    const id = await added(t, `${SENTINEL} banquet.pdf`, pdf('Holiday party Dec 12'), { purpose: 'history' });
+    expect(await aiOf(id)).toBeNull();
+    await readHistory();
+    const file = await server.connection.collection('tw_files').findOne({ _id: new Types.ObjectId(id) });
+    expect(file?.status).not.toBe('read');
+    expect(await aiOf(id)).toMatchObject({ status: 'queued', auto: true, requestedBy: t.member.userId });
   });
 
   it('nothing is queued while the organization’s switch is off, and a read queued before it was turned off is skipped', async () => {
@@ -192,6 +227,38 @@ describe('the reader bounds automatic reads (D59)', () => {
     expect(requests).toHaveLength(0);
     expect(await aiOf(twin)).toMatchObject({ status: 'skipped', reason: 'duplicate' });
     expect(await usage(t)).toBe(0);
+  });
+
+  it('skips a file turned off while its automatic read waited, before anything is reserved or sent', async () => {
+    const t = await team();
+    const off = await seeded(t, { disabledAt: server.clock.now(), disabledBy: t.member.userId, ai: autoAi(t) });
+    await read();
+    expect(requests).toHaveLength(0);
+    expect(await aiOf(off)).toMatchObject({ status: 'skipped', reason: 'turned_off' });
+    expect(await usage(t)).toBe(0);
+  });
+
+  it('a file turned off is never queued for an automatic read', async () => {
+    const t = await team();
+    const off = await seeded(t, { disabledAt: server.clock.now(), disabledBy: t.member.userId, aiAuto: true });
+    const at = server.clock.now();
+    const input = { by: t.member.userId, role: 'member' as const, byStaff: false, grantId: null, at };
+    expect(await server.ctx.stores.files.requestAutoRead(t.scope, t.locationId, off, input)).toBeNull();
+    const on = await seeded(t, { aiAuto: true });
+    expect(await server.ctx.stores.files.requestAutoRead(t.scope, t.locationId, on, input)).not.toBeNull();
+  });
+
+  it('a retry of the 20th automatic read of the day whose call gave no answer is read, not counted against itself', async () => {
+    const t = await team();
+    for (let i = 0; i < AUTO_READS_PER_DAY - 1; i += 1) await seeded(t, { ai: autoAi(t, { status: 'done', chargedAt: server.clock.now() }) });
+    const twentieth = await seeded(t, { ai: autoAi(t) });
+    answers = [{ kind: 'failed', errType: 'overloaded_error', status: 529 }];
+    await read();
+    expect(await aiOf(twentieth)).toMatchObject({ status: 'queued' });
+    await server.connection.collection('tw_files').updateOne({ _id: new Types.ObjectId(twentieth) }, { $set: { 'ai.notBefore': null } });
+    await read();
+    expect(await aiOf(twentieth)).toMatchObject({ status: 'done' });
+    expect(requests).toHaveLength(2);
   });
 
   it('reads 20 automatic files a day per organization and skips the 21st, while a press still runs', async () => {
