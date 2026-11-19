@@ -219,7 +219,7 @@ As built (task 3.5): `handlers/locations.ts` `researchAfterWrite`, after `create
 
 **Person deletion.** `deletePersonRecords` gains `researchRevisionModel(connection).updateMany({ 'by.userId': userId }, { $set: { 'by.userId': null } })` beside its neighbors, and `research.by` on `tw_orgs` as `agentAuto.by`; the revision schema allows a null `by.userId`. Runs record no person. Spec 10.7 lists both.
 
-**Suppression by staff.** A town row that is wrong for everyone is suppressed by staff with `api/scripts/research-suppress.ts <townKey> <eventId> <code>` (refuses without a staff id argument, writes an audit event `research.town_event_suppressed { townKey, eventId, code }` with the staff actor, and logs ids only). A suppressed row is left out of every read and of `known`, and a merge never clears `suppressed`. [CONFIRM: staff suppress a wrong shared town row for everyone with an ops script, not a route]
+**Suppression by staff.** A town row that is wrong for everyone is suppressed by staff with `api/scripts/research-suppress.ts <townKey> <eventId> <code>` (refuses without a staff id argument, writes an audit event `research.town_event_suppressed { townKey, eventId, code }` with the staff actor, and logs ids only). A suppressed row is left out of every read and of `known`, and a merge never clears `suppressed`. [CONFIRM: staff suppress a wrong shared town row for everyone with an ops script, not a route] As built: no task built the script, so it does not exist yet; the reads, `known` and the merge already honor `suppressed`, and until the script lands a wrong shared row stays until a later run stops finding it, while a member can hide it at their location (api/README.md and spec 13.3 say so).
 
 ### 10. Competitors
 
