@@ -136,4 +136,16 @@ describe('followUpsFor', () => {
     })]);
     expect(JSON.stringify(followUpsFor([named, other], [event(DEC_12)], GUARDS))).not.toMatch(/Holiday party|Wine dinner/u);
   });
+
+  it('a note edited into a guest-count mark (D67) gets no move and no removal: its open follow-up expires', () => {
+    const NOV_1: NoteDates = { startDate: '2026-11-01', endDate: '2026-11-01', startTime: null, endTime: null };
+    const mark = note('n1', NOV_1, NOV_1, { kind: 'other', effect: 'wrong_guest_count', expectedGuests: null, detail: null });
+    const moved = { ...NOV_1, startDate: '2026-12-12', endDate: '2026-12-12' };
+    expect(followUpsFor([mark], [event(moved)], GUARDS)).toEqual({ follows: [], expire: ['n1'] });
+    expect(followUpsFor([mark], [], GUARDS)).toEqual({ follows: [], expire: ['n1'] });
+    // Even a stored mark on a later day (never valid through the notes routes) is skipped.
+    const allDay: NoteDates = { ...DEC_5, startTime: null, endTime: null };
+    const ahead = note('n2', allDay, allDay, { kind: 'other', effect: 'wrong_guest_count', expectedGuests: null, detail: null });
+    expect(followUpsFor([ahead], [], GUARDS)).toEqual({ follows: [], expire: ['n2'] });
+  });
 });

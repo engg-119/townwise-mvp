@@ -100,7 +100,7 @@ function noteSchema(): Schema<NoteFields> {
     startDate: { type: String, required: true },
     endDate: { type: String, required: true },
     weekdays: { type: [Number], default: null },
-    effect: { type: String, required: true, enum: ['closed', 'more_guests', 'fewer_guests', 'unknown'] },
+    effect: { type: String, required: true, enum: ['closed', 'more_guests', 'fewer_guests', 'unknown', 'wrong_guest_count'] },
     expectedGuests: { type: Number, default: null },
     detail: { type: String, default: null, maxlength: 280 },
     // 120 code points, which a String's maxlength (UTF-16 units) cannot count.

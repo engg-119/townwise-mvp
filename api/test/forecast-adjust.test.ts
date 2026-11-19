@@ -5,7 +5,7 @@
 // note reasons come at most six, the ones that changed the day first. Synthetic notes.
 import { describe, expect, it } from 'vitest';
 
-import { adjustDay, flagsAfterData, MAX_NOTE_REASONS, MAX_RULE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
+import { adjustDay, flagsAfterData, ownerBeatsAgent, MAX_NOTE_REASONS, MAX_RULE_REASONS, orderedReasons, type AdjustedNote, type AdjustedRule, type ModelDay, type ScheduledRule } from '../src/forecasts/adjust.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { NoteRecord } from '../src/stores/notes.ts';
 
@@ -362,5 +362,18 @@ describe('owner beats agent (D59)', () => {
 
   it('a past day keeps the model’s numbers, and every note there is past_day, TownwiseAI’s included', () => {
     expect(adjustDay('2026-05-30', TODAY, OPEN, WEEKDAY, [agent(), party(40)]).notes.map((entry) => entry.outcome)).toEqual(['past_day', 'past_day']);
+  });
+
+  it('a person’s guest-count mark (D67) decides nothing: TownwiseAI’s note beside it is kept, and on a past day both are past_day', () => {
+    const mark = note({ kind: 'other', effect: 'wrong_guest_count', expectedGuests: null, startDate: '2026-05-30', endDate: '2026-05-30' });
+    const theirs = agent({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40, startDate: '2026-05-30', endDate: '2026-05-30' });
+    expect(ownerBeatsAgent([mark, theirs])).toEqual({ kept: [mark, theirs], overridden: [] });
+    expect(adjustDay('2026-05-30', TODAY, OPEN, WEEKDAY, [mark, theirs])).toEqual({
+      ...OPEN, noteGuests: 0, rules: [], notes: [{ note: mark, outcome: 'past_day' }, { note: theirs, outcome: 'past_day' }],
+    });
+    // Nor does it set aside a rule's closure.
+    const closedMondays = rule({ kind: 'closure', effect: 'closed', expectedGuests: null });
+    expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [{ ...mark, startDate: DAY, endDate: DAY }], [closedMondays]))
+      .toMatchObject({ status: 'closed', rules: [{ outcome: 'closed' }] });
   });
 });
