@@ -72,3 +72,13 @@ test('the Calendars group lists the locationâ€™s calendars, and a tap opens oneâ
   await fireEvent.press(link);
   await waitFor(() => { expect(router.getPathname()).toBe('/locations/l1/data/c_fedcba9876543210fedcba98'); });
 });
+
+// D60: with no calendar the group still shows, and on native its import is the line pointing to the web.
+test('with no calendar the Calendars group says so, and points to the web for importing a calendar file', async () => {
+  const { api, fake } = setup();
+  await renderApp('/locations/l1/data', api);
+  expect(await screen.findByText('No calendars yet.')).toBeTruthy();
+  expect(screen.getByText('To add events from your own calendar file, open Townwise on the web.')).toBeTruthy();
+  expect(screen.queryByRole('button', { name: 'Import a calendar file' })).toBeNull();
+  expect(fake.calendarAdds).toEqual([]);
+});

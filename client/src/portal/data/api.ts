@@ -102,8 +102,19 @@ export const dataItemSchema = z.object({
   ai: aiReadSchema.nullable(),
   /** On an upload or a summary item a TownwiseAI read made: the ref of the item it was read from. */
   fromAiRead: z.string().nullable(),
+  /**
+   * D60: on one item's page only (absent on the list's rows), what importing its stored file as a calendar did: added
+   * (its calendar's id, label and event count), removed since, or refused (the code, read as a string, and whether Try
+   * again may mend it); null for any other item.
+   */
+  calendar: z.discriminatedUnion('status', [
+    z.object({ status: z.literal('added'), calendarId: z.string(), label: z.string(), eventCount: z.number() }),
+    z.object({ status: z.literal('removed') }),
+    z.object({ status: z.literal('refused'), reason: z.string(), retry: z.boolean() }),
+  ]).nullable().optional(),
 });
 export type DataItem = z.infer<typeof dataItemSchema>;
+export type DataItemCalendar = NonNullable<DataItem['calendar']>;
 
 const listSchema = z.object({ items: z.array(dataItemSchema), next: z.string().nullable() });
 const itemSchema = z.object({ item: dataItemSchema });
@@ -175,6 +186,16 @@ export async function addText(api: ApiClient, locationId: string, input: { title
  */
 export async function readWithAi(api: ApiClient, locationId: string, ref: string): Promise<DataItem> {
   const body = await api.json(`${itemPath(locationId, ref)}/ai`, itemSchema, { method: 'POST', body: {} });
+  return body.item;
+}
+
+/**
+ * D60: imports a calendar file kept in Your data again, after a refusal Try again may mend (the location had 5
+ * calendars, or its original couldn't be read); answers the item with its `calendar` as it is after, refused again
+ * included. 400 invalid_request for an item that is no calendar file.
+ */
+export async function retryCalendar(api: ApiClient, locationId: string, ref: string): Promise<DataItem> {
+  const body = await api.json(`${itemPath(locationId, ref)}/calendar`, itemSchema, { method: 'POST', body: {} });
   return body.item;
 }
 

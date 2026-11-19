@@ -529,11 +529,75 @@ test('the Calendars group lists the location’s calendars above the list, each 
   expect(uploads.compareDocumentPosition(await table()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
 });
 
-test('no calendars, no group; with stored files off the group still shows', async () => {
+test('no calendars: the group still shows, saying so, with Import a calendar file (D60); with stored files off it still shows', async () => {
   setup(meOf(ACCESS.member));
   await table();
   expect(screen.queryByRole('list', { name: 'Calendars' })).toBeNull();
+  expect(screen.getByRole('heading', { name: 'Calendars' })).toBeTruthy();
+  expect(screen.getByText('No calendars yet.')).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Import a calendar file' })).toBeTruthy();
   cleanup();
   setup(meOf(ACCESS.member), ITEMS, { files: 'off', calendars: [KITCHEN] });
   expect(await screen.findByRole('list', { name: 'Calendars' })).toBeTruthy();
+  expect(screen.getByRole('button', { name: 'Import a calendar file' })).toBeTruthy();
+});
+
+/** The Calendars group's file input (Add a file has its own), and a chosen file whose text is `text` (jsdom's Blob lacks it). */
+function chooseCalendarFile(name: string, text: string, size?: number): void {
+  const input = [...document.querySelectorAll<HTMLInputElement>('input[type="file"]')].find((each) => each.accept.includes('.ics'));
+  if (input === undefined) throw new Error('no calendar file input');
+  const file = new File(['x'], name, { type: 'text/calendar' });
+  Object.defineProperty(file, 'text', { value: () => Promise.resolve(text) });
+  if (size !== undefined) Object.defineProperty(file, 'size', { value: size });
+  fireEvent.change(input, { target: { files: [file] } });
+}
+
+test('Import a calendar file posts the file as Your calendars does, says what it did, and the list reads again (D60)', async () => {
+  const fake = setup(meOf(ACCESS.member));
+  await table();
+  const button = screen.getByRole('button', { name: 'Import a calendar file' });
+  // Described by the weekly reading's words it sends `titlesNotice` for.
+  const help = screen.getByText(/^Once a week TownwiseAI reads the titles/);
+  expect(button.getAttribute('aria-describedby')).toBe(help.id);
+  chooseCalendarFile('Front desk.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n');
+  expect(await screen.findByText('Added Front desk: 2 events.')).toBeTruthy();
+  expect(fake.calendarAdds).toEqual([{ kind: 'file', label: 'Front desk', ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n', titlesNotice: 1 }]);
+  const group = await screen.findByRole('list', { name: 'Calendars' });
+  expect(within(group).getByRole('link', { name: /^Front desk\./ }).getAttribute('href')).toBe('/locations/l1/data/c_c1');
+});
+
+test('a refused import says why in the group and adds nothing; a file over 1 MB is refused unread (D60)', async () => {
+  const fake = setup(meOf(ACCESS.member));
+  await table();
+  fake.answers['POST owner-calendars'] = () => refusal(409, 'calendar_limit');
+  chooseCalendarFile('Late.ics', 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n');
+  expect(await screen.findByText('This location has 5 calendars, the most it can hold. Remove one to add another.')).toBeTruthy();
+  chooseCalendarFile('Big.ics', '', 1024 * 1024 + 1);
+  expect(await screen.findByText('This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.')).toBeTruthy();
+  expect(fake.calendarAdds).toHaveLength(1);
+  expect(screen.queryByRole('list', { name: 'Calendars' })).toBeNull();
+});
+
+test('under view-as Import a calendar file stays in place, disabled, described by the read-only line (D60)', async () => {
+  const fake = setup(viewAsMe(ACCESS.member));
+  await table();
+  const button = screen.getByRole('button', { name: 'Import a calendar file' });
+  expect(button.getAttribute('aria-disabled') === 'true' || (button as HTMLButtonElement).disabled).toBe(true);
+  expect((button.getAttribute('aria-describedby') ?? '').split(' ')).toContain('data-ro');
+  expect(fake.calendarAdds).toEqual([]);
+});
+
+test('a fresh read of the list (a file stored, text saved) reads the Calendars group again, which may now list a calendar (D60)', async () => {
+  const fake = setup(meOf(ACCESS.member));
+  await table();
+  expect(screen.getByText('No calendars yet.')).toBeTruthy();
+  // The API imported a calendar file meanwhile; saving pasted text reads the list fresh, as a stored file does.
+  fake.calendars = [KITCHEN];
+  fireEvent.click(screen.getByRole('button', { name: 'Paste text' }));
+  fireEvent.change(await screen.findByLabelText('Title'), { target: { value: 'Winter hours' } });
+  fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Closed Mondays.' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+  const group = await screen.findByRole('list', { name: 'Calendars' });
+  expect(within(group).getByRole('link', { name: 'Kitchen. File, 12 events' })).toBeTruthy();
+  expect(screen.queryByText('No calendars yet.')).toBeNull();
 });

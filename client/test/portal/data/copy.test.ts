@@ -4,6 +4,7 @@ import { DATA_STATES, DATA_VIAS } from '../../../src/portal/data/api';
 import { rowAiLine, settledLine } from '../../../src/portal/data/aiCopy';
 import * as copy from '../../../src/portal/data/copy';
 import { bookingsStateLine, emptyFilterLine, sortedLines } from '../../../src/portal/data/item/bookingWords';
+import { calendarImportLine } from '../../../src/portal/data/item/copy';
 import { dailyTotalsOf, itemOf } from './fakes';
 
 // Every state and way an item arrived has words, and each refusal an action can get says what to do.
@@ -88,4 +89,16 @@ test('no line carries an em dash or an exclamation mark', () => {
   for (const line of [...strings(copy.DATA), ...strings(copy.VIA_LINE), ...strings(copy.COLUMNS)]) {
     expect(line).not.toMatch(/[—!]/);
   }
+});
+
+test('D60: every calendar import outcome has words, a code from later included, with no dash or exclamation mark', () => {
+  const lines = [
+    calendarImportLine({ status: 'added', calendarId: 'c1', label: 'Front desk', eventCount: 1_200 }),
+    calendarImportLine({ status: 'removed' }),
+    ...['calendar_limit', 'too_large', 'not_calendar', 'unavailable'].map((reason) => calendarImportLine({ status: 'refused', reason, retry: false })),
+  ];
+  expect(lines[0]).toBe('Added to your calendars as Front desk: 1,200 events.');
+  expect(new Set(lines).size).toBe(lines.length);
+  for (const line of lines) expect(line).not.toMatch(/[—!]/);
+  expect(calendarImportLine({ status: 'refused', reason: 'a_code_from_later', retry: false })).toBe('Not added to your calendars.');
 });

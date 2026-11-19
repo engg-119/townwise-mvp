@@ -436,6 +436,82 @@ describe('what shows nothing says why', () => {
     expect(screen.queryByRole('link', { name: 'Open Your calendars on the Calendar' })).toBeNull();
   });
 
+  test('a calendar file imported as a calendar says so with its events and opens the calendar’s page (D60)', async () => {
+    const ref = refOf('f', 40);
+    setup([storedFile(ref, {
+      kind: 'other', name: 'Bookings.ics', calendar: { status: 'added', calendarId: '0123456789abcdef01234567', label: 'Bookings', eventCount: 12 },
+    })], ref);
+    expect(await screen.findByText('Added to your calendars as Bookings: 12 events.')).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open the calendar' }).getAttribute('href')).toBe('/locations/l1/data/c_0123456789abcdef01234567');
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    cleanup();
+    // One event, and a calendar removed since: the file stays, and nothing offers to add it again.
+    const one = refOf('f', 41);
+    setup([storedFile(one, { kind: 'other', name: 'One.ics', calendar: { status: 'added', calendarId: 'c1', label: 'One', eventCount: 1 } })], one);
+    expect(await screen.findByText('Added to your calendars as One: 1 event.')).toBeTruthy();
+    cleanup();
+    const gone = refOf('f', 42);
+    setup([storedFile(gone, { kind: 'other', name: 'Gone.ics', calendar: { status: 'removed' } })], gone);
+    expect(await screen.findByText('Added to your calendars once; that calendar was removed since. Removing a calendar keeps this file, and Townwise doesn’t add it again.')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open the calendar' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    cleanup();
+    // Any other file says nothing of calendars.
+    const plain = refOf('f', 43);
+    setup([storedFile(plain, { kind: 'other', name: 'Notes.txt', calendar: null })], plain);
+    expect(await screen.findByText('Notes.txt')).toBeTruthy();
+    expect(screen.queryByText(/your calendars/)).toBeNull();
+  });
+
+  test('a refused calendar file says why; Try again shows only for a fixable cause and shows what the retry answered (D60)', async () => {
+    const ref = refOf('f', 44);
+    setup([storedFile(ref, { kind: 'other', name: 'Broken.ics', calendar: { status: 'refused', reason: 'not_calendar', retry: false } })], ref);
+    expect(await screen.findByText(
+      'Not added to your calendars: Townwise can’t read this file as a calendar. Add an .ics file, or a CSV with event_id, title, start_at and end_at columns.',
+    )).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Try again' })).toBeNull();
+    cleanup();
+    const big = refOf('f', 45);
+    setup([storedFile(big, { kind: 'other', name: 'Big.ics', calendar: { status: 'refused', reason: 'too_large', retry: false } })], big);
+    expect(await screen.findByText('Not added to your calendars: this file is over 1 MB. Export a shorter range of your calendar, then add that file.')).toBeTruthy();
+    cleanup();
+    const full = refOf('f', 46);
+    const { fake } = setup([storedFile(full, { kind: 'other', name: 'Late.ics', calendar: { status: 'refused', reason: 'calendar_limit', retry: true } })], full);
+    expect(await screen.findByText('Not added to your calendars: this location already has 5 calendars. Remove one on the Calendar, then try again.')).toBeTruthy();
+    const added = storedFile(full, { kind: 'other', name: 'Late.ics', calendar: { status: 'added', calendarId: 'c9', label: 'Late', eventCount: 3 } });
+    // As the API does, the retry's outcome stays: the page's read after it finds the item added.
+    fake.answers['POST calendar'] = () => {
+      fake.items = [added];
+      return { item: added };
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Added to your calendars as Late: 3 events.')).toBeTruthy();
+    await waitFor(() => { expect(fake.paths.filter((path) => path.endsWith(`/data/${full}`)).length).toBeGreaterThan(1); });
+    expect(screen.getByText('Added to your calendars as Late: 3 events.')).toBeTruthy();
+    expect(screen.queryByText(/^Not added to your calendars/)).toBeNull();
+    expect(fake.calendarRetries).toEqual([full]);
+    // A failed request says why and keeps the line.
+    cleanup();
+    const failing = setup([storedFile(full, { kind: 'other', name: 'Late.ics', calendar: { status: 'refused', reason: 'unavailable', retry: true } })], full);
+    failing.fake.answers['POST calendar'] = () => refusal(503, 'unavailable');
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }));
+    expect(await screen.findByText('Townwise isn’t responding. Try again in a minute.')).toBeTruthy();
+    expect(screen.getByText('Not added to your calendars: Townwise couldn’t read this file just now.')).toBeTruthy();
+  });
+
+  test('under view-as Try again stays in place, disabled, described by the read-only line (D60)', async () => {
+    const ref = refOf('f', 47);
+    const { fake } = setup(
+      [storedFile(ref, { kind: 'other', name: null, calendar: { status: 'refused', reason: 'calendar_limit', retry: true } })], ref, { me: viewAsMe(ACCESS.admin) },
+    );
+    const button = await screen.findByRole('button', { name: 'Try again' });
+    expect(button.getAttribute('aria-disabled') === 'true' || (button as HTMLButtonElement).disabled).toBe(true);
+    const described = (button.getAttribute('aria-describedby') ?? '').split(' ');
+    expect(described).toContain('item-ro');
+    fireEvent.click(button);
+    expect(fake.calendarRetries).toEqual([]);
+  });
+
   test('an item that is gone says it may have been deleted or replaced by an edit, with the way back', async () => {
     setup([], refOf('f', 36));
     expect(await screen.findByText('This item isn’t here anymore. It may have been deleted, or replaced when someone saved an edit of it.')).toBeTruthy();
