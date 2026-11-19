@@ -249,9 +249,11 @@ async function undoRow(
     // pass clears the mark when nothing it reads changed.
     if (change.action === 'rule.add' && change.startDate !== null) {
       // A rule marks from its start, as a person's rule does (handlers/rules.ts).
-      await wantRefitFor(ctx, scope, location.id, { startDate: change.startDate, endDate: change.startDate });
+      await wantRefitFor(ctx, scope, location.id, { startDate: change.startDate, endDate: change.startDate }, 'person_change');
     } else if (change.startDate !== null && change.endDate !== null) {
-      await wantRefitFor(ctx, scope, location.id, change.action === 'sales_days.add' ? 'always' : { startDate: change.startDate, endDate: change.endDate });
+      await wantRefitFor(
+        ctx, scope, location.id, change.action === 'sales_days.add' ? 'always' : { startDate: change.startDate, endDate: change.endDate }, 'person_change',
+      );
     }
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, changeId: change.id, action: change.action, removed }, 'townwise.agent_change_undone');
   }

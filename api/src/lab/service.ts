@@ -20,6 +20,7 @@ import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { ForecastRunRecord } from '../stores/forecasts.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
+import type { Cause } from './causes.ts';
 import { currentChampion, decideGate, GATE, jumpSums, streakOf, type CurrentRun } from './gate.ts';
 import { guestSpan, recordedBacktest } from './input.ts';
 import { checkLabResult, type LabSuccess } from './result.ts';
@@ -77,6 +78,8 @@ export interface StartRequest {
   readonly scope: OrgScope;
   readonly location: LocationRecord;
   readonly requester: StartRequester;
+  /** What started a system calibration (D65, lab/causes.ts); a person's start passes none. */
+  readonly causes?: readonly Cause[];
   readonly regimeStart: string | null;
   /** The town's local date. */
   readonly today: string;
@@ -244,7 +247,7 @@ export async function launch(
   const now = ctx.now();
   const queued = await ctx.stores.calibrations.insertQueued(scope, {
     id: req.id, locationId: location.id, regimeStart: req.regimeStart, championRunId: champion?.id ?? null,
-    requestedBy: { userId: req.requester.userId, role: req.requester.role, via: req.requester.via },
+    requestedBy: { userId: req.requester.userId, role: req.requester.role, via: req.requester.via }, causes: req.causes,
     tokenExpiresAt: new Date(now.getTime() + CALIBRATION_TIMEOUT_MS), now,
   });
   if (queued === null) return { ok: false, code: 'in_progress' };

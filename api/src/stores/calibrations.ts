@@ -7,11 +7,13 @@
 // fetch, which the result is posted with, and `finish` removes it, so a finished calibration takes no result
 // (cross-tenant.ts findLabCallback). Every transition is a compare-and-set (no transactions), so a retried result
 // completes the work once. Results are the scorecard as a JSON string (a chat-messages precedent), never read as a
-// figure by anything that logs. Nothing here logs.
+// figure by anything that logs. A system calibration stores what started it (`causes`, D65); a person's stores none.
+// Nothing here logs.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
+import { CAUSES, type Cause } from '../lab/causes.ts';
 
 export const CALIBRATIONS_COLLECTION = 'tw_calibrations';
 
@@ -43,6 +45,11 @@ interface CalibrationFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
   requestedBy: CalibrationRequester;
+  /**
+   * What started a system calibration (D65, lab/causes.ts): `['weekly']` for the weekly path, the refit mark's causes for
+   * a D59 refit. Absent on a person's, on a refit of a mark from before D65, and on every one from before D65; never empty.
+   */
+  causes?: Cause[];
   regimeStart: string | null;
   status: CalibrationStatus;
   championRunId: string | null;
@@ -87,6 +94,8 @@ function calibrationSchema(): Schema<CalibrationFields> {
     orgId: { type: Schema.Types.ObjectId, required: true },
     locationId: { type: Schema.Types.ObjectId, required: true },
     requestedBy: { type: requestedBy, required: true },
+    // `default: undefined`: with minimize false a plain array path would store [] on every record.
+    causes: { type: [String], enum: CAUSES, default: undefined },
     regimeStart: { type: String, default: null },
     status: { type: String, required: true, enum: CALIBRATION_STATUSES },
     championRunId: { type: String, default: null },
@@ -125,6 +134,8 @@ export interface CalibrationRecord {
   readonly id: string;
   readonly locationId: string;
   readonly requestedBy: CalibrationRequester;
+  /** What started a system calibration (D65); `[]` when none is stored (a person's, or one from before D65). */
+  readonly causes: readonly Cause[];
   readonly regimeStart: string | null;
   readonly status: CalibrationStatus;
   readonly championRunId: string | null;
@@ -150,9 +161,12 @@ export type CalibrationOutcome = { status: 'succeeded' } | { status: 'failed'; f
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface CalibrationStore {
-  /** Inserts a queued calibration holding the location's live slot; null when the slot is taken. */
+  /**
+   * Inserts a queued calibration holding the location's live slot; null when the slot is taken. `causes` (D65) are stored
+   * only when non-empty: an empty or absent list stores no key.
+   */
   insertQueued(scope: OrgScope, input: {
-    id: string; locationId: string; requestedBy: CalibrationRequester; regimeStart: string | null;
+    id: string; locationId: string; requestedBy: CalibrationRequester; causes?: readonly Cause[] | undefined; regimeStart: string | null;
     championRunId: string | null; tokenExpiresAt: Date; now: Date;
   }): Promise<CalibrationRecord | null>;
   find(scope: OrgScope, id: string): Promise<CalibrationRecord | null>;
@@ -204,6 +218,7 @@ function toCalibration(doc: CalibrationDoc): CalibrationRecord {
     id: doc._id.toHexString(),
     locationId: doc.locationId.toHexString(),
     requestedBy: { userId: doc.requestedBy.userId, role: doc.requestedBy.role, via: doc.requestedBy.via },
+    causes: doc.causes ?? [],
     regimeStart: doc.regimeStart,
     status: doc.status,
     championRunId: doc.championRunId,
@@ -237,6 +252,7 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
           ...org(scope),
           locationId: new Types.ObjectId(input.locationId),
           requestedBy: { userId: input.requestedBy.userId, role: input.requestedBy.role, via: input.requestedBy.via },
+          ...(input.causes !== undefined && input.causes.length > 0 ? { causes: [...input.causes] } : {}),
           regimeStart: input.regimeStart,
           status: 'queued',
           championRunId: input.championRunId,

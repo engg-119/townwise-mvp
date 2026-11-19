@@ -177,6 +177,9 @@ describe('the write (spec 11.4)', () => {
       dayCount: 3, guestsDayCount: 3, netSalesDayCount: 2, firstDate: '2026-04-01', lastDate: '2026-04-03', missingDays: 0,
     });
     expect(firstBody.calibration).toEqual({ state: 'not_calibrated', dayCount: 3, firstDate: '2026-04-01', lastDate: '2026-04-03' });
+    // D59: the upload marks the location for a refit; D65: with its cause.
+    expect((await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) }))?.refit)
+      .toEqual({ wantedAt: server.clock.now(), causes: ['sales'] });
 
     const second = await upload(locationId, { days: [day('2026-04-02', null, 2500), day('2026-04-03', 35, 3500), day('2026-04-05', 50, 5000)] });
     const secondBody = await second.json() as UploadResponse;

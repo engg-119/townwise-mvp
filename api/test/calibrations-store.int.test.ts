@@ -12,8 +12,9 @@ import { scopeForLabCallback, scopeForNewOrg, type OrgScope } from '../src/acces
 import { summaryOf } from '../src/audit.ts';
 import { checkLabRunFile, runFileSha256, type LabRunFile } from '../src/forecasts/file.ts';
 import { runView } from '../src/forecasts/reader.ts';
+import type { Cause } from '../src/lab/causes.ts';
 import { createAuditEventStore, type AuditEventInput } from '../src/stores/audit-events.ts';
-import { createCalibrationStore, type CalibrationStore } from '../src/stores/calibrations.ts';
+import { createCalibrationStore, type CalibrationRequester, type CalibrationStore } from '../src/stores/calibrations.ts';
 import { deletePersonRecords, findLabCallback } from '../src/stores/cross-tenant.ts';
 import { createForecastStore } from '../src/stores/forecasts.ts';
 import { createOrgStore } from '../src/stores/orgs.ts';
@@ -23,6 +24,7 @@ import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.t
 const FIXTURE = JSON.parse(readFileSync(new URL('fixtures/forecast-run.json', import.meta.url), 'utf8')) as Record<string, unknown>;
 const STAFF = { kind: 'staff', actor: { userId: 'staff-0000', email: 'staff@example.test', sessionId: 'session-0000', verifiedUntil: '' } } as const;
 const ADMIN = { userId: 'admin-0001', role: 'org_admin', via: 'chat' } as const;
+const SYSTEM = { userId: null, role: 'system', via: 'scheduled' } as const;
 
 let server: TownwiseTestServer;
 let calibrations: CalibrationStore;
@@ -84,6 +86,42 @@ describe('calibrations', () => {
     });
     expect(record?.requestedBy).toEqual({ userId: null, role: 'system', via: 'scheduled' });
     expect((await calibrations.find(t.scope, record?.id ?? ''))?.requestedBy).toEqual({ userId: null, role: 'system', via: 'scheduled' });
+  });
+
+  // D65 (openspec change forecast-training-status, design decision 5): what started a system calibration.
+  it('stores a system start’s causes; a person’s start and an empty list store no causes key; an unknown cause throws', async () => {
+    const t = await tenant();
+    const insert = (causes: readonly Cause[] | undefined, requestedBy: CalibrationRequester = SYSTEM) => {
+      const now = server.clock.now();
+      return calibrations.insertQueued(t.scope, {
+        id: new Types.ObjectId().toHexString(), locationId: t.locationId, requestedBy, causes, regimeStart: null, championRunId: null,
+        tokenExpiresAt: new Date(now.getTime() + 20 * 60_000), now,
+      });
+    };
+    const raw = (id: string) => server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) });
+    const done = (id: string) => calibrations.finish(t.scope, id, { status: 'failed', failure: 'job_failed' }, server.clock.now());
+
+    const system = await insert(['sales', 'person_change']);
+    expect(system?.causes).toEqual(['sales', 'person_change']);
+    expect((await calibrations.find(t.scope, system?.id ?? ''))?.causes).toEqual(['sales', 'person_change']);
+    expect((await raw(system?.id ?? ''))?.causes).toEqual(['sales', 'person_change']);
+    await done(system?.id ?? '');
+
+    // A person's start passes none (lab/service.ts): no key despite minimize false, and it reads [].
+    const person = await queued(t);
+    expect(await raw(person.id)).not.toHaveProperty('causes');
+    expect(person.causes).toEqual([]);
+    await done(person.id);
+
+    // An empty list is never refused and stores no key either (a refit of a mark from before D65).
+    const empty = await insert([]);
+    expect(empty).not.toBeNull();
+    expect(await raw(empty?.id ?? '')).not.toHaveProperty('causes');
+    expect((await calibrations.find(t.scope, empty?.id ?? ''))?.causes).toEqual([]);
+    await done(empty?.id ?? '');
+
+    await expect(insert(['bogus' as Cause])).rejects.toThrow();
+    expect(await calibrations.live(t.scope, t.locationId)).toBeNull();
   });
 
   it('insertQueued stores no token: the result token’s hash arrives with the input fetch', async () => {

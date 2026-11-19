@@ -49,6 +49,8 @@ describe('refit wanted (D59)', () => {
     const res = await note(p, '2026-05-30');
     expect(res.status).toBe(201);
     expect(await wantedAt(p)).toEqual(server.clock.now());
+    // D65: a person's note names its cause on the mark.
+    expect((await server.ctx.stores.locations.refitState(p.scope, p.locationId)).causes).toEqual(['person_change']);
     const { note: written } = await res.json() as { note: { id: string } };
     server.clock.advance(MINUTE);
     // Moved to a later day: it covered a training day before, so the edit still wants a refit.
@@ -114,19 +116,47 @@ describe('refit wanted (D59)', () => {
     const { locations } = server.ctx.stores;
     const first = new Date('2026-06-01T12:00:00.000Z');
     const later = new Date('2026-06-01T12:05:00.000Z');
-    expect(await locations.wantRefit(p.scope, p.locationId, later)).toBe(true);
-    expect(await locations.wantRefit(p.scope, p.locationId, first)).toBe(true);
+    expect(await locations.wantRefit(p.scope, p.locationId, later, 'sales')).toBe(true);
+    expect(await locations.wantRefit(p.scope, p.locationId, first, 'sales')).toBe(true);
     expect((await locations.refitState(p.scope, p.locationId)).wantedAt).toEqual(later);
     // A pass read `later`; a change lands at `newest` before its clear: the clear misses, and the mark stays.
     const newest = new Date('2026-06-01T12:06:00.000Z');
-    await locations.wantRefit(p.scope, p.locationId, newest);
+    await locations.wantRefit(p.scope, p.locationId, newest, 'sales');
     expect(await locations.clearRefitWanted(p.scope, p.locationId, later)).toBe(false);
     expect((await locations.refitState(p.scope, p.locationId)).wantedAt).toEqual(newest);
     expect(await locations.clearRefitWanted(p.scope, p.locationId, newest)).toBe(true);
-    expect(await locations.refitState(p.scope, p.locationId)).toEqual({ wantedAt: null, startedAt: null });
+    expect(await locations.refitState(p.scope, p.locationId)).toEqual({ wantedAt: null, startedAt: null, causes: [] });
     expect(await locations.markRefitStarted(p.scope, p.locationId, newest, true)).toBe(true);
     expect((await locations.refitState(p.scope, p.locationId)).startedAt).toEqual(newest);
     // Another organization's scope changes nothing.
-    expect(await locations.wantRefit({ orgId: new Types.ObjectId().toHexString() } as unknown as OrgScope, p.locationId, newest)).toBe(false);
+    expect(await locations.wantRefit({ orgId: new Types.ObjectId().toHexString() } as unknown as OrgScope, p.locationId, newest, 'sales')).toBe(false);
+  });
+  // D65 (openspec change forecast-training-status, design decision 5): the mark keeps what wanted it.
+  it('keeps every cause once, a clear removes them with the mark, and a cause landing after the read stays', async () => {
+    const p = await place();
+    const { locations } = server.ctx.stores;
+    const at = new Date('2026-06-01T12:00:00.000Z');
+    await locations.wantRefit(p.scope, p.locationId, at, 'sales');
+    await locations.wantRefit(p.scope, p.locationId, at, 'person_change');
+    await locations.wantRefit(p.scope, p.locationId, at, 'sales');
+    expect(await locations.refitState(p.scope, p.locationId)).toEqual({ wantedAt: at, startedAt: null, causes: ['sales', 'person_change'] });
+    expect(await locations.clearRefitWanted(p.scope, p.locationId, at)).toBe(true);
+    const raw = await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(p.locationId) });
+    expect(raw?.refit).toEqual({});
+    // A pass read `at`; TownwiseAI marks it after the read and before the clear: the clear misses, and both causes stay.
+    await locations.wantRefit(p.scope, p.locationId, at, 'sales');
+    const later = new Date('2026-06-01T12:01:00.000Z');
+    await locations.wantRefit(p.scope, p.locationId, later, 'townwise_ai');
+    expect(await locations.clearRefitWanted(p.scope, p.locationId, at)).toBe(false);
+    expect(await locations.refitState(p.scope, p.locationId)).toEqual({ wantedAt: later, startedAt: null, causes: ['sales', 'townwise_ai'] });
+  });
+
+  it('a mark set without causes, as before D65, stores no causes key and reads []', async () => {
+    const p = await place();
+    const at = new Date('2026-06-01T12:00:00.000Z');
+    await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(p.locationId) }, { $set: { 'refit.wantedAt': at } });
+    const raw = await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(p.locationId) });
+    expect(raw?.refit).toEqual({ wantedAt: at });
+    expect(await server.ctx.stores.locations.refitState(p.scope, p.locationId)).toEqual({ wantedAt: at, startedAt: null, causes: [] });
   });
 });

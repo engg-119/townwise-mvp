@@ -10,7 +10,7 @@ import { scorecardWith } from './helpers/lab-scorecard.ts';
 
 function record(fields: Partial<CalibrationRecord> = {}): CalibrationRecord {
   return {
-    id: 'c1', locationId: 'l1', requestedBy: { userId: 'admin-0001', role: 'org_admin', via: 'chat' }, regimeStart: null,
+    id: 'c1', locationId: 'l1', requestedBy: { userId: 'admin-0001', role: 'org_admin', via: 'chat' }, causes: [], regimeStart: null,
     status: 'succeeded', championRunId: null, dataThrough: '2026-11-15', termsThrough: null, inputSha256: null, dataSha256: null, imageDigest: null, codeVersion: null,
     runId: null, scorecardJson: null, gate: null, failure: null, chargedMicroUsd: 100_000,
     requestedAt: new Date('2026-11-23T08:10:00.000Z'), startedAt: null, finishedAt: null, ...fields,

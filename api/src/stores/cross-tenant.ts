@@ -20,6 +20,7 @@ import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { trusted, Types, type Connection } from 'mongoose';
 
 import type { Role } from '../access/resolve.ts';
+import type { Cause } from '../lab/causes.ts';
 import { accessRequestModel, type AccessRequestStatus } from './access-requests.ts';
 import { activityDayModel } from './activity-days.ts';
 import { agentChangeModel } from './agent-changes.ts';
@@ -797,13 +798,18 @@ export interface RefitCandidate {
   readonly wantedAt: Date;
 }
 
+/** D65: a refit candidate with what wanted it since the mark was last cleared (`[]` on a mark from before D65). */
+export interface RefitMark extends RefitCandidate {
+  readonly causes: readonly Cause[];
+}
+
 /**
  * D59 (openspec change auto-apply-agent-reads, design decision 12): the hourly pass's refit candidates, across
  * organizations: every location of an active organization whose forecasts are on (as weeklyCandidates) whose mark is
  * at least as old as `quietBefore` (15 quiet minutes) and which had no refit start after `startedBefore` (24 hours).
- * Ids and the mark only, oldest mark first; scoped by access/policy.ts's scopeForWeeklyRefresh.
+ * Ids and the mark with its causes (D65) only, oldest mark first; scoped by access/policy.ts's scopeForWeeklyRefresh.
  */
-export async function refitCandidates(connection: Connection, input: { quietBefore: Date; startedBefore: Date }): Promise<RefitCandidate[]> {
+export async function refitCandidates(connection: Connection, input: { quietBefore: Date; startedBefore: Date }): Promise<RefitMark[]> {
   const orgs = await orgModel(connection).find(
     { status: 'active', $or: [{ forecasts: trusted({ $exists: false }) }, { forecasts: null }, { 'forecasts.on': true }] },
     { _id: 1 },
@@ -815,7 +821,8 @@ export async function refitCandidates(connection: Connection, input: { quietBefo
   }, { _id: 1, orgId: 1, refit: 1 }).sort({ 'refit.wantedAt': 1, _id: 1 }).lean();
   return docs.flatMap((doc) => {
     const wantedAt = doc.refit?.wantedAt;
-    return wantedAt === undefined ? [] : [{ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString(), wantedAt }];
+    return wantedAt === undefined
+      ? [] : [{ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString(), wantedAt, causes: doc.refit?.causes ?? [] }];
   });
 }
 

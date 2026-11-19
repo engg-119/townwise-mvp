@@ -351,7 +351,9 @@ export async function applyChange(
   }
   const wantRefit = async (current: AgentChangeRecord): Promise<void> => {
     const dates = refitDates(candidate, current);
-    if (dates !== null) await wantRefitFor(ctx, scope, candidate.locationId, candidate.action === 'sales_days.add' ? 'always' : dates);
+    if (dates !== null) {
+      await wantRefitFor(ctx, scope, candidate.locationId, candidate.action === 'sales_days.add' ? 'always' : dates, 'townwise_ai');
+    }
   };
   if (row.status !== 'applying') {
     // A retry of this change: an earlier attempt may have stopped between marking it applied and marking the refit.
