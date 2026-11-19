@@ -5,7 +5,7 @@ import { createServer, connect, type AddressInfo, type Socket } from 'node:net';
 
 import { afterAll, beforeAll, expect, inject, it } from 'vitest';
 
-import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
+import { startTownwiseServer, testDatabase, testWorker, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
 
@@ -15,6 +15,33 @@ afterAll(async () => { await server.close(); });
 it('the test database deletes nothing by the wall clock: its TTL monitor is off', async () => {
   const reply = await server.connection.getClient().db('admin').command({ getParameter: 1, ttlMonitorEnabled: 1 });
   expect(reply.ttlMonitorEnabled).toBe(false);
+});
+
+// Integration files run side by side (vitest.config.ts), and a server drops its database and flushes its Valkey db at
+// start. Each worker has its own of both (helpers/server.ts testWorker), so a server starting in one file leaves the
+// data of a file running beside it alone. Valkey db 0 and the database `townwise-test-0` stand in for that neighbor:
+// no worker uses either.
+it('a server clears only its own worker\'s database and Valkey db, so files can run side by side', async () => {
+  const slot = testWorker();
+  expect(server.connection.name).toBe(`townwise-test-${String(slot)}`);
+  expect(testDatabase()).toBe(server.connection.name);
+  expect(server.redis.options.db).toBe(slot);
+  const otherDb = server.connection.getClient().db('townwise-test-0');
+  const otherRedis = server.redis.duplicate({ db: 0 });
+  try {
+    await otherDb.collection('neighbor').insertOne({ kept: true });
+    await otherRedis.set('neighbor', 'kept');
+    await server.redis.set('mine', 'cleared');
+    const next = await startTownwiseServer();
+    await next.close();
+    expect(await otherDb.collection('neighbor').countDocuments()).toBe(1);
+    expect(await otherRedis.get('neighbor')).toBe('kept');
+    expect(await server.redis.get('mine')).toBeNull();
+  } finally {
+    await otherDb.dropDatabase();
+    await otherRedis.del('neighbor');
+    otherRedis.disconnect();
+  }
 });
 
 // The laptop CI runner reaches the test Valkey through Docker Desktop's forwarded port (host.docker.internal), and at a
@@ -40,7 +67,7 @@ it('starts when Redis answers only after longer than three pings', async () => {
   await new Promise<void>((resolve) => { proxy.listen(0, '127.0.0.1', resolve); });
   try {
     const { port } = proxy.address() as AddressInfo;
-    const slow = await startTownwiseServer({ env: { REDIS_URL: `redis://127.0.0.1:${String(port)}` } });
+    const slow = await startTownwiseServer({ env: { REDIS_URL: `redis://127.0.0.1:${String(port)}/${String(testWorker())}` } });
     await slow.close();
     expect(performance.now()).toBeGreaterThan(until);
   } finally {
