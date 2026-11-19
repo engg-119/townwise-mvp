@@ -123,7 +123,7 @@ const files: ActivitySource = async ({ ctx, scope, locationId, userId }) => {
  * D59: the changes TownwiseAI saved on its own, newest first, but those still being applied; a `sales_days.add` change
  * carries its upload's id, so the merge leaves that upload's own item out.
  */
-const agentChanges: ActivitySource = async ({ ctx, scope, locationId, caller }) => {
+export const agentChangeSource: ActivitySource = async ({ ctx, scope, locationId, caller }) => {
   const { changes } = await ctx.stores.agentChanges.page(scope, locationId, { limit: CHANGES_READ });
   const shown = changes.filter((change) => change.status !== 'applying');
   const states = await targetStates(ctx, scope, locationId, shown);
@@ -136,7 +136,7 @@ const agentChanges: ActivitySource = async ({ ctx, scope, locationId, caller }) 
 };
 
 /** Append-only: each later source adds one entry. */
-export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answers, files, agentChanges];
+export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answers, files, agentChangeSource];
 
 /** The item as the route answers it: without the merge's upload link. */
 function published(item: SourceItem): ActivityItem {

@@ -57,6 +57,8 @@ interface Tenant {
   suggestionId: string;
   /** resumable-chat-turns: a turn record of the location's conversation, by its conversation's owner. */
   turnId: string;
+  /** D59: a change TownwiseAI applied at the location (its note), its why named after the organization. */
+  changeId: string;
 }
 
 /**
@@ -83,6 +85,8 @@ interface SetupTenant {
   suggestionId: string;
   /** resumable-chat-turns: a turn record of the location's conversation, by its conversation's owner. */
   turnId: string;
+  /** D59: a change TownwiseAI applied at the location (its note), its why named after the organization. */
+  changeId: string;
 }
 
 let a: Tenant;
@@ -121,6 +125,7 @@ async function tenant(name: string): Promise<Tenant> {
   await addOrderRecords(server, { orgId, locationId, conversationId });
   const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: member.session.userId });
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
+  const changeId = await addChangeRow(orgId, locationId, noteId, name);
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
@@ -128,7 +133,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
-    ruleId, calendarId, suggestionId, turnId,
+    ruleId, calendarId, suggestionId, turnId, changeId,
   };
 }
 
@@ -152,7 +157,23 @@ async function setupTenant(name: string, staffUserId: string): Promise<SetupTena
   const calendarId = await addOwnerCalendar(server, { orgId, locationId });
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
   const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: staffUserId });
-  return { orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId, suggestionId, turnId };
+  const changeId = await addChangeRow(orgId, locationId, noteId, name);
+  return {
+    orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId, suggestionId, turnId, changeId,
+  };
+}
+
+/** D59: a change TownwiseAI applied at the location: the location's note, still as it was. */
+async function addChangeRow(orgId: string, locationId: string, noteId: string, name: string): Promise<string> {
+  const _id = new Types.ObjectId();
+  const note = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(noteId) });
+  await server.connection.collection('tw_agent_changes').insertOne({
+    _id, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), sourceKind: 'file', sourceId: null, action: 'note.add',
+    targetId: new Types.ObjectId(noteId), dedupeKey: `${name} key`, confidence: 'high', why: `${name} private change why`, onBehalfOf: null,
+    status: 'applied', targetUpdatedAt: note?.updatedAt ?? server.clock.now(), startDate: '2026-05-03', endDate: '2026-05-03', noteKind: 'closure',
+    appliedAt: server.clock.now(), statusAt: server.clock.now(), statusBy: 'townwise_ai',
+  });
+  return _id.toHexString();
 }
 
 /** An open weekly suggestion of the location (spec 6.27), a closure on a day after the test clock's today. */
@@ -238,6 +259,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_welcomes',
     // U9, TownwiseAI's questions, and its weekly suggestions.
     'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
+    // D59: TownwiseAI's changes.
+    'tw_agent_changes',
     // Orders: edits, rules, cards, setups, item sales and counts.
     ...ORDER_COLLECTIONS,
     // Business rules (spec 6.24).
@@ -271,7 +294,7 @@ function bIds(): Record<string, string> {
   return {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
-    ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId, suggestionId: b.suggestionId, turnId: b.turnId,
+    ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId, suggestionId: b.suggestionId, turnId: b.turnId, changeId: b.changeId,
   };
 }
 
@@ -282,6 +305,7 @@ function bSecrets(): string[] {
     b.fileId, b.importId, b.uploadId, `${b.name} private item`, b.refFileId, `${b.name} private item.txt`, `${b.name} reference text`,
     b.ruleId, `${b.name} private rule`,
     b.calendarId, `${b.name} bookings`, `${b.name} private booking`, b.suggestionId, `${b.name} private why`, b.turnId,
+    b.changeId, `${b.name} private change why`,
   ];
 }
 
@@ -375,7 +399,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
   const bOwn: Record<string, string[]> = {
     memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
     fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`], ruleId: [b.ruleId],
-    calendarId: [b.calendarId], suggestionId: [b.suggestionId], turnId: [b.turnId],
+    calendarId: [b.calendarId], suggestionId: [b.suggestionId], turnId: [b.turnId], changeId: [b.changeId],
   };
   const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
   // Every other segment is the caller's own, so the request reaches the route: an empty one would match no route, and
@@ -404,7 +428,10 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
 
 /** The path ids of an organization's own records, and the ids no organization owns, for `route`. */
 function ownIds(
-  org: Pick<Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId' | 'suggestionId' | 'turnId'>,
+  org: Pick<
+    Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId' | 'suggestionId' | 'turnId'
+    | 'changeId'
+  >,
   route: TownwiseRoute,
 ): Record<string, string> {
   return {
@@ -416,7 +443,7 @@ function ownIds(
     ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
-    calendarId: org.calendarId, suggestionId: org.suggestionId, turnId: org.turnId,
+    calendarId: org.calendarId, suggestionId: org.suggestionId, turnId: org.turnId, changeId: org.changeId,
   };
 }
 
@@ -434,6 +461,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       // U3 stages 5 to 9.
       'org.files.entries', 'org.originals.remove', 'org.data.text',
       'org.agent.get', 'org.agent.answer',
+      // D59: the log of TownwiseAI's changes, and Undo of one.
+      'org.agent.changes', 'org.agent.change_undo',
       'org.people.get', 'org.estimates.about',
       // U13B.
       'org.forecast.get',
