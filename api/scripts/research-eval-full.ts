@@ -459,9 +459,14 @@ export function precisionSample(town: readonly PlannedInsert[], location: readon
 
 // ---- Fixtures --------------------------------------------------------------------------------------------------------
 
-function redactor(patterns: readonly string[]): (value: string) => string {
+/**
+ * Each `--redact` pattern replaced by "Redacted", and then, in any URL the redaction touched, every run of 4 or more
+ * digits replaced by 0: a listing's stable id (a review site's `-d422332-`) names the business as surely as its name.
+ */
+export function redactor(patterns: readonly string[]): (value: string) => string {
   const regexes = patterns.map((pattern) => new RegExp(pattern, 'gi'));
-  return (value) => regexes.reduce((out, regex) => out.replace(regex, REDACTED), value);
+  return (value) => regexes.reduce((out, regex) => out.replace(regex, REDACTED), value)
+    .replace(/https?:\/\/[^\s"'<>)\]]+/g, (url) => (url.includes(REDACTED) ? url.replace(/\d{4,}/g, '0') : url));
 }
 
 /**
@@ -558,7 +563,7 @@ export function expectationOf(outcome: ThreadOutcome): ResearchFixture['expected
 async function recordFixture(run: ThreadRun, context: { now: Date; today: string; window: ResearchWindow }, options: FullEvalOptions, deps: FullEvalDeps): Promise<void> {
   const redact = redactor(options.redact);
   const base = {
-    about: `D66 live eval recording (research-eval.ts --record), Hanover ${run.thread} thread, web fetch ${run.fetch ? 'on' : 'off'}, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.`,
+    about: `D66 live eval recording (research-eval.ts --record), Hanover ${run.thread} thread, web fetch ${run.fetch ? 'on' : 'off'}, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted, and the listing ids in URLs that named it. Public pages only.`,
     thread: run.thread, fetch: run.fetch, placesToAi: false as const, now: context.now.toISOString(), today: context.today,
     window: context.window, reservedMicroUsd: run.reservedMicroUsd, responses: stripForFixture(run.responses, redact),
   };

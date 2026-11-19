@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { expectationOf, replayFixture, scoreCurated, type ResearchFixture } from '../scripts/research-eval-full.ts';
+import { expectationOf, redactor, replayFixture, scoreCurated, type ResearchFixture } from '../scripts/research-eval-full.ts';
 import type { Finding } from '../src/research/verify.ts';
 import { evalRefusal, parseEvalArgs, runResearchEval, type EvalDeps } from '../scripts/research-eval.ts';
 import { cited, citedQuotes, message, messagesOf, scriptedModel, text, webResults, webSearch } from './helpers/chat-model.ts';
@@ -205,5 +205,15 @@ describe('research-eval scoreCurated', () => {
   it('finds a term row only by a school finding on its first or last day', () => {
     expect(scoreCurated([term], [{ thread: 'sports', events: [finding('sports', '2026-11-25')], entities: [] }])[0]?.foundBy).toEqual([]);
     expect(scoreCurated([term], [{ thread: 'schools', events: [finding('school', '2026-11-25')], entities: [] }])[0]?.foundBy).toEqual(['schools']);
+  });
+});
+
+describe('the fixture redactor', () => {
+  it('replaces the name, and the listing ids of URLs that named it, but leaves other URLs whole', () => {
+    const redact = redactor(['Lantern Bakery', 'lantern-bakery']);
+    expect(redact('https://www.reviews.example/Restaurant_Review-g46114-d422332-Reviews-Lantern_Bakery-Hanover.html'.replace('Lantern_Bakery', 'lantern-bakery')))
+      .toBe('https://www.reviews.example/Restaurant_Review-g0-d0-Reviews-Redacted-Hanover.html');
+    expect(redact('Lantern Bakery opens at 7')).toBe('Redacted opens at 7');
+    expect(redact('https://news.example/2026/03/26/plan-12345')).toBe('https://news.example/2026/03/26/plan-12345');
   });
 });
