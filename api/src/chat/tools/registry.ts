@@ -13,6 +13,7 @@ import type { Role } from '../../access/resolve.ts';
 import type { ByteGate } from '../attachments.ts';
 import type { AuditEventInput } from '../../stores/audit-events.ts';
 import { compareForecastModelsTool, getCalibrationTool, startCalibrationTool } from './calibration.ts';
+import { correctCalendarEventTool } from './correct-calendar-event.ts';
 import { dayTool } from './day.ts';
 import { forecastTool } from './forecast.ts';
 import { listDataTool } from './list-data.ts';
@@ -63,7 +64,11 @@ export interface ToolContext {
    * handed the model in this turn (absent: none); propose_note saves nothing itself on one of those days, and still saves
    * a plainly stated note on any other day.
    */
-  readonly turn: { readUntrusted: boolean; readWeb: boolean; readNotTyped: boolean; pictureBytes: number; readResearchedDays?: Set<string> };
+  readonly turn: {
+    readUntrusted: boolean; readWeb: boolean; readNotTyped: boolean; pictureBytes: number; readResearchedDays?: Set<string>;
+    /** D66: how many correct_calendar_event calls this turn has made (absent: none); at most 5 run. */
+    corrections?: number;
+  };
   readonly files: TurnFiles;
 }
 
@@ -195,6 +200,8 @@ export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
   proposeOrderRuleTool,
   // D56: a card of ordering setup suggestions from a file attached to the conversation. It saves nothing.
   proposeOrderSetupTool,
+  // D66: TownwiseAI corrects an event town research found when a person asks, with Undo (a one-tap card after a web or file read).
+  correctCalendarEventTool,
 ];
 
 /** The tool definitions sent to the model, in registry order. */

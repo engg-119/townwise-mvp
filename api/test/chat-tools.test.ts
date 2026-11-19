@@ -41,6 +41,8 @@ const FROZEN_NAMES = [
   'get_owner_calendar',
   // Orders.
   'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule', 'propose_order_setup',
+  // D66: a correction of a researched event.
+  'correct_calendar_event',
 ];
 
 describe('the tool registry', () => {
