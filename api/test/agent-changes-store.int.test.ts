@@ -1,12 +1,13 @@
 // D59: tw_agent_changes, the ledger of TownwiseAI's changes (stores/agent-changes.ts), against the database: a dedupe
 // key is held once per location in every status, every change of status is a compare-and-set, another organization
 // reads nothing, a file's undo marks its rows, the log pages newest first, and deleting a location or an organization
-// removes its rows. Synthetic ids only.
+// removes its rows; the action enum takes every action, (D66) `event.correct` included, and nothing else. Synthetic ids
+// only.
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
-import type { AgentChangeStore, NewAgentChange } from '../src/stores/agent-changes.ts';
+import { AGENT_CHANGE_ACTIONS, type AgentChangeAction, type AgentChangeStore, type NewAgentChange } from '../src/stores/agent-changes.ts';
 import { startTownwiseServer, type TownwiseTestServer } from './helpers/server.ts';
 
 let server: TownwiseTestServer;
@@ -147,5 +148,17 @@ describe('tw_agent_changes', () => {
     expect((await store.page(scope, kept, { limit: 50 })).changes).toHaveLength(1);
     expect(await store.removeForOrg(scope)).toBe(1);
     expect((await store.page(scope, kept, { limit: 50 })).changes).toEqual([]);
+  });
+
+  it('takes every action, a correction of a researched event (D66) included, and refuses any other', async () => {
+    expect(AGENT_CHANGE_ACTIONS).toEqual(['note.add', 'item.add', 'sales_days.add', 'rule.add', 'booking.label', 'event.correct']);
+    const scope = scopeOf(id());
+    const locationId = id();
+    const made = await store.insertApplying(scope, change(locationId, {
+      sourceKind: 'chat', action: 'event.correct', startDate: null, endDate: null, why: null,
+    }));
+    expect(made.record).toMatchObject({ action: 'event.correct', sourceKind: 'chat', confidence: 'high', startDate: null, endDate: null, status: 'applying' });
+    expect((await store.find(scope, locationId, made.record.id))?.action).toBe('event.correct');
+    await expect(store.insertApplying(scope, change(locationId, { action: 'event.delete' as AgentChangeAction }))).rejects.toThrow();
   });
 });

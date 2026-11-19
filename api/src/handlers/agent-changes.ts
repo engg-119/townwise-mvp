@@ -10,7 +10,11 @@
 // change (one a person changed since is theirs and stays), then the labels that sort set that nobody changed since are
 // cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again (or reads as
 // never sorted when no label is left); it answers 409 change_in_progress while the calendar's sort still runs. [CONFIRM:
-// Undo per calendar takes back the notes, labels and confirm TownwiseAI made that nobody changed since] Logs and
+// Undo per calendar takes back the notes, labels and confirm TownwiseAI made that nobody changed since] Undo of a
+// correction of a researched event (D66, town-research-agent design decision 12) deletes nothing: it appends a `revert`
+// revision based on the correction's, as the person who pressed it, which the unique index takes only while the
+// correction is the head; a member's revision based on it (there first, or winning the race) leaves the row `adopted`
+// (409 changed_since). It marks no refit: the forecast does not read researched events. Logs and
 // audit events carry ids, the action and the source kind only: never a title, a why, a file name or a figure.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
@@ -121,7 +125,10 @@ export async function listAgentChanges(ctx: TownwiseContext, req: Request, res: 
   res.status(200).json({ changes, next: page.next === null ? null : `${page.next.at.toISOString()}_${page.next.id}` });
 }
 
-/** The undo's second step: the target removed while unchanged. 'changed' when a person changed it since. */
+/**
+ * The undo's second step: the target removed (a correction: reverted) while unchanged. 'changed' when a person changed it
+ * since.
+ */
 async function removeTarget(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, change: AgentChangeRecord): Promise<'removed' | 'gone' | 'changed'> {
   const { scope } = caller;
   switch (change.action) {
@@ -170,6 +177,20 @@ async function removeTarget(ctx: TownwiseContext, caller: MemberPrincipal, locat
       // No label left at all: the calendar reads as never sorted, so its page offers Sort again, not an empty confirm.
       await calendars.unsortIfUnlabeled(scope, location.id, change.targetId, ctx.now());
       return cleared > 0 ? 'removed' : 'gone';
+    }
+    case 'event.correct': {
+      // D66: a revert based on the correction's revision, taken by the unique index only while that revision is the head.
+      const revisions = ctx.stores.researchRevisions;
+      const revision = await revisions.find(scope, location.id, change.targetId);
+      if (revision === null) return 'gone';
+      const reverted = await revisions.append(scope, {
+        locationId: location.id, eventId: revision.eventId, op: 'revert', fields: null, reverts: revision.id, basedOn: revision.id,
+        by: { kind: 'person', userId: caller.userId }, now: ctx.now(),
+      });
+      if (reverted !== null) return 'removed';
+      // Its child is this Undo's own revert (an earlier attempt), or a member's revision: the event is theirs now.
+      const child = (await revisions.list(scope, location.id)).find((each) => each.eventId === revision.eventId && each.basedOn === revision.id);
+      return child?.op === 'revert' && child.reverts === revision.id ? 'removed' : 'changed';
     }
     case 'rule.add': {
       // Slice 3: as a note, by compare-and-set on the rule's updatedAt.

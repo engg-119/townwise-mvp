@@ -5,7 +5,10 @@
 // the time planned first; (slice 3) a rule is added as TownwiseAI's, a person's rule blocks a conflicting one, D31's
 // limit and words refuse one, an undone closure is never added again from another start, TownwiseAI's own unedited rule
 // blocks nothing, a standing rule from a past start is checked up to 400 days from today, and a weekly or sales row a
-// pass left `applying` is finished, or its key freed, an hour on. Synthetic notes and days only.
+// pass left `applying` is finished, or its key freed, an hour on; (D66) a correction of a researched event appends its
+// revision under the planned id with no refit, is one change per conversation and call, answers `conflict` (its key
+// freed) when a person's revision took its head first, and a stale one is finished when its revision exists and removed
+// otherwise. Synthetic notes, days and events only.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -13,7 +16,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
 import {
-  applyChange, dedupeKeyOf, finishStaleChanges, TOWNWISE_AI_AUTHOR, type NoteCandidate, type RuleCandidate,
+  applyChange, dedupeKeyOf, eventCorrectionCandidate, finishStaleChanges, TOWNWISE_AI_AUTHOR, type EventCorrection, type NoteCandidate,
+  type RuleCandidate,
 } from '../src/agent/apply.ts';
 import { TOWNWISE_AI_ACTOR } from '../src/audit.ts';
 import { MAX_RULES, type RuleSchedule } from '../src/stores/business-rules.ts';
@@ -419,6 +423,115 @@ describe('applyChange, slice 3: rules', () => {
       expect(await notesOf(p)).toEqual([expect.objectContaining({ createdBy: 'person' })]);
       const events = (await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId);
       expect(events.map((event) => event.details)).toEqual([{ locationId: p.locationId, action: 'note.add', sourceKind: 'chat' }]);
+      expect(await refitOf(p)).toBeUndefined();
+    } finally {
+      server.clock.advance(-60 * 60_000);
+    }
+  });
+});
+
+describe('event.correct (D66)', () => {
+  const eventId = (): string => `l-${id()}`;
+
+  function correction(p: Place, over: Partial<EventCorrection> = {}): EventCorrection {
+    return {
+      locationId: p.locationId, conversationId: id(), callId: `toolu_${randomUUID().slice(0, 8)}`, eventId: eventId(), op: 'edit',
+      fields: { title: `${SENTINEL} trivia night`, start: '2026-12-03', end: '2026-12-03' }, basedOn: 'base',
+      why: `${SENTINEL} the person says it moved`, onBehalfOf: 'person', actor: TOWNWISE_AI_ACTOR, ...over,
+    };
+  }
+
+  async function revisionsOf(p: Place): Promise<Record<string, unknown>[]> {
+    return server.connection.collection('tw_research_revisions').find({ locationId: new Types.ObjectId(p.locationId) }).sort({ createdAt: 1, _id: 1 }).toArray();
+  }
+
+  it('appends the revision under the planned id as the chat’s, with a high-confidence row of no dates, one event and no refit', async () => {
+    const p = await place();
+    await addSalesDay(server, { orgId: p.orgId, locationId: p.locationId, date: '2026-12-31', guests: 100, netSalesCents: null });
+    const input = correction(p);
+    const c = eventCorrectionCandidate(server.ctx, p.scope, input);
+    const result = await applyChange(server.ctx, p.scope, c);
+    expect(result.outcome).toBe('applied');
+    const [revision] = await revisionsOf(p);
+    expect(revision).toMatchObject({
+      _id: new Types.ObjectId(c.targetId), eventId: input.eventId, op: 'edit', basedOn: 'base', reverts: null,
+      fields: { title: `${SENTINEL} trivia night`, start: '2026-12-03', end: '2026-12-03' },
+      by: { kind: 'chat', conversationId: new Types.ObjectId(input.conversationId), changeId: new Types.ObjectId(result.change?.id) },
+    });
+    expect(result.change).toMatchObject({
+      status: 'applied', action: 'event.correct', sourceKind: 'chat', sourceId: input.conversationId, targetId: c.targetId,
+      confidence: 'high', startDate: null, endDate: null, onBehalfOf: 'person', targetUpdatedAt: revision?.createdAt,
+      dedupeKey: dedupeKeyOf({ action: 'event.correct', key: JSON.stringify([input.conversationId, input.callId]) }),
+    });
+    const events = (await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId);
+    expect(events.map((event) => event.details)).toEqual([{ locationId: p.locationId, action: 'event.correct', sourceKind: 'chat' }]);
+    expect(JSON.stringify(events)).not.toContain(SENTINEL);
+    expect(server.logs.join('\n')).not.toContain(SENTINEL);
+    // The forecast does not read researched events: no refit, even with the stored days after the event.
+    expect(await refitOf(p)).toBeUndefined();
+    // A retry of the same candidate finds it applied and writes nothing more.
+    expect((await applyChange(server.ctx, p.scope, c)).outcome).toBe('applied');
+    expect(await revisionsOf(p)).toHaveLength(1);
+  });
+
+  it('the same conversation and call is one change: asked again it is a duplicate, and nothing more is written', async () => {
+    const p = await place();
+    const input = correction(p);
+    const first = await applyChange(server.ctx, p.scope, eventCorrectionCandidate(server.ctx, p.scope, input));
+    expect(first.outcome).toBe('applied');
+    const again = await applyChange(server.ctx, p.scope, eventCorrectionCandidate(server.ctx, p.scope, { ...input, basedOn: first.change?.targetId ?? '' }));
+    expect([again.outcome, again.change?.id]).toEqual(['duplicate', first.change?.id]);
+    expect(await revisionsOf(p)).toHaveLength(1);
+    expect(await rowsOf(p)).toHaveLength(1);
+  });
+
+  it('a head a person’s revision took first answers conflict, writes nothing and frees the key', async () => {
+    const p = await place();
+    const input = correction(p);
+    const persons = await server.ctx.stores.researchRevisions.append(p.scope, {
+      locationId: p.locationId, eventId: input.eventId, op: 'hide', fields: null, reverts: null, basedOn: 'base',
+      by: { kind: 'person', userId: 'member' }, now: server.clock.now(),
+    });
+    expect(persons).not.toBeNull();
+    expect(await applyChange(server.ctx, p.scope, eventCorrectionCandidate(server.ctx, p.scope, input))).toEqual({ outcome: 'conflict', change: null });
+    expect(await rowsOf(p)).toEqual([]);
+    expect((await revisionsOf(p)).map((each) => String(each._id))).toEqual([persons?.id]);
+    expect((await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId)).toEqual([]);
+    // The key is free: the same call on the head it reads now is applied.
+    const retried = await applyChange(server.ctx, p.scope, eventCorrectionCandidate(server.ctx, p.scope, { ...input, basedOn: persons?.id ?? '' }));
+    expect(retried.outcome).toBe('applied');
+  });
+
+  it('finishStaleChanges finishes a correction whose revision was written and removes one whose revision was not', async () => {
+    const p = await place();
+    const at = server.clock.now();
+    const conversationId = id();
+    const applying = async (key: string) => (await server.ctx.stores.agentChanges.insertApplying(p.scope, {
+      id: id(), locationId: p.locationId, sourceKind: 'chat', sourceId: conversationId, action: 'event.correct', targetId: id(), dedupeKey: key,
+      confidence: 'high', why: null, onBehalfOf: 'person', startDate: null, endDate: null, now: at,
+    })).record;
+    // The turn appended the revision, then stopped before marking its row applied.
+    const written = await applying('written');
+    await server.ctx.stores.researchRevisions.append(p.scope, {
+      id: written.targetId, locationId: p.locationId, eventId: eventId(), op: 'hide', fields: null, reverts: null, basedOn: 'base',
+      by: { kind: 'chat', conversationId, changeId: written.id }, now: at,
+    });
+    // Another turn stopped before its revision.
+    const empty = await applying('empty');
+    server.clock.advance(59 * 60_000);
+    try {
+      await finishStaleChanges(server.ctx, p.scope, p.locationId);
+      expect((await rowsOf(p)).map((each) => each.status)).toEqual(['applying', 'applying']);
+      server.clock.advance(60_000);
+      await finishStaleChanges(server.ctx, p.scope, p.locationId);
+      const rows = await rowsOf(p);
+      expect(rows.map((each) => [String(each._id), each.status, each.targetUpdatedAt, each.statusBy])).toEqual([[written.id, 'applied', at, 'townwise_ai']]);
+      expect(rows.some((each) => String(each._id) === empty.id)).toBe(false);
+      expect(await revisionsOf(p)).toHaveLength(1);
+      const events = (await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId);
+      expect(events.map((event) => [event.actorUserId, event.details])).toEqual([
+        ['townwise_ai', { locationId: p.locationId, action: 'event.correct', sourceKind: 'chat' }],
+      ]);
       expect(await refitOf(p)).toBeUndefined();
     } finally {
       server.clock.advance(-60 * 60_000);

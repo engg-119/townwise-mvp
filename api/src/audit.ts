@@ -48,7 +48,7 @@ export const TOWNWISE_AI_ACTOR = {
 /** D59: a change TownwiseAI saved, by its typed action. */
 const AGENT_ACTION_WORDS: Readonly<Record<string, string>> = {
   'note.add': 'a note', 'item.add': 'a summary of a file', 'sales_days.add': 'missing sales days', 'rule.add': 'a business rule',
-  'booking.label': 'a booking label',
+  'booking.label': 'a booking label', 'event.correct': 'a correction to a researched event',
 };
 
 /**
