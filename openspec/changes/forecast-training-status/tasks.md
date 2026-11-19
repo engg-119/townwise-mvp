@@ -22,8 +22,9 @@ D65 makes no model call, so it has no eval; D66 (`town-research-agent`) carries 
 
 ## 2. The days a calibration used (decision 6)
 
-- [ ] 2.1 `stores/calibrations.ts` `recordInput` takes `dayCount`, `dataFrom`, `newDays` (optional fields); `lab/callback.ts` computes them from the input it built and the `dataThrough` of the location's newest run with status `published` (current or lapsed; null without one). Lab-input golden unchanged. Tests: `api/test/lab.int.test.ts` (the fetch stores the three; a first forecast stores `newDays: null`; a location whose published run lapsed stores days after that run), `api/test/lab-contract.test.ts` unchanged. `npm run test:int -w @townwise/api -- test/lab.int.test.ts` and `npm run test:unit -w @townwise/api -- test/lab-contract.test.ts test/lab-input.test.ts`
-- [ ] 2.2 Commit: `feat: record the days each calibration used (d65)`.
+- [x] 2.1 `stores/calibrations.ts` `recordInput` takes `dayCount`, `dataFrom`, `newDays` (optional fields); `lab/callback.ts` computes them from the input it built and the `dataThrough` of the location's newest run with status `published` (current or lapsed; null without one). Lab-input golden unchanged. Tests: `api/test/lab.int.test.ts` (the fetch stores the three; a first forecast stores `newDays: null`; a location whose published run lapsed stores days after that run), `api/test/lab-contract.test.ts` unchanged. `npm run test:int -w @townwise/api -- test/lab.int.test.ts` and `npm run test:unit -w @townwise/api -- test/lab-contract.test.ts test/lab-input.test.ts`
+  Done: "the input's days" is read as its history days with guests on or before `dataThrough` (the input also holds the 400 days ahead; a day with no row or likely closed has none), which matches the spec scenario's 1,041 days in a 1,056-day span; design decision 6 and the spec now say so. `newDays` counts the same days after the newest published run's `dataThrough` (`forecasts.published`, sorted by `dataThrough`). `recordInput` sets each of the three only when given. Extra test: before the fetch the three read null and are not stored.
+- [x] 2.2 Commit: `feat: record the days each calibration used (d65)`.
 
 ## 3. The `updating` and `lastRun` fields (decisions 1, 2 and 4)
 

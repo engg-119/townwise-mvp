@@ -63,6 +63,14 @@ interface CalibrationFields {
   inputSha256: string | null;
   /** The fingerprint the weekly refresh compares (D42, lab/input.ts labInputFingerprint); null on one from before it. */
   dataSha256: string | null;
+  /**
+   * D65 (design decision 6), set with the input: the history days with guests it trains on (`dayCount`), its first day
+   * (`dataFrom`), and how many of those days come after the last day of data of the location's newest published run,
+   * current or lapsed (`newDays`, null with none). Absent before the fetch and on a calibration from before D65.
+   */
+  dayCount?: number;
+  dataFrom?: string;
+  newDays?: number | null;
   imageDigest: string | null;
   codeVersion: string | null;
   runId: string | null;
@@ -103,6 +111,9 @@ function calibrationSchema(): Schema<CalibrationFields> {
     termsThrough: { type: String },
     inputSha256: { type: String, default: null },
     dataSha256: { type: String, default: null },
+    dayCount: { type: Number },
+    dataFrom: { type: String },
+    newDays: { type: Number },
     imageDigest: { type: String, default: null },
     codeVersion: { type: String, default: null },
     runId: { type: String, default: null },
@@ -145,6 +156,15 @@ export interface CalibrationRecord {
   readonly inputSha256: string | null;
   /** The fingerprint the weekly refresh compares (D42), set with the input; null before the fetch or on one from before D42. */
   readonly dataSha256: string | null;
+  /** D65: the history days with guests the input held, set with it; null before the fetch or on one from before D65. */
+  readonly dayCount: number | null;
+  /** D65: the input's first day, set with it; null before the fetch or on one from before D65. */
+  readonly dataFrom: string | null;
+  /**
+   * D65: of those days, how many come after the last day of data of the newest published run at the fetch; null with no
+   * published run, before the fetch, or on one from before D65.
+   */
+  readonly newDays: number | null;
   readonly imageDigest: string | null;
   readonly codeVersion: string | null;
   readonly runId: string | null;
@@ -180,13 +200,16 @@ export interface CalibrationStore {
   recordImageDigest(scope: OrgScope, id: string, imageDigest: string): Promise<boolean>;
   /**
    * The job's one input fetch, by compare-and-set on running with no input recorded yet: the hash of the input it is
-   * given, its fingerprint (D42), the last day it holds, the town's last researched term day it names (D52), and the
-   * sha256 of the result token the API hands only to that fetch, the one the result is posted with. False for any
-   * second fetch.
+   * given, its fingerprint (D42), the last day it holds, the town's last researched term day it names (D52), the days
+   * it used (D65: `dayCount`, `dataFrom`, `newDays`, each stored only when given), and the sha256 of the result token the API hands only to that
+   * fetch, the one the result is posted with. False for any second fetch.
    */
   recordInput(
     scope: OrgScope, id: string,
-    input: { inputSha256: string; dataSha256: string; dataThrough: string; termsThrough: string | null; resultTokenSha256: string },
+    input: {
+      inputSha256: string; dataSha256: string; dataThrough: string; termsThrough: string | null; dayCount?: number; dataFrom?: string;
+      newDays?: number | null; resultTokenSha256: string;
+    },
   ): Promise<boolean>;
   /** Compare-and-set on running with no run recorded yet: a run id, once set, is kept. */
   recordResult(scope: OrgScope, id: string, result: { runId: string; scorecardJson: string; codeVersion: string }): Promise<boolean>;
@@ -226,6 +249,9 @@ function toCalibration(doc: CalibrationDoc): CalibrationRecord {
     termsThrough: doc.termsThrough ?? null,
     inputSha256: doc.inputSha256,
     dataSha256: doc.dataSha256 ?? null,
+    dayCount: doc.dayCount ?? null,
+    dataFrom: doc.dataFrom ?? null,
+    newDays: doc.newDays ?? null,
     imageDigest: doc.imageDigest,
     codeVersion: doc.codeVersion,
     runId: doc.runId,
@@ -297,6 +323,9 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
           $set: {
             inputSha256: input.inputSha256, dataSha256: input.dataSha256, dataThrough: input.dataThrough,
             termsThrough: input.termsThrough, tokenSha256: input.resultTokenSha256,
+            ...(input.dayCount === undefined ? {} : { dayCount: input.dayCount }),
+            ...(input.dataFrom === undefined ? {} : { dataFrom: input.dataFrom }),
+            ...(input.newDays === undefined ? {} : { newDays: input.newDays }),
           },
         },
       );

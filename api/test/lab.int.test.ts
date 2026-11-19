@@ -9,6 +9,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import { canonicalSha256, type FileIssue } from '../src/forecasts/file.ts';
 import { labInputFingerprint, labInputSchema, type LabInput } from '../src/lab/input.ts';
@@ -122,14 +123,14 @@ async function eventsFor(calibrationId: string): Promise<Record<string, unknown>
  * A published run of the location (files_from_owner) whose forecast reaches 2026-07-09, so it is the current one. Staff
  * switch forecasts on to publish it and off again (G1), so a calibration's draft then stays a draft.
  */
-async function publishedChampion(t: Team): Promise<string> {
+async function publishedChampion(t: Team, days = 70): Promise<string> {
   const forecasts = (on: boolean): Promise<Response> => call(server, `/api/admin/orgs/${t.orgId}/forecasts-switch`, {
     session: staff, json: on ? { on, ownerAgreed: true } : { on },
   });
   const file = {
     schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'hybrid_linear_xgboost', version: 'v5', notebookCommit: 'abcdef0' },
     trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-04-30', madeAt: '2026-05-01', frozen: null,
-    interval: { level: 0.8, widened: true }, backtest: null, ...runDays('2026-04-30', 70),
+    interval: { level: 0.8, widened: true }, backtest: null, ...runDays('2026-04-30', days),
   };
   const imported = await call(server, `/api/admin/orgs/${t.orgId}/locations/${t.locationId}/forecast-runs`, { session: staff, json: file });
   expect(imported.status).toBe(201);
@@ -340,6 +341,8 @@ describe('the job’s callback', () => {
     expect(stored).toMatchObject({
       championRunId: championId, dataThrough: '2026-05-31', termsThrough: '2028-06-06', inputSha256: canonicalSha256(input),
       dataSha256: labInputFingerprint(input),
+      // D65: 2024-10-01 to 2026-05-31 with guests every day, 31 of them after the current run's 2026-04-30.
+      dayCount: 608, dataFrom: '2024-10-01', newDays: 31,
     });
 
     const result = labResultFor(input);
@@ -579,6 +582,42 @@ describe('the job’s callback', () => {
       });
     }
     expect(await count('tw_forecast_runs', { locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+  });
+
+  // D65 (openspec change forecast-training-status, design decision 6): the days a calibration used.
+  it('a first forecast stores the history days with guests it used and newDays null', async () => {
+    const t = await team();
+    // Three days with no row: the input holds them with no guests, and they are not counted.
+    await server.connection.collection('tw_sales_days').deleteMany({
+      locationId: new Types.ObjectId(t.locationId), date: { $in: ['2025-03-01', '2025-03-02', '2025-03-03'] },
+    });
+    const { calibration, job } = await started(t);
+    const input = await inputFor(job);
+    expect(input.champion).toBeNull();
+    const stored = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
+    expect(stored).toMatchObject({ dayCount: 605, dataFrom: '2024-10-01', newDays: null, dataThrough: '2026-05-31' });
+    expect(await server.ctx.stores.calibrations.find({ orgId: t.orgId } as OrgScope, calibration.id))
+      .toMatchObject({ dayCount: 605, dataFrom: '2024-10-01', newDays: null });
+  });
+
+  it('a location whose published run lapsed stores the days after that run’s data as new', async () => {
+    const t = await team();
+    // Published, but reaching only 20 days ahead, so it is never the current run: the input has no champion.
+    await publishedChampion(t, 20);
+    const { calibration, job } = await started(t);
+    const input = await inputFor(job);
+    expect(input.champion).toBeNull();
+    const stored = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
+    expect(stored).toMatchObject({ championRunId: null, dayCount: 608, dataFrom: '2024-10-01', newDays: 31 });
+  });
+
+  it('before its input is fetched (as on a calibration from before D65), the three read null and are not stored', async () => {
+    const t = await team();
+    const { calibration } = await started(t);
+    expect(await server.ctx.stores.calibrations.find({ orgId: t.orgId } as OrgScope, calibration.id))
+      .toMatchObject({ dayCount: null, dataFrom: null, newDays: null });
+    const stored = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
+    for (const key of ['dayCount', 'dataFrom', 'newDays']) expect(stored).not.toHaveProperty(key);
   });
 
   it('ok false with not_enough_history fails the calibration with that failure', async () => {

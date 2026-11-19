@@ -30,7 +30,7 @@ import type { TownwiseContext } from '../app.ts';
 import { canonicalSha256 } from '../forecasts/file.ts';
 import { findLabCallback, type LabCallbackClaim } from '../stores/cross-tenant.ts';
 import type { LabCallerRefusal } from './caller.ts';
-import { buildLabInput, labInputFingerprint } from './input.ts';
+import { buildLabInput, labInputFingerprint, type LabInput } from './input.ts';
 import { finishCalibration, ingestLabResult } from './service.ts';
 
 /** The result token: randomBytes(32) as base64url, 43 characters. */
@@ -126,10 +126,11 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
       await finishCalibration(ctx, scope, calibration, { status: 'failed', failure: 'not_enough_history' });
       throw notFound();
     }
+    const [newestPublished] = await ctx.stores.forecasts.published(scope, calibration.locationId);
     const resultToken = randomBytes(32).toString('base64url');
     const recorded = await calibrations.recordInput(scope, calibration.id, {
       inputSha256: canonicalSha256(input), dataSha256: labInputFingerprint(input), dataThrough: input.dataThrough,
-      termsThrough: input.termsThrough, resultTokenSha256: sha256(resultToken),
+      termsThrough: input.termsThrough, ...daysUsed(input, newestPublished?.dataThrough ?? null), resultTokenSha256: sha256(resultToken),
     });
     // A concurrent fetch recorded its input first.
     if (!recorded) throw refused(ctx, 'input', 'not_live');
@@ -147,4 +148,20 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
   }));
 
   return router;
+}
+
+/**
+ * D65 (openspec change forecast-training-status, design decision 6): the days a calibration used, for the owner's run
+ * history. Counted are the history days the lab trains on, those with guests on or before dataThrough (the input also
+ * holds the 400 days ahead, and a day with no row or one likely closed has none); `newDays` counts those after
+ * `publishedThrough`, the last day of data of the location's newest published run, current or lapsed (null with none).
+ * Counts and a date only.
+ */
+function daysUsed(input: LabInput, publishedThrough: string | null): { dayCount: number; dataFrom: string; newDays: number | null } {
+  const used = input.days.filter((day) => day.date <= input.dataThrough && day.guests !== null);
+  return {
+    dayCount: used.length,
+    dataFrom: input.days[0]?.date ?? input.dataThrough,
+    newDays: publishedThrough === null ? null : used.filter((day) => day.date > publishedThrough).length,
+  };
 }

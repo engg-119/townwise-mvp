@@ -20,7 +20,7 @@ Every call that marks a location as wanting a refit SHALL name its cause, and th
 - **THEN** the history reads its cause as `staff`, not `asked`
 
 ### Requirement: A calibration records the days it used
-When the job fetches its input, the calibration SHALL also store `dayCount` (the input's days), `dataFrom` (its first day) and `newDays` (input days after the last day of data of the location's newest run with status `published`, current or lapsed; null when there is none), beside `dataThrough`. Records without them SHALL read as null.
+When the job fetches its input, the calibration SHALL also store `dayCount` (the input's history days with guests, on or before its `dataThrough`), `dataFrom` (its first day) and `newDays` (of those days, the ones after the last day of data of the location's newest run with status `published`, current or lapsed; null when there is none), beside `dataThrough`. Records without them SHALL read as null.
 
 #### Scenario: A weekly refresh with new days
 - **WHEN** the input holds 1,041 days from 2024-01-01 to 2026-11-21 and the newest published run's data ended 2026-11-15
