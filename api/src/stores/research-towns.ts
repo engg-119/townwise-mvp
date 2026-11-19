@@ -122,6 +122,11 @@ export interface TownResearchStore {
    * passed) taken over. The lane that settles the last thread and the planner's sweep both ask; one wins (decision 8).
    */
   claimMerge(input: { runId: string; owner: string; now: Date; leaseMs: number }): Promise<boolean>;
+  /**
+   * The planner's merge sweep (decision 2): ids of `running` runs, and `merging` runs whose merge lease passed by `now`,
+   * oldest first, at most 50. claimMerge decides which of them are ready.
+   */
+  mergeableRuns(now: Date): Promise<string[]>;
   /** Ends a live run and frees the town's slot. */
   finishRun(id: string, end: RunEnd): Promise<boolean>;
   /** Clears `found` on the run's threads once merged (counts and drops kept). */
@@ -203,6 +208,12 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
       const set = { $set: { status: 'merging', mergeOwner: input.owner, mergeUntil: new Date(input.now.getTime() + input.leaseMs) } };
       if ((await Run.updateOne({ _id: id(input.runId), status: 'running' }, set)).modifiedCount === 1) return true;
       return (await Run.updateOne({ _id: id(input.runId), status: 'merging', mergeUntil: trusted({ $lte: input.now }) }, set)).modifiedCount === 1;
+    },
+    async mergeableRuns(now) {
+      const docs = await Run.find(
+        { $or: [{ status: 'running' as const }, { status: 'merging' as const, mergeUntil: trusted({ $lte: now }) }] }, { _id: 1 },
+      ).sort({ createdAt: 1, _id: 1 }).limit(50).lean();
+      return docs.map((doc) => doc._id.toHexString());
     },
     finishRun: (runId, end) => runMoves.finish(runs, {}, runId, end),
     async clearFound(runId) {

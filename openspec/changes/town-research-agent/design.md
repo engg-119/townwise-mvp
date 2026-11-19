@@ -48,6 +48,8 @@ The planner (`research/plan.ts`) runs 60 s after boot and then every 15 minutes,
 - The run document is inserted first and then its thread rows, each unique `(runId, thread)`; a plan that crashed between them is completed by the next tick, which inserts missing thread rows for any `queued` run.
 - **Merge sweep:** each tick also claims the merge of any `running` run whose threads are all terminal (decision 8), so a run never stays `running` because the lane that settled its last thread died or raced.
 
+As built (task 3.3): `research/plan.ts` exports `planTick(ctx, owner, merge)`, `planTownRun`, `planLocationRun`, `queueEarlyRun` (the handlers' early path, which also asks for the town's run) and `sweepMerges`; the runner owns the timers and passes its merge as `merge`, so the sweep claims and the runner merges. A town run's sweep reads `stores/research-towns.ts` `mergeableRuns` (running runs, and merging ones whose lease passed) and then `claimMerge`; a location's loops on `claimLocationResearchMerge` with no run id. A live run (queued or running) missing thread rows is completed, not only a queued one, since a lane may have claimed one of its existing threads first. `TOWNWISE_RESEARCH_TOWN_MONTHLY_USD` at 0 plans no town run, and `TOWNWISE_RESEARCH_ORG_MONTHLY_USD` at 0 no weekly or early location run (rather than runs whose threads all end `budget`). A location row's `town` stamp is the TownId, or `typed:{state}:{nameKey}` for a typed town (`townStamp`).
+
 States. Run: `queued → running → merging → done | partial | failed | budget | off`. Thread: `queued → running → recorded | empty | budget | failed` with a `code`. `partial` means at least one thread recorded and at least one did not.
 
 ### 3. Threads
@@ -291,7 +293,7 @@ Alternatives: an upserted override with a `prior` field (bends apply.ts's insert
 ### 14. Isolation
 
 - `stores/cross-tenant.ts` adds `researchTownsInUse`, `researchLocationCandidates`, `claimNextLocationResearchThread(conn, { owner, now, leaseMs, perOrgLive })`, `claimLocationResearchMerge` (used by the lane and the merge sweep) and `staleLocationResearchThreads`, all answering ids only. Its header and spec 6.10 rule 8 list them; only `research/runner.ts` and `research/plan.ts` import it (added to `test/isolation.test.ts`'s importer list).
-- `access/policy.ts` adds `scopeForResearch(claim)`, with a test that only policy.ts mints and only `research/runner.ts` asks. Before every write after a model call, the runner rechecks that the location exists and the organization is active (decision 8).
+- `access/policy.ts` adds `scopeForResearch(claim)`, with a test that only policy.ts mints and only `research/plan.ts` and `research/runner.ts` ask (as built: the planner scopes the location candidates it plans for and the location merges its sweep claims). Before every write after a model call, the runner rechecks that the location exists and the organization is active (decision 8).
 - A new pin in `test/isolation.test.ts`: nothing under `src/research/` imports notes, sales, sales days, owner calendars, chat conversations or turns, files, or orders; and only `research/read.ts` and `research/revisions.ts` import `stores/research-revisions.ts` (decision 4).
 - Town prompts read only curated rows and town rows; location prompts add the location's own rows and, while allowed, Google's answers. All from base values.
 

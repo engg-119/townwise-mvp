@@ -12,7 +12,7 @@ function sourceFiles(): { path: string; text: string }[] {
 }
 
 describe('isolation (source)', () => {
-  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh, the TownwiseAI turn sweep and the title backfill import stores/cross-tenant.ts', () => {
+  it('only access/resolve.ts, the active days recorder, the join and decline handlers, the staff handlers, the file reader, the TownwiseAI reader, the sweeper, the lab callback, the calendar refresh loop, Google access, the weekly refresh, the TownwiseAI turn sweep, the title backfill and research’s planner and runner import stores/cross-tenant.ts', () => {
     // A type-only import grants no access to the operations, so it is not counted.
     const importers = sourceFiles()
       .filter((file) => /^import (?!type )[^;]*from '[./]+(stores\/)?cross-tenant\.ts';/m.test(file.text))
@@ -32,10 +32,12 @@ describe('isolation (source)', () => {
     // chat/turn-sweeper.ts (resumable-chat-turns) finds the running turns whose lease passed, and the records past their
     // keep, in any organization.
     // files/note-titles.ts, the boot-time title backfill (D49), finds the notes from before titles in every organization.
+    // research/plan.ts (D66) lists the towns in use and the locations to research, and sweeps runs ready to merge;
+    // research/runner.ts claims location threads and merges and finds a dead lane's thread, in any organization.
     expect(importers).toEqual([
       'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/turn-sweeper.ts', 'files/ai-reader.ts', 'files/note-titles.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
-      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts',
+      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts', 'research/plan.ts',
     ]);
   });
 
@@ -118,6 +120,11 @@ describe('isolation (source)', () => {
   it('only access/policy.ts mints the weekly refresh’s scope, and only lab/schedule.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForWeeklyRefresh(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'lab/schedule.ts']);
+  });
+
+  it('D66: only access/policy.ts mints research’s scope, and only the research planner and runner ask for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForResearch(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'research/plan.ts']);
   });
 
   it('only access/policy.ts mints the title backfill’s scope, and only files/note-titles.ts asks for it', () => {
