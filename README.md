@@ -56,23 +56,25 @@ flowchart LR
     api["Container Apps<br/>Node API + Valkey"]
     db[("DocumentDB<br/>private endpoint only")]
     files[("Client file storage<br/>private endpoint only")]
-    lab["Forecast lab job"]
-    worker["Weekly forecast worker job"]
+    worker["Forecast worker job<br/>hourly check, weekly refresh"]
+    lab["Forecast lab job<br/>Python, no database access"]
     backup["Nightly backup<br/>to Blob Storage"]
     email["Communication Services<br/>(email)"]
   end
-  google["Google sign-in<br/>and Places"]
+  google["Google sign-in, Places,<br/>maps and Calendar"]
   claude["Anthropic API<br/>(TownwiseAI)"]
 
   web -->|served by| swa
   web --> api
+  web -->|sign-in button, map images| google
   native --> api
   api --> db
   api -.->|when enabled| files
   api -.->|when enabled| lab
   lab -.->|callback| api
   worker --> db
-  worker -.->|when enabled| lab
+  worker -.->|starts, when enabled| lab
+  worker -.-> claude
   backup --> db
   api --> email
   api --> google
@@ -80,7 +82,7 @@ flowchart LR
 ```
 
 - **Client** (`client/`): one React Native app built with Expo and Expo Router, for iOS, Android and the web. The homepage, the daily-totals and item sales uploads, the file viewer and the staff console are web only. The rest of the signed-in portal runs on every platform.
-- **API** (`api/`): one Node.js and Express process. It mounts sign-in under `/auth`, the Townwise product under `/api`, and the forecast lab's callbacks under `/lab`. Every `/api` route declares who may call it (signed in, member, org admin or staff) in one table, `api/src/access/routes.ts`, and each organization's data is isolated from every other's (pinned by `api/test/isolation.test.ts`). The same process runs the background workers for stored files, TownwiseAI's file reads, calendar links and chat turns. A scheduled job on the same image, the weekly forecast worker, runs hourly to start each location's weekly refresh and TownwiseAI's weekly suggestions.
+- **API** (`api/`): one Node.js and Express process. It mounts sign-in under `/auth`, the Townwise product under `/api`, and the forecast lab's callbacks under `/lab`. Every `/api` route declares who may call it (signed in, member, org admin or staff) in one table, `api/src/access/routes.ts`, and each organization's data is isolated from every other's (pinned by `api/test/isolation.test.ts`). The same process runs the background workers for stored files, TownwiseAI's file reads, calendar links and chat turns. The weekly forecast refresh runs outside it, in a Container Apps job that starts every hour from the API's image, starts the forecast lab for each location that is due and writes TownwiseAI's weekly suggestions. The lab is a Python job (`modeling/lab`) with no database access: it reads its input from the API and posts its result back over HTTPS.
 - **Shared backend modules** (`api/kit/`): sign-in and sessions, MongoDB, Redis, rate limiting, and the HTTP server core. They were copied from a reusable module kit (versions in [`KIT.md`](KIT.md)) and are owned here. `client/` came from the same kit.
 - **Infrastructure** (`infra/`): Terraform for Azure. The database and the client file storage accept connections only from inside the private network. Secrets live in Key Vault, and deploys run from GitHub Actions without long-lived keys. Expected cost is about $58 a month at low traffic; TownwiseAI and the Places search bill Anthropic and Google directly ([`infra/README.md`](infra/README.md), Monthly cost).
 - **Research** (`eda/`, `modeling/`) and **ordering** (`reorder/`): Python projects set up with uv. The notebooks read the private exports in `data/`, so they only run where a teammate has copied those in.
