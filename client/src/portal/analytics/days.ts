@@ -1,3 +1,4 @@
+import { EFFECT_LABEL } from '../../chat/format';
 import type { Note } from '../locations/api';
 import { addDays } from '../locations/dates';
 import type { RuleSchedule, RuleSeason } from '../rules/api';
@@ -24,7 +25,8 @@ import { weekdayOf } from './words';
 //   never makes a day noted, and a context without rules (Home's, today) behaves as before.
 // - A note marking a day's guest count wrong (D67, the API's trustedGuestDays) is read before any of this: the day's
 //   guests are none, so it is never likely closed and is in no other day's typical guests; its sales stand, and the
-//   note makes it noted.
+//   note makes it noted. The mark says its sales were right, so with net sales above 0 a rule's closure never holds
+//   on it (markedOpen); with no sales it reads as any day with no guest count.
 // - A day is noted when a covering note does not close it (a private event, an opening or other, unless closed).
 // - Holiday and event days are those with a `holiday` or an `event` on the calendar. Term and season periods span
 //   months, so they are context only: they never make a day irregular and are never a driver, even with a `group`.
@@ -85,15 +87,17 @@ export function isWrongGuestCount(note: Pick<Note, 'effect'>): boolean {
 }
 
 /**
- * The days with `guests` null on every date a wrong-guest-count note covers, sales and every other field untouched; the
- * same array when no note has the effect. The mirror of api/src/closed-days.ts trustedGuestDays (D67).
+ * The days with `guests` null on every date a wrong-guest-count note covers, the stored count kept in `storedGuests` for
+ * the words that say it was marked (the Calendar's day panel), sales and every other field untouched; the same array
+ * when no note has the effect. The mirror of api/src/closed-days.ts trustedGuestDays (D67).
  */
 export function trustedGuestDays<D extends { readonly date: string; readonly guests: number | null }>(
   days: readonly D[], notes: readonly Pick<Note, 'startDate' | 'endDate' | 'weekdays' | 'effect'>[],
-): readonly D[] {
+): readonly (D & { storedGuests?: number })[] {
   const marks = notes.filter(isWrongGuestCount);
   if (marks.length === 0) return days;
-  return days.map((day) => (day.guests !== null && marks.some((note) => noteCovers(note, day.date)) ? { ...day, guests: null } : day));
+  return days.map((day) => (day.guests !== null && marks.some((note) => noteCovers(note, day.date))
+    ? { ...day, guests: null, storedGuests: day.guests } : day));
 }
 
 export function notesOn(date: string, notes: readonly Note[]): Note[] {
@@ -183,6 +187,14 @@ const saysGuests = (entry: Entry): boolean => entry.effect === 'more_guests' || 
 /** A note that says the day was open: an opening, a private event, or more or fewer guests, unless it closes it. */
 const saysOpen = (entry: Entry): boolean => !isClosure(entry) && (entry.kind === 'opening' || entry.kind === 'private_event' || saysGuests(entry));
 
+/**
+ * Whether a day whose guest count a covering note marks wrong (D67) has stored net sales above 0: it was open, so a
+ * rule's closure never holds on it. The mirror of api/src/closed-days.ts markedOpen.
+ */
+function markedOpen(day: StoredDay | undefined, notes: readonly Entry[]): boolean {
+  return day?.netSalesCents !== undefined && day.netSalesCents !== null && day.netSalesCents > 0 && notes.some(isWrongGuestCount);
+}
+
 /** Missing guests (no row, no guest count or 0), or guests under a tenth of the typical guests. */
 function fewOrNoGuests(day: StoredDay | undefined): boolean {
   if (day === undefined || day.guests === null || day.guests === 0) return true;
@@ -195,14 +207,16 @@ function fewOrNoGuests(day: StoredDay | undefined): boolean {
  * the rule schedules covering it (`rules`, none by default); null when it is open or has no row. `past`: the day is
  * before the town's today (true by default); a day that is not is never likely closed. Closed comes first, so a day
  * closed by a note, a rule or an all-zero row is never "likely". A note that decides the day sets aside the rules'
- * closures and buyouts, and before today a rule's closure holds only on a day with few or no guests.
+ * closures and buyouts, and before today a rule's closure holds only on a day with few or no guests that is not
+ * markedOpen (D67).
  */
 export function closureOf(
   day: StoredDay | undefined, notes: readonly Entry[], { rules = NONE, past = true }: { rules?: readonly Entry[]; past?: boolean } = {},
 ): 'closed' | 'likely_closed' | null {
   if (notes.some(isClosure)) return 'closed';
   const decided = notes.some((note) => isClosure(note) || saysOpen(note));
-  if (!decided && rules.some((rule) => isClosure(rule) && (!past || isBuyout(rule) || fewOrNoGuests(day)))) return 'closed';
+  const few = fewOrNoGuests(day) && !markedOpen(day, notes);
+  if (!decided && rules.some((rule) => isClosure(rule) && (!past || isBuyout(rule) || few))) return 'closed';
   if (day === undefined) return null;
   if (isAllZero(day)) return 'closed';
   const typical = day.typicalGuests ?? null;
@@ -215,6 +229,14 @@ export function closureOf(
 /** “Likely closed (1 guest recorded)”: `recorded` is the day's stored figure in words. */
 export function likelyClosedWords(recorded: string): string {
   return `Likely closed (${recorded} recorded)`;
+}
+
+/**
+ * “2 guests recorded, guest count marked wrong” (D67): `recorded` is the stored count in words; Home's This day and the
+ * Calendar's day panel say it, as Analytics' day panel says “2, guest count marked wrong” beside its Guests label.
+ */
+export function markedGuestsWords(recorded: string): string {
+  return `${recorded} recorded, ${EFFECT_LABEL.wrong_guest_count.toLowerCase()}`;
 }
 
 export function dayFlags(date: string, day: DayRecord | undefined, context: DayContext): DayFlags {

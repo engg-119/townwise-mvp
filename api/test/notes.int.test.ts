@@ -671,6 +671,25 @@ describe('a note marking past days’ guest counts wrong (D67)', () => {
     expect(stored).not.toHaveProperty('fromEvent');
   });
 
+  it('drops the link when a note made from a past calendar event is edited into a mark; an edit that stays keeps it', async () => {
+    const location = await addLocation(server, { orgId, name: 'Edited Mark Room' });
+    const added = await createOwnerCalendarStore(server.connection).add({ orgId } as unknown as OrgScope, location, { kind: 'file', label: 'Past' }, {
+      events: [{ uid: 'fall-fest@bookings.example.test', title: 'Fall fest', startDate: '2025-10-31', endDate: '2025-10-31', startTime: null, endTime: null, keyed: true }],
+      skippedRepeating: 0,
+    }, { createdBy: 'fixture', now: server.clock.now() });
+    if (added === 'calendar_limit') throw new Error('calendar_limit');
+    const plain = { kind: 'other', startDate: '2025-10-31', endDate: '2025-10-31', effect: 'unknown', detail: 'Synthetic detail' };
+    const note = await created({ ...plain, fromEvent: { calendarId: added.id, uid: 'fall-fest@bookings.example.test' } }, author, location);
+    expect(note.fromEvent).not.toBeNull();
+    const path = `${notesPath(location)}/${note.id}`;
+    const kept = await call(server, path, { session: author.session, method: 'PATCH', json: { ...plain, detail: 'Other synthetic detail' } });
+    expect((await kept.json() as { note: NoteView }).note.fromEvent).not.toBeNull();
+    const marked = await call(server, path, { session: author.session, method: 'PATCH', json: { ...MARK, endDate: '2025-10-31' } });
+    expect((await marked.json() as { note: NoteView }).note).toMatchObject({ effect: 'wrong_guest_count', fromEvent: null });
+    const stored = await server.connection.collection('tw_notes').findOne({ _id: new Types.ObjectId(note.id) });
+    expect(stored).not.toHaveProperty('fromEvent');
+  });
+
   it('readNoteContent refuses the mark without the town’s date, so TownwiseAI can never save one', () => {
     expect(readNoteContent(MARK, '2026-06-01')).toBeNull();
     expect(readNoteContent(MARK, '2026-06-01', { townToday: '2026-06-01' })).toMatchObject({ effect: 'wrong_guest_count', detail: null, title: null });

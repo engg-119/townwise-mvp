@@ -386,7 +386,8 @@ export async function createNote(ctx: TownwiseContext, req: Request, res: Respon
 
 /**
  * PATCH /api/org/locations/:locationId/notes/:noteId: a full replace, by the author or an org admin, but for a body with
- * no `title` key, which keeps the stored title (D49), so the note is read before the body is checked.
+ * no `title` key, which keeps the stored title (D49), so the note is read before the body is checked. An edit into a
+ * note marking guest counts wrong drops any calendar-event link, as a create does (D67).
  */
 export async function updateNote(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -395,7 +396,7 @@ export async function updateNote(ctx: TownwiseContext, req: Request, res: Respon
   const location = await loadLocation(ctx, scope, req.params.locationId);
   const existing = await editableNote(ctx, caller, location.id, req.params.noteId);
   const content = noteContent(req.body, utcDay(now), { keepTitle: existing.title, townToday: townTodayOf(location, now) });
-  const note = await ctx.stores.notes.replace(scope, location.id, existing.id, content, now);
+  const note = await ctx.stores.notes.replace(scope, location.id, existing.id, content, now, { unlink: content.effect === 'wrong_guest_count' });
   if (note === null) throw notFound();
   await recordAfter(ctx, {
     ...actorOf(caller), at: now, orgId: scope.orgId, action: 'note.updated',

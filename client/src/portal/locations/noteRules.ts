@@ -68,8 +68,12 @@ export const NOTE_COPY = {
   /** A note TownwiseAI made from a file (D34): under its author on Notes, and in its edit form. */
   fromAiFile: 'From a file TownwiseAI read',
   fromAiFileEdit: 'Undoing that file’s read removes this note, even after an edit.',
-  /** D67: a guest count can be marked wrong only on days that are over. */
+  /** D67: a guest count can be marked wrong only on days that are over: the end date's helper. */
   pastOnly: 'Only days before today.',
+  /** D67: why Save refused a mark on today or a later day, a sentence apart from the helper. */
+  markFuture: 'A guest count can only be marked wrong on days before today.',
+  /** D67: the Effect helper while the mark is chosen. */
+  markEffectHelp: 'Townwise leaves this day’s guest count out of forecasts and comparisons. Its sales stay.',
 } as const;
 
 /** D67: the note marks the days' guest counts wrong; its sales stand. */
@@ -248,8 +252,8 @@ export function checkNote(
   else if (draft.kind === 'other' && !marksGuestCount(draft) && detail === '' && title === '') messages.detail = NOTE_COPY.detailOther;
   const fields = checkFields(draft, today, false, messages);
   if (fields !== null && marksGuestCount(draft) && (fields.endDate ?? fields.startDate) >= deviceToday) {
-    if (draft.endDate.trim() === '') messages.startDate = NOTE_COPY.pastOnly;
-    else messages.endDate = NOTE_COPY.pastOnly;
+    if (draft.endDate.trim() === '') messages.startDate = NOTE_COPY.markFuture;
+    else messages.endDate = NOTE_COPY.markFuture;
   }
   if (fields === null || Object.keys(messages).length > 0) return { messages };
   return {

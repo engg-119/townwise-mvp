@@ -1,7 +1,7 @@
 import { formatCount, formatDate, plural } from '../format';
 import type { TownEvent } from '../analytics/api';
 import { mondayOf, weekDates } from '../analytics/cells';
-import { closureOf, likelyClosedWords, noteCovers, typicalGuests } from '../analytics/days';
+import { closureOf, likelyClosedWords, markedGuestsWords, noteCovers, typicalGuests } from '../analytics/days';
 import { metricText, MONTH_NAMES, shortDate, type Metric } from '../analytics/words';
 import { appliedOf, guestsFromWords, yoursDid, type ForecastDay, type ForecastReason, type ForecastWindow, type ReasonEffect } from '../estimates/api';
 import type { Note, SalesDay } from '../locations/api';
@@ -74,8 +74,11 @@ export interface CalendarInput {
   covered: DateRange;
   /** The range's forecast read; null while it loads or when it failed. */
   forecast: ForecastWindow | null;
-  /** The stored days of the range's past part, and of the 8 weeks before it that likely closed reads (grid.ts pastRangeFor). */
-  salesDays: readonly SalesDay[];
+  /**
+   * The stored days of the range's past part, and of the 8 weeks before it that likely closed reads (grid.ts pastRangeFor),
+   * masked by the notes (days.ts trustedGuestDays, D67): a marked day's guests null, its stored count in `storedGuests`.
+   */
+  salesDays: readonly (SalesDay & { storedGuests?: number })[];
   events: readonly TownEvent[];
   notes: readonly Note[];
   /** The location's business rules (D31); Home passes the same rules for its tooltip. */
@@ -102,6 +105,16 @@ function forecastDayOf(date: string, input: CalendarInput): ForecastDay | null {
 
 function storedGuests(date: string, input: CalendarInput): number | null {
   return input.salesDays.find((day) => day.date === date)?.guests ?? null;
+}
+
+/** D67: the stored count of a day whose guest count a note marks wrong; null on any other day. */
+function markedGuests(date: string, input: CalendarInput): number | null {
+  return input.salesDays.find((day) => day.date === date)?.storedGuests ?? null;
+}
+
+/** What a past day with no guests to show says first: “No data”, or that its count was marked wrong (D67). */
+function gapWords(date: string, input: CalendarInput): string {
+  return markedGuests(date, input) === null ? 'No data' : 'Guest count marked wrong';
 }
 
 /** A stored day's figure in `metric`: its guests, or its net sales in cents (Home, for a location with no stored guests). */
@@ -223,8 +236,9 @@ export function figureLabel(value: number, figure: Pick<CellFigure, 'kind'>, met
  * A day's figure: its stored data first, else the forecast made for it, else a word saying there is neither (owner
  * request, 2026-11-17: data wins over a forecast, and every day shows something). Before today that is the stored
  * guests or “Likely closed”, else the run's own figures for the day (the API leaves a past day as the run made it,
- * adjust.ts), else “No data”; from today on, the published forecast, else “No forecast”. The words wait for the
- * forecast read: while it loads or after it failed, a day with no data shows nothing rather than a word that may be wrong.
+ * adjust.ts), else “No data” (“Guest count marked wrong” on a day a note marks, D67); from today on, the published
+ * forecast, else “No forecast”. The words wait for the forecast read: while it loads or after it failed, a day with no
+ * data shows nothing rather than a word that may be wrong.
  * `metric` is Home's (D49, design decision 9): with net sales, a past day's stored value is its net sales in cents; the
  * fallbacks are the same guest figures, and likely closed stays guest-based. The Calendar always shows guests.
  */
@@ -235,13 +249,14 @@ export function figureOf(date: string, input: CalendarInput, metric: Metric = 'g
     if (likely !== null) return { status: 'likely_closed', figure: null, noteGuests: 0, words: `${likelyClosedWords(plural(likely, 'guest', 'guests'))}.` };
     const stored = storedValue(date, input, metric);
     if (stored !== null) return { ...NO_FIGURE, figure: { value: stored, kind: 'actual' }, words: `${figureLabel(stored, { kind: 'actual' }, metric)}.` };
-    if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_data', words: 'No data.' };
-    if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: 'No data. Forecast closed.' };
-    if (day.status === 'booked') return { ...NO_FIGURE, status: 'booked', words: `No data. ${bookedWords(day)}.` };
-    if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_data', words: 'No data.' };
+    const gap = gapWords(date, input);
+    if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_data', words: `${gap}.` };
+    if (day.status === 'closed') return { ...NO_FIGURE, status: 'closed', words: `${gap}. Forecast closed.` };
+    if (day.status === 'booked') return { ...NO_FIGURE, status: 'booked', words: `${gap}. ${bookedWords(day)}.` };
+    if (day.mid === null || day.low === null || day.high === null) return { ...NO_FIGURE, status: 'no_data', words: `${gap}.` };
     return {
       ...NO_FIGURE, figure: { value: Math.round(day.mid), kind: 'past_forecast' },
-      words: `No data. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })}, likely ${rangeWords(day.low, day.high)}.`,
+      words: `${gap}. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })}, likely ${rangeWords(day.low, day.high)}.`,
     };
   }
   if (day === null) return input.forecast === null ? NO_FIGURE : { ...NO_FIGURE, status: 'no_forecast', words: 'No forecast.' };
@@ -378,6 +393,8 @@ export type ForecastPart =
    */
   | {
     kind: 'past'; actual: number | null; likelyClosed: boolean; model: { low: number; mid: number | null; high: number } | null; modelClosed: boolean;
+    /** D67: the stored count of a day whose guest count a note marks wrong; absent on any other day. */
+    markedGuests?: number;
     /** How the forecast did (forecastCheck); null otherwise. */
     check: ForecastCheck | null;
     /** The run may have read a note or rule written on or after the day, so it isn't compared with it (D49 as amended). */
@@ -441,8 +458,10 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
     const low = day?.model.low ?? null;
     const high = day?.model.high ?? null;
     const model = low !== null && high !== null ? { low, mid: day?.model.mid ?? null, high } : null;
+    const marked = markedGuests(date, input);
     return {
       kind: 'past', actual: storedGuests(date, input) ?? day?.actual ?? null, likelyClosed: likelyClosedGuests(date, input) !== null, model,
+      ...(marked === null ? {} : { markedGuests: marked }),
       modelClosed: day?.model.status === 'closed', check: forecastCheck(day, input.today, input.forecast?.runs), laterNote: day?.laterNote === true,
     };
   }
@@ -760,7 +779,8 @@ export function forecastWords(part: ForecastPart, locationName: string): Forecas
       const figure = part.actual !== null ? { before: '', value: whole(part.actual), after: part.actual === 1 ? 'guest' : 'guests', source: 'actual' as const }
         : runMid !== null && !part.modelClosed ? { before: 'About', value: whole(runMid), after: Math.round(runMid) === 1 ? 'guest' : 'guests', source: 'forecast' as const }
           : null;
-      const lines = part.actual === null ? ['No guests stored for this day.'] : [];
+      const lines = part.actual !== null ? []
+        : part.markedGuests === undefined ? ['No guests stored for this day.'] : [`${markedGuestsWords(plural(part.markedGuests, 'guest', 'guests'))}.`];
       if (part.modelClosed) lines.push('Townwise’s model expected you closed.');
       else if (part.check !== null) lines.push(`${checkWords(part.check)}.`);
       else if (part.model !== null) {
@@ -816,14 +836,14 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
       const check = forecastCheck(day, input.today, input.forecast?.runs);
       if (check !== null) lines.push(checkWords(check));
     }
-    // No stored guests: the forecast made for the day, as the cell shows it (figureOf).
+    // No stored guests: the forecast made for the day, as the cell shows it (figureOf), after “No data” or the mark (D67).
     else if (day === null) {
-      if (input.forecast !== null) lines.push('No data');
-    } else if (day.status === 'closed') lines.push('No data. Forecast closed');
-    else if (day.status === 'booked') lines.push(`No data. ${bookedWords(day)}`);
+      if (input.forecast !== null) lines.push(gapWords(date, input));
+    } else if (day.status === 'closed') lines.push(`${gapWords(date, input)}. Forecast closed`);
+    else if (day.status === 'booked') lines.push(`${gapWords(date, input)}. ${bookedWords(day)}`);
     else if (day.mid !== null && day.low !== null && day.high !== null) {
-      lines.push(`No data. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })} (likely ${rangeWords(day.low, day.high)})`);
-    } else lines.push('No data');
+      lines.push(`${gapWords(date, input)}. ${figureLabel(Math.round(day.mid), { kind: 'past_forecast' })} (likely ${rangeWords(day.low, day.high)})`);
+    } else lines.push(gapWords(date, input));
   } else if (day === null) {
     if (input.forecast !== null) lines.push('No forecast');
   } else {

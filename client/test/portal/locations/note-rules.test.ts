@@ -181,8 +181,11 @@ describe('a guest count marked wrong (D67)', () => {
       },
     });
     expect(checkNote(mark({ startDate: '2026-11-18', endDate: '' }), TODAY, local)).toMatchObject({ input: { endDate: '2026-11-18' } });
-    expect(checkNote(mark({ startDate: '2026-11-17', endDate: local }), TODAY, local)).toEqual({ messages: { endDate: NOTE_COPY.pastOnly } });
-    expect(checkNote(mark({ startDate: local, endDate: '' }), TODAY, local)).toEqual({ messages: { startDate: NOTE_COPY.pastOnly } });
+    expect(checkNote(mark({ startDate: '2026-11-17', endDate: local }), TODAY, local)).toEqual({ messages: { endDate: NOTE_COPY.markFuture } });
+    expect(checkNote(mark({ startDate: local, endDate: '' }), TODAY, local)).toEqual({ messages: { startDate: NOTE_COPY.markFuture } });
+    // The helper and the refusal are different sentences, so a refused Save never reads as the helper repeated.
     expect(NOTE_COPY.pastOnly).toBe('Only days before today.');
+    expect(NOTE_COPY.markFuture).toBe('A guest count can only be marked wrong on days before today.');
+    expect(NOTE_COPY.markEffectHelp).toBe('Townwise leaves this day’s guest count out of forecasts and comparisons. Its sales stay.');
   });
 });

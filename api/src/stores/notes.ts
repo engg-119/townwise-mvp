@@ -4,7 +4,8 @@
 // note stored before titles existed (D49) has no `title` key and reads as untitled.
 // A note made from an owner-calendar event keeps `fromEvent` (openspec change calendar-event-suggestions, design
 // decisions 1, 2 and 5): the calendar's id, the event's stored uid and the event's dates and hours when the link was
-// made or last followed, never its title. `replace` sets content only, so an edit keeps the link; moveIf and removeIf
+// made or last followed, never its title. `replace` sets content only, so an edit keeps the link unless the caller
+// asks to drop it (an edit into a guest-count mark, D67); moveIf and removeIf
 // are the follow-up's compare-and-set on `updatedAt`. A uid names a booking: nothing here logs it.
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -187,8 +188,8 @@ export interface NoteStore {
    * run or another replica writes nothing. Resolves whether this call wrote it.
    */
   setTitleOnce(scope: OrgScope, noteId: string, title: string | null): Promise<boolean>;
-  /** A full replace of the content, keeping any link; null when the note is gone. */
-  replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date): Promise<NoteRecord | null>;
+  /** A full replace of the content, keeping any link unless `unlink`; null when the note is gone. */
+  replace(scope: OrgScope, locationId: string, noteId: string, content: NoteContent, now: Date, opts?: { unlink?: boolean }): Promise<NoteRecord | null>;
   remove(scope: OrgScope, locationId: string, noteId: string): Promise<boolean>;
   /** This location's notes linked to the calendar, sorted by start date. */
   linkedTo(scope: OrgScope, locationId: string, calendarId: string): Promise<NoteRecord[]>;
@@ -298,10 +299,10 @@ export function createNoteStore(connection: Connection): NoteStore {
       });
       return toNote(doc.toObject());
     },
-    async replace(scope, locationId, noteId, content, now) {
+    async replace(scope, locationId, noteId, content, now, opts = {}) {
       const doc = await Note.findOneAndUpdate(
         { _id: noteId, orgId: scope.orgId, locationId },
-        { $set: { ...fieldsOf(content), updatedAt: now } },
+        { $set: { ...fieldsOf(content), updatedAt: now }, ...(opts.unlink === true ? { $unset: { fromEvent: 1 } } : {}) },
         { returnDocument: 'after' },
       ).lean();
       return doc === null ? null : toNote(doc);

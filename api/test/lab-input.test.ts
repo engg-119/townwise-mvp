@@ -552,6 +552,18 @@ describe('a guest count marked wrong (D67)', () => {
     expect(dayOf(input, '2026-05-31')).toMatchObject({ guests: null, closed: false });
   });
 
+  it('a marked day with sales under a closing rule goes out open with no guest count; with no sales the rule still closes it', () => {
+    const closedMondays: ScheduledRule = {
+      id: '6'.repeat(24),
+      schedule: { kind: 'closure', startDate: '2026-04-06', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },
+    };
+    // Apr 27 and May 4 are Mondays with guests and sales; May 4's stored sales are none.
+    const sales = days.map((each) => (each.date === '2026-05-04' ? day(each.date, 43, null) : each));
+    const input = inputOf(sales, [mark('2026-04-27'), mark('2026-05-04')], null, [closedMondays]);
+    expect(dayOf(input, '2026-04-27')).toMatchObject({ guests: null, closed: false });
+    expect(dayOf(input, '2026-05-04')).toMatchObject({ guests: null, closed: true });
+  });
+
   it('a later Friday’s typical guests and likely-closed test leave the marked Friday out', () => {
     // The 8 Fridays before 2026-05-29: five with no guests (but sales), three with 40, one of them marked.
     const empty = ['2026-04-03', '2026-04-10', '2026-04-17', '2026-04-24', '2026-05-01'];

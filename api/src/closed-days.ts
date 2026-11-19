@@ -19,6 +19,9 @@
 //
 // A note marking a day's guest count wrong (D67) is read before any of this: trustedGuestDays sets that day's guests to
 // null, so it is a day with sales and no guest count, never likely closed and never in a neighbor's typical guests.
+// The mark says the day's sales were right, so a marked day with net sales above 0 is open to every closure test that
+// reads guests (markedOpen): a rule's closure never holds on it. A marked day with no sales reads as any day with no
+// guest count. A closure note and a rule's buyout read no guests, so they close a marked day as any other.
 //
 // The client mirrors this in client/src/portal/analytics/days.ts, pinned by the shared day-classes.json fixture
 // (test/fixtures/day-classes.json and its client copy). A change to one side needs the other and the fixture.
@@ -53,6 +56,14 @@ export function isClosure(entry: Entry): boolean {
  */
 export function isWrongGuestCount(entry: Pick<NoteContent, 'effect'>): boolean {
   return entry.effect === 'wrong_guest_count';
+}
+
+/**
+ * Whether a day whose guest count a covering note marks wrong (D67) has stored net sales above 0: the mark says its
+ * sales were right, so it was open, and a rule's closure never holds on it however few guests it shows.
+ */
+export function markedOpen(day: Pick<SalesDay, 'netSalesCents'> | undefined, notes: readonly Pick<NoteContent, 'effect'>[]): boolean {
+  return day?.netSalesCents !== undefined && day.netSalesCents !== null && day.netSalesCents > 0 && notes.some(isWrongGuestCount);
 }
 
 /** What trustedGuestDays reads of a note: its dates, weekdays and effect. */
@@ -138,13 +149,14 @@ export function fewOrNoGuests(day: StoredDay | undefined, typical: number | null
 
 /**
  * The covering rule schedules whose closure or buyout holds on the day (see the top): none when the notes decide it;
- * before today, a buyout always and a closure only on a day with few or no guests.
+ * before today, a buyout always and a closure only on a day with few or no guests that is not markedOpen (D67).
  */
 export function closingRules<R extends Entry>(
   rules: readonly R[], notes: readonly Entry[], day: StoredDay | undefined, typical: number | null, past: boolean,
 ): R[] {
   if (notesDecide(notes)) return [];
-  return rules.filter((rule) => isClosure(rule) && (!past || isBuyout(rule) || fewOrNoGuests(day, typical)));
+  const few = fewOrNoGuests(day, typical) && !markedOpen(day, notes);
+  return rules.filter((rule) => isClosure(rule) && (!past || isBuyout(rule) || few));
 }
 
 /**

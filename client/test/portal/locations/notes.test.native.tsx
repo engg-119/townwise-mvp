@@ -177,10 +177,16 @@ test('an Other note can mark past days’ guest counts wrong (D67): no guests, n
   expect(screen.queryByLabelText('Expected guests (optional)')).toBeNull();
   expect(screen.queryByLabelText('Starts at')).toBeNull();
   expect(screen.getAllByText('Only days before today.').length).toBeGreaterThan(0);
+  // The Effect helper says what the mark does, not that the kind set it.
+  expect(screen.getByText('Townwise leaves this day’s guest count out of forecasts and comparisons. Its sales stay.')).toBeTruthy();
+  expect(screen.queryByText('Set from the kind. Change it if you expect something else.')).toBeNull();
   await fireEvent.changeText(screen.getByLabelText('Starts'), day(-3));
   await fireEvent.changeText(screen.getByLabelText('Ends (optional)'), day(0));
   await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
   expect(writes(api)).toEqual([]);
+  // The refusal is its own sentence, announced: the alert role.
+  const refusal = screen.getByText('A guest count can only be marked wrong on days before today.');
+  expect(refusal.props.role).toBe('alert');
   await fireEvent.changeText(screen.getByLabelText('Ends (optional)'), day(-2));
   await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
   expect(await screen.findByText('Saved.')).toBeTruthy();

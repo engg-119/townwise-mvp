@@ -21,7 +21,11 @@ import { ToggleGroup } from './parts';
 // Ends: checked, the two dates are the first season, which repeats every year with no end, so Ends is required. The
 // note form adds Details and its buttons; the rules page its own. Each group's id starts with `idPrefix`, so two forms
 // on one page never share one. An Other note (never a rule) may also say its days' guest count was wrong (D67): chosen,
-// it hides Expected guests and the hours, and the end date's helper says only days before today.
+// it hides Expected guests and the hours, the end date's helper says only days before today, the Effect helper says
+// what the mark does, and the dates' messages, which only Save sets, are announced as alerts.
+
+/** The Effect helper, but for the mark (D67). */
+const EFFECT_HELP = 'Set from the kind. Change it if you expect something else.';
 
 const KIND_OPTIONS = NOTE_KINDS.map((kind) => ({ value: kind, label: KIND_LABEL[kind] }));
 const EFFECT_OPTIONS: readonly { value: NoteEffect; label: string }[] = SHARED_EFFECTS.map((effect) => ({ value: effect, label: EFFECT_LABEL[effect] }));
@@ -88,13 +92,16 @@ export function NoteFields(props: {
         />
       ) : null}
       <Pair>
-        <DateField label="Starts" value={draft.startDate} onChange={(startDate) => { set({ startDate }); }} messages={list(messages.startDate)} />
+        <DateField
+          label="Starts" value={draft.startDate} onChange={(startDate) => { set({ startDate }); }} messages={list(messages.startDate)} alert={mark}
+        />
         <DateField
           label={yearly ? 'Ends' : 'Ends (optional)'}
           helper={yearly ? 'The first season’s last day.' : mark ? NOTE_COPY.pastOnly : props.endHelper}
           value={draft.endDate}
           onChange={(endDate) => { set({ endDate }); }}
           messages={list(messages.endDate)}
+          alert={mark}
         />
       </Pair>
       {props.noun === 'rule' ? (
@@ -126,7 +133,7 @@ export function NoteFields(props: {
       />
       <ToggleGroup
         label="Effect"
-        helper="Set from the kind. Change it if you expect something else."
+        helper={mark ? NOTE_COPY.markEffectHelp : EFFECT_HELP}
         nativeID={`${idPrefix}-effect`}
         options={effectOptions(draft.kind, props.noun === 'note' && props.marks !== false)}
         isPressed={(effect) => draft.effect === effect}

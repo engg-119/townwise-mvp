@@ -282,6 +282,12 @@ test('the note form on web: an Other note marks past days’ guest counts wrong 
   expect(screen.getByRole('button', { name: MARK }).getAttribute('aria-pressed')).toBe('true');
   expect(screen.queryByLabelText('Expected guests (optional)')).toBeNull();
   expect(screen.queryByLabelText('Starts at')).toBeNull();
+  expect(screen.getByText('Townwise leaves this day’s guest count out of forecasts and comparisons. Its sales stay.')).toBeTruthy();
+  // Today is refused with its own sentence, announced as an alert, and nothing is sent.
+  fireEvent.change(screen.getByLabelText('Starts'), { target: { value: localToday() } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+  expect(screen.getByRole('alert').textContent).toBe('A guest count can only be marked wrong on days before today.');
+  expect(writes(api)).toEqual([]);
   const start = addDays(localToday(), -2);
   fireEvent.change(screen.getByLabelText('Starts'), { target: { value: start } });
   fireEvent.click(screen.getByRole('button', { name: 'Save note' }));

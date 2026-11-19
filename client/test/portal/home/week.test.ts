@@ -551,6 +551,20 @@ describe('the month card', () => {
     expect(monthDay('2026-11-03', slow)).toMatchObject({ likelyClosed: false });
   });
 
+  test('a day whose guest count is marked wrong (D67) says its stored count and its net sales, as Analytics’ day panel does', () => {
+    // 100 guests a day at $20 a guest; Mon, Nov 2, 2026 marked wrong.
+    const mark = note({ kind: 'other', startDate: '2026-11-02', endDate: '2026-11-02', effect: 'wrong_guest_count', detail: null, expectedGuests: null });
+    const days = decodeHistory(historyBody(run('2024-09-01', '2026-11-04', () => 100)), [mark]);
+    const home = input(days, dayContext([mark], []));
+    const marked = monthDay('2026-11-02', home);
+    expect(marked).toMatchObject({ value: null, likelyClosed: false });
+    expect(thisDayLine(marked, 'guests')).toBe('100 guests recorded, guest count marked wrong. Net sales $2,000.');
+    // Net sales are the day's own, as stored.
+    expect(thisDayLine(monthDay('2026-11-02', { ...home, metric: 'netSales' }), 'netSales')).toBe('$2,000');
+    // An unmarked day reads as before.
+    expect(thisDayLine(monthDay('2026-11-03', home), 'guests')).toBe('100 guests');
+  });
+
   test('this week’s own near-empty day (spec D32) is likely closed, in This month’s words, but never today in the app', () => {
     // History through Tuesday, Nov 3, 2026, which had 1 guest; This week starts that day.
     const tuesdayToday = '2026-11-03';
