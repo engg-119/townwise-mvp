@@ -128,10 +128,37 @@ test('a pointer over another column lights it white, and the selected column kee
   expect(x('svg [data-hover="day"]')).toBeLessThan(x('svg [data-chosen="day"]'));
 });
 
-test('pressing a column selects its day', () => {
+test('pressing a column selects its day, and its mousedown never moves focus into the hidden chart', () => {
   const onSelect = renderChart();
+  // fireEvent answers false when the event's default was prevented: the browser's focus on mousedown.
+  expect(fireEvent.mouseDown(screen.getByTestId('calendar-month-chart-2026-11-14'))).toBe(false);
   fireEvent.click(screen.getByTestId('calendar-month-chart-2026-11-14'));
   expect(onSelect).toHaveBeenCalledWith('2026-11-14');
+});
+
+test('a column with a status word draws no same weekday last year, so the faint line never runs through the word', () => {
+  const reads = (lastYear: string[]) => calendarChart(NOVEMBER, {
+    today: TODAY, covered: { from: '2026-10-26', to: '2026-12-06' },
+    forecast: forecastOf([
+      forecastDay({ date: '2026-11-12' }),
+      forecastDay({ date: '2026-11-13' }),
+      forecastDay({ date: '2026-11-14', status: 'closed', low: null, mid: null, high: null }),
+    ]) as ForecastWindow,
+    salesDays: [], events: [], notes: [], rules: [], imported: [], filters: ALL_FILTERS,
+  }, lastYear.map((date) => ({ date, guests: 96, netSalesCents: 192_000 })));
+  // The same weekdays last year of Nov 12, 13 and 14 (closed, its word upright in its column).
+  renderChart('2026-11-21', reads(['2025-11-13', '2025-11-14', '2025-11-15']));
+  expect(series('status').map((word) => word.textContent)).toContain('CLOSED');
+  expect(series('last-year-point')).toHaveLength(2);
+  // The line runs from the 12th to the 13th and stops there: two points, so it never reaches the 14th's column.
+  expect(series('last-year')[0]?.getAttribute('d')?.match(/[ML]/g)).toEqual(['M', 'L']);
+  expect(screen.getByTestId('calendar-month-chart-key-items').textContent).toContain('Same weekday last year');
+  cleanup();
+  // Last year only on the closed day: nothing is drawn, so the key leaves it out.
+  renderChart('2026-11-21', reads(['2025-11-15']));
+  expect(series('last-year-point')).toHaveLength(0);
+  expect(series('last-year')).toHaveLength(0);
+  expect(screen.getByTestId('calendar-month-chart-key-items').textContent).not.toContain('Same weekday last year');
 });
 
 test('the chart is hidden from screen readers and takes no tab stop', () => {

@@ -17,8 +17,10 @@ import { Mono } from '../ui/text';
 // `chosen` the Calendar's selected day (`mint` at 16% with 1px `mint` edges, D64), so it never reads as today's shade
 // and a hovered column beside it doesn't take its place [CONFIRM: the chart's selected day tinted `mint` at 16% with
 // 1px `mint` edges, apart from today's `white` 5% shade]. `words` stand upright in
-// columns too narrow for words across (the month's). The drawing is always aria-hidden: the surface that draws it says
-// each day in words. `PlotKey` names only what is drawn.
+// columns too narrow for words across (the month's); a column with a word draws no same-weekday-last-year point and
+// the line breaks around it, so the faint line never runs through the word (D64; `wordedLastYear` keeps the key honest).
+// The drawing is always aria-hidden: the surface that draws it says each day in words. `PlotKey` names only what is
+// drawn.
 
 const C = theme.color;
 /** The plot's top and bottom inset, so a point at 0 or at the top is whole. */
@@ -85,6 +87,11 @@ export function bandPaths(points: readonly ({ x: number; low: number; high: numb
   return bands;
 }
 
+/** Whether a day's same weekday last year is drawn: never in a column whose status word stands in it. */
+export function wordedLastYear(day: PlotDay, word: string | null | undefined): boolean {
+  return day.lastYear !== null && (word ?? null) === null;
+}
+
 /** A column's fill: today's shade or the lit column. */
 function columnBox(index: number, slot: number, height: number): string {
   return `M${String(r2(index * slot))} 0 h${String(r2(slot))} V${String(height)} h${String(-r2(slot))} Z`;
@@ -129,7 +136,15 @@ export function ForecastPlot(props: {
     day.point === null || !near(index) || (day.outlook === true) !== outlook ? null : { x: x(index), low: y(day.point.low), high: y(day.point.high) }
   )), half);
   const middle = linePath(days.map((day, index) => (day.point === null || !near(index) ? null : { x: x(index), y: y(day.point.mid) })));
-  const lastYear = linePath(days.map((day, index) => (day.lastYear === null || !near(index) ? null : { x: x(index), y: y(day.lastYear) })));
+  const words = props.words ?? [];
+  const lastYearAt = (index: number): number | null => {
+    const day = days[index];
+    return day === undefined || !wordedLastYear(day, words[index]) ? null : day.lastYear;
+  };
+  const lastYear = linePath(days.map((_, index) => {
+    const value = lastYearAt(index);
+    return value === null || !near(index) ? null : { x: x(index), y: y(value) };
+  }));
   const drawn = (index: number): boolean => index >= from && index < to;
   const shaded = props.shaded ?? null;
   const lit = props.lit ?? null;
@@ -145,9 +160,12 @@ export function ForecastPlot(props: {
       {band(false).map((d) => <Path key={d} data-series="range" d={d} fill={C.raised} stroke={C.line} strokeWidth={1} />)}
       {band(true).map((d) => <Path key={d} data-series="outlook-range" d={d} fill={C.raised} fillOpacity={0.5} stroke={C.line} strokeWidth={1} strokeDasharray="3 2" />)}
       {lastYear === '' ? null : <Path data-series="last-year" d={lastYear} fill="none" stroke={C.line} strokeOpacity={0.7} strokeWidth={1} />}
-      {days.map((day, index) => (day.lastYear === null || !drawn(index) ? null : (
-        <Circle key={day.date} data-series="last-year-point" cx={x(index)} cy={y(day.lastYear)} r={2} fill={C.line} fillOpacity={0.7} />
-      )))}
+      {days.map((day, index) => {
+        const value = lastYearAt(index);
+        return value === null || !drawn(index) ? null : (
+          <Circle key={day.date} data-series="last-year-point" cx={x(index)} cy={y(value)} r={2} fill={C.line} fillOpacity={0.7} />
+        );
+      })}
       {middle === '' ? null : <Path data-series="forecast" d={middle} fill="none" stroke={C.mint} strokeWidth={1.5} strokeDasharray="4 3" />}
       {days.map((day, index) => (day.point === null || !drawn(index) ? null : (
         <Circle key={day.date} data-series="forecast-point" cx={x(index)} cy={y(day.point.mid)} r={4} fill={C.panel} stroke={C.mint} strokeWidth={1.5} />
@@ -155,7 +173,7 @@ export function ForecastPlot(props: {
       {days.map((day, index) => (day.actual === null || !drawn(index) ? null : (
         <Circle key={day.date} data-series="actual" cx={r2(x(index) + (day.point === null ? 0 : beside))} cy={y(day.actual)} r={4.5} fill={C.mint} />
       )))}
-      {(props.words ?? []).map((word, index) => {
+      {words.map((word, index) => {
         if (word === null || !drawn(index)) return null;
         const at = { x: r2(x(index) + 3), y: height - INSET };
         return (

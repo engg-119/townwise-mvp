@@ -390,6 +390,14 @@ function CalendarView(): React.JSX.Element {
     router.setParams({ day: date });
   }, [router, selected]);
 
+  // A press on the month chart's column (D64) selects its day as the grid does, and on web focus goes to that day's
+  // cell, as a click in the grid leaves it there: never inside the aria-hidden chart, and the arrow keys go on from it.
+  const selectFromChart = useCallback((date: string) => {
+    select(date);
+    if (Platform.OS !== 'web' || typeof document === 'undefined') return;
+    document.getElementById(SLOT_ID)?.querySelector<HTMLElement>(`[role="grid"] [data-date="${date}"]`)?.focus({ preventScroll: true });
+  }, [select]);
+
   const toMonth = useCallback((next: string) => {
     select(next === today.slice(0, 7) ? today : `${next}-01`, true, next);
   }, [select, today]);
@@ -551,7 +559,7 @@ function CalendarView(): React.JSX.Element {
         {/* From 641px the filters head the grid's column, so from 1024px the panel beside it starts level with them. */}
         <View style={[styles.column, desktop ? styles.wide : null]}>
           {phone ? null : filtersNode}
-          {view === 'month' && chart !== null ? <MonthChart chart={chart} selected={selected} onSelect={select} busy={busy} /> : null}
+          {view === 'month' && chart !== null ? <MonthChart chart={chart} selected={selected} onSelect={selectFromChart} busy={busy} /> : null}
           {/* Both views render in this slot, so the focus restore covers a switch of views too; "Your calendars" in the
               header row is outside it, and its popover floats over the page, so a switch never remounts them and a shown
               result or refusal stays. */}

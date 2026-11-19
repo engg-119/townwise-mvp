@@ -31,7 +31,10 @@ import type { ChartDay, WeekChart as Model } from './weekChartData';
 // (DayDetail.tsx), the same weekday last year, and a link that opens the day on the Calendar. The chosen column is lit;
 // a mouse or pen over another (web; never touch) lights that one instead and leaves the panel alone, so the pointer
 // never shows content it can't reach and never hides a keyboard choice (WCAG 1.4.13). The drawing and its key are
-// chart/ForecastPlot.tsx's, which the Calendar's charts share (D64).
+// chart/ForecastPlot.tsx's, which the Calendar's charts share (D64). Under each column its weekday and date; on a phone
+// the date's month stands over its day number, since “Nov 19” fills a seventh of 390px and the dates ran together.
+// The chart and the panel share a row 3 to 2 only from 1024px; stacked, each is as tall as what it holds (a flex
+// share there split the stack's height 3 to 2, leaving a gap under the chart and the panel spilling past its box).
 
 const C = theme.color;
 const HEIGHT = 140;
@@ -71,6 +74,16 @@ function DayPanel(props: {
   );
 }
 
+/** A column's date: “Nov 19”, or on a phone “Nov” over “19”, so each day's date stands apart. */
+function DateLine(props: { date: string; stacked: boolean }): React.JSX.Element {
+  const words = dayMonth(props.date);
+  return (
+    <View testID={`home-week-chart-date-${props.date}`} style={styles.dateStack}>
+      {(props.stacked ? words.split(' ') : [words]).map((line) => <Mono key={line} tone="text3" style={styles.center}>{line}</Mono>)}
+    </View>
+  );
+}
+
 export function WeekChart(props: {
   model: Model; input: CalendarInput; metric: Metric; history: boolean; published: boolean; locationId: string;
 }): React.JSX.Element {
@@ -90,7 +103,7 @@ export function WeekChart(props: {
   };
   return (
     <View style={desktop ? styles.wide : styles.stack}>
-      <View style={styles.chartSide}>
+      <View style={desktop ? [styles.chartSide, styles.chartWide] : styles.chartSide}>
         <View style={styles.chart} onLayout={onLayout}>
           <View style={styles.plot}><ForecastPlot days={model.days} top={model.top} width={width} height={HEIGHT} lit={active < 0 ? null : active} /></View>
           <View role="group" aria-label="This week’s days" style={styles.days}>
@@ -117,7 +130,7 @@ export function WeekChart(props: {
                       {day.isToday ? <View style={styles.square} /> : null}
                       <Mono tone={isChosen ? 'white' : 'text3'}>{(WEEKDAY_NAMES[weekdayOf(day.date)] ?? '').slice(0, 3)}</Mono>
                     </View>
-                    <Mono tone="text3" style={styles.center}>{dayMonth(day.date)}</Mono>
+                    <DateLine date={day.date} stacked={phone} />
                     <View style={[styles.mark, isChosen ? styles.markOn : null]} />
                   </View>
                 </Pressable>
@@ -130,7 +143,7 @@ export function WeekChart(props: {
         <Mono tone="text3">{Platform.OS === 'web' ? 'Choose a day to see it in full.' : 'Tap a day to see it in full.'}</Mono>
       </View>
       {shown === undefined ? null : (
-        <View style={styles.panelSide}>
+        <View style={desktop ? [styles.panelSide, styles.panelWide] : styles.panelSide}>
           <DayPanel day={shown} input={props.input} metric={metric} history={props.history} published={props.published} locationId={props.locationId} />
         </View>
       )}
@@ -141,8 +154,10 @@ export function WeekChart(props: {
 const styles = StyleSheet.create({
   wide: { flexDirection: 'row', alignItems: 'flex-start', columnGap: theme.space.gutter },
   stack: { gap: theme.space[5] },
-  chartSide: { flex: 3, minWidth: 0, gap: theme.space[2] },
-  panelSide: { flex: 2, minWidth: 0 },
+  chartSide: { minWidth: 0, gap: theme.space[2] },
+  chartWide: { flex: 3 },
+  panelSide: { minWidth: 0 },
+  panelWide: { flex: 2 },
   chart: { position: 'relative' },
   plot: { position: 'absolute', top: 0, left: 0, right: 0, height: HEIGHT },
   days: { flexDirection: 'row' },
@@ -155,6 +170,7 @@ const styles = StyleSheet.create({
   weekday: { flexDirection: 'row', alignItems: 'center', columnGap: 4 },
   square: { width: 6, height: 6, backgroundColor: C.mint },
   center: { textAlign: 'center' },
+  dateStack: { alignItems: 'center' },
   mark: { width: 16, height: 2, marginTop: 2 },
   markOn: { backgroundColor: C.mint },
   panel: { gap: theme.space[4], minWidth: 0 },

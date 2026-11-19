@@ -10,7 +10,7 @@ import { townEvent } from '../analytics/fakes';
 import { calendarFake, forecastDay, forecastOf, setToday } from './fakes';
 
 // P28 Calendar's forecast chart and scrolling week on the page (D64): the chart above the month grid, a press on its
-// column selecting the day as the grid does (the panel follows), the “Forecast chart” chip hiding and showing it in both
+// column selecting the day as the grid does (the panel follows) and moving focus to its cell, the “Forecast chart” chip hiding and showing it in both
 // views, each week column's slice, and the week's scroll: a stop moves the label to the days in view and the selected
 // day into them, a stop that keeps it in view keeps it, and Next week moves on 7 days from wherever the scroll stopped.
 // The week's view is 697px wide, so a day's step is 100px. Today is Wed, Nov 11, 2026. Synthetic figures only.
@@ -117,6 +117,21 @@ test('the month’s chart sits above the grid, and a press on its column selects
   await waitFor(() => { expect(day()).toBe('2026-11-21'); });
   expect(within(panel()).getByRole('heading', { name: 'Sat, Nov 21, 2026' })).toBeTruthy();
   expect(document.querySelector('[role="grid"] [data-date="2026-11-21"]')?.getAttribute('aria-selected')).toBe('true');
+});
+
+test('a press on the month chart’s column moves focus to the day’s grid cell, so the arrow keys go on from it', async () => {
+  await renderAt('/locations/l1/calendar', 'November 2026');
+  const column = await screen.findByTestId('calendar-month-chart-2026-11-21');
+  fireEvent.mouseDown(column);
+  fireEvent.click(column);
+  const cell = document.querySelector('[role="grid"] [data-date="2026-11-21"]');
+  // Never left inside the aria-hidden chart (Chrome blocks aria-hidden on a focused element's ancestor).
+  expect(document.activeElement).toBe(cell);
+  expect(screen.getByTestId('calendar-month-chart').contains(document.activeElement)).toBe(false);
+  await waitFor(() => { expect(day()).toBe('2026-11-21'); });
+  fireEvent.keyDown(document.activeElement ?? document.body, { key: 'ArrowRight' });
+  await waitFor(() => { expect(day()).toBe('2026-11-22'); });
+  expect(document.activeElement).toBe(document.querySelector('[role="grid"] [data-date="2026-11-22"]'));
 });
 
 test('the Forecast chart chip hides the chart and shows it again, in both views', async () => {

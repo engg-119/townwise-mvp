@@ -435,10 +435,21 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
     if (date !== null) onSelect(date);
   }
 
+  // A press on the phone's strip never leaves focus inside it (it is aria-hidden): its mousedown is prevented, and focus
+  // goes to the day's agenda row, as a press there leaves it, so the arrow keys go on from it; a day out of view has
+  // its row focused once the page brings it into view.
+  function onStripMouseDown(event: React.MouseEvent<HTMLDivElement>): void {
+    if (event.target instanceof Element && event.target.closest('[data-strip]') !== null) event.preventDefault();
+  }
+
   function onStripClick(event: React.MouseEvent<HTMLDivElement>): void {
     const element = event.target instanceof Element ? event.target.closest('[data-strip]') : null;
     const date = element?.getAttribute('data-strip') ?? null;
-    if (date !== null) onSelect(date);
+    if (date === null) return;
+    const row = box.current?.querySelector<HTMLElement>(`[role="grid"] [data-date="${date}"]`) ?? null;
+    if (row === null) focusNext.current = date;
+    else row.focus({ preventScroll: true });
+    onSelect(date);
   }
 
   // Over a column's head only: a card, a gap or a pending or inert day clears the tooltip.
@@ -486,7 +497,7 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
       <style href="townwise-calendar-week" precedence="default">{CSS}</style>
       {phone ? (
         <>
-          <div ref={strip} data-scroller="1" aria-hidden="true" tabIndex={-1} onClick={onStripClick}>
+          <div ref={strip} data-scroller="1" aria-hidden="true" tabIndex={-1} onMouseDown={onStripMouseDown} onClick={onStripClick}>
             <div data-strip-row="1">
               {days.map((day) => (
                 <StripDay key={day.date} day={day} selected={day.date === selected} plot={plotOf(day.date)} plotWidth={dayWidth} />

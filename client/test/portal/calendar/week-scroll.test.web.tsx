@@ -320,3 +320,19 @@ test('at 640px and below the strip is aria-hidden over the agenda of the 7 days 
   fireEvent.click(strip);
   expect(onSelect).toHaveBeenCalledWith('2026-11-26');
 });
+
+test('at 640px and below a press on the strip moves focus to the day’s agenda row, never into the hidden strip', () => {
+  setWidth(600);
+  const onSelect = jest.fn();
+  render(week({ chart: true, onSelect }));
+  const strip = scroller().querySelector('[data-strip="2026-11-20"]');
+  if (strip === null) throw new Error('no strip day');
+  // fireEvent answers false when the event's default was prevented: the browser's focus on mousedown.
+  expect(fireEvent.mouseDown(strip)).toBe(false);
+  fireEvent.click(strip);
+  expect(onSelect).toHaveBeenCalledWith('2026-11-20');
+  expect(document.activeElement).toBe(column('2026-11-20'));
+  expect(scroller().contains(document.activeElement)).toBe(false);
+  fireEvent.keyDown(column('2026-11-20'), { key: 'ArrowDown' });
+  expect(onSelect).toHaveBeenLastCalledWith('2026-11-21', true, null);
+});

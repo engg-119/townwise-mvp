@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent } from 'react-native';
 
 import { useReducedMotion } from '../../motion';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
-import { ForecastPlot, PlotKey, type PlotDrawn } from '../chart/ForecastPlot';
+import { ForecastPlot, PlotKey, wordedLastYear, type PlotDrawn } from '../chart/ForecastPlot';
 import { chartWords, type CalendarChart } from './chart';
 import { FIGURE_KEY } from './model';
 
@@ -17,9 +17,12 @@ import { FIGURE_KEY } from './model';
 // so it never reads as today's; a mouse or pen over another column (web, never touch) lights that one `white` as well,
 // and the selected column keeps its tint. A column is at least 24px wide, so a month that doesn't fit (a phone) scrolls
 // sideways, brought to the selected day (animated unless reduced motion). Pressing a column selects its day as
-// pressing it in the grid does. The chart is hidden from screen readers and neither its columns nor its scroller are
-// focusable (tabIndex -1): the grid's cells say each day's forecast and range. Under it, the key (only what is drawn)
-// and the printed scale (ChartKey, which the week view draws under its strip too). [CONFIRM: the forecast chart shown
+// pressing it in the grid does, and on web focus goes to that day's grid cell (the page's `onSelect`): a column's
+// mousedown is prevented, so focus never lands inside the aria-hidden chart, and the arrow keys go on from the cell.
+// The chart is hidden from screen readers and neither its columns nor its scroller are focusable (tabIndex -1): the
+// grid's cells say each day's forecast and range. A column with a status word draws no same weekday last year
+// (ForecastPlot.tsx), so the key names last year only when another column draws it. Under it, the key (only what is
+// drawn) and the printed scale (ChartKey, which the week view draws under its strip too). [CONFIRM: the forecast chart shown
 // by default on the Calendar with a “Forecast chart” chip to hide it]
 
 const C = theme.color;
@@ -28,6 +31,8 @@ const HEIGHT = 120;
 export const MIN_SLOT = 24;
 /** The width until it is measured. */
 const START_WIDTH = 320;
+/** On web, a press never moves focus into the aria-hidden chart; the page moves it to the day's grid cell. */
+const NO_FOCUS = Platform.OS === 'web' ? { onMouseDown: (event: { preventDefault: () => void }) => { event.preventDefault(); } } : {};
 
 /** A column's width: the measured width shared by the days, never under MIN_SLOT. */
 export function monthSlot(width: number, days: number): number {
@@ -65,6 +70,8 @@ export function MonthChart(props: {
   const chosen = index(selected);
   const lit = hovered === selected ? null : index(hovered);
   const today = chart.days.findIndex((day) => day.isToday);
+  const words = chartWords(chart);
+  const drawn = { ...chart.drawn, lastYear: chart.days.some((day, at) => wordedLastYear(day, words[at])) };
 
   // A month wider than the box keeps the selected day in view.
   useEffect(() => {
@@ -104,7 +111,7 @@ export function MonthChart(props: {
                 shaded={today < 0 ? null : today}
                 lit={lit}
                 chosen={chosen}
-                words={chartWords(chart)}
+                words={words}
               />
             </View>
             <View style={styles.days}>
@@ -116,6 +123,7 @@ export function MonthChart(props: {
                     testID={`calendar-month-chart-${day.date}`}
                     accessible={false}
                     tabIndex={-1}
+                    {...NO_FOCUS}
                     onPress={() => { props.onSelect(day.date); }}
                     onHoverIn={() => { setHovered(day.date); }}
                     onHoverOut={() => { setHovered((prev) => (prev === day.date ? null : prev)); }}
@@ -132,7 +140,7 @@ export function MonthChart(props: {
         </ScrollView>
       </View>
       {chart.drawn.forecast ? null : <Text style={styles.scale}>No forecast for these days yet.</Text>}
-      <ChartKey drawn={chart.drawn} top={chart.top} testID="calendar-month-chart-key" />
+      <ChartKey drawn={drawn} top={chart.top} testID="calendar-month-chart-key" />
     </View>
   );
 }
