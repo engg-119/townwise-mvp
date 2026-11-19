@@ -112,7 +112,8 @@ describe('adding and listing', () => {
     expect(file).toEqual({
       id: expect.any(String) as string, locationId: t.locationId, kind: 'file', label: 'Bookings', host: null, eventCount: 3, skippedRepeating: 2,
       status: 'ok', lastSuccessAt: now, lastAttemptAt: now, nextRefreshAt: null, leaseUntil: null, consecutiveFailures: 0,
-      lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now,
+      lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: 'ics',
+      bookings: { state: 'unsorted', sortedAt: null, confirmedAt: null, confirmedBy: null },
     });
     // A link is fetched again 6 hours after it is added; a file never is.
     expect(link).toMatchObject({
@@ -163,7 +164,7 @@ describe('adding and listing', () => {
     ]);
     expect(events[0]).toEqual({
       calendarId: bookings.id, calendar: 'Bookings', uid: 'long', title: 'Inventory', startDate: '2026-10-30', endDate: '2026-11-01',
-      startTime: null, endTime: null,
+      startTime: null, endTime: null, booking: null, bookingBy: null,
     });
     expect(events[1]?.calendarId).toBe(catering.id);
     expect((await calendars.eventsBetween(t.scope, patio, NOVEMBER)).map((each) => each.title)).toEqual(['Patio party']);
@@ -379,7 +380,7 @@ describe('stable keys (calendar-event-suggestions, design decisions 1 and 12)', 
     const read = await calendars.keyedEventsBetween(t.scope, t.locationId, NOVEMBER);
     expect(read).toEqual([{
       uid: 'party@example.test', title: 'Private party', startDate: '2026-11-05', endDate: '2026-11-05', startTime: null, endTime: null, keyed: true,
-      calendarId: added.id, kind: 'file', connectionId: null, titlesNotice: false,
+      calendarId: added.id, kind: 'file', connectionId: null, titlesNotice: false, labeled: false,
     }]);
     expect(JSON.stringify(read)).not.toContain('Sentinel Bookings');
     const noticed = await calendars.add(t.scope, t.locationId, { kind: 'file', label: 'Noticed', titlesNotice: 1 }, parsed([event('lunch@example.test', '2026-11-07')]), {
@@ -571,7 +572,7 @@ describe('Google calendars (connect-google-calendar)', () => {
     expect(google).toEqual({
       id: expect.any(String) as string, locationId: t.locationId, kind: 'google', label: 'Google calendar', host: null, eventCount: 1, skippedRepeating: 0,
       status: 'ok', lastSuccessAt: now, lastAttemptAt: now, nextRefreshAt: new Date(now.getTime() + REFRESH_INTERVAL_MS), leaseUntil: null,
-      consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now,
+      consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: null, bookings: null,
     });
     // The sixth calendar, a Google one, finds no slot.
     const before = await snapshotOf(t.orgId);

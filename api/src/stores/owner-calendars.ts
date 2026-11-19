@@ -36,6 +36,15 @@
 // it switches from is current until its switch, so no one deletes those rows meanwhile). keyedEventsBetween reads a
 // range's keyed events for TownwiseAI's weekly call (lab/suggestions.ts), with each calendar's kind, Google connection
 // and whether a file's or link's add showed the weekly notice (`titlesNotice`), never its label.
+//
+// Booking labels (openspec change learn-from-calendar-bookings, D58, design decisions 6, 7 and 9): a file calendar keeps
+// its `format` (`csv`, or `ics` when absent) and, once sorted, labeled or confirmed, `bookings` (its state, when it was
+// sorted, and when and by whom it was confirmed); each of its rows may keep a `booking` label with who set it (`ai` or
+// `person`) and when. A file is never re-read, so its rows are never replaced and its labels last. setLabels writes the
+// AI's only on rows no one has labeled (a person's label, a cleared one included, is never overwritten), setLabel a
+// person's, and confirmBookings marks the calendar confirmed by compare-and-set. bookingsBetween reads the confirmed
+// calendars' buyout and party rows as dates and label only, never a title or uid, for the lab input (lab/input.ts). A
+// label is not a customer's data but sits on a row whose title is, so it follows the title's rules: never logged.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -56,6 +65,24 @@ export const REFRESH_INTERVAL_MS = 6 * 60 * 60_000;
 export const MANUAL_REFRESH_INTERVAL_MS = 5 * 60_000;
 
 export type CalendarKind = 'file' | 'link' | 'google';
+
+/** A file calendar event's booking label (D58): only `buyout` and `party` change a forecast, once confirmed. */
+export const BOOKINGS = ['buyout', 'party', 'own_event', 'other'] as const;
+export type Booking = typeof BOOKINGS[number];
+/** Who set a label: TownwiseAI's sort, or a person (whose label, or cleared label, the sort never overwrites). */
+export type BookingBy = 'ai' | 'person';
+
+/** A file calendar's bookings: `unsorted` until a sort or a person's label, then `sorted`, then `confirmed` (Use for forecasts). */
+export type BookingsState = 'unsorted' | 'sorted' | 'confirmed';
+
+/** How many of a file calendar's events carry each label, and how many none. */
+export interface BookingCounts {
+  readonly buyout: number;
+  readonly party: number;
+  readonly own_event: number;
+  readonly other: number;
+  readonly unlabeled: number;
+}
 
 /**
  * `ok`, or the code of the last failed refresh (design decisions 4 and 5). `bad_link` is a redirect to an address that
@@ -105,6 +132,18 @@ interface SourceFields {
    * calendar-event-suggestions design decision 11); absent otherwise, and never cleared.
    */
   titlesNotice?: number;
+  /** A file's format (D58); absent reads `ics`. Never set on a link or a Google calendar. */
+  format?: 'ics' | 'csv';
+  /** A file calendar's bookings once sorted, labeled or confirmed (D58); absent reads unsorted. */
+  bookings?: StoredBookings;
+}
+
+interface StoredBookings {
+  state: 'sorted' | 'confirmed';
+  sortedAt?: Date | null;
+  confirmedAt?: Date | null;
+  /** The org admin who confirmed; null once that person is deleted (stores/cross-tenant.ts deletePersonRecords). */
+  confirmedBy?: string | null;
 }
 
 interface EventFields {
@@ -121,6 +160,10 @@ interface EventFields {
   endTime: string | null;
   /** Whether `uid` survives a refresh; absent on rows written before it was kept, which read as false. */
   keyed?: boolean;
+  /** A file calendar row's booking label (D58); null when a person cleared it. Absent: never labeled. */
+  booking?: Booking | null;
+  bookingBy?: BookingBy;
+  bookingAt?: Date;
 }
 
 function sourceSchema(): Schema<SourceFields> {
@@ -147,6 +190,16 @@ function sourceSchema(): Schema<SourceFields> {
     createdBy: { type: String, required: true },
     createdAt: { type: Date, required: true },
     titlesNotice: { type: Number, enum: [WEEKLY_TITLES_NOTICE] },
+    format: { type: String, enum: ['ics', 'csv'] },
+    bookings: {
+      type: new Schema<StoredBookings>({
+        state: { type: String, required: true, enum: ['sorted', 'confirmed'] },
+        sortedAt: { type: Date, default: null },
+        confirmedAt: { type: Date, default: null },
+        confirmedBy: { type: String, default: null },
+      }, { _id: false, strict: 'throw' }),
+      default: undefined,
+    },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, slot: 1 }, { unique: true });
   // The refresh loop's claim of a due link, across organizations (stores/cross-tenant.ts); a file's is null.
@@ -167,6 +220,9 @@ function eventSchema(): Schema<EventFields> {
     startTime: { type: String, default: null },
     endTime: { type: String, default: null },
     keyed: { type: Boolean },
+    booking: { type: String, enum: [...BOOKINGS, null] },
+    bookingBy: { type: String, enum: ['ai', 'person'] },
+    bookingAt: { type: Date },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   // A calendar's generation by date (reads), and every row of an organization or a calendar (deletion) by its prefix.
   schema.index({ orgId: 1, sourceId: 1, generation: 1, startDate: 1 });
@@ -204,6 +260,15 @@ export interface OwnerCalendarRecord {
   readonly lastManualRefreshAt: Date | null;
   readonly createdBy: string;
   readonly createdAt: Date;
+  /** A file's format (D58); null for a link or a Google calendar. */
+  readonly format: 'ics' | 'csv' | null;
+  /** A file calendar's bookings (D58); null for a link or a Google calendar. */
+  readonly bookings: {
+    readonly state: BookingsState;
+    readonly sortedAt: Date | null;
+    readonly confirmedAt: Date | null;
+    readonly confirmedBy: string | null;
+  } | null;
 }
 
 /** A stored event with its calendar's name. */
@@ -218,6 +283,9 @@ export interface OwnerCalendarEvent {
   readonly endDate: string;
   readonly startTime: string | null;
   readonly endTime: string | null;
+  /** A file calendar event's label (D58), null for none (and for any other kind's event). */
+  readonly booking: Booking | null;
+  readonly bookingBy: BookingBy | null;
 }
 
 /** One event of a calendar's current generation, for server code (a note's link and its follow-up). */
@@ -259,6 +327,22 @@ export interface KeyedOwnerEvent extends StoredEvent {
   readonly connectionId: string | null;
   /** A file or link added from the popover that showed the weekly notice; false for a Google calendar. */
   readonly titlesNotice: boolean;
+  /** It carries a label on a confirmed calendar (D58): the weekly call leaves it out (design decision 13). */
+  readonly labeled: boolean;
+}
+
+/** A file calendar's event with its label, for the sort's request and confirm's notes. */
+export interface LabeledEvent extends StoredEvent {
+  readonly booking: Booking | null;
+  readonly bookingBy: BookingBy | null;
+}
+
+/** A confirmed calendar's buyout or party, as the lab input reads it: dates and label only, never a title or uid. */
+export interface ConfirmedBooking {
+  readonly startDate: string;
+  /** Inclusive. */
+  readonly endDate: string;
+  readonly booking: 'buyout' | 'party';
 }
 
 /** The keyed events eventsByUid found, read at one generation. */
@@ -274,7 +358,7 @@ export interface EventsByUid {
  * and the connection that reads it. A file or link carries `titlesNotice: 1` when its add showed the weekly notice.
  */
 export type NewCalendar =
-  | { readonly kind: 'file'; readonly label: string; readonly titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
+  | { readonly kind: 'file'; readonly label: string; readonly titlesNotice?: typeof WEEKLY_TITLES_NOTICE; readonly format?: 'ics' | 'csv' }
   | { readonly kind: 'link'; readonly label: string; readonly sealedAddress: string; readonly host: string; readonly titlesNotice?: typeof WEEKLY_TITLES_NOTICE }
   | { readonly kind: 'google'; readonly label: string; readonly sealedAddress: string; readonly googleConnectionId: string };
 
@@ -351,6 +435,32 @@ export interface OwnerCalendarStore {
   eventsBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<OwnerCalendarEvent[]>;
   /** As eventsBetween, the keyed events only, each with its calendar's kind and Google connection: never its label. */
   keyedEventsBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<KeyedOwnerEvent[]>;
+  /**
+   * D58: a file calendar's current events, by start, with their labels; with `unlabeled`, only those no one labeled
+   * (what a sort sends). Null for a missing calendar or one that is not a file.
+   */
+  labeledEvents(scope: OrgScope, locationId: string, calendarId: string, opts?: { unlabeled?: boolean }): Promise<LabeledEvent[] | null>;
+  /**
+   * D58: TownwiseAI's labels, each written only on a current row of this file calendar that no one has labeled, and the
+   * calendar marked sorted with its sortedAt. Resolves how many rows were labeled; null for a missing calendar or one
+   * that is not a file.
+   */
+  setLabels(scope: OrgScope, locationId: string, calendarId: string, labels: readonly { uid: string; booking: Booking }[], now: Date): Promise<number | null>;
+  /**
+   * D58: a person's label on one current row of this file calendar (null clears it, and a sort still leaves it), and
+   * the calendar marked sorted when it was unsorted. Resolves the row as it was before, or null when the calendar is
+   * missing, not a file, or holds no such row.
+   */
+  setLabel(scope: OrgScope, locationId: string, calendarId: string, uid: string, booking: Booking | null, now: Date): Promise<LabeledEvent | null>;
+  /**
+   * D58: Use for forecasts, by compare-and-set: the file calendar's bookings confirmed at `now` by `by` unless already
+   * confirmed. 'confirmed' when this call confirmed it, 'already' when it was, null when the calendar is missing or not a file.
+   */
+  confirmBookings(scope: OrgScope, locationId: string, calendarId: string, input: { by: string; now: Date }): Promise<'confirmed' | 'already' | null>;
+  /** D58: how many of each file calendar's current events carry each label, by calendar id; a link or Google calendar has none. */
+  labelCounts(scope: OrgScope, locationId: string): Promise<Map<string, BookingCounts>>;
+  /** D58: the location's confirmed file calendars' current buyout and party events overlapping [from, to], dates and label only. */
+  bookingsBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }): Promise<ConfirmedBooking[]>;
   /** Location deletion. Resolves the number of calendars deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion (spec 10.7). Resolves the number of calendars deleted. */
@@ -361,6 +471,15 @@ type SourceDoc = SourceFields & { _id: Types.ObjectId };
 
 /** What googleSource and googleSources read: nothing a record shows. */
 const SECRET_FIELDS = { _id: 1, googleConnectionId: 1, sealedAddress: 1 } as const;
+
+function bookingsOf(doc: Pick<SourceDoc, 'kind' | 'bookings'>): OwnerCalendarRecord['bookings'] {
+  if (doc.kind !== 'file') return null;
+  const stored = doc.bookings;
+  return {
+    state: stored?.state ?? 'unsorted', sortedAt: stored?.sortedAt ?? null, confirmedAt: stored?.confirmedAt ?? null,
+    confirmedBy: stored?.confirmedBy ?? null,
+  };
+}
 
 function toCalendar(doc: SourceDoc): OwnerCalendarRecord {
   return {
@@ -380,6 +499,8 @@ function toCalendar(doc: SourceDoc): OwnerCalendarRecord {
     lastManualRefreshAt: doc.lastManualRefreshAt,
     createdBy: doc.createdBy,
     createdAt: doc.createdAt,
+    format: doc.kind === 'file' ? doc.format ?? 'ics' : null,
+    bookings: bookingsOf(doc),
   };
 }
 
@@ -388,6 +509,10 @@ function storedEvent(row: EventFields): StoredEvent {
     uid: row.uid, title: row.title, startDate: row.startDate, endDate: row.endDate, startTime: row.startTime, endTime: row.endTime,
     keyed: row.keyed === true,
   };
+}
+
+function labeledEvent(row: EventFields): LabeledEvent {
+  return { ...storedEvent(row), booking: row.booking ?? null, bookingBy: row.bookingBy ?? null };
 }
 
 function startKey(event: Pick<OwnerCalendarEvent, 'startDate' | 'startTime'>): string {
@@ -468,7 +593,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
    */
   async function readBetween(scope: OrgScope, locationId: string, range: { from: string; to: string }, keyed: boolean) {
     const location = ofLocation(scope, locationId);
-    const current = () => Source.find(location, { label: 1, kind: 1, googleConnectionId: 1, generation: 1, createdAt: 1, titlesNotice: 1 })
+    const current = () => Source.find(location, { label: 1, kind: 1, googleConnectionId: 1, generation: 1, createdAt: 1, titlesNotice: 1, bookings: 1 })
       .sort({ createdAt: 1, _id: 1 }).lean();
     const read = (sources: Awaited<ReturnType<typeof current>>) => Promise.all(sources.map((source) => Event.find({
       orgId: location.orgId, sourceId: source._id, generation: source.generation,
@@ -484,6 +609,21 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       rows = await read(sources);
     }
     return sources.map((source, index) => ({ source, rows: rows[index] ?? [] }));
+  }
+
+  /** A file calendar's key and the filter of its current rows, or null when it is missing or not a file. */
+  async function fileRows(scope: OrgScope, locationId: string, calendarId: string) {
+    const key = ofCalendar(scope, locationId, calendarId);
+    const source = await Source.findOne({ ...key, kind: 'file' }, { generation: 1 }).lean();
+    return source === null ? null : { key, rows: { orgId: key.orgId, sourceId: key._id, generation: source.generation } };
+  }
+
+  /** Marks a file calendar sorted when it has no bookings yet; a sort also sets sortedAt, whatever its state. */
+  async function markSorted(key: ReturnType<typeof ofCalendar>, now: Date, bySort: boolean): Promise<void> {
+    const fresh = await Source.updateOne({ ...key, bookings: trusted({ $exists: false }) }, {
+      $set: { bookings: { state: 'sorted', sortedAt: bySort ? now : null, confirmedAt: null, confirmedBy: null } },
+    });
+    if (bySort && fresh.modifiedCount === 0) await Source.updateOne(key, { $set: { 'bookings.sortedAt': now } });
   }
 
   async function remove(scope: OrgScope, locationId: string, calendarId: string): Promise<boolean> {
@@ -540,6 +680,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
         nextRefreshAt: calendar.kind === 'file' ? null : new Date(input.now.getTime() + REFRESH_INTERVAL_MS),
         leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: input.createdBy, createdAt: input.now,
         ...(calendar.kind !== 'google' && calendar.titlesNotice === WEEKLY_TITLES_NOTICE ? { titlesNotice: WEEKLY_TITLES_NOTICE } : {}),
+        ...(calendar.kind === 'file' && calendar.format !== undefined ? { format: calendar.format } : {}),
       };
       let added: SourceDoc | null = null;
       for (const slot of free) {
@@ -614,6 +755,7 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       return byStart(read.flatMap(({ source, rows }) => rows.map((row): OwnerCalendarEvent => ({
         calendarId: source._id.toHexString(), calendar: source.label, uid: row.uid, title: row.title, startDate: row.startDate,
         endDate: row.endDate, startTime: row.startTime, endTime: row.endTime,
+        booking: source.kind === 'file' ? row.booking ?? null : null, bookingBy: source.kind === 'file' ? row.bookingBy ?? null : null,
       }))));
     },
     async keyedEventsBetween(scope, locationId, range) {
@@ -622,7 +764,83 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
         ...storedEvent(row), calendarId: source._id.toHexString(), kind: source.kind,
         connectionId: source.googleConnectionId === null ? null : source.googleConnectionId.toHexString(),
         titlesNotice: source.kind !== 'google' && source.titlesNotice === WEEKLY_TITLES_NOTICE,
+        labeled: source.kind === 'file' && source.bookings?.state === 'confirmed' && (row.booking ?? null) !== null,
       }))));
+    },
+    async labeledEvents(scope, locationId, calendarId, opts) {
+      const file = await fileRows(scope, locationId, calendarId);
+      if (file === null) return null;
+      const rows = await Event.find({ ...file.rows, ...(opts?.unlabeled === true ? { bookingBy: trusted({ $exists: false }) } : {}) })
+        .sort({ startDate: 1, _id: 1 }).lean();
+      return byStart(rows.map(labeledEvent));
+    },
+    async setLabels(scope, locationId, calendarId, labels, now) {
+      const file = await fileRows(scope, locationId, calendarId);
+      if (file === null) return null;
+      let labeled = 0;
+      if (labels.length > 0) {
+        const written = await Event.bulkWrite(labels.map((label) => ({
+          updateOne: {
+            filter: { ...file.rows, uid: label.uid, bookingBy: trusted({ $exists: false }) },
+            update: { $set: { booking: label.booking, bookingBy: 'ai' as const, bookingAt: now } },
+          },
+        })), { ordered: false });
+        labeled = written.modifiedCount;
+      }
+      await markSorted(file.key, now, true);
+      return labeled;
+    },
+    async setLabel(scope, locationId, calendarId, uid, booking, now) {
+      const file = await fileRows(scope, locationId, calendarId);
+      if (file === null) return null;
+      const before = await Event.findOneAndUpdate(
+        { ...file.rows, uid }, { $set: { booking, bookingBy: 'person', bookingAt: now } }, { returnDocument: 'before' },
+      ).lean();
+      if (before === null) return null;
+      await markSorted(file.key, now, false);
+      return labeledEvent(before);
+    },
+    async confirmBookings(scope, locationId, calendarId, input) {
+      const key = { ...ofCalendar(scope, locationId, calendarId), kind: 'file' as const };
+      // Unsorted (no bookings yet) or sorted: one compare-and-set each, so two confirms at once confirm once.
+      const fresh = await Source.updateOne({ ...key, bookings: trusted({ $exists: false }) }, {
+        $set: { bookings: { state: 'confirmed', sortedAt: null, confirmedAt: input.now, confirmedBy: input.by } },
+      });
+      if (fresh.modifiedCount === 1) return 'confirmed';
+      const sorted = await Source.updateOne({ ...key, 'bookings.state': 'sorted' }, {
+        $set: { 'bookings.state': 'confirmed', 'bookings.confirmedAt': input.now, 'bookings.confirmedBy': input.by },
+      });
+      if (sorted.modifiedCount === 1) return 'confirmed';
+      return (await Source.exists({ ...key, 'bookings.state': 'confirmed' })) === null ? null : 'already';
+    },
+    async labelCounts(scope, locationId) {
+      const location = ofLocation(scope, locationId);
+      const files = await Source.find({ ...location, kind: 'file' }, { generation: 1 }).lean();
+      const counts = new Map<string, BookingCounts>();
+      await Promise.all(files.map(async (source) => {
+        const groups = await Event.aggregate<{ _id: Booking | null; count: number }>([
+          { $match: { orgId: location.orgId, sourceId: source._id, generation: source.generation } },
+          { $group: { _id: { $ifNull: ['$booking', null] }, count: { $sum: 1 } } },
+        ]);
+        const of = (booking: Booking): number => groups.find((group) => group._id === booking)?.count ?? 0;
+        const total = groups.reduce((sum, group) => sum + group.count, 0);
+        const labeled = BOOKINGS.reduce((sum, booking) => sum + of(booking), 0);
+        counts.set(source._id.toHexString(), {
+          buyout: of('buyout'), party: of('party'), own_event: of('own_event'), other: of('other'), unlabeled: total - labeled,
+        });
+      }));
+      return counts;
+    },
+    async bookingsBetween(scope, locationId, range) {
+      const location = ofLocation(scope, locationId);
+      const sources = await Source.find({ ...location, kind: 'file', 'bookings.state': 'confirmed' }, { generation: 1 }).lean();
+      const rows = (await Promise.all(sources.map((source) => Event.find({
+        orgId: location.orgId, sourceId: source._id, generation: source.generation, booking: trusted({ $in: ['buyout', 'party'] }),
+        startDate: trusted({ $lte: range.to }), endDate: trusted({ $gte: range.from }),
+      }, { startDate: 1, endDate: 1, booking: 1 }).lean()))).flat();
+      return rows.flatMap((row): ConfirmedBooking[] => (row.booking === 'buyout' || row.booking === 'party'
+        ? [{ startDate: row.startDate, endDate: row.endDate, booking: row.booking }] : []))
+        .sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : 0));
     },
     removeForLocation(scope, locationId) {
       const location = ofLocation(scope, locationId);

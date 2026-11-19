@@ -27,18 +27,19 @@ function calendar(fields: Partial<OwnerCalendarRecord> = {}): OwnerCalendarRecor
     id: '0000000000000000000000a1', locationId: LOCATION_ID, kind: 'link', label: SENTINEL_LABEL, host: 'calendar.example.test',
     eventCount: 1, skippedRepeating: 3, status: 'ok', lastSuccessAt: new Date('2026-11-05T00:00:00Z'),
     lastAttemptAt: new Date('2026-11-05T00:00:00Z'), nextRefreshAt: new Date('2026-11-05T06:00:00Z'), leaseUntil: null,
-    consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: SENTINEL_USER, createdAt: new Date('2026-11-01T00:00:00Z'), ...fields,
+    consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: SENTINEL_USER, createdAt: new Date('2026-11-01T00:00:00Z'), format: null,
+    bookings: null, ...fields,
   };
 }
 
 const EVENTS: OwnerCalendarEvent[] = [
   {
     calendarId: '0000000000000000000000a1', calendar: SENTINEL_LABEL, uid: SENTINEL_UID, title: SENTINEL_TITLE,
-    startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '22:00',
+    startDate: '2026-11-21', endDate: '2026-11-21', startTime: '18:00', endTime: '22:00', booking: null, bookingBy: null,
   },
   {
     calendarId: '0000000000000000000000a2', calendar: 'Events', uid: 'uid-0002', title: 'Trivia weekend',
-    startDate: '2026-11-27', endDate: '2026-11-28', startTime: null, endTime: null,
+    startDate: '2026-11-27', endDate: '2026-11-28', startTime: null, endTime: null, booking: null, bookingBy: null,
   },
 ];
 
@@ -140,6 +141,30 @@ describe('get_owner_calendar result', () => {
     expect(outcome).toMatchObject({ proposal: null, visual: null, prompts: null });
   });
 
+  it('lists an imported CSV calendar’s events 2 years back, with no label in the result (learn-from-calendar-bookings, D58)', async () => {
+    const csv = calendar({
+      id: '0000000000000000000000d1', kind: 'file', label: 'Master calendar', host: null, skippedRepeating: 0, format: 'csv',
+      bookings: { state: 'confirmed', sortedAt: null, confirmedAt: new Date('2026-11-04T00:00:00Z'), confirmedBy: SENTINEL_USER },
+    });
+    const past: OwnerCalendarEvent = {
+      calendarId: csv.id, calendar: csv.label, uid: 'csv-0001', title: 'Spring reunion', startDate: '2024-04-12', endDate: '2024-04-12',
+      startTime: '18:00', endTime: '22:00', booking: 'party', bookingBy: 'ai',
+    };
+    const { tc, reads } = context([csv], [past]);
+    const outcome = await runTool(tc, call({ from: '2024-04-01', to: '2024-04-30' }));
+    expect(outcome.result.is_error).toBeUndefined();
+    expect(reads.find((read) => read.method === 'eventsBetween')?.range).toEqual({ from: '2024-04-01', to: '2024-04-30' });
+    expect(JSON.parse(outcome.result.content as string)).toEqual({
+      events: [{
+        calendar: 'Master calendar', title: 'Spring reunion', startDate: '2024-04-12', startWeekday: 'Fri', endDate: '2024-04-12',
+        endWeekday: 'Fri', startTime: '18:00', endTime: '22:00',
+      }],
+      truncated: false, calendars: 1, skippedRepeating: 0,
+    });
+    expect(outcome.result.content).not.toContain('party');
+    expect(outcome.result.content).not.toContain(SENTINEL_USER);
+  });
+
   it('lists no events when the location’s calendars have none in range', async () => {
     const { tc } = context([calendar({ skippedRepeating: 0 })]);
     const outcome = await runTool(tc, call({ from: '2026-11-16', to: '2026-11-30' }));
@@ -152,6 +177,7 @@ describe('get_owner_calendar result', () => {
     const many: OwnerCalendarEvent[] = Array.from({ length: 10_000 }, (_, index) => ({
       calendarId: `0000000000000000000000b${String(index % 5)}`, calendar: String(index % 5).repeat(60), uid: `uid-${String(index)}`,
       title: `${String(index).padStart(5, '0')} ${'x'.repeat(194)}`, startDate: '2026-11-21', endDate: '2026-11-22', startTime: '18:00', endTime: '22:00',
+      booking: null, bookingBy: null,
     }));
     const { tc } = context(calendars, many);
     const { content } = await toolNamed('get_owner_calendar')?.run(tc, { from: '2026-11-16', to: '2027-02-14' }) ?? { content: '' };
@@ -180,7 +206,7 @@ describe('get_owner_calendar result', () => {
     const google = calendar({ id: '0000000000000000000000c1', kind: 'google', label: 'Sentinel Google bookings', host: null, skippedRepeating: 0 });
     const googleEvent: OwnerCalendarEvent = {
       calendarId: google.id, calendar: google.label, uid: 'google-event-0001', title: 'Sentinel Google buyout',
-      startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '21:00',
+      startDate: '2026-11-24', endDate: '2026-11-24', startTime: '17:00', endTime: '21:00', booking: null, bookingBy: null,
     };
     // A calendar the list didn't read (added meanwhile) is hidden too.
     const lateEvent: OwnerCalendarEvent = { ...googleEvent, calendarId: '0000000000000000000000c2', calendar: 'Sentinel late calendar', title: 'Sentinel late title' };
