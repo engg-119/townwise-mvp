@@ -17,8 +17,8 @@ import type { OrgScope } from '../access/policy.ts';
 import type { LocationOrigin, ThreadId } from '../research/threads.ts';
 import type { EntityType, SourceRef } from '../research/verify.ts';
 import {
-  entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, runFields,
-  runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase, toThreadBase,
+  entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, REPORTED_RUN_STATUSES,
+  runFields, runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase, toThreadBase,
   type EntityDoc, type EntityRecordBase, type EventDoc, type EventInsertBase, type EventRecordBase, type EventUpdate,
   type RunDoc, type RunEnd, type RunRecordBase, type ThreadDoc, type ThreadEnd, type ThreadRecordBase,
   type ThreadTallyWrite,
@@ -160,6 +160,8 @@ export interface LocationResearchStore {
   liveRuns(scope: OrgScope): Promise<LocationRunRecord[]>;
   /** The location's latest merged (`done` or `partial`) run: what a prompt's `known` rows were found again by (decision 4). */
   lastFinishedRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
+  /** The location's runs ended `done`, `partial`, `failed` or `budget`, newest first, at most `limit` (TownwiseAI's activity). */
+  reportedRuns(scope: OrgScope, locationId: string, limit: number): Promise<LocationRunRecord[]>;
   /** Inserts the run's thread rows that are missing (unique `(orgId, runId, thread)`); resolves how many it inserted. */
   insertThreads(scope: OrgScope, run: { id: string; locationId: string }, threads: readonly { thread: ThreadId; notBefore: Date }[], now: Date): Promise<number>;
   threadsOf(scope: OrgScope, runId: string): Promise<LocationThreadRecord[]>;
@@ -173,6 +175,8 @@ export interface LocationResearchStore {
   reclaimThread(scope: OrgScope, id: string, input: { now: Date; next: { status: 'queued'; notBefore: Date } | { status: 'failed'; code: string } }): Promise<LocationThreadRecord | null>;
   /** The location's stored events, every stamp included (the reader skips rows of another place or town). */
   events(scope: OrgScope, locationId: string): Promise<LocationEventRecord[]>;
+  /** How many of the location's stored competitor rows each of `runIds` first found (TownwiseAI's activity), by run id. */
+  competitorsAdded(scope: OrgScope, locationId: string, runIds: readonly string[]): Promise<Map<string, number>>;
   insertEvent(scope: OrgScope, locationId: string, input: LocationEventInsert): Promise<LocationEventRecord>;
   /** A merge's update of a stored row: never its title or dates. */
   updateEvent(scope: OrgScope, locationId: string, id: string, update: EventUpdate): Promise<boolean>;
@@ -254,6 +258,11 @@ export function createLocationResearchStore(connection: Connection): LocationRes
       const doc = await Run.findOne({ ...at(scope, locationId), status: trusted({ $in: ['done', 'partial'] }) }).sort({ finishedAt: -1, _id: -1 }).lean();
       return doc === null ? null : toLocationRun(doc);
     },
+    async reportedRuns(scope, locationId, limit) {
+      const docs = await Run.find({ ...at(scope, locationId), status: trusted({ $in: [...REPORTED_RUN_STATUSES] }) })
+        .sort({ createdAt: -1, _id: -1 }).limit(limit).lean();
+      return docs.map(toLocationRun);
+    },
     async insertThreads(scope, run, list, now) {
       let inserted = 0;
       for (const each of list) {
@@ -282,6 +291,18 @@ export function createLocationResearchStore(connection: Connection): LocationRes
     },
     async events(scope, locationId) {
       return (await Event.find(at(scope, locationId)).sort({ start: 1, _id: 1 }).lean()).map(toLocationEvent);
+    },
+    async competitorsAdded(scope, locationId, runIds) {
+      const counts = new Map<string, number>();
+      if (runIds.length === 0) return counts;
+      const docs = await Event.find(
+        { ...at(scope, locationId), origin: 'competitor', firstRunId: trusted({ $in: runIds.map(oid) }) }, { firstRunId: 1 },
+      ).lean();
+      for (const doc of docs) {
+        const runId = doc.firstRunId.toHexString();
+        counts.set(runId, (counts.get(runId) ?? 0) + 1);
+      }
+      return counts;
     },
     async insertEvent(scope, locationId, input) {
       const doc = await Event.create({
