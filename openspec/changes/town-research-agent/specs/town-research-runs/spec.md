@@ -87,7 +87,7 @@ A thread SHALL reserve its ceiling (`research/budget.ts`: the gather's input ove
 
 #### Scenario: Little budget left
 - **WHEN** an organization has $6 left of its month and a location thread's ceiling is $3
-- **THEN** the weekly thread ends `budget`, its run ends `partial`, and Research now still runs it
+- **THEN** the weekly thread ends `budget`, its run ends `partial` when another of its threads recorded or found nothing (`budget` when every thread was refused), and Research now still runs it
 
 #### Scenario: Three locations
 - **WHEN** an organization with three locations has used $5.50 of its automatic share and a weekly thread's ceiling is $2
@@ -132,7 +132,7 @@ The lane that settles a run's last thread SHALL try to claim the merge by compar
 - **THEN** the API refuses it as every route without `openAsAdmin` is refused
 
 ### Requirement: Research reaches only what isolation allows
-Lookups across organizations SHALL be `researchTownsInUse`, `researchLocationCandidates`, `claimNextLocationResearchThread`, `claimLocationResearchMerge` and `staleLocationResearchThreads` in `stores/cross-tenant.ts`, answering ids only, imported only by `research/runner.ts` and `research/plan.ts`. Only `access/policy.ts` SHALL mint the scope (`scopeForResearch`), and only `research/runner.ts` SHALL ask for it. No file under `src/research/` SHALL import notes, sales, sales days, owner calendars, chat conversations or turns, files, or orders, and only `research/read.ts` and `research/revisions.ts` SHALL import the revisions store. Town rows and town run views SHALL hold no field derived from an organization, including what started a run.
+Lookups across organizations SHALL be `researchTownsInUse`, `researchLocationCandidates`, `claimNextLocationResearchThread`, `claimLocationResearchMerge` and `staleLocationResearchThreads` in `stores/cross-tenant.ts`, answering ids only, imported only by `research/runner.ts` and `research/plan.ts`. Only `access/policy.ts` SHALL mint the scope (`scopeForResearch`), and only `research/plan.ts` (the location candidates it plans for and the merges its sweep claims) and `research/runner.ts` SHALL ask for it. No file under `src/research/` SHALL import notes, sales, sales days, owner calendars, chat conversations or turns, files, or orders, and only `research/read.ts` and `research/revisions.ts` SHALL import the revisions store. Town rows and town run views SHALL hold no field derived from an organization, including what started a run.
 
 #### Scenario: Isolation pins
 - **WHEN** a file under `src/research/` imports `stores/notes.ts`
