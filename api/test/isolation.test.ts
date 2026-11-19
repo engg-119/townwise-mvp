@@ -216,7 +216,7 @@ describe('isolation (source)', () => {
     expect(sockets).toEqual(['calendar/fetch.ts']);
   });
 
-  it('only the calendar routes, the refresh loop, Google access, TownwiseAI’s calendar tool and the deletions reach stored calendars, so no forecast code reads them', () => {
+  it('only the calendar routes, the refresh loop, Google access, TownwiseAI’s calendar tool, the deletions and the lab input’s confirmed labels reach stored calendars', () => {
     // A value import of the store, a read of stores.ownerCalendars (dotted, destructured or bracketed) or a collection by name.
     const reaches = (file: { path: string; text: string }): boolean => /\bownerCalendars\b|\btw_calendar_/.test(file.text)
       || [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
@@ -227,12 +227,15 @@ describe('isolation (source)', () => {
     // their accepts (handlers/weekly-suggestions.ts) and the weekly suggestions call, which sends the events' titles to
     // spot private events (lab/suggestions.ts), read events to write notes and suggestions and to word the cards, never
     // a figure (calendar-event-suggestions). D58 (learn-from-calendar-bookings): the booking routes
-    // (handlers/calendar-bookings.ts) label a file calendar's events and write notes from them.
+    // (handlers/calendar-bookings.ts) label a file calendar's events and write notes from them, and the lab input
+    // (lab/input.ts) reads only the confirmed buyouts and parties, as dates and label, through bookingsBetween (below).
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
       'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/calendar-bookings.ts',
       'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
-      'handlers/weekly-suggestions.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
+      'handlers/weekly-suggestions.ts', 'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
     ]);
+    const input = sourceFiles().find((each) => each.path === 'lab/input.ts')?.text ?? '';
+    expect([...input.matchAll(/\bownerCalendars\b\.?(\w*)/g)].map((match) => match[1])).toEqual(['bookingsBetween']);
     // Seat loss ends a person's Google calendars only through calendar/google-access.ts (connect-google-calendar).
     const imports = (file: { path: string; text: string }): string[] => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
       .map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));

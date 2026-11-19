@@ -494,6 +494,69 @@ describe('labInputFingerprint (D42, the weekly refresh’s “changed since its 
   });
 });
 
+describe('confirmed booking labels (learn-from-calendar-bookings, D58)', () => {
+  const days = history('2025-01-02', '2026-05-31');
+  const stored = (date: string): number | null => days.find((each) => each.date === date)?.guests ?? null;
+  const withLabels = (
+    bookings: Parameters<typeof labInputOf>[0]['bookings'], notes: readonly NoteRecord[] = [], sales: readonly SalesDay[] = days,
+  ): LabInput => {
+    const input = labInputOf({ calibration: CALIBRATION, location: HANOVER, days: sales, notes, rules: [], today: TODAY, champion: null, bookings });
+    if (input === null) throw new Error('no input');
+    return labInputSchema.parse(input);
+  };
+
+  it('a buyout books a past day and a party marks it a private event, its guests unchanged; none means as before', () => {
+    const input = withLabels([
+      { startDate: '2026-05-29', endDate: '2026-05-29', booking: 'buyout' },
+      { startDate: '2026-05-30', endDate: '2026-05-30', booking: 'party' },
+      { startDate: '2026-05-15', endDate: '2026-05-16', booking: 'party' },
+    ]);
+    expect(dayOf(input, '2026-05-29')).toMatchObject({ booked: true, privateEvent: false, closed: false, guests: stored('2026-05-29') });
+    expect(dayOf(input, '2026-05-30')).toMatchObject({ booked: false, privateEvent: true, closed: false, guests: stored('2026-05-30') });
+    expect([dayOf(input, '2026-05-15').privateEvent, dayOf(input, '2026-05-16').privateEvent, dayOf(input, '2026-05-17').privateEvent]).toEqual([true, true, false]);
+    expect(withLabels([])).toEqual(withLabels(undefined));
+    expect(withLabels(undefined)).toEqual(inputOf(days));
+  });
+
+  it('a private-event or closure note on the day decides: a counted party is not counted twice, and a closure is not booked', () => {
+    const notes = [
+      note({ kind: 'private_event', startDate: '2026-05-23', effect: 'more_guests', expectedGuests: 20 }),
+      note({ kind: 'closure', startDate: '2026-05-22', effect: 'closed' }),
+    ];
+    const input = withLabels([
+      { startDate: '2026-05-23', endDate: '2026-05-23', booking: 'party' },
+      { startDate: '2026-05-22', endDate: '2026-05-22', booking: 'buyout' },
+    ], notes);
+    expect(dayOf(input, '2026-05-23')).toMatchObject({ privateEvent: false, booked: false, guests: (stored('2026-05-23') ?? 0) - 20 });
+    expect(dayOf(input, '2026-05-22')).toMatchObject({ closed: true, booked: false });
+  });
+
+  it('never changes a likely-closed day: a party on a near-empty Monday stays closed with no guests', () => {
+    const sales = days.map((each) => (each.date === '2026-04-06' ? day(each.date, 1) : each));
+    const input = withLabels([{ startDate: '2026-04-06', endDate: '2026-04-06', booking: 'party' }], [], sales);
+    expect(dayOf(input, '2026-04-06')).toMatchObject({ closed: true, guests: null });
+    expect(dayOf(withLabels(undefined, [], sales), '2026-04-06')).toMatchObject({ closed: true, guests: null });
+  });
+
+  it('sets nothing after dataThrough: an upcoming booking reaches the forecast as its note', () => {
+    const input = withLabels([
+      { startDate: '2026-06-10', endDate: '2026-06-10', booking: 'party' }, { startDate: '2026-06-12', endDate: '2026-06-12', booking: 'buyout' },
+      // A booking running across dataThrough sets only its history days.
+      { startDate: '2026-05-31', endDate: '2026-06-01', booking: 'buyout' },
+    ]);
+    expect(input.dataThrough).toBe('2026-05-31');
+    for (const date of ['2026-06-10', '2026-06-12', '2026-06-01']) expect(dayOf(input, date)).toMatchObject({ privateEvent: false, booked: false });
+    expect(dayOf(input, '2026-05-31')).toMatchObject({ booked: true });
+  });
+
+  it('changes the fingerprint with a confirmed label on a history day, and not with one after dataThrough or none', () => {
+    const fingerprint = labInputFingerprint(withLabels(undefined));
+    expect(labInputFingerprint(withLabels([{ startDate: '2026-05-30', endDate: '2026-05-30', booking: 'party' }]))).not.toBe(fingerprint);
+    expect(labInputFingerprint(withLabels([{ startDate: '2026-06-10', endDate: '2026-06-10', booking: 'party' }]))).toBe(fingerprint);
+    expect(labInputFingerprint(withLabels([]))).toBe(fingerprint);
+  });
+});
+
 /**
  * The API's side of the lab contract: an input labInputOf builds, from 637 days of synthetic Hanover history (a gap, zero
  * days, a row after today), notes of each kind, a pattern change date and a current forecast to compare with, must equal
