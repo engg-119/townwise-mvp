@@ -15,11 +15,22 @@
 // applied, with no title, why, file name or figure (the why is in the log). `undoable` is false under view-as, once a
 // person changed the target, and for a caller the action's role refuses. The upload a `sales_days.add` change wrote is
 // then left out, so the change shows once.
+//
+// D66 (openspec change town-research-agent, design decision 15): each research run that ended with an outcome, of the
+// location and of its town (one of the twelve), as `research_done { subject, status, found, added, competitors,
+// threadsFailed, finishedAt }`, dated when it finished. Derived from run rows at read time: the counts the merge stored,
+// `threadsFailed` the topics that ended `failed` or `budget`, and for the location `competitors`, how many of the events
+// it added are competitors' (the location's stored rows the run first found); null for the town. A town run is shared,
+// so its item carries its status and counts only, never what started it. A run ended `off` (research stopped) is left
+// out, and nothing shows while TOWNWISE_RESEARCH or the organization's switch is off, as the calendar reads none then.
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { AgentChangeAction, AgentChangeStatus, AgentSourceKind } from '../stores/agent-changes.ts';
 import type { NoteKind, NoteRecord } from '../stores/notes.ts';
 import type { AnswerRecord } from '../stores/agent-answers.ts';
+import { isTownId } from '../research/plan.ts';
+import { researchReadable } from '../research/read.ts';
+import type { ReportedRunStatus, RunRecordBase, RunStatus, ThreadRecordBase } from '../stores/research-shared.ts';
 import { targetStates, undoable } from './changes.ts';
 import { noteFor, parseQuestionId } from './questions.ts';
 
@@ -31,6 +42,8 @@ const UPLOADS_READ = 10;
 const FILES_READ = 10;
 /** D59: TownwiseAI's changes read per request, newest first. */
 const CHANGES_READ = MAX_ACTIVITY;
+/** D66: research runs read per request, of the location and of its town each, newest first. */
+const RESEARCH_RUNS_READ = 5;
 
 export type ActivityItem =
   | { at: string; kind: 'upload_applied'; firstDate: string; lastDate: string; dayCount: number }
@@ -41,6 +54,10 @@ export type ActivityItem =
     at: string; kind: 'agent_change'; changeId: string; action: AgentChangeAction; sourceKind: AgentSourceKind; status: AgentChangeStatus;
     startDate: string | null; endDate: string | null; noteKind: NoteKind | null; weekdays: readonly number[] | null; count: number | null;
     undoable: boolean;
+  }
+  | {
+    at: string; kind: 'research_done'; subject: 'town' | 'location'; status: ReportedRunStatus; found: number; added: number;
+    competitors: number | null; threadsFailed: number; finishedAt: string;
   };
 
 export interface ActivityInput {
@@ -136,8 +153,46 @@ export const agentChangeSource: ActivitySource = async ({ ctx, scope, locationId
   }));
 };
 
+// A type import only (test/isolation.test.ts pins who imports research-shared.ts by value): stores' REPORTED_RUN_STATUSES.
+const reported = (status: RunStatus): status is ReportedRunStatus => status === 'done' || status === 'partial' || status === 'failed' || status === 'budget';
+
+/** D66: research runs of the location and its town that ended with an outcome; none while research is off for the organization. */
+export const researchSource: ActivitySource = async ({ ctx, scope, locationId }) => {
+  if (!await researchReadable(ctx, scope)) return [];
+  const location = await ctx.stores.locations.find(scope, locationId);
+  if (location === null) return [];
+  const townId = location.town.townId !== null && isTownId(location.town.townId) ? location.town.townId : null;
+  const { researchLocations: own, researchTowns: towns } = ctx.stores;
+  const [ownRuns, townRuns] = await Promise.all([
+    own.reportedRuns(scope, locationId, RESEARCH_RUNS_READ),
+    townId === null ? Promise.resolve([]) : towns.reportedRuns(townId, RESEARCH_RUNS_READ),
+  ]);
+  const competitorsAdded = new Map<string, number>();
+  for (const row of ownRuns.length === 0 ? [] : await own.events(scope, locationId)) {
+    if (row.origin === 'competitor') competitorsAdded.set(row.firstRunId, (competitorsAdded.get(row.firstRunId) ?? 0) + 1);
+  }
+  // A `done` run had no thread fail and a `failed` or `budget` one had all (research/runner.ts runStatus), so only a
+  // `partial` run's threads are read.
+  const item = async (
+    run: RunRecordBase, subject: 'town' | 'location', competitors: number | null, threadsOf: () => Promise<readonly ThreadRecordBase[]>,
+  ): Promise<SourceItem[]> => {
+    const { status, finishedAt } = run;
+    if (!reported(status) || finishedAt === null) return [];
+    const threadsFailed = status === 'done' ? 0 : status !== 'partial' ? run.threads.length
+      : (await threadsOf()).filter((thread) => thread.status === 'failed' || thread.status === 'budget').length;
+    return [{
+      at: finishedAt.toISOString(), kind: 'research_done', subject, status, found: run.counts.found, added: run.counts.added, competitors,
+      threadsFailed, finishedAt: finishedAt.toISOString(),
+    }];
+  };
+  return (await Promise.all([
+    ...ownRuns.map((run) => item(run, 'location', competitorsAdded.get(run.id) ?? 0, () => own.threadsOf(scope, run.id))),
+    ...townRuns.map((run) => item(run, 'town', null, () => towns.threadsOf(run.id))),
+  ])).flat();
+};
+
 /** Append-only: each later source adds one entry. */
-export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answers, files, agentChangeSource];
+export const ACTIVITY_SOURCES: readonly ActivitySource[] = [uploads, savedProposals, answers, files, agentChangeSource, researchSource];
 
 /** The item as the route answers it: without the merge's upload link. */
 function published(item: SourceItem): ActivityItem {

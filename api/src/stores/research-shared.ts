@@ -20,6 +20,9 @@ export type RunStatus = typeof RUN_STATUSES[number];
 /** The statuses that hold the subject's one live slot (`liveSubject`). */
 export const LIVE_RUN_STATUSES: readonly RunStatus[] = ['queued', 'running', 'merging'];
 export type EndedRunStatus = Exclude<RunStatus, 'queued' | 'running' | 'merging'>;
+/** The ended statuses with an outcome to report (TownwiseAI's activity): every ended one but `off` (research stopped). */
+export const REPORTED_RUN_STATUSES = ['done', 'partial', 'failed', 'budget'] as const;
+export type ReportedRunStatus = typeof REPORTED_RUN_STATUSES[number];
 
 /** A thread: `queued → running → recorded | empty | budget | failed`, with a code. */
 export const THREAD_STATUSES = ['queued', 'running', 'recorded', 'empty', 'budget', 'failed'] as const;

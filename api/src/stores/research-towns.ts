@@ -14,8 +14,8 @@ import type { ThreadId } from '../research/threads.ts';
 import type { EntityType, SourceRef } from '../research/verify.ts';
 import type { TownId } from '../towns.ts';
 import {
-  allThreadsEnded, entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, runFields,
-  runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase,
+  allThreadsEnded, entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc,
+  REPORTED_RUN_STATUSES, runFields, runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase,
   toThreadBase, type EntityDoc, type EntityRecordBase, type EventDoc, type EventInsertBase, type EventRecordBase,
   type EventUpdate, type RunDoc, type RunEnd, type RunRecordBase, type ThreadDoc, type ThreadEnd,
   type ThreadRecordBase, type ThreadTallyWrite,
@@ -114,6 +114,8 @@ export interface TownResearchStore {
   liveRun(townKey: TownId): Promise<TownRunRecord | null>;
   /** The town's latest merged (`done` or `partial`) run: what a prompt's `known` rows were found again by (decision 4). */
   lastFinishedRun(townKey: TownId): Promise<TownRunRecord | null>;
+  /** The town's runs ended `done`, `partial`, `failed` or `budget`, newest first, at most `limit` (TownwiseAI's activity). */
+  reportedRuns(townKey: TownId, limit: number): Promise<TownRunRecord[]>;
   /** Inserts the run's thread rows that are missing (unique `(runId, thread)`); resolves how many it inserted. */
   insertThreads(run: { id: string; townKey: TownId }, threads: readonly { thread: ThreadId; notBefore: Date }[], now: Date): Promise<number>;
   threadsOf(runId: string): Promise<TownThreadRecord[]>;
@@ -201,6 +203,10 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
     async lastFinishedRun(townKey) {
       const doc = await Run.findOne({ townKey, status: trusted({ $in: ['done', 'partial'] }) }).sort({ finishedAt: -1, _id: -1 }).lean();
       return doc === null ? null : toTownRun(doc);
+    },
+    async reportedRuns(townKey, limit) {
+      const docs = await Run.find({ townKey, status: trusted({ $in: [...REPORTED_RUN_STATUSES] }) }).sort({ createdAt: -1, _id: -1 }).limit(limit).lean();
+      return docs.map(toTownRun);
     },
     async insertThreads(run, list, now) {
       let inserted = 0;

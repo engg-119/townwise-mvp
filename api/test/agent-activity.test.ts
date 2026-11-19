@@ -3,14 +3,16 @@
 // applied is left out; Undo is offered only on an applied change whose target is still as it was, to a caller the
 // action's role allows, never under view-as; a `sales_days.add` change shows once, in place of its upload; and the
 // log's view carries the why outside view-as only; (slice 3) a rule TownwiseAI added is undoable while unchanged.
-// Synthetic records.
+// D66 (openspec change town-research-agent, design decision 15): research runs as `research_done`, the town's with its
+// status and counts only, and none while research is off for the organization. Synthetic records.
 import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
-import { activityFor, agentChangeSource, ACTIVITY_SOURCES, type ActivityInput } from '../src/agent/activity.ts';
+import { activityFor, agentChangeSource, ACTIVITY_SOURCES, researchSource, type ActivityInput } from '../src/agent/activity.ts';
 import { changeView, mayUndo, targetStates, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import type { AgentChangeRecord } from '../src/stores/agent-changes.ts';
+import type { RunRecordBase, ThreadStatus } from '../src/stores/research-shared.ts';
 
 const SCOPE = { orgId: 'a'.repeat(24) } as unknown as OrgScope;
 const LOCATION = 'b'.repeat(24);
@@ -78,7 +80,7 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
       expect.objectContaining({ changeId: undone.id, status: 'undone', undoable: false }),
     ]);
     expect(JSON.stringify(items)).not.toContain(SENTINEL);
-    expect(ACTIVITY_SOURCES.at(-1)).toBe(agentChangeSource);
+    expect(ACTIVITY_SOURCES).toContain(agentChangeSource);
   });
 
   it('offers no Undo once a person edited the note, once it is gone, under view-as, or with no caller', async () => {
@@ -183,5 +185,112 @@ describe('who may undo, and the log’s view (D59)', () => {
     });
     expect(changeView(VIEW_AS, row, states)).toMatchObject({ why: null, undoable: false });
     expect(changeView(MEMBER, { ...row, status: 'applying' }, states)).toMatchObject({ targetId: null, undoable: false });
+  });
+});
+
+describe('research runs in TownwiseAI’s activity (D66)', () => {
+  const at = (hour: number) => new Date(`2026-06-0${String(hour)}T12:00:00.000Z`);
+  let runIds = 0;
+  function run(over: Partial<RunRecordBase> = {}): RunRecordBase & { trigger: 'press' } {
+    runIds += 1;
+    return {
+      id: String(runIds).padStart(24, 'r'), key: `k${String(runIds)}`, status: 'done', code: null, threads: ['neighborhood', 'competitors'],
+      counts: { found: 9, added: 3, updated: 2, dropped: 1 }, costMicroUsd: 5_000, createdAt: at(1), startedAt: at(1), finishedAt: at(1),
+      trigger: 'press', ...over,
+    };
+  }
+
+  interface Fakes {
+    on?: boolean; research?: boolean; townId?: string | null;
+    own?: RunRecordBase[]; town?: RunRecordBase[];
+    events?: { origin: string; firstRunId: string; title: string }[];
+    threads?: Record<string, ThreadStatus[]>;
+  }
+  function researchContext(fakes: Fakes, reads: string[] = []): TownwiseContext {
+    const threadsOf = (id: string) => {
+      reads.push(`threads:${id}`);
+      return Promise.resolve((fakes.threads?.[id] ?? []).map((status) => ({ status })));
+    };
+    return {
+      config: { research: fakes.research ?? true },
+      logger: { warn: () => undefined },
+      stores: {
+        orgs: { findById: () => Promise.resolve({ research: { on: fakes.on ?? true } }) },
+        locations: { find: () => Promise.resolve({ id: LOCATION, town: { townId: fakes.townId === undefined ? 'hanover-nh' : fakes.townId } }) },
+        researchLocations: {
+          reportedRuns: () => { reads.push('own'); return Promise.resolve(fakes.own ?? []); },
+          events: () => { reads.push('events'); return Promise.resolve(fakes.events ?? []); },
+          threadsOf: (_scope: OrgScope, id: string) => threadsOf(id),
+        },
+        researchTowns: {
+          reportedRuns: (townKey: string) => { reads.push(`town:${townKey}`); return Promise.resolve(fakes.town ?? []); },
+          threadsOf,
+        },
+      },
+    } as unknown as TownwiseContext;
+  }
+
+  it('lists the location’s and the town’s ended runs, newest first, with counts, failed topics and competitors’ new events', async () => {
+    const press = run({ finishedAt: at(5) });
+    const partial = run({ status: 'partial', finishedAt: at(3), counts: { found: 4, added: 1, updated: 0, dropped: 0 } });
+    const townDone = run({ finishedAt: at(4), threads: ['schools', 'sports', 'civic'] });
+    const townBudget = run({ status: 'budget', finishedAt: at(2), threads: ['schools', 'sports', 'civic'], counts: { found: 0, added: 0, updated: 0, dropped: 0 } });
+    const reads: string[] = [];
+    const ctx = researchContext({
+      own: [press, partial], town: [townDone, townBudget],
+      events: [
+        { origin: 'competitor', firstRunId: press.id, title: 'Sentinel Trivia' }, { origin: 'competitor', firstRunId: press.id, title: 'Sentinel Jazz' },
+        { origin: 'neighborhood', firstRunId: press.id, title: 'Sentinel Fair' }, { origin: 'competitor', firstRunId: 'gone-run', title: 'Sentinel Old' },
+      ],
+      threads: { [partial.id]: ['recorded', 'failed'] },
+    }, reads);
+    const items = await activityFor(input(ctx, MEMBER), [researchSource]);
+    expect(items).toEqual([
+      {
+        at: at(5).toISOString(), kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 2, threadsFailed: 0,
+        finishedAt: at(5).toISOString(),
+      },
+      // A town run is shared: its status and counts only, never what started it or when, and no competitors.
+      {
+        at: at(4).toISOString(), kind: 'research_done', subject: 'town', status: 'done', found: 9, added: 3, competitors: null, threadsFailed: 0,
+        finishedAt: at(4).toISOString(),
+      },
+      {
+        at: at(3).toISOString(), kind: 'research_done', subject: 'location', status: 'partial', found: 4, added: 1, competitors: 0, threadsFailed: 1,
+        finishedAt: at(3).toISOString(),
+      },
+      {
+        at: at(2).toISOString(), kind: 'research_done', subject: 'town', status: 'budget', found: 0, added: 0, competitors: null, threadsFailed: 3,
+        finishedAt: at(2).toISOString(),
+      },
+    ]);
+    // Only the partial run's threads are read; the town is the location's own.
+    expect(reads.filter((read) => read.startsWith('threads:'))).toEqual([`threads:${partial.id}`]);
+    expect(reads).toContain('town:hanover-nh');
+    expect(JSON.stringify(items)).not.toContain('Sentinel');
+    expect(JSON.stringify(items)).not.toContain('press');
+    expect(ACTIVITY_SOURCES.at(-1)).toBe(researchSource);
+  });
+
+  it('shows nothing while TOWNWISE_RESEARCH or the organization’s switch is off, and reads no run', async () => {
+    for (const fakes of [{ on: false }, { research: false }]) {
+      const reads: string[] = [];
+      const ctx = researchContext({ ...fakes, own: [run()], town: [run()] }, reads);
+      expect(await activityFor(input(ctx, MEMBER), [researchSource])).toEqual([]);
+      expect(reads).toEqual([]);
+    }
+  });
+
+  it('reads no town run for a town outside the twelve, and no events when the location has no run', async () => {
+    const reads: string[] = [];
+    const ctx = researchContext({ townId: null, own: [] }, reads);
+    expect(await activityFor(input(ctx, MEMBER), [researchSource])).toEqual([]);
+    expect(reads).toEqual(['own']);
+  });
+
+  it('a failed run counts every topic as not finished', async () => {
+    const failed = run({ status: 'failed', counts: { found: 0, added: 0, updated: 0, dropped: 0 } });
+    const items = await activityFor(input(researchContext({ own: [failed] }), MEMBER), [researchSource]);
+    expect(items).toEqual([expect.objectContaining({ subject: 'location', status: 'failed', threadsFailed: 2, competitors: 0 })]);
   });
 });

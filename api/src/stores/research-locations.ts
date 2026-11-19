@@ -17,8 +17,8 @@ import type { OrgScope } from '../access/policy.ts';
 import type { LocationOrigin, ThreadId } from '../research/threads.ts';
 import type { EntityType, SourceRef } from '../research/verify.ts';
 import {
-  entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, runFields,
-  runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase, toThreadBase,
+  entityFields, eventDocOf, eventFields, eventUpdateOf, insertUnlessDuplicate, newRunDoc, newThreadDoc, REPORTED_RUN_STATUSES,
+  runFields, runMoves, SCHEMA_OPTIONS, threadFields, threadMoves, toEntityBase, toEventBase, toRunBase, toThreadBase,
   type EntityDoc, type EntityRecordBase, type EventDoc, type EventInsertBase, type EventRecordBase, type EventUpdate,
   type RunDoc, type RunEnd, type RunRecordBase, type ThreadDoc, type ThreadEnd, type ThreadRecordBase,
   type ThreadTallyWrite,
@@ -160,6 +160,8 @@ export interface LocationResearchStore {
   liveRuns(scope: OrgScope): Promise<LocationRunRecord[]>;
   /** The location's latest merged (`done` or `partial`) run: what a prompt's `known` rows were found again by (decision 4). */
   lastFinishedRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
+  /** The location's runs ended `done`, `partial`, `failed` or `budget`, newest first, at most `limit` (TownwiseAI's activity). */
+  reportedRuns(scope: OrgScope, locationId: string, limit: number): Promise<LocationRunRecord[]>;
   /** Inserts the run's thread rows that are missing (unique `(orgId, runId, thread)`); resolves how many it inserted. */
   insertThreads(scope: OrgScope, run: { id: string; locationId: string }, threads: readonly { thread: ThreadId; notBefore: Date }[], now: Date): Promise<number>;
   threadsOf(scope: OrgScope, runId: string): Promise<LocationThreadRecord[]>;
@@ -253,6 +255,11 @@ export function createLocationResearchStore(connection: Connection): LocationRes
     async lastFinishedRun(scope, locationId) {
       const doc = await Run.findOne({ ...at(scope, locationId), status: trusted({ $in: ['done', 'partial'] }) }).sort({ finishedAt: -1, _id: -1 }).lean();
       return doc === null ? null : toLocationRun(doc);
+    },
+    async reportedRuns(scope, locationId, limit) {
+      const docs = await Run.find({ ...at(scope, locationId), status: trusted({ $in: [...REPORTED_RUN_STATUSES] }) })
+        .sort({ createdAt: -1, _id: -1 }).limit(limit).lean();
+      return docs.map(toLocationRun);
     },
     async insertThreads(scope, run, list, now) {
       let inserted = 0;
