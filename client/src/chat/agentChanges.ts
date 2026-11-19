@@ -161,7 +161,7 @@ export function undoErrorFinal(error: unknown): boolean {
 }
 
 /** The switch's words (design decision 14). [CONFIRM: the panel's and switch's words] */
-export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data, and sorts the bookings in each calendar file you import, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
+export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
 
 /** How TownwiseAI works' sentence, by the switch (design decision 14). [CONFIRM: the panel's and switch's words] */
 export function savesLine(on: boolean): string {

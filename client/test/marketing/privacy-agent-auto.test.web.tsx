@@ -66,7 +66,7 @@ test('a Changes TownwiseAI makes item says what it may add, that it changes and 
   if (changes === undefined) throw new Error('no Changes TownwiseAI makes item');
   for (const words of [
     'a note, a summary on Your data, or sales days you didn’t have',
-    'It never changes or deletes anything that exists.',
+    'It never changes or deletes anything that exists, apart from using a calendar file’s labels for forecasts when every label on it is TownwiseAI’s own.',
     'Each change shows in TownwiseAI’s activity with Undo',
     'listed on the TownwiseAI page’s log of its changes',
     'so a change someone undid is never made again',

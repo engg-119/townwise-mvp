@@ -167,7 +167,7 @@ function ActivitySection(props: { panel: AgentPanelState; locationId: string; re
             <View key={`${item.at}-${String(index)}`} style={styles.item}>
               <Text style={styles.when}>{when}</Text>
               {item.kind === 'agent_change'
-                ? <ActivityChange item={item} locationId={props.locationId} readOnlyId={props.readOnlyId} />
+                ? <ActivityChange item={item} locationId={props.locationId} readOnlyId={props.readOnlyId} onOthersChanged={props.panel.reload} />
                 : <Text style={styles.itemText}>{activityLine(item)}</Text>}
             </View>
           );

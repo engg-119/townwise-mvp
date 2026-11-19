@@ -62,6 +62,9 @@ test('Sorting bookings: titles without emails or phones, dates and hours go to A
   // D59 slice 2: on import, with no press, unless a switch is off or staff open as admin imported it, with Undo.
   expect(sorting).toContain('Where TownwiseAI works on its own for your organization (an org admin can turn it off on the TownwiseAI page), and unless an org admin turned off sending your calendars’ titles to TownwiseAI there, Townwise does this once for each calendar file when it is imported, with no press, except a file Townwise staff import with your organization open as its admin.');
   expect(sorting).toContain('never changes a label a person set');
+  // A press, a person's label or a confirm first, even during the sort, keeps TownwiseAI's labels and confirm off it.
+  expect(sorting).toContain('If someone on your team sorts, labels or confirms that calendar first, even while TownwiseAI is sorting it, TownwiseAI leaves the calendar to them and keeps none of its own labels.');
+  expect(sorting).toContain('leaves the calendar waiting for Use for forecasts, or not sorted when no label is left');
   expect(sorting).toContain('one change with Undo, which removes the labels and notes it added that nobody changed since');
   expect(sorting).toContain('Otherwise, on a calendar file’s page in Your data, an org admin can press Sort with TownwiseAI, and Townwise sends them once each time it is pressed.');
   expect(sorting).toContain('Townwise staff with your organization open as its admin can’t press it.');

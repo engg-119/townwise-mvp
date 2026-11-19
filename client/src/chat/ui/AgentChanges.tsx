@@ -33,9 +33,14 @@ export function ChangeLine(props: {
   readOnlyId: string | null;
   /** The line's own style (the activity's or the log's). */
   textStyle?: object;
+  /**
+   * Called once a calendar's labels are undone (slice 2): that Undo also removed the notes TownwiseAI made from the
+   * calendar, which are lines of their own, so the list reads again.
+   */
+  onOthersChanged?: () => void;
 }): React.JSX.Element {
   const { api } = usePortal();
-  const { change } = props;
+  const { change, onOthersChanged } = props;
   const [state, setState] = useState<{ status: AgentChange['status']; undoing: boolean; error: string | null; final: boolean }>({
     status: change.status, undoing: false, error: null, final: false,
   });
@@ -43,7 +48,10 @@ export function ChangeLine(props: {
     if (state.undoing) return;
     setState((current) => ({ ...current, undoing: true, error: null }));
     undoChange(api, props.locationId, change.id).then(
-      (after) => { setState({ status: after.status, undoing: false, error: null, final: false }); },
+      (after) => {
+        setState({ status: after.status, undoing: false, error: null, final: false });
+        if (change.action === 'booking.label' && after.status === 'undone') onOthersChanged?.();
+      },
       (error: unknown) => {
         setState((current) => ({ ...current, undoing: false, error: undoErrorText(error, change.action), final: undoErrorFinal(error) }));
       },
@@ -70,8 +78,17 @@ export function ChangeLine(props: {
 }
 
 /** An activity item for a change, as ChangeLine draws it. */
-export function ActivityChange(props: { item: AgentChangeItem; locationId: string; readOnlyId: string | null }): React.JSX.Element {
-  return <ChangeLine change={{ ...props.item, id: props.item.changeId }} locationId={props.locationId} readOnlyId={props.readOnlyId} />;
+export function ActivityChange(props: {
+  item: AgentChangeItem; locationId: string; readOnlyId: string | null; onOthersChanged?: () => void;
+}): React.JSX.Element {
+  return (
+    <ChangeLine
+      change={{ ...props.item, id: props.item.changeId }}
+      locationId={props.locationId}
+      readOnlyId={props.readOnlyId}
+      {...(props.onOthersChanged === undefined ? {} : { onOthersChanged: props.onOthersChanged })}
+    />
+  );
 }
 
 /** "{n} things TownwiseAI wasn't sure of are waiting for you", and the log's link. */

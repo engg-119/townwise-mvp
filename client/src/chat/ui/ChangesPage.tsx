@@ -20,6 +20,11 @@ import { ChangeLine } from './AgentChanges';
 
 const READ_ONLY_ID = 'changes-ro';
 
+/**
+ * The page's intro, slice 2's calendar labels and their Undo included. [CONFIRM: the panel's and switch's words]
+ */
+export const CHANGES_INTRO = 'Each note, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.';
+
 const WHEN = new Intl.DateTimeFormat('en-US', { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' });
 
 function whenText(iso: string): string {
@@ -27,12 +32,12 @@ function whenText(iso: string): string {
   return Number.isNaN(date.getTime()) ? '' : WHEN.format(date);
 }
 
-function ChangeRow(props: { change: AgentChange; locationId: string; readOnlyId: string | null }): React.JSX.Element {
+function ChangeRow(props: { change: AgentChange; locationId: string; readOnlyId: string | null; onOthersChanged: () => void }): React.JSX.Element {
   const { change } = props;
   return (
     <View role="listitem" style={styles.row}>
       <Text style={styles.when}>{whenText(change.at)}</Text>
-      <ChangeLine change={change} locationId={props.locationId} readOnlyId={props.readOnlyId} textStyle={styles.line} />
+      <ChangeLine change={change} locationId={props.locationId} readOnlyId={props.readOnlyId} textStyle={styles.line} onOthersChanged={props.onOthersChanged} />
       {change.why === null ? null : <Text style={styles.why}>{`Why: ${change.why}`}</Text>}
     </View>
   );
@@ -47,7 +52,12 @@ export function ChangesPage(): React.JSX.Element {
   const [older, setOlder] = useState<{ changes: AgentChange[]; next: string | null | undefined; pending: boolean; failed: boolean }>({
     changes: [], next: undefined, pending: false, failed: false,
   });
-  const { state } = first;
+  const { state, reload } = first;
+  // A calendar's Undo also undid its notes, lines of their own: the log reads again from its first page.
+  const readAgain = useCallback(() => {
+    setOlder({ changes: [], next: undefined, pending: false, failed: false });
+    reload();
+  }, [reload]);
   const next = older.next === undefined ? (state.status === 'ready' ? state.data.next : null) : older.next;
   const more = (): void => {
     if (older.pending || next === null) return;
@@ -66,7 +76,7 @@ export function ChangesPage(): React.JSX.Element {
       <Stack>
         <View role="list" aria-label="TownwiseAI’s changes" style={styles.list}>
           {[...state.data.changes, ...older.changes].map((change) => (
-            <ChangeRow key={change.id} change={change} locationId={location.id} readOnlyId={readOnlyId} />
+            <ChangeRow key={change.id} change={change} locationId={location.id} readOnlyId={readOnlyId} onOthersChanged={readAgain} />
           ))}
         </View>
         {next === null ? null : (
@@ -80,10 +90,7 @@ export function ChangesPage(): React.JSX.Element {
     <Stack>
       {readOnly ? <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} /> : null}
       <Section first kicker="TownwiseAI" title="Every change it made on its own">
-        <Body>
-          Each note, summary or set of sales days TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it
-          since. Once you change something it added, it’s yours.
-        </Body>
+        <Body>{CHANGES_INTRO}</Body>
         <LinkButton href={locationHref(location.id, 'agent')} label="Back to TownwiseAI" />
         {body}
       </Section>

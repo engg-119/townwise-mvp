@@ -96,6 +96,26 @@ test('a change TownwiseAI saved shows in its activity with Undo, which sends to 
   expect(api.writes).toEqual([{ method: 'POST', path: CHANGE, body: undefined }]);
 });
 
+test('slice 2: Undo on a calendar’s labels reads the panel again, since it also took back that calendar’s notes', async () => {
+  const labels = {
+    at: '2026-06-01T08:00:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e1', action: 'booking.label', sourceKind: 'calendar',
+    status: 'applied', startDate: '2026-07-04', endDate: '2026-07-04', noteKind: null, count: 3, undoable: true,
+  };
+  const api = chatApi({ ...fixture.panel, activity: [labels] });
+  api.respond[CHANGE] = () => ({
+    change: {
+      id: '0000000000000000000000e1', at: '2026-06-01T08:00:00.000Z', action: 'booking.label', sourceKind: 'calendar', sourceRef: null, status: 'undone',
+      startDate: '2026-07-04', endDate: '2026-07-04', noteKind: null, count: 3, why: null, undoable: false, targetId: null,
+    },
+  });
+  renderAt(api, meOf(ACCESS.admin));
+  const panel = await side();
+  const line = 'Added booking labels on 3 events, used for forecasts, from a calendar you imported.';
+  const loads = api.panelLoads;
+  fireEvent.click(within(panel).getByRole('button', { name: `Undo: ${line}` }));
+  await waitFor(() => { expect(api.panelLoads).toBe(loads + 1); });
+});
+
 test('Undo on a note a person changed since says it is theirs now, and where to delete it', async () => {
   const api = chatApi();
   api.respond[CHANGE] = () => refusal(409, 'changed_since');

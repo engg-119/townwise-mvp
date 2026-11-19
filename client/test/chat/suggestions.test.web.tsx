@@ -476,6 +476,8 @@ test('the titles switch: members see whether it is on; an org admin turns it off
   let panel = await side();
   expect(within(panel).getByText(TITLES_WORDS, { exact: false })).toBeTruthy();
   expect(TITLES_WORDS).toContain('Once a week TownwiseAI also reads the titles, dates and hours of the next 3 months of events');
+  // D59 slice 2: the switch also stops a calendar file's sort on import.
+  expect(TITLES_WORDS).toContain('where it works on its own it reads every event in a calendar file when it is imported, to label your bookings.');
   // The weekly switch beside it says the same "Once a week".
   expect(SWITCH_WORDS.startsWith('Once a week TownwiseAI reads the next 3 months of Hanover’s calendar with your notes and rules')).toBe(true);
   expect(within(panel).getByText('Reading event titles is on.')).toBeTruthy();
