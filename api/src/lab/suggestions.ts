@@ -69,8 +69,9 @@
 // location (research/read.ts, after the location's revisions): at most 60 events of medium or high confidence, not
 // hidden and not cancelled, after the town's own entries, each with scope `researched`, its source hosts and no history;
 // none while the organization's research switch or TOWNWISE_RESEARCH is off, or when the read fails. With none, the
-// request is exactly as it was before. A kept suggestion citing any researched id (`t-` or `l-`) is never saved on its
-// own, whatever its rating: it waits open for a person, so a web page never changes the forecast without one.
+// request is exactly as it was before. A kept suggestion citing any researched id (`t-` or `l-`), or covering a day a
+// sent researched entry falls on whatever it cites (researchedDaysOf), is never saved on its own, whatever its rating:
+// it waits open for a person, so a web page never changes the forecast without one.
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type {
   BetaMessage, BetaMessageStreamParams, BetaRawMessageStreamEvent,
@@ -239,6 +240,8 @@ export const SUGGESTIONS_EVENTS_FORMAT = { type: 'json_schema', schema: betaZodO
 export type KeptSuggestion = NewSuggestion & {
   readonly confidence?: AgentConfidence;
   readonly choice?: 'closed' | 'more_guests';
+  /** D66: it covers a day a sent researched entry falls on, so it waits for a person whatever it cites (sureOf). */
+  readonly researchedDay?: true;
 };
 
 /** An answered item's confidence, or undefined when it gave none or an unknown one (then it is not sure). */
@@ -397,6 +400,11 @@ export interface SuggestionChecks {
    * standing rule. They are never sent.
    */
   readonly closureKeys?: ReadonlySet<string>;
+  /**
+   * D66 decision 12: the days the sent researched entries fall on (by their dates and weekdays, researchedDaysOf). A
+   * kept suggestion covering any of them is never saved on its own, whatever ids the model cites or leaves out.
+   */
+  readonly researchedDays?: ReadonlySet<string>;
 }
 
 /** The why: one line, trimmed, 1 to 280 characters with no control or format character; null otherwise. */
@@ -668,7 +676,32 @@ export function keptSuggestions(output: unknown, checks: SuggestionChecks): Kept
     const spotted = spottedOf(raw, checks, used);
     if (spotted !== null) kept.push(spotted);
   }
-  return kept;
+  const researchedDays = checks.researchedDays;
+  if (researchedDays === undefined || researchedDays.size === 0) return kept;
+  return kept.map((each) => (coversAny(each.content, checks.to, researchedDays) ? { ...each, researchedDay: true } : each));
+}
+
+/** Whether a suggestion's days (to `to` at the latest) hold any of `days`. */
+function coversAny(content: KeptSuggestion['content'], to: string, days: ReadonlySet<string>): boolean {
+  const covered = content.type === 'rule' ? content.schedule : content.note;
+  const end = covered.endDate === null || covered.endDate > to ? to : covered.endDate;
+  return covered.startDate <= end && eachDay(covered.startDate, end).some((day) => days.has(day) && noteCovers(covered, day));
+}
+
+/**
+ * D66 decision 12: the days of `from` to `to` the sent researched entries fall on, by their dates and weekdays, as
+ * chat's readResearchedDays holds them for propose_note. Pure.
+ */
+export function researchedDaysOf(calendar: readonly CalendarEntry[], from: string, to: string): Set<string> {
+  const days = new Set<string>();
+  for (const entry of calendar) {
+    if (entry.scope !== 'researched') continue;
+    const start = entry.start < from ? from : entry.start;
+    const end = entry.end > to ? to : entry.end;
+    if (start > end) continue;
+    for (const day of eachDay(start, end)) if (entry.weekdays === undefined || entry.weekdays.includes(new Date(`${day}T00:00:00.000Z`).getUTCDay())) days.add(day);
+  }
+  return days;
 }
 
 /** D59 slice 3: what applying a sure suggestion writes: a note (linked to the event a spotted one names), or a rule. */
@@ -702,7 +735,8 @@ export function closedRunOf(sure: SureChange): number {
  * rated `high`: a note as it is; a rule only when it is a closure (with or without hours), D59's `rule.add`; a spotted
  * event only when the model chose its effect, as a private-event note with that effect (alongside regular service only
  * with the guest count its title states), checked again by the note rules. Never a follow-up, never one closing more
- * than 14 days in a row (closedRunOf), and (D66) never one citing a researched event's id. Pure. [CONFIRM: TownwiseAI saves a weekly suggestion it rated high on its own: a
+ * than 14 days in a row (closedRunOf), and (D66) never one citing a researched event's id or covering a day a sent
+ * researched entry falls on. Pure. [CONFIRM: TownwiseAI saves a weekly suggestion it rated high on its own: a
  * note, a closure rule, or a spotted private event whose effect it chose]
  */
 export function sureChangeOf(kept: KeptSuggestion, today: string): SureChange | null {
@@ -711,8 +745,9 @@ export function sureChangeOf(kept: KeptSuggestion, today: string): SureChange | 
 }
 
 function sureOf(kept: KeptSuggestion, today: string): SureChange | null {
-  // D66 decision 12: one resting on a researched event waits for a person, whatever its rating.
-  if (kept.confidence !== 'high' || kept.calendarIds.some(isResearchedId)) return null;
+  // D66 decision 12: one resting on a researched event waits for a person, whatever its rating: one citing a researched
+  // id, and one on a day a sent researched entry falls on, whatever it cites (the model may cite nothing, or a holiday).
+  if (kept.confidence !== 'high' || kept.researchedDay === true || kept.calendarIds.some(isResearchedId)) return null;
   const { content } = kept;
   if (content.type === 'note') return { type: 'note', note: content.note, event: null };
   if (content.type === 'rule') return content.schedule.kind === 'closure' ? { type: 'rule', text: content.text, schedule: content.schedule } : null;
@@ -1010,7 +1045,7 @@ export async function suggestionsInput(
     checks: {
       today, to, notes, rules: rules.map((rule) => ({ text: rule.text, schedule: rule.schedule })), suggested,
       calendarIds: new Set(calendar.map((entry) => entry.id)), calendarTitles: new Map(calendar.map((entry) => [entry.id, entry.title])), ownerEvents: owner.sent,
-      closureKeys,
+      closureKeys, researchedDays: researchedDaysOf(calendar, from, to),
     },
   };
 }

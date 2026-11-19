@@ -11,7 +11,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
-  GENERIC_TITLE_WORDS, keptSuggestions, MAX_EVENT_SUGGESTIONS, MAX_SUGGESTIONS, researchedEntries, sentTitle, SUGGESTIONS_EVENTS_FORMAT, SUGGESTIONS_FORMAT,
+  GENERIC_TITLE_WORDS, keptSuggestions, MAX_EVENT_SUGGESTIONS, MAX_SUGGESTIONS, researchedDaysOf, researchedEntries, sentTitle, SUGGESTIONS_EVENTS_FORMAT, SUGGESTIONS_FORMAT,
   SUGGESTIONS_MAX_RESEARCHED, SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_OWNER_EVENTS_PROMPT, SUGGESTIONS_RESEARCHED_PROMPT, SUGGESTIONS_RESERVE_MICRO_USD,
   SUGGESTIONS_SYSTEM_PROMPT, suggestionsRequest, suggestionsReserveMicroUsd, suggestionsWeek, sureChangeOf, type OwnerEventEntry, type SentOwnerEvent,
   type SuggestionChecks, type SuggestionsInput,
@@ -525,6 +525,28 @@ describe('researched events (D66, task 5.6)', () => {
     for (const kept of [both, own]) expect(kept === undefined ? undefined : sureChangeOf(kept, TODAY)).toBeNull();
     // The same note citing only the holiday is still sure.
     expect(unsent === undefined ? undefined : sureChangeOf(unsent, TODAY)).toMatchObject({ type: 'note' });
+  });
+
+  it('is never sure of one on a day a sent researched entry falls on, whatever it cites (decision 12)', () => {
+    // The trivia night falls on Tuesdays from Dec 1; Dec 8 is one, Dec 9 a Wednesday.
+    const researchedDays = researchedDaysOf(researchedEntries([view()]), '2026-11-17', TO);
+    expect(researchedDays.has('2026-12-08')).toBe(true);
+    expect(researchedDays.has('2026-12-09')).toBe(false);
+    const over = { calendarIds: new Set(['us:thanksgiving:2026', TOWN_ID]), researchedDays };
+    const dec8 = { ...CLOSURE, startDate: '2026-12-08', endDate: '2026-12-08' };
+    const [none, holiday, rule, wednesday] = keptSuggestions(answer(
+      { ...dec8, calendarIds: [], confidence: 'high' },
+      { ...dec8, startDate: '2026-12-15', endDate: '2026-12-15', calendarIds: ['us:thanksgiving:2026'], confidence: 'high' },
+      { ...CLOSURE, type: 'rule', ruleText: 'Closed Tuesdays in December', startDate: '2026-12-01', endDate: '2026-12-29', weekdays: [2], calendarIds: [], confidence: 'high' },
+      { ...CLOSURE, startDate: '2026-12-09', endDate: '2026-12-09', calendarIds: [], confidence: 'high' },
+    ), checks(over));
+    for (const kept of [none, holiday, rule]) {
+      expect(kept?.researchedDay).toBe(true);
+      expect(kept === undefined ? undefined : sureChangeOf(kept, TODAY)).toBeNull();
+    }
+    // A day no researched entry falls on is sure as before.
+    expect(wednesday?.researchedDay).toBeUndefined();
+    expect(wednesday === undefined ? undefined : sureChangeOf(wednesday, TODAY)).toMatchObject({ type: 'note' });
   });
 
   it('keeps a cited researched id past the 5-id cap, so the suggestion still waits for a person', () => {

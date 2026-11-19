@@ -1409,6 +1409,15 @@ describe('researched events in the weekly pass (D66, task 5.6)', () => {
     expect(card).toMatchObject({ type: 'note', calendar: [{ id: fair, title: 'Riverside Street Fair', start: '2026-07-11', end: '2026-07-11' }] });
   });
 
+  it('never saves on its own a high note on a researched event’s day citing no id, or only a holiday (decision 12)', async () => {
+    const t = await team();
+    await seed(t);
+    const { outcome } = await passWith(t, [closureCiting([]), { ...closureCiting(['us:independence:2026']), startDate: '2026-07-18', endDate: '2026-07-18' }]);
+    expect(outcome).toMatchObject({ status: 'suggested', suggested: 2, applied: 0 });
+    expect(await server.connection.collection('tw_agent_changes').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+    expect(await server.connection.collection('tw_notes').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+  });
+
   it('with the organization’s research switch off, sends none and the prompt is as before', async () => {
     const t = await team();
     const { fair } = await seed(t);
