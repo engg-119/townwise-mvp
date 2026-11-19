@@ -61,7 +61,8 @@ import { useHistoryAi } from './useHistoryAi';
 //
 // Under the drop (web, stored files on) sits the TownwiseAI opt-in (D34, 11A.9; useHistoryAi), off by default: a file
 // that finishes uploading while it is checked is sent to TownwiseAI to read once Townwise has read it for sales, and
-// its row says how that went. The browser upload never sends anything to TownwiseAI.
+// its row says how that went. The browser upload never sends anything to TownwiseAI. D59: a file dropped with the box
+// unchecked opens its upload with `aiAuto: false`, so TownwiseAI never reads it on its own either.
 
 const RO_ID = 'history-step-ro';
 const READ_HELP_ID = 'history-step-read-help';
@@ -365,7 +366,10 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const reduced = useReducedMotion();
   const moment = useMoment();
   const { desktop } = useBreakpoint();
-  const queue = useUploadQueue(location.id);
+  // D59: read as each upload opens; useHistoryAi below keeps it in step with the box.
+  const aiOptIn = useRef(false);
+  const aiAuto = useCallback(() => aiOptIn.current, []);
+  const queue = useUploadQueue(location.id, { aiAuto });
   const poll = useImport(location.id, 'current');
   const { refresh } = poll;
   const [over, setOver] = useState<number | null>(null);
@@ -392,6 +396,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const refused = queue.items.some((item) => item.state === 'refused' || item.state === 'failed');
   const byFile = useMemo(() => new Map(queue.items.filter((item) => item.fileId !== null).map((item) => [item.fileId, item])), [queue.items]);
   const ai = useHistoryAi(location.id, queue.items, view?.files ?? []);
+  useEffect(() => { aiOptIn.current = ai.optIn; }, [ai.optIn]);
 
   // The server's list follows this screen's uploads: once the first joins an import, and as each one finishes.
   const finished = queue.items.filter((item) => item.state === 'done').length;

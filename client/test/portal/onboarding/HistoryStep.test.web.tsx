@@ -182,7 +182,8 @@ test('many files upload at once, each with its own progress and line, then Read 
   // The names travel in the create bodies only, never in a path.
   expect(api.calls.some((call) => call.path.includes('sales_2024'))).toBe(false);
   expect(files.calls.filter((call) => call.method === 'POST' && call.path === '/files').map((call) => call.body)).toContainEqual(
-    { name: 'sales_2024.csv', sizeBytes: 8, purpose: 'history' },
+    // D59: dropped with the TownwiseAI box unchecked, so it is kept from TownwiseAI's own reads.
+    { name: 'sales_2024.csv', sizeBytes: 8, purpose: 'history', aiAuto: false },
   );
   expect(setItem).not.toHaveBeenCalled();
 });
@@ -372,7 +373,7 @@ test('a file dropped while reading joins the import, and Done waits for it befor
   choose([zeros('late.csv', 4)]);
   await waitFor(() => { expect(files.puts).toHaveLength(1); });
   expect(files.calls.filter((call) => call.method === 'POST' && call.path === '/files').map((call) => call.body)).toEqual(
-    [{ name: 'late.csv', sizeBytes: 4, purpose: 'history' }],
+    [{ name: 'late.csv', sizeBytes: 4, purpose: 'history', aiAuto: false }],
   );
   readDays(api, analytics);
   files.current = { import: DONE };
