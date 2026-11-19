@@ -6,6 +6,9 @@
 // The owner-calendar kinds (openspec change calendar-event-suggestions): accepting and dismissing a spotted event, a
 // move and a removal, the cards' words (no title on a follow-up; a Google event's title never to staff), and what the
 // panel hides once the note or calendar a card rests on is gone. Every event title here is made up.
+// D59 slice 3 (openspec change auto-apply-agent-reads): while TownwiseAI works on its own, the pass saves a note or a
+// closure rule rated high as TownwiseAI's (at most 2 rules a week), stores it accepted so the panel never lists it, leaves
+// the rest open, and adds a closed weekday the sales history is sure of; with the switch off it saves nothing.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -1100,8 +1103,8 @@ describe('the weekly pass beside suggested closure rules (D46)', () => {
     chat.script({ kind: 'message', message: message([text(reply)]) });
     const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
     if (location === null) throw new Error('no location');
-    const outcome = await suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, chat }, t.scope, location, '2026-06-01');
-    expect(outcome).toEqual({ status: 'none', ownerEvents: 0 });
+    const outcome = await suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, logger: server.ctx.logger, chat }, t.scope, location, '2026-06-01');
+    expect(outcome).toEqual({ status: 'none', ownerEvents: 0, applied: 0 });
     const [sent] = messagesOf(chat.calls[0]);
     expect((JSON.parse(typeof sent?.content === 'string' ? sent.content : '') as { alreadySuggested: unknown[] }).alreadySuggested).toEqual([
       expect.objectContaining({ type: 'note', startDate: (weekly?.type === 'note' ? weekly.note.startDate : '') }),
@@ -1121,6 +1124,8 @@ describe('the weekly pass beside the sales history’s suggestion (code review S
       });
     }
     await server.connection.collection('tw_sales_days').insertMany(rows);
+    // D59 slice 3 adds a sure closed weekday on its own; with TownwiseAI's own work off it stays a suggestion.
+    await server.ctx.stores.orgs.setAgentAuto(t.scope, { on: false, at: server.clock.now(), by: t.admin.userId });
     const chat = scriptedModel();
     chat.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: [{
       type: 'rule', ruleText: 'Shut Mondays', kind: 'closure', startDate: '2026-06-08', endDate: null, weekdays: [1], effect: 'closed',
@@ -1128,8 +1133,147 @@ describe('the weekly pass beside the sales history’s suggestion (code review S
     }] }))]) });
     const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
     if (location === null) throw new Error('no location');
-    const outcome = await suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, chat }, t.scope, location, '2026-06-01');
-    expect(outcome).toEqual({ status: 'none', ownerEvents: 0 });
+    const outcome = await suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, logger: server.ctx.logger, chat }, t.scope, location, '2026-06-01');
+    expect(outcome).toEqual({ status: 'none', ownerEvents: 0, applied: 0 });
     expect((await panel(t, t.member)).ruleSuggestions.map((each) => each.id)).toEqual(['sales_weekday_1']);
+  });
+});
+
+describe('suggestions TownwiseAI is sure of (D59 slice 3)', () => {
+  const ITEM = {
+    type: 'note', ruleText: null, kind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04', weekdays: null, effect: 'closed',
+    expectedGuests: null, detail: null, startTime: null, endTime: null, why: 'Independence Day is Sat, Jul 4.', calendarIds: ['us:independence-day:2026'],
+  };
+
+  function closureRule(day: string, text: string, confidence = 'high') {
+    return { ...ITEM, type: 'rule', ruleText: text, startDate: day, endDate: day, why: `Closed on ${day}.`, confidence };
+  }
+
+  async function passWith(t: Team, items: unknown[], week = '2026-06-01') {
+    const chat = scriptedModel();
+    chat.script({ kind: 'message', message: message([text(JSON.stringify({ suggestions: items }))]) });
+    const location = await server.ctx.stores.locations.find(t.scope, t.locationId);
+    if (location === null) throw new Error('no location');
+    return suggestFor({ config: server.ctx.config, now: server.ctx.now, stores: server.ctx.stores, logger: server.ctx.logger, chat }, t.scope, location, week);
+  }
+
+  async function changesOf(t: Team): Promise<Record<string, unknown>[]> {
+    return server.connection.collection('tw_agent_changes').find({ locationId: new Types.ObjectId(t.locationId) }).sort({ _id: 1 }).toArray();
+  }
+
+  it('saves a note rated high as TownwiseAI’s, stored accepted under its id; a medium one and one with no rating wait open', async () => {
+    const t = await team();
+    const outcome = await passWith(t, [
+      { ...ITEM, confidence: 'high' },
+      { ...ITEM, startDate: '2026-07-05', endDate: '2026-07-05', confidence: 'medium' },
+      { ...ITEM, startDate: '2026-07-06', endDate: '2026-07-06' },
+    ]);
+    expect(outcome).toEqual({ status: 'suggested', suggested: 2, ownerEvents: 0, applied: 1 });
+    const [change] = await changesOf(t);
+    expect(change).toMatchObject({ action: 'note.add', sourceKind: 'weekly', status: 'applied', confidence: 'high', why: ITEM.why, onBehalfOf: null });
+    const note = await server.connection.collection('tw_notes').findOne({ _id: change?.targetId as Types.ObjectId });
+    expect(note).toMatchObject({ createdBy: 'townwise_ai', kind: 'closure', startDate: '2026-07-04' });
+    const accepted = await server.connection.collection('tw_agent_suggestions').findOne({ _id: change?.targetId as Types.ObjectId });
+    expect(accepted).toMatchObject({ status: 'accepted', decidedBy: 'townwise_ai', type: 'note' });
+    const listed = (await panel(t, t.member)).suggestions;
+    expect(listed.map((each) => (each.type === 'note' ? each.note.startDate : ''))).toEqual(['2026-07-05', '2026-07-06']);
+    expect((await panel(t, t.member)).activity.find((item) => item.kind === 'agent_change'))
+      .toMatchObject({ action: 'note.add', sourceKind: 'weekly', undoable: true });
+  });
+
+  it('with TownwiseAI’s own work off, saves nothing and every suggestion waits', async () => {
+    const t = await team();
+    await server.ctx.stores.orgs.setAgentAuto(t.scope, { on: false, at: server.clock.now(), by: t.admin.userId });
+    const outcome = await passWith(t, [{ ...ITEM, confidence: 'high' }, closureRule('2026-07-10', 'Closed for inventory')]);
+    expect(outcome).toEqual({ status: 'suggested', suggested: 2, ownerEvents: 0, applied: 0 });
+    expect(await changesOf(t)).toEqual([]);
+  });
+
+  it('a high note a person’s note decides differently waits open', async () => {
+    const t = await team();
+    await server.ctx.stores.notes.create(t.scope, t.locationId, {
+      kind: 'private_event', startDate: '2026-07-04', endDate: '2026-07-04', weekdays: null, effect: 'more_guests', expectedGuests: 50,
+      detail: null, title: null, startTime: null, endTime: null,
+    }, { createdBy: t.admin.userId, now: server.clock.now() });
+    const outcome = await passWith(t, [{ ...ITEM, confidence: 'high' }]);
+    expect(outcome).toMatchObject({ applied: 0 });
+    expect(await changesOf(t)).toEqual([]);
+  });
+
+  it('adds at most 2 closure rules a week as TownwiseAI’s; a third, and a rule that is not a closure, wait open', async () => {
+    const t = await team();
+    const party = {
+      ...closureRule('2026-07-11', 'Party night', 'high'), kind: 'private_event', effect: 'more_guests', expectedGuests: 40,
+    };
+    const outcome = await passWith(t, [
+      closureRule('2026-07-08', 'Closed for a deep clean'), closureRule('2026-07-09', 'Closed for staff training'),
+      closureRule('2026-07-10', 'Closed for inventory'), party,
+    ]);
+    expect(outcome).toMatchObject({ applied: 2, suggested: 2 });
+    const rules = await server.connection.collection('tw_business_rules').find({ locationId: new Types.ObjectId(t.locationId) }).sort({ text: 1 }).toArray();
+    expect(rules.map((rule): unknown[] => [rule.text, rule.createdBy, rule.addedVia])).toEqual([
+      ['Closed for a deep clean', 'townwise_ai', 'townwise_ai'], ['Closed for staff training', 'townwise_ai', 'townwise_ai'],
+    ]);
+    expect((await changesOf(t)).map((row) => [row.action, row.sourceKind])).toEqual([['rule.add', 'weekly'], ['rule.add', 'weekly']]);
+    // The next pass within the week adds none: the 2 are counted on the ledger, undone or not.
+    const next = await passWith(t, [closureRule('2026-07-15', 'Closed for a wedding')], '2026-06-02');
+    expect(next).toMatchObject({ applied: 0, suggested: 1 });
+    server.clock.advance(7 * 24 * 60 * MINUTE + MINUTE);
+    try {
+      expect(await passWith(t, [closureRule('2026-07-16', 'Closed for a funeral')], '2026-06-08')).toMatchObject({ applied: 1 });
+    } finally {
+      server.clock.advance(-(7 * 24 * 60 * MINUTE + MINUTE));
+    }
+  });
+
+  /** Mondays with no sales from Mar 2 to May 31 (12 counted, from the first day with sales), every other day 80 guests. */
+  async function closedMondays(t: Team, from = '2026-03-02'): Promise<void> {
+    const rows: Record<string, unknown>[] = [];
+    for (let day = from; day <= '2026-05-31'; day = new Date(Date.parse(`${day}T00:00:00.000Z`) + 86_400_000).toISOString().slice(0, 10)) {
+      if (new Date(`${day}T00:00:00.000Z`).getUTCDay() === 1) continue;
+      rows.push({
+        orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(t.locationId), date: day, guests: 80, netSalesCents: null,
+        uploadId: new Types.ObjectId(), updatedAt: server.clock.now(),
+      });
+    }
+    await server.connection.collection('tw_sales_days').insertMany(rows);
+  }
+
+  it('adds a closed weekday the sales history is sure of as TownwiseAI’s rule, stored accepted with its key, before the call', async () => {
+    const t = await team();
+    await closedMondays(t);
+    const outcome = await passWith(t, []);
+    expect(outcome).toMatchObject({ status: 'none', applied: 1 });
+    const [change] = await changesOf(t);
+    expect(change).toMatchObject({
+      action: 'rule.add', sourceKind: 'sales', status: 'applied', why: 'No sales on 12 of 12 counted Mondays in your sales history.', endDate: null,
+    });
+    const rule = await server.connection.collection('tw_business_rules').findOne({ _id: change?.targetId as Types.ObjectId });
+    expect(rule).toMatchObject({ text: 'Closed on Mondays', createdBy: 'townwise_ai', schedule: { weekdays: [1], endDate: null } });
+    const row = await server.connection.collection('tw_agent_suggestions').findOne({ _id: change?.targetId as Types.ObjectId });
+    expect(row).toMatchObject({ source: 'sales', status: 'accepted', decidedBy: 'townwise_ai', closureKey: 'closed|w=1|ongoing' });
+    expect((await panel(t, t.member)).ruleSuggestions).toEqual([]);
+    // The request read it as a rule.
+    expect(JSON.stringify((await server.ctx.stores.businessRules.list(t.scope, t.locationId)).map((each) => each.text))).toContain('Closed on Mondays');
+  });
+
+  it('leaves a closed weekday below the sure bar as D46’s suggestion', async () => {
+    const t = await team();
+    // From Apr 13: 6 counted Mondays, under the 8 the sure bar needs.
+    await closedMondays(t, '2026-04-13');
+    expect(await passWith(t, [])).toMatchObject({ applied: 0 });
+    expect((await panel(t, t.member)).ruleSuggestions.map((each) => each.id)).toEqual(['sales_weekday_1']);
+  });
+
+  it('a closed weekday someone undid is never added again, and is not suggested again', async () => {
+    const t = await team();
+    await closedMondays(t);
+    await passWith(t, []);
+    const [change] = await changesOf(t);
+    const undo = await call(server, `/api/org/locations/${t.locationId}/agent/changes/${String(change?._id)}/undo`, { session: t.member, method: 'POST' });
+    expect(undo.status).toBe(200);
+    expect(await passWith(t, [], '2026-06-08')).toMatchObject({ applied: 0 });
+    expect(await server.connection.collection('tw_business_rules').countDocuments({ locationId: new Types.ObjectId(t.locationId) })).toBe(0);
+    expect((await panel(t, t.member)).ruleSuggestions).toEqual([]);
   });
 });

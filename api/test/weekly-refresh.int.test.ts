@@ -689,7 +689,7 @@ describe('weekly suggestions', () => {
     await pass({ chat: answering([JULY_4]) });
     const line = logLines(server).filter((each) => each.msg === 'townwise.weekly_suggestions_pass').at(-1);
     const keys = Object.keys(line ?? {}).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)).sort();
-    expect(keys).toEqual(['budget', 'failed', 'ms', 'none', 'ownerEvents', 'passes', 'state', 'suggested']);
+    expect(keys).toEqual(['applied', 'budget', 'failed', 'ms', 'none', 'ownerEvents', 'passes', 'state', 'suggested']);
     const textOf = JSON.stringify(logLines(server));
     for (const absent of [p.orgId, p.locationId, JULY_4.why]) expect(JSON.stringify(line)).not.toContain(absent);
     expect(textOf).not.toContain(JULY_4.why);
@@ -1095,6 +1095,34 @@ describe('weekly suggestions', () => {
       } finally {
         await removeStaffFactor(server);
       }
+    });
+
+    it('D59 slice 3: saves a spotted buyout it is sure of as TownwiseAI’s note linked to the event, with no title anywhere it keeps', async () => {
+      const p = await place();
+      const calendarId = await calendarOf(p, [
+        { uid: 'buyout-0001@bookings.example.test', title: 'Qxzv buyout, 60 guests', day: '20260613' },
+        { uid: 'party-0002@bookings.example.test', title: 'Qxzv party, 12 guests', day: '20260620' },
+      ], { label: 'Front desk' });
+      const spot = (ref: string, date: string, over: Record<string, unknown>) => ({
+        ...JULY_4, type: 'event', kind: 'private_event', startDate: date, endDate: date, eventRef: ref, why: '', calendarIds: [], ...over,
+      });
+      const model = answering([
+        spot('e1', '2026-06-13', { effect: 'closed', expectedGuests: 60, confidence: 'high' }),
+        spot('e2', '2026-06-20', { effect: 'unknown', expectedGuests: 12, confidence: 'high' }),
+      ]);
+      expect((await pass({ chat: model })).suggestions).toMatchObject({ applied: 1, suggested: 1, ownerEvents: 2 });
+      const notes = await server.connection.collection('tw_notes').find({ locationId: new Types.ObjectId(p.locationId) }).toArray();
+      expect(notes).toEqual([expect.objectContaining({
+        createdBy: 'townwise_ai', kind: 'private_event', effect: 'closed', expectedGuests: 60, startDate: '2026-06-13', title: null, detail: null,
+        startTime: '18:00', endTime: '22:00', fromEvent: expect.objectContaining({ uid: 'buyout-0001@bookings.example.test', calendarId: new Types.ObjectId(calendarId) }) as unknown,
+      })]);
+      const rows = await suggestions(p);
+      expect(rows.map((row) => [row.type, row.status]).sort()).toEqual([['event', 'accepted'], ['event', 'open']]);
+      expect(String(rows.find((row) => row.status === 'accepted')?._id)).toBe(String(notes[0]?._id));
+      const ledger = await server.connection.collection('tw_agent_changes').find({ locationId: new Types.ObjectId(p.locationId) }).toArray();
+      expect(ledger).toEqual([expect.objectContaining({ action: 'note.add', sourceKind: 'weekly', why: null, noteKind: 'private_event' })]);
+      expect(passLine()).toMatchObject({ applied: 1 });
+      expect(JSON.stringify([rows, ledger, logLines(server), await auditEvents(server)])).not.toContain('Qxzv');
     });
   });
 });

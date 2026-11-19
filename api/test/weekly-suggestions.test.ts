@@ -4,13 +4,14 @@
 // of a note, a rule, an earlier suggestion or another kept one; known calendar ids only) and the week a pass is due for.
 // Then the owner-calendar events (openspec change calendar-event-suggestions): the request with and without them, the
 // titles as sent (no email or phone number), the spotted events kept and the sentinel titles no kept suggestion repeats.
-// Every date, number and title is synthetic.
+// D59 slice 3: each item's confidence (required in the schema sent, read leniently), a spotted event's effect choice,
+// and what TownwiseAI would save of a kept suggestion it is sure of (sureChangeOf). Every date, number and title is synthetic.
 import { describe, expect, it } from 'vitest';
 
 import {
   GENERIC_TITLE_WORDS, keptSuggestions, MAX_EVENT_SUGGESTIONS, MAX_SUGGESTIONS, sentTitle, SUGGESTIONS_EVENTS_FORMAT, SUGGESTIONS_FORMAT,
   SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_OWNER_EVENTS_PROMPT, SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_SYSTEM_PROMPT, suggestionsRequest,
-  suggestionsReserveMicroUsd, suggestionsWeek, type OwnerEventEntry, type SentOwnerEvent, type SuggestionChecks, type SuggestionsInput,
+  suggestionsReserveMicroUsd, suggestionsWeek, sureChangeOf, type OwnerEventEntry, type SentOwnerEvent, type SuggestionChecks, type SuggestionsInput,
 } from '../src/lab/suggestions.ts';
 import { ceilingCostMicroUsd } from '../src/chat/pricing.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
@@ -381,3 +382,68 @@ describe('the week a pass is due for', () => {
     expect(suggestionsWeek('2026-11-23', 4 * 60, 3)).toBe('2026-11-23');
   });
 });
+
+describe('confidence and what TownwiseAI is sure of (D59 slice 3)', () => {
+  const ownerEvents = new Map([['e1', {
+    calendarId: 'c'.repeat(24), uid: 'uid-1', title: 'Private party, 40 guests', startDate: '2026-12-05', endDate: '2026-12-05', startTime: '18:00', endTime: '21:00',
+  }]]);
+  const spot = (over: Record<string, unknown>) => ({
+    ...CLOSURE, type: 'event', kind: 'private_event', effect: 'unknown', startDate: '2026-12-05', endDate: '2026-12-05', eventRef: 'e1', why: '',
+    expectedGuests: 40, ...over,
+  });
+
+  it('the schema sent requires a confidence on every item, and the prompt says only a high one is saved on its own', () => {
+    /** The schema object whose properties hold `confidence` (an item's), wherever the generator put it. */
+    const itemOf = (node: unknown): { required?: string[]; properties: Record<string, unknown> } | null => {
+      if (typeof node !== 'object' || node === null) return null;
+      const props = (node as { properties?: Record<string, unknown> }).properties;
+      if (props !== undefined && 'confidence' in props) return node as { required?: string[]; properties: Record<string, unknown> };
+      for (const value of Object.values(node)) {
+        const found = itemOf(value);
+        if (found !== null) return found;
+      }
+      return null;
+    };
+    for (const format of [SUGGESTIONS_FORMAT, SUGGESTIONS_EVENTS_FORMAT]) {
+      const item = itemOf(format.schema);
+      expect(item?.required).toContain('confidence');
+      expect(JSON.stringify(item?.properties.confidence)).toMatch(/high.*medium.*low/);
+    }
+    expect(SUGGESTIONS_SYSTEM_PROMPT).toContain('Rate each one\'s confidence: "high" only when');
+    expect(SUGGESTIONS_SYSTEM_PROMPT).not.toContain('nothing you suggest changes the forecast until they accept it');
+    expect(SUGGESTIONS_OWNER_EVENTS_PROMPT).toContain('effect is closed when the title says the party takes the whole restaurant');
+  });
+
+  it('keeps a known confidence and an event’s chosen effect, and nothing for none or an unknown value', () => {
+    const [high, unknown, none] = keptSuggestions(answer(
+      { ...CLOSURE, confidence: 'high' }, { ...CLOSURE, startDate: '2026-11-27', endDate: '2026-11-27', confidence: 'certain' },
+      { ...CLOSURE, startDate: '2026-11-28', endDate: '2026-11-28' },
+    ), checks());
+    expect(high).toMatchObject({ confidence: 'high' });
+    expect(unknown).not.toHaveProperty('confidence');
+    expect(none).not.toHaveProperty('confidence');
+    const [event] = keptSuggestions(answer(spot({ effect: 'closed', confidence: 'high' })), checks({ ownerEvents }));
+    expect(event).toMatchObject({ confidence: 'high', choice: 'closed', content: { type: 'event', note: { effect: 'unknown' } } });
+  });
+
+  it('is sure of a high note, a high closure rule and a high event with its effect; never a medium one, another rule, or an unchosen event', () => {
+    const keep = (item: unknown, over: Partial<SuggestionChecks> = {}) => keptSuggestions(answer(item), checks(over))[0];
+    const sure = (item: unknown, over: Partial<SuggestionChecks> = {}) => {
+      const kept = keep(item, over);
+      return kept === undefined ? undefined : sureChangeOf(kept, TODAY);
+    };
+    expect(sure({ ...CLOSURE, confidence: 'high' })).toMatchObject({ type: 'note', event: null, note: { kind: 'closure', startDate: '2026-11-26' } });
+    expect(sure({ ...CLOSURE, confidence: 'medium' })).toBeNull();
+    expect(sure({ ...CLOSURE, type: 'rule', ruleText: 'Closed on Thanksgiving', confidence: 'high' }))
+      .toMatchObject({ type: 'rule', text: 'Closed on Thanksgiving', schedule: { kind: 'closure' } });
+    expect(sure({ ...CLOSURE, type: 'rule', ruleText: 'Busy on Thanksgiving', kind: 'other', effect: 'more_guests', confidence: 'high' })).toBeNull();
+    expect(sure(spot({ effect: 'closed', confidence: 'high' }), { ownerEvents }))
+      .toMatchObject({ type: 'note', note: { kind: 'private_event', effect: 'closed', expectedGuests: 40, startTime: '18:00' }, event: { uid: 'uid-1' } });
+    expect(sure(spot({ effect: 'more_guests', confidence: 'high' }), { ownerEvents })).toMatchObject({ note: { effect: 'more_guests', expectedGuests: 40 } });
+    // Alongside regular service with no count the title states, or no choice, waits for an admin.
+    expect(sure(spot({ effect: 'more_guests', confidence: 'high', expectedGuests: 12 }), { ownerEvents })).toBeNull();
+    expect(sure(spot({ effect: 'unknown', confidence: 'high' }), { ownerEvents })).toBeNull();
+    expect(sure(spot({ effect: 'closed', confidence: 'medium' }), { ownerEvents })).toBeNull();
+  });
+});
+

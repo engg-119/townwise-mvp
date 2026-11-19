@@ -342,6 +342,8 @@ export interface NewRuleSuggestion {
   readonly fileId?: string;
   readonly evidence?: SalesEvidence;
   readonly now: Date;
+  /** D59 slice 3: stored `accepted` by this decider (TownwiseAI, which added its rule on its own); absent, `open`. */
+  readonly acceptedBy?: string;
 }
 
 export interface SuggestionPassRecord {
@@ -362,6 +364,11 @@ export interface NewSuggestion {
   /** Set on `note` and `rule`; null on the other kinds. */
   readonly why: string | null;
   readonly calendarIds: readonly string[];
+  /**
+   * D59 slice 3: TownwiseAI applied it on its own: stored `accepted` by `townwise_ai` under `id`, its note's or rule's id,
+   * so it is never listed, suggested or sent again. Absent, it is stored `open`.
+   */
+  readonly applied?: { readonly id: string };
 }
 
 /** At most this many of a location's suggestions are read back for the duplicate check, newest first. */
@@ -393,7 +400,7 @@ export interface AgentSuggestionStore {
    */
   releasePass(scope: OrgScope, input: { locationId: string; week: string }): Promise<HeldReservation | null>;
   findPass(scope: OrgScope, locationId: string, week: string): Promise<SuggestionPassRecord | null>;
-  /** Stores a pass's kept suggestions, each `open`. */
+  /** Stores a pass's kept suggestions, each `open` (D59 slice 3: one TownwiseAI applied, `accepted` under its id). */
   insert(scope: OrgScope, input: { locationId: string; week: string; suggestions: readonly NewSuggestion[]; now: Date }): Promise<SuggestionRecord[]>;
   /**
    * D46: a file or sales suggestion under its given id. `created` false: a row with the id was there (a retry wrote
@@ -634,8 +641,11 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
     async insert(scope, input) {
       if (input.suggestions.length === 0) return [];
       const docs = await Suggestion.insertMany(input.suggestions.map((suggestion) => ({
+        ...(suggestion.applied === undefined ? {} : { _id: new Types.ObjectId(suggestion.applied.id) }),
         ...of(scope, input.locationId), week: input.week, ...contentFields(suggestion.content), why: suggestion.why,
-        calendarIds: [...suggestion.calendarIds], status: 'open', decidedBy: null, decidedAt: null, createdAt: input.now, updatedAt: input.now,
+        calendarIds: [...suggestion.calendarIds], createdAt: input.now, updatedAt: input.now,
+        ...(suggestion.applied === undefined ? { status: 'open', decidedBy: null, decidedAt: null }
+          : { status: 'accepted', decidedBy: 'townwise_ai', decidedAt: input.now }),
       })));
       return docs.map((doc) => toSuggestion(doc.toObject<SuggestionDoc>()));
     },
@@ -644,7 +654,9 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
       try {
         const doc = await Suggestion.create({
           _id: id, ...of(scope, input.locationId), week: input.week, ...contentFields({ type: 'rule', text: input.text, schedule: input.schedule }),
-          why: null, calendarIds: [], status: 'open', decidedBy: null, decidedAt: null, createdAt: input.now, updatedAt: input.now,
+          why: null, calendarIds: [], createdAt: input.now, updatedAt: input.now,
+          ...(input.acceptedBy === undefined ? { status: 'open', decidedBy: null, decidedAt: null }
+            : { status: 'accepted', decidedBy: input.acceptedBy, decidedAt: input.now }),
           source: input.source, closureKey: input.closureKey,
           ...(input.fileId === undefined ? {} : { fileId: new Types.ObjectId(input.fileId) }),
           ...(input.evidence === undefined ? {} : { evidence: { ...input.evidence } }),
