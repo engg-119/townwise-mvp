@@ -41,8 +41,9 @@ export interface LocationFields {
   earlyPass?: { wantedAt?: Date };
   /**
    * D65 (openspec change forecast-training-status, design decision 9): when the location's first-forecast email was
-   * claimed for sending, by compare-and-set on absent, so it goes at most once. Absent until then, and for ever on a
-   * location whose first forecast was published before D65 or with no admin to send to.
+   * claimed for sending, by compare-and-set on absent, so it goes at most once. Absent until then, and on a location
+   * whose first forecast was published before D65, while email was off or with no admin to send to; such a location gets
+   * no email for a later run, unless its sales data is deleted (taking its runs) and a new first run is published.
    */
   firstForecastMailedAt?: Date;
 }

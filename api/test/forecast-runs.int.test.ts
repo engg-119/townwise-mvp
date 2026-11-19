@@ -349,6 +349,23 @@ describe('the first-forecast email (D65)', () => {
     expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
   });
 
+  it('sales data deleted and a first run published again mails no one: the marker stays on the location', async () => {
+    const t = await team();
+    const first = await imported(t);
+    expect((await change(t, first.id, 'publish')).status).toBe(200);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    const marked = await mailedAt(t.locationId);
+    // Deleting the sales data deletes the runs (U13B), so the next run is the location's first again; only the marker holds.
+    await addSalesDay(server, { orgId: t.orgId, locationId: t.locationId, date: '2026-05-01', guests: 90, netSalesCents: 100_000 });
+    expect((await call(server, `/api/org/locations/${t.locationId}/sales`, { method: 'DELETE', session: t.admin })).status).toBe(200);
+    const again = await imported(t);
+    // A later time, so a claim that overwrote the marker would show as modified rather than an equal $set.
+    server.clock.advance(1000);
+    expect((await change(t, again.id, 'publish')).status).toBe(200);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    expect(await mailedAt(t.locationId)).toEqual(marked);
+  });
+
   it('a throwing mail step still answers 200 with the run published, and logs only ids', async () => {
     const t = await team();
     const run = await imported(t);
