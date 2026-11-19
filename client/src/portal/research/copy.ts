@@ -112,6 +112,8 @@ export const EDIT_SHEET = {
 /** The banner's link to the Town tab and its dismiss. */
 export const BANNER_LINK = 'Open the Town tab';
 export const BANNER_DISMISS = 'Dismiss';
+/** The dismiss control's name for a screen reader, which hears it apart from the banner's words. */
+export const BANNER_DISMISS_LABEL = 'Dismiss the research notice';
 
 /**
  * The Calendar's banner for the location's last run, only for one a person started (Research now, or the early run

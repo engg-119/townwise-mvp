@@ -1,5 +1,5 @@
 import {
-  askDraft, BANNER_DISMISS, BANNER_LINK, bannerWords, EDIT_SHEET, EDITED_LINE, FOUND_ACTIONS, FOUND_LABEL, FOUND_NOTE, FOUND_NOTICES, foundActionLabel,
+  askDraft, BANNER_DISMISS, BANNER_DISMISS_LABEL, BANNER_LINK, bannerWords, EDIT_SHEET, EDITED_LINE, FOUND_ACTIONS, FOUND_LABEL, FOUND_NOTE, FOUND_NOTICES, foundActionLabel,
   foundChips, foundEntryLabel, foundLine, foundTime, foundWords, whereWho,
 } from '../../src/portal/research/copy';
 import * as copy from '../../src/portal/research/copy';
@@ -82,6 +82,7 @@ test('the banner: only a run a person started, while it runs and after, in plain
   }
   expect(BANNER_LINK).toBe('Open the Town tab');
   expect(BANNER_DISMISS).toBe('Dismiss');
+  expect(BANNER_DISMISS_LABEL).toBe('Dismiss the research notice');
 });
 
 describe('TownwiseAI, Home and the dashboard (task 7.4)', () => {

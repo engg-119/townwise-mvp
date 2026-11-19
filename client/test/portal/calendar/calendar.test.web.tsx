@@ -1144,12 +1144,12 @@ describe('found by research (D66)', () => {
     const words = await screen.findByText(/finished: 3 new events on the calendar\./);
     expect(words.textContent).toMatch(/^Research for .+ finished: 3 new events on the calendar\. Open the Town tab\.$/);
     expect(screen.getByRole('link', { name: 'Open the Town tab' }).getAttribute('href')).toBe('/locations/l1/town');
-    fireEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss the research notice' }));
     expect(screen.queryByText(/finished: 3 new events/)).toBeNull();
     cleanup();
     await renderAt('/locations/l1/calendar?day=2026-11-21', api);
     expect(screen.queryByText(/finished: 3 new events/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss the research notice' })).toBeNull();
   });
 
   test('a running run a person started says it is researching; a weekly run shows no banner', async () => {
@@ -1163,6 +1163,6 @@ describe('found by research (D66)', () => {
     await renderAt('/locations/l1/calendar?day=2026-11-21', weekly.api);
     await waitFor(() => { expect(weekly.fake.paths).toContain(RESEARCH_PATH); });
     expect(screen.queryByText(/Research for/)).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Dismiss' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Dismiss the research notice' })).toBeNull();
   });
 });

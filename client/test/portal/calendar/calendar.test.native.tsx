@@ -352,6 +352,6 @@ describe('found by research (D66)', () => {
     const { api } = setup({ research: researchBody('press', 'running') });
     await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
     expect(await screen.findByText(/^Researching .+ and nearby\. What it finds shows on the calendar when it finishes\./)).toBeTruthy();
-    expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Dismiss the research notice' })).toBeTruthy();
   });
 });
