@@ -302,6 +302,8 @@ describe('the routes read the mode from the body (handlers/places.ts)', () => {
       autocomplete: () => Promise.reject(new Error('not called')),
       details: (placeId) => Promise.resolve({ placeId: placeId === PLACE_ID ? NEWER_ID : placeId, formattedAddress: '', addressComponents: [] }),
       locate: () => Promise.reject(new Error('not called')),
+      nearby: () => Promise.reject(new Error('not called')),
+      profile: () => Promise.reject(new Error('not called')),
     };
     const ctx = { places, placesMap: placesMapOn, logger: { warn: () => undefined } } as unknown as TownwiseContext;
     let sent: unknown;

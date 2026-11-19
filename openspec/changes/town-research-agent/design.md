@@ -223,8 +223,8 @@ As built (task 3.5): `handlers/locations.ts` `researchAfterWrite`, after `create
 
 `PlacesClient` gains:
 
-- `nearby(center, { radiusM, types, max, withWebsite })`: `POST places:searchNearby`, `rankPreference: 'DISTANCE'`, `maxResultCount` 20, `includedTypes` restaurant, bar, cafe, coffee_shop, pub, bakery, fast_food_restaurant; field mask `places.id,places.displayName,places.primaryType,places.location`, adding `places.websiteUri` only for a run. Same 5-second timeout and `PlacesUnavailableError` as the other calls.
-- `profile(placeId)`: `id,displayName,formattedAddress`, for the restaurant line of a location thread's prompt.
+- `nearby(center, { radiusM, withWebsite })`: `POST places:searchNearby`, `rankPreference: 'DISTANCE'`, `maxResultCount` 20 (`NEARBY_MAX`), `includedTypes` restaurant, bar, cafe, coffee_shop, pub, bakery, fast_food_restaurant (`NEARBY_TYPES`; the types and the count are constants, not options), `languageCode: 'en'`; field mask `places.id,places.displayName,places.primaryType,places.location`, adding `places.websiteUri` only for a run. A place without a valid id, a name or a point is skipped, and a website is kept only when it is http(s). Same 5-second timeout and `PlacesUnavailableError` as the other calls.
+- `profile(placeId)`: `id,displayName,formattedAddress`, for the restaurant line of a location thread's prompt; null for an unknown place or one with no name.
 
 `research/competitors.ts` (pure) drops the location's own place, drops any place whose `primaryType` is not a food or drink type, ranks places of the same type family first and then by distance, and keeps the first 8 within 1,500 m. [CONFIRM: competitors are the 8 nearest restaurants, bars and cafes within 1,500 m, the location's own type first]
 
