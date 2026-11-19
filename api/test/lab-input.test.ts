@@ -500,7 +500,9 @@ describe('confirmed booking labels (learn-from-calendar-bookings, D58)', () => {
   const withLabels = (
     bookings: Parameters<typeof labInputOf>[0]['bookings'], notes: readonly NoteRecord[] = [], sales: readonly SalesDay[] = days,
   ): LabInput => {
-    const input = labInputOf({ calibration: CALIBRATION, location: HANOVER, days: sales, notes, rules: [], today: TODAY, champion: null, bookings });
+    const input = labInputOf({
+      calibration: CALIBRATION, location: HANOVER, days: sales, notes, rules: [], today: TODAY, champion: null, ...(bookings === undefined ? {} : { bookings }),
+    });
     if (input === null) throw new Error('no input');
     return labInputSchema.parse(input);
   };
