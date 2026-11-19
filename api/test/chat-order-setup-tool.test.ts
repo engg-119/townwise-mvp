@@ -44,6 +44,7 @@ function context(fakes: Fakes = {}): ToolContext {
   return {
     ctx: guarded as unknown as TownwiseContext,
     scope: { orgId: '000000000000000000000003' } as unknown as OrgScope,
+    conversationId: '0000000000000000000000c1',
     location: {
       id: '000000000000000000000001', name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00.000Z'),
       town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' },

@@ -60,6 +60,7 @@ function context(calendars: OwnerCalendarRecord[], events: OwnerCalendarEvent[] 
   const tc: ToolContext = {
     ctx: { stores: { ownerCalendars } } as unknown as TownwiseContext,
     scope: { orgId: ORG_ID } as unknown as OrgScope,
+    conversationId: '0000000000000000000000c1',
     location: {
       id: LOCATION_ID, name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00Z'),
       town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' },

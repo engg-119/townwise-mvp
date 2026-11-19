@@ -276,6 +276,7 @@ describe('show_visual’s run', () => {
     const tc: ToolContext = {
       ctx: ctx as unknown as TownwiseContext,
       scope: { orgId: '000000000000000000000003' } as unknown as OrgScope,
+      conversationId: '0000000000000000000000c1',
       location: {
         id: '000000000000000000000001', name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00Z'),
         town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' },

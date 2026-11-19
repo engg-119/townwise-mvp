@@ -11,6 +11,7 @@ import type {
 
 import type { AttachmentKind } from '../files/items.ts';
 import { readNoteContent } from '../handlers/notes.ts';
+import type { AgentChangeStatus } from '../stores/agent-changes.ts';
 import type { FeedbackReason } from '../stores/chat-conversations.ts';
 import type { NoteContent } from '../stores/notes.ts';
 import { attachedTo } from './attachments.ts';
@@ -22,10 +23,15 @@ import { isAside, NOT_RUN, ran } from './turn.ts';
 import { isContextBlock } from './user-message.ts';
 import { citedSources, searchCard, WEB_SEARCH, type SourceLink } from './web-search.ts';
 
-/** What the author did with a proposal (tw_chat_proposals). `noteId` is the saved note's id, else null. */
+/**
+ * What the author did with a proposal (tw_chat_proposals). `noteId` is the saved note's id, else null. D59 slice 4:
+ * `auto` only on a note TownwiseAI saved itself from the person's own words: its ledger row's id and status, and
+ * whether the caller is offered Undo (agent/changes.ts undoable).
+ */
 export interface ProposalState {
   readonly status: 'open' | 'saved' | 'dismissed';
   readonly noteId: string | null;
+  readonly auto?: { readonly changeId: string; readonly status: AgentChangeStatus; readonly undoable: boolean };
 }
 
 export const OPEN: ProposalState = { status: 'open', noteId: null };
