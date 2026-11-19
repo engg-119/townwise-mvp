@@ -299,7 +299,7 @@ describe('one set of rules for every calibration (D42)', () => {
     });
     const base = labResultFor(input, { scorecard });
     // Release B (D52): the widening's outlook anchors must be the scorecard's horizonOutlook ratios, as labResultFor builds them.
-    const params = { ...BASELINE_PARAMS, widening: base.params.widening };
+    const params = { ...BASELINE_PARAMS, widening: base.params.widening ?? [] };
     const result: LabSuccess = { ...base, params, run: { ...base.run, model: { ...base.run.model, family: 'seasonal_baseline' } } };
     expect(await post(job, result)).toEqual(SUCCEEDED);
     const view = await viewOf(t, calibration.id);
