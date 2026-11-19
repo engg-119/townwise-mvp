@@ -16,7 +16,7 @@ const SECTION_VIEW: RevealView = { threshold: 0, ratio: 0, rootMargin: '0px 0px 
 const FEATURES: readonly { name: string; text: string }[] = [
   { name: 'Three-month forecast', text: 'Daily guests for the next 91 days, refit every week from your sales, your notes and the town calendar.' },
   { name: 'Year-ahead outlook', text: 'Past the first three months, a wider outlook out to a year, for planning the season.' },
-  { name: 'A range, not just a number', text: 'Every day gets a low and a high. A new forecast publishes only when its 80% range held up on your own past weeks.' },
+  { name: 'A range, not just a number', text: 'Every day gets a low and a high. A new forecast publishes only when its weekly 80% ranges held up on your own past weeks.' },
   { name: 'A reason for every swing', text: 'Each day names what is driving it: a term ending, a town event, a holiday, or a closure or private event you noted.' },
   { name: 'TownwiseAI', text: 'An AI assistant that reads your sales, forecast and town calendar, answers your questions, and proposes notes you approve before they change anything.' },
   { name: 'Your calendars', text: 'Import a calendar file or connect Google Calendar, and TownwiseAI spots private bookings for you to add to the forecast.' },
