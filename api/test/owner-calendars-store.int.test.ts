@@ -684,3 +684,98 @@ describe('Google calendars (connect-google-calendar)', () => {
     expect(await calendars.find(t.scope, t.locationId, file.id)).toMatchObject({ lastManualRefreshAt: null });
   });
 });
+
+describe('booking labels (learn-from-calendar-bookings, D58)', () => {
+  const DECEMBER = { from: '2026-12-01', to: '2026-12-31' };
+
+  it('writes the AI’s labels only where no one labeled, never over a person’s (a cleared one included), and marks the calendar sorted', async () => {
+    const t = await tenant();
+    const file = await addFile(t, 'Master', [event('a', '2026-12-01'), event('b', '2026-12-02'), event('c', '2026-12-03'), event('d', '2026-12-04')]);
+    expect(file.bookings).toEqual({ state: 'unsorted', sortedAt: null, confirmedAt: null, confirmedBy: null });
+    const now = server.clock.now();
+    expect(await calendars.setLabel(t.scope, t.locationId, file.id, 'a', 'other', now)).toMatchObject({ uid: 'a', booking: null, bookingBy: null });
+    expect(await calendars.setLabel(t.scope, t.locationId, file.id, 'b', null, now)).toMatchObject({ uid: 'b', booking: null, bookingBy: null });
+    expect(await calendars.find(t.scope, t.locationId, file.id)).toMatchObject({ bookings: { state: 'sorted', sortedAt: null } });
+    expect((await calendars.labeledEvents(t.scope, t.locationId, file.id, { unlabeled: true }))?.map((each) => each.uid)).toEqual(['c', 'd']);
+
+    const labeled = await calendars.setLabels(t.scope, t.locationId, file.id, [
+      { uid: 'a', booking: 'party' }, { uid: 'b', booking: 'buyout' }, { uid: 'c', booking: 'party' }, { uid: 'gone', booking: 'party' },
+    ], now);
+    expect(labeled).toBe(1);
+    expect((await calendars.labeledEvents(t.scope, t.locationId, file.id))?.map((each) => [each.uid, each.booking, each.bookingBy])).toEqual([
+      ['a', 'other', 'person'], ['b', null, 'person'], ['c', 'party', 'ai'], ['d', null, null],
+    ]);
+    expect(await calendars.find(t.scope, t.locationId, file.id)).toMatchObject({ bookings: { state: 'sorted', sortedAt: now } });
+    expect((await calendars.labelCounts(t.scope, t.locationId)).get(file.id)).toEqual({ buyout: 0, party: 1, own_event: 0, other: 1, unlabeled: 2 });
+    // A person's later label replaces the AI's, and answers the row as it was.
+    expect(await calendars.setLabel(t.scope, t.locationId, file.id, 'c', 'buyout', now)).toMatchObject({ booking: 'party', bookingBy: 'ai' });
+    expect(await calendars.setLabel(t.scope, t.locationId, file.id, 'nope', 'buyout', now)).toBeNull();
+    const shown = await calendars.eventsBetween(t.scope, t.locationId, DECEMBER);
+    expect(shown.map((each) => [each.uid, each.booking, each.bookingBy])).toEqual([['a', 'other', 'person'], ['b', null, 'person'], ['c', 'buyout', 'person'], ['d', null, null]]);
+  });
+
+  it('confirms once by compare-and-set, and only a confirmed calendar’s buyouts and parties reach bookingsBetween, as dates and label', async () => {
+    const t = await tenant();
+    const file = await addFile(t, 'Master', [
+      event('party', '2026-12-05', { title: 'Sentinel party' }), event('buyout', '2026-12-06', { endDate: '2026-12-07' }),
+      event('own', '2026-12-08'), event('other', '2026-12-09'), event('none', '2026-12-10'),
+    ]);
+    const now = server.clock.now();
+    await calendars.setLabels(t.scope, t.locationId, file.id, [
+      { uid: 'party', booking: 'party' }, { uid: 'buyout', booking: 'buyout' }, { uid: 'own', booking: 'own_event' }, { uid: 'other', booking: 'other' },
+    ], now);
+    expect(await calendars.bookingsBetween(t.scope, t.locationId, DECEMBER)).toEqual([]);
+    expect((await calendars.keyedEventsBetween(t.scope, t.locationId, DECEMBER)).some((each) => each.labeled)).toBe(false);
+
+    const confirms = await Promise.all([
+      calendars.confirmBookings(t.scope, t.locationId, file.id, { by: 'admin-0001', now }),
+      calendars.confirmBookings(t.scope, t.locationId, file.id, { by: 'admin-0002', now }),
+    ]);
+    expect(confirms.sort()).toEqual(['already', 'confirmed']);
+    expect(await calendars.find(t.scope, t.locationId, file.id)).toMatchObject({ bookings: { state: 'confirmed', confirmedAt: now, sortedAt: now } });
+    const booked = await calendars.bookingsBetween(t.scope, t.locationId, DECEMBER);
+    expect(booked).toEqual([
+      { startDate: '2026-12-05', endDate: '2026-12-05', booking: 'party' },
+      { startDate: '2026-12-06', endDate: '2026-12-07', booking: 'buyout' },
+    ]);
+    expect(JSON.stringify(booked)).not.toContain('Sentinel');
+    expect(await calendars.bookingsBetween(t.scope, t.locationId, { from: '2026-12-07', to: '2026-12-07' })).toHaveLength(1);
+    // Labeled events of a confirmed calendar are marked for the weekly call to leave out; an unlabeled one is not.
+    expect((await calendars.keyedEventsBetween(t.scope, t.locationId, DECEMBER)).map((each) => [each.uid, each.labeled])).toEqual([
+      ['party', true], ['buyout', true], ['own', true], ['other', true], ['none', false],
+    ]);
+
+    // A calendar confirmed with no sort (labeled by hand, or not at all) confirms too.
+    const plain = await addFile(t, 'Plain', [event('p1', '2026-12-11')]);
+    expect(await calendars.confirmBookings(t.scope, t.locationId, plain.id, { by: 'admin-0001', now })).toBe('confirmed');
+    expect(await calendars.find(t.scope, t.locationId, plain.id)).toMatchObject({ bookings: { state: 'confirmed', sortedAt: null } });
+  });
+
+  it('refuses labels on a link, and reads nothing of another organization’s calendar', async () => {
+    const t = await tenant();
+    const other = await tenant();
+    const now = server.clock.now();
+    const link = await calendars.add(t.scope, t.locationId, { kind: 'link', label: 'Link', sealedAddress: SEALED, host: 'calendar.google.com' },
+      parsed([event('l1', '2026-12-01')]), { createdBy: 'user-0001', now });
+    if (link === 'calendar_limit') throw new Error('calendar_limit');
+    expect(link.bookings).toBeNull();
+    expect(await calendars.setLabels(t.scope, t.locationId, link.id, [{ uid: 'l1', booking: 'party' }], now)).toBeNull();
+    expect(await calendars.setLabel(t.scope, t.locationId, link.id, 'l1', 'party', now)).toBeNull();
+    expect(await calendars.confirmBookings(t.scope, t.locationId, link.id, { by: 'admin-0001', now })).toBeNull();
+    expect(await calendars.labeledEvents(t.scope, t.locationId, link.id)).toBeNull();
+    expect((await calendars.labelCounts(t.scope, t.locationId)).has(link.id)).toBe(false);
+
+    const file = await addFile(t, 'Master', [event('f1', '2026-12-01')]);
+    await calendars.setLabels(t.scope, t.locationId, file.id, [{ uid: 'f1', booking: 'party' }], now);
+    await calendars.confirmBookings(t.scope, t.locationId, file.id, { by: 'admin-0001', now });
+    const before = await snapshotOf(t.orgId);
+    expect(await calendars.setLabels(other.scope, t.locationId, file.id, [{ uid: 'f1', booking: 'buyout' }], now)).toBeNull();
+    expect(await calendars.setLabel(other.scope, t.locationId, file.id, 'f1', 'buyout', now)).toBeNull();
+    expect(await calendars.confirmBookings(other.scope, t.locationId, file.id, { by: 'admin-0009', now })).toBeNull();
+    expect(await calendars.labeledEvents(other.scope, t.locationId, file.id)).toBeNull();
+    expect(await calendars.bookingsBetween(other.scope, t.locationId, DECEMBER)).toEqual([]);
+    expect((await calendars.labelCounts(other.scope, t.locationId)).size).toBe(0);
+    expect(await snapshotOf(t.orgId)).toBe(before);
+    expect(await calendars.bookingsBetween(t.scope, t.locationId, DECEMBER)).toHaveLength(1);
+  });
+});
