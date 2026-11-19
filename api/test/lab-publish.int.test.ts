@@ -298,7 +298,9 @@ describe('one set of rules for every calibration (D42)', () => {
       history: { firstDate: input.days[0]?.date ?? '', lastDate: input.dataThrough, spanDays: 300 },
     });
     const base = labResultFor(input, { scorecard });
-    const result: LabSuccess = { ...base, params: BASELINE_PARAMS, run: { ...base.run, model: { ...base.run.model, family: 'seasonal_baseline' } } };
+    // Release B (D52): the widening's outlook anchors must be the scorecard's horizonOutlook ratios, as labResultFor builds them.
+    const params = { ...BASELINE_PARAMS, widening: base.params.widening };
+    const result: LabSuccess = { ...base, params, run: { ...base.run, model: { ...base.run.model, family: 'seasonal_baseline' } } };
     expect(await post(job, result)).toEqual(SUCCEEDED);
     const view = await viewOf(t, calibration.id);
     // A first forecast's baseline is judged by its absolute checks, as a scheduled one's is

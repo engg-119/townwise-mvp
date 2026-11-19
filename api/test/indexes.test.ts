@@ -125,7 +125,7 @@ describe('indexes', () => {
     ]);
   });
 
-  it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person and the files sweep', () => {
+  it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person, the files sweep and the cross-organization claims', () => {
     const connection = registered();
     for (const model of [
       'TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage',
@@ -148,6 +148,8 @@ describe('indexes', () => {
         // The TownwiseAI reader's claim (spec 11A.9) spans organizations too: the oldest read asked for, in any.
         if (model === 'TwFile' && keys[0] === 'ai.status') continue;
         if (model === 'TwImport' && keys[0] === 'status') continue;
+        // D59 slice 2: the TownwiseAI reader's claim of a queued automatic sort spans organizations (stores/cross-tenant.ts).
+        if (model === 'TwCalendarSource' && keys[0] === 'autoSort.status') continue;
         // The lab callback finds a calibration by its id and token hash, before any organization is known.
         if (model === 'TwCalibration' && keys[0] === '_id') continue;
         expect(keys[0]).toBe('orgId');

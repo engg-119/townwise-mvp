@@ -257,8 +257,8 @@ describe('each event’s confidence (D59)', () => {
 
 describe('which stored files TownwiseAI reads on its own (D59)', () => {
   const kept = {
-    status: 'kept', rawDeletedAt: null, disabledAt: null, ai: null, aiAutoOff: false, uploadId: null, result: null, outcome: 'reference',
-    addedVia: null, source: null, purgeRaw: false,
+    name: 'menu.pdf', status: 'kept', rawDeletedAt: null, disabledAt: null, ai: null, aiAutoOff: false, uploadId: null, result: null,
+    outcome: 'reference', addedVia: null, source: null, purgeRaw: false,
   } as unknown as FileRecord;
 
   it('a finished file with its original, never asked about, that wrote no days', () => {
@@ -274,5 +274,10 @@ describe('which stored files TownwiseAI reads on its own (D59)', () => {
       { disabledAt: new Date() },
     ];
     for (const over of refused) expect(autoReadable({ ...kept, ...over })).toBe(false);
+  });
+
+  it('never a calendar file, which Your data imports as a calendar (D60) and TownwiseAI sorts instead (D59 slice 2)', () => {
+    for (const name of ['bookings.ics', 'Master.ICAL', 'folder/events.ics']) expect(autoReadable({ ...kept, name })).toBe(false);
+    expect(autoReadable({ ...kept, name: 'events.ics.pdf' })).toBe(true);
   });
 });
