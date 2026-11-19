@@ -31,9 +31,12 @@ import { CalendarDay, PANEL_ID } from './CalendarDay';
 import { CalendarGrid } from './CalendarGrid';
 import { CalendarWeek } from './CalendarWeek';
 import { fetchOwnerCalendarEvents, fetchOwnerCalendars, GOOGLE_OFF, type OwnerCalendarEvent } from './api';
+import { calendarChart, chartDraws, lastYearRange } from './chart';
 import {
-  buildGrid, buildWeek, gridMonthFor, pastRangeFor, readRangeFor, shownFor, stepWeek, weekLabel, weekStartFor, type DateRange,
+  buildDays, buildGrid, gridDays, gridMonthFor, pastRangeFor, readRangeFor, shownFor, weekLabel, weekStartFor, type DateRange,
 } from './grid';
+import { MonthChart } from './MonthChart';
+import { followSelection, stepView, stripDates, stripFor, VIEW_DAYS } from './strip';
 import { CalendarFilters, Toolbar, type CalendarView } from './Toolbar';
 import {
   ALL_FILTERS, dayView, monthBounds, monthCheckLine, monthLabel, outlookKey, savedNotice, selectedDay, stepMonth, tooltipLines,
@@ -77,6 +80,16 @@ import { FigureKey } from './FigureKey';
 // events with its dates and hours but never its title, and the saved note is linked to that event by its calendar id and
 // uid (calendar-event-suggestions), so the day panel says "Made from a calendar event" on it; it is disabled under view-as.
 // "Today" is the device's date.
+// D64 (2026-11-19, owner request): the selected day stands out in both views (CalendarGrid*, CalendarWeek*); a forecast
+// chart (chart.ts over these reads, with the sales days 364 days before the range read beside them for last year, a
+// failure of which leaves only that line out) shows above the month grid (MonthChart.tsx, the grid month's days) and
+// atop each day of the week view, on by default, hidden with the “Forecast chart” chip; and the week view scrolls
+// sideways and snaps to a day. The page keeps the week view's first day in view (`start`) and the days it renders (the
+// strip, strip.ts stripFor): `start` begins at the block from today that holds the selected day (D40) and follows a
+// scroll once it stops (`onSettle`), the selected day moving to the nearest day in view when the scroll left it out;
+// Previous week and Next week move both 7 days (stepView); and a change of the selected day that leaves the view (a
+// key, Today, a link, browser back) shows the block that holds it. The week's label and its reads (readRangeFor) follow
+// `start`.
 
 const READ_ONLY_ID = 'calendar-ro';
 /** The grid's slot: on web, focus that was on a cell the last render removed goes to the selected cell. */
@@ -184,12 +197,26 @@ function CalendarView(): React.JSX.Element {
   const [rendered, setRendered] = useState(shownMonth);
   const nextShown = shownFor(shownMonth, seen, selected);
   const [form, setForm] = useState<FormState>(null);
+  // The week view's first day in view and the days it renders (D64).
+  const [start, setStart] = useState(() => weekStartFor(selected, today));
+  const [strip, setStrip] = useState<DateRange>(() => stripFor(null, weekStartFor(selected, today), bounds, today));
+  let viewStart = start;
   // Any change of the selected day closes the note form, including one that doesn't come through `select` (browser
-  // back or forward to another Calendar entry, or a link), so a draft never shows over another day.
+  // back or forward to another Calendar entry, or a link), so a draft never shows over another day. One that leaves the
+  // week view's days in view shows the block from today that holds it (D40).
   if (seen !== selected) {
     setSeen(selected);
     setForm(null);
+    if (followSelection(selected, start) !== selected) {
+      viewStart = weekStartFor(selected, today);
+      setStart(viewStart);
+    }
   }
+  const nextStrip = stripFor(strip, viewStart, bounds, today);
+  if (nextStrip !== strip) setStrip(nextStrip);
+  // Whether the forecast chart shows (D64): page state, on at first. [CONFIRM: the forecast chart shown by default on
+  // the Calendar with a “Forecast chart” chip to hide it]
+  const [chartOn, setChartOn] = useState(true);
   if (nextShown !== shownMonth) setShownMonth(nextShown);
   const month = gridMonthFor(selected, nextShown, rendered);
   if (month !== rendered) setRendered(month);
@@ -208,8 +235,8 @@ function CalendarView(): React.JSX.Element {
   const [chosen, setChosen] = useState(0);
   const locationName = shownLocationName(location, org);
 
-  // The week view's block, and what every read covers for the shown view (readRangeFor): the reads are keyed by its days.
-  const weekStart = weekStartFor(selected, today);
+  // The week view's first day in view, and what every read covers for the shown view (readRangeFor): the reads are keyed by its days.
+  const weekStart = viewStart;
   const range = useMemo(() => readRangeFor(view, month, weekStart, bounds), [view, month, weekStart, bounds]);
   const { from, to } = range;
   // The notes and the business rules, read and read again together: a write reads both again with the forecast.
@@ -220,12 +247,15 @@ function CalendarView(): React.JSX.Element {
   const monthData = useKept(useCallback(async () => {
     const read: DateRange = { from, to };
     const past = pastRangeFor(read, today);
-    const [calendar, days, stored] = await Promise.all([
+    const before = lastYearRange(read, today);
+    const [calendar, days, stored, lastYear] = await Promise.all([
       fetchCalendar(api, location.id, read),
       past === null ? Promise.resolve([]) : fetchSalesDays(api, location.id, past),
       storedEventsOf(api, location.id, read),
+      // The chart's same weekday last year (D64): its failure leaves only that line out.
+      before === null ? Promise.resolve([]) : fetchSalesDays(api, location.id, before).catch(() => null),
     ]);
-    return { range: read, calendar, days, stored: stored.events, storedFailed: stored.failed };
+    return { range: read, calendar, days, stored: stored.events, storedFailed: stored.failed, lastYear };
   }, [api, location.id, from, to, today]));
   const forecast = useKept(useCallback(
     async () => ({ range: { from, to }, window: await fetchForecast(api, location.id, { from, to }) }),
@@ -262,10 +292,20 @@ function CalendarView(): React.JSX.Element {
     rules: notes.data.rules, imported: hasCalendars ? shown.stored : [], filters,
   }), [today, shown, forecastWindow, notes.data, hasCalendars, filters]);
   const rows = useMemo(() => (input === null || view === 'week' ? [] : buildGrid(month, input, bounds)), [input, view, month, bounds]);
-  const week = useMemo(() => (input === null || view !== 'week' ? [] : buildWeek(selected, today, input, bounds)), [input, view, selected, today, bounds]);
-  // The key line under the grid while a shown day is an outlook day (D52).
-  const outlook = useMemo(() => outlookKey((view === 'week' ? week : rows.flat())
-    .flatMap((slot) => (slot.kind === 'day' && !slot.pending && !slot.outside ? [slot] : []))), [view, week, rows]);
+  const stripDays = useMemo(() => stripDates(strip), [strip]);
+  const week = useMemo(() => (input === null || view !== 'week' ? [] : buildDays(stripDays, input, bounds)), [input, view, stripDays, bounds]);
+  // The key line under the grid while a shown day is an outlook day (D52): in the week view, the 7 days in view.
+  const outlook = useMemo(() => outlookKey((view === 'week' ? week.filter((slot) => followSelection(slot.date, weekStart) === slot.date) : rows.flat())
+    .flatMap((slot) => (slot.kind === 'day' && !slot.pending && !slot.outside ? [slot] : []))), [view, week, rows, weekStart]);
+  // The forecast chart (D64): the grid month's days above the grid, or the strip's days atop the week's; none while
+  // the chip hides it or it has nothing to draw.
+  const lastYear = monthData.data?.lastYear ?? null;
+  const chart = useMemo(() => {
+    if (input === null || !chartOn) return null;
+    const dates = view === 'week' ? stripDays : gridDays(month).filter((date) => date.startsWith(month));
+    const drawn = calendarChart(dates, input, lastYear);
+    return chartDraws(drawn) ? drawn : null;
+  }, [input, chartOn, view, stripDays, month, lastYear]);
   // The days the kept reads cover: their own range, which lags the shown one while a new range reads.
   const covered = input?.covered ?? null;
   const covers = useCallback((date: string) => covered !== null && date >= covered.from && date <= covered.to, [covered]);
@@ -380,14 +420,21 @@ function CalendarView(): React.JSX.Element {
   const noticeText = notice === null ? null : 'text' in notice ? notice.text
     : forecast.busy || !sameRange(input.covered, range) ? 'Saved.' : savedNotice(selected, input, notice.savedId);
   const unpublished = forecastWindow !== null && !forecastWindow.available && forecastWindow.reason === 'no_published_forecast';
-  // The week view's Previous and Next move the day a week, disabled in place once that block is past the 25 months;
-  // the month view's step from the grid's month.
-  const back = stepWeek(selected, -1, bounds, today);
-  const on = stepWeek(selected, 1, bounds, today);
+  // The week view's Previous and Next move the days in view and the selected day 7 days (D64), disabled in place at the
+  // 25 months' first and last blocks; the month view's step from the grid's month.
+  const back = stepView(weekStart, -1, bounds, today);
+  const on = stepView(weekStart, 1, bounds, today);
+  /** A day of the view moved into the 25 months: a view at their first or last block holds days outside them. */
+  const clampToBounds = (date: string): string => (date < `${bounds.first}-01` ? `${bounds.first}-01` : date > bounds.lastDay ? bounds.lastDay : date);
+  /** Shows the days from `next` and moves the selected day `days` with them, into the new view and the 25 months. */
+  const moveView = (next: string, days: number): void => {
+    setStart(next);
+    select(clampToBounds(followSelection(addDays(selected, days), next)), true);
+  };
   const nav = view === 'week'
     ? {
       label: weekLabel(weekStart), canPrevious: back !== null, canNext: on !== null,
-      onPrevious: () => { if (back !== null) select(back, true); }, onNext: () => { if (on !== null) select(on, true); },
+      onPrevious: () => { if (back !== null) moveView(back, -VIEW_DAYS); }, onNext: () => { if (on !== null) moveView(on, VIEW_DAYS); },
     }
     : {
       label: monthLabel(month), canPrevious: month > bounds.first, canNext: month < bounds.last,
@@ -399,7 +446,15 @@ function CalendarView(): React.JSX.Element {
   const listFailed = calendars.error !== null;
   const storedFailed = hasCalendars && shown.storedFailed && sameRange(shown.range, range);
 
-  const filtersNode = <CalendarFilters filters={filters} onFilter={toggle} imported={hasCalendars} />;
+  const filtersNode = (
+    <CalendarFilters filters={filters} onFilter={toggle} imported={hasCalendars} chart={chartOn} onChart={() => { setChartOn((on) => !on); }} />
+  );
+  /** A scroll of the week stopped with `next` first in view: it follows, and so does the selected day when it left the view. */
+  const onSettle = (next: string): void => {
+    setStart(next);
+    const follow = clampToBounds(followSelection(selected, next));
+    if (follow !== selected) select(follow, true);
+  };
   const formNode = form === null ? null : (
     <NoteForm
       key={form.mode === 'edit' ? form.note.id : `${form.source}-${selected}`}
@@ -471,7 +526,11 @@ function CalendarView(): React.JSX.Element {
       ) : null}
       <Toolbar
         {...nav}
-        onToday={() => { select(today, false, today.slice(0, 7)); }}
+        onToday={() => {
+          // The week view shows today's block again, today first (D40), wherever a scroll left it.
+          if (view === 'week') setStart(weekStartFor(today, today));
+          select(today, false, today.slice(0, 7));
+        }}
         view={view}
         onView={onView}
         trailing={(
@@ -492,6 +551,7 @@ function CalendarView(): React.JSX.Element {
         {/* From 641px the filters head the grid's column, so from 1024px the panel beside it starts level with them. */}
         <View style={[styles.column, desktop ? styles.wide : null]}>
           {phone ? null : filtersNode}
+          {view === 'month' && chart !== null ? <MonthChart chart={chart} selected={selected} onSelect={select} busy={busy} /> : null}
           {/* Both views render in this slot, so the focus restore covers a switch of views too; "Your calendars" in the
               header row is outside it, and its popover floats over the page, so a switch never remounts them and a shown
               result or refusal stays. */}
@@ -506,6 +566,8 @@ function CalendarView(): React.JSX.Element {
                 busy={busy}
                 label={weekLabel(weekStart)}
                 tooltip={tooltip}
+                chart={chart}
+                onSettle={onSettle}
               />
             ) : (
               <CalendarGrid

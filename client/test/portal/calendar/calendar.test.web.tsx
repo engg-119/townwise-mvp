@@ -295,13 +295,16 @@ test('the forecast read covers exactly the shown grid (one request of at most 42
   expect(cell('2026-11-11').getAttribute('aria-selected')).toBe('true');
   expect(within(panel()).getByRole('heading', { name: 'Today, Wed, Nov 11' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST]);
-  // Sales days only for the grid's past part, and the 8 weeks before it that likely closed reads (spec D32).
-  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([`${PATH}/sales/days?from=2026-08-31&to=2026-11-10`]);
+  // Sales days only for the grid's past part, and the 8 weeks before it that likely closed reads (spec D32), and the
+  // chart's same weekdays last year, 364 days before the grid's (D64).
+  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toEqual([
+    `${PATH}/sales/days?from=2026-08-31&to=2026-11-10`, `${PATH}/sales/days?from=2025-10-27&to=2025-12-07`,
+  ]);
   fireEvent.click(screen.getByRole('button', { name: 'Next month' }));
   expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`]);
-  // A grid after today has no past part to read.
-  expect(fake.paths.filter((path) => path.includes('/sales/days?'))).toHaveLength(1);
+  // A grid after today has no past part to read; only its same weekdays last year (D64).
+  expect(fake.paths.filter((path) => path.includes('/sales/days?')).slice(2)).toEqual([`${PATH}/sales/days?from=2025-12-01&to=2026-01-11`]);
   expect(screen.getByText('December 2026')).toBeTruthy();
   fireEvent.click(screen.getByRole('button', { name: 'Today' }));
   expect(await screen.findByRole('grid', { name: 'November 2026' })).toBeTruthy();

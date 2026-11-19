@@ -156,14 +156,20 @@ test('the label stays 216px wide in both views', () => {
 
 test('CalendarFilters is the “Show on the calendar” group of pressed chips; Your calendar only when the location has a calendar', () => {
   const onFilter = jest.fn();
-  const { rerender } = render(<CalendarFilters filters={{ ...ALL_FILTERS, terms: false }} onFilter={onFilter} imported={false} />);
+  const onChart = jest.fn();
+  const { rerender } = render(<CalendarFilters filters={{ ...ALL_FILTERS, terms: false }} onFilter={onFilter} imported={false} chart onChart={onChart} />);
   const group = screen.getByRole('group', { name: 'Show on the calendar' });
   const chips = within(group).getAllByRole('button');
+  // The last chip shows or hides the forecast chart (D64).
   expect(chips.map((chip) => [chip.textContent, chip.getAttribute('aria-pressed')])).toEqual([
-    ['Holidays', 'true'], ['Town events', 'true'], ['Term dates', 'false'], ['Your notes', 'true'],
+    ['Holidays', 'true'], ['Town events', 'true'], ['Term dates', 'false'], ['Your notes', 'true'], ['Forecast chart', 'true'],
   ]);
   fireEvent.click(within(group).getByRole('button', { name: 'Term dates' }));
   expect(onFilter).toHaveBeenCalledWith('terms');
-  rerender(<CalendarFilters filters={ALL_FILTERS} onFilter={onFilter} imported />);
+  fireEvent.click(within(group).getByRole('button', { name: 'Forecast chart' }));
+  expect(onChart).toHaveBeenCalledTimes(1);
+  expect(onFilter).toHaveBeenCalledTimes(1);
+  rerender(<CalendarFilters filters={ALL_FILTERS} onFilter={onFilter} imported chart={false} onChart={onChart} />);
+  expect(within(screen.getByRole('group', { name: 'Show on the calendar' })).getByRole('button', { name: 'Forecast chart' }).getAttribute('aria-pressed')).toBe('false');
   expect(within(screen.getByRole('group', { name: 'Show on the calendar' })).getByRole('button', { name: 'Your calendar' })).toBeTruthy();
 });

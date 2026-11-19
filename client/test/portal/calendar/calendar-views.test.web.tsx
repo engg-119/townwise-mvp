@@ -289,6 +289,11 @@ function columns(grid: HTMLElement): HTMLElement[] {
   return [...grid.querySelectorAll<HTMLElement>('[role="gridcell"]')];
 }
 
+/** The 7 columns in view of the scrolling week (D64): the strip renders weeks either side of them. */
+function inView(grid: HTMLElement): HTMLElement[] {
+  return columns(grid).filter((column) => column.hasAttribute('data-view'));
+}
+
 test('Week sets view=week and keeps the day, with no read; Month takes view out of the URL', async () => {
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21', api);
@@ -323,13 +328,16 @@ test('a load at ?view=week opens the block that holds the selected day; any othe
   expect(viewButton('Month').getAttribute('aria-pressed')).toBe('true');
 });
 
-test('the week’s columns at 1280: a grid named by the block, 7 gridcells from Wednesday, one tab stop, Saturday’s figure and range', async () => {
+test('the week’s columns at 1280: a grid named by the block, 7 gridcells in view from Wednesday, one tab stop, Saturday’s figure and range', async () => {
   const grid = await renderAt('/locations/l1/calendar?day=2026-11-21&view=week', setup().api, 'Nov 18 to 24, 2026');
-  expect(columns(grid).map((column) => column.getAttribute('data-date'))).toEqual([
+  expect(inView(grid).map((column) => column.getAttribute('data-date'))).toEqual([
     '2026-11-18', '2026-11-19', '2026-11-20', '2026-11-21', '2026-11-22', '2026-11-23', '2026-11-24',
   ]);
+  // The strip renders 2 weeks either side to scroll to (D64): Nov 4 to Dec 8.
+  expect(columns(grid)).toHaveLength(35);
+  expect(columns(grid)[0]?.getAttribute('data-date')).toBe('2026-11-04');
   expect(grid.querySelectorAll('[tabindex="0"]')).toHaveLength(1);
-  expect(columns(grid)[0]?.textContent.startsWith('Wed 18')).toBe(true);
+  expect(inView(grid)[0]?.textContent).toContain('Wed 18');
   const saturday = cell('2026-11-21').querySelector('[data-head]');
   expect(saturday?.textContent).toContain('212');
   expect(saturday?.textContent).toContain('180 to 240');
@@ -339,10 +347,10 @@ test('with no ?day= the week opens on today, in its first column with its Today 
   setToday('2026-11-15');
   const grid = await renderAt('/locations/l1/calendar?view=week', setup().api, 'Nov 15 to 21, 2026');
   expect(screen.getByText('Nov 15 to 21, 2026')).toBeTruthy();
-  const first = columns(grid)[0];
+  const first = inView(grid)[0];
   if (first === undefined) throw new Error('no first column');
   expect(first.getAttribute('data-date')).toBe('2026-11-15');
-  expect(first.textContent.startsWith('Sun 15')).toBe(true);
+  expect(first.textContent).toContain('Sun 15');
   expect(within(first).getByText('Today')).toBeTruthy();
   expect(first.getAttribute('aria-selected')).toBe('true');
   // Next week moves the day a block on.
@@ -425,11 +433,11 @@ test('a block past the grid’s last day reads its own days, keeps the covered d
   // Dec 6 to 12: Dec 6 is the last day of November's grid (Oct 26 to Dec 6), the rest past it.
   fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
   const grid = await screen.findByRole('grid', { name: 'Dec 6 to 12, 2026' });
-  await waitFor(() => { expect(fake.paths.length).toBe(reads + 3); });
-  // No day of it is past, so no sales days.
+  await waitFor(() => { expect(fake.paths.length).toBe(reads + 4); });
+  // No day of it is past, so no sales days but the chart's same weekdays last year (D64).
   expect([...fake.paths.slice(reads)].sort()).toEqual([
     `${PATH}/calendar?from=2026-12-06&to=2026-12-12`, `${PATH}/forecast?from=2026-12-06&to=2026-12-12`,
-    `${PATH}/owner-calendars/events?from=2026-12-06&to=2026-12-12`,
+    `${PATH}/owner-calendars/events?from=2026-12-06&to=2026-12-12`, `${PATH}/sales/days?from=2025-12-07&to=2025-12-13`,
   ]);
   expect(grid.getAttribute('aria-busy')).toBe('true');
   expect(cell('2026-12-06').textContent).toContain('212');
@@ -465,10 +473,10 @@ test('a day past the grid’s edge inside a block that crosses it moves the grid
   // Dec 9 is past November's grid (Oct 26 to Dec 6), so the grid's month becomes December, whose grid holds the block.
   fireEvent.click(cell('2026-12-09'));
   await waitFor(() => { expect(day()).toBe('2026-12-09'); });
-  await waitFor(() => { expect(fake.paths.length).toBe(reads + 3); });
+  await waitFor(() => { expect(fake.paths.length).toBe(reads + 4); });
   expect([...fake.paths.slice(reads)].sort()).toEqual([
     `${PATH}/calendar?from=2026-11-30&to=2027-01-10`, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`,
-    `${PATH}/owner-calendars/events?from=2026-11-30&to=2027-01-10`,
+    `${PATH}/owner-calendars/events?from=2026-11-30&to=2027-01-10`, `${PATH}/sales/days?from=2025-12-01&to=2026-01-11`,
   ]);
   // The same days stay on screen, with the kept reads' data, dimmed while December's grid reads.
   const grid = screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' });
@@ -476,7 +484,7 @@ test('a day past the grid’s edge inside a block that crosses it moves the grid
   expect(cell('2026-12-09').textContent).toContain('212');
   await act(async () => { for (const release of releases) release(); await Promise.resolve(); });
   await waitFor(() => { expect(screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' }).getAttribute('aria-busy')).toBe('false'); });
-  expect(fake.paths).toHaveLength(reads + 3);
+  expect(fake.paths).toHaveLength(reads + 4);
 });
 
 test('Week inside the grid reads nothing more: the block shows its data at once', async () => {
