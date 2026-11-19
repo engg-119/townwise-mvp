@@ -103,6 +103,24 @@ flowchart LR
 | `compose.yaml` | Local MongoDB, Valkey and Azurite (blob storage) for development |
 | `.github/` | CI, security scans, secret scanning and the deploy workflow |
 
+### Size
+
+A snapshot from 2026-11-19 (1,467 commits since 2026-11-01): about 1,870 tracked files and 320,000 lines, counted with `wc -l`, so blank lines and comments are included.
+
+| Area | Lines |
+|---|---|
+| TypeScript, all (`.ts`, `.tsx`, `.mts`) | 281,000 |
+| `client/app` and `client/src` | 74,000 |
+| `client/test` | 74,000 |
+| `api/src` | 54,000 |
+| `api/test` | 67,000 |
+| `api/kit/*` source and tests | 4,000 and 7,000 |
+| Python (`modeling/`, `reorder/`) | 13,000 |
+| Markdown (11,000 of it in `openspec/`) | 21,000 |
+| Terraform | 4,700 |
+
+About half the TypeScript is tests. To recount one area: `git ls-files -z -- 'api/src/*.ts' | xargs -0 cat | wc -l`.
+
 ## Run it locally
 
 You need [nvm](https://github.com/nvm-sh/nvm) (for Node 24) and Docker. From the repository root:

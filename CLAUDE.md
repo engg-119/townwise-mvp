@@ -6,6 +6,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Townwise (townwise.tech) is an ENGG 119 course project at Dartmouth: daily guest and sales forecasts for restaurants in small towns, built from the town's own calendar. The repo holds the product (a TypeScript API, a React Native/Expo client and their Azure infrastructure) and the research side (`data/`, `eda/`, `modeling/`). `README.md` is the human overview.
 
+Scale (2026-11-19): about 280,000 lines of TypeScript, half of it tests, plus 13,000 of Python; breakdown in `README.md` (### Size). Search with targeted paths rather than reading whole workspaces.
+
 ## Commands
 
 Node 24 is required (`.nvmrc`; `.npmrc` sets `engine-strict`). A non-interactive shell may start on an older Node: if `node --version` is not 24, run `. "$HOME/.nvm/nvm.sh" && nvm use` in the same command. Integration tests need Docker running.
