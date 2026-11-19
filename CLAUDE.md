@@ -119,6 +119,7 @@ Azure, with Terraform in two stacks: `bootstrap` (applied by the subscription ow
 ## Conventions
 
 - PRs target `develop`. `main` is production: a merge there deploys.
+- `develop` is never behind `main` (owner, 2026-11-19). Right after a release PR merges into `main`, merge `main` back into `develop` and push it: `git fetch origin && git merge --no-autostash --no-edit origin/main` on `develop` (a fast-forward when `develop` hasn't moved, otherwise a merge commit named `chore: merge main back into develop`). A release adds only its merge commit, so this changes no files; a fix that lands on `main` or a release branch first comes back the same way. Check with `git rev-list --count origin/develop..origin/main`, which must be 0.
 - Pushing to `develop` needs no one's go: the owner gave every session standing permission on 2026-11-17 ("you have permission to push anything to develop"). Push straight to `develop` or merge a PR into it, after the checks your change needs, and hold off while a release PR's CI is running. `main` still needs the owner's go, through a release PR.
 - Commit as you go (owner, 2026-11-17): commit each finished, checked piece of work on your branch when it's done, in Conventional Commits, rather than leaving work uncommitted until the end of a task.
 - `data/` holds a partner restaurant's private Toast exports and is gitignored, as is `modeling/outputs/`. Never commit either, and never print customer or group names that appear in Toast item names.

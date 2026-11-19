@@ -332,6 +332,29 @@ test('phones show the chart too, and a tap chooses a day', async () => {
   expect(within(panel()).getByRole('heading', { name: 'Mon, Nov 9, 2026' })).toBeTruthy();
 });
 
+test('each day’s date stands apart: on a phone its month over its day number, from 1024px on one line', async () => {
+  resize(390);
+  await renderAt(portal());
+  await forecastIn();
+  const lines = (date: string): string[] => {
+    const found = document.querySelector(`[data-testid="home-week-chart-date-${date}"]`);
+    if (found === null) throw new Error(`no date for ${date}`);
+    return Array.from(found.children, (line) => line.textContent);
+  };
+  expect(lines('2026-11-05')).toEqual(['Nov', '5']);
+  expect(lines('2026-11-10')).toEqual(['Nov', '10']);
+  // Stacked, the chart and the panel each take the height of what they hold: no flex share of the stack's height.
+  const chartSide = screen.getByRole('group', { name: 'This week’s days' }).parentElement?.parentElement;
+  const panelSide = panel().parentElement;
+  expect(chartSide !== null && chartSide !== undefined ? getComputedStyle(chartSide).flexGrow : 'none').not.toBe('3');
+  expect(panelSide !== null ? getComputedStyle(panelSide).flexGrow : 'none').not.toBe('2');
+  cleanup();
+  resize(1280);
+  await renderAt(portal());
+  await forecastIn();
+  expect(lines('2026-11-05')).toEqual(['Nov 5']);
+});
+
 test('with nothing published the chart draws last year alone, no day says a word, and nothing reads as a forecast', async () => {
   await renderAt(portal(NO_FORECAST, DAYS.slice(0, -1)));
   expect(marks('last-year-point')).toHaveLength(7);

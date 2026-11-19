@@ -2,7 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useState } from 'react';
 
 import { CalendarGrid } from '../../../src/portal/calendar/CalendarGrid.web';
-import { buildGrid, gridRange } from '../../../src/portal/calendar/grid';
+import { buildGrid, columnTemplate, gridRange } from '../../../src/portal/calendar/grid';
 import { ALL_FILTERS, monthBounds, monthLabel, type CalendarInput, type ImportedEvent } from '../../../src/portal/calendar/model';
 import type { ForecastWindow } from '../../../src/portal/estimates/api';
 import { theme } from '../../../src/theme';
@@ -168,6 +168,43 @@ test('clicking a trailing day selects it, and the selected outside day is outlin
   expect(cell('2026-12-03').getAttribute('aria-selected')).toBe('true');
   expect(cell('2026-12-03').getAttribute('tabindex')).toBe('0');
   expect(cell('2026-12-03').style.borderColor).toBe(C.mint);
+});
+
+test('the selected day stands out (D64): a 2px mint outline over the state fill, its weekday column wider in every row', () => {
+  const { grid } = renderGrid({ selected: '2026-11-21' });
+  const saturday = cell('2026-11-21');
+  expect(saturday.getAttribute('data-sel')).toBe('1');
+  expect(saturday.getAttribute('aria-selected')).toBe('true');
+  expect(saturday.style.borderColor).toBe(C.mint);
+  expect(saturday.style.backgroundColor).toBe(C.state);
+  expect(saturday.style.boxShadow).toBe(`inset 0 0 0 1px ${C.mint}, 0 0 0 2px ${C.mintRing}`);
+  // Every row, the weekday head's too, gives Saturday's column the extra width, so the grid's height never moves.
+  const rows = [...grid.querySelectorAll<HTMLElement>('[role="row"]')];
+  expect(rows).toHaveLength(7);
+  for (const row of rows) expect(row.style.gridTemplateColumns).toBe(columnTemplate(5));
+  // Another day keeps the raised fill and no ring.
+  expect(cell('2026-11-20').style.backgroundColor).toBe(C.raised);
+  expect(cell('2026-11-20').style.boxShadow).toBe('');
+});
+
+test('today stays apart from the selected day: its own number, no selected fill unless chosen', () => {
+  renderGrid({ selected: '2026-11-21' });
+  const number = rowsOf(TODAY)[0]?.firstElementChild as HTMLElement | null;
+  expect(number?.style.color).toBe(C.white);
+  expect(number?.style.fontWeight).toBe('600');
+  expect(cell(TODAY).hasAttribute('data-sel')).toBe(false);
+  expect(cell(TODAY).style.backgroundColor).toBe(C.raised);
+  cleanup();
+  renderGrid({ selected: TODAY });
+  expect(cell(TODAY).style.backgroundColor).toBe(C.state);
+  expect((rowsOf(TODAY)[0]?.firstElementChild as HTMLElement | null)?.style.fontWeight).toBe('600');
+});
+
+test('the widening eases, and not under reduced motion', () => {
+  renderGrid({ selected: '2026-11-21' });
+  const css = [...document.querySelectorAll('style')].map((style) => style.textContent).join('\n');
+  expect(css).toContain('.tw-cg [role="row"]{transition:grid-template-columns 150ms');
+  expect(css).toMatch(/@media \(prefers-reduced-motion: ?reduce\)\{\.tw-cg \[role="row"\],\.tw-cg \[data-date\]\{transition:none\}\}/);
 });
 
 test('three entries show as three lines; four show the first two and “+2 more”', () => {

@@ -20,16 +20,6 @@ const Mail = (): React.JSX.Element => <A href={CONTACT_HREF}>{CONTACT_EMAIL}</A>
 // “Files you let TownwiseAI read”, the last sentence of the TownwiseAI conversations item, the Anthropic item’s
 // sentences on attached files and on names in what it reads, and what Your data says stays in a conversation after an
 // item is turned off or its original deleted (spec D36 and D56; OpenSpec change propose-order-setup-in-chat, task 7.5).
-// [CONFIRM: weekly suggestions wording, awaiting the owner before they run in production] The “TownwiseAI’s weekly
-// suggestions” item and the Anthropic item’s sentence on them (OpenSpec change weekly-forecast-suggestions, task 3.3),
-// drafted for the owner’s approval; docs/portal/estimates.md section 5 carries the same words.
-// [CONFIRM: calendar event titles wording, awaiting the owner before titles are sent in production] The Your calendars,
-// Google calendars and TownwiseAI’s weekly suggestions items, the Anthropic item’s sentence on the location calendars’
-// titles, and the date (OpenSpec change calendar-event-suggestions, task 9.1), drafted for the owner’s approval. The
-// Limited Use statement is unchanged; the weekly sending is disclosed here, in the Google connect explainer and on the
-// file and link add screens (src/portal/calendar/calendars.ts), and a calendar added or connected on a screen that did
-// not show those words (no stored titlesNotice) sends no titles weekly. [CONFIRM: the sentence on calendars added or
-// connected on a screen that did not yet say titles go weekly]
 // [CONFIRM: privacy wording for TownwiseAI working on its own] The first sentences of “Files you let TownwiseAI read” and
 // what it saves, the “Changes TownwiseAI makes” item and the Anthropic item’s sentences on files it reads on its own
 // (spec D59, OpenSpec change auto-apply-agent-reads, design decision 14, task 7.1), drafted for the owner's approval
@@ -42,10 +32,9 @@ const Mail = (): React.JSX.Element => <A href={CONTACT_HREF}>{CONTACT_EMAIL}</A>
 // TownwiseAI conversations item's and the “Changes TownwiseAI makes” item's sentences on a note saved from your own
 // message, and the sentences on pasted text read on its own in “Files you let TownwiseAI read” and the Anthropic item,
 // drafted for the same approval.
-// [CONFIRM: calendar CSV and booking labels wording, awaiting the owner before production] The Your calendars item's
-// sentence on a calendar CSV export, the “Sorting bookings with TownwiseAI” item and the Anthropic item's sentence on a
-// sort (spec D58, OpenSpec change learn-from-calendar-bookings, design decision 14, task 10.2), drafted for the owner's
-// approval.
+
+// The owner approved the weekly suggestions, calendar event titles and calendar CSV and booking labels wording on
+// 2026-11-19 (weekly-forecast-suggestions 3.3, calendar-event-suggestions 9.1, learn-from-calendar-bookings 10.2).
 
 // Anthropic's own terms for API data (checked 2026-11-05: “Anthropic may not train models on Customer Content
 // from Services”, where Customer Content is the inputs and outputs).
