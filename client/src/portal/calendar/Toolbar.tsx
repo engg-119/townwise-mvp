@@ -79,15 +79,17 @@ export function Toolbar(props: {
 
 /**
  * “Show on the calendar”: the filters hide marks and list items, never a figure; "Your calendar" shows only when the
- * location has a calendar. Filters are page state, not stored.
+ * location has a calendar, and "Found by research" while research found something. Filters are page state, not stored.
  */
 export function CalendarFilters(props: {
   filters: Filters;
   onFilter: (key: FilterKey) => void;
   /** Whether the location has a calendar, so its chip shows. */
   imported: boolean;
+  /** Whether "Found by research" shows (D66): while the read holds a found event, or the filter is off. */
+  researched?: boolean;
 }): React.JSX.Element {
-  const keys = FILTER_KEYS.filter((key) => key !== 'imported' || props.imported);
+  const keys = FILTER_KEYS.filter((key) => (key !== 'imported' || props.imported) && (key !== 'researched' || props.researched === true));
   return (
     <ToggleGroup
       label="Show on the calendar"

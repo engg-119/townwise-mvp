@@ -23,12 +23,15 @@ import { noteOf } from '../locations/fakes';
 // the page's today, for a test that runs with only Date faked. `hold` keeps a route's read from one `from` waiting until
 // the test releases it, so a test can see a grid whose reads are in flight. DELETE (through `request`) answers 204, or
 // the ApiError a test sets in `deletes` for its path. Writes the portal fake answers itself (POST and PATCH) go in its
-// `answers`. Every figure, name and title is made up.
+// `answers`. Town research (D66): the calendar's `found` answers the `found` events that overlap the range (or the
+// literal `null`, a failed read), and GET .../research answers `research` (a 404 unless a test sets it). Every figure,
+// name and title is made up.
 
 export const PATH = '/api/org/locations/l1';
 export const NOTES_PATH = `${PATH}/notes`;
 export const RULES_PATH = `${PATH}/rules`;
 export const CALENDARS_PATH = `${PATH}/owner-calendars`;
+export const RESEARCH_PATH = `${PATH}/research`;
 
 export interface CalendarFake extends ApiClient {
   notes: Note[] | ApiError;
@@ -42,6 +45,10 @@ export interface CalendarFake extends ApiClient {
   calendars: OwnerCalendar[] | ApiError;
   /** Their stored events, by start; an ApiError rejects every stored-events read. */
   ownerEvents: OwnerCalendarEvent[] | ApiError;
+  /** The calendar read's `found`: events town research found, by start; null answers `found: null` (a failed read). */
+  found: Record<string, unknown>[] | null;
+  /** GET .../research's answer, or the ApiError it throws. */
+  research: unknown;
   /** What a DELETE of a path answers instead of 204. */
   deletes: Record<string, ApiError>;
   /** Every GET path, in order. */
@@ -57,7 +64,7 @@ interface WindowBody { available?: boolean; days?: { date: string }[] }
 export const NO_FORECAST = { available: false, reason: 'no_published_forecast', runs: [], days: [], weeks: [] };
 
 export function calendarFake(
-  init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'events' | 'days' | 'forecasts' | 'calendars' | 'ownerEvents'>> = {},
+  init: Partial<Pick<CalendarFake, 'notes' | 'rules' | 'events' | 'days' | 'forecasts' | 'calendars' | 'ownerEvents' | 'found' | 'research'>> = {},
 ): CalendarFake {
   const holds = new Map<string, Promise<void>>();
   const answer = <T>(value: unknown, schema: z.ZodType<T>): Promise<T> =>
@@ -70,6 +77,8 @@ export function calendarFake(
     forecasts: init.forecasts ?? {},
     calendars: init.calendars ?? [],
     ownerEvents: init.ownerEvents ?? [],
+    found: init.found ?? [],
+    research: init.research ?? refusal(404, 'not_found'),
     deletes: {},
     paths: [],
     json<T>(path: `/${string}`, schema: z.ZodType<T>, opts?: RequestOptions): Promise<T> {
@@ -78,11 +87,13 @@ export function calendarFake(
       if (path === NOTES_PATH) return answer(fake.notes instanceof ApiError ? fake.notes : { notes: fake.notes }, schema);
       if (path === RULES_PATH) return answer({ rules: fake.rules, limit: 30 }, schema);
       if (path === CALENDARS_PATH) return answer(fake.calendars instanceof ApiError ? fake.calendars : { calendars: fake.calendars }, schema);
+      if (path === RESEARCH_PATH) return answer(fake.research, schema);
       const range = /^\/api\/org\/locations\/l1\/(calendar|sales\/days|forecast|owner-calendars\/events)\?from=([\d-]+)&to=([\d-]+)$/.exec(path);
       const [, route, from = '', to = ''] = range ?? [];
       const respond = (): Promise<T> => {
         if (route === 'calendar') {
-          return answer(calendarBody({ events: fake.events.filter((event) => event.start <= to && event.end >= from) }), schema);
+          const found = fake.found === null ? null : fake.found.filter((event) => String(event.start) <= to && String(event.end) >= from);
+          return answer({ ...calendarBody({ events: fake.events.filter((event) => event.start <= to && event.end >= from) }), found }, schema);
         }
         if (route === 'sales/days') return answer({ days: fake.days.filter((day) => day.date >= from && day.date <= to) }, schema);
         if (route === 'forecast') return answer(forecastFor(fake.forecasts, from, to), schema);
@@ -181,4 +192,29 @@ export function savedNote(id: string, body: unknown): { note: Note } {
     linkedAt: '2026-11-11T15:00:00.000Z',
   };
   return { note: noteOf(id, { ...input, createdByEmail: EMAIL, createdAt: '2026-11-11T15:00:00.000Z', fromEvent: link }) };
+}
+
+/**
+ * An event town research found, as the calendar read's `found` sends it (D66): a medium-confidence trivia night at a
+ * made-up tavern on Sat, Nov 21, from research's own values (head 'base'), with one https source.
+ */
+export function foundEvent(fields: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    id: `l-${'a'.repeat(24)}`, head: 'base', title: 'Trivia night', start: '2026-11-21', end: '2026-11-21', weekdays: null, startTime: '19:00',
+    kind: 'event', category: 'dining', status: 'scheduled', origin: 'competitor', confidence: 'medium', where: 'Example Tavern', who: 'Example Quiz Club',
+    competitor: { entityId: 'e1', placeId: null }, sources: [{ label: 'example.com', url: 'https://example.com/trivia' }],
+    lastSeenAt: '2026-11-10T12:00:00.000Z', edited: false, hidden: false, ...fields,
+  };
+}
+
+/** GET .../research with the location's last run started by `trigger` and in `status`, and no town run. */
+export function researchBody(trigger: 'weekly' | 'early' | 'press', status: string, added = 0): unknown {
+  return {
+    on: true, available: true, town: null,
+    location: {
+      status, finishedAt: status === 'running' ? null : '2026-11-11T14:00:00.000Z', threads: [], counts: { found: added, added, updated: 0, dropped: 0 },
+      trigger, startedAt: '2026-11-11T13:00:00.000Z',
+    },
+    next: null, gaps: [], entities: [], hidden: [],
+  };
 }
