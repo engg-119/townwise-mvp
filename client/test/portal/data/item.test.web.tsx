@@ -33,6 +33,8 @@ Object.defineProperty(document.documentElement, 'clientWidth', { configurable: t
 const urls = { made: [] as string[], types: [] as string[], revoked: [] as string[] };
 
 beforeEach(() => {
+  // D61: Your data's rows read as one table, Newest first, remembered for the person signed in.
+  window.localStorage.setItem('townwise.dataView.u1', 'newest');
   urls.made.length = 0;
   urls.types.length = 0;
   urls.revoked.length = 0;
@@ -51,6 +53,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   jest.restoreAllMocks();
+  window.localStorage.clear();
 });
 
 /** A ref the routing allows: `u_` or `f_` and 24 hex digits. */

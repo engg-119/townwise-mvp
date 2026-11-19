@@ -24,7 +24,7 @@ export function itemOf(ref: string, extra?: Partial<DataItem>): DataItem {
       id: ref.replace(/^[uf]_/, 'file-'), hasClean: false, rawAvailable: true, rawExpiresAt: '2027-11-05T15:00:00.000Z', entries: null,
       canDownloadRaw: true, canDownloadClean: false, canDeleteRaw: true,
     },
-    canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null, canAiRead: false, ai: null, fromAiRead: null,
+    canTurnOff: true, canDelete: true, canEdit: false, editedAt: null, editedByEmail: null, canAiRead: false, ai: null, fromAiRead: null, folder: 'unsorted',
     ...extra,
   };
 }
@@ -64,7 +64,10 @@ export interface DataFake extends ApiClient {
   /** Answers by "METHOD path": a body, an ApiError or a promise of either. */
   answers: Record<string, (body: unknown) => unknown>;
   files: FilesFake;
-  /** GET .../owner-calendars (D49): the location's calendars, as the API sends them. */
+  /**
+   * GET .../owner-calendars (D49): the location's calendars, as the API sends them; GET /api/org/data answers them too
+   * (D61), each at its `locationId`, l1 when it has none.
+   */
   calendars: unknown[];
   /** The list's `bookingSort` (D58); left out of the answer while undefined, as an older API does. */
   bookingSort?: { available: boolean };
@@ -117,7 +120,7 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
         const calendar = {
           id: `c${String(fake.calendars.length + 1)}`, label, kind: 'file', host: null, eventCount: 2, skippedRepeating: 0, status: 'ok',
           lastSuccessAt: '2026-11-11T15:00:00.000Z', lastAttemptAt: '2026-11-11T15:00:00.000Z', createdAt: '2026-11-11T15:00:00.000Z',
-          mine: false, format: 'ics', bookings: null,
+          mine: false, format: 'ics', bookings: null, fromFile: null,
         };
         fake.calendars = [...fake.calendars, calendar];
         return settle({ calendar, skippedRows: 0 }, schema);
@@ -138,7 +141,11 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
         const start = after === null ? 0 : Number(after);
         const page = all.slice(start, start + fake.pageSize);
         const next = start + fake.pageSize < all.length ? String(start + fake.pageSize) : null;
-        return settle({ items: page, next }, schema);
+        // D61: the scope's calendars, on every page; a calendar without a locationId is l1's.
+        const calendars = (fake.calendars as Record<string, unknown>[])
+          .map((calendar) => ({ locationId: 'l1', ...calendar }))
+          .filter((calendar) => locationId === null || calendar.locationId === locationId);
+        return settle({ items: page, next, calendars }, schema);
       }
       const one = /^\/api\/org\/locations\/([^/]+)\/data\/([^/]+)$/.exec(path);
       if (one?.[1] !== undefined && one[2] !== undefined && one[2] !== 'text') {

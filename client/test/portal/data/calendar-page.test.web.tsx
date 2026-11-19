@@ -3,13 +3,15 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
+import type { OwnerCalendar } from '../../../src/portal/calendar/api';
+import type { DataItem } from '../../../src/portal/data/api';
 import { ITEM } from '../../../src/portal/data/item/copy';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf } from '../../helpers/portal';
 import { ownerCalendar, ownerEvent } from '../calendar/fakes';
 import { locationsFake } from '../locations/fakes';
-import { dataFake, type DataFake } from './fakes';
+import { dataFake, itemOf, type DataFake } from './fakes';
 
 // A calendar's page in Your data on web (D49, calendar-detail): P27 at the client-only ref `c_<calendarId>`, which
 // reads the calendar routes and never the data item's. Its name, kind and host as text, counts and last refresh, then
@@ -45,9 +47,9 @@ const HOLIDAYS = ownerCalendar({
   id: ID, label: 'US holidays', kind: 'link', host: 'calendar.google.com', eventCount: 2, skippedRepeating: 1, lastSuccessAt: '2026-11-16T15:00:00.000Z',
 });
 
-function setup(path: string): DataFake {
-  const fake = dataFake({ inner: locationsFake() });
-  fake.calendars = [HOLIDAYS, ownerCalendar({ id: '0123456789abcdef01234567', label: 'Kitchen' })];
+function setup(path: string, kitchen: Partial<OwnerCalendar> = {}, items: DataItem[] = []): DataFake {
+  const fake = dataFake({ inner: locationsFake(), items });
+  fake.calendars = [HOLIDAYS, ownerCalendar({ id: '0123456789abcdef01234567', label: 'Kitchen', ...kitchen })];
   fake.calendarEvents = [
     ownerEvent({ calendarId: ID, calendar: 'US holidays', uid: 'v1', title: 'Veterans Day', startDate: '2026-11-11' }),
     ownerEvent({ calendarId: ID, calendar: 'US holidays', uid: 't1', title: 'Thanksgiving Day', startDate: '2026-11-26' }),
@@ -124,4 +126,19 @@ test('a calendar with a status links to the Calendar’s Your calendars; one wit
   );
   expect(await screen.findByText('Townwise can’t open this link any more. Remove it and add the link again.')).toBeTruthy();
   expect(screen.getByRole('link', { name: ITEM.manageCalendars }).getAttribute('href')).toBe('/locations/l1/calendar');
+});
+
+// D61: Your data lists a file imported as a calendar once, as the calendar, so the calendar's page leads to the file.
+test('a calendar imported from a file kept in Your data links to that file’s page; one without such a file has no link', async () => {
+  setup('/locations/l1/data/c_0123456789abcdef01234567');
+  expect(await screen.findByRole('heading', { name: 'Kitchen' })).toBeTruthy();
+  expect(screen.queryByRole('link', { name: ITEM.calendarFile })).toBeNull();
+  cleanup();
+  setup('/locations/l1/data/c_0123456789abcdef01234567', { fromFile: 'f_00000000000000000000000a' }, [
+    itemOf('f_00000000000000000000000a', { name: 'Kitchen.ics', state: 'kept', outcome: 'reference', folder: 'calendars' }),
+  ]);
+  const link = await screen.findByRole('link', { name: ITEM.calendarFile });
+  expect(link.getAttribute('href')).toBe('/locations/l1/data/f_00000000000000000000000a');
+  fireEvent.click(link);
+  expect(await screen.findByRole('heading', { level: 2, name: 'Kitchen.ics' })).toBeTruthy();
 });

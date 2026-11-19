@@ -9,7 +9,7 @@ import { errorCopy } from '../../errors';
 import { useLoad } from '../../hooks';
 import { localToday, monthRange } from '../../locations/dates';
 import { usePortal, useReadOnly } from '../../PortalProvider';
-import { calendarHref, locationHref } from '../../routing';
+import { calendarHref, itemHref, locationHref } from '../../routing';
 import { useLocation } from '../../shell/LocationShell';
 import { Actions, Button, LinkButton } from '../../ui/Button';
 import { ErrorNotice, InlineNotice, LoadingLine } from '../../ui/feedback';
@@ -35,7 +35,9 @@ import { ITEM } from './copy';
 // (item/Bookings.tsx): its state, counts per label, Sort with TownwiseAI and Use for forecasts for an org admin, and
 // their results. Its events then show each one's label, with a label filter over the month (All events, or one label),
 // and for an org admin outside view-as a label choice under each card. A write's answer carries the calendar, which the
-// page shows in place of the list's; a label set is kept for its event until a sort reads the month again.
+// page shows in place of the list's; a label set is kept for its event until a sort reads the month again. A calendar
+// imported from a file kept in Your data (D60) links to that file's page while the file is kept (`fromFile`, D61),
+// since Your data lists the file once, as this calendar.
 
 export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
   const { api, me } = usePortal();
@@ -111,6 +113,8 @@ export function CalendarItem(props: { calendarId: string }): React.JSX.Element {
           {status === null ? null : <Small white>{status}</Small>}
           {status === null ? null : <LinkButton variant="link" href={calendarHref(location.id)} label={ITEM.manageCalendars} />}
           {row.updated === null ? null : <Mono>{row.updated}</Mono>}
+          {/* D61: Your data shows the file once, as this calendar, so its page leads to the file. */}
+          {listed.fromFile === null ? null : <LinkButton variant="link" href={itemHref(location.id, listed.fromFile)} label={ITEM.calendarFile} />}
         </View>
         {bookings === null ? null : (
           <>
