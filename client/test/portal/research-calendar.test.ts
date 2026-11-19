@@ -19,8 +19,14 @@ test('the draft starts from the shown values; a time and a place left empty are 
   });
 });
 
-test('moved dates drop the weekdays, since they may not fall in the new span', () => {
+test('moved dates keep the weekdays that still fall in the new span, and none left reads as every day', () => {
+  // Dec 1, 2026 is a Tuesday; the event is on Thursdays.
+  expect(checkFound({ ...draftOfFound(EVENT), end: '2026-12-31' }, EVENT).fields?.weekdays).toEqual([4]);
+  expect(checkFound({ ...draftOfFound(EVENT), start: '2026-12-03', end: '2026-12-03' }, EVENT).fields?.weekdays).toEqual([4]);
   expect(checkFound({ ...draftOfFound(EVENT), end: '2026-12-02' }, EVENT).fields?.weekdays).toBeNull();
+  const twice = { ...EVENT, weekdays: [2, 4] };
+  expect(checkFound({ ...draftOfFound(twice), end: '2026-12-02' }, twice).fields?.weekdays).toEqual([2]);
+  expect(checkFound({ ...draftOfFound(EVENT), title: 'Quiz' }, { ...EVENT, weekdays: null }).fields?.weekdays).toBeNull();
 });
 
 test('the check refuses an empty title, a date that isn’t one, an end before the start and a time that isn’t HH:MM', () => {

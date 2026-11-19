@@ -1031,7 +1031,7 @@ describe('found by research (D66)', () => {
       return new ApiError('http', 'The request was refused.', { status: 409, code: 'changed_since', detail: { event: theirs } });
     };
     fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
-    expect(await screen.findByText('Someone changed this event since you opened it. It now reads as shown. Save again to apply your change.')).toBeTruthy();
+    expect(await screen.findByText('Someone changed this event since you opened it. It now reads as shown. Make your change again, then save.')).toBeTruthy();
     const again = screen.getByRole('dialog', { name: 'Edit event' });
     expect(within(again).getByLabelText<HTMLInputElement>('Title').value).toBe('Pub quiz');
     expect(writes(api)[0]?.body).toEqual({
@@ -1066,7 +1066,7 @@ describe('found by research (D66)', () => {
     await waitFor(() => {
       expect(within(screen.getByRole('dialog', { name: 'Edit event' })).getByLabelText<HTMLInputElement>('Title').value).toBe('Pub quiz');
     });
-    expect(screen.getByText('Someone changed this event since you opened it. It now reads as shown. Save again to apply your change.')).toBeTruthy();
+    expect(screen.getByText('Someone changed this event since you opened it. It now reads as shown. Make your change again, then save.')).toBeTruthy();
     api.answers[TRIVIA_PATH] = () => ({ event: foundEvent({ head: 'r8', title: 'Pub quiz', edited: true }) });
     fireEvent.click(within(screen.getByRole('dialog', { name: 'Edit event' })).getByRole('button', { name: 'Save' }));
     expect(await screen.findByText('Saved. Only this location’s calendar changes.')).toBeTruthy();

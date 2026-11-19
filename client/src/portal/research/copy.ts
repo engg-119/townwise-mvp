@@ -82,7 +82,7 @@ export const FOUND_NOTICES = {
   saved: 'Saved. Only this location’s calendar changes.',
   hidden: 'Hidden for this location. Restore it from the Town tab.',
   reset: 'Back to what research found.',
-  changedSince: 'Someone changed this event since you opened it. It now reads as shown. Save again to apply your change.',
+  changedSince: 'Someone changed this event since you opened it. It now reads as shown. Make your change again, then save.',
   changedSinceAction: 'Someone changed this event since you opened it. Here is how it reads now.',
   gone: 'This event isn’t available any more.',
   tooManyEdits: 'This location has reached its limit of 1,000 edits to researched events.',
