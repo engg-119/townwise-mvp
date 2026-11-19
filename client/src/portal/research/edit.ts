@@ -5,11 +5,11 @@ import { EDIT_SHEET } from './copy';
 
 // The Calendar's edit sheet on a found event (D66 design decision 11), pure: the draft from the event's shown values,
 // and the check before a save. The API checks the title and where again (safeText) and the dates by its own rules, and
-// a refusal there is shown as FOUND_NOTICES.invalid. Weekdays are not edited here; an edit sends the event's own, less
+// a refusal there is shown by its code (foundSaveCopy). Weekdays are not edited here; an edit sends the event's own, less
 // any its new dates leave out.
 
-/** The longest title or place the sheet takes, as the API's research titles. */
-export const MAX_FOUND_TEXT = 200;
+/** The longest title or place the sheet takes: the API's MAX_TITLE_CHARS (research/verify.ts), 120. */
+export const MAX_FOUND_TEXT = 120;
 
 export interface FoundDraft {
   title: string;

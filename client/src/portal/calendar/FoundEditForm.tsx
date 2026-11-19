@@ -26,7 +26,12 @@ function list(message: string | undefined): readonly string[] {
 /** A save failure in the sheet's words: the edit limit, a refused value, the shared network and rate-limit copy. */
 export function foundSaveCopy(error: unknown): string {
   if (error instanceof ApiError && error.status === 409 && error.code === 'too_many_edits') return FOUND_NOTICES.tooManyEdits;
-  if (error instanceof ApiError && error.status === 400) return FOUND_NOTICES.invalid;
+  if (error instanceof ApiError && error.status === 400) {
+    if (error.code === 'bad_title') return FOUND_NOTICES.badTitle;
+    if (error.code === 'bad_where') return FOUND_NOTICES.badWhere;
+    if (error.code === 'bad_dates') return FOUND_NOTICES.badDates;
+    return FOUND_NOTICES.invalid;
+  }
   return errorCopy(error);
 }
 

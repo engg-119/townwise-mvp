@@ -1,7 +1,10 @@
 import { researchedEventSchema } from '../../src/portal/analytics/api';
 import type { LastChatStore } from '../../src/chat/lastChat';
 import { handOffAsk, takeAsk } from '../../src/portal/research/ask';
-import { checkFound, draftOfFound } from '../../src/portal/research/edit';
+import { ApiError } from '../../src/api/client';
+import { foundSaveCopy } from '../../src/portal/calendar/FoundEditForm';
+import { FOUND_NOTICES } from '../../src/portal/research/copy';
+import { checkFound, draftOfFound, MAX_FOUND_TEXT } from '../../src/portal/research/edit';
 import { bannerShows, markSeen, readSeen, researchSeenKey, runMark } from '../../src/portal/research/seen';
 import { foundEvent } from './calendar/fakes';
 
@@ -35,6 +38,15 @@ test('the check refuses an empty title, a date that isn’t one, an end before t
     messages: { title: 'Enter a title.', start: 'Enter a date as YYYY-MM-DD.', startTime: 'Enter a time as HH:MM, or leave it empty.' }, fields: null,
   });
   expect(checkFound({ ...draft, end: '2026-11-30' }, EVENT).messages).toEqual({ end: 'The end can’t be before the start.' });
+});
+
+test('the sheet takes a title or place as long as the API does, and words each refusal by its field', () => {
+  expect(MAX_FOUND_TEXT).toBe(120);
+  const refused = (code: string) => new ApiError('http', 'The request was refused.', { status: 400, code });
+  expect(foundSaveCopy(refused('bad_title'))).toBe(FOUND_NOTICES.badTitle);
+  expect(foundSaveCopy(refused('bad_where'))).toBe(FOUND_NOTICES.badWhere);
+  expect(foundSaveCopy(refused('bad_dates'))).toBe(FOUND_NOTICES.badDates);
+  expect(foundSaveCopy(refused('invalid_request'))).toBe(FOUND_NOTICES.invalid);
 });
 
 test('Ask TownwiseAI’s draft is taken once, and only for its location', () => {

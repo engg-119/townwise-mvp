@@ -87,6 +87,9 @@ export const FOUND_NOTICES = {
   gone: 'This event isn’t available any more.',
   tooManyEdits: 'This location has reached its limit of 1,000 edits to researched events.',
   invalid: 'Check the title, dates and time.',
+  badTitle: 'That title can’t be used. Write it in plain words, without a link, an email or a phone number.',
+  badWhere: 'That place can’t be used. Write it in plain words, without a link, an email or a phone number.',
+  badDates: 'Those dates can’t be used for this event. Check the start and the end.',
 } as const;
 
 /** The edit sheet. */

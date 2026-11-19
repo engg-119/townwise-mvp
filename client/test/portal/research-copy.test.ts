@@ -48,6 +48,9 @@ test('the actions, their screen-reader names and their answers', () => {
     gone: 'This event isn’t available any more.',
     tooManyEdits: 'This location has reached its limit of 1,000 edits to researched events.',
     invalid: 'Check the title, dates and time.',
+    badTitle: 'That title can’t be used. Write it in plain words, without a link, an email or a phone number.',
+    badWhere: 'That place can’t be used. Write it in plain words, without a link, an email or a phone number.',
+    badDates: 'Those dates can’t be used for this event. Check the start and the end.',
   });
   expect(EDIT_SHEET).toEqual({
     heading: 'Edit event', title: 'Title', start: 'Starts', end: 'Ends', time: 'Time (optional)', where: 'Where (optional)', save: 'Save',
