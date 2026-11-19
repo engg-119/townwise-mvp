@@ -150,9 +150,9 @@ const ICS = [
 ].join('\r\n');
 
 // The list here answers without `google` (Google calendars off), so the help names none.
-const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
-const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar.';
-const NOT_CALENDAR = 'This doesn’t look like a calendar file (.ics).';
+const HELP = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or a calendar CSV with event_id, title, start_at and end_at columns, or add its iCal link, which Townwise reads again about every 6 hours. Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. From a CSV, Townwise keeps each event’s title, dates and hours and never reads its other columns. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
+const TOO_LARGE = 'This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.';
+const NOT_CALENDAR = 'That isn’t a calendar. Import an .ics file, or a CSV with event_id, title, start_at and end_at columns.';
 const CALENDAR_LIMIT = 'This location has 5 calendars, the most it can hold. Remove one to add another.';
 const NOVEMBER_EVENTS = `${CALENDARS_PATH}/events?from=2026-10-26&to=2026-12-06`;
 
@@ -195,7 +195,7 @@ function chooseFile(file: File): void {
   expect(calendars.getAttribute('aria-expanded')).toBe('true');
   const input = document.querySelector<HTMLInputElement>('input[type="file"]');
   if (input === null) throw new Error('no file input');
-  expect(input.getAttribute('accept')).toBe('.ics,text/calendar');
+  expect(input.getAttribute('accept')).toBe('.ics,text/calendar,.csv,text/csv');
   fireEvent.change(input, { target: { files: [file] } });
 }
 
@@ -529,14 +529,15 @@ test('a file over 1 MB is refused unread, and a file that isn’t a calendar say
   chooseFile(icsFile(ICS, 'everything.ics', 1024 * 1024 + 1));
   expect(await within(calendarsPanel()).findByText(TOO_LARGE)).toBeTruthy();
   expect(writes(api)).toEqual([]);
-  // A CSV is posted, and the API says it isn't a calendar: nothing is kept, so nothing is read again.
+  // A CSV is posted (named without its .csv, D58), and the API says it isn't a calendar: nothing is kept, so nothing is
+  // read again.
   api.answers[CALENDARS_PATH] = () => refusal(400, 'not_calendar');
   const reads = fake.paths.length;
   const csv = 'date,guests\n2026-11-01,120\n';
   chooseFile(icsFile(csv, 'sales.csv'));
   expect(await within(calendarsPanel()).findByText(NOT_CALENDAR)).toBeTruthy();
   expect(screen.queryByText(TOO_LARGE)).toBeNull();
-  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'sales.csv', ics: csv, titlesNotice: 1 } }]);
+  expect(writes(api)).toEqual([{ method: 'POST', path: CALENDARS_PATH, body: { kind: 'file', label: 'sales', ics: csv, titlesNotice: 1 } }]);
   expect(fake.paths.slice(reads)).toEqual([]);
   expect(screen.queryByRole('button', { name: 'Your calendar' })).toBeNull();
   api.answers[CALENDARS_PATH] = () => refusal(409, 'calendar_limit');

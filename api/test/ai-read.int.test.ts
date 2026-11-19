@@ -618,6 +618,8 @@ describe('the TownwiseAI reader', () => {
         [{ kind: 'other', name: 'locked.xlsx', raw: Buffer.from([0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1]) }, 'encrypted'],
         [{ kind: 'pdf', name: 'locked.pdf', raw: pdfOf([{ texts: [{ text: 'x', x: 72, y: 700 }] }], { encrypted: true }) }, 'encrypted'],
         [{ raw: null }, 'raw_missing'],
+        // D58: a calendar export (made up) goes to Your calendars, never to the model.
+        [{ name: 'master.csv', raw: Buffer.from('calendar_id,event_id,title,start_at,end_at\nmade-up,e1,Spring reunion,2026-06-14T18:00:00-04:00,2026-06-14T22:00:00-04:00\n') }, 'calendar_export'],
       ];
       const ids: string[] = [];
       for (const [seed] of cases) ids.push(await seedStored(l1, { ...seed, ai: aiDoc() }));

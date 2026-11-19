@@ -30,6 +30,8 @@ export interface TableSource {
   visit(visit: (cells: readonly string[]) => void): Promise<void>;
   /** The table's delimiter, known after its first pass (a semicolon file's decimal comma check needs it). */
   delimiter(): Delimiter;
+  /** A text entry's table: one with a calendar export's header is kept `calendar_export` (D58). */
+  readonly text?: boolean;
 }
 
 /** What became of one table. */
@@ -128,7 +130,7 @@ export async function readFamilies(
       }
       joined.family = family;
       return family.stats;
-    });
+    }, { text: table.text === true });
     try {
       await table.visit((cells) => { first.add(cells); });
     } catch (err) {

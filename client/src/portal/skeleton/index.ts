@@ -6,6 +6,6 @@ export {
 export { AuditSkeleton, OrgSkeleton, OrgsSkeleton, OverviewSkeleton, PeopleSkeleton, RequestsSkeleton } from './console';
 export {
   AnalyticsSkeleton, CalendarSkeleton, HomeSkeleton, LocationsSkeleton, NotesSkeleton, RulesSkeleton, RequestAccessSkeleton, SalesSkeleton, SecuritySkeleton, SettingsSkeleton, TableSkeleton,
-  UploadReadingSkeleton, UploadSendingSkeleton, WeekTileShapes,
+  InTownPeopleShapes, UploadReadingSkeleton, UploadSendingSkeleton, WeekTileShapes,
 } from './pages';
 export { PULSE, PULSE_KEYFRAMES } from './timing';

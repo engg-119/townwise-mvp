@@ -417,6 +417,25 @@ describe('what shows nothing says why', () => {
     expect(await screen.findByText('Its file was deleted, so there’s nothing left to show.')).toBeTruthy();
   });
 
+  test('a calendar export says why it was kept and links to the Calendar, where Your calendars imports it (D58)', async () => {
+    // Their originals deleted, so nothing is drawn below the status.
+    const noRaw = (item: DataItem): DataItem => ({
+      ...item, file: item.file === null ? null : { ...item.file, rawAvailable: false, canDownloadRaw: false, canDeleteRaw: false },
+    });
+    const ref = refOf('f', 37);
+    setup([noRaw(storedFile(ref, { name: 'Master calendar.csv', outcome: 'calendar_export' }))], ref);
+    expect(await screen.findByText(
+      'On · Kept, not used: it’s a calendar export. Import it in Your calendars to see its events and let TownwiseAI read them all.',
+    )).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'Open Your calendars on the Calendar' }).getAttribute('href')).toBe('/locations/l1/calendar');
+    cleanup();
+    // Any other kept file has no such link.
+    const other = refOf('f', 38);
+    setup([noRaw(storedFile(other, { name: 'Text', outcome: 'no_header' }))], other);
+    expect(await screen.findByText('On · Kept, not used: it has no header row.')).toBeTruthy();
+    expect(screen.queryByRole('link', { name: 'Open Your calendars on the Calendar' })).toBeNull();
+  });
+
   test('an item that is gone says it may have been deleted or replaced by an edit, with the way back', async () => {
     setup([], refOf('f', 36));
     expect(await screen.findByText('This item isn’t here anymore. It may have been deleted, or replaced when someone saved an edit of it.')).toBeTruthy();

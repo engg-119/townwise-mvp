@@ -2,6 +2,7 @@
 // date order is proven or not over the whole table) and collects the location column's values; the mapping is decided
 // between the passes; the second adds rows up per date. Rows are handed in one at a time and never kept, so a table
 // streamed from a 200 MiB file holds only its first 30 records, the profiles and the per-date totals.
+import { isCalendarCsvHeader } from '../../calendar/csv-events.ts';
 import { isBlankRecord } from './csv.ts';
 import { LocationValues, Profiler, type ColumnProfile } from './columns.ts';
 import { DayAggregator, type DaysResult, type ExclusionReason, type RowTally, type SalesDay } from './days.ts';
@@ -98,6 +99,8 @@ export class TableStats {
 export class FirstPassReader {
   private readonly head: string[][] = [];
   private readonly adopt: (header: readonly string[]) => TableStats;
+  /** A text table (a CSV file or a ZIP's text entry): one whose header is a calendar export's is kept `calendar_export` (D58). */
+  private readonly text: boolean;
   private stats: TableStats | null = null;
   private headerRow = 0;
   private search: ReturnType<typeof findHeader> | null = null;
@@ -105,8 +108,9 @@ export class FirstPassReader {
   /** More rows than the reader takes (2,000,000). */
   tooMany = false;
 
-  constructor(adopt: (header: readonly string[]) => TableStats = (header) => new TableStats(header)) {
+  constructor(adopt: (header: readonly string[]) => TableStats = (header) => new TableStats(header), opts: { text?: boolean } = {}) {
     this.adopt = adopt;
+    this.text = opts.text === true;
   }
 
   add(cells: readonly string[]): void {
@@ -147,6 +151,8 @@ export class FirstPassReader {
     if (search.kind !== 'found' || this.stats === null) {
       return { kind: 'kept', outcome: search.kind === 'found' ? 'no_header' : search.kind };
     }
+    // D58: a calendar export is never read for sales and asks no question; Your calendars imports it.
+    if (this.text && isCalendarCsvHeader(this.stats.header)) return { kind: 'kept', outcome: 'calendar_export' };
     return this.stats.firstPass(this.headerRow);
   }
 }
@@ -216,9 +222,9 @@ export function tableReport(
  */
 export async function readTable(
   pass: (visit: (cells: readonly string[]) => void) => Promise<void>,
-  input: { answers: SheetAnswers; locationName: string; latest: string; delimiter: () => Delimiter; choose?: ChooseColumns },
+  input: { answers: SheetAnswers; locationName: string; latest: string; delimiter: () => Delimiter; choose?: ChooseColumns; text?: boolean },
 ): Promise<TableOutcome> {
-  const first = new FirstPassReader();
+  const first = new FirstPassReader(undefined, { text: input.text === true });
   await pass((cells) => { first.add(cells); });
   const found = first.finish();
   if ('kind' in found) return found;

@@ -1,6 +1,6 @@
 import { act, cleanup, render, screen, within } from '@testing-library/react';
 
-import { PULSE, PULSE_KEYFRAMES, Skeleton, SkeletonField, SkeletonHeading, SkeletonTable, SkeletonText } from '../../../src/portal/skeleton';
+import { PULSE, PULSE_KEYFRAMES, Skeleton, SkeletonField, SkeletonHeading, SkeletonPanel, SkeletonTable, SkeletonText } from '../../../src/portal/skeleton';
 
 // The skeleton kit in the browser (spec 15.7 Loading): one polite status line and aria-hidden shapes, an opacity
 // pulse in CSS that is off under prefers-reduced-motion, and shapes that keep the content's size at each width.
@@ -103,4 +103,14 @@ test('a text line keeps its line height: 20px for small text, 24px on phones', (
 test('a field’s input is 44px tall', () => {
   render(<SkeletonField />);
   expect(boxes(44)).toHaveLength(1);
+});
+
+test('a panel grows to its row’s height only when asked, as Home’s blocks side by side do', () => {
+  render(<SkeletonPanel grow><SkeletonText /></SkeletonPanel>);
+  render(<SkeletonPanel><SkeletonText /></SkeletonPanel>);
+  const panels = Array.from(document.body.querySelectorAll('div')).filter((div) => div.parentElement?.parentElement === document.body);
+  const grows = panels.map((panel) => window.getComputedStyle(panel).flexGrow);
+  expect(grows).toHaveLength(2);
+  expect(grows[0]).toBe('1');
+  expect(grows[1]).not.toBe('1');
 });

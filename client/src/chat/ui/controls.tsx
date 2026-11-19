@@ -28,8 +28,11 @@ export function ChatButton(props: {
   label: string;
   /** The accessible name when the label is a glyph ("‹" is "Previous version"). */
   accessibilityLabel?: string;
-  /** Drawn instead of the label, in the label's color (a thumb); the label is then the accessible name. */
-  icon?: (color: string) => React.ReactNode;
+  /**
+   * Drawn instead of the label, in the label's color (a thumb); the label is then the accessible name. Pressed, an icon
+   * is drawn filled in mint on the button's own ground instead of on a mint fill (owner, 2026-11-18).
+   */
+  icon?: (color: string, pressed: boolean) => React.ReactNode;
   variant: Variant;
   /**
    * Arrow only. An `arrow` inside a rounded box (the composer's Expand and Shrink): a 44px circle, so the hover fill stays inside
@@ -37,7 +40,7 @@ export function ChatButton(props: {
    */
   round?: boolean;
   disabled?: boolean;
-  /** A toggle (Helpful, Not helpful): aria-pressed on web, checked on native, and the mint fill when pressed. */
+  /** A toggle (Helpful, Not helpful): aria-pressed on web, checked on native; pressed, a label sits on a mint fill and an icon is filled in mint. */
   pressed?: boolean;
   /** A disclosure (a question's Something else…): aria-expanded on web, expanded on native. */
   expanded?: boolean;
@@ -77,11 +80,11 @@ export function ChatButton(props: {
         variant === 'arrow' && props.round === true ? styles.round : null,
         !disabled && hovered(state) ? boxHover[variant] : null,
         disabled && !pressed ? boxOff[variant] : null,
-        pressed ? styles.pressed : null,
+        pressed && props.icon === undefined ? styles.pressed : null,
         disabled ? styles.inert : null,
       ]}
     >
-      {(state) => (props.icon !== undefined ? props.icon(pressed ? c.onMint : disabled ? c.text3 : c.white) : (
+      {(state) => (props.icon !== undefined ? props.icon(pressed ? c.mint : disabled ? c.text3 : c.white, pressed) : (
         <Text
           style={[
             labels[variant],

@@ -63,6 +63,8 @@ export interface DataFake extends ApiClient {
   files: FilesFake;
   /** GET .../owner-calendars (D49): the location's calendars, as the API sends them. */
   calendars: unknown[];
+  /** The list's `bookingSort` (D58); left out of the answer while undefined, as an older API does. */
+  bookingSort?: { available: boolean };
   /** GET .../owner-calendars/events: the stored events, each answered when it overlaps the range asked for. */
   calendarEvents: { startDate: string; endDate: string }[];
   /** Every json path asked for, in order. */
@@ -97,7 +99,7 @@ export function dataFake(init: { inner: ApiClient; items?: DataItem[] }): DataFa
       const method = opts?.method ?? 'GET';
       fake.paths.push(path);
       if (method === 'GET' && /^\/api\/org\/locations\/[^/]+\/owner-calendars$/.test(path)) {
-        return settle({ calendars: fake.calendars }, schema);
+        return settle({ calendars: fake.calendars, ...(fake.bookingSort === undefined ? {} : { bookingSort: fake.bookingSort }) }, schema);
       }
       const events = /^\/api\/org\/locations\/[^/]+\/owner-calendars\/events\?from=([\d-]+)&to=([\d-]+)$/.exec(path);
       if (method === 'GET' && events?.[1] !== undefined && events[2] !== undefined) {

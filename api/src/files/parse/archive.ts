@@ -125,6 +125,7 @@ async function headOf(source: Source, entry: ZipEntry, max = HEAD_BYTES): Promis
 function textTable(source: Source, entry: ZipEntry): TableSource {
   const found: { encoding: TextEncoding | null; delimiter: Delimiter | null } = { encoding: null, delimiter: null };
   return {
+    text: true,
     delimiter: () => found.delimiter ?? ',',
     async visit(visit) {
       const state: { decoder: TextDecoder | null; reader: CsvPushReader | null; probe: Buffer[]; probed: number } = {

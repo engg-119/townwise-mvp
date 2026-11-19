@@ -34,6 +34,8 @@ export const KEPT_CODES = [
   'raw_deleted',
   // D28: a file kept for reference, never read for sales.
   'reference',
+  // D58: a text file or ZIP entry whose header is a calendar CSV's, never read for sales; it is imported in Your calendars.
+  'calendar_export',
 ] as const;
 /** Our faults: the file is stored and we look into it. */
 export const FAILED_CODES = ['internal', 'raw_missing'] as const;

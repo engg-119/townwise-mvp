@@ -987,6 +987,26 @@ describe('weekly suggestions', () => {
       expect(passLine()).toMatchObject({ ownerEvents: 2 });
     });
 
+    it('leaves out the labeled events of a confirmed file calendar, and sends its unlabeled ones and an unconfirmed calendar’s (D58)', async () => {
+      const p = await place();
+      const confirmed = await calendarOf(p, [
+        { uid: 'labeled-other@bookings.example.test', title: 'Labeled meeting', day: '20260609' },
+        { uid: 'labeled-party@bookings.example.test', title: 'Labeled party', day: '20260610' },
+        { uid: 'unlabeled@bookings.example.test', title: 'Unlabeled dinner', day: '20260611' },
+      ], { label: 'Confirmed', file: true });
+      const sorted = await calendarOf(p, [{ uid: 'sorted-party@bookings.example.test', title: 'Sorted party', day: '20260612' }], { label: 'Sorted', file: true });
+      const calendars = server.ctx.stores.ownerCalendars;
+      await calendars.setLabels(p.scope, p.locationId, confirmed, [
+        { uid: 'labeled-other@bookings.example.test', booking: 'other' }, { uid: 'labeled-party@bookings.example.test', booking: 'party' },
+      ], server.clock.now());
+      await calendars.confirmBookings(p.scope, p.locationId, confirmed, { by: 'admin-0000', now: server.clock.now() });
+      await calendars.setLabels(p.scope, p.locationId, sorted, [{ uid: 'sorted-party@bookings.example.test', booking: 'party' }], server.clock.now());
+      const model = answering([]);
+      await pass({ chat: model });
+      expect((sentOf(model).ownerEvents as { title: string }[]).map((each) => each.title)).toEqual(['Unlabeled dinner', 'Sorted party']);
+      expect(JSON.stringify(model.calls[0]?.params)).not.toMatch(/Labeled meeting|Labeled party/);
+    });
+
     it('sends none of a new file’s or link’s events with the organization’s calendar titles switch off', async () => {
       const p = await place();
       await calendarOf(p, [{ uid: 'new-link-0001@bookings.example.test', title: 'New link dinner', day: '20260611' }], { label: 'New link' });

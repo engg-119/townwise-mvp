@@ -10,6 +10,7 @@ import {
 } from '../analytics/week';
 import { cellSize } from '../calendar/grid';
 import { FIGURE_KEY, FORECAST_TAG, markedFigure } from '../calendar/model';
+import { noNumberLine } from '../estimates/format';
 import { BlockRow, GUTTER } from '../home/Block';
 import { MONTH_INTRO } from '../home/ThisMonth';
 import { BARS_FOOTNOTE } from '../home/ThisWeek';
@@ -382,10 +383,20 @@ function TileLines(props: { widths: readonly DimensionValue[] }): React.JSX.Elem
  * back; `n` ran 7 to 19% wider and wrapped the tile three lines early. In mono every glyph is one width.
  */
 const masked = (words: string): string => words.replace(/[\p{L}\p{N}]/gu, 's');
+/**
+ * `masked` for a line of plain text, without the bold figures that widen the tile's: `x`, which the font's own advance
+ * widths (Instrument Sans at 14px, 2026-11-18) put at 99 to 105% of Who's in town's and Past years' real lines, where
+ * `s` came to 86 to 91% and so wrapped a line short at 1280, 1100 and 375.
+ */
+const maskedPlain = (words: string): string => words.replace(/[\p{L}\p{N}]/gu, 'x');
 const PLACEHOLDER_TOWN = { townId: 'town', name: 'Hanover', state: 'NH' };
 const PLACEHOLDER_WEEK = { from: '2026-11-18', to: '2026-11-24' };
 
-/** This week's forecast tile's six lines (Glance.tsx ForecastWeekTile): range, days, today, busiest, quietest, last year. */
+/**
+ * This week's forecast tile's six lines (Glance.tsx ForecastWeekTile): range, days, today, busiest, quietest, last year.
+ * The last-year line is drawn from 6 of its 7 days, with its "From 6 of its 7 days." ending, as the owner's location's
+ * is (a closed day last year); a complete week's line is that much shorter.
+ */
 const WEEK_TILE_WORDS: readonly string[] = [
   plainOf(weekRangePhrase({ low: 600, high: 900 })),
   weekForecastLabel({ ...PLACEHOLDER_WEEK, missing: [] }),
@@ -394,12 +405,16 @@ const WEEK_TILE_WORDS: readonly string[] = [
   plainOf(forecastDayPhrase('Busiest', { date: '2026-11-21', value: 220, booked: false })),
   plainOf(forecastDayPhrase('Quietest', { date: '2026-11-23', value: 60, booked: false })),
   plainOf(lastYearBesidePhrase({
-    ...PLACEHOLDER_WEEK, days: 7, total: 757, vsUsual: { change: -0.19, days: 7 }, busiest: null, quietest: null, busiestValue: null, quietestValue: null,
+    ...PLACEHOLDER_WEEK, days: 6, total: 757, vsUsual: { change: -0.19, days: 7 }, busiest: null, quietest: null, busiestValue: null, quietestValue: null,
   }, 'guests')),
 ];
 
 /** This week's footnote on the town calendar's coverage (ThisWeek.tsx, analytics/week.ts calendarCoverageLine). */
 const COVERAGE_WORDS = calendarCoverageLine({ town: PLACEHOLDER_TOWN, researched: true, covers: { from: '2026-09-01', to: '2027-06-30' } });
+
+/** This week's calendar line and a term's line (analytics/week.ts calendarWeekLine, periodLine). */
+const WEEK_LINE_WORDS = 'On the calendar this week: Home football vs Brown (Saturday).';
+const WEEK_PERIOD_WORDS = 'Fall term finals. Term, Nov 20 to 25, 2026.';
 
 /** A day's forecast in This week's strip (analytics/week.ts forecastPhrase, an open day). */
 const STRIP_FORECAST_WORDS = `${markedFigure('110 guests', { kind: 'forecast' })}, ${FORECAST_TAG}, likely 90 to 130`;
@@ -492,6 +507,84 @@ function ChipSkeleton(): React.JSX.Element {
   return <View style={styles.chip}><SkeletonBlock height={24} width={140} /></View>;
 }
 
+/** One of Who's in town's runs (InTown.tsx Rows): its dates (mono, 112px) beside its words, over them on a phone. */
+function TownRunSkeleton(): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  return (
+    <View style={phone ? styles.townRunPhone : styles.townRun}>
+      <View style={phone ? null : styles.townRunWhen}><SkeletonText type="mono" width={88} /></View>
+      <View style={styles.townRunWords}><SkeletonText width={120} /></View>
+    </View>
+  );
+}
+
+/**
+ * Who's in town's lines that wrap (home/InTown.tsx), in the page's wording with a placeholder town, day and figures, all
+ * masked: the no-number line, today's term (nowLine), the between-terms note, Your sales by term (estimates/format.ts
+ * historyLine) and its provenance (estimates/Provenance.tsx), and the county's jobs (jobsWords, as figure and rest).
+ */
+const TOWN_WORDS = {
+  noNumber: noNumberLine(PLACEHOLDER_TOWN),
+  now: 'Townwise has no term dates until Thu, Nov 19.',
+  between: 'Between terms is worked out from the term dates.',
+  history: 'Your Wednesdays averaged 112 guests in term and 115 between terms (53 and 14 Wednesdays).',
+  provenance: 'From your sales, Jan 6, 2025 to Oct 21, 2026, 476 days.',
+  jobs: ['4.5% fewer', ' jobs in November 2025 than in an average month that year.'],
+  jobsNote: 'County, not town. Employment is a stand-in for demand.',
+} as const;
+
+/**
+ * Who's in town's people (home/InTown.tsx People) for a college town with no headcount, as the owner's is: the Planned
+ * tag with its no-number line (beside the tag when it fits, under it when not); This week (today's term as an h3 line,
+ * then a run); Later in the month (a run); the between-terms note over a source chip; and Your sales by term over its
+ * provenance. Its sentences are drawn in their words (`TOWN_WORDS`), so they wrap where the page's do. Home's skeleton
+ * and the block's own, while its read is out, both draw it.
+ */
+export function InTownPeopleShapes(): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  const group = (label: number, body: React.ReactNode): React.JSX.Element => (
+    <View style={styles.inTownGroup}><SkeletonText type="label" width={label} />{body}</View>
+  );
+  return (
+    <View style={styles.inTown}>
+      <View style={styles.townTagRow}>
+        <View style={styles.townTag}><SkeletonBlock outline height={6} width={6} /><SkeletonText type="label" width={54} /></View>
+        <View style={styles.townShrink}><SkeletonWords type="small">{maskedPlain(TOWN_WORDS.noNumber)}</SkeletonWords></View>
+      </View>
+      {group(72, (
+        <>
+          <Text style={phone ? theme.type.h3Phone : theme.type.h3}><SkeletonWords>{maskedPlain(TOWN_WORDS.now)}</SkeletonWords></Text>
+          <TownRunSkeleton />
+        </>
+      ))}
+      {group(120, <TownRunSkeleton />)}
+      <View style={styles.townFoot}><SkeletonWords type="mono">{masked(TOWN_WORDS.between)}</SkeletonWords><ChipSkeleton /></View>
+      {group(130, (
+        <>
+          <SkeletonWords type="small">{maskedPlain(TOWN_WORDS.history)}</SkeletonWords>
+          <SkeletonWords type="mono">{masked(TOWN_WORDS.provenance)}</SkeletonWords>
+        </>
+      ))}
+    </View>
+  );
+}
+
+/** The county's jobs (InTown.tsx Jobs): its figure line (24px, the figure 18px mono) and note, then the source chip. */
+function JobsSkeleton(): React.JSX.Element {
+  const { phone } = useBreakpoint();
+  return (
+    <View style={styles.inTownGroup}>
+      <SkeletonText type="label" width={220} />
+      <Text style={[phone ? theme.type.sub : theme.type.small, styles.jobsLine]}>
+        <Text style={styles.jobsFigure}><SkeletonWords>{masked(TOWN_WORDS.jobs[0])}</SkeletonWords></Text>
+        <SkeletonWords>{masked(TOWN_WORDS.jobs[1])}</SkeletonWords>
+      </Text>
+      <SkeletonWords type="mono">{masked(TOWN_WORDS.jobsNote)}</SkeletonWords>
+      <ChipSkeleton />
+    </View>
+  );
+}
+
 /**
  * The selected day beside the month (home/DayDetail.tsx), today at first: its h3, then Forecast, Why, Reorder, On the
  * calendar, This day and Same weekday last year.
@@ -519,8 +612,8 @@ function DayDetailSkeleton(): React.JSX.Element {
  * three tiles (the week's forecast, last week's figure, the next event's title); This week (its calendar line, the
  * strip from 1024px or the day table below it, the footnotes and Show the numbers); This month's grid with the key,
  * Open the calendar and the month's check line, beside the selected day; Last week on a line of its own (as with last
- * week's forecast; on web the chart with its day labels, legend and scale); On the calendar beside Who's in town (whose
- * people load on their own in 240px, then the county's jobs); Past years beside Bar order (which checks the next order
+ * week's forecast; on web the chart with its day labels, legend and scale); On the calendar beside Who's in town (its
+ * people's groups, then the county's jobs); Past years beside Bar order (which checks the next order
  * on its own, with no title yet); and Your history (its year's heatmap on web) with its links. Fixed copy (block
  * titles, footnotes, the month's first line) is drawn in its own words, so it wraps where the page's does.
  */
@@ -554,7 +647,11 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
         />
         <SkeletonPanel>
           <BlockHeadSkeleton eyebrow={180} words="What’s on the calendar, and how this week went before" />
-          <SkeletonText width="80%" />
+          {/* The week's calendar line, then a college town's term this week over its source chip (ThisWeek.tsx). */}
+          <View style={styles.weekLines}>
+            <SkeletonWords type="small">{masked(WEEK_LINE_WORDS)}</SkeletonWords>
+            <View style={styles.weekPeriod}><SkeletonWords type="small">{masked(WEEK_PERIOD_WORDS)}</SkeletonWords><ChipSkeleton /></View>
+          </View>
           {desktop ? <WeekStripSkeleton /> : (
             // A day's weekday and date; its forecast; an entry's title over its kind; last year's figure over its change. The
             // rows are 64px from 641px, as tall as a day's head with a two-line cell beside it (today's, with Today, is 70).
@@ -614,7 +711,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'list', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <BlockHeadSkeleton eyebrow={110} width={280} />
                   <View style={styles.monthList}>
                     {[0, 1, 2, 3].map((item) => (
@@ -630,17 +727,11 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'people', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <BlockHeadSkeleton eyebrow={160} words="Who’s in town" />
                   <View style={styles.inTown}>
-                    <View style={styles.inTownPeople}><SkeletonText width="60%" /></View>
-                    <View style={styles.inTownJobs}>
-                      <SkeletonText type="label" width={220} />
-                      {/* The figure line is 24px (InTown.tsx `figureLine`), its figure 18px. */}
-                      <View style={styles.jobsFigure}><View style={styles.jobsFigureBar} /></View>
-                      <SkeletonText type="mono" width="70%" />
-                      <ChipSkeleton />
-                    </View>
+                    <InTownPeopleShapes />
+                    <JobsSkeleton />
                   </View>
                 </SkeletonPanel>
               ),
@@ -652,9 +743,9 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'years', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <BlockHeadSkeleton eyebrow={120} width={280} />
-                  <SkeletonWords type="small">{masked(PAST_YEAR_WORDS)}</SkeletonWords>
+                  <SkeletonWords type="small">{maskedPlain(PAST_YEAR_WORDS)}</SkeletonWords>
                   <SkeletonWords type="mono">Averages leave out closed days.</SkeletonWords>
                 </SkeletonPanel>
               ),
@@ -662,7 +753,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
             {
               key: 'bar', span: 6,
               node: (
-                <SkeletonPanel>
+                <SkeletonPanel grow>
                   <SkeletonText type="label" width={80} />
                   <SkeletonText width="50%" />
                   <SkeletonText width="80%" />
@@ -962,8 +1053,8 @@ const styles = StyleSheet.create({
   // MonthKey.tsx `key` and `item`.
   monthKey: { flexDirection: 'row', flexWrap: 'wrap', columnGap: 16, rowGap: 6 },
   monthKeyItem: { flexDirection: 'row', alignItems: 'center', columnGap: 6 },
-  jobsFigure: { height: 24, justifyContent: 'center' },
-  jobsFigureBar: { height: 18, width: '80%', backgroundColor: c.raised },
+  jobsLine: { lineHeight: 24 },
+  jobsFigure: { ...theme.type.monoValue, fontSize: 18, lineHeight: 24 },
   // An event's title in `h3` (22/28) at every width.
   tileTitle: { height: theme.type.h3.lineHeight, justifyContent: 'center' },
   tileTitleBar: { height: theme.type.h3.fontSize, width: '70%', backgroundColor: c.raised },
@@ -985,9 +1076,19 @@ const styles = StyleSheet.create({
   monthItemDate: { width: 112 },
   monthItemBody: { flex: 1, minWidth: 0 },
   inTown: { gap: theme.space[5], minWidth: 0 },
-  // Who's in town's people load on their own, in a LoadingLine of 240px (InTown.tsx).
-  inTownPeople: { minHeight: 240 },
-  inTownJobs: { gap: theme.space[3], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border },
+  // InTown.tsx's group, row and tag (ui/feedback.tsx StatusTag: its label line, 3px padding and 1px border).
+  inTownGroup: { gap: theme.space[3], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border, minWidth: 0 },
+  townTagRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[3], rowGap: theme.space[2] },
+  townTag: { flexDirection: 'row', alignItems: 'center', columnGap: 6, borderWidth: 1, borderColor: c.line, paddingVertical: 3, paddingHorizontal: 6 },
+  townRun: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[4], minWidth: 0 },
+  townRunPhone: { gap: 2, minWidth: 0 },
+  townRunWhen: { width: 112 },
+  townRunWords: { flexGrow: 1, flexShrink: 1, flexBasis: 120, minWidth: 0 },
+  townShrink: { flexShrink: 1, minWidth: 0 },
+  // ThisWeek.tsx's Stack of 8 and its term item's 2.
+  weekLines: { gap: theme.space[2] },
+  weekPeriod: { gap: 2, minWidth: 0 },
+  townFoot: { alignItems: 'flex-start' },
   month: { gap: 3, width: '100%' },
   monthRow: { flexDirection: 'row', gap: 3 },
   monthHead: { flex: 1, alignItems: 'center' },

@@ -5,7 +5,8 @@ import { IcsImport } from '../../../src/portal/calendar/IcsImport.web';
 
 // The calendar file picker on web (P28; connect-owner-calendar design decision 11), inside the "Your calendars" popover
 // (refine-calendar-and-home design decision 1): "Import a calendar file" is described by the id the popover gives it and
-// opens a hidden file input for .ics files, cleared after each choice. A file over 1 MB is refused unread; any other is
+// opens a hidden file input for .ics files and calendar CSVs (learn-from-calendar-bookings design decision 2), cleared
+// after each choice. A file over 1 MB is refused unread; any other is
 // read with File.text() and handed to the popover as its name and text, which the API parses. "Importing…" shows while
 // the popover posts it, which holds the popover open (test/portal/calendar/your-calendars.test.web.tsx). Made-up file
 // names only.
@@ -35,11 +36,11 @@ function fileOf(name: string, text: () => Promise<string>, size?: number): File 
   return file;
 }
 
-test('“Import a calendar file” is described by the id it is given and opens the file input for .ics files', () => {
+test('“Import a calendar file” is described by the id it is given and opens the file input for .ics and calendar CSV files', () => {
   const { input } = renderPicker();
   const button = screen.getByRole('button', { name: 'Import a calendar file' });
   expect(button.getAttribute('aria-describedby')).toBe('p1-help');
-  expect(input.getAttribute('accept')).toBe('.ics,text/calendar');
+  expect(input.getAttribute('accept')).toBe('.ics,text/calendar,.csv,text/csv');
   const opened = jest.spyOn(input, 'click').mockImplementation(() => undefined);
   fireEvent.click(button);
   expect(opened).toHaveBeenCalledTimes(1);

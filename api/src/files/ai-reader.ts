@@ -15,6 +15,7 @@ import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
 
 import { scopeForClaimedAiRead, type OrgScope } from '../access/policy.ts';
+import { isCalendarCsvText } from '../calendar/csv-events.ts';
 import { DELETED_PERSON } from '../people.ts';
 import { EARLIEST_DATE, utcDay } from '../dates.ts';
 import { claimNextAiRead, type ClaimedAiRead } from '../stores/cross-tenant.ts';
@@ -86,10 +87,13 @@ export interface AiReader {
  * call may cost); the file is over the size or page caps; its kind is not read (old Excel or Word, Numbers, anything
  * else that is not a picture, or a ZIP with no entry read as text); it is encrypted; its original is gone; making its
  * text ran past the thread's limits; it could not be opened; or the person who asked no longer belongs to the
- * organization (or, for Townwise staff, their open-as-admin grant ended) by the time it was acted on.
+ * organization (or, for Townwise staff, their open-as-admin grant ended) by the time it was acted on; or (D58) it is a
+ * calendar export (the file reader kept it `calendar_export`, or a text file's header is a calendar CSV's), which is
+ * skipped before the budget is read or anything is reserved or sent, so it writes no notes: Your calendars imports it.
  */
 export type AiSkipReason =
-  | 'budget_spent' | 'too_large' | 'kind_not_read' | 'encrypted' | 'raw_missing' | 'too_complex' | 'not_readable' | 'requester_gone';
+  | 'budget_spent' | 'too_large' | 'kind_not_read' | 'encrypted' | 'raw_missing' | 'too_complex' | 'not_readable' | 'requester_gone'
+  | 'calendar_export';
 
 const POLL_MS = 5000;
 const LEASE_MS = 90_000;
@@ -167,6 +171,10 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
   async function answer(
     scope: OrgScope, file: FileRecord, attempt: number, finish: (status: 'failed' | 'skipped', reason: string, costMicroUsd?: number) => Promise<boolean>,
   ): Promise<{ result: AiReadResult; partial: boolean; costMicroUsd: number } | null> {
+    if (file.outcome === 'calendar_export') {
+      await finish('skipped', 'calendar_export');
+      return null;
+    }
     const month = now().toISOString().slice(0, 7);
     const budget = Math.round(deps.filesMonthlyBudgetUsd * 1_000_000);
     if (budget <= 0 || await stores.filesUsage.costMicroUsd(scope, month) >= budget) {
@@ -186,6 +194,10 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
     }
     if (prepared.kind === 'skip') {
       await finish('skipped', prepared.reason);
+      return null;
+    }
+    if (prepared.input.type === 'text' && prepared.input.form === 'text' && isCalendarCsvText(prepared.input.text)) {
+      await finish('skipped', 'calendar_export');
       return null;
     }
     const reserved = readerCeilingMicroUsd(prepared.input, prepared.pages);

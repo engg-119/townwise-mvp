@@ -4,7 +4,8 @@ import { formatCount, formatDate, formatTime, plural } from '../format';
 import type { OwnerCalendar } from './api';
 
 // The "Your calendars" popover's words (P28; connect-owner-calendar design decision 11, connect-google-calendar design
-// decision 15), pure: a file's name, the words for every code phase 1 answers (api/src/handlers/owner-calendars.ts) and
+// decision 15, learn-from-calendar-bookings design decisions 1 and 2: a file is an .ics or a calendar CSV), pure: a
+// file's name, the words for every code phase 1 answers (api/src/handlers/owner-calendars.ts) and
 // for a link's status, a row's lines, and the add-a-link form's checks, which hold the fields to the API's own limits (a
 // trimmed name of 1 to 60 UTF-16 code units, a trimmed link of 1 to 2,048), so its 400 is only a fallback; the help
 // and native's line, which name Google calendars only while the list answers them on; and the Google section's
@@ -29,8 +30,8 @@ const MAX_LINK = 2048;
 export const WEEKLY_TITLES_NOTICE = 1;
 
 export const CALENDARS_COPY = {
-  tooLarge: 'This file is over 1 MB. Export a shorter range of your calendar.',
-  notCalendar: 'This doesn’t look like a calendar file (.ics).',
+  tooLarge: 'This file is over 1 MB. Export a shorter range of your calendar, or a CSV with fewer columns.',
+  notCalendar: 'That isn’t a calendar. Import an .ics file, or a CSV with event_id, title, start_at and end_at columns.',
   unreadable: 'Couldn’t read this file. Choose it again.',
   none: 'No calendars yet.',
   nameLabel: 'Name',
@@ -51,9 +52,9 @@ export const CALENDARS_COPY = {
   weeklyReading: 'Once a week TownwiseAI reads the titles, dates and hours of the next 3 months of events on a calendar you add here, with email addresses and phone numbers removed, to suggest notes for private events. They reach Anthropic, which doesn’t train on them. An admin of your organization can turn off the weekly reading on the TownwiseAI page.',
 } as const;
 
-const HELP_IMPORT = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or add its iCal link, which Townwise reads again about every 6 hours.';
+const HELP_IMPORT = 'Import a calendar exported from Google Calendar, Outlook or Apple Calendar as an .ics file, or a calendar CSV with event_id, title, start_at and end_at columns, or add its iCal link, which Townwise reads again about every 6 hours.';
 const HELP_GOOGLE = 'Or add a Google calendar by signing in with Google, which Townwise reads about every 6 hours, repeating events included.';
-const HELP_KEPT = 'Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
+const HELP_KEPT = 'Townwise keeps each event’s title, dates and hours until you remove the calendar, and nothing else from it. From a CSV, Townwise keeps each event’s title, dates and hours and never reads its other columns. TownwiseAI reads the titles, so they can reach Anthropic when you ask about your bookings. Events change the forecast only through notes you make from them. To update a file, remove it and import the new export.';
 
 /**
  * What the privacy page (app/(marketing)/privacy.tsx) says of kept calendars, in the popover's words, with the sentence
@@ -227,9 +228,12 @@ function cut(text: string, max: number): string {
   return text.slice(0, last >= 0xd800 && last <= 0xdbff ? max - 1 : max);
 }
 
-/** A file's name as its calendar's: a final `.ics` off, trimmed, at most 60 code units, and “Calendar file” when empty. */
+/**
+ * A file's name as its calendar's: a final `.ics` or `.csv` off, trimmed, at most 60 code units, and “Calendar file”
+ * when empty.
+ */
 export function labelOfFile(fileName: string): string {
-  const label = cut(fileName.replace(/\.ics$/i, '').trim(), MAX_LABEL).trim();
+  const label = cut(fileName.replace(/\.(?:ics|csv)$/i, '').trim(), MAX_LABEL).trim();
   return label === '' ? 'Calendar file' : label;
 }
 
@@ -328,11 +332,16 @@ export function rowLines(calendar: OwnerCalendar): RowLines {
   };
 }
 
-/** “Added Bookings: 3 events.”, and the repeating events it left out. */
-export function addedLines(calendar: OwnerCalendar): string[] {
-  const repeating = repeatingLine(calendar.skippedRepeating);
+/** A calendar CSV's rows whose start couldn't be read (D58); null for none. */
+function skippedLine(skippedRows: number): string | null {
+  if (skippedRows <= 0) return null;
+  return `Skipped ${plural(skippedRows, 'row', 'rows')} Townwise couldn’t read.`;
+}
+
+/** “Added Bookings: 3 events.”, the repeating events it left out, and a calendar CSV's rows it skipped. */
+export function addedLines(calendar: OwnerCalendar, skippedRows = 0): string[] {
   const added = `Added ${calendar.label}: ${plural(calendar.eventCount, 'event', 'events')}.`;
-  return repeating === null ? [added] : [added, repeating];
+  return [added, repeatingLine(calendar.skippedRepeating), skippedLine(skippedRows)].filter((line) => line !== null);
 }
 
 export function refreshedLine(name: string): string {

@@ -228,6 +228,8 @@ describe('route table', () => {
   const REFUSED = [
     'me.join', 'me.decline', 'me.welcome', 'requests.create', 'org.leave', 'org.members.list', 'org.members.add', 'org.members.update', 'org.members.remove',
     'org.google_calendars.connect', 'org.google_calendars.list', 'org.google_calendars.disconnect',
+    // D58: Sort with TownwiseAI sends customers' names to Anthropic, so staff never press it for an organization.
+    'org.owner_calendars.bookings_sort',
   ];
   it('D25: every route runs while open as admin except staff routes and the people, seat and request routes', () => {
     for (const r of TOWNWISE_ROUTES) {
@@ -360,6 +362,13 @@ describe('route table', () => {
       { id: 'org.owner_calendars.create', method: 'POST', path: base, bodyLimit: '2mb', ...row },
       { id: 'org.owner_calendars.refresh', method: 'POST', path: `${base}/:calendarId/refresh`, bodyLimit: 'none', ...row },
       { id: 'org.owner_calendars.remove', method: 'DELETE', path: `${base}/:calendarId`, bodyLimit: 'none', ...row },
+      // D58: the booking labels are an org admin's; the sort is never open as admin and limits itself (3 a calendar an hour).
+      {
+        id: 'org.owner_calendars.bookings_sort', method: 'POST', path: `${base}/:calendarId/bookings/sort`, bodyLimit: 'none', policy: 'org_admin',
+        limiter: undefined, openAsAdmin: undefined,
+      },
+      { id: 'org.owner_calendars.bookings_label', method: 'PATCH', path: `${base}/:calendarId/bookings`, bodyLimit: '2kb', ...row, policy: 'org_admin' },
+      { id: 'org.owner_calendars.bookings_confirm', method: 'POST', path: `${base}/:calendarId/bookings/confirm`, bodyLimit: 'none', ...row, policy: 'org_admin' },
     ]);
     expect(TOWNWISE_ROUTES.filter((r) => r.bodyLimit === '2mb').map((r) => r.id)).toEqual(['org.owner_calendars.create']);
   });

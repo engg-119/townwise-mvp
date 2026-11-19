@@ -463,15 +463,20 @@ function RatedReply(props: { rate: jest.Mock }): React.JSX.Element {
   return <ReplyView {...replyProps({ message, chat })} />;
 }
 
-it('Helpful and Not helpful are a thumb up and a thumb down, named by their words, dark on mint once chosen', () => {
+it('Helpful and Not helpful are a thumb up and a thumb down, named by their words, an outline until chosen and then filled in mint (owner, 2026-11-18)', () => {
   render(<RatedReply rate={jest.fn()} />);
   for (const name of ['Helpful', 'Not helpful']) {
     const control = button(name);
     expect(control.textContent).toBe('');
     expect(control.querySelector('svg')?.getAttribute('stroke')).toBe(theme.color.white);
+    expect(control.querySelector('[data-testid="thumb-outline"]')?.getAttribute('fill') ?? null).toBeNull();
   }
   fireEvent.click(button('Helpful'));
-  expect(button('Helpful').querySelector('svg')?.getAttribute('stroke')).toBe(theme.color.onMint);
+  const chosen = button('Helpful');
+  expect(chosen.querySelector('svg')?.getAttribute('stroke')).toBe(theme.color.mint);
+  expect(chosen.querySelector('[data-testid="thumb-filled"]')?.getAttribute('fill')).toBe(theme.color.mint);
+  // The hand is filled, not the box around it.
+  expect(window.getComputedStyle(chosen).backgroundColor).not.toBe(MINT);
 });
 
 it('Helpful shows alone and pressed once chosen; pressing it again shows both; Not helpful asks the optional reason', () => {
@@ -483,7 +488,7 @@ it('Helpful shows alone and pressed once chosen; pressing it again shows both; N
   fireEvent.click(button('Helpful'));
   expect(rate).toHaveBeenLastCalledWith('m2', 'up', undefined);
   expect(button('Helpful').getAttribute('aria-pressed')).toBe('true');
-  expect(window.getComputedStyle(button('Helpful')).backgroundColor).toBe(MINT);
+  expect(button('Helpful').querySelector('[data-testid="thumb-filled"]')).not.toBeNull();
   expect(screen.queryByRole('button', { name: 'Not helpful' })).toBeNull();
 
   fireEvent.click(button('Helpful'));
