@@ -101,7 +101,8 @@ export interface RevisionRecord {
 export interface ResearchRevisionStore {
   /**
    * Appends a revision (under `id` when given: TownwiseAI's correction plans its revision's id, agent/apply.ts). Null
-   * when `basedOn` already has a child (the unique index): the caller answers 409 `changed_since`.
+   * when `basedOn` already has a child (the unique index): the caller answers 409 `changed_since`. Null too when a
+   * revision with the planned `id` exists (a retried apply), which the caller tells apart with `find`.
    */
   append(scope: OrgScope, input: {
     id?: string; locationId: string; eventId: string; op: RevisionOp; fields: RevisionFields | null; reverts: string | null;

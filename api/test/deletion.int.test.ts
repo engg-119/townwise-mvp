@@ -266,13 +266,15 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     // records, chat usage and (U13B) forecasts swept again.
     expect(writes[0]).toBe('insert tw_audit_events');
     // Stored files (none here) are swept again after the row too: imports first. Then (staff-overview) active days, (D42)
-    // week rows, the weekly suggestions' pass rows and suggestions, (D59) TownwiseAI's changes, and (U13B) forecast rows,
-    // then runs.
-    expect(writes.slice(-18)).toEqual([
+    // week rows, the weekly suggestions' pass rows and suggestions, (D59) TownwiseAI's changes, (U13B) forecast rows,
+    // then runs, and (D66) research's runs and threads, then its events, entities and edits.
+    expect(writes.slice(-23)).toEqual([
       'delete tw_orgs', 'delete tw_imports', 'delete tw_sales_days', 'delete tw_item_sales', 'delete tw_order_counts',
       'delete tw_order_setups', 'delete tw_order_decisions', 'delete tw_order_rules', 'delete tw_order_cards',
       'delete tw_chat_usage', 'delete tw_activity_days', 'delete tw_calibrations', 'delete tw_forecast_weeks', 'delete tw_suggestion_passes',
       'delete tw_agent_suggestions', 'delete tw_agent_changes', 'delete tw_forecasts', 'delete tw_forecast_runs',
+      'delete tw_location_research_runs', 'delete tw_location_research_threads', 'delete tw_location_events', 'delete tw_location_entities',
+      'delete tw_research_revisions',
     ]);
 
     const orgId = new Types.ObjectId(doomed.orgId);
@@ -361,7 +363,7 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     expect(await count('tw_orgs', { _id: orgId })).toBe(0);
   });
 
-  it('sales days, ordering’s records and chat usage written after the first sweep, by requests in flight, are swept too', async () => {
+  it('sales days, ordering’s records, chat usage and research written after the first sweep, by requests in flight, are swept too', async () => {
     const org = await populatedOrg('Late Writes Grill', 'suspended');
     const model = server.connection.models.TwOrg as unknown as { deleteOne: (...args: unknown[]) => Promise<unknown> };
     const deleteOne = model.deleteOne.bind(model);
@@ -374,6 +376,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
       await addActivityDay(server, { orgId: org.orgId, userId: org.member.session.userId, day: '2026-06-02' });
       // A setup save, an item sales upload, a count, an edit, a rule and a card save still running (A14).
       await addOrderRecords(server, { orgId: org.orgId, locationId });
+      // D66: a planner tick, a merge or an edit already past its organization check.
+      await addResearchRecords(server, { orgId: org.orgId, locationId });
       return removed;
     });
     let res: Response;
