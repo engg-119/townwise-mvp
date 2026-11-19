@@ -13,4 +13,6 @@
 # ranges, the baseline's shape from two years back past 357 days of lead, and the model's outlook stopping at the
 # town's last researched term. The API's LAB_MODEL_VERSION (api/src/lab/input.ts) is held equal to this by a contract
 # test, so a bump refits every location once.
-MODEL_VERSION = "v10"
+# v11 (2026-11-19): Halloween is the weekend around Oct 31 (features.halloween_weekend), not Oct 31 alone, so the other
+# weekend night carries the Halloween effect and a Sunday Halloween keeps its Friday and Saturday.
+MODEL_VERSION = "v11"
