@@ -79,7 +79,7 @@ test('weekly suggestions: what they read from the calendars, the org admin’s s
 test('Anthropic receives the titles weekly, never a calendar’s name; the Limited Use statement is unchanged; the date', () => {
   renderPrivacy();
   const anthropic = item('Who else sees it', 'Anthropic,');
-  expect(anthropic).toContain('its notes and business rules for those days as your team wrote them, the suggestions it made before and, unless an org admin turns that off too, the titles, dates and hours of the next 3 months of events on the location’s own calendars, with email addresses and phone numbers removed; never your team’s names or email addresses (apart from any written in a note, a rule or an event’s title), a calendar’s name, or your organization’s or location’s name.');
+  expect(anthropic).toContain('its notes and business rules for those days as your team wrote them, the suggestions it made before and, unless an org admin turns that off too, the titles, dates and hours of the next 3 months of events on the location’s own calendars, with email addresses and phone numbers removed; never your team’s names or email addresses (apart from any written in a note, a rule or an event’s title), a calendar’s name, or your organization’s name. The weekly reading doesn’t send your location’s name either, though an event town research found can name your restaurant or another public business.');
   const text = screen.getByRole('main').textContent;
   expect(text).toContain('Google user data. Townwise’s use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.');
   expect(text).toContain('Effective November 5, 2026. Last updated November 19, 2026.');
