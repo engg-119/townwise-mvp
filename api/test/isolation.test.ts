@@ -226,11 +226,12 @@ describe('isolation (source)', () => {
     // link (handlers/notes.ts), the follow-up of linked notes (calendar/follow-up.ts), the panel's owner-calendar cards and
     // their accepts (handlers/weekly-suggestions.ts) and the weekly suggestions call, which sends the events' titles to
     // spot private events (lab/suggestions.ts), read events to write notes and suggestions and to word the cards, never
-    // a figure (calendar-event-suggestions).
+    // a figure (calendar-event-suggestions). D58 (learn-from-calendar-bookings): the booking routes
+    // (handlers/calendar-bookings.ts) label a file calendar's events and write notes from them.
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
-      'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/deletion.ts',
-      'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts', 'handlers/weekly-suggestions.ts',
-      'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
+      'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/calendar-bookings.ts',
+      'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
+      'handlers/weekly-suggestions.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
     ]);
     // Seat loss ends a person's Google calendars only through calendar/google-access.ts (connect-google-calendar).
     const imports = (file: { path: string; text: string }): string[] => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]

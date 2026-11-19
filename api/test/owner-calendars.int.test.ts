@@ -344,6 +344,16 @@ describe('with the calendar key', () => {
     expect(await sourceCount(t)).toBe(before);
   });
 
+  it('with no model, Sort with TownwiseAI answers 503 chat_unavailable, and with the lab off a confirm says the refresh will learn (D58)', async () => {
+    const t = await tenant('Quiet Kitchen');
+    const calendar = calendarOf(await addFile(t, 'Master calendar', CSV_EXPORT));
+    const bookings = `${base(t)}/${calendar.id}/bookings`;
+    expect(await send(`${bookings}/sort`, t.admin, { method: 'POST' })).toMatchObject({ status: 503, body: { error: 'chat_unavailable' } });
+    expect(await send(bookings, t.admin, { method: 'PATCH', json: { uid: 'csv-new', booking: 'party' } })).toMatchObject({ status: 200 });
+    const confirmed = await send(`${bookings}/confirm`, t.admin, { method: 'POST' });
+    expect(confirmed).toMatchObject({ status: 200, body: { notesMade: 1, calibration: { status: 'lab_unavailable', id: null } } });
+  });
+
   it('adds a link: fetched through the guarded fetcher, stored sealed with its host, and shown by its label and host only', async () => {
     const t = await tenant('Link Bistro');
     const now = server.clock.now();

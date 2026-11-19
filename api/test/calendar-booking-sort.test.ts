@@ -19,7 +19,7 @@ function event(index: number, title = `Event ${String(index)}`) {
   };
 }
 
-function sentEvents(params: { messages: { content: unknown }[] }): { ref: string; title: string }[] {
+function sentEvents(params: { messages: readonly { content?: unknown }[] }): { ref: string; title: string }[] {
   return (JSON.parse(params.messages[0]?.content as string) as { events: { ref: string; title: string }[] }).events;
 }
 

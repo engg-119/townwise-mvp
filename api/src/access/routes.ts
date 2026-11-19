@@ -33,6 +33,7 @@ import {
 import { connectGoogle, dropGoogleConnection, listGoogleChoices } from '../handlers/google-calendars.ts';
 import { createLocation, deleteLocation, getOwnOrg, updateLocation } from '../handlers/locations.ts';
 import { getLocationsMap } from '../handlers/locations-map.ts';
+import { confirmCalendarBookings, labelCalendarBooking, sortCalendarBookings } from '../handlers/calendar-bookings.ts';
 import { declineInvite, getMe, joinInvite, recordWelcome } from '../handlers/me.ts';
 import { createNote, deleteNote, listNotes, updateNote } from '../handlers/notes.ts';
 import { startOpenAsAdmin } from '../handlers/open-as-admin.ts';
@@ -240,6 +241,21 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.owner_calendars.remove', method: 'DELETE', path: '/org/locations/:locationId/owner-calendars/:calendarId',
     policy: 'member', bodyLimit: 'none', openAsAdmin: true, handler: removeOwnerCalendar,
+  },
+  // A file calendar's booking labels (learn-from-calendar-bookings, D58): an org admin's only. Sort with TownwiseAI sends
+  // the titles to Anthropic, so it is never staff's open as admin; its handler holds it to 3 a calendar an hour. A label
+  // names its event by uid in the 2 KB body, never the path; the sort and the confirm have no body.
+  {
+    id: 'org.owner_calendars.bookings_sort', method: 'POST', path: '/org/locations/:locationId/owner-calendars/:calendarId/bookings/sort',
+    policy: 'org_admin', bodyLimit: 'none', handler: sortCalendarBookings,
+  },
+  {
+    id: 'org.owner_calendars.bookings_label', method: 'PATCH', path: '/org/locations/:locationId/owner-calendars/:calendarId/bookings',
+    policy: 'org_admin', bodyLimit: '2kb', openAsAdmin: true, handler: labelCalendarBooking,
+  },
+  {
+    id: 'org.owner_calendars.bookings_confirm', method: 'POST', path: '/org/locations/:locationId/owner-calendars/:calendarId/bookings/confirm',
+    policy: 'org_admin', bodyLimit: 'none', openAsAdmin: true, handler: confirmCalendarBookings,
   },
   // Connecting a Google calendar (openspec change connect-google-calendar, design decision 8): a member's own Google
   // account, never staff's, so none runs open as admin (D25). Every call reaches Google, so all three spend the

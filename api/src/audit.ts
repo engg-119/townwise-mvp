@@ -162,6 +162,11 @@ const LIKELY_CLOSED_ANSWER_WORDS: Readonly<Record<string, string>> = {
 /** D46: where a suggested closure rule came from; a weekly suggestion's event carries no source. */
 const SUGGESTION_SOURCE_WORDS: Readonly<Record<string, string>> = { file: ' from a file', sales: ' from the sales history' };
 
+/** D58: a booking label's words; a cleared label (null) has none. */
+const BOOKING_WORDS: Readonly<Record<string, string>> = {
+  buyout: 'buyout', party: 'party', own_event: 'the restaurant’s own event', other: 'not a booking',
+};
+
 const AI_KIND_WORDS: Readonly<Record<string, string>> = {
   sales: 'sales', calendar: 'a calendar', inventory: 'inventory', menu: 'a menu', staffing: 'staffing', other: 'other',
 };
@@ -241,6 +246,10 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'owner_calendar.removed': return `Removed ${calendarWords(d)}`;
     case 'owner_calendar.refreshed':
       return d.status === 'ok' ? `Refreshed ${calendarWords(d)}: ${text(d.eventCount)} events` : `Refreshing ${calendarWords(d)} failed (${text(d.status)})`;
+    case 'owner_calendar.bookings_sorted': return `Sorted a calendar’s events with TownwiseAI: ${text(d.labeled)} of ${text(d.sent)} labeled`;
+    case 'owner_calendar.booking_labeled': return `Labeled a calendar event: ${BOOKING_WORDS[text(d.booking)] ?? 'no label'}`;
+    case 'owner_calendar.bookings_confirmed':
+      return `Used a calendar’s bookings for forecasts: ${text(d.buyouts)} buyouts, ${text(d.parties)} parties, ${text(d.notes)} notes made`;
     case 'google_calendar.connected': return 'Connected a Google account for calendars';
     case 'google_calendar.disconnected': return 'Disconnected a Google account from calendars';
     case 'chat.turn_completed': return 'Asked the tuning chat about a location';
