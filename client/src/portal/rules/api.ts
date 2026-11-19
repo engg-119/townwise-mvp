@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { ApiError, type ApiClient } from '../../api/client';
-import { NOTE_EFFECTS, NOTE_KINDS } from '../locations/api';
+import { NOTE_KINDS, SHARED_EFFECTS } from '../locations/api';
 import type { ScheduleInput } from '../locations/noteRules';
 
 // The Business rules routes (spec 10.16, api/src/handlers/rules.ts), through the portal ApiClient. `z.object` strips
@@ -24,7 +24,7 @@ export const ruleScheduleSchema = z.object({
   startDate: z.string(),
   endDate: z.string().nullable(),
   weekdays: z.array(z.number()).nullable(),
-  effect: z.enum(NOTE_EFFECTS),
+  effect: z.enum(SHARED_EFFECTS),
   expectedGuests: z.number().nullable(),
   startTime: z.string().nullable(),
   endTime: z.string().nullable(),

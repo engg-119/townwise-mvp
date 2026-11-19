@@ -1,4 +1,5 @@
 import { formatTime } from '../portal/format';
+import type { NoteEffect } from '../portal/locations/api';
 import type { NoteProposal } from './api';
 
 // Plain words for a note proposal and TownwiseAI's dates. The note copy follows the portal spec's notes list (P14):
@@ -18,11 +19,14 @@ export const KIND_LABEL: Record<NoteProposal['kind'], string> = {
   other: 'Other',
 };
 
-export const EFFECT_LABEL: Record<NoteProposal['effect'], string> = {
+/** Every note's effect; a proposal never has `wrong_guest_count` (D67), which only a person's note takes. */
+export const EFFECT_LABEL: Record<NoteEffect, string> = {
   closed: 'Closed',
   more_guests: 'More guests than usual',
   fewer_guests: 'Fewer guests than usual',
   unknown: 'Not sure',
+  // [CONFIRM: the words "The guest count was wrong (sales were right)", "Your note: guest count marked wrong" and "Guest count marked wrong"]
+  wrong_guest_count: 'Guest count marked wrong',
 };
 
 /** A calendar date, YYYY-MM-DD, in words ("March 3, 2026"), read without a time zone. */

@@ -132,7 +132,8 @@ function HomeView(props: {
   const imported = eventsRead.status === 'ready' ? eventsRead.data : NO_EVENTS;
   // One read of the board for Bar order and the selected day's Reorder part; it fails on its own, in their places.
   const { state: board } = useLoad(useCallback(() => fetchOrderBoard(api, locationId), [api, locationId]));
-  const days = useMemo(() => decodeHistory(history), [history]);
+  // D67: a guest count a note marks wrong reads as none, as the API reads it.
+  const days = useMemo(() => decodeHistory(history, notes), [history, notes]);
   // With the town's today, so only a day before it can be likely closed (D32): today's upload may be partial.
   const context = useMemo(() => dayContext(notes, calendar.events, ruleSchedules(rules), today), [notes, calendar.events, rules, today]);
   const metric = metricsWithData(days).guests ? 'guests' : 'netSales';

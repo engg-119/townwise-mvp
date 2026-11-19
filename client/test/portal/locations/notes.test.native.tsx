@@ -160,6 +160,40 @@ test('the form checks the API’s rules before it sends, then saves the note, se
   expect(within(coming).getByText('About 1,200 guests')).toBeTruthy();
 });
 
+test('an Other note can mark past days’ guest counts wrong (D67): no guests, no hours, no details, only days before today', async () => {
+  const { api } = setup();
+  api.answers[PATH] = (body) => saved('n9', body);
+  await renderApp('/locations/l1/notes', api);
+  await fireEvent.press(await screen.findByRole('button', { name: 'Add a note' }));
+  const MARK = 'The guest count was wrong (sales were right)';
+  // Offered for an Other note only.
+  for (const kind of ['Closure', 'Private event', 'Opening']) {
+    await fireEvent.press(screen.getByRole('button', { name: kind }));
+    expect(screen.queryByRole('button', { name: MARK })).toBeNull();
+  }
+  await fireEvent.press(screen.getByRole('button', { name: 'Other' }));
+  await fireEvent.press(screen.getByRole('button', { name: MARK }));
+  expect(pressed(MARK)).toMatchObject({ checked: true });
+  expect(screen.queryByLabelText('Expected guests (optional)')).toBeNull();
+  expect(screen.queryByLabelText('Starts at')).toBeNull();
+  expect(screen.getAllByText('Only days before today.').length).toBeGreaterThan(0);
+  await fireEvent.changeText(screen.getByLabelText('Starts'), day(-3));
+  await fireEvent.changeText(screen.getByLabelText('Ends (optional)'), day(0));
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(writes(api)).toEqual([]);
+  await fireEvent.changeText(screen.getByLabelText('Ends (optional)'), day(-2));
+  await fireEvent.press(screen.getByRole('button', { name: 'Save note' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api)).toEqual([{
+    method: 'POST', path: PATH,
+    body: {
+      kind: 'other', startDate: day(-3), endDate: day(-2), weekdays: null, effect: 'wrong_guest_count', expectedGuests: null, detail: null,
+      title: null, startTime: null, endTime: null,
+    },
+  }]);
+  expect(within(screen.getByLabelText('Past notes')).getByText('Guest count marked wrong')).toBeTruthy();
+});
+
 test('an event takes hours and a closure none; a buyout takes its guests; the list shows the hours', async () => {
   const { api } = setup();
   api.answers[PATH] = (body) => saved('n9', body);

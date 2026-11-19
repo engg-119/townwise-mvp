@@ -22,6 +22,9 @@ import { weekdayOf } from './words';
 //   an opening, a private event, or more or fewer guests) sets it aside, and before today a rule's closure holds only
 //   on a day with no guests or guests under the likely-closed line: real recorded guests beat a standing rule. A rule
 //   never makes a day noted, and a context without rules (Home's, today) behaves as before.
+// - A note marking a day's guest count wrong (D67, the API's trustedGuestDays) is read before any of this: the day's
+//   guests are none, so it is never likely closed and is in no other day's typical guests; its sales stand, and the
+//   note makes it noted.
 // - A day is noted when a covering note does not close it (a private event, an opening or other, unless closed).
 // - Holiday and event days are those with a `holiday` or an `event` on the calendar. Term and season periods span
 //   months, so they are context only: they never make a day irregular and are never a driver, even with a `group`.
@@ -74,6 +77,23 @@ export function noteCovers(
   if (date < note.startDate || (note.endDate !== null && date > note.endDate)) return false;
   if (note.season !== undefined && note.season !== null && !inSeason(note.season, date)) return false;
   return note.weekdays === null || note.weekdays.includes(weekdayOf(date));
+}
+
+/** A note marking its days' guest counts wrong (D67): the mirror of api/src/closed-days.ts isWrongGuestCount. */
+export function isWrongGuestCount(note: Pick<Note, 'effect'>): boolean {
+  return note.effect === 'wrong_guest_count';
+}
+
+/**
+ * The days with `guests` null on every date a wrong-guest-count note covers, sales and every other field untouched; the
+ * same array when no note has the effect. The mirror of api/src/closed-days.ts trustedGuestDays (D67).
+ */
+export function trustedGuestDays<D extends { readonly date: string; readonly guests: number | null }>(
+  days: readonly D[], notes: readonly Pick<Note, 'startDate' | 'endDate' | 'weekdays' | 'effect'>[],
+): readonly D[] {
+  const marks = notes.filter(isWrongGuestCount);
+  if (marks.length === 0) return days;
+  return days.map((day) => (day.guests !== null && marks.some((note) => noteCovers(note, day.date)) ? { ...day, guests: null } : day));
 }
 
 export function notesOn(date: string, notes: readonly Note[]): Note[] {

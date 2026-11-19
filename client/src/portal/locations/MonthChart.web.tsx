@@ -63,7 +63,7 @@ export function MonthChart(props: MonthChartProps): React.JSX.Element | null {
       fetchNotes(api, props.locationId),
       fetchRules(api, props.locationId).then((list) => list.rules, () => NO_RULES),
     ]);
-    return { days: decodeHistory(history), context: dayContext(notes, [], ruleSchedules(rules), today) };
+    return { days: decodeHistory(history, notes), context: dayContext(notes, [], ruleSchedules(rules), today) };
   }, [api, props.locationId, today]));
   if (state.status === 'loading') return <LoadingLine text="Loading the chart" minHeight={280} />;
   if (state.status === 'failed') return <ErrorNotice error={state.error} onRetry={reload} />;

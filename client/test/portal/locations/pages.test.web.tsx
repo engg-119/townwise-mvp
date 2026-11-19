@@ -270,6 +270,32 @@ test('the note form on web: date inputs, pressed buttons, and the note it sends'
   expect(screen.getByText('Patio season')).toBeTruthy();
 });
 
+test('the note form on web: an Other note marks past days’ guest counts wrong (D67), with no guests or hours', async () => {
+  const api = portal(meOf(ACCESS.member));
+  api.answers['/api/org/locations/l1/notes'] = (body) => ({ note: noteOf('n9', { ...(body as NoteInput), createdByEmail: EMAIL }) });
+  renderAt('/locations/l1/notes', api);
+  fireEvent.click(await screen.findByRole('button', { name: 'Add a note' }));
+  const MARK = 'The guest count was wrong (sales were right)';
+  expect(screen.queryByRole('button', { name: MARK })).toBeNull();
+  fireEvent.click(screen.getByRole('button', { name: 'Other' }));
+  fireEvent.click(screen.getByRole('button', { name: MARK }));
+  expect(screen.getByRole('button', { name: MARK }).getAttribute('aria-pressed')).toBe('true');
+  expect(screen.queryByLabelText('Expected guests (optional)')).toBeNull();
+  expect(screen.queryByLabelText('Starts at')).toBeNull();
+  const start = addDays(localToday(), -2);
+  fireEvent.change(screen.getByLabelText('Starts'), { target: { value: start } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save note' }));
+  expect(await screen.findByText('Saved.')).toBeTruthy();
+  expect(writes(api)).toEqual([{
+    method: 'POST', path: '/api/org/locations/l1/notes',
+    body: {
+      kind: 'other', startDate: start, endDate: start, weekdays: null, effect: 'wrong_guest_count', expectedGuests: null, detail: null, title: null,
+      startTime: null, endTime: null,
+    },
+  }]);
+  expect(screen.getByText('Guest count marked wrong')).toBeTruthy();
+});
+
 test('Add a closure note opens the form; once the note is saved, the address drops ?new=closure', async () => {
   const api = portal(meOf(ACCESS.member));
   api.answers['/api/org/locations/l1/notes'] = (body) => ({ note: noteOf('n9', { ...(body as NoteInput), createdByEmail: EMAIL }) });
