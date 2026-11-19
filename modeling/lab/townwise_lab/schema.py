@@ -1,6 +1,7 @@
-"""The lab's two documents: the LabInput the API builds (townwise.lab-input/2) and the LabResult the lab returns
+"""The lab's two documents: the LabInput the API builds (townwise.lab-input/3) and the LabResult the lab returns
 (townwise.lab-result/1). validate_input checks an input against the contract before anything is fitted; its errors
-name a path, never a value. Version 1 inputs are refused: the API and the lab move to version 2 together (D42)."""
+name a path, never a value. Inputs of versions 1 and 2 are refused: the API and the lab move to version 3 together
+(D52: 400 future days and termsThrough, the town's last researched term day)."""
 
 import math
 import re
@@ -8,7 +9,7 @@ from datetime import date, timedelta
 
 from townwise_lab.forecast import HORIZON_DAYS
 
-INPUT_SCHEMA = "townwise.lab-input/2"
+INPUT_SCHEMA = "townwise.lab-input/3"
 RESULT_SCHEMA = "townwise.lab-result/1"
 
 ONE_OFF = "one_off"  # an event with no calendar group
@@ -17,8 +18,8 @@ DAY_STATUSES = ("open", "closed", "booked")
 ENGINES = ("model", "baseline")
 CALENDAR_KINDS = ("event", "holiday", "term", "season")
 CONFIDENCES = ("high", "medium", "low")
-INPUT_KEYS = {"schema", "calibrationId", "metric", "today", "dataThrough", "horizonDays", "regimeStart", "days",
-              "calendar", "champion"}
+INPUT_KEYS = {"schema", "calibrationId", "metric", "today", "dataThrough", "horizonDays", "termsThrough", "regimeStart",
+              "days", "calendar", "champion"}
 DAY_KEYS = {"date", "guests", "term", "weekOfTerm", "events", "closed", "privateEvent", "booked"}
 CALENDAR_KEYS = {"id", "group", "kind", "start", "end", "confidence"}  # never a title, URL or source label
 CHAMPION_KEYS = {"runId", "engine", "recordedWeekdayBiasMeanAbs", "dataThrough", "days", "weeks"}
@@ -104,9 +105,9 @@ def _calendar(calendar) -> None:
 
 
 def validate_input(inp: dict) -> None:
-    """Raises InputError unless `inp` is a LabInput: every date from its first day to dataThrough + 182 once, in order;
+    """Raises InputError unless `inp` is a LabInput: every date from its first day to dataThrough + 400 once, in order;
     guests a count or null, and null after dataThrough; the calendar fields typed; the town calendar's entries with
-    no title, URL or source; the champion null or a run with its engine and its recorded weekday bias (null without
+    no title, URL or source; termsThrough a date or null; the champion null or a run with its engine and its recorded weekday bias (null without
     one)."""
     _object(inp, INPUT_KEYS, "input")
     _require(inp["schema"] == INPUT_SCHEMA, "schema")
@@ -117,6 +118,7 @@ def validate_input(inp: dict) -> None:
     _require(through is not None, "dataThrough")
     _require(today is not None and today >= through, "today")
     _require(_int(inp["horizonDays"]) and inp["horizonDays"] == HORIZON_DAYS, "horizonDays")
+    _require(inp["termsThrough"] is None or _date(inp["termsThrough"]) is not None, "termsThrough")
     _require(inp["regimeStart"] is None or _date(inp["regimeStart"]) is not None, "regimeStart")
 
     days = inp["days"]

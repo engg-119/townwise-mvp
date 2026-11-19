@@ -7,7 +7,9 @@ with nothing to fit, so its backtest refits every week.
   With fewer than 3, the last 8 training days of that weekday; with none, the median training day.
 - Shape: last year's plain same weekdays in the 3 weeks around the date less 364 days (that day and a week either
   side), their median over last year's level (the plain level at the cutoff less 364 days), clamped to 0.5 to 2; 1
-  when last year has fewer than 3 such days or no level.
+  when last year has fewer than 3 such days or no level. For a date whose 3 weeks a year back are not all on or before
+  the cutoff (leads of 358 to 400 days, the outlook's last weeks, D52), the same two years back: the 3 weeks around the
+  date less 728 days over the plain level at the cutoff less 728 days, and 1 without them.
 - Effects: per event or holiday group, the median ratio of its past training days to the mean of the plain same
   weekdays up to 4 weeks either side of each (on or before the cutoff). An event group needs 3 days with it and 3
   without, a holiday 1 past occurrence (thresholds as api/src/forecasts/effects.ts). Holidays are the calendar's
@@ -39,6 +41,7 @@ LEVEL_DAYS = 8
 LEVEL_MIN_DAYS = 3
 SHAPE_LAG_DAYS = 364
 SHAPE_OFFSETS = (-7, 0, 7)  # the 3 weeks around the date less 364 days
+SHAPE_LAG_TWO_YEARS = 2 * SHAPE_LAG_DAYS  # past 357 days of lead, when last year's 3 weeks are not all history yet
 SHAPE_CLAMP = (0.5, 2.0)
 EVENT_MIN_DAYS = 3  # with the event, and without it
 HOLIDAY_MIN_DAYS = 1
@@ -145,13 +148,17 @@ def level(history: History, weekday: str, cutoff: pd.Timestamp) -> float:
 
 
 def shape(history: History, day: pd.Timestamp, cutoff: pd.Timestamp) -> float:
-    """Last year's seasonal shape for `day` as seen from `cutoff` (the module's rule)."""
-    year_ago = day - pd.Timedelta(days=SHAPE_LAG_DAYS)
+    """Last year's seasonal shape for `day` as seen from `cutoff`, or two years back's past 357 days of lead (the module's
+    rule)."""
+    lag = SHAPE_LAG_DAYS
+    if day - pd.Timedelta(days=SHAPE_LAG_DAYS - max(SHAPE_OFFSETS)) > cutoff:
+        lag = SHAPE_LAG_TWO_YEARS
+    back = day - pd.Timedelta(days=lag)
     around = [history.plain[when] for k in SHAPE_OFFSETS
-              if (when := year_ago + pd.Timedelta(days=k)) <= cutoff and when in history.plain]
+              if (when := back + pd.Timedelta(days=k)) <= cutoff and when in history.plain]
     if len(around) < len(SHAPE_OFFSETS):
         return 1.0
-    then = plain_level(history, day.day_name(), cutoff - pd.Timedelta(days=SHAPE_LAG_DAYS))
+    then = plain_level(history, day.day_name(), cutoff - pd.Timedelta(days=lag))
     if then is None or then <= 0:
         return 1.0
     return float(np.clip(np.median(around) / then, *SHAPE_CLAMP))
@@ -285,9 +292,10 @@ def _pct(multiplier: float) -> float:
 def run_file(history: History, frame: pd.DataFrame, *, data_through: pd.Timestamp, end: pd.Timestamp, widen_k: float,
              daily_log_range: dict[str, float], weekly_log_range: dict[str, float],
              widening: list[tuple[int, float]], trained_from: pd.Timestamp, made_at: str, code_version: str,
-             backtest_block: dict | None) -> dict:
+             backtest_block: dict | None, outlook: forecast.Outlook | None = None) -> dict:
     """The baseline's run file for the days after `data_through` through `end`: open days' mid from predict at
-    data_through, their range from `daily_log_range` widened by widen_k times the day's lead ratio, baseline the level
+    data_through, their range from `daily_log_range` widened by widen_k times the day's lead ratio (`outlook` past the
+    forecast tier, forecast.lead_ratios), baseline the level
     times the shape. An event reason carries its group's effect as effectPct, and the holiday reason the product of the
     day's holiday groups' (null where none has one)."""
     rows, status = forecast.window(frame, data_through, end)
@@ -295,7 +303,7 @@ def run_file(history: History, frame: pd.DataFrame, *, data_through: pd.Timestam
     multipliers = effects(history, data_through)
     numbers = predict(history, data_through, open_rows, multipliers)
     mid = numbers.mid
-    ratio = forecast.lead_ratios(rows.date, data_through, widening)
+    ratio = forecast.lead_ratios(rows.date, data_through, widening, outlook)
     lo, hi = metrics.widen(mid, mid * np.exp(daily_log_range["lo"]), mid * np.exp(daily_log_range["hi"]),
                            widen_k * ratio[open_rows])
     table = pd.DataFrame({"low": lo, "mid": mid, "high": hi, "baseline": numbers.base}).clip(lower=0,
@@ -314,6 +322,7 @@ def run_file(history: History, frame: pd.DataFrame, *, data_through: pd.Timestam
             return _pct(float(np.prod(found))) if found else None
         return None
 
-    days, weeks = forecast.assemble(rows, status, table, weekly_log_range, ratio, effect_pct)
+    days, weeks = forecast.assemble(rows, status, table, weekly_log_range, ratio, effect_pct,
+                                    tier_end=None if outlook is None else outlook.tier_end)
     return forecast.run_document(FAMILY, trained_from=trained_from, data_through=data_through, made_at=made_at,
                                  code_version=code_version, backtest_block=backtest_block, days=days, weeks=weeks)

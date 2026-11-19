@@ -141,7 +141,7 @@ test('the first screen is the map story’s title with both actions; the lead fo
   const lead = hero.querySelector('.hd2');
   expect([...(lead?.children ?? [])].map((child) => [child.tagName, child.textContent])).toEqual([
     ['P', 'Early access. Built at Dartmouth, testing in Hanover, NH.'],
-    ['P', 'We’re building forecasts of daily guests for restaurants and bars, up to three months ahead, from your town’s calendar, not the region’s.'],
+    ['P', 'We’re building forecasts of daily guests for restaurants and bars, up to a year ahead, the first three months as a forecast and the rest as a wider outlook, from your town’s calendar, not the region’s.'],
     ['DIV', 'Request early accessSign in'],
     ['P', 'In development. No forecasts are for sale yet.'],
   ]);

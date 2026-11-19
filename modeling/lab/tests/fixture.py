@@ -8,13 +8,18 @@ LabInput the API sends, with synthetic_calendar as its town calendar and synthet
 run.
 """
 
+import json
+import re
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
 FIRST_DAY = pd.Timestamp("2024-01-01")
 DATA_THROUGH = pd.Timestamp("2025-10-21")
-FUTURE_DAYS = 182
+FUTURE_DAYS = 400  # the LabInput's future days (input version 3, D52)
+CHAMPION_DAYS = 182  # the current published run's days after its cutoff
 LEVEL_SHIFT = DATA_THROUGH - pd.Timedelta(days=364)  # the last year runs busier (what the notebook's is_2026 marks)
 REGIME_START = pd.Timestamp("2025-05-26")  # Mondays have no row from here on, and three weekdays change level
 FESTIVAL = "ev_test-town:festival"
@@ -41,8 +46,9 @@ EFFECT = {"festival": 1.5, "football": 1.6, "private_event": 1.3, "comedy": 1.15
 
 
 def _notebook_holidays(dates: pd.Series) -> pd.DataFrame:
-    # The notebook's holiday rules (section 1, cell 6), copied here so the lab's holiday_flags is checked against them
-    federal = USFederalHolidayCalendar().holidays(dates.min(), dates.max(), return_name=True)
+    # The notebook's holiday rules (section 1, cell 6), copied here so the lab's holiday_flags is checked against them;
+    # read a day past the last date, as the lab does, since the frame (400 days after the cutoff) ends on Thanksgiving Eve
+    federal = USFederalHolidayCalendar().holidays(dates.min(), dates.max() + pd.Timedelta(days=1), return_name=True)
     thanksgiving = federal[federal == "Thanksgiving Day"].index
     years = range(dates.min().year, dates.max().year + 1)
     big_night = list(thanksgiving - pd.Timedelta(days=1)) + [pd.Timestamp(y, 12, d) for y in years for d in (23, 31)]
@@ -169,7 +175,7 @@ def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THR
     model's weekday-bias check (pipeline.passes) has nothing to compare with."""
     past = frame[(frame.date <= through) & frame.guests.gt(0) & ~frame.closed & ~frame.booked]
     median = past.groupby("weekday").guests.median()
-    rows = frame[(frame.date > through) & (frame.date <= through + pd.Timedelta(days=FUTURE_DAYS))]
+    rows = frame[(frame.date > through) & (frame.date <= through + pd.Timedelta(days=CHAMPION_DAYS))]
     closed = rows.closed | rows.hol_closed.eq(1) | (rows.weekday.eq("Monday") & (rows.date >= REGIME_START))
     status = np.select([rows.booked, closed], ["booked", "closed"], "open")
     mid = rows.weekday.map(median).where(status == "open")
@@ -188,7 +194,7 @@ def synthetic_champion(frame: pd.DataFrame, through: pd.Timestamp = CHAMPION_THR
 
 def synthetic_input(seed: int = 0) -> dict:
     """synthetic_frame(seed) as the LabInput the API sends: every date from the first day with guests to the data
-    cutoff plus 182 days, no regime start, synthetic_calendar over those days, and synthetic_champion (a model run) as
+    cutoff plus 400 days, no regime start, no termsThrough (the test town's terms are not a researched calendar's), synthetic_calendar over those days, and synthetic_champion (a model run) as
     the current published run."""
     f = synthetic_frame(seed)
     has = f.guests.gt(0)
@@ -200,8 +206,9 @@ def synthetic_input(seed: int = 0) -> dict:
              "events": sorted(c.removeprefix("ev_") for c in groups if row[c] == 1),
              "closed": bool(row.closed), "privateEvent": bool(row.private_event), "booked": bool(row.booked)}
             for _, row in rows.iterrows()]
-    return {"schema": "townwise.lab-input/2", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
-            "dataThrough": _iso(through), "horizonDays": FUTURE_DAYS, "regimeStart": None, "days": days,
+    return {"schema": "townwise.lab-input/3", "calibrationId": CALIBRATION_ID, "metric": "guests", "today": _iso(TODAY),
+            "dataThrough": _iso(through), "horizonDays": FUTURE_DAYS, "termsThrough": None, "regimeStart": None,
+            "days": days,
             "calendar": synthetic_calendar(rows), "champion": synthetic_champion(f)}
 
 
@@ -213,7 +220,8 @@ TWO_YEAR_SHAPES = ("steady", "calm", "drifting", "growing", "closed_mondays")
 
 
 def two_year_input(seed: int, shape: str, days: int = 700, through: str = "2026-11-15") -> dict:
-    """A LabInput of `days` days of guests through `through`, plus 182 days after: each weekday's level times a yearly
+    """A LabInput of `days` days of guests through `through`, plus 400 days after (guests drawn for the first 182 of
+    them, as before the input reached 400, so the histories are those of D42's check): each weekday's level times a yearly
     season (25% either way, peaking in summer) times a weekly swing times daily noise (lognormal, sigma 0.12). The
     weekly swing by `shape`: "steady" an independent 8% each week, "calm" 4%, "drifting" a random walk of 3% a week,
     "growing" steady with 15% more guests a year, "closed_mondays" steady with no Monday row. No calendar, no champion."""
@@ -222,7 +230,7 @@ def two_year_input(seed: int, shape: str, days: int = 700, through: str = "2026-
     rng = np.random.default_rng(seed)
     end = pd.Timestamp(through)
     first = end - pd.Timedelta(days=days - 1)
-    dates = pd.Series(pd.date_range(first, end + pd.Timedelta(days=FUTURE_DAYS)))
+    dates = pd.Series(pd.date_range(first, end + pd.Timedelta(days=CHAMPION_DAYS)))
     week = ((dates - first).dt.days // 7).to_numpy()
     weeks = int(week.max()) + 1
     swing = (np.exp(np.cumsum(rng.normal(0.0, 0.03, weeks))) if shape == "drifting"
@@ -235,7 +243,119 @@ def two_year_input(seed: int, shape: str, days: int = 700, through: str = "2026-
     out = [{"date": _iso(day), "guests": None if missing else int(count), "term": "interim", "weekOfTerm": -1,
             "events": [], "closed": False, "privateEvent": False, "booked": False}
            for day, count, missing in zip(dates, guests, no_row)]
+    out += [{"date": _iso(day), "guests": None, "term": "interim", "weekOfTerm": -1, "events": [], "closed": False,
+             "privateEvent": False, "booked": False}
+            for day in pd.date_range(dates.iloc[-1] + pd.Timedelta(days=1), end + pd.Timedelta(days=FUTURE_DAYS))]
     first_with = next(i for i, d in enumerate(out) if d["guests"])
-    return {"schema": "townwise.lab-input/2", "calibrationId": CALIBRATION_ID, "metric": "guests",
+    return {"schema": "townwise.lab-input/3", "calibrationId": CALIBRATION_ID, "metric": "guests",
             "today": _iso(end + pd.Timedelta(days=1)), "dataThrough": through, "horizonDays": FUTURE_DAYS,
-            "regimeStart": None, "days": out[first_with:], "calendar": [], "champion": None}
+            "termsThrough": None, "regimeStart": None, "days": out[first_with:], "calendar": [], "champion": None}
+
+
+# Four-year histories for the outlook coverage check (test_outlook_coverage.py, D52 decision 6). Each history runs
+# from FOUR_YEAR_FIRST (to 2028-06-11, where Hanover's researched calendar ends, and on to FOUR_YEAR_LAST) and is cut at
+# two or three years; the cut's input carries the 400 days after it, and its run is scored on the guests of the year after it.
+FOUR_YEAR_FIRST = pd.Timestamp("2024-06-12")
+FOUR_YEAR_LAST = pd.Timestamp("2028-07-15")  # the three-year cut's input reaches here; the same draws for both cuts
+FOUR_YEAR_SHAPES = TWO_YEAR_SHAPES + ("level_shift", "trend_change", "hanover")
+CHANGE_AFTER_DAYS = 183  # the level shift and the trend change start this many days after the cut: inside its year
+LEVEL_SHIFT_UP, LEVEL_SHIFT_DOWN = 1.2, 0.8  # even seeds shift up 20%, odd seeds down 20%
+TREND_PER_YEAR = 1.15  # trend_change: 15% a year one way, then 15% a year the other (even seeds up first)
+HANOVER_TERM_LIFT = {"fall": 1.3, "winter": 1.15, "spring": 1.25, "summer": 1.05, "interim": 1.0}
+HANOVER_EVENT_LIFT = 1.4  # a day with any town event
+EVENT_NOTICE_DAYS = 182  # a cut's input knows only the town events that start within this many days of it
+HANOVER_CALENDAR = Path(__file__).resolve().parent / "golden" / "hanover-calendar.json"
+
+
+def hanover_days() -> dict:
+    """Hanover's days (term, week of term, event groups) and calendar entries from 2024-06-12 to 2028-07-15, as the API
+    builds them (api/test/lab-input.test.ts writes golden/hanover-calendar.json)."""
+    return json.loads(HANOVER_CALENDAR.read_text(encoding="utf-8"))
+
+
+def _withheld(calendar: list[dict], known_until: pd.Timestamp) -> tuple[list[dict], dict[str, set[str]]]:
+    """The calendar a cut's input carries (no town event starting after `known_until`), and by date the event groups
+    only the withheld entries put there."""
+    kept, hidden = [], []
+    for entry in calendar:
+        (hidden if entry["kind"] == "event" and pd.Timestamp(entry["start"]) > known_until else kept).append(entry)
+
+    def groups(entries: list[dict]) -> dict[str, set[str]]:
+        out: dict[str, set[str]] = {}
+        for entry in entries:
+            if entry["kind"] != "event":
+                continue
+            for when in pd.date_range(entry["start"], entry["end"]):
+                out.setdefault(_iso(when), set()).add(entry["group"] or "one_off")
+        return out
+
+    shown = groups(kept)
+    return kept, {date: names - shown.get(date, set()) for date, names in groups(hidden).items()}
+
+
+def four_year_input(seed: int, shape: str, cut_years: int) -> tuple[dict, pd.Series]:
+    """The LabInput (version 3) of a four-year history cut at `cut_years` (2 or 3) years, today the day after the cut,
+    and every day's guests (the scored year's included), by date.
+
+    Guests as two_year_input makes them: each weekday's level times a yearly season (25% either way) times a weekly
+    swing times daily noise (lognormal, sigma 0.12), the swing by shape ("steady" 8% each week, "calm" 4%, "drifting" a
+    3% random walk, "growing" steady with 15% more guests a year, "closed_mondays" steady with no Monday row). The other
+    shapes are steady with: "level_shift" a 20% shift (up for even seeds, down for odd) from 183 days after the cut;
+    "trend_change" 15% a year up then down from 183 days after the cut (down then up for odd seeds); "hanover" Hanover's
+    term lifts (HANOVER_TERM_LIFT) and 40% more guests on a day with any town event, with Hanover's days and calendar,
+    its termsThrough (the last day of its last term entry), and no town event starting more than 182 days after the cut
+    in the input. The others have no calendar and termsThrough null. No champion."""
+    if shape not in FOUR_YEAR_SHAPES or cut_years not in (2, 3):
+        raise ValueError(shape)
+    rng = np.random.default_rng(seed)
+    first = FOUR_YEAR_FIRST
+    through = first + pd.Timedelta(days=365 * cut_years - 1)  # 730 or 1095 days: through 2026-06-11 or 2027-06-11
+    dates = pd.Series(pd.date_range(first, FOUR_YEAR_LAST))
+    week = ((dates - first).dt.days // 7).to_numpy()
+    weeks = int(week.max()) + 1
+    swing = (np.exp(np.cumsum(rng.normal(0.0, 0.03, weeks))) if shape == "drifting"
+             else np.exp(rng.normal(0.0, 0.04 if shape == "calm" else 0.08, weeks)))
+    season = 1 + 0.25 * np.sin(2 * np.pi * (dates.dt.day_of_year.to_numpy() - 100) / 365.25)
+    t = (dates - first).dt.days.to_numpy()
+    change = (through - first).days + CHANGE_AFTER_DAYS
+    multiplier = np.ones(len(dates))
+    if shape == "growing":
+        multiplier = 1 + 0.15 * t / 365
+    elif shape == "level_shift":
+        multiplier = np.where(t >= change, LEVEL_SHIFT_UP if seed % 2 == 0 else LEVEL_SHIFT_DOWN, 1.0)
+    elif shape == "trend_change":
+        slope = np.log(TREND_PER_YEAR) / 365 * (1 if seed % 2 == 0 else -1)
+        multiplier = np.exp(slope * np.minimum(t, change) - slope * np.maximum(t - change, 0))
+    town = None
+    if shape == "hanover":
+        town = hanover_days()
+        by_date = {d["date"]: d for d in town["days"]}
+        multiplier = np.array([HANOVER_TERM_LIFT[by_date[_iso(day)]["term"]]
+                               * (HANOVER_EVENT_LIFT if by_date[_iso(day)]["events"] else 1.0) for day in dates])
+    level = dates.dt.day_name().map(TWO_YEAR_LEVEL).to_numpy(dtype=float)
+    guests = np.round(level * season * multiplier * swing[week] * rng.lognormal(0.0, 0.12, len(dates)))
+    no_row = (dates.dt.day_name() == "Monday") & (shape == "closed_mondays")
+    actual = pd.Series(np.where(no_row, np.nan, guests), index=dates.to_numpy())
+
+    calendar, terms_through, hidden = [], None, {}
+    if town is not None:
+        calendar, hidden = _withheld(town["calendar"], through + pd.Timedelta(days=EVENT_NOTICE_DAYS))
+        terms_through = max(e["end"] for e in town["calendar"]
+                            if e["kind"] == "term" and re.search(r":(classes|finals):", e["group"] or ""))
+        calendar = [e for e in calendar if e["start"] <= _iso(dates.iloc[-1])]
+    out = []
+    for day, count, missing in zip(dates, guests, no_row):
+        if day > through + pd.Timedelta(days=FUTURE_DAYS):
+            break
+        date = _iso(day)
+        known = town is not None and by_date[date]
+        out.append({"date": date, "guests": None if missing or day > through else int(count),
+                    "term": known["term"] if known else "interim", "weekOfTerm": known["weekOfTerm"] if known else -1,
+                    "events": sorted(set(known["events"]) - hidden.get(date, set())) if known else [],
+                    "closed": False, "privateEvent": False, "booked": False})
+    first_with = next(i for i, d in enumerate(out) if d["guests"])
+    inp = {"schema": "townwise.lab-input/3", "calibrationId": CALIBRATION_ID, "metric": "guests",
+           "today": _iso(through + pd.Timedelta(days=1)), "dataThrough": _iso(through),
+           "horizonDays": FUTURE_DAYS, "termsThrough": terms_through, "regimeStart": None,
+           "days": out[first_with:], "calendar": calendar, "champion": None}
+    return inp, actual

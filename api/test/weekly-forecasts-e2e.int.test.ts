@@ -178,7 +178,7 @@ describe.skipIf(!RUN_E2E || !HAS_UV)(
     return await res.json() as ForecastWindow;
   }
 
-  it('a Monday 03:05 pass starts the location as the system, and the real job publishes a run reaching 91 days past today', async () => {
+  it('a Monday 03:05 pass starts the location as the system, and the real job publishes a run reaching a year past today', async () => {
     // An organization nobody switched: no `forecasts` field, which reads as on (D42).
     expect(await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(orgId) })).not.toHaveProperty('forecasts');
 
@@ -201,18 +201,24 @@ describe.skipIf(!RUN_E2E || !HAS_UV)(
     expect(scorecard.engines.model).not.toBeNull();
     expect(scorecard.engines.baseline).not.toBeNull();
 
-    // The published run: the lab's, from the day after its data through today plus 91 days.
+    // The published run: the lab's, from the day after its data through today plus 365 days (D52 release B): its
+    // forecast tier through today plus 91, then its outlook.
     const run = await server.connection.collection('tw_forecast_runs').findOne({ _id: new Types.ObjectId(calibration.runId as string) });
     expect(run).toMatchObject({
       status: 'published', trainingSource: 'townwise_lab', dataThrough: through, madeAt: today,
       model: { family: scorecard.engine === 'baseline' ? 'seasonal_baseline' : 'hybrid_linear_xgboost', version: LAB_MODEL_VERSION },
-      range: { from: lastWeek, to: addDays(today, 91) }, lab: expect.objectContaining({ calibrationId }) as unknown,
+      range: { from: lastWeek, to: addDays(today, 365) }, lab: expect.objectContaining({ calibrationId }) as unknown,
     });
     const ahead = await forecast(today, addDays(today, 91));
     expect(ahead.available).toBe(true);
     expect(ahead.runs.map((each) => [each.id, each.engine])).toEqual([[calibration.runId, scorecard.engine]]);
     expect(ahead.days).toHaveLength(92);
-    for (const day of ahead.days) {
+    // The last 92 days of the year: the run's outlook, with the same open days and ordered figures
+    const outlook = await forecast(addDays(today, 274), addDays(today, 365));
+    expect(outlook.days).toHaveLength(92);
+    expect(ahead.days.map((day) => day.outlook).concat(outlook.days.map((day) => day.outlook)))
+      .toEqual([...Array<boolean>(92).fill(false), ...Array<boolean>(92).fill(true)]);
+    for (const day of [...ahead.days, ...outlook.days]) {
       // Every day is open (the history has guests on holidays too), with the run's own middle and 80% range.
       expect(day.model.status).toBe('open');
       expect(day.model.low).not.toBeNull();

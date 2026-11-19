@@ -6,7 +6,8 @@ weeks (the model's quarterly refits, the baseline's weekly cutoffs, each week sc
 returned is the current run's engine unless the other's backtest weekly WAPE is at least 0.5 points lower and it passes
 the gate's coverage, bias, weekday-bias and weekday-median checks (choose_engine, passes). The returned engine's backtest, six-month folds and
 comparison with the current published run make the scorecard, with each engine's own figures beside them, and its run
-reaches today plus 91 days (forecast.run_end). Nothing here logs or prints.
+reaches today plus 91 days (its forecast tier, D42) and, when that tier is backed, on to today plus 365 (its outlook,
+D52; forecast.run_end), with the outlook's ranges by outlook_ratios. Nothing here logs or prints.
 """
 
 import re
@@ -26,7 +27,8 @@ MIN_HISTORY_DAYS = 595
 MIN_LEARNING_DAYS = 28  # held-out days a fold needs before its learning curve is worth reading
 HORIZON = 28  # the scorecard's horizon: each week forecast from a refit at least 28 days before its Monday
 SHORT_HORIZON = 7
-LONG_HORIZON = forecast.REACH_DAYS  # reported, never gated: each week forecast at least 91 days before its Monday
+LONG_HORIZON = forecast.FORECAST_DAYS  # reported, never gated: each week forecast at least 91 days before its Monday
+CONFORMAL_MIN = 9  # independent windows an outlook's 80% conformal rank needs (as baseline.weekly_band: n of 9 or more)
 ENGINE_MARGIN = 0.005  # an engine switch needs the other's backtest weekly WAPE 0.5 points lower on the same weeks
 # The publish gate's absolute checks an engine must pass to be returned over the other (api/src/lab/gate.ts GATE)
 WEEKS_WITH_RANGE_MIN = 12  # GATE.heldOutWeeksMin
@@ -223,9 +225,9 @@ def _band_width(past: pd.Series, rule: metrics.Band, horizon: int, since: pd.Tim
 
 
 def _horizon(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Timestamp, horizon: int,
-             calibration: Calibration = None) -> tuple[dict | None, float | None]:
+             calibration: Calibration = None) -> tuple[dict | None, dict[str, float] | None]:
     """The backtest weeks forecast at least `horizon` days before their Monday, reported as {weeks, weeklyWape,
-    coverage80}, and their weekly band's width (log scale); (None, None) with no such week."""
+    coverage80}, and their weekly band's log range (_log_range); (None, None) with no such week."""
     days = backtest.pick(preds, horizon, *backtest.score_window(origins, through, horizon))
     if days.empty:
         return None, None
@@ -236,7 +238,86 @@ def _horizon(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Times
     inside = [band[0] <= e <= band[1] for e, band in zip(log_err, bands) if band is not None]
     return ({"weeks": len(weeks), "weeklyWape": metrics.weekly_wape(weeks),
              "coverage80": {"inside": int(sum(inside)), "weeks": len(inside)}},
-            _band_width(past, rule, horizon, since, through))
+            _log_range(past, rule, horizon, since, through))
+
+
+def _width(log_range: dict[str, float] | None) -> float | None:
+    return None if log_range is None else log_range["hi"] - log_range["lo"]
+
+
+def _outlook_band(own: pd.Series, every: pd.Series, horizon: int) -> tuple[float, float] | None:
+    """The weekly log band (-m, m) an outlook horizon's ratio is read from (D52 decision 5, as built in release B), or
+    None when the backtest has too few weeks at that lead to read one, and the growth floor alone sets the ratio.
+
+    m is a size of the engine's weekly misses at that lead, |log(actual / forecast)|, the same on both sides: which way
+    a level drifts in the next year is not read from which way it drifted before. `own` holds the backtest weeks
+    forecast the way the run is (_outlook_errors), `every` all of them. Weeks at a lead of H days, forecast from cutoffs
+    a week apart, share most of their H days of drift, so n of them count as n * 7 / H independent windows (n_eff):
+
+    - n_eff of CONFORMAL_MIN or more: the split conformal 80% rank on n_eff windows, ceil(0.8 (n_eff + 1)) of them,
+      read as the same share of the n weeks' misses (in whole numbers, so no rounding moves it);
+    - n_eff of 1 or more but under CONFORMAL_MIN: the largest miss, since so few windows hold no 80% rank;
+    - n_eff under 1: the larger of the own weeks' largest miss and the conformal 80% rank of every backtest week at
+      that lead, of either kind, from forecast.MIN_HORIZON_WEEKS of them; with fewer, None. The rank treats correlated
+      weeks as exchangeable, which the reasoning above rejects, so it is only a floor under the own weeks' largest
+      miss: then the band never widens when the own weeks reach one window and the floor drops away, unless a new
+      week is a new largest miss. (Every week's largest miss instead widened two-year outlooks past the R2 fallback,
+      and the own weeks alone failed held-out histories: design.md, release B build notes.)"""
+    misses = np.sort(own.abs().to_numpy(dtype=float))
+    n = len(misses)
+    if 7 * n >= CONFORMAL_MIN * horizon:
+        windows = -(-8 * (7 * n + horizon) // (10 * horizon))  # ceil(0.8 (n_eff + 1))
+        m = float(misses[min(-(-windows * horizon // 7), n) - 1])  # that many of n_eff windows, as a rank of n weeks
+        return -m, m
+    if 7 * n >= horizon:
+        m = float(misses[-1])
+        return -m, m
+    if len(every) >= forecast.MIN_HORIZON_WEEKS:
+        values = np.sort(every.abs().to_numpy(dtype=float))
+        m = float(values[min(-(-8 * (len(values) + 1) // 10), len(values)) - 1])
+        m = max(m, float(misses[-1])) if n else m
+        return -m, m
+    return None
+
+
+def _outlook_errors(preds: pd.DataFrame, origins: list[pd.Timestamp], through: pd.Timestamp, horizon: int,
+                    calibration: Calibration) -> tuple[pd.Series, pd.Series]:
+    """An outlook horizon's weekly log errors over the whole backtest (_week_errors): those forecast the way the run
+    is, and all of them. For the baseline, whose run made on or after baseline.shaped_from reads last year's shape,
+    its own are the weeks forecast from a cutoff on or after that day (metrics.same_kind's later kind); for the model,
+    and for a baseline run made before that day, every week."""
+    every = _week_errors(preds, origins, through, horizon)
+    since = None if calibration is None else calibration[2]
+    if since is None or through < since:
+        return every, every
+    return every[every.index >= since + pd.Timedelta(days=horizon)], every
+
+
+def outlook_ratios(previous: tuple[int, float], backtests: list[tuple[int, dict | None, tuple[pd.Series, pd.Series]]],
+                   log_range28: dict[str, float]) -> list[dict]:
+    """The outlook horizons' reports with their ratios (D52 decision 5, as built in release B). `previous` is the
+    forecast tier's last horizon and its ratio (91, or the reach when sales lag); `backtests` each outlook horizon in
+    order with its _horizon report and its (own, every) weekly log errors (_outlook_errors). An outlook week's range is
+    the same on both sides, the 28-day weekly range's wider side times its ratio (forecast.assemble). For each horizon
+    H after P with ratio r_P, the ratio is the growth floor r_P * sqrt(H / P), widened to m over that side when
+    _outlook_band reads a band (-m, m) at H (basis growth_or_backtest), else the floor alone (basis growth). So no
+    ratio is under the one before, and a week whose widest day has a lead of H is at least as wide as (-m, m)."""
+    reports = []
+    last_horizon, last_ratio = previous
+    side = max(-log_range28["lo"], log_range28["hi"])
+    for horizon, report, (own, every) in backtests:
+        weeks = 0 if report is None else report["weeks"]
+        growth = last_ratio * float(np.sqrt(horizon / last_horizon))
+        band = _outlook_band(own, every, horizon)
+        if band is None:
+            ratio, basis = growth, "growth"
+        else:
+            ratio, basis = max(growth, band[1] / side if side > 0 else 1.0), "growth_or_backtest"
+        reports.append({"horizon": horizon, "weeks": weeks, "weeklyWape": None if report is None else report["weeklyWape"],
+                        "coverage80": {"inside": 0, "weeks": 0} if report is None else report["coverage80"],
+                        "ratio": ratio, "basis": basis})
+        last_horizon, last_ratio = horizon, ratio
+    return reports
 
 
 def calibrate(inp: dict, code_version: str) -> dict:
@@ -266,8 +347,10 @@ def calibrate(inp: dict, code_version: str) -> dict:
         return _failure(calibration_id, "not_enough_history")
     first, last = hist.date.min(), hist.date.max()
     base_cols, event_cols = features.base_columns(regime), features.event_columns(frame, hist.index)
+    terms_through = None if inp["termsThrough"] is None else pd.Timestamp(inp["termsThrough"])
     reach = forecast.reach_horizon(today, through)
-    horizons = [SHORT_HORIZON, HORIZON, LONG_HORIZON] + ([reach] if reach is not None else [])
+    horizons = [SHORT_HORIZON, HORIZON, LONG_HORIZON] + ([reach] if reach is not None else []) + list(
+        forecast.OUTLOOK_HORIZONS)
 
     # The model, at a 595-day span: refits every quarter, each week scored from the latest refit 28 (or 7) days
     # before its Monday
@@ -305,16 +388,30 @@ def calibrate(inp: dict, code_version: str) -> dict:
     widen_k = metrics.choose_k(days28)
     log_range = _log_range(bt["past"], bt["rule"], HORIZON, bt["since"], through)
     width28 = _band_width(bt["past"], bt["rule"], HORIZON, bt["since"], through)
-    horizon91, width91 = _horizon(preds, window_origins, through, LONG_HORIZON, bt["calibration"])
-    horizon_reach, width_reach = (_horizon(preds, window_origins, through, reach, bt["calibration"])
+    horizon91, range91 = _horizon(preds, window_origins, through, LONG_HORIZON, bt["calibration"])
+    horizon_reach, range_reach = (_horizon(preds, window_origins, through, reach, bt["calibration"])
                                   if reach is not None else (None, None))
     widening = []
-    for first_lead, width in ((HORIZON + 1, width91), (LONG_HORIZON + 1, width_reach)):
+    tier_horizon = LONG_HORIZON
+    for first_lead, horizon, width in ((HORIZON + 1, LONG_HORIZON, _width(range91)),
+                                       (LONG_HORIZON + 1, reach, _width(range_reach))):
         if width is not None:
             previous = widening[-1][1] if widening else 1.0
             widening.append((first_lead, max(previous, width / width28 if width28 > 0 else 1.0)))
+            tier_horizon = horizon
+    # Past the forecast tier, the outlook (D52): each outlook horizon's backtest on the weeks its band is drawn from
+    # (the baseline's whole weekly backtest, the model's own window), and its ratio by outlook_ratios
+    band_origins = window_origins if bt["calibration"] is None else bt["calibration"][0]
+    horizon_outlook = outlook_ratios(
+        (tier_horizon, widening[-1][1] if widening else 1.0),
+        [(h, _horizon(preds, band_origins, through, h, bt["calibration"])[0],
+          _outlook_errors(preds, band_origins, through, h, bt["calibration"])) for h in forecast.OUTLOOK_HORIZONS],
+        log_range)
+    tier_end = forecast.forecast_end(today, through)
+    outlook = forecast.Outlook(tier_end, horizon_outlook[0]["ratio"], horizon_outlook[1]["ratio"])
     end = forecast.run_end(today, through, 0 if horizon91 is None else horizon91["weeks"],
-                           None if horizon_reach is None else horizon_reach["weeks"])
+                           None if horizon_reach is None else horizon_reach["weeks"],
+                           terms_through if engine == "model" else None)
 
     series = [{"week": iso(start), "actual": int(round(week.actual)), "mid": float(week.pred),
                "low": None if band is None else float(week.pred * np.exp(band[0])),
@@ -343,6 +440,7 @@ def calibrate(inp: dict, code_version: str) -> dict:
         "engines": {"model": None if model_bt is None else _summary(model_bt), "baseline": _summary(base_bt)},
         "horizon91": horizon91,
         "horizonReach": horizon_reach,
+        "horizonOutlook": horizon_outlook,
     }
     run_backtest = {
         "from": iso(window[0]), "to": iso(window[1]), "weeks": len(weeks28),
@@ -351,7 +449,11 @@ def calibrate(inp: dict, code_version: str) -> dict:
         "weeklyRangePct": {"below": round(float(1 - np.exp(log_range["lo"])) * 100, 1),
                            "above": round(float(np.exp(log_range["hi"]) - 1) * 100, 1)},
     }
-    widening_params = [{"fromLead": lead, "ratio": ratio} for lead, ratio in widening]
+    # The forecast tier's entries, then the outlook's anchors: r_182 from the first outlook day's lead (it holds to 182
+    # days), r_365 from 365 (the lead it is reached at; ratios only grow between and after)
+    widening_params = [{"fromLead": lead, "ratio": ratio} for lead, ratio in widening] + [
+        {"fromLead": (tier_end - through).days + 1, "ratio": outlook.r182, "horizon": forecast.OUTLOOK_HORIZONS[0]},
+        {"fromLead": forecast.OUTLOOK_HORIZONS[1], "ratio": outlook.r365, "horizon": forecast.OUTLOOK_HORIZONS[1]}]
     if engine == "baseline":
         params = {
             "target": "guests", "engine": "baseline", "regimeStart": inp["regimeStart"],
@@ -364,7 +466,7 @@ def calibrate(inp: dict, code_version: str) -> dict:
         run = baseline.run_file(history, frame, data_through=through, end=end, widen_k=widen_k,
                                 daily_log_range=daily_log_range, weekly_log_range=log_range, widening=widening,
                                 trained_from=first, made_at=inp["today"], code_version=code_version,
-                                backtest_block=run_backtest)
+                                backtest_block=run_backtest, outlook=outlook)
         return _success(calibration_id, code_version, params, scorecard, run)
 
     # The model the run forecasts with: every history day, the level as of the cutoff, the regime where it has data
@@ -382,7 +484,7 @@ def calibrate(inp: dict, code_version: str) -> dict:
     }
     run = forecast.run_file(fitted, fit, effects, widen_k, log_range, trained_from=first, data_through=through,
                             end=end, widening=widening, made_at=inp["today"], code_version=code_version,
-                            backtest_block=run_backtest)
+                            backtest_block=run_backtest, outlook=outlook)
     # Only a model run carries how its trees learned: the baseline is a rule, with nothing fitted round by round
     scorecard["learning"] = _learning(frame, hist, through, base_cols, event_cols)
     return _success(calibration_id, code_version, params, scorecard, run)
