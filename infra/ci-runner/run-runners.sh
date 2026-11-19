@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Runs the repository's CI checks on this Mac (infra/README.md, "CI on the laptop runner"). Each slot keeps one
-# ephemeral runner waiting for a job: a just-in-time registration with the labels self-hosted and townwise-laptop,
+# ephemeral runner waiting for a job: a just-in-time registration with the labels self-hosted, townwise-laptop and
+# townwise-ci (which camo's runners carry too, infra/README.md, "CI on camo"),
 # and a fresh container that takes one job and is removed with its job folder; then the slot starts another.
 # One session runs at a time (a lock in ~/.townwise-ci). At start it removes what earlier sessions left behind: job
 # folders, runner containers, and offline townwise-laptop-* registrations. Ctrl-C stops every slot: it removes the
@@ -136,7 +137,7 @@ start_slot() {
   count=$((count + 1))
   n="$prefix-$s-$count"
   if ! resp="$(gh api -X POST "repos/$repo/actions/runners/generate-jitconfig" \
-      -f name="$n" -F runner_group_id=1 -f 'labels[]=self-hosted' -f 'labels[]=townwise-laptop' \
+      -f name="$n" -F runner_group_id=1 -f 'labels[]=self-hosted' -f 'labels[]=townwise-laptop' -f 'labels[]=townwise-ci' \
       -f work_folder=_work 2> "$state/gh-error")"; then
     retry_later "$s" "GitHub refused a runner config ($(tr '\n' ' ' < "$state/gh-error" | cut -c 1-200))"
     return
