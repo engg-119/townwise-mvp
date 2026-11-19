@@ -45,6 +45,12 @@ export interface OrgFields {
    * (staff open as admin may only turn it off), null once that person is deleted.
    */
   agentAuto?: { on: boolean; at: Date; by: string | null };
+  /**
+   * D66 (openspec change town-research-agent, design decision 9): an org admin turned research of the organization's
+   * locations off or back on. Absent until first switched, which reads as on (owner rule 2026-11-16). `by` is the
+   * admin's user id (staff open as admin may only turn it off), null once that person is deleted.
+   */
+  research?: { on: boolean; at: Date; by: string | null };
 }
 
 function orgSchema(): Schema<OrgFields> {
@@ -61,6 +67,7 @@ function orgSchema(): Schema<OrgFields> {
     weeklySuggestions: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
     calendarTitlesToAi: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
     agentAuto: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
+    research: { type: new Schema({ on: { type: Boolean, required: true }, at: { type: Date, required: true }, by: { type: String, default: null } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ createdAt: -1 });
   return schema;
@@ -89,6 +96,8 @@ export interface OrgRecord {
   readonly calendarTitlesToAi: { readonly on: boolean; readonly at: Date | null };
   /** D59: whether TownwiseAI works on its own, and when an org admin last switched it; on before that. */
   readonly agentAuto: { readonly on: boolean; readonly at: Date | null };
+  /** D66: whether the organization's locations are researched, and when an org admin last switched it; on before that. */
+  readonly research: { readonly on: boolean; readonly at: Date | null };
 }
 
 export interface OrgStore {
@@ -126,6 +135,8 @@ export interface OrgStore {
   setCalendarTitlesToAi(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
   /** D59: turns TownwiseAI working on its own on or off, recording when and by whom. False when the organization is gone. */
   setAgentAuto(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
+  /** D66: turns research on or off, recording when and by whom. False when the organization is gone. */
+  setResearch(scope: OrgScope, change: { on: boolean; at: Date; by: string }): Promise<boolean>;
 }
 
 function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
@@ -148,6 +159,8 @@ function toOrg(doc: OrgFields & { _id: Types.ObjectId }): OrgRecord {
       ? { on: true, at: null } : { on: doc.calendarTitlesToAi.on, at: doc.calendarTitlesToAi.at },
     // D59: TownwiseAI works on its own by default (owner rule 2026-11-16) until an org admin turns it off. [CONFIRM]
     agentAuto: doc.agentAuto == null ? { on: true, at: null } : { on: doc.agentAuto.on, at: doc.agentAuto.at },
+    // D66: research is on by default (owner rule 2026-11-16) until an org admin turns it off. [CONFIRM]
+    research: doc.research == null ? { on: true, at: null } : { on: doc.research.on, at: doc.research.at },
   };
 }
 
@@ -240,6 +253,10 @@ export function createOrgStore(connection: Connection): OrgStore {
     },
     async setAgentAuto(scope, change) {
       const result = await Org.updateOne({ _id: scope.orgId }, { $set: { agentAuto: { on: change.on, at: change.at, by: change.by } } });
+      return result.matchedCount === 1;
+    },
+    async setResearch(scope, change) {
+      const result = await Org.updateOne({ _id: scope.orgId }, { $set: { research: { on: change.on, at: change.at, by: change.by } } });
       return result.matchedCount === 1;
     },
   };

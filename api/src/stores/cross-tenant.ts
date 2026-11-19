@@ -46,6 +46,7 @@ import { orderCardModel } from './orders.ts';
 import { orgModel } from './orgs.ts';
 import { calendarSourceModel } from './owner-calendars.ts';
 import { profileModel } from './profiles.ts';
+import { researchRevisionModel } from './research-revisions.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
@@ -352,6 +353,10 @@ export async function deletePersonRecords(
   await orgModel(connection).updateMany({ 'calendarTitlesToAi.by': userId }, { $set: { 'calendarTitlesToAi.by': null } });
   // D59: who last switched TownwiseAI working on its own; the switch stays. Not counted.
   await orgModel(connection).updateMany({ 'agentAuto.by': userId }, { $set: { 'agentAuto.by': null } });
+  // D66: who last switched research, and the person behind a hand edit of a researched event; the switch and the edits
+  // stay. Runs record no person. Not counted.
+  await orgModel(connection).updateMany({ 'research.by': userId }, { $set: { 'research.by': null } });
+  await researchRevisionModel(connection).updateMany({ 'by.userId': userId }, { $set: { 'by.userId': null } });
   await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
   // D59: the person TownwiseAI made a change for, and who undid or adopted one; the changes stay. Not counted.
   await agentChangeModel(connection).updateMany({ onBehalfOf: userId }, { $set: { onBehalfOf: null } });

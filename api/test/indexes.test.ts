@@ -51,6 +51,11 @@ describe('indexes', () => {
       'tw_google_connections',
       // The days each person used the app (openspec change staff-overview).
       'tw_activity_days',
+      // D66, town research: a town's runs, threads, events and entities and the system month (no tenant data), and a
+      // location's runs, threads, events, entities and hand edits.
+      'tw_town_research_runs', 'tw_town_research_threads', 'tw_town_events', 'tw_town_entities', 'tw_research_spend',
+      'tw_location_research_runs', 'tw_location_research_threads', 'tw_location_events', 'tw_location_entities',
+      'tw_research_revisions',
     ].sort());
   });
 
@@ -93,6 +98,23 @@ describe('indexes', () => {
       { orgId: 1, locationId: 1, closureKey: 1 },
       expect.objectContaining({ unique: true, partialFilterExpression: { closureKey: { $type: 'string' } } }),
     ]);
+  });
+
+  it('holds one live research run per town and per location, and leads every location research index but the claim indexes with the organization (D66)', () => {
+    const connection = registered();
+    expect(indexesOf(connection, 'TwTownResearchRun')).toContainEqual([
+      { liveSubject: 1 }, expect.objectContaining({ unique: true, partialFilterExpression: { liveSubject: { $type: 'string' } } }),
+    ]);
+    expect(indexesOf(connection, 'TwLocationResearchRun')).toContainEqual([
+      { orgId: 1, liveSubject: 1 }, expect.objectContaining({ unique: true, partialFilterExpression: { liveSubject: { $type: 'objectId' } } }),
+    ]);
+    expect(indexesOf(connection, 'TwResearchRevision')).toContainEqual([{ orgId: 1, locationId: 1, eventId: 1, basedOn: 1 }, expect.objectContaining({ unique: true })]);
+    const claim = [{ status: 1, createdAt: 1 }, { status: 1, notBefore: 1 }, { status: 1, leaseUntil: 1 }];
+    for (const model of ['TwLocationResearchRun', 'TwLocationResearchThread', 'TwLocationEvent', 'TwLocationEntity', 'TwResearchRevision']) {
+      const unled = indexesOf(connection, model).map(([fields]) => fields).filter((fields) => Object.keys(fields)[0] !== 'orgId');
+      expect({ model, unled: unled.filter((fields) => !claim.some((each) => JSON.stringify(each) === JSON.stringify(fields))) }).toEqual({ model, unled: [] });
+      expect(connection.models[model]?.schema.get('strict')).toBe('throw');
+    }
   });
 
   it('declares only indexes DocumentDB 5.0 builds', () => {

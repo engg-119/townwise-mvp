@@ -650,6 +650,26 @@ describe('POST /api/admin/people/delete', () => {
     expect(docs.map((doc): unknown[] => [doc.status, doc.onBehalfOf, doc.statusBy])).toEqual([['applied', null, 'townwise_ai'], ['undone', null, null]]);
   });
 
+  it('clears a former org admin’s id from the research switch and a former member’s from their edits of researched events, which stay (D66)', async () => {
+    const former = await person('former-researcher');
+    const orgId = await createOrg(server, { name: `Research Kitchen ${randomUUID().slice(0, 6)}` });
+    const scope = { orgId } as OrgScope;
+    const locationId = await addLocation(server, { orgId, name: 'Research Room' });
+    const at = server.clock.now();
+    expect(await server.ctx.stores.orgs.setResearch(scope, { on: false, at, by: former.session.userId })).toBe(true);
+    const edit = await server.ctx.stores.researchRevisions.append(scope, {
+      locationId, eventId: `l-${new Types.ObjectId().toHexString()}`, op: 'edit', fields: { title: 'Trivia at the Hall' }, reverts: null,
+      basedOn: 'base', by: { kind: 'person', userId: former.session.userId }, now: at,
+    });
+    expect((await deletePerson(former.email)).status).toBe(200);
+    const doc = await server.connection.collection('tw_orgs').findOne({ _id: new Types.ObjectId(orgId) });
+    expect(doc?.research).toEqual({ on: false, at, by: null });
+    expect(await server.ctx.stores.researchRevisions.find(scope, locationId, edit?.id ?? '')).toMatchObject({
+      op: 'edit', fields: { title: 'Trivia at the Hall' }, by: { kind: 'person', userId: null },
+    });
+    expect(JSON.stringify(await server.connection.collection('tw_research_revisions').find({}).toArray())).not.toContain(former.session.userId);
+  });
+
   it('deletes an address that never signed in: its invitations and the events that name it', async () => {
     const orgId = await createOrg(server, { name: 'Inviting Bakery' });
     const email = uniqueEmail('never-signed-in');
