@@ -126,7 +126,7 @@ function Key(props: { model: Model; metric: Metric }): React.JSX.Element | null 
   ];
   if (items.length === 0) return null;
   return (
-    <View aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.key}>
+    <View testID="home-week-chart-key" aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.key}>
       {items.map((item) => (
         <View key={item.kind} style={styles.keyItem}><Swatch kind={item.kind} /><Mono tone="text3">{item.words}</Mono></View>
       ))}

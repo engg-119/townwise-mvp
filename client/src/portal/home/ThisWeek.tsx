@@ -232,7 +232,7 @@ export function ThisWeek(props: {
   );
 }
 
-/** The strip's footnote for its bars (from 1024px); Home's skeleton draws it in its own words. */
+/** The strip's footnote for its bars (from 1024px), under the strip behind Show the numbers when the chart shows. */
 export const BARS_FOOTNOTE = 'Bars show last year’s days, scaled to the busiest of them.';
 
 const c = theme.color;
