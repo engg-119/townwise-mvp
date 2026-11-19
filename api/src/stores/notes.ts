@@ -82,6 +82,11 @@ interface NoteFields {
   source?: { via: 'ai_file'; fileId: Types.ObjectId };
   /** A note made from an owner-calendar event. Absent otherwise. */
   fromEvent?: StoredLink;
+  /**
+   * D59: a note TownwiseAI saved on its own, through agent/apply.ts: its ledger row (tw_agent_changes) and the note's
+   * `updatedAt` when it was applied. A note whose `updatedAt` is later was edited by a person, and is theirs. Absent otherwise.
+   */
+  agent?: { changeId: Types.ObjectId; at: Date };
   createdAt: Date;
   updatedAt: Date;
 }
@@ -119,6 +124,11 @@ function noteSchema(): Schema<NoteFields> {
         linkedAt: { type: Date, required: true },
       }, { _id: false, strict: 'throw' }),
     },
+    agent: {
+      type: new Schema({
+        changeId: { type: Schema.Types.ObjectId, required: true }, at: { type: Date, required: true },
+      }, { _id: false, strict: 'throw' }),
+    },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
@@ -141,9 +151,14 @@ export interface NoteRecord extends NoteContent {
   readonly source: AiSource | null;
   /** The owner-calendar event the note was made from; null for any other note. */
   readonly fromEvent: NoteLink | null;
+  /** D59: the ledger row of a note TownwiseAI saved on its own, and its `updatedAt` then; null for any other note. */
+  readonly agent: NoteAgent | null;
   readonly createdAt: Date;
   readonly updatedAt: Date;
 }
+
+/** D59: which ledger row added the note, and the note's `updatedAt` when it did. */
+export interface NoteAgent { readonly changeId: string; readonly at: Date }
 
 /** Tenant store: every function takes the OrgScope first and filters on its orgId. */
 export interface NoteStore {
@@ -164,7 +179,7 @@ export interface NoteStore {
    * TownwiseAI made from a file (spec 11A.9); `fromEvent` links one made from an owner-calendar event.
    */
   create(scope: OrgScope, locationId: string, content: NoteContent, input: {
-    createdBy: string; now: Date; id?: string; byStaff?: boolean; source?: AiSource; fromEvent?: NoteLink;
+    createdBy: string; now: Date; id?: string; byStaff?: boolean; source?: AiSource; fromEvent?: NoteLink; agent?: { changeId: string };
   }): Promise<NoteRecord>;
   /**
    * The title backfill (D49): sets the note's title only while it has no `title` key (a compare-and-set), so a second
@@ -213,6 +228,7 @@ function toNote(doc: NoteFields & { _id: Types.ObjectId }): NoteRecord {
       calendarId: doc.fromEvent.calendarId.toHexString(), uid: doc.fromEvent.uid, startDate: doc.fromEvent.startDate,
       endDate: doc.fromEvent.endDate, startTime: doc.fromEvent.startTime, endTime: doc.fromEvent.endTime, linkedAt: doc.fromEvent.linkedAt,
     },
+    agent: doc.agent === undefined ? null : { changeId: doc.agent.changeId.toHexString(), at: doc.agent.at },
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
   };
@@ -276,6 +292,7 @@ export function createNoteStore(connection: Connection): NoteStore {
         orgId: scope.orgId, locationId, ...fieldsOf(content), createdBy: input.createdBy, ...(input.byStaff === true ? { byStaff: true } : {}),
         ...(input.source === undefined ? {} : { source: { via: 'ai_file', fileId: new Types.ObjectId(input.source.fileId) } }),
         ...(input.fromEvent === undefined ? {} : { fromEvent: { ...input.fromEvent, calendarId: new Types.ObjectId(input.fromEvent.calendarId) } }),
+        ...(input.agent === undefined ? {} : { agent: { changeId: new Types.ObjectId(input.agent.changeId), at: input.now } }),
         createdAt: input.now, updatedAt: input.now,
       });
       return toNote(doc.toObject());

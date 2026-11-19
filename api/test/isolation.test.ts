@@ -39,6 +39,22 @@ describe('isolation (source)', () => {
     ]);
   });
 
+  it('D59: only stores/index.ts and the writer import the ledger of TownwiseAI’s changes, and only agent/apply.ts adds to it', () => {
+    const importers = sourceFiles()
+      .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'stores/agent-changes.ts'))
+      .map((file) => file.path)
+      .sort();
+    // agent/apply.ts reads the why's length cap from it; stores/cross-tenant.ts clears a deleted person's id from its rows.
+    expect(importers).toEqual(['agent/apply.ts', 'stores/cross-tenant.ts', 'stores/index.ts']);
+    // The one writer: every change TownwiseAI saves goes through applyChange. Undo moves a row's status
+    // (handlers/agent-changes.ts), and a file's own undo marks its rows (handlers/data.ts).
+    const writers = sourceFiles().filter((file) => /agentChanges\.(insertApplying|setWritten|markApplied|removeApplying)\(/.test(file.text)).map((file) => file.path);
+    expect(writers).toEqual(['agent/apply.ts']);
+    const undoers = sourceFiles().filter((file) => /agentChanges\.(markUndoing|markUndone|markAdopted|markSourceUndone)\(/.test(file.text)).map((file) => file.path).sort();
+    expect(undoers.every((path) => ['handlers/agent-changes.ts', 'handlers/data.ts'].includes(path))).toBe(true);
+  });
+
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {
     const with401 = sourceFiles().filter((file) => /\b401\b/.test(file.text)).map((file) => file.path).sort();
     // calendar/google.ts reads Google's 401 to pick its `unauthorized` code and never answers one: it builds no AppError,
@@ -115,6 +131,11 @@ describe('isolation (source)', () => {
 
   it('only access/policy.ts mints the TownwiseAI reader’s scope, and only files/ai-reader.ts asks for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedAiRead(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'files/ai-reader.ts']);
+  });
+
+  it('D59 slice 2: only access/policy.ts mints a claimed calendar sort’s scope, and only files/ai-reader.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedCalendarSort(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'files/ai-reader.ts']);
   });
 
@@ -232,10 +253,15 @@ describe('isolation (source)', () => {
     // D63: a calendar file attached to a TownwiseAI message is told to the model with what its import did
     // (files/calendar-import.ts attachedCalendars: the calendar's id, label, event count and date added). D61: Your data's
     // list shows each calendar as a row through the calendar routes' own view (handlers/data.ts). Neither reads an event.
+    // D59 slice 2: TownwiseAI's sort on import (calendar/auto-sort.ts) labels a file calendar's events and notes its
+    // upcoming bookings as the booking routes do, and its Undo per calendar (handlers/agent-changes.ts) and the changes'
+    // views (agent/changes.ts) clear and count the labels that sort set, never reading a title.
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
-      'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'files/calendar-import.ts',
-      'handlers/calendar-bookings.ts', 'handlers/data.ts', 'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
-      'handlers/weekly-suggestions.ts', 'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
+      'agent/changes.ts', 'calendar/auto-sort.ts', 'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts',
+      'chat/tools/owner-calendar.ts', 'files/calendar-import.ts', 'handlers/agent-changes.ts', 'handlers/calendar-bookings.ts', 'handlers/data.ts',
+      'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
+      'handlers/weekly-suggestions.ts', 'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts',
+      'stores/owner-calendars.ts',
     ]);
     const input = sourceFiles().find((each) => each.path === 'lab/input.ts')?.text ?? '';
     expect([...input.matchAll(/\bownerCalendars\b\.?(\w*)/g)].map((match) => match[1])).toEqual(['bookingsBetween']);

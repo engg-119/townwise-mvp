@@ -6,6 +6,7 @@ import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
 import { knownRuleSuggestions, ruleScheduleSchema, ruleSchema, type Rule, type RuleSuggestion } from '../portal/rules/api';
 import type { SseEvent } from '../api/sse';
+import { agentAutoSchema, agentChangeItemSchema, noteSuggestionSchema, type AgentAuto, type NoteSuggestion } from './agentChanges';
 import type { SourceLink } from './tools';
 import type { TreeNode } from './tree';
 import { visualSchema, type Visual } from './visuals/schema';
@@ -58,7 +59,19 @@ export type ToolView = Record<string, unknown>;
 const viewSchema = z.record(z.string(), z.unknown()).nullable();
 
 const proposalStatusSchema = z.enum(['open', 'saved', 'dismissed']);
-const proposalViewSchema = noteProposalSchema.extend({ id: z.string(), status: proposalStatusSchema, noteId: z.string().nullable() });
+/**
+ * D59 slice 4: on a note TownwiseAI saved itself from the person's own message, its change (the activity's and the log's
+ * row): its status, whether this caller is offered Undo, and `target` when someone edited (`changed`) or deleted
+ * (`gone`) the note on Notes since. Absent on any other proposal, and from an older API.
+ */
+const autoSchema = z.object({
+  changeId: z.string(), status: z.enum(['applying', 'applied', 'undoing', 'undone', 'adopted']), undoable: z.boolean(),
+  target: z.enum(['changed', 'gone']).optional(),
+});
+export type AutoSaved = z.infer<typeof autoSchema>;
+const proposalViewSchema = noteProposalSchema.extend({
+  id: z.string(), status: proposalStatusSchema, noteId: z.string().nullable(), auto: autoSchema.optional(),
+});
 
 const partSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('thinking'), text: z.string() }),
@@ -174,6 +187,8 @@ export interface ProposalView extends NoteProposal {
   id: string;
   status: 'open' | 'saved' | 'dismissed';
   noteId: string | null;
+  /** D59 slice 4: set only when TownwiseAI saved the note itself. */
+  auto?: AutoSaved | undefined;
 }
 
 export type StoredPart =
@@ -238,7 +253,8 @@ export type ChatEvent =
   /** The text streamed since the last tool call was written ahead of work, not as the answer: it joins the thinking. */
   | { type: 'aside' }
   | { type: 'tool'; id: string; name: string; state: 'running' | 'done' | 'error'; input: ToolView | null; result: ToolView | null }
-  | { type: 'proposal'; id: string; proposal: NoteProposal }
+  /** D59 slice 4: `saved` when TownwiseAI saved the note itself, the person having stated it plainly. */
+  | { type: 'proposal'; id: string; proposal: NoteProposal; saved?: { noteId: string; changeId: string } | undefined }
   | { type: 'visual'; id: string; visual: Visual }
   | { type: 'suggestions'; id: string; prompts: string[] }
   /**
@@ -270,7 +286,7 @@ const eventSchemas = {
   tool: z.object({
     id: z.string(), name: z.string(), state: z.enum(['running', 'done', 'error']), input: viewSchema.default(null), result: viewSchema.default(null),
   }),
-  proposal: z.object({ id: z.string(), proposal: noteProposalSchema }),
+  proposal: z.object({ id: z.string(), proposal: noteProposalSchema, saved: z.object({ noteId: z.string(), changeId: z.string() }).optional() }),
   visual: z.object({ id: z.string(), visual: visualSchema }),
   suggestions: z.object({ id: z.string(), prompts: z.array(z.string()) }),
   done: z.object({ stopReason: z.string(), leafId: nodeIdOrNull, sources: sourcesSchema }),
@@ -307,7 +323,8 @@ export function chatEventOf(sse: SseEvent): ChatEvent | null {
     }
     case 'proposal': {
       const parsed = eventSchemas.proposal.safeParse(data);
-      return parsed.success ? { type: 'proposal', id: parsed.data.id, proposal: proposalOf(parsed.data.proposal) } : null;
+      if (!parsed.success) return null;
+      return { type: 'proposal', id: parsed.data.id, proposal: proposalOf(parsed.data.proposal), ...(parsed.data.saved === undefined ? {} : { saved: parsed.data.saved }) };
     }
     case 'visual': {
       const parsed = eventSchemas.visual.safeParse(data);
@@ -360,7 +377,7 @@ export function loadChat(api: ApiClient, locationId: string): Promise<ChatSummar
 }
 
 function proposalViewOf(raw: z.infer<typeof proposalViewSchema>): ProposalView {
-  return { ...proposalOf(raw), id: raw.id, status: raw.status, noteId: raw.noteId };
+  return { ...proposalOf(raw), id: raw.id, status: raw.status, noteId: raw.noteId, ...(raw.auto === undefined ? {} : { auto: raw.auto }) };
 }
 
 function partOf(part: z.infer<typeof partSchema>): StoredPart[] {
@@ -591,6 +608,8 @@ const activitySchema = z.discriminatedUnion('kind', [
   z.object({
     at: z.string(), kind: z.literal('file_processed'), fileId: z.string(), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int(),
   }),
+  /** D59: a change TownwiseAI saved on its own, with whether Undo is offered. */
+  agentChangeItemSchema,
 ]);
 export type ActivityItem = z.infer<typeof activitySchema>;
 
@@ -663,6 +682,7 @@ export type WeeklySuggestions = z.infer<typeof weeklySuggestionsSchema>;
 const panelSchema = z.object({
   questions: z.array(z.unknown()), activity: z.array(z.unknown()), suggestions: z.array(z.unknown()).optional(),
   weeklySuggestions: z.unknown().optional(), ruleSuggestions: z.array(z.unknown()).optional(),
+  agentAuto: z.unknown().optional(), noteSuggestions: z.array(z.unknown()).optional(), waiting: z.number().int().optional(),
 });
 
 export interface AgentPanel {
@@ -673,6 +693,12 @@ export interface AgentPanel {
   weeklySuggestions: WeeklySuggestions | null;
   /** D46: the open suggested closure rules from files and the sales history; none from an API before them. */
   ruleSuggestions: RuleSuggestion[];
+  /** D59: whether TownwiseAI works on its own; null from an API before it. */
+  agentAuto: AgentAuto | null;
+  /** D59: the events a file read wasn't sure of, waiting for a member; none from an API before them. */
+  noteSuggestions: NoteSuggestion[];
+  /** D59: how many things TownwiseAI wasn't sure of are waiting (these and the suggested rules); 0 from an API before it. */
+  waiting: number;
 }
 
 function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
@@ -685,10 +711,14 @@ function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
 export async function loadAgentPanel(api: ApiClient, locationId: string): Promise<AgentPanel> {
   const panel = await api.json(`${locationPath(locationId)}/agent`, panelSchema);
   const weekly = weeklySuggestionsSchema.safeParse(panel.weeklySuggestions);
+  const agentAuto = agentAutoSchema.safeParse(panel.agentAuto);
   return {
     questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema),
     suggestions: known(panel.suggestions ?? [], suggestionSchema), weeklySuggestions: weekly.success ? weekly.data : null,
     ruleSuggestions: knownRuleSuggestions(panel.ruleSuggestions ?? []),
+    agentAuto: agentAuto.success ? agentAuto.data : null,
+    noteSuggestions: known(panel.noteSuggestions ?? [], noteSuggestionSchema),
+    waiting: panel.waiting ?? 0,
   };
 }
 

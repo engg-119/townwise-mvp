@@ -170,6 +170,18 @@ describe('Sort with TownwiseAI', () => {
   });
 });
 
+describe('sorting on import (D59 slice 2)', () => {
+  it('queues no sort of its own where no TownwiseAI reader runs, so the press stays the only sort (calendar-auto-sort.int.test.ts has the rest)', async () => {
+    const t = await tenant();
+    const calls = model.calls.length;
+    const calendar = await addExport(t);
+    const stored = await server.connection.collection('tw_calendar_sources').findOne({ _id: new Types.ObjectId(calendar.id) });
+    expect(stored?.autoSort).toBeUndefined();
+    expect(calendar.bookings).toMatchObject({ state: 'unsorted' });
+    expect(model.calls).toHaveLength(calls);
+  });
+});
+
 describe('labels and Use for forecasts', () => {
   it('confirms, notes each upcoming buyout and party once, starts a refit as the admin, and audits counts only', async () => {
     const t = await tenant();

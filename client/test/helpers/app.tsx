@@ -35,7 +35,8 @@ import Town from '../../app/(gate)/(app)/(client)/locations/[locationId]/town';
 import Orders from '../../app/(gate)/(app)/(client)/locations/[locationId]/orders/index';
 import OrdersSetup from '../../app/(gate)/(app)/(client)/locations/[locationId]/orders/setup';
 import LocationSettings from '../../app/(gate)/(app)/(client)/locations/[locationId]/settings';
-import Agent from '../../app/(gate)/(app)/(client)/locations/[locationId]/agent';
+import Agent from '../../app/(gate)/(app)/(client)/locations/[locationId]/agent/index';
+import AgentChanges from '../../app/(gate)/(app)/(client)/locations/[locationId]/agent/changes';
 import Rules from '../../app/(gate)/(app)/(client)/locations/[locationId]/rules';
 import Chat from '../../app/(gate)/(app)/(client)/locations/[locationId]/chat';
 import ConsoleLayout from '../../app/(gate)/(app)/(console)/_layout';
@@ -101,7 +102,8 @@ export function appRoutes(root: React.ComponentType, overrides?: Record<string, 
     '(gate)/(app)/(client)/locations/[locationId]/orders/index': Orders,
     '(gate)/(app)/(client)/locations/[locationId]/orders/setup': OrdersSetup,
     '(gate)/(app)/(client)/locations/[locationId]/settings': LocationSettings,
-    '(gate)/(app)/(client)/locations/[locationId]/agent': Agent,
+    '(gate)/(app)/(client)/locations/[locationId]/agent/index': Agent,
+    '(gate)/(app)/(client)/locations/[locationId]/agent/changes': AgentChanges,
     '(gate)/(app)/(client)/locations/[locationId]/rules': Rules,
     '(gate)/(app)/(client)/locations/[locationId]/chat': Chat,
     '(gate)/(app)/(console)/_layout': ConsoleLayout,

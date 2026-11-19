@@ -10,7 +10,8 @@
 // never come back. The tool's name, description and input are unchanged by that (its frozen prefix). In a turn staff
 // run with the organization open as its admin, a Google calendar's events are listed as "Google calendar event" from
 // "Google calendar", as the Calendar shows them to staff (connect-google-calendar design decision 12), so its reply
-// can't quote one. An event becomes a note only through propose_note, which the owner saves.
+// can't quote one. An event becomes a note only through propose_note's card, which the owner saves: a read that lists
+// any event sets the turn's readNotTyped, so propose_note never saves a note itself in that turn (D59 slice 4).
 import { z } from 'zod';
 
 import { daysBetween, EARLIEST_DATE, isoDate, utcDay } from '../../dates.ts';
@@ -98,6 +99,8 @@ export const ownerCalendarTool: ChatTool<OwnerCalendarRange> = {
       ? new Set(calendars.filter((calendar) => calendar.kind !== 'google').map((calendar) => calendar.id))
       : null;
     const events = await store.eventsBetween(tc.scope, tc.location.id, range);
+    // D59 slice 4: a title is anyone's words (an invitation, a subscribed feed), so propose_note saves nothing itself.
+    if (events.length > 0) tc.turn.readNotTyped = true;
     return {
       content: JSON.stringify({
         events: events.slice(0, MAX_EVENTS_LISTED).map((event) => {

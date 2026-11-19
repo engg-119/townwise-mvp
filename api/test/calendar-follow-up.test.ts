@@ -21,7 +21,7 @@ const DEC_12: NoteDates = { startDate: '2026-12-12', endDate: '2026-12-12', star
 function note(id: string, dates: NoteDates, link: NoteDates | null = dates, fields: Partial<NoteRecord> = {}): NoteRecord {
   return {
     id, kind: 'private_event', ...dates, weekdays: null, effect: 'closed', expectedGuests: 40, detail: 'Buyout upstairs', title: null,
-    createdBy: 'user-0001', byStaff: false, source: null,
+    createdBy: 'user-0001', byStaff: false, source: null, agent: null,
     fromEvent: link === null ? null : { calendarId: CALENDAR, uid: UID, ...link, linkedAt: new Date('2026-11-01T12:00:00.000Z') },
     createdAt: new Date('2026-11-01T12:00:00.000Z'), updatedAt: EDITED, ...fields,
   };

@@ -595,6 +595,8 @@ test('today’s stored day is never likely closed: its upload may be partial, so
 
 test('a rule a note sets aside says so, and rule reasons past the first six are counted for the panel (D31)', () => {
   expect(reasonOutcomeWords('overridden', null)).toBe('A note on this day sets this rule aside');
+  // D59: a TownwiseAI note a note your team made sets aside.
+  expect(reasonOutcomeWords('overridden', null, 0, 'note')).toBe('A note your team made on this day sets this TownwiseAI note aside');
   const ruled = forecastDay({ date: '2026-11-21', moreRules: 2 });
   expect(dayView('2026-11-21', input({ forecast: windowOf([ruled]) })).moreRules).toBe(2);
   // An older answer without the count reads as none.

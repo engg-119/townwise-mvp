@@ -139,8 +139,13 @@ export const dataCalendarSchema = z.object({
 });
 export type DataCalendar = z.infer<typeof dataCalendarSchema>;
 
-/** `calendars` are the same on every page; none from an API older than D61. */
-const listSchema = z.object({ items: z.array(dataItemSchema), next: z.string().nullable(), calendars: z.array(dataCalendarSchema).default([]) });
+/**
+ * `calendars` are the same on every page; none from an API older than D61. D59: `agentAuto`, whether TownwiseAI reads a
+ * file added here on its own; absent from an API before it, read as no.
+ */
+const listSchema = z.object({
+  items: z.array(dataItemSchema), next: z.string().nullable(), calendars: z.array(dataCalendarSchema).default([]), agentAuto: z.boolean().optional(),
+});
 const itemSchema = z.object({ item: dataItemSchema });
 const removedSchema = z.object({ deletedDays: z.number(), deletedFiles: z.number() });
 const undoneSchema = z.object({ item: dataItemSchema, calibrationKept: z.string().nullable() });
@@ -156,7 +161,7 @@ function itemPath(locationId: string, ref: string): `/${string}` {
  */
 export function listData(
   api: ApiClient, opts: { locationId?: string; after?: string },
-): Promise<{ items: DataItem[]; next: string | null; calendars: DataCalendar[] }> {
+): Promise<{ items: DataItem[]; next: string | null; calendars: DataCalendar[]; agentAuto?: boolean | undefined }> {
   const query = new URLSearchParams();
   if (opts.locationId !== undefined) query.set('locationId', opts.locationId);
   if (opts.after !== undefined) query.set('after', opts.after);
@@ -202,7 +207,8 @@ export function removeItem(api: ApiClient, locationId: string, ref: string): Pro
 }
 
 /** Pasted text kept for reference, as a `.txt` file named from its title. */
-export async function addText(api: ApiClient, locationId: string, input: { title: string; text: string }): Promise<FileView> {
+/** D59 slice 4: `aiAuto: true` only when the person left the box checked, so TownwiseAI reads the text on its own. */
+export async function addText(api: ApiClient, locationId: string, input: { title: string; text: string; aiAuto?: true }): Promise<FileView> {
   const body = await api.json(`/api/org/locations/${encodeURIComponent(locationId)}/data/text`, textSchema, { method: 'POST', body: input });
   return body.file;
 }

@@ -63,11 +63,14 @@ export function filesPath(locationId: string, rest = ''): string {
 
 export interface Created { file: FileView; import: { id: string; status: string }; limits: Record<string, number> }
 
-/** Create, every chunk in order, complete. Resolves the complete response's body (or the first refusal). */
+/** Create, every chunk in order, complete (with `aiAuto` when given). Resolves the complete response's body (or the first refusal). */
 export async function uploadFile(
-  server: TownwiseTestServer, locationId: string, session: TestSession, name: string, bytes: Buffer, opts: { purpose?: 'history' | 'reference' } = {},
+  server: TownwiseTestServer, locationId: string, session: TestSession, name: string, bytes: Buffer,
+  opts: { purpose?: 'history' | 'reference'; aiAuto?: boolean } = {},
 ): Promise<{ status: number; body: Record<string, unknown> & { file?: FileView } }> {
-  const created = await call(server, filesPath(locationId), { session, json: { name, sizeBytes: bytes.length, purpose: opts.purpose ?? 'history' } });
+  const created = await call(server, filesPath(locationId), {
+    session, json: { name, sizeBytes: bytes.length, purpose: opts.purpose ?? 'history' },
+  });
   if (created.status !== 201) return { status: created.status, body: await created.json() as Record<string, unknown> };
   const { file, limits } = await created.json() as Created;
   const chunkSize = limits.chunkSize ?? 0;
@@ -75,7 +78,8 @@ export async function uploadFile(
     const sent = await putChunk(server, filesPath(locationId, `/${file.id}/chunks/${String(index)}`), session, bytes.subarray(index * chunkSize, (index + 1) * chunkSize));
     if (sent.status !== 200) return { status: sent.status, body: sent.json() };
   }
-  const done = await call(server, filesPath(locationId, `/${file.id}/complete`), { session, json: {} });
+  // D59: the box's choice as the upload finishes; left out, as an upload with no box sends it.
+  const done = await call(server, filesPath(locationId, `/${file.id}/complete`), { session, json: opts.aiAuto === undefined ? {} : { aiAuto: opts.aiAuto } });
   return { status: done.status, body: await done.json() as Record<string, unknown> & { file?: FileView } };
 }
 

@@ -56,6 +56,8 @@ export interface Call { method: string; path: string; body: unknown }
 
 export interface FilesFake extends ApiClient {
   chunkSize: number;
+  /** D59: the create answer's `autoRead`; left out while undefined, as an API before it does. */
+  autoRead?: boolean;
   calls: Call[];
   puts: PendingPut[];
   /**
@@ -92,6 +94,7 @@ function createdOf(fake: FilesFake, n: number, body: unknown): unknown {
     }),
     import: { id: 'i1', status: 'open' },
     limits: { maxFileBytes: 209_715_200, chunkSize: fake.chunkSize, dailyBytesLeft: 2 ** 31, storedBytesLeft: 5 * 2 ** 30, filesLeftInImport: 49 },
+    ...(fake.autoRead === undefined ? {} : { autoRead: fake.autoRead }),
   };
 }
 

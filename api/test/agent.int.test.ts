@@ -105,6 +105,8 @@ async function addRules(locationId: string, schedules: readonly (Record<string, 
 /** A member's panel at a location with no weekly suggestions (openspec change weekly-forecast-suggestions) and no suggested rules (D46). */
 const NO_SUGGESTIONS = {
   suggestions: [], weeklySuggestions: { on: true, available: false, canChange: false, calendarTitles: true }, ruleSuggestions: [],
+  // D59: TownwiseAI works on its own by default; nothing reads files in this suite, so it is not available here.
+  agentAuto: { on: true, available: false, canChange: false }, noteSuggestions: [], waiting: 0,
 };
 
 async function panel(locationId: string, session = member): Promise<{ status: number; body: AgentPanel }> {
@@ -204,7 +206,7 @@ describe('GET /api/org/locations/:locationId/agent', () => {
       body: {
         questions: [GAP],
         activity: [{ at: at.toISOString(), kind: 'upload_applied', firstDate: FROM, lastDate: TO, dayCount: 78 }],
-        ...NO_SUGGESTIONS, ruleSuggestions: [SALES_MONDAY],
+        ...NO_SUGGESTIONS, ruleSuggestions: [SALES_MONDAY], waiting: 1,
       },
     });
   });
@@ -212,7 +214,7 @@ describe('GET /api/org/locations/:locationId/agent', () => {
   it('asks about a usually busy day with almost no guests, and the gap (newest first)', async () => {
     const locationId = await askedLocation({ nearEmpty: true });
     expect(await panel(locationId)).toEqual({
-      status: 200, body: { questions: [LIKELY, GAP], activity: [], ...NO_SUGGESTIONS, ruleSuggestions: [SALES_MONDAY] },
+      status: 200, body: { questions: [LIKELY, GAP], activity: [], ...NO_SUGGESTIONS, ruleSuggestions: [SALES_MONDAY], waiting: 1 },
     });
   });
 
@@ -889,6 +891,29 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
       type: 'rule', text: 'Closed on Tuesdays', why: null, calendarIds: [], source: 'file', fileId: new Types.ObjectId('0000000000000000000000f1'),
       closureKey: 'closed|w=2|ongoing',
       content: { kind: 'closure', startDate: '2026-06-01', endDate: null, weekdays: [2], effect: 'closed', expectedGuests: null, detail: null, startTime: null, endTime: null },
+    }));
+
+    // D59: a note TownwiseAI added from that file on its own, at 08:00, still as it added it, so any member may undo it;
+    // and an event of the file it was not sure of, waiting as a note suggestion.
+    const changeAt = new Date('2026-06-01T08:00:00.000Z');
+    await server.connection.collection('tw_notes').insertOne({
+      _id: new Types.ObjectId('0000000000000000000000a4'), orgId: org, locationId: location, kind: 'private_event', startDate: '2026-07-04',
+      endDate: '2026-07-04', weekdays: null, effect: 'closed', expectedGuests: 60, detail: null, title: 'Sentinel-event-title',
+      createdBy: 'townwise_ai', source: { via: 'ai_file', fileId: new Types.ObjectId('0000000000000000000000f1') },
+      agent: { changeId: new Types.ObjectId('0000000000000000000000e1'), at: changeAt }, createdAt: changeAt, updatedAt: changeAt,
+    });
+    await server.connection.collection('tw_agent_changes').insertOne({
+      _id: new Types.ObjectId('0000000000000000000000e1'), orgId: org, locationId: location, sourceKind: 'file', sourceId: '0000000000000000000000f1',
+      action: 'note.add', targetId: new Types.ObjectId('0000000000000000000000a4'), dedupeKey: 'sentinel-key', confidence: 'high',
+      why: 'Sentinel-why', onBehalfOf: member.userId, status: 'applied', targetUpdatedAt: changeAt, startDate: '2026-07-04', endDate: '2026-07-04',
+      noteKind: 'private_event', appliedAt: changeAt, statusAt: changeAt, statusBy: 'townwise_ai',
+    });
+    await server.connection.collection('tw_agent_suggestions').insertOne(suggestion('0000000000000000000000d2', {
+      type: 'note', text: null, why: null, calendarIds: [], source: 'file', fileId: new Types.ObjectId('0000000000000000000000f1'),
+      content: {
+        kind: 'private_event', startDate: '2026-07-11', endDate: '2026-07-11', weekdays: null, effect: 'more_guests', expectedGuests: 30,
+        detail: null, startTime: null, endTime: null, title: 'Sentinel-unsure-event',
+      },
     }));
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });

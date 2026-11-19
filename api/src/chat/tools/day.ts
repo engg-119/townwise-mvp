@@ -14,7 +14,7 @@ import type { NoteRecord } from '../../stores/notes.ts';
 import { localDay, weekdayOf } from '../../time-zones.ts';
 import { townCalendarCovers, townEvents } from '../../town-calendar.ts';
 import type { ChatTool } from './registry.ts';
-import { DATE, dollars, sourceLinks, viewOf } from './shared.ts';
+import { DATE, dollars, notTypedNote, sourceLinks, viewOf } from './shared.ts';
 
 const MAX_DAYS_AHEAD = 400;
 
@@ -71,6 +71,8 @@ export const dayTool: ChatTool<DayInput> = {
     const rules = scheduledRules(scheduled).map((rule) => rule.schedule);
     const row = history.find((day) => day.date === date);
     const notes = allNotes.filter((note) => covers(note, date));
+    // D59 slice 4: as list_notes, a note written from a file or a calendar carries words no person typed.
+    if (notes.some(notTypedNote)) tc.turn.readNotTyped = true;
     const events = townEvents(town.townId, { from: date, to: date });
     const [upload] = row === undefined ? [] : await ctx.stores.uploads.byIds(scope, location.id, [row.uploadId]);
     const guests = new Map(history.map((day) => [day.date, day.guests]));

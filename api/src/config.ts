@@ -104,6 +104,12 @@ export const configSchema = z.object({
    */
   TOWNWISE_WEEKLY_SUGGESTIONS: z.stringbool().default(true),
   /**
+   * D59 (openspec change auto-apply-agent-reads, design decision 13): whether TownwiseAI works on its own here, reading
+   * each stored file a person adds and saving what it is sure of with Undo. On unless set false (the owner's rule of
+   * 2026-11-16); an organization's own switch (`agentAuto`) must be on too. [CONFIRM: TownwiseAI works on its own by default]
+   */
+  TOWNWISE_AGENT_AUTO: z.stringbool().default(true),
+  /**
    * Development only: the secret a local lab job calls back with, shared by the API and the weekly worker so a job the
    * worker started can call back to the API (both refuse it in production, as they refuse TOWNWISE_LAB_RUNNER=local).
    * Unset, the API makes its own per process and the worker can't start a local job.
@@ -150,6 +156,8 @@ export interface ResolvedTownwiseConfig {
   readonly weeklyForecastCap: number;
   /** TOWNWISE_WEEKLY_SUGGESTIONS, the weekly suggestions' deploy-level switch. */
   readonly weeklySuggestions: boolean;
+  /** D59: TOWNWISE_AGENT_AUTO, the deploy-level switch for TownwiseAI working on its own. */
+  readonly agentAuto: boolean;
 }
 
 /** The URL's origin, or null when it has a path, query, fragment or credentials. */
@@ -292,5 +300,6 @@ export function resolveTownwiseConfig(
     weeklyForecasts: config.TOWNWISE_WEEKLY_FORECASTS,
     weeklyForecastCap: config.TOWNWISE_WEEKLY_FORECAST_CAP,
     weeklySuggestions: config.TOWNWISE_WEEKLY_SUGGESTIONS,
+    agentAuto: config.TOWNWISE_AGENT_AUTO,
   };
 }

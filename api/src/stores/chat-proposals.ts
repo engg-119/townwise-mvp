@@ -4,7 +4,9 @@
 // still open. A save claims the row (`saving`), writes the note or the item with the row's `noteId`, then marks it
 // `saved`, so a retry or a second tab finishes the same note or item instead of making another
 // (handlers/chat-proposals.ts, handlers/chat-item-proposals.ts). Every row gets its `noteId` when it is inserted, a
-// dismissed one too. Holds no note content, title or text.
+// dismissed one too. Holds no note content, title or text. D59 slice 4: a note propose_note saved itself, because the
+// person stated it plainly, is claimed the same way inside the turn and marked saved with `changeId`, its row in
+// tw_agent_changes (chat/tools/propose-note.ts saveStated); a claim whose note was not saved is taken back, so the card stays open.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -26,6 +28,8 @@ interface ProposalFields {
   /** The id the saved note takes, or for an item the id reserved for the kept file, so every try writes the same one. */
   noteId: Types.ObjectId;
   edited: boolean;
+  /** D59 slice 4: the tw_agent_changes row of a note TownwiseAI saved itself from the person's message; absent otherwise. */
+  changeId?: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -41,6 +45,7 @@ function proposalSchema(): Schema<ProposalFields> {
     kind: { type: String, enum: ['item'] },
     noteId: { type: Schema.Types.ObjectId, required: true },
     edited: { type: Boolean, required: true },
+    changeId: { type: Schema.Types.ObjectId },
     createdAt: { type: Date, required: true },
     updatedAt: { type: Date, required: true },
   }, { strict: true, versionKey: false, read: 'primary' });
@@ -60,6 +65,8 @@ export interface ProposalRecord {
   readonly status: ProposalStatus;
   readonly noteId: string;
   readonly edited: boolean;
+  /** D59 slice 4: the ledger row of a note TownwiseAI saved itself (its card offers Undo), else null. */
+  readonly changeId: string | null;
 }
 
 /** One proposal: the conversation it was made in and its propose_note call's id. */
@@ -92,11 +99,16 @@ export interface ChatProposalStore {
    * the claim and this call; the note exists by then, so it is overruled.
    */
   markSaved(scope: OrgScope, key: ProposalKey, now: Date): Promise<void>;
+  /** D59 slice 4: `saving` to `saved`, with the ledger row of the note TownwiseAI saved itself under the claimed id. */
+  markAutoSaved(scope: OrgScope, key: ProposalKey, input: { changeId: string; now: Date }): Promise<void>;
+  /** D59 slice 4: removes a `saving` row whose note TownwiseAI did not save after all, so the card reads open. */
+  unclaim(scope: OrgScope, key: ProposalKey): Promise<void>;
   /** Sets the proposal aside, unless it is saved. Resolves the row either way. */
   dismiss(scope: OrgScope, key: ProposalKey, input: ProposalInsert & { now: Date }): Promise<ProposalRecord>;
   /**
    * The note ids of the author's saved note proposals at the location, most recently saved first (TownwiseAI's
-   * activity, spec 10.12). Kept items are not notes and are left out.
+   * activity, spec 10.12). Kept items are not notes and are left out, and so are notes TownwiseAI saved itself (D59
+   * slice 4), which the activity lists as its own changes.
    */
   listSaved(scope: OrgScope, owner: ProposalOwner, limit: number): Promise<string[]>;
   /** Resolves the number deleted. */
@@ -109,7 +121,10 @@ export interface ChatProposalStore {
 type ProposalDoc = ProposalFields & { _id: Types.ObjectId };
 
 function toRecord(doc: ProposalDoc): ProposalRecord {
-  return { proposalId: doc.proposalId, status: doc.status, noteId: doc.noteId.toHexString(), edited: doc.edited };
+  return {
+    proposalId: doc.proposalId, status: doc.status, noteId: doc.noteId.toHexString(), edited: doc.edited,
+    changeId: doc.changeId?.toHexString() ?? null,
+  };
 }
 
 export function createChatProposalStore(connection: Connection): ChatProposalStore {
@@ -163,6 +178,15 @@ export function createChatProposalStore(connection: Connection): ChatProposalSto
     async markSaved(scope, key, now) {
       await Proposal.updateOne({ ...keyOf(scope, key), status: trusted({ $ne: 'saved' }) }, { $set: { status: 'saved', updatedAt: now } });
     },
+    async markAutoSaved(scope, key, input) {
+      await Proposal.updateOne(
+        { ...keyOf(scope, key), status: 'saving' },
+        { $set: { status: 'saved', changeId: new Types.ObjectId(input.changeId), updatedAt: input.now } },
+      );
+    },
+    async unclaim(scope, key) {
+      await Proposal.deleteOne({ ...keyOf(scope, key), status: 'saving' });
+    },
     async dismiss(scope, key, input) {
       const moved = await moveUnlessSaved(scope, key, { status: 'dismissed' }, input, input.now);
       if (moved !== null) return moved;
@@ -173,7 +197,7 @@ export function createChatProposalStore(connection: Connection): ChatProposalSto
     async listSaved(scope, owner, limit) {
       const docs = await Proposal.find({
         orgId: new Types.ObjectId(scope.orgId), locationId: new Types.ObjectId(owner.locationId), userId: owner.userId, status: 'saved',
-        kind: trusted({ $exists: false }),
+        kind: trusted({ $exists: false }), changeId: trusted({ $exists: false }),
       }, { _id: 0, noteId: 1 }).sort({ updatedAt: -1, _id: -1 }).limit(limit).lean();
       return docs.map((doc) => doc.noteId.toHexString());
     },

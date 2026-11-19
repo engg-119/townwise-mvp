@@ -276,6 +276,7 @@ describe('show_visual’s run', () => {
     const tc: ToolContext = {
       ctx: ctx as unknown as TownwiseContext,
       scope: { orgId: '000000000000000000000003' } as unknown as OrgScope,
+      conversationId: '0000000000000000000000c1',
       location: {
         id: '000000000000000000000001', name: 'Test Taproom', placeId: null, createdAt: new Date('2026-01-01T00:00:00Z'),
         town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' },
@@ -285,7 +286,7 @@ describe('show_visual’s run', () => {
       // The forecast lab's fields (#59); show_visual reads neither.
       role: 'member',
       actor: { actorUserId: '000000000000000000000002', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
+      turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0 },
       files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
     };
     return { tc, dayReads, windowReads };
@@ -416,7 +417,7 @@ describe('show_visual’s run', () => {
     const days = mondays.map((each) => day(each.date, changed.get(each.date) ?? 100));
     const closure = {
       id: '0000000000000000000000aa', kind: 'closure', startDate: '2026-10-12', endDate: '2026-10-12', weekdays: null, effect: 'closed', expectedGuests: null,
-      detail: null, title: null, startTime: null, endTime: null, createdBy: 'u', byStaff: false, source: null, fromEvent: null, createdAt: new Date(0), updatedAt: new Date(0),
+      detail: null, title: null, startTime: null, endTime: null, createdBy: 'u', byStaff: false, source: null, fromEvent: null, agent: null, createdAt: new Date(0), updatedAt: new Date(0),
     } satisfies NoteRecord;
     const rule = {
       id: 'r1', schedule: { kind: 'closure', startDate: '2026-10-19', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },

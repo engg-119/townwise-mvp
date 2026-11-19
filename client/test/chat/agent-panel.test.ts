@@ -19,7 +19,7 @@ test('the fixture holds every question kind and every activity kind the API send
   // D46: the sales history's weekday question became a suggested rule, so the API sends no weekday question.
   expect(fixture.panel.questions.map((q) => (q as { kind: string }).kind)).toEqual(['likely_closed', 'gap']);
   expect(fixture.panel.activity.map((a) => (a as { kind: string }).kind)).toEqual([
-    'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'question_answered',
+    'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'agent_change', 'question_answered',
   ]);
   // Every answer an activity item can name, `other` (Something else…) included.
   expect(fixture.panel.activity.flatMap((a) => {
@@ -66,7 +66,11 @@ test('an API from before calendar titles reads the switch without them', async (
 test('an API from before weekly suggestions reads as none, and a suggestion this client does not know is left out', async () => {
   const api = fakeChatApi();
   api.panel = { questions: [], activity: [], suggestions: [{ id: 's9', type: 'reminder', why: 'x', calendar: [], createdAt: '' }] };
-  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [], activity: [], suggestions: [], weeklySuggestions: null, ruleSuggestions: [] });
+  expect(await loadAgentPanel(api, 'l1')).toEqual({
+    questions: [], activity: [], suggestions: [], weeklySuggestions: null, ruleSuggestions: [],
+    // D59: an API from before TownwiseAI worked on its own.
+    agentAuto: null, noteSuggestions: [], waiting: 0,
+  });
 });
 
 test('accepting or dismissing a suggestion sends an empty body to its route', async () => {

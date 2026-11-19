@@ -24,6 +24,8 @@ describe('indexes', () => {
       'tw_access_requests',
       // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
       'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
+      // D59: the ledger of the changes TownwiseAI saved on its own.
+      'tw_agent_changes',
       'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
       // A TownwiseAI turn's progress (openspec change resumable-chat-turns).
       'tw_chat_turns',
@@ -50,6 +52,17 @@ describe('indexes', () => {
       // The days each person used the app (openspec change staff-overview).
       'tw_activity_days',
     ].sort());
+  });
+
+  it('holds one TownwiseAI change per fact at a location, and reads a location’s newest first (D59)', () => {
+    const connection = registered();
+    const indexes = indexesOf(connection, 'TwAgentChange');
+    expect(indexes.map(([fields]) => fields)).toEqual([
+      { orgId: 1, locationId: 1, dedupeKey: 1 }, { orgId: 1, locationId: 1, appliedAt: -1, _id: -1 },
+      { orgId: 1, locationId: 1, sourceKind: 1, sourceId: 1 },
+    ]);
+    expect(indexes[0]?.[1]).toMatchObject({ unique: true });
+    expect(connection.models.TwAgentChange?.schema.get('strict')).toBe('throw');
   });
 
   it('reads active days by organization and day, by day across organizations, and by person (staff-overview)', () => {
