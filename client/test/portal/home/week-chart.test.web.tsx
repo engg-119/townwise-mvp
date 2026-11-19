@@ -342,7 +342,10 @@ test('with nothing published the chart draws last year alone, no day says a word
   expect(screen.getByTestId('home-week-chart-key').textContent).toBe('Same weekday last year');
   expect(within(panel()).queryByText('Forecast')).toBeNull();
   expect(week().textContent).not.toMatch(FORECAST_WORDING);
-  expect(dayButton('2026-11-05').getAttribute('aria-label')).toBe('Thu, Nov 5, 2026. Today. No forecast. Same weekday last year, Thu, Nov 6, 2025: 100 guests.');
+  // "No forecast." once the forecast read has answered with none (it reads on its own, after the page).
+  await waitFor(() => {
+    expect(dayButton('2026-11-05').getAttribute('aria-label')).toBe('Thu, Nov 5, 2026. Today. No forecast. Same weekday last year, Thu, Nov 6, 2025: 100 guests.');
+  });
 });
 
 test('with no history and nothing published there is nothing to draw, so the days stay in view', async () => {
