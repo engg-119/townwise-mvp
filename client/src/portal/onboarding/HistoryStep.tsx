@@ -61,8 +61,9 @@ import { useHistoryAi } from './useHistoryAi';
 //
 // Under the drop (web, stored files on) sits the TownwiseAI opt-in (D34, 11A.9; useHistoryAi), off by default: a file
 // that finishes uploading while it is checked is sent to TownwiseAI to read once Townwise has read it for sales, and
-// its row says how that went. The browser upload never sends anything to TownwiseAI. D59: a file dropped with the box
-// unchecked opens its upload with `aiAuto: false`, so TownwiseAI never reads it on its own either.
+// its row says how that went. The browser upload never sends anything to TownwiseAI. D59: only a file that finishes
+// uploading with the box checked sends `aiAuto: true` on complete, and only to an API that said TownwiseAI reads files
+// on its own there (files/uploadQueue.ts), so a file finished with it unchecked is never read on its own either.
 
 const RO_ID = 'history-step-ro';
 const READ_HELP_ID = 'history-step-read-help';
@@ -366,7 +367,7 @@ export function HistoryStep(props: { onDone?: () => void }): React.JSX.Element {
   const reduced = useReducedMotion();
   const moment = useMoment();
   const { desktop } = useBreakpoint();
-  // D59: read as each upload opens; useHistoryAi below keeps it in step with the box.
+  // D59: read as each upload completes; useHistoryAi below keeps it in step with the box.
   const aiOptIn = useRef(false);
   const aiAuto = useCallback(() => aiOptIn.current, []);
   const queue = useUploadQueue(location.id, { aiAuto });

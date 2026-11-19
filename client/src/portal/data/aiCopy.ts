@@ -41,7 +41,7 @@ export const AI = {
   optIn: 'Let TownwiseAI read these files and use what it finds',
   optInHelp: 'Each file you add is sent whole to Anthropic’s Claude to read. You can undo what TownwiseAI adds from a file on its page.',
   // D59: while TownwiseAI works on its own the box starts checked. [CONFIRM: privacy wording for TownwiseAI working on its own]
-  optInHelpAuto: 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it. A sales export Townwise reads into days is never sent.',
+  optInHelpAuto: 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, a sales export too, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it.',
 } as const;
 
 /** What TownwiseAI found a file to be, in a sentence. */
@@ -71,6 +71,8 @@ const SKIPPED: Readonly<Record<string, string>> = {
   not_readable: 'TownwiseAI didn’t read this file: it couldn’t be opened, so it may be damaged.',
   // D58: a calendar CSV is read whole by the calendar import instead, never half-read by a model.
   calendar_export: 'TownwiseAI didn’t read this file: it’s a calendar export. Import it in Your calendars instead.',
+  // D59: turned off before TownwiseAI got to it on its own.
+  turned_off: 'TownwiseAI didn’t read this file: it was turned off.',
 };
 const FAILED: Readonly<Record<string, string>> = {
   refused: 'TownwiseAI declined to read this file.',
@@ -143,6 +145,7 @@ const NO_DAYS: Readonly<Record<string, string>> = {
   not_high_confidence: `It added no sales days: TownwiseAI wasn’t sure enough that it read the totals right.${ADD_YOURSELF}`,
   days_not_verified: `It added no sales days: too few of the dates and figures it read could be found in the file’s own text.${ADD_YOURSELF}`,
   already_had_days: 'It added no sales days: you already have every day it found, and TownwiseAI never changes a day you already have.',
+  adder_gone: 'It added no sales days: the person who added this file is no longer on your team.',
 };
 
 /** The days line: what it added (and the days it left as they were), or why it added none. */
@@ -160,6 +163,7 @@ const NO_ITEM: Readonly<Record<string, string>> = {
   no_summary: 'It kept no summary: it found nothing to summarize.',
   storage_full: 'It kept no summary: your organization’s file storage is full.',
   daily_upload_limit: 'It kept no summary: your organization reached today’s upload limit.',
+  adder_gone: 'It kept no summary: the person who added this file is no longer on your team.',
 };
 
 /** The summary item line: kept, gone since, or why none was kept. */

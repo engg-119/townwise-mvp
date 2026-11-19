@@ -143,6 +143,12 @@ export function undoErrorText(error: unknown, action: AgentChange['action']): st
   return 'Couldn’t undo this. Try again.';
 }
 
+/** Whether an undo's error is final (Undo is then no longer offered); any other may be tried again. */
+export function undoErrorFinal(error: unknown): boolean {
+  if (!(error instanceof ApiError) || error.kind !== 'http') return false;
+  return error.status === 404 || ['changed_since', 'view_as_read_only', 'forbidden'].includes(error.code ?? '');
+}
+
 /** The switch's words (design decision 14). [CONFIRM: the panel's and switch's words] */
 export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data and saves what it’s sure of, such as a dated private event, so the forecast updates. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
 

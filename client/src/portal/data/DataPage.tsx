@@ -90,6 +90,10 @@ function Data(): React.JSX.Element {
   if (state.status === 'ready' && state.data.scope === scope && (shown?.scope !== scope || shown.items !== state.data.page.items)) {
     setShown({ scope, items: state.data.page.items, next: state.data.page.next });
   }
+  // D59: whether TownwiseAI reads files added here on its own, from the last list that answered, so a reload in flight
+  // (each finished upload's) changes nothing under Add a file.
+  const [agentAuto, setAgentAuto] = useState(false);
+  if (state.status === 'ready' && (state.data.page.agentAuto === true) !== agentAuto) setAgentAuto(state.data.page.agentAuto === true);
   const [older, setOlder] = useState<{ items: DataItem[]; next: string | null | undefined; pending: boolean; error: unknown }>({
     items: [], next: undefined, pending: false, error: null,
   });
@@ -212,7 +216,7 @@ function Data(): React.JSX.Element {
               {...(readOnlyId === null ? {} : { describedBy: readOnlyId })}
               onStored={fresh}
               onAsked={fresh}
-              auto={state.status === 'ready' && state.data.page.agentAuto === true}
+              auto={agentAuto}
             />
             <Small>{DATA.addFileHelp}</Small>
             <Actions>

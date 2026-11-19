@@ -20,7 +20,8 @@ import { serveAbout } from './about-fakes';
 // activity line with Undo, which sends to the undo route and says Undone, or says the 409's words when a person changed
 // it since; the waiting line counts what it wasn't sure of and links to the log; an event a file read wasn't sure of has
 // Add the note and Dismiss; the switch sits after the weekly one, an org admin turns it, a member reads it; How
-// TownwiseAI works says it saves what it's sure of. Under view-as Undo is not offered. The fixture is the API's.
+// TownwiseAI works says it saves what it's sure of only while the switch is on and it can run here. Undo stays offered
+// after a failure worth retrying. Under view-as Undo is not offered. The fixture is the API's.
 
 const fixture = JSON.parse(readFileSync(join(__dirname, 'agent-panel.json'), 'utf8')) as { panel: Record<string, unknown> };
 const CHANGE = '/api/org/locations/l1/agent/changes/0000000000000000000000e1/undo';
@@ -121,23 +122,58 @@ test('the waiting line counts what it wasn’t sure of and links to the log; an 
   expect(api.writes).toEqual([{ method: 'POST', path: `${base}/accept`, body: {} }]);
 });
 
-test('the switch: a member reads it, an org admin turns it off, and How TownwiseAI works says it saves what it’s sure of', async () => {
+const SAVES_ON = 'It saves what it’s sure of and shows each change here with Undo. Anything it isn’t sure of waits for you.';
+const SAVES_OFF = 'It suggests notes; it saves one only when you ask, or when you let it read a file.';
+
+test('the switch: an org admin turns it off, and How TownwiseAI works then says it saves only when asked', async () => {
   const api = chatApi({ ...fixture.panel, agentAuto: { on: true, available: true, canChange: true } });
   api.respond['/api/org/agent-auto'] = () => ({ agentAuto: { on: false } });
   renderAt(api, meOf(ACCESS.admin));
   const panel = await side();
   expect(within(panel).getByRole('heading', { name: 'Working on its own' })).toBeTruthy();
   expect(within(panel).getByText('TownwiseAI works on its own.')).toBeTruthy();
+  fireEvent.click(within(panel).getByRole('button', { name: 'How TownwiseAI works' }));
+  expect(within(panel).getByText(SAVES_ON)).toBeTruthy();
   fireEvent.click(within(panel).getByRole('button', { name: 'Turn off working on its own' }));
   expect(await within(panel).findByText('TownwiseAI works on its own is off.')).toBeTruthy();
   expect(api.writes).toEqual([{ method: 'PATCH', path: '/api/org/agent-auto', body: { on: false } }]);
+  expect(within(panel).getByText(SAVES_OFF)).toBeTruthy();
+  expect(within(panel).queryByText(SAVES_ON)).toBeNull();
+});
+
+test('where it can’t run (TOWNWISE_AGENT_AUTO off), the switch reads off and How TownwiseAI works never says it saves on its own', async () => {
+  const api = chatApi({ ...fixture.panel, agentAuto: { on: true, available: false, canChange: false } });
+  renderAt(api);
+  const panel = await side();
+  expect(within(panel).getByText('TownwiseAI works on its own is off.')).toBeTruthy();
+  expect(within(panel).queryByText('TownwiseAI works on its own.')).toBeNull();
   fireEvent.click(within(panel).getByRole('button', { name: 'How TownwiseAI works' }));
-  expect(within(panel).getByText('It saves what it’s sure of and shows each change here with Undo. Anything it isn’t sure of waits for you.')).toBeTruthy();
-  expect(within(panel).queryByText('It suggests notes; it never saves one without you.')).toBeNull();
+  expect(within(panel).getByText(SAVES_OFF)).toBeTruthy();
+  expect(within(panel).queryByText(SAVES_ON)).toBeNull();
+});
+
+test('Undo that fails for a reason worth retrying says so and stays offered', async () => {
+  const api = chatApi();
+  let calls = 0;
+  api.respond[CHANGE] = () => {
+    calls += 1;
+    return calls === 1 ? refusal(503, 'unavailable') : {
+      change: {
+        id: '0000000000000000000000e1', at: '2026-06-01T08:00:00.000Z', action: 'note.add', sourceKind: 'file', sourceRef: null, status: 'undone',
+        startDate: '2026-07-04', endDate: '2026-07-04', noteKind: 'private_event', why: null, undoable: false, targetId: null,
+      },
+    };
+  };
+  renderAt(api);
+  const panel = await side();
+  fireEvent.click(within(panel).getByRole('button', { name: `Undo: ${LINE}` }));
+  expect(await within(panel).findByText('Couldn’t undo this. Try again.')).toBeTruthy();
+  fireEvent.click(within(panel).getByRole('button', { name: `Undo: ${LINE}` }));
+  expect(await within(panel).findByText(`${LINE} Undone.`)).toBeTruthy();
 });
 
 test('a member gets no switch button, and under view-as Undo is not offered and nothing is decided', async () => {
-  const member = chatApi();
+  const member = chatApi({ ...fixture.panel, agentAuto: { on: true, available: true, canChange: false } });
   renderAt(member);
   const panel = await side();
   expect(within(panel).getByText('TownwiseAI works on its own.')).toBeTruthy();

@@ -41,13 +41,22 @@ function renderPrivacy(): string {
   return screen.getByRole('main').textContent;
 }
 
-test('says stored files other than sales exports are read on their own unless an org admin turns it off or the file’s box was unchecked', () => {
+test('says files are read on their own only where TownwiseAI works on its own, with the box checked, and that a sales export added under Add a file is sent', () => {
   const text = renderPrivacy();
-  expect(text).toContain('Files you let TownwiseAI read. Unless an org admin turns it off on the TownwiseAI page, TownwiseAI reads each file added to Your data on its own once Townwise has stored it, except a sales export Townwise read into days, a calendar export, and any file whose box under Add a file was unchecked.');
+  expect(text).toContain('Files you let TownwiseAI read. Townwise sends a file you add to an AI model only when you let it. Where TownwiseAI works on its own for your organization (an org admin can turn it off on the TownwiseAI page), the box under Add a file, and the one under your sales history’s drop, starts checked, and TownwiseAI reads each file that finishes uploading with its box checked once Townwise has stored it, except a sales export Townwise read into days and a calendar export.');
+  expect(text).toContain('A sales export added under Add a file isn’t read into days, so it is sent whole too unless you uncheck the box.');
+  // Production keeps it off until the owner approves: the page still says the box is off there.
+  expect(text).toContain('Where it doesn’t work on its own, the box is off until you choose it.');
   expect(text).toContain('TownwiseAI saves what it’s sure of to your account');
   expect(text).toContain('An event it isn’t sure of, or one that disagrees with a note or rule your team made, waits for someone on your team to add or dismiss it.');
   expect(text).not.toContain('Townwise never sends a file you add to an AI model unless you ask');
-  expect(text).not.toContain('is off until you choose it');
+  expect(text).not.toContain('Unless an org admin turns it off on the TownwiseAI page, TownwiseAI reads');
+});
+
+test('the two retention sentences agree: the reason for a change stays in the log after the read is undone', () => {
+  const text = renderPrivacy();
+  expect(text).toContain('What Claude found is kept with the file until you undo the read or the file’s original is deleted, except TownwiseAI’s short reason for each change it saved, which stays in the log of its changes');
+  expect(text).toContain('even once the change is undone or the file deleted');
 });
 
 test('a Changes TownwiseAI makes item says what it may add, that it changes and deletes nothing, Undo, the log and what is kept', () => {
@@ -70,7 +79,7 @@ test('a Changes TownwiseAI makes item says what it may add, that it changes and 
 test('the Anthropic item names the files TownwiseAI reads on its own beside the weekly suggestions', () => {
   renderPrivacy();
   const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
-  expect(anthropic?.textContent).toContain('Apart from TownwiseAI’s weekly suggestions and the files it reads on its own');
+  expect(anthropic?.textContent).toContain('Apart from TownwiseAI’s weekly suggestions and, where it works on its own, the files it reads on its own');
   expect(anthropic?.textContent).toContain('When TownwiseAI reads a file, on its own or because you let it, the whole file is sent to it');
   expect(anthropic?.textContent).toContain('TownwiseAI never reads a sales file Townwise read into days unless you let it read one.');
 });

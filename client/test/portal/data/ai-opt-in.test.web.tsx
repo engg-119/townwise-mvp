@@ -31,7 +31,10 @@ const OPT_IN = 'Let TownwiseAI read these files and use what it finds';
 
 function setup(me: MeResponse = meOf(ACCESS.admin), agentAuto?: boolean): DataFake {
   const fake = dataFake({ inner: locationsFake() });
-  if (agentAuto !== undefined) fake.agentAuto = agentAuto;
+  if (agentAuto !== undefined) {
+    fake.agentAuto = agentAuto;
+    fake.files.autoRead = agentAuto;
+  }
   const api = fakePortalApi({ me, org: orgOf('org_admin'), fallback: fake });
   const auth = fakeAuth({ status: 'signedIn', user: { id: 'u1', email: EMAIL } }, { api });
   window.history.replaceState(null, '', '/locations/l1/data');
@@ -145,7 +148,8 @@ test('view-as: the box is shown disabled and can’t be checked', async () => {
 
 // ---- D59: while TownwiseAI works on its own ---------------------------------------------------------------------------
 
-const AUTO_HELP = 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it. A sales export Townwise reads into days is never sent.';
+// A sales export added here is never read into days, so the box never promises one isn't sent.
+const AUTO_HELP = 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, a sales export too, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it.';
 
 /** The bodies of POST .../files, which open each upload. */
 function creates(fake: DataFake): unknown[] {
@@ -166,15 +170,48 @@ test('while TownwiseAI works on its own the box starts checked and says so; an a
   expect(within(files).getByText('Added. TownwiseAI reads it on its own; open it on Your data to see what it finds.')).toBeTruthy();
 });
 
-test('unchecked while TownwiseAI works on its own, each upload opens with aiAuto false, which keeps the file from it', async () => {
+/** The bodies of POST .../files/:id/complete: `{ aiAuto: true }` lets TownwiseAI read the file on its own. */
+function completes(fake: DataFake): unknown[] {
+  return fake.files.calls.filter((call) => call.method === 'POST' && call.path.endsWith('/complete')).map((call) => call.body);
+}
+
+test('checked while TownwiseAI works on its own, each file completes with aiAuto true; a drop of several all finish', async () => {
+  const fake = setup(meOf(ACCESS.admin), true);
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  await waitFor(() => { expect((box as HTMLInputElement).checked).toBe(true); });
+  // Each finished file reloads the list; the queue keeps the others going through it.
+  await add(fake, ['a.pdf', 'b.pdf', 'c.pdf']);
+  expect(completes(fake)).toEqual([{ aiAuto: true }, { aiAuto: true }, { aiAuto: true }]);
+  expect(fake.files.calls.filter((call) => call.method === 'DELETE')).toEqual([]);
+});
+
+test('unchecked while TownwiseAI works on its own, each file completes without aiAuto, and the box stays unchecked after the list reloads', async () => {
   const fake = setup(meOf(ACCESS.admin), true);
   const box = await screen.findByRole('checkbox', { name: OPT_IN });
   await waitFor(() => { expect((box as HTMLInputElement).checked).toBe(true); });
   fireEvent.click(box);
   expect((box as HTMLInputElement).checked).toBe(false);
+  const lists = fake.lists.length;
   await add(fake, ['private.pdf']);
-  expect(creates(fake)).toEqual([{ name: 'private.pdf', sizeBytes: 4, purpose: 'reference', aiAuto: false }]);
+  await waitFor(() => { expect(fake.lists.length).toBeGreaterThan(lists); });
+  await act(async () => { await new Promise((resolve) => { setTimeout(resolve, 20); }); });
+  expect(screen.getByRole<HTMLInputElement>('checkbox', { name: OPT_IN }).checked).toBe(false);
+  expect(creates(fake)).toEqual([{ name: 'private.pdf', sizeBytes: 4, purpose: 'reference' }]);
+  expect(completes(fake)).toEqual([{}]);
   expect(fake.ai).toEqual([]);
+});
+
+test('unchecked while a file is still uploading, that file completes without aiAuto', async () => {
+  const fake = setup(meOf(ACCESS.admin), true);
+  const box = await screen.findByRole('checkbox', { name: OPT_IN });
+  await waitFor(() => { expect((box as HTMLInputElement).checked).toBe(true); });
+  const input = document.querySelector<HTMLInputElement>('input[type="file"]');
+  if (input === null) throw new Error('no file input');
+  fireEvent.change(input, { target: { files: [new File(['menu'], 'large.pdf')] } });
+  await waitFor(() => { expect(fake.files.puts).toHaveLength(1); });
+  fireEvent.click(box);
+  await act(async () => { fake.files.puts[0]?.ok(); await Promise.resolve(); });
+  await waitFor(() => { expect(completes(fake)).toEqual([{}]); });
 });
 
 test('with it off (or an API before it) the box starts unchecked, as D34 had it', async () => {

@@ -211,7 +211,8 @@ export const reportSchema = z.object({
 export type Report = z.infer<typeof reportSchema>;
 
 const importRefSchema = z.object({ id: z.string(), status: z.enum(IMPORT_STATUSES) });
-const createdSchema = z.object({ file: fileViewSchema, import: importRefSchema.nullable(), limits: uploadLimitsSchema });
+/** D59: `autoRead`, whether TownwiseAI reads files here on its own now; absent from an API before it, read as no. */
+const createdSchema = z.object({ file: fileViewSchema, import: importRefSchema.nullable(), limits: uploadLimitsSchema, autoRead: z.boolean().optional() });
 const chunkSchema = z.object({ index: z.number(), receivedBytes: z.number(), chunksReceived: z.number() });
 const completedSchema = z.object({ file: fileViewSchema, import: importRefSchema.nullable() });
 const filesSchema = z.object({ files: z.array(fileViewSchema) });
@@ -231,7 +232,7 @@ export type ChunkReceipt = z.infer<typeof chunkSchema>;
 export type FilePurpose = 'history' | 'reference';
 
 export function createUpload(
-  api: ApiClient, locationId: string, input: { name: string; sizeBytes: number; purpose: FilePurpose; aiAuto?: false },
+  api: ApiClient, locationId: string, input: { name: string; sizeBytes: number; purpose: FilePurpose },
 ): Promise<Created> {
   return api.json(`${locationPath(locationId)}/files`, createdSchema, { method: 'POST', body: input });
 }
@@ -253,8 +254,12 @@ export async function putChunk(
   return parsed.data;
 }
 
-export function completeUpload(api: ApiClient, locationId: string, fileId: string): Promise<Completed> {
-  return api.json(`${filePath(locationId, fileId)}/complete`, completedSchema, { method: 'POST', body: {} });
+/**
+ * D59: `aiAuto` true lets TownwiseAI read the file on its own (its box was checked as it finished); sent only to an API
+ * whose create answered `autoRead`, so an API before it never sees the key.
+ */
+export function completeUpload(api: ApiClient, locationId: string, fileId: string, aiAuto = false): Promise<Completed> {
+  return api.json(`${filePath(locationId, fileId)}/complete`, completedSchema, { method: 'POST', body: aiAuto ? { aiAuto: true } : {} });
 }
 
 /** The original, cleaned copy, report and entry list; the days it added stay (`daysKept`). Cancels an upload. */

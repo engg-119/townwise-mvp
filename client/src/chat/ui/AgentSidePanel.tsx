@@ -231,7 +231,7 @@ function HowItWorks(props: {
   locationId: string;
   about: LoadState<EstimatesAbout>;
   onRetryAbout: () => void;
-  /** D59: whether TownwiseAI works on its own; on until the panel says otherwise. */
+  /** D59: whether TownwiseAI works on its own here: the organization's switch on and TOWNWISE_AGENT_AUTO on. */
   agentAuto: boolean;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
@@ -286,6 +286,11 @@ export function AgentSidePanel(props: {
   showQuestions?: boolean;
 }): React.JSX.Element {
   const ready = props.panel.state.status === 'ready' ? props.panel.state.data : null;
+  // D59: the organization's choice once switched here, until the panel loads it again.
+  const [switched, setSwitched] = useState<boolean | null>(null);
+  // Working on its own only while the organization's switch is on and it can run here (TOWNWISE_AGENT_AUTO): off while
+  // the panel loads, fails or comes from an API before it.
+  const working = (switched ?? ready?.agentAuto?.on ?? false) && ready?.agentAuto?.available === true;
   return (
     <View style={styles.panel}>
       <RuleSuggestionsSection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
@@ -293,7 +298,7 @@ export function AgentSidePanel(props: {
         <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
       )}
       <SuggestionsSection panel={props.panel} town={props.ctx.town} readOnlyId={props.readOnlyId} />
-      {ready === null ? null : <AgentAutoSwitch agentAuto={ready.agentAuto} readOnlyId={props.readOnlyId} />}
+      {ready === null ? null : <AgentAutoSwitch agentAuto={ready.agentAuto} readOnlyId={props.readOnlyId} on={switched} onSwitched={setSwitched} />}
       {ready === null ? null : <NoteSuggestionsSection suggestions={ready.noteSuggestions} locationId={props.locationId} readOnlyId={props.readOnlyId} />}
       <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
       <BudgetSection budget={props.budget} />
@@ -302,7 +307,7 @@ export function AgentSidePanel(props: {
         locationId={props.locationId}
         about={props.about}
         onRetryAbout={props.onRetryAbout}
-        agentAuto={ready?.agentAuto?.on ?? true}
+        agentAuto={working}
       />
     </View>
   );

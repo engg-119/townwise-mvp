@@ -50,6 +50,37 @@ test('three files upload at a time; the rest wait in drop order', async () => {
   expect(last.importId).toBe('i1');
 });
 
+test('D59: the box is read as each file completes, and aiAuto true is sent only where the create said TownwiseAI reads on its own', async () => {
+  fake = filesFake({ chunkSize: 4 });
+  fake.autoRead = true;
+  let box = true;
+  queue = createUploadQueue({ api: fake, locationId: LOCATION, random: () => 0, aiAuto: () => box, onChange: (snapshot) => { last = snapshot; } });
+  queue.add([sourceOf('a.pdf', 4), sourceOf('b.pdf', 4)]);
+  await flush();
+  // Nothing about the box goes on create.
+  expect(fake.calls.filter((call) => call.path === '/files').map((call) => call.body)).toEqual([
+    { name: 'a.pdf', sizeBytes: 4, purpose: 'history' }, { name: 'b.pdf', sizeBytes: 4, purpose: 'history' },
+  ]);
+  fake.puts[0]?.ok();
+  await flush();
+  // Unchecked while b is still uploading: b is kept from TownwiseAI.
+  box = false;
+  fake.puts[1]?.ok();
+  await flush();
+  const completes = (): unknown[] => fake.calls.filter((call) => call.path.endsWith('/complete')).map((call) => call.body);
+  expect(completes()).toEqual([{ aiAuto: true }, {}]);
+  queue.dispose();
+  // An API that did not say so (one before D59) never sees the key, whatever the box says.
+  fake = filesFake({ chunkSize: 4 });
+  box = true;
+  queue = createUploadQueue({ api: fake, locationId: LOCATION, random: () => 0, aiAuto: () => box, onChange: (snapshot) => { last = snapshot; } });
+  queue.add([sourceOf('c.pdf', 4)]);
+  await flush();
+  fake.puts[0]?.ok();
+  await flush();
+  expect(completes()).toEqual([{}]);
+});
+
 test('chunks go in index order, one in flight per file, each exactly the chunk size but the last', async () => {
   start(4);
   queue.add([sourceOf('a.csv', 10)]);

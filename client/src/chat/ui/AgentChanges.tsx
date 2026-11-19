@@ -10,7 +10,7 @@ import { ErrorNotice } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
 import {
-  AGENT_AUTO_WORDS, changeLine, decideNoteSuggestion, setAgentAuto, undoChange, undoErrorText, waitingLine,
+  AGENT_AUTO_WORDS, changeLine, decideNoteSuggestion, setAgentAuto, undoChange, undoErrorFinal, undoErrorText, waitingLine,
   type AgentAuto, type AgentChange, type AgentChangeItem, type NoteSuggestion,
 } from '../agentChanges';
 import { KIND_LABEL, rangeText } from '../format';
@@ -36,18 +36,21 @@ export function ChangeLine(props: {
 }): React.JSX.Element {
   const { api } = usePortal();
   const { change } = props;
-  const [state, setState] = useState<{ status: AgentChange['status']; undoing: boolean; error: string | null }>({
-    status: change.status, undoing: false, error: null,
+  const [state, setState] = useState<{ status: AgentChange['status']; undoing: boolean; error: string | null; final: boolean }>({
+    status: change.status, undoing: false, error: null, final: false,
   });
   const undo = (): void => {
     if (state.undoing) return;
     setState((current) => ({ ...current, undoing: true, error: null }));
     undoChange(api, props.locationId, change.id).then(
-      (after) => { setState({ status: after.status, undoing: false, error: null }); },
-      (error: unknown) => { setState((current) => ({ ...current, undoing: false, error: undoErrorText(error, change.action) })); },
+      (after) => { setState({ status: after.status, undoing: false, error: null, final: false }); },
+      (error: unknown) => {
+        setState((current) => ({ ...current, undoing: false, error: undoErrorText(error, change.action), final: undoErrorFinal(error) }));
+      },
     );
   };
-  const offered = change.undoable && state.status === 'applied' && state.error === null;
+  // A final refusal (changed since, gone, not allowed) takes Undo away; any other failure leaves it to try again.
+  const offered = change.undoable && state.status === 'applied' && !state.final;
   return (
     <View style={styles.change}>
       <Text style={props.textStyle ?? styles.itemText}>{changeLine({ ...change, status: state.status })}</Text>
@@ -148,24 +151,30 @@ export function NoteSuggestionsSection(props: { suggestions: readonly NoteSugges
 }
 
 /**
- * The switch: its words and a button for an org admin, its state for members, and a line while it can't run here.
- * Staff open as admin may turn it off but not on (the organization's own consent).
+ * The switch: its words and a button for an org admin, its state for members, and a line while it can't run here (the
+ * deploy switch off: the state then reads off, whatever the organization's choice). Staff open as admin may turn it off
+ * but not on (the organization's own consent). `on` is the choice once switched here, which the panel shares with How
+ * TownwiseAI works; null until then.
  */
-export function AgentAutoSwitch(props: { agentAuto: AgentAuto | null; readOnlyId: string | null }): React.JSX.Element | null {
+export function AgentAutoSwitch(props: {
+  agentAuto: AgentAuto | null;
+  readOnlyId: string | null;
+  on: boolean | null;
+  onSwitched: (on: boolean) => void;
+}): React.JSX.Element | null {
   const { api, me } = usePortal();
-  const [on, setOn] = useState<boolean | null>(null);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const { agentAuto } = props;
+  const { agentAuto, onSwitched } = props;
   if (agentAuto === null) return null;
-  const current = on ?? agentAuto.on;
+  const current = props.on ?? agentAuto.on;
   const openAsAdmin = openAsAdminOrgId(me);
   const press = (): void => {
     if (switching) return;
     setSwitching(true);
     setError(null);
     setAgentAuto(api, !current, openAsAdmin).then(
-      (now) => { setOn(now); },
+      (now) => { onSwitched(now); },
       () => { setError('Couldn’t change this. Try again.'); },
     ).finally(() => { setSwitching(false); });
   };
@@ -176,7 +185,7 @@ export function AgentAutoSwitch(props: { agentAuto: AgentAuto | null; readOnlyId
         {AGENT_AUTO_WORDS}{' '}
         <Link href="/privacy" style={styles.link}>Privacy</Link>
       </Text>
-      <Text style={styles.body}>{current ? 'TownwiseAI works on its own.' : 'TownwiseAI works on its own is off.'}</Text>
+      <Text style={styles.body}>{current && agentAuto.available ? 'TownwiseAI works on its own.' : 'TownwiseAI works on its own is off.'}</Text>
       {current && !agentAuto.available ? <Text style={styles.help}>It isn’t running here right now, so it reads nothing on its own.</Text> : null}
       {agentAuto.canChange && (current || openAsAdmin === null) ? (
         <Button
