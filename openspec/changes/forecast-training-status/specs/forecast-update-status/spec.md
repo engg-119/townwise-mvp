@@ -81,7 +81,7 @@ While any shown location is updating, the dashboard and the location's pages SHA
 - **THEN** no page re-reads GET /api/org on a timer
 
 ### Requirement: Home says why a first forecast was not published, from the server
-A `not_calibrated` calibration SHALL carry `lastRun`: null, or, when `updating` is null and the location's newest calibration finished or is live past its 20 minutes, `{ outcome, reason, finishedAt }` from the owner outcome rules (a live one past 20 minutes reads `not_run`, `failed`, dated its `requestedAt` plus 20 minutes), read without a write. Home SHALL show the not-published notice whenever the location is `not_calibrated`, not updating and has a `lastRun` whose reason is neither `published` nor `published_by_staff`, whether or not it saw the run: the reason's first-forecast sentence, the next step ("Townwise tries again after your next sales upload", left out for `forecasts_off`), and a link to TownwiseAI's activity. With no `lastRun`, or one that was published (every run since withdrawn), Home SHALL show its plain no-forecast line. The client SHALL accept a calibration without `lastRun` and read it as null. [CONFIRM: Home's words and next step when a first forecast was not published]
+A `not_calibrated` calibration SHALL carry `lastRun`: null, or, when `updating` is null and the location's newest calibration finished or is live past its 20 minutes, `{ outcome, reason, firstForecast, finishedAt }` from the owner outcome rules (a live one past 20 minutes reads `not_run`, `failed`, dated its `requestedAt` plus 20 minutes), `firstForecast` by the history's rule, read without a write. Home SHALL show the not-published notice whenever the location is `not_calibrated`, not updating and has a `lastRun` whose reason is neither `published` nor `published_by_staff`, whether or not it saw the run: the reason's first-forecast sentence (saying "the newest forecast", not "the first forecast", when `firstForecast` is false), the next step ("Townwise tries again after your next sales upload", left out for `forecasts_off`), and a link to TownwiseAI's activity. With no `lastRun`, or one that was published (every run since withdrawn), Home SHALL show its plain no-forecast line. The client SHALL accept a calibration without `lastRun` and read it as null. [CONFIRM: Home's words and next step when a first forecast was not published]
 
 #### Scenario: The first run is held by the gate
 - **WHEN** a location's first calibration succeeded with the gate holding it, and the owner opens Home a day later
@@ -90,6 +90,10 @@ A `not_calibrated` calibration SHALL carry `lastRun`: null, or, when `updating` 
 #### Scenario: A first run timed out
 - **WHEN** a location's first calibration is still stored `running` 30 minutes after it was requested, and no refit mark the hourly pass would take is left (with one, the location reads `waiting`, since the pass fails that run and starts another)
 - **THEN** `lastRun` reads `not_run` with reason `failed`, Home shows the notice, and TownwiseAI's activity lists the run
+
+#### Scenario: A run fails after every published run was withdrawn
+- **WHEN** a location's first forecast was published, staff withdrew it, and the next calibration failed
+- **THEN** `lastRun.firstForecast` is false and Home says the newest forecast wasn't published because it couldn't run, never the first
 
 #### Scenario: Waiting ends without a run
 - **WHEN** Home showed the first forecast as next and the pass cleared the mark without starting anything

@@ -173,24 +173,36 @@ describe('updatingOf (D65)', () => {
 describe('lastRunOf (D65)', () => {
   it('a held first run reads kept with its owner reason, dated when it finished', () => {
     const held = record({ runId: 'r1', gate: { published: false, reason: 'baseline_not_beaten' } });
-    expect(lastRunOf(held, { status: 'draft', publishedAt: null, publishedBy: null }, null, NOW))
-      .toEqual({ outcome: 'kept', reason: 'not_beat_average', finishedAt: '2026-11-23T08:16:00.000Z' });
+    expect(lastRunOf(held, { status: 'draft', publishedAt: null, publishedBy: null }, null, null, NOW))
+      .toEqual({ outcome: 'kept', reason: 'not_beat_average', firstForecast: true, finishedAt: '2026-11-23T08:16:00.000Z' });
   });
 
   it('a failed first run reads not_run', () => {
-    expect(lastRunOf(record({ status: 'failed', failure: 'job_failed' }), null, null, NOW))
-      .toEqual({ outcome: 'not_run', reason: 'failed', finishedAt: '2026-11-23T08:16:00.000Z' });
+    expect(lastRunOf(record({ status: 'failed', failure: 'job_failed' }), null, null, null, NOW))
+      .toEqual({ outcome: 'not_run', reason: 'failed', firstForecast: true, finishedAt: '2026-11-23T08:16:00.000Z' });
+  });
+
+  it('is not the first forecast once a run was published before it finished, since withdrawn, as the history reads it', () => {
+    const failed = record({ status: 'failed', failure: 'job_failed' });
+    const withdrawn = { runId: 'r0', publishedAt: new Date('2026-11-01T10:00:00.000Z') };
+    expect(lastRunOf(failed, null, withdrawn, null, NOW)).toEqual({
+      outcome: 'not_run', reason: 'failed', firstForecast: false, finishedAt: '2026-11-23T08:16:00.000Z',
+    });
+    // Its own run, or one published only after it finished: still the first.
+    const held = record({ runId: 'r1', gate: { published: false, reason: 'baseline_not_beaten' } });
+    expect(lastRunOf(held, null, { runId: 'r1', publishedAt: NOW }, null, NOW)?.firstForecast).toBe(true);
+    expect(lastRunOf(failed, null, { runId: 'r0', publishedAt: NOW }, null, NOW)?.firstForecast).toBe(true);
   });
 
   it('a timed-out one, still stored live, reads not_run, failed, dated its request plus 20 minutes', () => {
     const stuck = record({ status: 'running', requestedAt: ago(30 * MINUTE), finishedAt: null });
-    expect(lastRunOf(stuck, null, null, NOW)).toEqual({ outcome: 'not_run', reason: 'failed', finishedAt: ago(10 * MINUTE).toISOString() });
+    expect(lastRunOf(stuck, null, null, null, NOW)).toEqual({ outcome: 'not_run', reason: 'failed', firstForecast: true, finishedAt: ago(10 * MINUTE).toISOString() });
   });
 
   it('null while updating, and with no calibration', () => {
     const failed = record({ status: 'failed', failure: 'job_failed' });
-    expect(lastRunOf(failed, null, { stage: 'waiting', since: NOW.toISOString() }, NOW)).toBeNull();
-    expect(lastRunOf(record({ status: 'queued', requestedAt: ago(MINUTE), finishedAt: null }), null, null, NOW)).toBeNull();
-    expect(lastRunOf(null, null, null, NOW)).toBeNull();
+    expect(lastRunOf(failed, null, null, { stage: 'waiting', since: NOW.toISOString() }, NOW)).toBeNull();
+    expect(lastRunOf(record({ status: 'queued', requestedAt: ago(MINUTE), finishedAt: null }), null, null, null, NOW)).toBeNull();
+    expect(lastRunOf(null, null, null, null, NOW)).toBeNull();
   });
 });

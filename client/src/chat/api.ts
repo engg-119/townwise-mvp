@@ -607,7 +607,8 @@ export type OwnerCause = (typeof OWNER_CAUSES)[number];
 
 /**
  * D65 (design decisions 6 to 8): a finished forecast run, dated when it finished: what started it, what happened to its
- * run in the owner codes (never the staff gate words), whether it was the location's first forecast, and the days it
+ * run in the owner codes (never the staff gate words), whether it was the location's first forecast, whether the
+ * location has a published forecast now (`currentForecast`, absent from an API before it, read as yes), and the days it
  * used (null on a run from before D65 or one that failed before it read them). Codes, dates and day counts only: no
  * accuracy and no guest or sales figure, so it is the same under view-as. The words are forecastRuns.ts's. A cause or
  * reason this client doesn't know leaves the item out, like an unknown kind, rather than wording it wrong.
@@ -615,6 +616,7 @@ export type OwnerCause = (typeof OWNER_CAUSES)[number];
 export const forecastMadeItemSchema = z.object({
   at: z.string(), kind: z.literal('forecast_made'), calibrationId: z.string(), causes: z.array(z.enum(OWNER_CAUSES)),
   outcome: z.enum(['published', 'kept', 'not_run']), reason: z.enum(OWNER_REASONS), firstForecast: z.boolean(),
+  currentForecast: z.boolean().optional(),
   dayCount: z.number().int().nullable(), firstDate: dateSchema.nullable(), lastDate: dateSchema.nullable(), newDays: z.number().int().nullable(),
 });
 export type ForecastMadeItem = z.infer<typeof forecastMadeItemSchema>;

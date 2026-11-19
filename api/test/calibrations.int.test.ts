@@ -10,6 +10,7 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
+import { activityFor, forecastMadeSource } from '../src/agent/activity.ts';
 import { calibrationFor, calibrationWords } from '../src/calibration.ts';
 import { utcDay } from '../src/dates.ts';
 import { runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
@@ -313,8 +314,39 @@ describe('updating and the last run (D65)', () => {
     await calibrations.finish(p.scope, id, { status: 'succeeded' }, now);
     await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, now, 'sales');
     expect(await stateAt(p)).toMatchObject({
-      state: 'not_calibrated', updating: null, lastRun: { outcome: 'kept', reason: 'not_beat_average', finishedAt: now.toISOString() },
+      state: 'not_calibrated', updating: null,
+      lastRun: { outcome: 'kept', reason: 'not_beat_average', firstForecast: true, finishedAt: now.toISOString() },
     });
+  });
+
+  it('a run that failed after every published run was withdrawn is not the first forecast, and the history says none is current', async () => {
+    const p = await place(300, true);
+    const { calibrations, forecasts } = server.ctx.stores;
+    const file: ForecastRunFile = {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-05-24', madeAt: '2026-05-24', frozen: null,
+      interval: { level: 0.8, widened: true }, backtest: null, ...runDays('2026-05-24', 70),
+    };
+    const published = server.clock.now();
+    const { run } = await forecasts.upsertRun(p.scope, p.locationId, {
+      id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: 'staff-0000', lab: null, now: published,
+    });
+    await forecasts.setStatus(p.scope, run.id, { from: ['importing'], to: 'published', at: published, by: 'staff-0000' });
+    await forecasts.setStatus(p.scope, run.id, { from: ['published'], to: 'withdrawn', at: published, by: 'staff-0000' });
+    const id = new Types.ObjectId().toHexString();
+    const at = new Date(published.getTime() + MINUTE);
+    await calibrations.insertQueued(p.scope, {
+      id, locationId: p.locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['sales'], regimeStart: null,
+      championRunId: null, tokenExpiresAt: new Date(at.getTime() + 20 * MINUTE), now: at,
+    });
+    await calibrations.finish(p.scope, id, { status: 'failed', failure: 'job_failed' }, new Date(at.getTime() + MINUTE));
+    expect(await stateAt(p)).toMatchObject({
+      state: 'not_calibrated', updating: null, lastRun: { outcome: 'not_run', reason: 'failed', firstForecast: false },
+    });
+    expect(await activityFor({
+      ctx: server.ctx, scope: p.scope, locationId: p.locationId, userId: 'staff-0000', notes: [], answers: [],
+    }, [forecastMadeSource]))
+      .toEqual([expect.objectContaining({ calibrationId: id, reason: 'failed', firstForecast: false, currentForecast: false })]);
   });
 
   it('a published location reads running while a refit runs, never waiting for its mark', async () => {

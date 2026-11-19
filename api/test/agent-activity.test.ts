@@ -200,8 +200,9 @@ describe('finished forecast runs in its activity (D65)', () => {
   /** A context whose stores answer these calibrations (newest first, as the store reads them), their runs and the first published run. */
   function runsContext(
     records: readonly CalibrationRecord[],
-    { runs = {}, first = null, changes = [] }: {
+    { runs = {}, first = null, changes = [], current = [] }: {
       runs?: Record<string, RunState>; first?: { runId: string; publishedAt: Date } | null; changes?: readonly AgentChangeRecord[];
+      current?: readonly { id: string }[];
     } = {},
   ): { ctx: TownwiseContext; reads: { runIds: string[][]; firsts: number } } {
     const reads = { runIds: [] as string[][], firsts: 0 };
@@ -221,6 +222,7 @@ describe('finished forecast runs in its activity (D65)', () => {
             reads.firsts += 1;
             return Promise.resolve(first);
           },
+          published: () => Promise.resolve(current),
         },
       },
     } as unknown as TownwiseContext;
@@ -237,12 +239,12 @@ describe('finished forecast runs in its activity (D65)', () => {
       scorecardJson: '{"mae":12.5}', requestedAt: minutesAgo(50), finishedAt: minutesAgo(44),
     });
     const { ctx } = runsContext([kept], {
-      runs: { r1: draft }, first: { runId: 'r0', publishedAt: new Date('2026-01-05T10:00:00.000Z') },
+      runs: { r1: draft }, first: { runId: 'r0', publishedAt: new Date('2026-01-05T10:00:00.000Z') }, current: [{ id: 'r0' }],
     });
     const items = await activityFor(input(ctx, ADMIN), [forecastMadeSource]);
     expect(items).toEqual([{
       at: minutesAgo(44).toISOString(), kind: 'forecast_made', calibrationId: 'k1', causes: ['sales'], outcome: 'kept',
-      reason: 'not_more_accurate', firstForecast: false, dayCount: 1041, firstDate: '2024-01-01', lastDate: '2026-11-21', newDays: 6,
+      reason: 'not_more_accurate', firstForecast: false, currentForecast: true, dayCount: 1041, firstDate: '2024-01-01', lastDate: '2026-11-21', newDays: 6,
     }]);
     // No accuracy and no figure of the scorecard.
     expect(JSON.stringify(items)).not.toContain('12.5');
@@ -317,6 +319,19 @@ describe('finished forecast runs in its activity (D65)', () => {
     expect(await first({ runId: 'r5', publishedAt: new Date(finished.getTime() + MINUTE) })).toEqual(['not_beat_average', true]);
   });
 
+  it('says on every item whether the location has a published run now: none once every run was withdrawn', async () => {
+    const failed = calibrationRecord({ id: 'w1', status: 'failed', failure: 'job_failed', requestedAt: minutesAgo(30), finishedAt: minutesAgo(24) });
+    const withdrawnFirst = { runId: 'r0', publishedAt: new Date('2026-11-01T10:00:00.000Z') };
+    const { ctx } = runsContext([failed], { first: withdrawnFirst });
+    expect(await activityFor(input(ctx, ADMIN), [forecastMadeSource])).toEqual([expect.objectContaining({
+      calibrationId: 'w1', reason: 'failed', firstForecast: false, currentForecast: false,
+    })]);
+    const { ctx: current } = runsContext([failed], { first: withdrawnFirst, current: [{ id: 'r9' }] });
+    expect(await activityFor(input(current, ADMIN), [forecastMadeSource])).toEqual([expect.objectContaining({
+      calibrationId: 'w1', firstForecast: false, currentForecast: true,
+    })]);
+  });
+
   it('answers the same items under view-as as to the owner, and with no caller, with codes, dates and counts only', async () => {
     const staffRun = calibrationRecord({
       id: 's1', requestedBy: { userId: 'staff-1', role: 'superadmin', via: 'chat' }, runId: 'r6', gate: { published: false, reason: 'jump_held' },
@@ -328,7 +343,7 @@ describe('finished forecast runs in its activity (D65)', () => {
     expect(await activityFor(input(ctx), [forecastMadeSource])).toEqual(owner);
     expect(owner).toEqual([{
       at: '2026-11-23T08:16:00.000Z', kind: 'forecast_made', calibrationId: 's1', causes: ['staff'], outcome: 'published',
-      reason: 'published_by_staff', firstForecast: true, dayCount: 400, firstDate: '2025-10-01', lastDate: '2026-11-15', newDays: null,
+      reason: 'published_by_staff', firstForecast: true, currentForecast: false, dayCount: 400, firstDate: '2025-10-01', lastDate: '2026-11-15', newDays: null,
     }]);
     expect(JSON.stringify(owner)).not.toContain('staff-1');
   });

@@ -244,6 +244,17 @@ describe('D65: the forecast updating, in each page’s words (design decisions 3
     expect(notPublishedLine(first(null, { outcome: 'published', reason: 'published', finishedAt: held.finishedAt }), 'Main Street Bar')).toBeNull();
   });
 
+  test('Home’s notice says the newest forecast, not the first, once a first forecast was published and since withdrawn', () => {
+    const failed: LastRun = { outcome: 'not_run', reason: 'failed', firstForecast: false, finishedAt: '2026-11-18T09:20:00.000Z' };
+    expect(notPublishedLine(first(null, failed), 'Main Street')).toEqual({
+      text: 'The newest forecast for Main Street wasn’t published: it couldn’t run.',
+      next: 'Townwise tries again after your next sales upload.',
+    });
+    // Marked the first, or from an API before the flag: the first forecast.
+    expect(notPublishedLine(first(null, { ...failed, firstForecast: true }), 'Main Street')?.text)
+      .toBe('The first forecast for Main Street wasn’t published: it couldn’t run.');
+  });
+
   test('every reason a first forecast wasn’t published has words, none stating a minimum or a kept forecast', () => {
     for (const reason of OWNER_REASONS) {
       if (reason === 'published' || reason === 'published_by_staff') continue;

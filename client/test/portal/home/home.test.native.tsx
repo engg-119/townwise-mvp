@@ -587,6 +587,15 @@ describe('D65: the first forecast as it builds, and why one wasn’t published',
     expect(screen.queryByText('In progress')).toBeNull();
   });
 
+  test('a run that failed after the first forecast was published and withdrawn: the newest forecast, not the first', async () => {
+    const failed = { outcome: 'not_run', reason: 'failed', firstForecast: false, finishedAt: '2026-11-04T09:20:00.000Z' };
+    await renderApp('/locations/l1', portal({ locations: located(first(null, failed)) }));
+    expect(await screen.findByText(
+      'The newest forecast for Main Street Bar wasn’t published: it couldn’t run. Townwise tries again after your next sales upload.',
+    )).toBeTruthy();
+    expect(screen.queryByText(/The first forecast for/)).toBeNull();
+  });
+
   test('next that ends with no run (the pass cleared the mark): the plain line, and no notice', async () => {
     jest.useFakeTimers({
       now: new Date(2026, 10, 5, 12, 0, 0),
