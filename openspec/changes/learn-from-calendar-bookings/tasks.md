@@ -72,7 +72,9 @@ Spec decision D58 (check develop's spec section 2 and the reservation list again
 - [x] 9.1 `client/src/portal/data/item/CalendarItem.tsx`: for a file calendar, counts per label, the month list with a label filter and a select per event (org admin), Sort with TownwiseAI with its words before the press, Use for forecasts, and the results (labeled, notes made, refit started or when it will run). Read-only for members and under view-as; no Sort for staff open as admin. Its path needs no new `isAllowed` entry (the page exists). Tests in `client/test/portal/data/`. `npm test -w @ckeith26/expo-shell -- test/portal/data`
   Done: as designed, in `CalendarItem.tsx` with a new `Bookings.tsx` and `bookingWords.ts` ([CONFIRM] words); a file calendar's page reaches 36 months back (the Calendar page keeps its 12, so the history shows on this page and in chat, not on the Calendar). Tests: `bookings.test.web.tsx` (11), `calendar-page.test.native.tsx`.
 - [ ] 9.2 Independent UI review on a DB copy with a made-up calendar (memory: UI review without owner sign-in), web and phone width.
+  Open: needs a DB copy and a throwaway API and Expo pair; this build was told not to pull the production database or touch the running dev servers, and an extra local API sharing Azurite deletes the owner's local files (memory). Left for the release coordinator.
 - [ ] 9.3 Offline comparison, never committed: on a local copy of the partner's data, import the CSV, label it as the owner's answers say, and run the lab with and without the confirmed labels. Report both engines' backtest WAPE and weekday bias to the owner as counts and metrics only, before release.
+  Open: needs a local copy of the partner's sales data and the lab run on it, which this worktree does not hold; to run before the owner confirms labels in production.
 
 ## 10. Docs and privacy (owner approval before push)
 
@@ -83,7 +85,11 @@ Spec decision D58 (check develop's spec section 2 and the reservation list again
 
 ## 11. Verification and landing
 
-- [ ] 11.1 `npm run lint` and `npm run typecheck`.
-- [ ] 11.2 The targeted suites above, then `test/isolation.test.ts`, `test/isolation.int.test.ts` and the view-as and open-as-admin route tests.
+- [x] 11.1 `npm run lint` and `npm run typecheck`.
+  Done: eslint on every changed .ts/.tsx file (62) is clean, rather than the whole repo on the shared runner; `npm run typecheck` (every workspace) is clean.
+- [x] 11.2 The targeted suites above, then `test/isolation.test.ts`, `test/isolation.int.test.ts` and the view-as and open-as-admin route tests.
+  Done: every suite named above passed, plus `isolation.test.ts`, `isolation.int.test.ts`, `view-as-routes.int.test.ts`, `open-as-admin-routes.int.test.ts`, `routes.test.ts`, the api unit suite (two file-reader timeouts during a laptop stall passed on rerun), and the neighboring calendar, Google, weekly, lab and notes integration suites. `google-calendars.int.test.ts` needed the list's new `bookingSort`.
 - [ ] 11.3 The owner imports the CSV locally, checks owner question 12 (three events' hours), and asks TownwiseAI chat about a booking two years back.
-- [ ] 11.4 Renumber this change's CONFIRM items against develop's spec 22.2 just before push. Ask before a full `npm run verify` on the shared runner.
+  Open: the owner's own check on their machine.
+- [x] 11.4 Renumber this change's CONFIRM items against develop's spec 22.2 just before push. Ask before a full `npm run verify` on the shared runner.
+  Done: rechecked against develop at dc9d3d50 after a rebase: D57 is still the highest decision and 129 the last CONFIRM item, so D58 and items 130 to 142 stand. A full `npm run verify` was not run on the shared runner.
