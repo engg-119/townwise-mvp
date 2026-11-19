@@ -1,0 +1,838 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover sports thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "sports",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 5542907,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2QA9HNSApfXptpiwhr",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_011jQrSgfA3nNMHhkWP95JgZ",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth home games schedule 2026-27 hockey basketball"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_011jQrSgfA3nNMHhkWP95JgZ",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule",
+              "page_age": "161 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Men's Basketball Announces 2026-27 Schedule - Dartmouth College ...",
+              "url": "https://dartmouthsports.com/news/2026/8/18/mens-basketball-announces-2026-27-schedule",
+              "page_age": "93 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Men’s Ice Hockey Announces 2026-27 Promotional Schedule - Dartmouth ...",
+              "url": "https://dartmouthsports.com/news/2026/10/14/mens-ice-hockey-mens-ice-hockey-announces-2026-27-promotional-schedule",
+              "page_age": "36 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "This Week in Dartmouth Sports: 10.26",
+              "url": "https://dartmouthsports.com/news/2026/10/28/athletics-this-week-in-dartmouth-sports-10-26-11-2",
+              "page_age": "22 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2025%E2%80%9326 Dartmouth Big Green men%27s basketball team",
+              "url": "https://en.wikipedia.org/wiki/2025%E2%80%9326_Dartmouth_Big_Green_men%27s_basketball_team",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-27 to Open For Men’s Basketball at Marist - Dartmouth College ...",
+              "url": "https://dartmouthsports.com/news/2026/10/31/mens-basketball-2026-27-to-open-for-mens-basketball-at-marist",
+              "page_age": "19 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Big Green Schedule 2026-27 - CBS Sports",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth 2026‑27 Schedule/Results : College Hockey News",
+              "url": "https://www.collegehockeynews.com/schedules/team/Dartmouth/19",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "This Week in Dartmouth Sports: 1.27",
+              "url": "https://dartmouthsports.com/news/2026/1/27/athletics-this-week-in-dartmouth-sports-1-27-2-2",
+              "page_age": "296 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found 14 dated Dartmouth College home games in Hanover during your window: 10 men's hockey games at Thompson Arena and 4 men's basketball games at Leede Arena. I only searched once, so women's teams, the Dartmouth Winter Carnival, high school teams, ski races and other events in the area are not covered yet. Most of the cited schedule lines don't say the year themselves. I added 2026 or 2027 from the season (2026-27) and the weekdays, which match.\n\nEVENT: Men's basketball, Dartmouth vs. Holy Cross, on Wednesday, November 25, 2026, at Leede Arena in Hanover. Dartmouth College Athletics is the host, and it is a one-off home game. The college lists it as "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Home dates continue with Maine Augusta on Tuesday, Nov. 17, and a non-conference contests against Patriot League opponent Holy Cross on Wednesday, Nov...",
+              "url": "https://dartmouthsports.com/news/2026/8/18/mens-basketball-announces-2026-27-schedule",
+              "title": "Men's Basketball Announces 2026-27 Schedule - Dartmouth College ..."
+            }
+          ],
+          "type": "text",
+          "text": "a non-conference contests against Patriot League opponent Holy Cross on Wednesday, Nov. 25"
+        },
+        {
+          "type": "text",
+          "text": ". CBS Sports gives the time as 5:00 pm: "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| 1:00 pm  | Case Gym  | Tickets Starting at $14.54  |\n| Nov 17, 2026  | vs team logo Maine-Augusta  | 6:30 pm  | Edward Leede Arena  | —  |\n| Nov 25,...",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/",
+              "title": "Dartmouth Big Green Schedule 2026-27 - CBS Sports"
+            }
+          ],
+          "type": "text",
+          "text": "Nov 25, 2026 | vs team logo Holy Cross | 5:00 pm | Edward Leede Arena"
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Men's ice hockey, Dartmouth vs. Northeastern, on Sunday, November 29, 2026, at 2:00 p.m. at Thompson Arena. Dartmouth College Athletics is the host, and it is a one-off home game with a post-game skate for fans. The promotion page says "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**Saturday, November 29 vs Northeastern 2:00 p.m.** **POST GAME SKATE -** All fans are invited to skate on the ice for 20 minutes after the game. ",
+              "url": "https://dartmouthsports.com/news/2026/10/14/mens-ice-hockey-mens-ice-hockey-announces-2026-27-promotional-schedule",
+              "title": "Men’s Ice Hockey Announces 2026-27 Promotional Schedule - Dartmouth ..."
+            }
+          ],
+          "type": "text",
+          "text": "November 29 vs Northeastern 2:00 p.m. POST GAME SKATE - All fans are invited to skate on the ice for 20 minutes after the game."
+        },
+        {
+          "type": "text",
+          "text": " That page calls it a Saturday, but November 29, 2026 is a Sunday, and College Hockey News lists it on Sunday too: "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 2027\n\n# Dartmouth\n## 2026‑27 Dartmouth Schedule/Results Record: 0-0-0 (0-0 OT) (0-0-0 ECAC)\n- 01 Sun · Alaska (nc) · 3:00 ET · Preview · ESPN\n...",
+              "url": "https://www.collegehockeynews.com/schedules/team/Dartmouth/19",
+              "title": "Dartmouth 2026‑27 Schedule/Results : College Hockey News"
+            }
+          ],
+          "type": "text",
+          "text": "29 Sun · Northeastern (nc) · 2:00 ET"
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Men's basketball, Dartmouth vs. Maine Maritime, on Sunday, December 6, 2026, at 2:00 pm at Leede Arena. Dartmouth College Athletics is the host, and it is a one-off home game. CBS Sports lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "St.  | 1:00 pm  | Holmes Convocation Center  | —  |\n| Dec 2, 2026  | @ team logo Davidson  | 7:00 pm  | Belk Arena  | Tickets Starting at $9.70  |\n| D...",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/",
+              "title": "Dartmouth Big Green Schedule 2026-27 - CBS Sports"
+            }
+          ],
+          "type": "text",
+          "text": "Dec 6, 2026 | vs team logo Maine Maritime | 2:00 pm | Edward Leede Arena"
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Men's ice hockey, Dartmouth vs. Stonehill, on Thursday, December 10, 2026, at 6:30 p.m. at Thompson Arena. Dartmouth College Athletics is the host, and it is a one-off home game. The schedule lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 2027\n\n# Dartmouth\n## 2026‑27 Dartmouth Schedule/Results Record: 0-0-0 (0-0 OT) (0-0-0 ECAC)\n- 01 Sun · Alaska (nc) · 3:00 ET · Preview · ESPN\n...",
+              "url": "https://www.collegehockeynews.com/schedules/team/Dartmouth/19",
+              "title": "Dartmouth 2026‑27 Schedule/Results : College Hockey News"
+            }
+          ],
+          "type": "text",
+          "text": "10 Thu · Stonehill (nc) · 6:30 ET"
+        },
+        {
+          "type": "text",
+          "text": " in December 2026.\n\nEVENT: Men's ice hockey, Dartmouth vs. New Hampshire, on Sunday, December 13, 2026, at 3:00 p.m. at Thompson Arena. Dartmouth College Athletics is the host, and it is a one-off home game against a regional rival. The schedule lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 2027\n\n# Dartmouth\n## 2026‑27 Dartmouth Schedule/Results Record: 0-0-0 (0-0 OT) (0-0-0 ECAC)\n- 01 Sun · Alaska (nc) · 3:00 ET · Preview · ESPN\n...",
+              "url": "https://www.collegehockeynews.com/schedules/team/Dartmouth/19",
+              "title": "Dartmouth 2026‑27 Schedule/Results : College Hockey News"
+            }
+          ],
+          "type": "text",
+          "text": "13 Sun · New Hampshire (nc) · 3:00 ET"
+        },
+        {
+          "type": "text",
+          "text": " in December 2026.\n\nEVENT: Men's ice hockey, Dartmouth vs. Holy Cross, on Tuesday, December 15, 2026, at 6:30 p.m. at Thompson Arena. Dartmouth College Athletics is the host, and it is a one-off home game. The schedule lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 2027\n\n# Dartmouth\n## 2026‑27 Dartmouth Schedule/Results Record: 0-0-0 (0-0 OT) (0-0-0 ECAC)\n- 01 Sun · Alaska (nc) · 3:00 ET · Preview · ESPN\n...",
+              "url": "https://www.collegehockeynews.com/schedules/team/Dartmouth/19",
+              "title": "Dartmouth 2026‑27 Schedule/Results : College Hockey News"
+            }
+          ],
+          "type": "text",
+          "text": "15 Tue · Holy Cross (nc) · 6:30 ET"
+        },
+        {
+          "type": "text",
+          "text": " in December 2026.\n\nEVENT: Men's basketball, Dartmouth vs. Sacred Heart on Sunday, December 20, 2026, and vs. Stonehill on Tuesday, December 29, 2026, both at 2:00 pm at Leede Arena. Dartmouth College Athletics is the host, and these are two home games in a row over the holidays. CBS Sports lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| Dec 16, 2026  | @ team logo Temple  | TBA  | Liacouras Center  | Tickets Starting at $18.90  |\n| Dec 20, 2026  | vs team logo Sacred Heart  | 2:00 p...",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/",
+              "title": "Dartmouth Big Green Schedule 2026-27 - CBS Sports"
+            }
+          ],
+          "type": "text",
+          "text": "Dec 20, 2026 | vs team logo Sacred Heart | 2:00 pm | Edward Leede Arena"
+        },
+        {
+          "type": "text",
+          "text": " and "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| Dec 16, 2026  | @ team logo Temple  | TBA  | Liacouras Center  | Tickets Starting at $18.90  |\n| Dec 20, 2026  | vs team logo Sacred Heart  | 2:00 p...",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/",
+              "title": "Dartmouth Big Green Schedule 2026-27 - CBS Sports"
+            }
+          ],
+          "type": "text",
+          "text": "Dec 29, 2026 | vs team logo Stonehill | 2:00 pm | Edward Leede Arena"
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Men's basketball Ivy League home games at Leede Arena in 2027, hosted by Dartmouth College Athletics, which run until the home finale on Saturday, February 27, 2027. Times for the January games were not found. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Dartmouth opens Ivy League play at home against Harvard on Monday, Jan. 4, followed by a Saturday, Jan. 9, home date with Cornell.\n\n",
+              "url": "https://dartmouthsports.com/news/2026/8/18/mens-basketball-announces-2026-27-schedule",
+              "title": "Men's Basketball Announces 2026-27 Schedule - Dartmouth College ..."
+            }
+          ],
+          "type": "text",
+          "text": "Dartmouth opens Ivy League play at home against Harvard on Monday, Jan. 4, followed by a Saturday, Jan. 9, home date with Cornell."
+        },
+        {
+          "type": "text",
+          "text": " Those dates are January 4 and January 9, 2027. The two sources disagree about the February 27, 2027 opponent: the college release names Columbia, but CBS Sports lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "| Dec 16, 2026  | @ team logo Temple  | TBA  | Liacouras Center  | Tickets Starting at $18.90  |\n| Dec 20, 2026  | vs team logo Sacred Heart  | 2:00 p...",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/",
+              "title": "Dartmouth Big Green Schedule 2026-27 - CBS Sports"
+            }
+          ],
+          "type": "text",
+          "text": "Feb 27, 2027 | vs team logo Penn | 5:00 pm | Edward Leede Arena"
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Men's ice hockey ECAC home weekends at Thompson Arena in January 2027, all at 7:00 p.m., hosted by Dartmouth College Athletics. There are four home games in a row on Friday and Saturday nights, January 8, 9, 15 and 16, 2027. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Dartmouth then hosts four straight home games against Princeton on Friday, Jan. 8, Quinnipiac on Saturday, Jan. 9, St. Lawrence on Friday, Jan. 15, an...",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule",
+              "title": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics"
+            }
+          ],
+          "type": "text",
+          "text": "Dartmouth then hosts four straight home games against Princeton on Friday, Jan. 8, Quinnipiac on Saturday, Jan. 9, St. Lawrence on Friday, Jan. 15, and Clarkson on Saturday, Jan. 16."
+        },
+        {
+          "type": "text",
+          "text": " The schedule gives each start as 7:00 ET: "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 2027\n\n# Dartmouth\n## 2026‑27 Dartmouth Schedule/Results Record: 0-0-0 (0-0 OT) (0-0-0 ECAC)\n- 01 Sun · Alaska (nc) · 3:00 ET · Preview · ESPN\n...",
+              "url": "https://www.collegehockeynews.com/schedules/team/Dartmouth/19",
+              "title": "Dartmouth 2026‑27 Schedule/Results : College Hockey News"
+            }
+          ],
+          "type": "text",
+          "text": "08 Fri · Princeton · 7:00 ET"
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Men's ice hockey ECAC home games at Thompson Arena in February 2027, all at 7:00 p.m., hosted by Dartmouth College Athletics. There are five Friday and Saturday games, on February 5, 12, 13, 19 and 20, 2027. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Harvard travels to the Upper Valley on Friday, Feb. 5 before the Big Green host RPI and Union on Friday, Feb. 12 and Saturday, Feb. 13. ",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule",
+              "title": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics"
+            }
+          ],
+          "type": "text",
+          "text": "Harvard travels to the Upper Valley on Friday, Feb. 5 before the Big Green host RPI and Union on Friday, Feb. 12 and Saturday, Feb. 13."
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The final home weekend comes on Friday, Feb. 19 and Saturday, Feb. 20 as Cornell and Colgate visit the Big Green.",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule",
+              "title": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics"
+            }
+          ],
+          "type": "text",
+          "text": "The final home weekend comes on Friday, Feb. 19 and Saturday, Feb. 20 as Cornell and Colgate visit the Big Green."
+        },
+        {
+          "type": "text",
+          "text": " February 20, 2027 is the last regular-season home game."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 206,
+        "cache_creation_input_tokens": 11688,
+        "cache_read_input_tokens": 3025,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 3025,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 2462,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 1,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 204,
+            "output_tokens": 69,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 3025,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 3025,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 2393,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 8663,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 8663,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 120
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2Rg68WCn5WDgzwiDCE",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"Men's Basketball: Dartmouth vs. Holy Cross\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2026-11-25\",\"endDate\":\"2026-11-25\",\"weekdays\":null,\"startTime\":\"17:00\",\"status\":\"scheduled\",\"venueRef\":\"leede\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S2\",\"S7\"],\"dateQuote\":\"a non-conference contests against Patriot League opponent Holy Cross on Wednesday, Nov...\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. Northeastern (Post-Game Skate)\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2026-11-29\",\"endDate\":\"2026-11-29\",\"weekdays\":null,\"startTime\":\"14:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S3\"],\"dateQuote\":\"November 29 vs Northeastern 2:00 p.m.\",\"confidence\":\"high\"},{\"title\":\"Men's Basketball: Dartmouth vs. Maine Maritime\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2026-12-06\",\"endDate\":\"2026-12-06\",\"weekdays\":null,\"startTime\":\"14:00\",\"status\":\"scheduled\",\"venueRef\":\"leede\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S7\"],\"dateQuote\":\"Dec 2, 2026\",\"confidence\":\"low\"},{\"title\":\"Men's Basketball: Dartmouth vs. Sacred Heart\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2026-12-20\",\"endDate\":\"2026-12-20\",\"weekdays\":null,\"startTime\":\"14:00\",\"status\":\"scheduled\",\"venueRef\":\"leede\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S7\"],\"dateQuote\":\"Dec 20, 2026 | vs team logo Sacred Heart | 2:00 p\",\"confidence\":\"medium\"},{\"title\":\"Men's Basketball: Dartmouth vs. Harvard\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-01-04\",\"endDate\":\"2027-01-04\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"leede\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S2\"],\"dateQuote\":\"Dartmouth opens Ivy League play at home against Harvard on Monday, Jan. 4\",\"confidence\":\"high\"},{\"title\":\"Men's Basketball: Dartmouth vs. Cornell\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-01-09\",\"endDate\":\"2027-01-09\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"leede\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S2\"],\"dateQuote\":\"followed by a Saturday, Jan. 9, home date with Cornell.\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. Princeton\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-01-08\",\"endDate\":\"2027-01-08\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"Princeton on Friday, Jan. 8\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. Quinnipiac\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-01-09\",\"endDate\":\"2027-01-09\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"Quinnipiac on Saturday, Jan. 9\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. St. Lawrence\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-01-15\",\"endDate\":\"2027-01-15\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"St. Lawrence on Friday, Jan. 15\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. Harvard\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-02-05\",\"endDate\":\"2027-02-05\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"Harvard travels to the Upper Valley on Friday, Feb. 5\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. RPI\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-02-12\",\"endDate\":\"2027-02-12\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"host RPI and Union on Friday, Feb. 12 and Saturday, Feb. 13.\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. Union\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-02-13\",\"endDate\":\"2027-02-13\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"host RPI and Union on Friday, Feb. 12 and Saturday, Feb. 13.\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. Cornell\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-02-19\",\"endDate\":\"2027-02-19\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"The final home weekend comes on Friday, Feb. 19 and Saturday, Feb. 20 as Cornell and Colgate visit the Big Green.\",\"confidence\":\"high\"},{\"title\":\"Men's Ice Hockey: Dartmouth vs. Colgate\",\"kind\":\"event\",\"category\":\"sports\",\"startDate\":\"2027-02-20\",\"endDate\":\"2027-02-20\",\"weekdays\":null,\"startTime\":\"19:00\",\"status\":\"scheduled\",\"venueRef\":\"thompson\",\"hostRef\":\"dca\",\"competitor\":null,\"sourceIds\":[\"S1\"],\"dateQuote\":\"The final home weekend comes on Friday, Feb. 19 and Saturday, Feb. 20 as Cornell and Colgate visit the Big Green.\",\"confidence\":\"high\"}],\"entities\":[{\"ref\":\"dca\",\"type\":\"organization\",\"name\":\"Dartmouth College Athletics\",\"sourceIds\":[\"S1\",\"S2\"]},{\"ref\":\"leede\",\"type\":\"venue\",\"name\":\"Leede Arena\",\"sourceIds\":[\"S7\"]},{\"ref\":\"thompson\",\"type\":\"venue\",\"name\":\"Thompson Arena\",\"sourceIds\":[\"S1\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 5813,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 2559,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 5813,
+            "output_tokens": 2559,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 193541,
+    "searches": 1,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 9,
+    "verified": {
+      "events": [
+        {
+          "title": "Men's Basketball: Dartmouth vs. Holy Cross",
+          "kind": "event",
+          "category": "sports",
+          "start": "2026-11-25",
+          "end": "2026-11-25",
+          "weekdays": null,
+          "startTime": "17:00",
+          "status": "scheduled",
+          "venueRef": "leede",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Basketball Announces 2026-27 Schedule - Dartmouth College ...",
+              "url": "https://dartmouthsports.com/news/2026/8/18/mens-basketball-announces-2026-27-schedule"
+            },
+            {
+              "label": "Dartmouth Big Green Schedule 2026-27 - CBS Sports",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. Northeastern (Post-Game Skate)",
+          "kind": "event",
+          "category": "sports",
+          "start": "2026-11-29",
+          "end": "2026-11-29",
+          "weekdays": null,
+          "startTime": "14:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men’s Ice Hockey Announces 2026-27 Promotional Schedule - Dartmouth ...",
+              "url": "https://dartmouthsports.com/news/2026/10/14/mens-ice-hockey-mens-ice-hockey-announces-2026-27-promotional-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Basketball: Dartmouth vs. Maine Maritime",
+          "kind": "event",
+          "category": "sports",
+          "start": "2026-12-06",
+          "end": "2026-12-06",
+          "weekdays": null,
+          "startTime": "14:00",
+          "status": "scheduled",
+          "venueRef": "leede",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Dartmouth Big Green Schedule 2026-27 - CBS Sports",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Men's Basketball: Dartmouth vs. Sacred Heart",
+          "kind": "event",
+          "category": "sports",
+          "start": "2026-12-20",
+          "end": "2026-12-20",
+          "weekdays": null,
+          "startTime": "14:00",
+          "status": "scheduled",
+          "venueRef": "leede",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Dartmouth Big Green Schedule 2026-27 - CBS Sports",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Basketball: Dartmouth vs. Harvard",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-01-04",
+          "end": "2027-01-04",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "leede",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Basketball Announces 2026-27 Schedule - Dartmouth College ...",
+              "url": "https://dartmouthsports.com/news/2026/8/18/mens-basketball-announces-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Basketball: Dartmouth vs. Cornell",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-01-09",
+          "end": "2027-01-09",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "leede",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Basketball Announces 2026-27 Schedule - Dartmouth College ...",
+              "url": "https://dartmouthsports.com/news/2026/8/18/mens-basketball-announces-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. Princeton",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-01-08",
+          "end": "2027-01-08",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. Quinnipiac",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-01-09",
+          "end": "2027-01-09",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. St. Lawrence",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-01-15",
+          "end": "2027-01-15",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. Harvard",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-02-05",
+          "end": "2027-02-05",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. RPI",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-02-12",
+          "end": "2027-02-12",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. Union",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-02-13",
+          "end": "2027-02-13",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. Cornell",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-02-19",
+          "end": "2027-02-19",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Men's Ice Hockey: Dartmouth vs. Colgate",
+          "kind": "event",
+          "category": "sports",
+          "start": "2027-02-20",
+          "end": "2027-02-20",
+          "weekdays": null,
+          "startTime": "19:00",
+          "status": "scheduled",
+          "venueRef": "thompson",
+          "hostRef": "dca",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "dca",
+          "type": "organization",
+          "name": "Dartmouth College Athletics",
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            },
+            {
+              "label": "Men's Basketball Announces 2026-27 Schedule - Dartmouth College ...",
+              "url": "https://dartmouthsports.com/news/2026/8/18/mens-basketball-announces-2026-27-schedule"
+            }
+          ]
+        },
+        {
+          "ref": "leede",
+          "type": "venue",
+          "name": "Leede Arena",
+          "sources": [
+            {
+              "label": "Dartmouth Big Green Schedule 2026-27 - CBS Sports",
+              "url": "https://www.cbssports.com/college-basketball/teams/DART/dartmouth-big-green/schedule/"
+            }
+          ]
+        },
+        {
+          "ref": "thompson",
+          "type": "venue",
+          "name": "Thompson Arena",
+          "sources": [
+            {
+              "label": "Men's Hockey Reveals 2026-27 Schedule - Dartmouth College Athletics",
+              "url": "https://dartmouthsports.com/news/2026/6/11/mens-ice-hockey-mens-hockey-reveals-2026-27-schedule"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}

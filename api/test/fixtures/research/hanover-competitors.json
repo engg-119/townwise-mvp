@@ -1,0 +1,592 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover competitors thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "competitors",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 3527550,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2VZFjd2hz932o6ajDW",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01E1TrRwVRjLJko8BCddLmSR",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH restaurant trivia night live music 2026"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01E1TrRwVRjLJko8BCddLmSR",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "TOP 10 BEST Trivia Night near Hanover, NH 03755 - Updated 2026 ...",
+              "url": "https://www.yelp.com/search?find_desc=trivia+night&find_loc=Hanover%2C+NH+03755",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "TOP 10 BEST Trivia near Hanover, NH 03755 - Updated 2026 - Quality ...",
+              "url": "https://www.yelp.com/search?find_desc=trivia&find_loc=Hanover%2C+NH+03755",
+              "page_age": "2187 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Things to Do in Hanover, NH This Weekend - Events & Activities ...",
+              "url": "https://www.eventbrite.com/d/nh--hanover/events--this-weekend/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "TOP 10 BEST Live Music Venues near Hanover, NH 03755 - (2026 Guide) ...",
+              "url": "https://www.yelp.com/search?find_desc=live+music+venues&find_loc=Hanover%2C+NH+03755",
+              "page_age": "1542 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "TOP 10 BEST Restaurants With Live Music near Hanover, NH - Updated ...",
+              "url": "https://www.yelp.com/search?find_desc=Restaurants+With+Live+Music&find_loc=Hanover%2C+NH",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "TOP 10 BEST Live Music Venues near Hanover, NH 03755 - Updated ...",
+              "url": "https://www.yelp.com/search?find_desc=Live+Music+Venues&find_loc=Hanover,+NH+03755",
+              "page_age": "1162 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "TOP 10 BEST Open Mic near Hanover, NH 03755 - Updated 2026 - Yelp",
+              "url": "https://www.yelp.com/search?find_desc=Open+Mic&find_loc=Hanover%2C+NH+03755",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth: Trivia Night",
+              "url": "https://www.explorehanovernh.com/event-details/sawtooth-trivia-night-2026-02-02-18-30",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Live Music in Hanover, New Hampshire",
+              "url": "https://wannagosee.com/new-hampshire/hanover/",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "text",
+          "text": "Need dated in-window items. Search explorehanovernh Sawtooth events Dec 2026."
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01R34v6AX3cHb2PXnkmcZtNo",
+          "name": "web_search",
+          "input": {
+            "query": "Sawtooth Kitchen Hanover December 2026 event"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01XQWwRQHdA6VGU1QGnERL66",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH restaurant opening closing November 2026"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01R34v6AX3cHb2PXnkmcZtNo",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth Kitchen Allen Street, Hanover",
+              "url": "https://order.toasttab.com/online/sawtooth-kitchen-33-south-main-street/item-328-8pm-bow-thayer_e25556a6-8dd4-48a9-9708-9dffb7536e00",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth Kitchen, Bar and Stage Tickets & 2026 Concert Schedule ...",
+              "url": "https://www.bandsintown.com/v/10313141-sawtooth-kitchen-bar-and-stage",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Danny Abel returns to Sawtooth Kitchen this November - Valley News",
+              "url": "https://vnews.com/2026/11/10/grammy-nominee-danny-abel-hanover-show/",
+              "page_age": "9 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth Kitchen, Bar and Stage - Updated 2026, Contemporary American ...",
+              "url": "https://www.opentable.com/r/sawtooth-kitchen-bar-and-stage-hanover",
+              "page_age": "1228 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth Kitchen Bar and Stage",
+              "url": "https://www.greateruppervalley.com/businesses/nh-hanover-sawtooth-kitchen",
+              "page_age": "1812 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth Kitchen, Bar and Stage",
+              "url": "https://www.toasttab.com/local/order/sawtooth-kitchen-33-south-main-street/r-46bc6aad-e24f-4862-82f3-ff2d97ea5500/item-brussels_40f43fc5-203a-4ccf-ae73-2c7cd1734e06",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth: Canopy New Year's Eve",
+              "url": "https://www.explorehanovernh.com/event-details/sawtooth-canopy-new-years-eve",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sawtooth Kitchen, bar and stage (@sawtoothhanover) • Instagram ...",
+              "url": "https://www.instagram.com/sawtoothhanover/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Find The Best Local Events In The Upper Valley",
+              "url": "https://www.greateruppervalley.com/calendar",
+              "page_age": "29 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01XQWwRQHdA6VGU1QGnERL66",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "THE 10 BEST Restaurants in Hanover (Updated November 2026)",
+              "url": "https://www.tripadvisor.com/Restaurants-g46114-Hanover_New_Hampshire.html",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Murphys On The Green Restaurant - Hanover, NH",
+              "url": "https://www.opentable.com/r/murphys-on-the-green-hanover",
+              "page_age": "1752 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "THE 10 BEST Lunch Restaurants in Hanover (UPDATED 2026)",
+              "url": "https://www.tripadvisor.com/Restaurants-g46114-zfp30-Hanover_New_Hampshire.html",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover Crossing",
+              "url": "https://en.wikipedia.org/wiki/Hanover_Crossing",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "TOP 10 BEST Restaurants Open Late near Hanover, NH - Updated 2026 ...",
+              "url": "https://www.yelp.com/search?find_desc=Restaurants+Open+Late&find_loc=Hanover%2C+NH",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Alpenrausch (restaurant)",
+              "url": "https://en.wikipedia.org/wiki/Alpenrausch_(restaurant)",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Rep%C3%BAblica (restaurant)",
+              "url": "https://en.wikipedia.org/wiki/Rep%C3%BAblica_(restaurant)",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Interurban (restaurant)",
+              "url": "https://en.wikipedia.org/wiki/Interurban_(restaurant)",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Tuk Tuk Thai Cuisine",
+              "url": "https://www.tuktukthaicuisine.com/",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01Lkpom6UcKrU9PiLJByfPNP",
+          "name": "web_search",
+          "input": {
+            "query": "Valley News Hanover restaurant opens closes Main Street 2026"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01Lkpom6UcKrU9PiLJByfPNP",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Hanover's Main Street Kitchens to close indefinitely - Valley News",
+              "url": "https://vnews.com/2026/01/06/main-street-kitchens-hanover-closing/",
+              "page_age": "317 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Tuk Tuk Thai Cuisine set to open in new Hanover spot - Valley News",
+              "url": "https://vnews.com/2026/02/26/tuk-tuk-thai-cuisine-set-to-relocate-hanover-restaurant/",
+              "page_age": "266 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "New Playa Bowls location to open in Hanover in April - Valley News",
+              "url": "https://vnews.com/2026/02/18/playa-bowls-hanover-opening/",
+              "page_age": "140 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "An ‘iconic Hanover small business’ closes its doors - The ...",
+              "url": "https://www.thedartmouth.com/article/2026/01/an-iconic-hanover-small-business-closes-its-doors",
+              "page_age": "308 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Main Street Hanover Invites Restaurants to Participate in 2026 ...",
+              "url": "https://mainstreethanover.org/restaurant-week-2026/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Eddie Bogosian aims to revive beloved EBA's legacy - Valley News",
+              "url": "https://vnews.com/2026/10/21/ebas-restaurant-comeback-plans/",
+              "page_age": "29 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover eatery closes due to drop in business following COVID-19 ...",
+              "url": "https://vnews.com/Cuttings-Northside-Cafe-in-Hanover-closing-after-17-years-56048025",
+              "page_age": "855 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover mulls $14.9M project, South Main Street parking cut - Valley ...",
+              "url": "https://vnews.com/2026/03/26/hanover-infrastructure-upgrade-plan/",
+              "page_age": "232 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Main Street Kitchens In Hanover Closing Its Doors - For Now",
+              "url": "https://www.greateruppervalley.com/2026/01/21/560987/main-street-kitchens-in-hanover-closing-its-doors-for-now",
+              "page_age": "302 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "First Annual Hanover Restaurant Week Launches August 8–22 with ...",
+              "url": "https://www.communitymedia.net/news/community/first-annual-hanover-restaurant-week-launches-august-8-22-with-exclusive-prix-fixe-menus-and-culinary-experiences/",
+              "page_age": "108 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found only two dated competitor events in the window (Nov 19, 2026 – May 18, 2027). Both are at Sawtooth Kitchen, Bar and Stage on Allen Street.\n\nEVENT: Danny Abel jazz, funk and soul show at Sawtooth Kitchen. It's a one-time concert today, Thursday, November 19, 2026, at 7:30 p.m., hosted by the restaurant: "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Grammy nominee Danny Abel will perform jazz, funk, and soul at Hanover's Sawtooth Kitchen on Nov. 19 at 7:30 p.m.\n\n# Grammy nominee Danny Abel to brin...",
+              "url": "https://vnews.com/2026/11/10/grammy-nominee-danny-abel-hanover-show/",
+              "title": "Danny Abel returns to Sawtooth Kitchen this November - Valley News"
+            }
+          ],
+          "type": "text",
+          "text": "Grammy-nominated guitarist and producer Danny Abel will perform at Sawtooth Kitchen in Hanover on Thursday, Nov. 19, at 7:30 p.m."
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Abel will be joined by Nate Edgar on bass, Gabe Jarrett on drums and Van Garrison on keyboards.\n\n",
+              "url": "https://vnews.com/2026/11/10/grammy-nominee-danny-abel-hanover-show/",
+              "title": "Danny Abel returns to Sawtooth Kitchen this November - Valley News"
+            }
+          ],
+          "type": "text",
+          "text": "Abel will be joined by Nate Edgar on bass, Gabe Jarrett on drums and Van Garrison on keyboards."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: The Conniption Fits at Sawtooth Kitchen, Bar and Stage, 33 S Main St, Hanover. It's a one-time concert on Friday, December 4, 2026, at 9:00 PM: "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "## About\nSawtooth Kitchen, Bar and Stage\n\nRestaurant\n\n33 S Main St Hanover, NH\n\nsawtoothkitchen.com\n\n1-603-643-5134\n\n{\"name\":\"The Conniption Fits @ Sa...",
+              "url": "https://www.bandsintown.com/v/10313141-sawtooth-kitchen-bar-and-stage",
+              "title": "Sawtooth Kitchen, Bar and Stage Tickets & 2026 Concert Schedule ..."
+            }
+          ],
+          "type": "text",
+          "text": "\"The Conniption Fits @ Sawtooth Kitchen, Bar and Stage\",\"startDate\":\"2026-12-04T21:00:00\",\"endDate\":\"2026-12-04\""
+        },
+        {
+          "type": "text",
+          "text": ".\n\n**What I couldn't find:**\n- **Other dated events:** Molly's, Murphy's on the Green, Jesse's and Little Havana show up in listings as having live music or trivia. None of those listings gives a date, so I left them out.\n- **Sawtooth's regular nights:** Sawtooth has run Monday trivia, but the only dated listing is February 2026. Its Wednesday comedy and New Year's Eve listings are from the 2025 season. I couldn't confirm either for this window.\n- **Openings and closings:** The ones I found (Tuk Tuk Thai moving to 44 South Main St, Playa Bowls, Main Street Kitchens closing) all happened before today. Nothing new is announced for the window."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 268,
+        "cache_creation_input_tokens": 29602,
+        "cache_read_input_tokens": 42999,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 1145,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 4,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 262,
+            "output_tokens": 65,
+            "cache_read_input_tokens": 3056,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 161,
+            "cache_read_input_tokens": 3056,
+            "cache_creation_input_tokens": 8283,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 8283,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 169,
+            "cache_read_input_tokens": 11339,
+            "cache_creation_input_tokens": 14209,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 14209,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 750,
+            "cache_read_input_tokens": 25548,
+            "cache_creation_input_tokens": 7110,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7110,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 161
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2WbYRSjJC23zUPRWsW",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"Danny Abel jazz, funk and soul show\",\"kind\":\"event\",\"category\":\"dining\",\"startDate\":\"2026-11-19\",\"endDate\":\"2026-11-19\",\"weekdays\":null,\"startTime\":\"19:30\",\"status\":\"scheduled\",\"venueRef\":\"saw\",\"hostRef\":\"saw\",\"competitor\":null,\"sourceIds\":[\"S12\"],\"dateQuote\":\"Grammy nominee Danny Abel will perform jazz, funk, and soul at Hanover's Sawtooth Kitchen on Nov. 19 at 7:30 p.m.\",\"confidence\":\"medium\"},{\"title\":\"The Conniption Fits at Sawtooth Kitchen, Bar and Stage\",\"kind\":\"event\",\"category\":\"dining\",\"startDate\":\"2026-12-04\",\"endDate\":\"2026-12-04\",\"weekdays\":null,\"startTime\":\"21:00\",\"status\":\"scheduled\",\"venueRef\":\"saw\",\"hostRef\":\"saw\",\"competitor\":null,\"sourceIds\":[\"S11\"],\"dateQuote\":\"The Conniption Fits @ Sa\",\"confidence\":\"low\"}],\"entities\":[{\"ref\":\"saw\",\"type\":\"business\",\"name\":\"Sawtooth Kitchen, Bar and Stage\",\"sourceIds\":[\"S11\",\"S12\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 4932,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 426,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 4932,
+            "output_tokens": 426,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 248830,
+    "searches": 4,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 37,
+    "verified": {
+      "events": [
+        {
+          "title": "Danny Abel jazz, funk and soul show",
+          "kind": "event",
+          "category": "dining",
+          "start": "2026-11-19",
+          "end": "2026-11-19",
+          "weekdays": null,
+          "startTime": "19:30",
+          "status": "scheduled",
+          "venueRef": "saw",
+          "hostRef": "saw",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Danny Abel returns to Sawtooth Kitchen this November - Valley News",
+              "url": "https://vnews.com/2026/11/10/grammy-nominee-danny-abel-hanover-show/"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "The Conniption Fits at Sawtooth Kitchen, Bar and Stage",
+          "kind": "event",
+          "category": "dining",
+          "start": "2026-12-04",
+          "end": "2026-12-04",
+          "weekdays": null,
+          "startTime": "21:00",
+          "status": "scheduled",
+          "venueRef": "saw",
+          "hostRef": "saw",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Sawtooth Kitchen, Bar and Stage Tickets & 2026 Concert Schedule ...",
+              "url": "https://www.bandsintown.com/v/10313141-sawtooth-kitchen-bar-and-stage"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "saw",
+          "type": "business",
+          "name": "Sawtooth Kitchen, Bar and Stage",
+          "sources": [
+            {
+              "label": "Sawtooth Kitchen, Bar and Stage Tickets & 2026 Concert Schedule ...",
+              "url": "https://www.bandsintown.com/v/10313141-sawtooth-kitchen-bar-and-stage"
+            },
+            {
+              "label": "Danny Abel returns to Sawtooth Kitchen this November - Valley News",
+              "url": "https://vnews.com/2026/11/10/grammy-nominee-danny-abel-hanover-show/"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}

@@ -15,7 +15,7 @@ import { runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
 import {
   addChatTurn, addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat,
-  addUpload, createOrg, ORDER_COLLECTIONS,
+  addResearchRecords, addUpload, createOrg, ORDER_COLLECTIONS, RESEARCH_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
 import { runDays } from './helpers/lab.ts';
@@ -70,6 +70,8 @@ interface Tenant {
   calibrationRunId: string;
   /** When the live calibration was requested. */
   liveRequestedAt: Date;
+  /** D66: a researched event of the location (`l-<hex>`), hidden there by a member's revision. */
+  eventId: string;
 }
 
 /**
@@ -98,6 +100,8 @@ interface SetupTenant {
   turnId: string;
   /** D59: a change TownwiseAI applied at the location (its note), its why named after the organization. */
   changeId: string;
+  /** D66: a researched event of the location (`l-<hex>`), hidden there by a member's revision. */
+  eventId: string;
 }
 
 let a: Tenant;
@@ -170,6 +174,7 @@ async function tenant(name: string, liveMinutesAgo: number): Promise<Tenant> {
   const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: member.session.userId });
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
   const changeId = await addChangeRow(orgId, locationId, noteId, name);
+  const eventId = `l-${await addResearchRecords(server, { orgId, locationId })}`;
   // U9: an answer to a TownwiseAI question.
   await server.connection.collection('tw_agent_answers').insertOne({
     orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(locationId), questionId: 'gap_2026-05-02_2026-05-03',
@@ -177,7 +182,7 @@ async function tenant(name: string, liveMinutesAgo: number): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
-    ruleId, calendarId, suggestionId, turnId, changeId, ...await addCalibrations(orgId, locationId, liveMinutesAgo),
+    ruleId, calendarId, suggestionId, turnId, changeId, eventId, ...await addCalibrations(orgId, locationId, liveMinutesAgo),
   };
 }
 
@@ -202,8 +207,10 @@ async function setupTenant(name: string, staffUserId: string): Promise<SetupTena
   const suggestionId = await addSuggestionRow(orgId, locationId, name);
   const turnId = await addChatTurn(server, { orgId, locationId, conversationId, userId: staffUserId });
   const changeId = await addChangeRow(orgId, locationId, noteId, name);
+  const eventId = `l-${await addResearchRecords(server, { orgId, locationId })}`;
   return {
     orgId, inviteId, locationId, noteId, conversationId, fileId, importId, uploadId, refFileId, ruleId, calendarId, suggestionId, turnId, changeId,
+    eventId,
   };
 }
 
@@ -313,6 +320,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_calendar_sources', 'tw_calendar_events',
     // D65: a read of B's calibrations never expires or changes them.
     'tw_calibrations',
+    // D66: a location's research runs, threads, events, entities and revisions.
+    ...RESEARCH_COLLECTIONS,
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -341,6 +350,7 @@ function bIds(): Record<string, string> {
     orgId: b.orgId, inviteId: b.inviteId, memberId: b.inviteId, userId: b.member.session.userId,
     locationId: b.locationId, noteId: b.noteId, conversationId: b.conversationId, fileId: b.fileId, importId: b.importId,
     ref: `u_${b.uploadId}`, ruleId: b.ruleId, calendarId: b.calendarId, suggestionId: b.suggestionId, turnId: b.turnId, changeId: b.changeId,
+    eventId: b.eventId,
   };
 }
 
@@ -354,6 +364,8 @@ function bSecrets(): string[] {
     b.changeId, `${b.name} private change why`,
     // D65: B's calibrations and their run, and when B's live one started.
     b.liveCalibrationId, b.doneCalibrationId, b.calibrationRunId, b.liveRequestedAt.toISOString(),
+    // D66: B's researched event.
+    b.eventId.slice(2),
   ];
 }
 
@@ -429,6 +441,8 @@ const BODY: Record<string, unknown> = {
   'org.owner_calendars.create': { kind: 'file', label: 'Added by A', ics: 'BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n' },
   // D58: a label names its event in the body.
   'org.owner_calendars.bookings_label': { uid: 'fixture-0@example.test', booking: 'party' },
+  // D66: a person's hide of a researched event.
+  'org.research.event_update': { op: 'hide', basedOn: 'base' },
 };
 const QUERY: Record<string, string> = {
   'org.sales.days': '?from=2026-01-01&to=2026-05-31', 'org.calendar.get': '?from=2026-01-01&to=2026-05-31',
@@ -449,7 +463,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
   const bOwn: Record<string, string[]> = {
     memberId: [b.inviteId, ...b.seatIds], locationId: [b.locationId], noteId: [b.noteId], conversationId: [b.conversationId],
     fileId: [b.fileId], importId: [b.importId], ref: [`u_${b.uploadId}`, `f_${b.refFileId}`], ruleId: [b.ruleId],
-    calendarId: [b.calendarId], suggestionId: [b.suggestionId], turnId: [b.turnId], changeId: [b.changeId],
+    calendarId: [b.calendarId], suggestionId: [b.suggestionId], turnId: [b.turnId], changeId: [b.changeId], eventId: [b.eventId],
   };
   const params = [...route.path.matchAll(/:([A-Za-z]+)/g)].map((match) => match[1] ?? '');
   // Every other segment is the caller's own, so the request reaches the route: an empty one would match no route, and
@@ -480,7 +494,7 @@ async function expectForeignIdsNotFound(route: TownwiseRoute, session: TestSessi
 function ownIds(
   org: Pick<
     Tenant, 'inviteId' | 'locationId' | 'noteId' | 'conversationId' | 'fileId' | 'importId' | 'uploadId' | 'ruleId' | 'calendarId' | 'suggestionId' | 'turnId'
-    | 'changeId'
+    | 'changeId' | 'eventId'
   >,
   route: TownwiseRoute,
 ): Record<string, string> {
@@ -493,7 +507,7 @@ function ownIds(
     ref: `u_${org.uploadId}`, ruleId: org.ruleId,
     // The reply of the organization's conversation (its stored messages have no tree, so their nodes are legacy-{index}).
     nodeId: 'legacy-1',
-    calendarId: org.calendarId, suggestionId: org.suggestionId, turnId: org.turnId, changeId: org.changeId,
+    calendarId: org.calendarId, suggestionId: org.suggestionId, turnId: org.turnId, changeId: org.changeId, eventId: org.eventId,
   };
 }
 
@@ -503,8 +517,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
       'org.notes.remove', 'org.sales.history', 'org.calendar.get',
-      // D66, the research agent's Town tab read and Research now.
-      'org.research.get', 'org.competition.get', 'org.research.run', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
+      // D66, the research agent's Town tab read, Research now, and a person's edit of a researched event.
+      'org.research.get', 'org.competition.get', 'org.research.run', 'org.research.event_update', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
       'org.chat.proposal', 'org.chat.rename', 'org.chat.active', 'org.chat.feedback',
       // Weekly suggestions (weekly-forecast-suggestions), and suggested closure rules (suggest-closure-rules).
       'org.agent.suggestion_accept', 'org.agent.suggestion_dismiss', 'org.agent.rule_suggestion_accept', 'org.agent.rule_suggestion_dismiss',

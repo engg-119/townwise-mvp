@@ -8,18 +8,26 @@
 // text; (3) usage.iterations, tokens per search and per fetch, and a pause_turn continuation's billing; (4) Places
 // Nearby Search and a place's profile with the design's field masks; and (5) web search with output_config.format in one
 // call, which the design does not rely on. Each probe prints counts and shapes only: never page text, a URL, a title, a
-// query or a place's name. The full eval (task 10.1) is not built yet.
+// query or a place's name.
 //
-//   TOWNWISE_RESEARCH_EVAL=1 node scripts/research-eval.ts --probe
+// Without `--probe`, the full eval (task 10.1, scripts/research-eval-full.ts) runs the probes and then the threads:
+//
+//   TOWNWISE_RESEARCH_EVAL=1 node scripts/research-eval.ts [--probe] [--no-probes] [--groups town-off,town-on,location]
+//     [--restaurant "<a public restaurant's name>"] [--redact <pattern>]... [--max-usd 25] [--concurrency 3]
+//     [--sample 30] [--record] [--out <results.json>] [--save-runs <runs.json>] [--from-runs <runs.json>]
 import { betaZodOutputFormat } from '@anthropic-ai/sdk/helpers/beta/zod';
 import type {
   BetaContentBlock, BetaMessage, BetaMessageParam, BetaMessageStreamParams, BetaToolUnion,
 } from '@anthropic-ai/sdk/resources/beta/messages/messages';
 import { z } from 'zod';
 
+import { mkdir, readFile, writeFile } from 'node:fs/promises';
+import { dirname, join } from 'node:path';
+
 import { createAnthropicChatModel, type ChatModel } from '../src/chat/model.ts';
 import { messageCostMicroUsd } from '../src/chat/pricing.ts';
 import { CHAT_MODEL } from '../src/chat/turn.ts';
+import { EVAL_GROUPS, runFullEval, type EvalGroup, type FullEvalOptions } from './research-eval-full.ts';
 
 type Env = Readonly<Record<string, string | undefined>>;
 type FetchLike = (url: string, init: RequestInit) => Promise<Response>;
@@ -30,6 +38,37 @@ export interface EvalDeps {
   /** Google's HTTP calls; never called while the guard refuses. */
   readonly fetch: FetchLike;
   readonly log: (line: string) => void;
+  /** Writes a JSON file (the --out results and the --record fixtures); never called while the guard refuses. */
+  readonly writeJson?: (path: string, value: unknown) => Promise<void>;
+  readonly readJson?: (path: string) => Promise<unknown>;
+  readonly now?: () => Date;
+}
+
+const FIXTURE_DIR = join(import.meta.dirname, '..', 'test', 'fixtures', 'research');
+
+/** The full eval's options from the arguments, or why they do not parse. */
+export function parseEvalArgs(argv: readonly string[]): (FullEvalOptions & { probes: boolean; out: string | null }) | string {
+  const value = (flag: string): string | null => {
+    const index = argv.indexOf(flag);
+    return index === -1 ? null : argv[index + 1] ?? null;
+  };
+  const number = (flag: string, fallback: number): number => {
+    const raw = value(flag);
+    return raw === null ? fallback : Number(raw);
+  };
+  const groups = (value('--groups') ?? EVAL_GROUPS.join(',')).split(',');
+  if (!groups.every((group) => (EVAL_GROUPS as readonly string[]).includes(group))) return `--groups takes ${EVAL_GROUPS.join(', ')}`;
+  const maxUsd = number('--max-usd', 25);
+  const concurrency = number('--concurrency', 3);
+  const sample = number('--sample', 30);
+  if (!(maxUsd > 0 && maxUsd <= 100)) return '--max-usd takes a number above 0 and at most 100';
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > 6) return '--concurrency takes 1 to 6';
+  if (!Number.isInteger(sample) || sample < 0) return '--sample takes a whole number';
+  const redact = argv.flatMap((arg, index) => (arg === '--redact' && argv[index + 1] !== undefined ? [argv[index + 1] ?? ''] : []));
+  return {
+    probes: !argv.includes('--no-probes'), groups: groups as EvalGroup[], restaurant: value('--restaurant'), maxUsd, concurrency, sample,
+    record: argv.includes('--record'), redact, out: value('--out'), saveRuns: value('--save-runs'), fromRuns: value('--from-runs'),
+  };
 }
 
 /** Why the eval must not run, or null when it may. */
@@ -47,11 +86,31 @@ export async function runResearchEval(argv: readonly string[], env: Env, deps: E
     deps.log(`research-eval: not run (${refusal})`);
     return 0;
   }
-  if (!argv.includes('--probe')) {
-    deps.log('research-eval: only --probe is built (the full eval is task 10.1)');
+  if (argv.includes('--probe')) {
+    await runProbes(deps.model(env.ANTHROPIC_API_KEY ?? ''), env.GOOGLE_PLACES_API_KEY ?? '', deps);
+    return 0;
+  }
+  const options = parseEvalArgs(argv);
+  if (typeof options === 'string') {
+    deps.log(`research-eval: ${options}`);
     return 2;
   }
-  await runProbes(deps.model(env.ANTHROPIC_API_KEY ?? ''), env.GOOGLE_PLACES_API_KEY ?? '', deps);
+  const writeJson = deps.writeJson;
+  if ((options.record || options.out !== null || options.saveRuns !== null) && writeJson === undefined) {
+    deps.log('research-eval: no file writer');
+    return 2;
+  }
+  const model = deps.model(env.ANTHROPIC_API_KEY ?? '');
+  if (options.probes && options.fromRuns === null) await runProbes(model, env.GOOGLE_PLACES_API_KEY ?? '', deps);
+  const result = await runFullEval(options, {
+    model, now: deps.now ?? (() => new Date()), log: deps.log, fixtureDir: FIXTURE_DIR,
+    writeJson: writeJson ?? (() => Promise.resolve()),
+    readJson: deps.readJson ?? (() => Promise.reject(new Error('no file reader'))),
+  });
+  if (options.out !== null && writeJson !== undefined) {
+    await writeJson(options.out, result);
+    deps.log('research-eval: results written to the --out file');
+  }
   return 0;
 }
 
@@ -411,5 +470,10 @@ if (import.meta.main) {
     model: createAnthropicChatModel,
     fetch: (url, init) => fetch(url, init),
     log: (line) => { console.log(line); },
+    readJson: async (path) => JSON.parse(await readFile(path, 'utf8')) as unknown,
+    writeJson: async (path, value) => {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+    },
   });
 }

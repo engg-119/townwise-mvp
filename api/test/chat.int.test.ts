@@ -186,6 +186,7 @@ describe('a plain answer', () => {
       'list_data_items', 'read_data_item', 'propose_data_item', 'start_calibration', 'get_calibration', 'compare_forecast_models',
       'get_owner_calendar',
       'get_order_board', 'get_order_line', 'get_order_setup', 'propose_order_change', 'propose_order_rule', 'propose_order_setup',
+      'correct_calendar_event',
     ]);
     expect(params?.tools?.every((tool) => 'eager_input_streaming' in tool && tool.eager_input_streaming === true)).toBe(true);
 

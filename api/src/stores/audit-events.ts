@@ -93,6 +93,11 @@ export const AUDIT_DETAIL_KEYS = {
   'agent.change_undone': ['locationId', 'action', 'sourceKind'],
   // D59 slice 5: a run in which the location's calendars answered open suggestions, by count. Never a title, uid or date.
   'agent.calendar_answered': ['locationId', 'count'],
+  // D66, a person's edit, hide or restore of a researched event at one location (design decision 11): the location's and
+  // the event's ids only, never a title, a place or a date.
+  'research.event_edited': ['locationId', 'eventId'],
+  'research.event_hidden': ['locationId', 'eventId'],
+  'research.event_restored': ['locationId', 'eventId'],
   // Orders: ids, dates, counts and a card's kind (change, rule or setup), never an item or supplier name, a servings
   // figure, a quantity, or the owner's reason or situation. A setup card (D56) is only ever dismissed: nothing saves
   // from it, so it never writes order.card_saved.
@@ -148,7 +153,9 @@ export type AuditTargetType =
   // A person's Google access for calendars (connect-google-calendar).
   | 'google_connection'
   // D42, the weekly refresh's schedule.
-  | 'forecast_schedule';
+  | 'forecast_schedule'
+  // D66, a researched event (`t-<hex>` or `l-<hex>`).
+  | 'research_event';
 export type AuditDetails = Record<string, string | number | boolean | null>;
 
 export interface AuditEventFields {
