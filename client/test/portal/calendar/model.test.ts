@@ -6,6 +6,7 @@ import {
   type CalendarInput, type ImportedEvent,
 } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastReason, ForecastWindow } from '../../../src/portal/estimates/api';
+import { forecastDayLines, WHY_LINES, whyRows } from '../../../src/portal/home/DayDetail';
 import { daysBetween } from '../../../src/portal/locations/dates';
 import { holiday, note, townEvent } from '../analytics/fakes';
 import { ruleOf } from '../rules/fakes';
@@ -428,6 +429,23 @@ test('a day the model closed that a private event opened shows only the notes’
     figure: { before: 'About', value: '70', after: 'guests', source: 'forecast' },
     lines: ['Townwise’s model expects you closed. Your notes open the day with 70 guests.'],
   });
+});
+
+// UI review 2026-11-19: a day the run closed with its own closure reason said "Closed" twice in the tooltip and in Home's
+// day panel. The status says it once; a closure that is a note or a rule still names itself.
+test('a closed day says Closed once in the tooltip and in Home’s Why', () => {
+  const closed = forecastDay({
+    date: '2026-11-24', status: 'closed', low: null, mid: null, high: null, model: { status: 'closed', low: null, mid: null, high: null },
+    reasons: [{ kind: 'closure', label: 'Closed', effectPct: null, sources: [], note: null }, { kind: 'weekday', label: 'Tuesday', effectPct: null, sources: [], note: null }],
+  });
+  const lines = tooltipLines('2026-11-24', input({ forecast: windowOf([closed]) }))?.lines ?? [];
+  expect(lines.filter((line) => /^Closed\.?$/.test(line))).toEqual(['Closed']);
+  expect(lines).toContain('Tuesday');
+  expect(whyRows(closed, WHY_LINES).map((row) => row.line)).toEqual(['Tuesday']);
+  expect(forecastDayLines(closed)).toEqual(['Closed.']);
+  // A closure note still names itself under the status.
+  const noted = { ...closed, reasons: [{ kind: 'note', label: 'Your closure', effectPct: null, sources: [], note: { id: 'n3', guests: null, outcome: 'closed' } }] } as ForecastDay;
+  expect(whyRows(noted, WHY_LINES).map((row) => row.line)).toEqual(['Your closure']);
 });
 
 test('the tooltip holds the range, the notes’ guests and at most three reasons', () => {

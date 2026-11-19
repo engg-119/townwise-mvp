@@ -95,6 +95,15 @@ export function renamedItemName(current: string, title: string): string | null {
 }
 
 /**
+ * UI review 2026-11-19: text pasted on Your data (POST .../data/text): the only text item saved with no adder of
+ * TownwiseAI's and no read it came from, which saveTextItem files in Notes and pasted text (D61). An uploaded `.txt`
+ * file has no folder of its own, and nothing yet files one there (FileStore.setFolder's hook).
+ */
+export function isPastedText(file: Pick<FileRecord, 'purpose' | 'kind' | 'addedVia' | 'source' | 'folder'>): boolean {
+  return file.purpose === 'reference' && file.kind === 'text' && file.addedVia === null && file.source === null && file.folder === 'notes';
+}
+
+/**
  * Keeps pasted text as a reference item. A retried save with the same `id` answers the stored item and reserves nothing
  * more. Order: caps, the day's reservation, the blob, then the row; a crash after the blob leaves an orphan the daily
  * sweep removes. A failed blob write or row insert gives the day's bytes back before the error goes on, as a canceled

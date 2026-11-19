@@ -23,12 +23,14 @@ const sourceKindSchema = z.enum(['file', 'calendar', 'weekly', 'sales', 'chat'])
 const countSchema = z.number().int().nonnegative().nullable().optional().transform((count) => count ?? null);
 /** Slice 3: the weekdays a note or rule covers (0 is Sunday); null for every day, absent from an older API. */
 const weekdaysSchema = z.array(z.number().int().min(0).max(6)).nullable().optional().transform((weekdays) => weekdays ?? null);
+/** UI review 2026-11-19: a `file` change read from text pasted on Your data; false when absent (an older API). */
+const pastedSchema = z.boolean().optional().transform((pasted) => pasted === true);
 
 /** The activity's item for one change: no title, why, file name or figure. */
 export const agentChangeItemSchema = z.object({
   at: z.string(), kind: z.literal('agent_change'), changeId: z.string(), action: actionSchema, sourceKind: sourceKindSchema,
   status: statusSchema, startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(),
-  weekdays: weekdaysSchema, count: countSchema, undoable: z.boolean(),
+  weekdays: weekdaysSchema, count: countSchema, undoable: z.boolean(), sourcePasted: pastedSchema,
 });
 export type AgentChangeItem = z.infer<typeof agentChangeItemSchema>;
 
@@ -53,7 +55,7 @@ export type NoteSuggestion = z.infer<typeof noteSuggestionSchema>;
 export const agentChangeSchema = z.object({
   id: z.string(), at: z.string(), action: actionSchema, sourceKind: sourceKindSchema, sourceRef: z.string().nullable(), status: statusSchema,
   startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(), weekdays: weekdaysSchema, count: countSchema,
-  why: z.string().nullable(), undoable: z.boolean(), targetId: z.string().nullable(),
+  why: z.string().nullable(), undoable: z.boolean(), targetId: z.string().nullable(), sourcePasted: pastedSchema,
 });
 export type AgentChange = z.infer<typeof agentChangeSchema>;
 
@@ -140,11 +142,16 @@ const SOURCE_WORDS: Readonly<Record<AgentChange['sourceKind'], string>> = {
   chat: 'from your message',
 };
 
+/** UI review 2026-11-19: a `file` change from text pasted on Your data (`sourcePasted`). */
+const PASTED_WORDS = 'from text you pasted';
+
 /** The activity's and the log's line for a change. */
 export function changeLine(
-  change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status'> & Partial<Pick<AgentChange, 'weekdays'>>,
+  change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status'>
+    & Partial<Pick<AgentChange, 'weekdays' | 'sourcePasted'>>,
 ): string {
-  const added = `Added ${whatOf({ ...change, weekdays: change.weekdays ?? null })}, ${SOURCE_WORDS[change.sourceKind]}.`;
+  const source = change.sourceKind === 'file' && change.sourcePasted === true ? PASTED_WORDS : SOURCE_WORDS[change.sourceKind];
+  const added = `Added ${whatOf({ ...change, weekdays: change.weekdays ?? null })}, ${source}.`;
   if (change.status === 'undone') return `${added} Undone.`;
   if (change.status === 'adopted') return `${added} You changed it since, so it’s yours.`;
   return added;

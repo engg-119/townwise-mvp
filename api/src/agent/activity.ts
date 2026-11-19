@@ -11,7 +11,7 @@
 // does not know as nothing.
 //
 // D59 (openspec change auto-apply-agent-reads, design decision 11): each change TownwiseAI saved on its own, as
-// `agent_change { changeId, action, sourceKind, status, startDate, endDate, noteKind, weekdays, count, undoable }`, dated when it was
+// `agent_change { changeId, action, sourceKind, status, startDate, endDate, noteKind, weekdays, count, undoable, sourcePasted }`, dated when it was
 // applied, with no title, why, file name or figure (the why is in the log). `undoable` is false under view-as, once a
 // person changed the target, and for a caller the action's role refuses. The upload a `sales_days.add` change wrote is
 // then left out, so the change shows once.
@@ -20,7 +20,7 @@ import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { AgentChangeAction, AgentChangeStatus, AgentSourceKind } from '../stores/agent-changes.ts';
 import type { NoteKind, NoteRecord } from '../stores/notes.ts';
 import type { AnswerRecord } from '../stores/agent-answers.ts';
-import { targetStates, undoable } from './changes.ts';
+import { fromPasted, pastedSources, targetStates, undoable } from './changes.ts';
 import { noteFor, parseQuestionId } from './questions.ts';
 
 /** At most this many items. */
@@ -41,6 +41,8 @@ export type ActivityItem =
     at: string; kind: 'agent_change'; changeId: string; action: AgentChangeAction; sourceKind: AgentSourceKind; status: AgentChangeStatus;
     startDate: string | null; endDate: string | null; noteKind: NoteKind | null; weekdays: readonly number[] | null; count: number | null;
     undoable: boolean;
+    /** UI review 2026-11-19: a `file` change from text pasted on Your data. */
+    sourcePasted: boolean;
   };
 
 export interface ActivityInput {
@@ -127,11 +129,11 @@ const files: ActivitySource = async ({ ctx, scope, locationId, userId }) => {
 export const agentChangeSource: ActivitySource = async ({ ctx, scope, locationId, caller }) => {
   const { changes } = await ctx.stores.agentChanges.page(scope, locationId, { limit: CHANGES_READ });
   const shown = changes.filter((change) => change.status !== 'applying');
-  const states = await targetStates(ctx, scope, locationId, shown);
+  const [states, pasted] = await Promise.all([targetStates(ctx, scope, locationId, shown), pastedSources(ctx, scope, shown)]);
   return shown.map((change): SourceItem => ({
     at: change.appliedAt.toISOString(), kind: 'agent_change', changeId: change.id, action: change.action, sourceKind: change.sourceKind,
     status: change.status, startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, weekdays: change.weekdays,
-    count: change.count, undoable: caller === undefined ? false : undoable(caller, change, states),
+    count: change.count, undoable: caller === undefined ? false : undoable(caller, change, states), sourcePasted: fromPasted(change, pasted),
     ...(change.action === 'sales_days.add' ? { uploadId: change.targetId } : {}),
   }));
 };
