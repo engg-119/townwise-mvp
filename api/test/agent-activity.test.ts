@@ -2,7 +2,8 @@
 // over fake stores. Each change is an `agent_change` item with no title, why, file name or figure; one still being
 // applied is left out; Undo is offered only on an applied change whose target is still as it was, to a caller the
 // action's role allows, never under view-as; a `sales_days.add` change shows once, in place of its upload; and the
-// log's view carries the why outside view-as only. Synthetic records.
+// log's view carries the why outside view-as only; (slice 3) a rule TownwiseAI added is undoable while unchanged.
+// Synthetic records.
 import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
@@ -34,13 +35,18 @@ const VIEW_AS: Caller = { role: 'org_admin', userId: 'admin', viewAs: { grantId:
 
 /** A context whose stores answer `changes` and their targets: notes by id (with their updatedAt), items and uploads. */
 function contextWith(
-  changes: readonly AgentChangeRecord[], targets: { notes?: Record<string, Date>; items?: string[]; uploads?: string[]; labels?: Record<string, number> } = {},
+  changes: readonly AgentChangeRecord[],
+  targets: { notes?: Record<string, Date>; items?: string[]; uploads?: string[]; labels?: Record<string, number>; rules?: Record<string, Date> } = {},
 ): TownwiseContext {
   return {
     stores: {
       agentChanges: { page: () => Promise.resolve({ changes: [...changes], next: null }) },
       notes: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.flatMap((id) => {
         const updatedAt = targets.notes?.[id];
+        return updatedAt === undefined ? [] : [{ id, updatedAt, createdBy: 'townwise_ai' }];
+      })) },
+      businessRules: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.flatMap((id) => {
+        const updatedAt = targets.rules?.[id];
         return updatedAt === undefined ? [] : [{ id, updatedAt, createdBy: 'townwise_ai' }];
       })) },
       files: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.filter((id) => targets.items?.includes(id)).map((id) => ({ id, status: 'kept' }))) },
@@ -97,6 +103,21 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
     expect(items[0]).toMatchObject({ action: 'sales_days.add', undoable: true });
     // A member may not undo days.
     expect((await activityFor(input(ctx, MEMBER), [agentChangeSource]))[0]).toMatchObject({ undoable: false });
+  });
+});
+
+describe('a rule TownwiseAI added (D59 slice 3)', () => {
+  it('is undoable by any member while unchanged, not once a person edited it or it is gone', async () => {
+    const rule = (over: Partial<AgentChangeRecord> = {}) => change({ action: 'rule.add', sourceKind: 'sales', noteKind: 'closure', endDate: null, ...over });
+    const kept = rule();
+    const edited = rule();
+    const gone = rule();
+    const ctx = contextWith([kept, edited, gone], { rules: { [kept.targetId]: AT, [edited.targetId]: new Date(AT.getTime() + 1) } });
+    const items = await activityFor(input(ctx, MEMBER), [agentChangeSource]);
+    expect(items.map((item) => (item.kind === 'agent_change' ? [item.action, item.sourceKind, item.undoable] : null))).toEqual([
+      ['rule.add', 'sales', true], ['rule.add', 'sales', false], ['rule.add', 'sales', false],
+    ]);
+    expect(JSON.stringify(items)).not.toContain(SENTINEL);
   });
 });
 
