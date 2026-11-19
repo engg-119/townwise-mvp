@@ -274,6 +274,7 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'org.calendar_titles_ai_changed':
       return d.on === true ? 'Turned sending calendar event titles to TownwiseAI on' : 'Turned sending calendar event titles to TownwiseAI off';
     case 'org.agent_auto_switched': return d.on === true ? 'Turned TownwiseAI working on its own on' : 'Turned TownwiseAI working on its own off';
+    case 'org.research_switched': return d.on === true ? 'Turned town research on' : 'Turned town research off';
     case 'agent.change_applied': return `TownwiseAI added ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'}${d.sourceKind === 'file' ? ' from a file' : ''}`;
     case 'agent.change_undone': return `Undid ${AGENT_ACTION_WORDS[text(d.action)] ?? 'something'} TownwiseAI added${d.sourceKind === 'file' ? ' from a file' : ''}`;
     case 'agent.calendar_answered': return `Your calendar answered ${text(d.count)} of TownwiseAI’s questions`;

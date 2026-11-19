@@ -15,25 +15,39 @@
 // name's (research/competitors.ts matchCompetitor; the match is computed here and stored and sent nowhere). Competitor
 // events matching no live competitor are listed under "Competing events found on the web", by the business's name, so
 // the card works with Google's names kept from Anthropic (the shipped config) and with Places off. It logs counts only.
-import { parseInput } from '@ckeith26/server-core';
+//
+// POST /api/org/locations/:locationId/research/run (`org.research.run`, org admin, `1kb`, the `research` limiter, never
+// open as admin): Research now. A run of the location's own threads, due at once, that never queues the town's run.
+// 202 { run }; 409 research_running while the location has a live run (the one-live-run index answers a racing press
+// the same); 409 too_soon within 6 hours of the location's last run (not one that ended `budget`); 503 research_off while research does not run here
+// or the organization's switch is off. It logs ids only.
+//
+// PATCH /api/org/research { on, orgId? } (`org.research.switch`, org admin, `2kb`, open as admin may only turn it off):
+// the organization's research switch, as `org.agent_auto.switch`. A change records `org.research_switched { on }`
+// before it is applied; the same state again writes nothing.
+import { objectId } from '@ckeith26/mongo';
+import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { applyRecorded, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { Principal } from '../access/policy.ts';
 import { PlacesUnavailableError } from '../places/google.ts';
 import { mapThemeSchema, pinLabel, STATIC_MAP_HEIGHT, STATIC_MAP_WIDTH, type PlaceMap } from '../places/static-map.ts';
 import { fitView, type LatLng } from '../places/view.ts';
 import { COMPETITOR_RADIUS_M, matchCompetitor, pickCompetitors, type Competitor } from '../research/competitors.ts';
-import { isTownId, nextWeeklyRunDay, researchRuns } from '../research/plan.ts';
+import { isTownId, nextWeeklyRunDay, queuePressRun, researchRuns } from '../research/plan.ts';
 import { readResearchedViews, researchedEventsFor, type ResearchedEventView } from '../research/read.ts';
 import { researchWindow } from '../research/threads.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { LocationRunRecord, RunTrigger } from '../stores/research-locations.ts';
+import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { EntityRecordBase, RunCounts, RunRecordBase, RunStatus, ThreadRecordBase } from '../stores/research-shared.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { pointOf } from './locations-map.ts';
 import { loadLocation, memberOf } from './locations.ts';
+import { actorOf, assertOpenAsAdminTab, orgAdmin } from './team.ts';
 
 /** A run's thread as the Town tab shows it: a queued thread with a code is waiting to try again. */
 export interface ThreadView { readonly thread: string; readonly status: string; readonly code: string | null }
@@ -236,4 +250,75 @@ export async function getCompetition(ctx: TownwiseContext, req: Request, res: Re
     routeId: COMPETITION_ROUTE_ID, competitors: competitors.length, matched: competitors.filter((each) => each.events.length > 0).length, web: webList.length,
   }, 'townwise.competition_read');
   res.status(200).json({ gap: live.gap, map, competitors, web: webList });
+}
+
+// ---- Research now and the organization's switch ---------------------------------------------------------------------
+
+/**
+ * Research now waits this long after the location's last run, from its finish (its creation while it has none), unless
+ * that run ended `budget`.
+ */
+export const PRESS_AFTER_MS = 6 * 3_600_000;
+/**
+ * The statuses that hold the location's live slot, as stores/research-shared.ts LIVE_RUN_STATUSES (only the research
+ * stores may import that module by value; test/isolation.test.ts).
+ */
+const LIVE: readonly RunStatus[] = ['queued', 'running', 'merging'];
+
+const pressBody = z.strictObject({});
+/** `orgId`, the organization the page shows, is required in open as admin (D25), as on the other switches. */
+const researchSwitchBody = z.strictObject({ on: z.boolean(), orgId: objectId.optional() });
+
+function researchRunning(): AppError {
+  return new AppError(409, 'research_running', 'Research is already running for this location');
+}
+
+export async function pressResearch(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const admin = orgAdmin(principal);
+  const { scope } = admin;
+  parseInput(pressBody, req.body ?? {});
+  // The location first, so another organization's id answers 404 whatever the switches say.
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const runs = researchRuns({ research: ctx.config.research, chatWebSearch: ctx.config.chatWebSearch, anthropicKey: ctx.chat !== null });
+  const org = await ctx.stores.orgs.findById(scope.orgId);
+  if (!runs || org?.status !== 'active' || !org.research.on) throw new AppError(503, 'research_off', 'Research is off');
+  // A live run is always the location's newest (the index allows no other while it lives), so one read answers both.
+  const last = await ctx.stores.researchLocations.lastRun(scope, location.id);
+  if (last !== null && LIVE.includes(last.status)) throw researchRunning();
+  // A run that ended `budget` had every thread refused before any call, so it spent nothing and sent nothing: Research
+  // now, which the automatic share does not bound, runs right after it (the "Little budget left" scenario).
+  if (last !== null && last.status !== 'budget' && ctx.now().getTime() - (last.finishedAt ?? last.createdAt).getTime() < PRESS_AFTER_MS) {
+    throw new AppError(409, 'too_soon', 'This location was researched in the last 6 hours');
+  }
+  const run = await queuePressRun(ctx, scope, location);
+  if (run === null) throw researchRunning();
+  const threads = await ctx.stores.researchLocations.threadsOf(scope, run.id);
+  ctx.logger.info({ orgId: scope.orgId, locationId: location.id, runId: run.id, threads: run.threads.length }, 'townwise.research_pressed');
+  res.status(202).json({ run: runView(run, threads) });
+}
+
+export async function switchResearch(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const admin = orgAdmin(principal);
+  const { scope } = admin;
+  const { on } = parseInput(researchSwitchBody, req.body);
+  assertOpenAsAdminTab(admin, req.body);
+  // Turning it on sends the organization's restaurant to Anthropic and spends its month, so it is the organization's own.
+  if (on && admin.openAsAdmin !== null) throw new AppError(403, 'open_as_admin_refused', 'Only the organization’s own admin can turn this on');
+  const org = await ctx.stores.orgs.findById(scope.orgId);
+  // Only a deletion racing this request gets here; the client re-reads /api/me.
+  if (org === null) throw new AppError(403, 'no_access', 'No access');
+  if (org.research.on !== on) {
+    const now = ctx.now();
+    const event: AuditEventInput = {
+      ...actorOf(admin), at: now, orgId: scope.orgId, action: 'org.research_switched', target: { type: 'org', id: scope.orgId },
+      details: { on },
+    };
+    const eventId = await recordBefore(ctx, event);
+    if (!(await applyRecorded(ctx, event, eventId, () => ctx.stores.orgs.setResearch(scope, { on, at: now, by: admin.userId })))) {
+      await recordNotApplied(ctx, event, eventId, 'not_found');
+      throw new AppError(403, 'no_access', 'No access');
+    }
+  }
+  ctx.logger.info({ orgId: scope.orgId, on }, 'townwise.research_switched');
+  res.status(200).json({ research: { on } });
 }

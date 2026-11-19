@@ -146,6 +146,19 @@ describe('the tick', () => {
     expect((await stores.researchTowns.threadsOf(town?.id ?? '')).map((thread) => thread.thread)).toEqual(['schools', 'sports']);
   });
 
+  it('completes a Research now run that lost its threads while the organization share is 0', async () => {
+    const t = await tenant();
+    const run = await stores.researchLocations.insertRun(t.scope, {
+      locationId: t.locationId, key: `p:${new Types.ObjectId().toHexString()}`, trigger: 'press', placeId: null, town: 'hanover-nh',
+      threads: ['neighborhood', 'competitors'], now: clock,
+    });
+    await stores.researchLocations.insertThreads(t.scope, run ?? { id: '', locationId: '' }, [{ thread: 'neighborhood', notBefore: clock }], clock);
+    expect(await planTick(context({ researchOrgMonthlyUsd: 0 }), 'replica-a', noMerge)).toMatchObject({ locations: 0 });
+    const threads = await stores.researchLocations.threadsOf(t.scope, run?.id ?? '');
+    expect(threads.map((thread) => [thread.thread, thread.notBefore])).toEqual([['neighborhood', clock], ['competitors', clock]]);
+    expect(await count('tw_location_research_runs')).toBe(1);
+  });
+
   it('an early run is due at once, asks for the town’s run, and counts as the week’s for a later tick', async () => {
     const t = await tenant();
     const location = await stores.locations.find(t.scope, t.locationId);
