@@ -4,12 +4,12 @@ import { StyleSheet, Text, View } from 'react-native';
 import { theme } from '../../theme';
 import type { Calendar } from '../analytics/api';
 import {
-  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, forecastPhrase, LAST_YEAR_FOOTNOTE, pastDayPhrase, periodLine, thisDayPhrase,
-  vsUsualDayPhrase,
-  type PastDay, type ThisWeek as Week, type WeekRow,
+  calendarCoverageLine, calendarWeekLine, dayMonth, EVENT_WORDS, forecastPhrase, LAST_YEAR_FOOTNOTE, periodLine, thisDayPhrase,
+  type ThisWeek as Week, type WeekRow,
 } from '../analytics/week';
 import { metricNumber, shortDate, WEEKDAY_NAMES, weekdayOf, type Metric } from '../analytics/words';
 import type { DayEntry } from '../calendar/entries';
+import type { CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { useBreakpoint } from '../hooks';
 import { ShowNumbers } from '../locations/parts';
@@ -19,6 +19,9 @@ import { Stack } from '../ui/layout';
 import { PhraseParts } from '../ui/PhraseParts';
 import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
+import { PastCell } from './PastCell';
+import { WeekChart } from './WeekChart';
+import { chartShows, weekChart } from './weekChartData';
 
 // This week (spec P11): the seven days from today, today first (owner request, 2026-11-15), each day with what is on
 // the town calendar and the location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
@@ -34,6 +37,10 @@ import { Block } from './Block';
 // rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
 // figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
 // day-by-day table, which stacks at 640px and below.
+// The chart (owner request, 2026-11-18; WeekChart.tsx): when it draws the published forecast, or with none published
+// draws last year or today's figure (weekChartData.ts chartShows), the week opens with its chart and chosen day, on web
+// and native, and the strip or table moves behind Show the numbers, above the past years' table. Otherwise (nothing to
+// draw, or a forecast it can't draw because Home's metric is net sales) the strip or table stays in view as before.
 
 /** An entry's kind words under its words: “Your note”, “Your rule”, “Holiday”, “Town event” or “Your calendar”. */
 function entryKind(entry: DayEntry): string {
@@ -67,22 +74,6 @@ function CalendarCell(props: { row: WeekRow }): React.JSX.Element {
 function ForecastCell(props: { day: ForecastDay | undefined }): React.JSX.Element {
   const phrase = forecastPhrase(props.day);
   return phrase === null ? <Mono tone="text3">No forecast</Mono> : <Mono tone="text2"><PhraseParts phrase={phrase} /></Mono>;
-}
-
-/** A day in a past year: "Sat, Nov 8, 2025: 241 guests", closed, against usual, and its holidays and events. */
-export function PastCell(props: { day: PastDay; metric: Metric }): React.JSX.Element {
-  const { day, metric } = props;
-  const line = pastDayPhrase(day, metric);
-  if (line === null) return <Mono tone="text3">No data</Mono>;
-  const change = vsUsualDayPhrase(day);
-  return (
-    <View style={styles.item}>
-      <Mono tone="white"><PhraseParts phrase={line} /></Mono>
-      {day.closed ? <Mono>{day.likelyClosed ? 'Likely closed' : 'Closed'}</Mono> : null}
-      {change === null ? null : <Mono><PhraseParts phrase={change} /></Mono>}
-      {day.events.map((title) => <Small key={title}>{title}</Small>)}
-    </View>
-  );
 }
 
 function DayHead(props: { row: WeekRow; metric: Metric }): React.JSX.Element {
@@ -177,6 +168,9 @@ export function ThisWeek(props: {
   week: Week; calendar: Calendar; metric: Metric; history: boolean;
   /** The published forecast, when there is one; null while it loads, if it fails, or with none published. */
   forecast: ForecastWindow | null;
+  /** Home's one CalendarInput (D49), which the chart reads each day's figure and calendar from. */
+  entries: CalendarInput;
+  locationId: string;
 }): React.JSX.Element {
   const { week, calendar, metric, history } = props;
   const { desktop } = useBreakpoint();
@@ -185,6 +179,14 @@ export function ThisWeek(props: {
     [props.forecast],
   );
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
+  // The chart shows only when it draws something (and the forecast, when one is published); otherwise the days stay in view.
+  const chart = useMemo(() => {
+    const model = weekChart(week, props.entries, metric, forecast !== null, history);
+    return chartShows(model, forecast !== null) ? model : null;
+  }, [forecast, history, week, props.entries, metric]);
+  const days = desktop
+    ? <WeekStrip week={week} metric={metric} history={history} forecast={forecast} />
+    : <WeekTable week={week} metric={metric} history={history} forecast={forecast} />;
 
   return (
     <Block label={`This week in ${calendar.town.name}`} eyebrow={`This week in ${calendar.town.name}`} title="What’s on the calendar, and how this week went before">
@@ -197,17 +199,19 @@ export function ThisWeek(props: {
           </View>
         ))}
       </Stack>
-      {desktop
-        ? <WeekStrip week={week} metric={metric} history={history} forecast={forecast} />
-        : <WeekTable week={week} metric={metric} history={history} forecast={forecast} />}
+      {chart === null ? days : (
+        <WeekChart model={chart} input={props.entries} metric={metric} history={history} published={forecast !== null} locationId={props.locationId} />
+      )}
       <Stack gap={8}>
         {history ? <Mono tone="text3">{LAST_YEAR_FOOTNOTE}</Mono> : null}
-        {history && desktop ? <Mono tone="text3">{BARS_FOOTNOTE}</Mono> : null}
+        {history && desktop && chart === null ? <Mono tone="text3">{BARS_FOOTNOTE}</Mono> : null}
         <Mono tone="text3">{calendarCoverageLine(calendar)}</Mono>
       </Stack>
-      {history ? (
+      {chart !== null || history ? (
         <ShowNumbers>
-          <DataTable
+          {chart === null ? null : days}
+          {chart !== null && history && desktop ? <Mono tone="text3">{BARS_FOOTNOTE}</Mono> : null}
+          {history ? <DataTable
             label="This week’s days in past years"
             columns={[
               { key: 'day', label: 'Day' }, { key: 'lastYear', label: 'Last year', numeric: true },
@@ -222,14 +226,14 @@ export function ThisWeek(props: {
                 usual: row.lastYear.usual === null ? 'Not enough days' : metricNumber(row.lastYear.usual.mean, metric),
               },
             }))}
-          />
+          /> : null}
         </ShowNumbers>
       ) : null}
     </Block>
   );
 }
 
-/** The strip's footnote for its bars (from 1024px); Home's skeleton draws it in its own words. */
+/** The strip's footnote for its bars (from 1024px), under the strip behind Show the numbers when the chart shows. */
 export const BARS_FOOTNOTE = 'Bars show last year’s days, scaled to the busiest of them.';
 
 const c = theme.color;
