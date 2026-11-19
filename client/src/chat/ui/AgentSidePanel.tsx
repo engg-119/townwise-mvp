@@ -5,6 +5,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { trainedOnWords, type EstimatesAbout } from '../../portal/estimates/api';
 import { formatDate } from '../../portal/format';
 import type { LoadState } from '../../portal/hooks';
+import { researchBudgetLine, researchDoneLine } from '../../portal/research/copy';
 import { locationHref } from '../../portal/routing';
 import { RuleSuggestionCard } from '../../portal/rules/RuleSuggestionCard';
 import { SUGGESTED_COPY, toDecideLine } from '../../portal/rules/suggestionWords';
@@ -37,6 +38,9 @@ import { SuggestionsSection } from './SuggestionCard';
 // sure from your files", and How TownwiseAI works says it saves what it's sure of while that switch is on.
 // D65 (openspec change forecast-training-status): each finished forecast run is an activity line in the owner's words
 // (forecastRuns.ts), with what started it and the days it used under it; no accuracy and no guest figure.
+// D66 (openspec change town-research-agent, design decision 15): each research run of the town and of the location that
+// ended is an activity line (research/copy.ts researchDoneLine), a correction TownwiseAI made is a change line with
+// Undo, and the budget adds what research used of the month, in dollars.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -63,7 +67,8 @@ function questionSubject(questionId: string): string | null {
   return null;
 }
 
-export function activityLine(item: ActivityItem): string {
+/** An activity item's line; `town` names the town in a town research run's line (D66). */
+export function activityLine(item: ActivityItem, town = 'your town'): string {
   switch (item.kind) {
     case 'upload_applied':
       return `Read your upload for ${rangeText(item.firstDate, item.lastDate)}, ${formatCount(item.dayCount)} ${item.dayCount === 1 ? 'day' : 'days'}.`;
@@ -86,6 +91,9 @@ export function activityLine(item: ActivityItem): string {
     // D65: a finished forecast run; the panel draws its cause and days under it (ForecastRun).
     case 'forecast_made':
       return runOutcomeLine(item);
+    // D66: a research run of the town or of the location that ended.
+    case 'research_done':
+      return researchDoneLine(item, town);
   }
 }
 
@@ -172,7 +180,7 @@ function RuleSuggestionsSection(props: { panel: AgentPanelState; locationId: str
 /** What it’s been doing, so `?panel=activity` can bring it into view on web. */
 export const ACTIVITY_ID = 'agent-activity';
 
-function ActivitySection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null; inView?: boolean }): React.JSX.Element {
+function ActivitySection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null; town: string; inView?: boolean }): React.JSX.Element {
   const { state } = props.panel;
   // D65's `?panel=activity`: on web the section scrolls into view once (at 640px and below the row sits under the
   // landing's chips, out of view); on native it is first in the opened panel.
@@ -198,7 +206,7 @@ function ActivitySection(props: { panel: AgentPanelState; locationId: string; re
                 ? <ActivityChange item={item} locationId={props.locationId} readOnlyId={props.readOnlyId} onOthersChanged={props.panel.reload} />
                 : item.kind === 'forecast_made'
                   ? <ForecastRun item={item} />
-                  : <Text style={styles.itemText}>{activityLine(item)}</Text>}
+                  : <Text style={styles.itemText}>{activityLine(item, props.town)}</Text>}
             </View>
           );
         })}
@@ -235,11 +243,13 @@ export function budgetLines(budget: Budget): { line: string; warning: string | n
 function BudgetSection(props: { budget: Budget | null }): React.JSX.Element | null {
   if (props.budget === null) return null;
   const { line, warning } = budgetLines(props.budget);
+  const research = researchBudgetLine(props.budget.researchUsd);
   return (
     <View style={styles.section}>
       <Heading>This month’s budget</Heading>
       <Text style={styles.body}>{line}</Text>
       {warning === null ? null : <Text style={styles.body}>{warning}</Text>}
+      {research === null ? null : <Text style={styles.body}>{research}</Text>}
     </View>
   );
 }
@@ -323,7 +333,7 @@ export function AgentSidePanel(props: {
   // Working on its own only while the organization's switch is on and it can run here (TOWNWISE_AGENT_AUTO): off while
   // the panel loads, fails or comes from an API before it.
   const working = (switched ?? ready?.agentAuto?.on ?? false) && ready?.agentAuto?.available === true;
-  const activity = <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} inView={props.activityFirst === true} />;
+  const activity = <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} town={props.ctx.town} inView={props.activityFirst === true} />;
   return (
     <View style={styles.panel}>
       {props.activityFirst === true ? activity : null}

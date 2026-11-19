@@ -17,7 +17,8 @@ import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, LOCATIONS, locationOf, meOf, offline, orgOf, refusal, viewAsMe, type FakePortalApi } from '../../helpers/portal';
 import { analyticsFake, calendarBody, day, historyBody, holiday, note, run, townEvent } from '../analytics/fakes';
-import { forecastDay, forecastOf, NO_FORECAST } from '../calendar/fakes';
+import { researchedEventSchema } from '../../../src/portal/analytics/api';
+import { forecastDay, forecastOf, foundEvent, NO_FORECAST } from '../calendar/fakes';
 import { ruleOf } from '../rules/fakes';
 import { NOVEMBER } from '../estimates/fakes';
 
@@ -304,6 +305,33 @@ test('this week is a strip of seven days from 1024px, today’s column raised, l
   expect(within(strip).getByText(sentence('Sat, Nov 8, 2025: 140 guests'))).toBeTruthy();
   expect(within(strip).getAllByText('140 guests').length).toBeGreaterThan(0);
   expect(screen.getByText('Bars show last year’s days, scaled to the busiest of them.')).toBeTruthy();
+});
+
+test('D66: This week lists found events after the day’s own entries; Unconfirmed and competitors’ stay on the Calendar', async () => {
+  const found = [
+    foundEvent({ id: `t-${'b'.repeat(24)}`, title: 'Winter carnival', start: '2026-11-07', end: '2026-11-07', origin: 'town', competitor: null }),
+    foundEvent({ id: `l-${'c'.repeat(24)}`, title: 'Maybe a market', start: '2026-11-07', end: '2026-11-07', origin: 'neighborhood', competitor: null, confidence: 'low' }),
+    foundEvent({ title: 'Trivia night', start: '2026-11-07', end: '2026-11-07' }),
+  ].map((event) => researchedEventSchema.parse(event));
+  await renderAt(portal(meOf(ACCESS.member), DAYS, undefined, NO_FORECAST, undefined, undefined, { [CALENDAR]: calendarBody({ events: EVENTS, found }) }));
+  openWeekNumbers();
+  const strip = screen.getByRole('table', { name: 'This week, day by day' });
+  const saturday = within(strip).getAllByText(/Sample game|Winter carnival/).map((element) => element.textContent);
+  expect(saturday).toEqual(['Sample game', 'Winter carnival']);
+  expect(within(strip).getByText('Found by research')).toBeTruthy();
+  expect(within(strip).queryByText('Maybe a market')).toBeNull();
+  expect(within(strip).queryByText('Trivia night')).toBeNull();
+  // The chart, which shows in place of the days, reads them too: Saturday's column names it, and so does its chosen day.
+  const column = screen.getByTestId('home-week-chart-2026-11-07');
+  expect(column.getAttribute('aria-label')).toContain('Found by research: Winter carnival');
+  expect(column.getAttribute('aria-label')).not.toContain('Maybe a market');
+  fireEvent.click(column);
+  const chosen = screen.getByRole('region', { name: 'This week’s chosen day' });
+  expect(within(chosen).getByText('Found by research: Winter carnival')).toBeTruthy();
+  expect(within(chosen).queryByText(/Maybe a market|Trivia night/)).toBeNull();
+  // Only This week reads them: no other part of Home names one.
+  const month = screen.getByRole('grid', { name: 'November 2026' });
+  expect(within(month).queryByText(/Winter carnival/)).toBeNull();
 });
 
 test('the month calendar: the arrow keys and a pointer preview the days beside the grid', async () => {

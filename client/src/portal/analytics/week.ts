@@ -8,7 +8,7 @@ import type { Note } from '../locations/api';
 import type { Rule } from '../rules/api';
 import { addDays, daysBetween, EARLIEST_DATE, monthRange } from '../locations/dates';
 import { valueOf } from '../locations/sales';
-import type { Calendar, TownEvent } from './api';
+import type { Calendar, ResearchedEvent, TownEvent } from './api';
 import { usual, type Usual } from './baseline';
 import { mondayOf, weekDates } from './cells';
 import { dayFlags, eventsOf, likelyClosedWords, notesOf, type DayContext } from './days';
@@ -218,8 +218,17 @@ function summaryOf(days: readonly PastDay[]): WeekSummary | null {
   };
 }
 
-/** A Home day's compact entries: three, or the first two and “+N more” (D49). */
-export function weekEntries(date: string, calendar: Pick<CalendarInput, 'notes' | 'rules' | 'events' | 'imported' | 'filters'>): WeekRow['entries'] {
+/**
+ * D66 (town-research-agent design decision 15): the found events Home's This Week reads, after every other entry of a
+ * day (dayEntries lists them last): Unconfirmed (low confidence) and competitors' events stay off Home and show only on
+ * the Calendar. None when the read has none or failed.
+ */
+export function homeFound(found: readonly ResearchedEvent[] | null | undefined): ResearchedEvent[] {
+  return (found ?? []).filter((event) => event.confidence !== 'low' && event.origin !== 'competitor');
+}
+
+/** A Home day's compact entries: three, or the first two and “+N more” (D49); found events last (D66, homeFound). */
+export function weekEntries(date: string, calendar: Pick<CalendarInput, 'notes' | 'rules' | 'events' | 'imported' | 'filters' | 'found'>): WeekRow['entries'] {
   const compact = compactEntries(dayEntries(date, calendar));
   if (compact.length <= 3) return { lines: compact, more: null };
   return { lines: compact.slice(0, 2), more: `+${String(compact.length - 2)} more` };
@@ -1035,7 +1044,7 @@ export function monthItems(today: string, calendar: Pick<CalendarInput, 'notes' 
   const items = new Map<string, MonthItem>();
   for (let date = from; date <= to; date = addDays(date, 1)) {
     for (const entry of compactEntries(dayEntries(date, calendar, { periods: true }))) {
-      // Home reads no found events yet (D66 task 7.4), so none reach here.
+      // D66: only This Week lists found events on Home (homeFound); Home's month list reads none.
       if (entry.kind === 'researched') continue;
       const item = itemOf(entry, date);
       if (!items.has(item.key)) items.set(item.key, item);

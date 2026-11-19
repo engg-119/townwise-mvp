@@ -108,6 +108,60 @@ test('D65: the API’s forecast run shows its outcome, then what started it and 
   expect(text.indexOf('Read your file')).toBeLessThan(text.indexOf(outcome));
 });
 
+describe('D66: town research in the panel', () => {
+  const corrected = {
+    at: '2026-06-01T08:30:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e1', action: 'event.correct', sourceKind: 'chat',
+    status: 'applied', startDate: null, endDate: null, noteKind: null, weekdays: null, count: null, undoable: true,
+  };
+  const research = [
+    { at: '2026-06-01T09:00:00.000Z', kind: 'research_done', subject: 'location', status: 'done', found: 9, added: 3, competitors: 2, threadsFailed: 0, finishedAt: '2026-06-01T09:00:00.000Z' },
+    { at: '2026-06-01T08:45:00.000Z', kind: 'research_done', subject: 'town', status: 'partial', found: 12, added: 4, competitors: null, threadsFailed: 1, finishedAt: '2026-06-01T08:45:00.000Z' },
+  ];
+  const LINE_CORRECTED = 'Corrected an event town research found, on this location’s calendar only, from your message.';
+
+  test('each research run is a line in plain words, the town by name, and a correction a change line with Undo', async () => {
+    const api = chatApi({ ...fixture.panel, activity: [...research, corrected] });
+    api.respond[CHANGE] = () => ({
+      change: {
+        id: '0000000000000000000000e1', at: '2026-06-01T08:30:00.000Z', action: 'event.correct', sourceKind: 'chat', sourceRef: null, status: 'undone',
+        startDate: null, endDate: null, noteKind: null, why: null, undoable: false, targetId: null,
+      },
+    });
+    renderAt(api);
+    const panel = await side();
+    expect(within(panel).getByText('Researched your restaurant and nearby: 9 events found, 3 new, 2 of them at competitors.')).toBeTruthy();
+    expect(within(panel).getByText('Researched Hanover: 12 events found, 4 new. 1 topic didn’t finish.')).toBeTruthy();
+    fireEvent.click(within(panel).getByRole('button', { name: `Undo: ${LINE_CORRECTED}` }));
+    expect(await within(panel).findByText(`${LINE_CORRECTED} Undone.`)).toBeTruthy();
+    expect(api.writes).toEqual([{ method: 'POST', path: CHANGE, body: undefined }]);
+  });
+
+  test('Undo on a correction someone edited since says so and points to the Calendar', async () => {
+    const api = chatApi({ ...fixture.panel, activity: [corrected] });
+    api.respond[CHANGE] = () => refusal(409, 'changed_since');
+    renderAt(api);
+    const panel = await side();
+    fireEvent.click(within(panel).getByRole('button', { name: `Undo: ${LINE_CORRECTED}` }));
+    expect(await within(panel).findByText('Someone changed this event since, so it’s no longer TownwiseAI’s to undo. Change it on the Calendar.')).toBeTruthy();
+    expect(within(panel).queryByRole('button', { name: `Undo: ${LINE_CORRECTED}` })).toBeNull();
+  });
+
+  test('the budget says what research used of the month in dollars, and nothing when it used none', async () => {
+    const api = chatApi();
+    api.summary = { enabled: true, budget: { month: '2026-11', usedUsd: 4.26, limitUsd: 20, exhausted: false, researchUsd: 3.55 }, conversations: [] };
+    renderAt(api);
+    const panel = await side();
+    expect(await within(panel).findByText('Research used $3.55 of this month’s budget.')).toBeTruthy();
+    cleanup();
+    const none = chatApi();
+    none.summary = { enabled: true, budget: { month: '2026-11', usedUsd: 4.26, limitUsd: 20, exhausted: false, researchUsd: 0 }, conversations: [] };
+    renderAt(none);
+    const after = await side();
+    await within(after).findByText('November: 21% used. Resets Dec 1.');
+    expect(within(after).queryByText(/Research used/)).toBeNull();
+  });
+});
+
 test('slice 2: Undo on a calendar’s labels reads the panel again, since it also took back that calendar’s notes', async () => {
   const labels = {
     at: '2026-06-01T08:00:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e1', action: 'booking.label', sourceKind: 'calendar',

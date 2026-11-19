@@ -14,6 +14,7 @@ import { formatCount, plural } from '../format';
 import type { LoadState } from '../hooks';
 import { datesLine, hoursLine } from '../locations/noteRules';
 import type { OrderBoard } from '../orders/api';
+import { foundEntryLabel, foundLine, foundWords, whereWho } from '../research/copy';
 import { itemHref, locationHref } from '../routing';
 import { Button } from '../ui/Button';
 import { PhraseParts } from '../ui/PhraseParts';
@@ -120,16 +121,19 @@ export function WhyPart(props: { why: readonly ShortReason[]; notes: CalendarDay
 
 /**
  * On the calendar (D49): the day's holidays and town events with their sources, less those Why names (as the Calendar's
- * panel leaves them out), then the notes, the business rules and the location's own calendars' events covering it.
+ * panel leaves them out), then the notes, the business rules and the location's own calendars' events covering it, and
+ * last (D66) the events town research found, which only This week's chart passes (Home's This month reads none).
  */
 export function CalendarPart(props: {
-  events: readonly TownEvent[]; why: readonly ShortReason[]; view: Pick<CalendarDayView, 'notes' | 'rules' | 'imported'>; locationId: string;
+  events: readonly TownEvent[]; why: readonly ShortReason[];
+  view: Pick<CalendarDayView, 'notes' | 'rules' | 'imported'> & Partial<Pick<CalendarDayView, 'researched'>>; locationId: string;
 }): React.JSX.Element {
   const { view, locationId } = props;
+  const researched = view.researched ?? [];
   // A holiday or town event a run reason in Why names is there with its sources, so On the calendar doesn't repeat it.
   const named = new Set(props.why.flatMap((row) => (appliedOf(row.reason) === null ? [row.reason.label] : [])));
   const events = props.events.filter((event) => !named.has(event.title));
-  const nothing = events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
+  const nothing = events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0 && researched.length === 0;
   return (
     <Part label="On the calendar">
       {nothing ? <Small>{events.length < props.events.length ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.'}</Small> : null}
@@ -168,6 +172,17 @@ export function CalendarPart(props: {
         />
       </View>
       ))}
+      {researched.map((event) => {
+        const place = whereWho(event);
+        return (
+          <View key={event.id} style={styles.item}>
+            <Small white>{foundEntryLabel(foundWords(event))}</Small>
+            <Mono>{foundLine(event)}</Mono>
+            {place === null ? null : <Small>{place}</Small>}
+            <SourceChips sources={event.sources} />
+          </View>
+        );
+      })}
     </Part>
   );
 }

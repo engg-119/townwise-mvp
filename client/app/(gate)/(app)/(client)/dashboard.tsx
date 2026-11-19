@@ -8,6 +8,7 @@ import { useBreakpoint, useWhileRunning } from '../../../../src/portal/hooks';
 import { useOrg, usePortal, useReadOnly } from '../../../../src/portal/PortalProvider';
 import { allUploadsOff } from '../../../../src/portal/locations/sales';
 import { calibrationHeading, dashboardUpdatingLine } from '../../../../src/portal/upload/copy';
+import { DASHBOARD_RESEARCHING } from '../../../../src/portal/research/copy';
 import { activityHref, locationHref } from '../../../../src/portal/routing';
 import { updatingOf, type LocationSummary } from '../../../../src/portal/schemas';
 import { Page } from '../../../../src/portal/shell/Page';
@@ -25,7 +26,9 @@ import { theme } from '../../../../src/theme';
 // Several: one row per location with its town, sales history, calibration in words, notes and the next step,
 // then the public profile of each of their towns. While a location's forecast updates (D65), its Calibration cell
 // adds a second line in plain words (15.6: a client's own data state is words, not a tag), linked to the runs in its
-// TownwiseAI activity, and the page re-reads the organization in place every 30 seconds until none is updating. None: org admins get the Add location form inline; members
+// TownwiseAI activity, and the page re-reads the organization in place every 30 seconds until none is updating. While a
+// location's town research runs (D66), its Town cell adds "Researching" the same way, linked to its Town tab, and the
+// page re-reads until none is researching either. None: org admins get the Add location form inline; members
 // get a line saying their admin hasn't added one. After a join, the notice names who added them (F1). When a press
 // of the inline form adds some places and leaves rows (P10), the form stays, through the organization's reload,
 // until a press adds the rest or one is added by hand.
@@ -76,6 +79,17 @@ function calibrationCell(location: LocationSummary): React.ReactNode {
   );
 }
 
+/** The town, and (D66) while the location's research runs, a second line linked to its Town tab. */
+function townCell(location: LocationSummary): React.ReactNode {
+  if (location.researching === null || location.researching === undefined) return townLabel(location.town);
+  return (
+    <View>
+      <Text style={styles.cell}>{townLabel(location.town)}</Text>
+      <Link href={locationHref(location.id, 'town')} style={styles.updating}>{DASHBOARD_RESEARCHING}</Link>
+    </View>
+  );
+}
+
 function YourTowns(props: { locations: readonly LocationSummary[] }): React.JSX.Element | null {
   const { desktop } = useBreakpoint();
   const seen = new Map<string, { profile: TownProfileData; locationId: string }>();
@@ -114,7 +128,9 @@ export default function LocationsPage(): React.JSX.Element {
   const { me, refreshOrg } = usePortal();
   const { state, reload } = useOrg();
   // D65: in place, so the table never goes back to its skeleton.
-  useWhileRunning(state.status === 'ready' && state.data.locations.some((location) => updatingOf(location.calibration) !== null), refreshOrg);
+  useWhileRunning(state.status === 'ready' && state.data.locations.some((location) => (
+    updatingOf(location.calibration) !== null || (location.researching !== null && location.researching !== undefined)
+  )), refreshOrg);
   const { readOnly, line } = useReadOnly();
   const access = me.access.state === 'member' ? me.access : null;
   const orgName = access?.org.name ?? '';
@@ -176,7 +192,7 @@ export default function LocationsPage(): React.JSX.Element {
             key: location.id,
             cells: {
               location: <Link href={locationHref(location.id) as Href} style={styles.name}>{location.name}</Link>,
-              town: townLabel(location.town),
+              town: townCell(location),
               sales: <SalesHistory location={location} />,
               calibration: calibrationCell(location),
               notes: location.notesCount === 0 ? 'No notes yet' : plural(location.notesCount, 'note', 'notes'),

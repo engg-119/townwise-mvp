@@ -176,6 +176,11 @@ export const locationSummarySchema = z.object({
   lastUploadAt: z.string().nullable(),
   /** D28: days that turned-off uploads hold, which `coverage` leaves out. Optional for an API from before it. */
   offDayCount: z.number().optional(),
+  /**
+   * D66: while the location's research run is running or merging, when it started; null otherwise. Absent from an API
+   * before it, and an unreadable value, read as not researching.
+   */
+  researching: z.object({ stage: z.literal('running'), since: z.string() }).nullable().optional().catch(null),
 });
 export type LocationSummary = z.infer<typeof locationSummarySchema>;
 

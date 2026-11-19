@@ -144,6 +144,47 @@ describe('D65: a forecast updating, in the Calibration cell', () => {
   });
 });
 
+describe('D66: a location’s town research running, in the Town cell', () => {
+  const history = { dayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-15' };
+  const coverage = { dayCount: 400, guestsDayCount: 400, netSalesDayCount: 400, firstDate: '2025-01-01', lastDate: '2026-11-15', missingDays: 0 };
+  const town = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
+  const calibration = { state: 'calibrated' as const, ...history, dataThrough: '2026-11-15', newerDays: 0, nextRefresh: '2026-11-23', updating: null };
+  const researching = locationOf('l7', 'Fresh Cafe', town, { coverage, calibration, researching: { stage: 'running', since: '2026-11-19T19:14:00.000Z' } });
+  const quiet = locationOf('l8', 'Quiet Cafe', town, { coverage, calibration, researching: null });
+  const orgReads = (api: ReturnType<typeof fakePortalApi>): number => api.calls.filter((call) => call.path === '/api/org').length;
+
+  afterEach(() => { jest.useRealTimers(); });
+
+  test('its town, then “Researching” in plain words linked to its Town tab; an API without the field reads as none', async () => {
+    const legacy = locationOf('l9', 'Old Cafe', town, { coverage, calibration });
+    const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [researching, quiet, legacy]) });
+    const { router } = await renderApp('/dashboard', api);
+    const table = await screen.findByLabelText('Locations');
+    expect(within(table).getAllByRole('link', { name: 'Researching' })).toHaveLength(1);
+    const link = within(table).getByRole('link', { name: 'Researching' });
+    expect(link.props.href).toBe('/locations/l7/town');
+    expect(within(table).getAllByText('Hanover, NH')).toHaveLength(3);
+    // Words, never a StatusTag (15.6).
+    expect(within(table).queryByText('In progress')).toBeNull();
+    await fireEvent.press(link);
+    expect(router.getPathname()).toBe('/locations/l7/town');
+  });
+
+  test('re-reads every 30 seconds in place while one researches, and stops once none does', async () => {
+    jest.useFakeTimers({ doNotFake: ['nextTick', 'setImmediate', 'clearImmediate', 'queueMicrotask', 'requestAnimationFrame', 'cancelAnimationFrame', 'performance', 'Date'] });
+    const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [researching, quiet]) });
+    await renderApp('/dashboard', api);
+    await screen.findByRole('link', { name: 'Researching' });
+    const before = orgReads(api);
+    api.org = orgOf('member', [{ ...researching, researching: null }, quiet]);
+    await act(() => jest.advanceTimersByTimeAsync(30_000));
+    expect(orgReads(api)).toBe(before + 1);
+    await waitFor(() => { expect(screen.queryByRole('link', { name: 'Researching' })).toBeNull(); });
+    await act(() => jest.advanceTimersByTimeAsync(120_000));
+    expect(orgReads(api)).toBe(before + 1);
+  });
+});
+
 test('a location whose every upload is off says so and links to Your data', async () => {
   const off = locationOf('l9', 'Off Cafe', { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, { offDayCount: 10 });
   const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [off, LOCATIONS[1] ?? off]) });

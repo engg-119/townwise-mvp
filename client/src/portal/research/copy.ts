@@ -126,3 +126,127 @@ export function bannerWords(run: Pick<LocationRun, 'trigger' | 'status' | 'count
   }
   return `Research for ${locationName} didn’t finish. The Town tab says why.`;
 }
+
+// TownwiseAI's, Home's and the dashboard's words (task 7.4): the correction card drawn from a correct_calendar_event
+// tool part (design decision 12), its tool row when nothing was changed, the activity's research_done line, the
+// budget line's research part and the dashboard's line while a location's run is live.
+
+/** What correct_calendar_event can do to an event. */
+export type CorrectionChange = 'edit' | 'hide' | 'restore';
+
+/** The fields a correction proposes; only those it changes are present. */
+export interface CorrectionFields {
+  title?: string;
+  start?: string;
+  end?: string;
+  weekdays?: number[] | null;
+  startTime?: string | null;
+  where?: string | null;
+}
+
+/** The correction card. */
+export const CORRECTION = {
+  eyebrow: 'Calendar correction',
+  undo: 'Undo',
+  undoing: 'Undoing…',
+  undone: 'Undone. The event reads as it did before.',
+  apply: 'Apply',
+  applying: 'Applying…',
+  applied: 'Applied. Only this location’s calendar changed. Reset it on the Calendar to undo.',
+  why: 'This conversation read a web page or a file, so nothing changes until you apply it. It changes this location’s calendar only.',
+  open: 'Open the Calendar',
+} as const;
+
+/** The card's lead for a correction TownwiseAI made. */
+export function correctionDoneLine(change: CorrectionChange): string {
+  const did = change === 'edit' ? 'changed' : change === 'hide' ? 'hid' : 'restored';
+  return `TownwiseAI ${did} an event town research found, on this location’s calendar only.`;
+}
+
+/** The card's lead for a correction it proposes for one tap. */
+export function correctionProposedLine(change: CorrectionChange): string {
+  const what = change === 'edit' ? 'changing' : change === 'hide' ? 'hiding' : 'restoring';
+  return `TownwiseAI suggests ${what} an event town research found.`;
+}
+
+/** The proposed change's lines: “Title: Trivia night”, “Dates: Dec 3, 2026”, “Thursdays only”, “From 7 pm”, “Where: Example Hall”. */
+export function correctionFieldLines(fields: CorrectionFields | null): string[] {
+  if (fields === null) return [];
+  const lines: string[] = [];
+  if (fields.title !== undefined) lines.push(`Title: ${fields.title}`);
+  if (fields.start !== undefined && fields.end !== undefined) lines.push(`Dates: ${datesLine({ startDate: fields.start, endDate: fields.end })}`);
+  else if (fields.start !== undefined) lines.push(`Starts ${datesLine({ startDate: fields.start, endDate: fields.start })}`);
+  else if (fields.end !== undefined) lines.push(`Ends ${datesLine({ startDate: fields.end, endDate: fields.end })}`);
+  if (fields.weekdays !== undefined) lines.push(weekdaysLine(fields.weekdays) ?? 'Every day of its dates');
+  if (fields.startTime !== undefined) lines.push(fields.startTime === null ? 'No start time' : `From ${clockWords(fields.startTime)}`);
+  if (fields.where !== undefined) lines.push(fields.where === null ? 'No place' : `Where: ${fields.where}`);
+  return lines;
+}
+
+/** Why Apply did not change the event. */
+export const APPLY_NOTICES = {
+  changedSince: 'Someone changed this event just now. Check it on the Calendar, then apply again if it’s still right.',
+  gone: 'This event isn’t available any more.',
+  tooManyEdits: 'This location has reached its limit of 1,000 edits to researched events.',
+  invalid: 'This change can’t be applied as it is now. Make it on the Calendar instead.',
+  viewAs: 'View-as is read-only, so you can’t apply this.',
+  failed: 'Couldn’t apply this. Try again.',
+} as const;
+
+/** The tool row's words for a correct_calendar_event call that changed nothing, by the result's code. */
+export const CORRECTION_CODES: Readonly<Record<string, string>> = {
+  not_researched: 'Only events town research found can be changed',
+  not_found: 'This location has no such event',
+  bad_title: 'That title or place can’t be used',
+  bad_dates: 'Those dates can’t be used',
+  staff: 'Townwise staff can’t change a calendar here',
+  view_as: 'Nothing changes while viewing as someone else',
+  too_many: 'At most 5 corrections in one reply',
+  too_many_edits: 'This location has reached its 1,000 edits',
+  changed_since: 'Someone changed this event just now',
+  invalid: 'It couldn’t be saved',
+  duplicate: 'This correction was already made',
+};
+
+/** The activity's and the changes log's line for a correction TownwiseAI made (chat/agentChanges.ts changeLine). */
+export const CORRECTED_LINE = 'Corrected an event town research found, on this location’s calendar only, from your message.';
+
+/** A research run that ended, as the activity's `research_done` item gives it. */
+export interface ResearchDone {
+  subject: 'town' | 'location';
+  status: 'done' | 'partial' | 'failed' | 'budget';
+  found: number;
+  added: number;
+  competitors: number | null;
+  threadsFailed: number;
+}
+
+/**
+ * The activity's line for a research run: “Researched Hanover: 12 events found, 4 new.”; the location's names how many
+ * of its new events are at competitors, and a partial run the topics that didn't finish. `town` is the town's name.
+ */
+export function researchDoneLine(item: ResearchDone, town: string): string {
+  const subject = item.subject === 'town' ? town : 'your restaurant and nearby';
+  if (item.status === 'failed') return `Research of ${subject} didn’t finish. Nothing changed on the calendar.`;
+  if (item.status === 'budget') {
+    return item.subject === 'town'
+      ? `Research of ${subject} waited: Townwise’s research budget for this month is used.`
+      : `Research of ${subject} didn’t run: little of this month’s TownwiseAI budget was left.`;
+  }
+  const found = item.found === 0 ? 'nothing found this time'
+    : `${formatCount(item.found)} ${item.found === 1 ? 'event' : 'events'} found, ${item.added === 0 ? 'none new' : `${formatCount(item.added)} new`}`;
+  const competitors = item.subject === 'location' && item.added > 0 && item.competitors !== null && item.competitors > 0
+    ? `, ${formatCount(item.competitors)} of them at competitors` : '';
+  const undone = item.status === 'partial' && item.threadsFailed > 0
+    ? ` ${formatCount(item.threadsFailed)} ${item.threadsFailed === 1 ? 'topic' : 'topics'} didn’t finish.` : '';
+  return `Researched ${subject}: ${found}${competitors}.${undone}`;
+}
+
+/** The budget line's research part, in dollars and cents; null when research spent nothing (or the API sent none). */
+export function researchBudgetLine(researchUsd: number | undefined): string | null {
+  if (researchUsd === undefined || !(researchUsd > 0)) return null;
+  return `Research used $${researchUsd.toFixed(2)} of this month’s budget.`;
+}
+
+/** The dashboard's line while a location's research run is live, linked to its Town tab (plain words, 15.6). */
+export const DASHBOARD_RESEARCHING = 'Researching';

@@ -25,7 +25,7 @@ describe('the tuning chat while it is off', () => {
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({
       enabled: false,
-      budget: { month: '2026-06', usedUsd: 0, limitUsd: 20, exhausted: false },
+      budget: { month: '2026-06', usedUsd: 0, limitUsd: 20, exhausted: false, researchUsd: 0 },
       conversations: [{ id: conversationId, title: 'Earlier question', updatedAt: server.clock.now().toISOString(), turnCount: 1, running: false }],
       liveTurn: null,
     });

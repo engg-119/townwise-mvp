@@ -91,9 +91,12 @@ export interface ResearchedEventFields {
   where: string | null;
 }
 
-/** What an edit, hide or restore (Reset) sends: the op, and the view's `head` it was made from. */
+/**
+ * What an edit, hide or restore (Reset) sends: the op, and the view's `head` it was made from. The Calendar's sheet sends
+ * every field; a TownwiseAI correction's Apply (task 7.4) sends only those it proposed, which the API takes (at least one).
+ */
 export type ResearchedEventChange =
-  | { op: 'edit'; fields: ResearchedEventFields; basedOn: string }
+  | { op: 'edit'; fields: Partial<ResearchedEventFields>; basedOn: string }
   | { op: 'hide' | 'restore'; basedOn: string };
 
 /**
