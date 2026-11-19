@@ -6,9 +6,10 @@ import {
   actOnItemProposal, addNote as postNote, deleteConversation as removeConversation, dismissProposal, endsTurn, followTurn, loadChat,
   loadConversation, loadItemProposal, rateReply, renameConversation, saveProposal, sendTurn, setActiveVersion, stopTurn, TURN_INTERRUPTED,
   type Budget, type ChatEvent, type ChatSummary, type ConversationLoad, type ConversationSummary, type Feedback, type FeedbackReason,
-  type ItemProposal, type LiveTurnLoad, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage, type TurnListener,
-  type TurnRequest,
+  type AutoSaved, type ItemProposal, type LiveTurnLoad, type MessageAttachment, type NoteProposal, type ProposalResult, type StoredMessage,
+  type TurnListener, type TurnRequest,
 } from './api';
+import { undoChange, undoErrorFinal, undoErrorText } from './agentChanges';
 import { draftKey, readDraft, writeDraft } from './drafts';
 import { forgetChat, lastChatKey, recallChat, rememberChat, type LastChatStore } from './lastChat';
 import { lastChatStore, onPageLeave } from './lastChatStore';
@@ -66,6 +67,11 @@ export interface ProposalCard {
   /** The server no longer has it (a 404): the card shows as unavailable. */
   gone: boolean;
   error: string | null;
+  /**
+   * D59 slice 4: TownwiseAI saved the note itself, the person having stated it plainly: its change, whose Undo the card
+   * offers while `undoable` (`undoing` while one is sent). Absent on any other card.
+   */
+  auto?: AutoSaved | undefined;
 }
 
 /** A propose_data_item call the owner was shown (its result view says `shown`). */
@@ -185,7 +191,7 @@ export interface TuningChatState {
   runningElsewhere: string | null;
 }
 
-type CardPatch = Partial<Pick<ProposalCard, 'status' | 'error' | 'edited' | 'gone'>>;
+type CardPatch = Partial<Pick<ProposalCard, 'status' | 'error' | 'edited' | 'gone' | 'auto'>>;
 
 export type ChatAction =
   | { type: 'load' }
@@ -739,7 +745,13 @@ function applyEvent(state: TuningChatState, event: ChatEvent, key: string, at: s
       if (isHiddenTool(event.name)) return state;
       return { ...state, messages: withLive(state, (message) => withTool(message, event, key)) };
     case 'proposal': {
-      const card: ProposalCard = { id: event.id, proposal: event.proposal, status: 'open', stored: 'pending', edited: false, gone: false, error: null };
+      // D59 slice 4: a note TownwiseAI saved itself reads saved, with Undo for the person who stated it.
+      const card: ProposalCard = event.saved === undefined
+        ? { id: event.id, proposal: event.proposal, status: 'open', stored: 'pending', edited: false, gone: false, error: null }
+        : {
+          id: event.id, proposal: event.proposal, status: 'saved', stored: 'pending', edited: false, gone: false, error: null,
+          auto: { changeId: event.saved.changeId, status: 'applied', undoable: true },
+        };
       return { ...state, messages: withLive(state, (message) => ({ ...message, parts: [...message.parts, { type: 'proposal', key, card }] })) };
     }
     case 'visual':
@@ -808,6 +820,8 @@ export interface TuningChat {
   dismiss: (cardId: string) => void;
   /** "Show the note" on a card set aside. */
   reopen: (cardId: string) => void;
+  /** D59 slice 4: Undo on a note TownwiseAI saved itself. */
+  undo: (cardId: string) => void;
   /**
    * Edits a saved message of the person's: it and everything after it leave the page, and the edit is sent under the
    * message's parent, as a second version of it.
@@ -1316,6 +1330,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         telling?.started?.();
       }
       if (event.type === 'conversation') created = event.id;
+      // D59 slice 4: TownwiseAI saved a note the person stated plainly.
+      if (event.type === 'proposal' && event.saved !== undefined) onNoteAdded?.();
       if (event.type === 'done' && SAVED_STOP_REASONS.includes(event.stopReason)) saved = true;
       else if (event.type === 'done') failure = doneNote(event.stopReason) ?? NOT_SAVED;
       if (event.type === 'error') failure = event.code === TURN_INTERRUPTED ? INTERRUPTED : streamErrorText(event.code);
@@ -1532,10 +1548,11 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
         if (last?.type === 'tools') last.steps.push(step);
         else message.parts.push({ type: 'tools', key: nextKey(), steps: [step] });
       } else {
-        const { id, status, kind, startDate, endDate, weekdays, effect, expectedGuests, detail, title } = part.proposal;
+        const { id, status, kind, startDate, endDate, weekdays, effect, expectedGuests, detail, title, auto } = part.proposal;
         const proposal: NoteProposal = { kind, startDate, endDate, weekdays, effect, expectedGuests, detail, title };
         message.parts.push({
-          type: 'proposal', key: nextKey(), card: { id, proposal, status, stored: 'kept', edited: false, gone: false, error: null },
+          type: 'proposal', key: nextKey(),
+          card: { id, proposal, status, stored: 'kept', edited: false, gone: false, error: null, ...(auto === undefined ? {} : { auto }) },
         });
       }
     }
@@ -1577,6 +1594,29 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
   const loadItem = useCallback((card: ItemCard) => loadItemProposal(api, locationId, itemIds(card)), [api, locationId]);
   const keepItem = useCallback((card: ItemCard) => actOnItemProposal(api, locationId, itemIds(card), 'save'), [api, locationId]);
   const setItemAside = useCallback((card: ItemCard) => actOnItemProposal(api, locationId, itemIds(card), 'dismiss'), [api, locationId]);
+
+  /** D59 slice 4: Undo on a note TownwiseAI saved itself, through the change's own route (agentChanges.ts). */
+  function undo(cardId: string): void {
+    const card = cardOf(latest.current, cardId);
+    const auto = card?.auto;
+    if (auto?.undoable !== true || auto.status !== 'applied' || acting.current.has(cardId)) return;
+    acting.current.add(cardId);
+    dispatch({ type: 'card', cardId, patch: { auto: { ...auto, status: 'undoing' }, error: null } });
+    void undoChange(api, locationId, auto.changeId).then(
+      (change) => {
+        dispatch({ type: 'card', cardId, patch: { auto: { changeId: change.id, status: change.status, undoable: change.undoable } } });
+        onNoteAdded?.();
+      },
+      (error: unknown) => {
+        // 409 changed_since: the server set the change adopted, so the card says the note is the person's now.
+        const adopted = error instanceof ApiError && error.code === 'changed_since';
+        dispatch({
+          type: 'card', cardId,
+          patch: { auto: { ...auto, status: adopted ? 'adopted' : 'applied', undoable: !undoErrorFinal(error) }, error: undoErrorText(error, 'note.add') },
+        });
+      },
+    ).finally(() => { acting.current.delete(cardId); });
+  }
 
   function dismiss(cardId: string): void {
     const card = cardOf(latest.current, cardId);
@@ -1713,6 +1753,7 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
       if (cardOf(state, cardId)?.status === 'editing') dispatch({ type: 'card', cardId, patch: { status: 'open', error: null } });
     },
     dismiss,
+    undo,
     reopen: (cardId) => {
       if (cardOf(state, cardId)?.status === 'dismissed') dispatch({ type: 'card', cardId, patch: { status: 'open', error: null } });
     },

@@ -159,8 +159,13 @@ test('the log’s intro and the switch’s words name calendar labels, and the s
     'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.',
   );
   expect(AGENT_AUTO_WORDS).toBe(
-    'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
+    'Let TownwiseAI work on its own. It reads each file you add or text you paste on Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. When you tell it about a dated event plainly in a message, it saves that note too. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
   );
+});
+
+test('slice 4: a note TownwiseAI saved from the person’s message says so', () => {
+  expect(changeLine({ action: 'note.add', sourceKind: 'chat', noteKind: 'private_event', startDate: '2026-06-20', endDate: '2026-06-20', count: null, status: 'applied' }))
+    .toBe('Added a note: Private event, Jun 20, 2026, from your message.');
 });
 
 test('slice 3: a rule from the sales history or the weekly look ahead, and a weekly note, each have their own words', () => {
