@@ -456,7 +456,8 @@ export async function claimNextAiRead(
       $set: { 'ai.status': 'reading', 'ai.leaseUntil': new Date(input.now.getTime() + input.leaseMs), 'ai.startedAt': input.now },
       $inc: { 'ai.attempts': 1 },
     },
-    { sort: { 'ai.requestedAt': 1, _id: 1 }, returnDocument: 'after' },
+    // D59: a pressed read (no `ai.auto`, which sorts first) before automatic ones, so a burst never makes a press wait.
+    { sort: { 'ai.auto': 1, 'ai.requestedAt': 1, _id: 1 }, returnDocument: 'after' },
   ).lean();
   if (doc?.ai === undefined) return null;
   return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), attempt: doc.ai.attempts };

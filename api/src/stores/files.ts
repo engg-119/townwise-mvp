@@ -108,6 +108,8 @@ export interface AiReadEvent {
   readonly effect: AiEventEffect;
   readonly expectedGuests: number | null;
   readonly detail: string;
+  /** D59: the model's confidence in this event; absent on an answer saved before it, which reads as the read's. */
+  readonly confidence?: 'high' | 'medium' | 'low';
 }
 
 /** A daily total the file states per day; `netSales` in dollars, as the file has it. */
@@ -244,11 +246,18 @@ export interface FileAiRead {
   readonly actions: AiReadActions | null;
   /** While an undo runs: it removes what the read made, then marks the read `undone`. */
   readonly undoing: boolean;
+  /**
+   * D59: queued on its own when the file was stored (openspec change auto-apply-agent-reads, design decision 1), with
+   * the file's adder as `requestedBy` (on whose behalf it reads), rather than pressed. False for a pressed read.
+   */
+  readonly auto: boolean;
+  /** D59: when an automatic read reserved its call, the day's count of automatic reads reads it; null otherwise. */
+  readonly chargedAt: Date | null;
 }
 
 /** As stored: `actions` and `notBefore` may be absent, and `undoing` is absent unless set. */
-type StoredAiRead = Omit<FileAiRead, 'actions' | 'undoing' | 'notBefore'> & {
-  actions?: AiReadActions | null; undoing?: boolean; notBefore?: Date | null;
+type StoredAiRead = Omit<FileAiRead, 'actions' | 'undoing' | 'notBefore' | 'auto' | 'chargedAt'> & {
+  actions?: AiReadActions | null; undoing?: boolean; notBefore?: Date | null; auto?: boolean; chargedAt?: Date | null;
 };
 
 interface FileFields {
@@ -303,6 +312,8 @@ interface FileFields {
   editedByStaff?: boolean;
   /** Reading with TownwiseAI (spec 11A.9); absent until asked for, never stored as null. */
   ai?: StoredAiRead;
+  /** D59: the person unchecked the Add a file box, so TownwiseAI never reads it on its own. Absent otherwise. */
+  aiAuto?: false;
   /** On the summary item a TownwiseAI read kept: the file it was read from. Absent otherwise. */
   source?: { via: 'ai_file'; fileId: Types.ObjectId };
 }
@@ -350,6 +361,7 @@ function fileSchema(): Schema<FileFields> {
     editedBy: { type: String },
     editedByStaff: { type: Boolean },
     ai: { type: Schema.Types.Mixed },
+    aiAuto: { type: Boolean, enum: [false] },
     source: {
       type: new Schema({
         via: { type: String, required: true, enum: ['ai_file'] }, fileId: { type: Schema.Types.ObjectId, required: true },
@@ -431,6 +443,8 @@ export interface FileRecord {
   readonly ai: FileAiRead | null;
   /** A summary item TownwiseAI kept from a read: the file it was read from; null for anything else. */
   readonly source: AiSource | null;
+  /** D59: kept from TownwiseAI's automatic reads (its Add a file box was unchecked). */
+  readonly aiAutoOff: boolean;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -475,8 +489,12 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     editedAt: doc.editedAt ?? null,
     editedBy: doc.editedBy ?? null,
     editedByStaff: doc.editedByStaff === true,
-    ai: doc.ai === undefined ? null : { ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true, notBefore: doc.ai.notBefore ?? null },
+    ai: doc.ai === undefined ? null : {
+      ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true, notBefore: doc.ai.notBefore ?? null,
+      auto: doc.ai.auto === true, chargedAt: doc.ai.chargedAt ?? null,
+    },
     source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
+    aiAutoOff: doc.aiAuto === false,
   };
 }
 
@@ -495,6 +513,8 @@ export interface NewFile {
   readonly sizeBytes: number;
   readonly chunkSize: number;
   readonly expiresAt: Date;
+  /** D59: the person unchecked the Add a file box: TownwiseAI never reads it on its own. */
+  readonly aiAutoOff?: true;
 }
 
 /** What the reader takes in a started import (nextToRead). */
@@ -652,6 +672,20 @@ export interface FileStore {
   requestAiRead(scope: OrgScope, locationId: string, fileId: string, input: {
     by: string; role: Role; byStaff: boolean; grantId: string | null; at: Date;
   }): Promise<FileRecord | null>;
+  /**
+   * D59: queues an automatic read (`auto`, as `input.by`, the file's adder) by compare-and-set, only on a file nobody
+   * asked TownwiseAI about yet (no `ai`), finished with its original, which wrote no days, is not a calendar export, a
+   * summary or item TownwiseAI kept, and whose box was not unchecked. The record after, or null when it does not qualify.
+   */
+  requestAutoRead(scope: OrgScope, locationId: string, fileId: string, input: {
+    by: string; role: Role; byStaff: boolean; grantId: string | null; at: Date;
+  }): Promise<FileRecord | null>;
+  /** D59: under claim `attempt`, marks that the automatic read reserved its call at `at`. */
+  markAiCharged(scope: OrgScope, fileId: string, attempt: number, at: Date): Promise<boolean>;
+  /** D59: the organization's automatic reads that reserved a call at or after `since`. */
+  countAutoReadsSince(scope: OrgScope, since: Date): Promise<number>;
+  /** D59: whether another file of the location with this fingerprint already had a finished TownwiseAI read (done or undone). */
+  hasReadTwin(scope: OrgScope, locationId: string, fingerprint: string, exceptId: string): Promise<boolean>;
   /** The reader's heartbeat: a later `leaseUntil` while the read is `reading` under claim `attempt`. False once it is not. */
   renewAiLease(scope: OrgScope, fileId: string, attempt: number, until: Date): Promise<boolean>;
   /**
@@ -674,7 +708,7 @@ export interface FileStore {
    * `notBefore`. False when not held.
    */
   releaseAiRead(scope: OrgScope, fileId: string, attempt: number, notBefore: Date): Promise<boolean>;
-  /** How many of the organization's reads are queued or reading (the 10 a time cap). */
+  /** How many of the organization's pressed reads are queued or reading (the 10 a time cap; D59: automatic reads are not counted). */
   aiReadsInFlight(scope: OrgScope): Promise<number>;
   /**
    * S2, before any action writes: compare-and-set the plan's ids on `ai.actions` (outcome null) while the read is held
@@ -733,6 +767,7 @@ export function createFileStore(connection: Connection): FileStore {
         },
         answers: {}, attempts: 0,
         ...(input.addedVia === undefined ? {} : { addedVia: input.addedVia }),
+        ...(input.aiAutoOff === true ? { aiAuto: false } : {}),
       });
       return toFile(doc.toObject());
     },
@@ -1015,6 +1050,36 @@ export function createFileStore(connection: Connection): FileStore {
       ).lean();
       return doc === null ? null : toFile(doc);
     },
+    async requestAutoRead(scope, locationId, fileId, input) {
+      const ai: StoredAiRead = {
+        status: 'queued', requestedBy: input.by, requestedByRole: input.role, requestedByStaff: input.byStaff,
+        requestedGrantId: input.grantId, requestedAt: input.at, attempts: 0, leaseUntil: null, notBefore: null, startedAt: null, finishedAt: null,
+        reason: null, partial: false, costMicroUsd: 0, result: null, actions: null, auto: true, chargedAt: null,
+      };
+      const doc = await File.findOneAndUpdate(
+        {
+          _id: oid(fileId), orgId: org(scope), locationId: oid(locationId), status: trusted({ $in: AI_READABLE }), rawDeletedAt: null,
+          ai: trusted({ $exists: false }), aiAuto: trusted({ $exists: false }), addedVia: trusted({ $exists: false }),
+          source: trusted({ $exists: false }), uploadId: null, outcome: trusted({ $ne: 'calendar_export' }),
+        },
+        { $set: { ai } },
+        after,
+      ).lean();
+      return doc === null ? null : toFile(doc);
+    },
+    async markAiCharged(scope, fileId, attempt, at) {
+      return (await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.chargedAt': at } })).matchedCount === 1;
+    },
+    countAutoReadsSince(scope, since) {
+      return File.countDocuments({ orgId: org(scope), 'ai.auto': true, 'ai.chargedAt': trusted({ $gte: since }) });
+    },
+    async hasReadTwin(scope, locationId, fingerprint, exceptId) {
+      const twin = await File.exists({
+        orgId: org(scope), locationId: oid(locationId), fingerprint, _id: trusted({ $ne: oid(exceptId) }),
+        status: trusted({ $ne: 'deleting' }), 'ai.status': trusted({ $in: ['done', 'undone'] }),
+      });
+      return twin !== null;
+    },
     async renewAiLease(scope, fileId, attempt, until) {
       const result = await File.updateOne(heldAiRead(scope, fileId, attempt), { $set: { 'ai.leaseUntil': until } });
       return result.matchedCount === 1;
@@ -1038,7 +1103,8 @@ export function createFileStore(connection: Connection): FileStore {
       return result.matchedCount === 1;
     },
     async aiReadsInFlight(scope) {
-      return File.countDocuments({ orgId: org(scope), 'ai.status': trusted({ $in: ['queued', 'reading'] }) });
+      // D59: automatic reads have their own daily cap, so a burst of them never fills the queue a press needs.
+      return File.countDocuments({ orgId: org(scope), 'ai.status': trusted({ $in: ['queued', 'reading'] }), 'ai.auto': trusted({ $ne: true }) });
     },
     async planAiActions(scope, fileId, attempt, plan) {
       const actions: AiReadActions = { plan, outcome: null };

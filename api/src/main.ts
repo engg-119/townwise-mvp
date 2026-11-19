@@ -114,9 +114,13 @@ async function fileBlobsFor(backend: FilesBackend | null): Promise<FileBlobs | u
 const files = await fileBlobsFor(filesBackendOf(config));
 // The file reader runs in this process while stored files are on (files/worker.ts). Its AI column step is on with the
 // same ANTHROPIC_API_KEY as the tuning chat, within TOWNWISE_FILES_MONTHLY_BUDGET_USD.
+// D59: a file the reader is done with may be read by TownwiseAI on its own, while TOWNWISE_AGENT_AUTO is true and the
+// TownwiseAI reader below runs.
+const aiReadsOn = files !== undefined && ANTHROPIC_API_KEY !== undefined && filesMonthlyBudgetUsd > 0;
 const fileWorker = files === undefined ? undefined : createFileWorker({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
   extract: ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicExtractModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
+  autoRead: config.TOWNWISE_AGENT_AUTO && aiReadsOn,
 });
 // The daily sweep (retention, unfinished uploads, orphans) runs while stored files are on; one replica takes it a day.
 const fileSweeper = files === undefined ? undefined : createFileSweeper({
@@ -177,6 +181,7 @@ const baseDeps = {
 const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAiReader({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
   model: createAnthropicFileReaderModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd, onRead: createAiReadActions(createTownwiseContext(baseDeps)),
+  agentAuto: config.TOWNWISE_AGENT_AUTO,
 });
 const deps = { ...baseDeps, aiReader };
 const api = createTownwiseApi(deps);

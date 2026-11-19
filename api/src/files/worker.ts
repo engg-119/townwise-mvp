@@ -17,6 +17,7 @@ import type { EntryCounts, FileProgress, FileRecord, FileResult } from '../store
 import type { ImportRecord } from '../stores/imports.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import { queueAutoRead } from './ai-auto.ts';
 import { BlobMissingError, type FileBlobs } from './blobs.ts';
 import { cleanCsv } from './clean.ts';
 import { purgeOriginal, RAW_DELETED } from './remove.ts';
@@ -49,6 +50,11 @@ export interface FileWorkerDeps {
   readonly extract?: ExtractModel | undefined;
   /** Its monthly spend limit per organization, in US dollars; 0 turns it off. */
   readonly filesMonthlyBudgetUsd?: number;
+  /**
+   * D59: TOWNWISE_AGENT_AUTO is true and TownwiseAI reads files in this process, so a file kept or failed with its
+   * original is queued for an automatic read (files/ai-auto.ts). Off when left out.
+   */
+  readonly autoRead?: boolean;
 }
 
 export interface FileWorker {
@@ -236,6 +242,9 @@ export function createFileWorker(deps: FileWorkerDeps): FileWorker {
       if (!settled && entries !== null) await stores.fileEntries.removeForFile(scope, file.id);
       if (status === 'kept') await stores.imports.addThroughput(scope, record.id, file.sizeBytes, now().getTime() - startedAt.getTime());
       logger.info({ fileId: file.id, kind: file.kind, outcome }, status === 'kept' ? 'townwise.file_kept' : 'townwise.file_failed');
+      // D59: a file Townwise did not read into days may be read by TownwiseAI on its own.
+      const finished = settled && deps.autoRead === true ? await stores.files.get(scope, file.locationId, file.id) : null;
+      if (finished !== null) await queueAutoRead({ stores, logger, now, on: true }, scope, finished);
       return false;
     };
     if (file.purgeRaw) {

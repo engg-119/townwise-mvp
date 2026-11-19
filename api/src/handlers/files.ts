@@ -15,6 +15,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { utcDay } from '../dates.ts';
+import { queueAutoRead } from '../files/ai-auto.ts';
 import { BlobMissingError, BlobUnavailableError, type BlobRef, type FileBlobs } from '../files/blobs.ts';
 import { importEta, type ImportEta } from '../files/eta.ts';
 import {
@@ -231,6 +232,8 @@ const createBody = z.strictObject({
   name: z.string().max(1024),
   sizeBytes: z.number().int().min(1),
   purpose: z.string().max(32),
+  /** D59: false when the person unchecked the Add a file box, so TownwiseAI never reads the file on its own. */
+  aiAuto: z.boolean().optional(),
 });
 
 /** POST /files: opens an upload session in the location's active import (spec 10.11). */
@@ -271,6 +274,7 @@ export async function createFile(ctx: TownwiseContext, req: Request, res: Respon
     importId: record?.id ?? null, purpose, uploadedBy: member.userId, uploaderRole: member.role,
     ...(member.openAsAdmin !== null ? { byStaff: true, openAsAdminGrantId: member.openAsAdmin.grantId } : {}), uploadedAt: now, name,
     kind: kindOfName(name), sizeBytes: body.sizeBytes, chunkSize: CHUNK_BYTES, expiresAt: new Date(now.getTime() + UPLOAD_SESSION_MS),
+    ...(body.aiAuto === false ? { aiAutoOff: true } : {}),
   });
   const chunkCount = file.upload?.chunkCount ?? 0;
   ctx.logger.info({
@@ -398,6 +402,10 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
     const kept = await ctx.stores.files.finishUpload(scope, file.id, { fingerprint, kind, status: 'kept', outcome: 'reference' });
     if (kept === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
     await recordUploaded(ctx, member, kept);
+    // D59: TownwiseAI reads it on its own, unless its box was unchecked or either switch is off.
+    if (await queueAutoRead({ stores: ctx.stores, logger: ctx.logger, now: ctx.now, on: ctx.config.agentAuto && ctx.aiReads !== null }, scope, kept)) {
+      ctx.aiReads?.nudge();
+    }
     res.status(200).json({ file: fileView(member, kept, kept.byStaff ? TOWNWISE_STAFF : member.email, null), import: null });
     return;
   }

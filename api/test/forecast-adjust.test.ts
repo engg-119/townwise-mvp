@@ -17,7 +17,7 @@ const BOOKED: ModelDay = { status: 'booked', low: null, mid: null, high: null };
 const WEEKDAY = [{ kind: 'weekday' as const }];
 
 let ids = 0;
-function note(fields: Partial<NoteContent> = {}): NoteRecord {
+function note(fields: Partial<NoteRecord> = {}): NoteRecord {
   ids += 1;
   return {
     id: String(ids).padStart(24, '0'), kind: 'private_event', startDate: DAY, endDate: DAY, weekdays: null, effect: 'more_guests',

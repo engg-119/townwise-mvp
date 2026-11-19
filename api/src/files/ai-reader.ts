@@ -8,14 +8,20 @@
 // that stops waits 1, 2, then 4 minutes before the next, a read is attempted at most three times, then failed
 // `internal`, and an API refusal of the request itself (a 4xx other than 408, 409 or 429) fails it at once. A retry
 // after the answer was saved goes straight to the actions, without the original. Only files a person opted in are
-// ever claimed. Logs and audit carry ids, kinds, codes and counts only: never a file name, its content, the summary, a
-// title or a figure.
+// ever claimed, and (D59) files TownwiseAI reads on its own (files/ai-auto.ts), queued `auto`: those are bounded here
+// before anything is read or reserved. One whose organization or deploy switch is off by then is skipped
+// `agent_auto_off`; one whose fingerprint matches a file of the location TownwiseAI already read, `duplicate`; past 20
+// a day per organization, `daily_auto_limit`; and one that would leave $1 or less of the files month after its ceiling,
+// `budget_spent`, so a press still runs. [CONFIRM: automatic reads leave $1 of the files month for presses] [CONFIRM: 20
+// automatic file reads a day per organization] Its audit event's actor is TownwiseAI. Logs and audit carry ids, kinds,
+// codes and counts only: never a file name, its content, the summary, a title or a figure.
 import type { AuthStores } from '@ckeith26/auth';
 import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
 
 import { scopeForClaimedAiRead, type OrgScope } from '../access/policy.ts';
 import { isCalendarCsvText } from '../calendar/csv-events.ts';
+import { TOWNWISE_AI_ACTOR } from '../audit.ts';
 import { DELETED_PERSON } from '../people.ts';
 import { EARLIEST_DATE, utcDay } from '../dates.ts';
 import { claimNextAiRead, type ClaimedAiRead } from '../stores/cross-tenant.ts';
@@ -70,6 +76,8 @@ export interface AiReaderDeps {
   /** Tests pass shorter limits. */
   readonly extractText?: (input: AiTextInput) => Promise<AiTextOutcome>;
   readonly onRead?: OnAiRead;
+  /** D59: TOWNWISE_AGENT_AUTO. Off (left out), a queued automatic read is skipped `agent_auto_off`. */
+  readonly agentAuto?: boolean;
 }
 
 export interface AiReader {
@@ -93,7 +101,12 @@ export interface AiReader {
  */
 export type AiSkipReason =
   | 'budget_spent' | 'too_large' | 'kind_not_read' | 'encrypted' | 'raw_missing' | 'too_complex' | 'not_readable' | 'requester_gone'
-  | 'calendar_export';
+  | 'calendar_export' | 'duplicate' | 'daily_auto_limit' | 'agent_auto_off';
+
+/** D59: automatic reads an organization may start in a UTC day. */
+export const AUTO_READS_PER_DAY = 20;
+/** D59: what an automatic read leaves of the files month for presses, in micro-dollars: more than $1. */
+export const AUTO_RESERVE_MICRO_USD = 1_000_000;
 
 const POLL_MS = 5000;
 const LEASE_MS = 90_000;
@@ -143,9 +156,12 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
     const ai = file.ai;
     if (ai === null) return;
     try {
+      const actor = ai.auto ? TOWNWISE_AI_ACTOR : {
+        actorUserId: ai.requestedBy, actorEmail: (await deps.authStores.users.findById(ai.requestedBy))?.email ?? DELETED_PERSON,
+        actorRole: ai.requestedByStaff ? 'superadmin' as const : ai.requestedByRole, viewAsGrantId: ai.requestedGrantId,
+      };
       await stores.audit.insert({
-        at: now(), actorUserId: ai.requestedBy, actorEmail: (await deps.authStores.users.findById(ai.requestedBy))?.email ?? DELETED_PERSON,
-        actorRole: ai.requestedByStaff ? 'superadmin' : ai.requestedByRole, viewAsGrantId: ai.requestedGrantId,
+        at: now(), ...actor,
         orgId: scope.orgId, action: 'file.ai_read', target: { type: 'file', id: file.id },
         details: {
           locationId: file.locationId, kind: result.kind, events: result.eventCount, days: result.dayCount,
@@ -175,9 +191,28 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
       await finish('skipped', 'calendar_export');
       return null;
     }
+    const auto = file.ai?.auto === true;
+    if (auto) {
+      // D59: an automatic read, bounded before the budget is read or anything is reserved or sent.
+      if (deps.agentAuto !== true || (await stores.orgs.findById(scope.orgId))?.agentAuto.on !== true) {
+        await finish('skipped', 'agent_auto_off');
+        return null;
+      }
+      if (file.fingerprint !== null && await stores.files.hasReadTwin(scope, file.locationId, file.fingerprint, file.id)) {
+        await finish('skipped', 'duplicate');
+        return null;
+      }
+      const dayStart = new Date(`${now().toISOString().slice(0, 10)}T00:00:00.000Z`);
+      if (await stores.files.countAutoReadsSince(scope, dayStart) >= AUTO_READS_PER_DAY) {
+        await finish('skipped', 'daily_auto_limit');
+        return null;
+      }
+    }
     const month = now().toISOString().slice(0, 7);
     const budget = Math.round(deps.filesMonthlyBudgetUsd * 1_000_000);
-    if (budget <= 0 || await stores.filesUsage.costMicroUsd(scope, month) >= budget) {
+    // An automatic read may spend only while more than $1 would be left after its ceiling.
+    const limit = auto ? budget - AUTO_RESERVE_MICRO_USD - 1 : budget;
+    if (limit <= 0 || await stores.filesUsage.costMicroUsd(scope, month) >= limit) {
       await finish('skipped', 'budget_spent');
       return null;
     }
@@ -201,10 +236,12 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
       return null;
     }
     const reserved = readerCeilingMicroUsd(prepared.input, prepared.pages);
-    if (!await stores.filesUsage.reserve(scope, month, reserved, budget, now())) {
+    if (!await stores.filesUsage.reserve(scope, month, reserved, limit, now())) {
       await finish('skipped', 'budget_spent');
       return null;
     }
+    // D59: the day's count of automatic reads counts this one from here.
+    if (auto) await stores.files.markAiCharged(scope, file.id, attempt, now());
     let reply;
     try {
       reply = await deps.model.readFile(readerRequest(prepared.input, { today, timeZone }), abort.signal);
