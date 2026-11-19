@@ -118,6 +118,13 @@ describe('the location pages', () => {
     const column = filters.parentElement;
     expect(column?.contains(first)).toBe(true);
     expect(filters.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The forecast chart, shown by default, sits between the filters and the grid (D64).
+    const chart = screen.getByTestId('skeleton-calendar-chart');
+    expect(column?.contains(chart)).toBe(true);
+    expect(filters.compareDocumentPosition(chart) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(chart.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    const plot = chart.firstElementChild;
+    expect(plot === null ? null : window.getComputedStyle(plot).height).toBe('144px');
     const panel = screen.getByTestId('skeleton-calendar-panel');
     expect(column?.contains(panel)).toBe(false);
     expect(column?.parentElement?.contains(panel)).toBe(true);
