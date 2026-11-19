@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { expectationOf, replayFixture, type ResearchFixture } from '../scripts/research-eval-full.ts';
+import { expectationOf, replayFixture, scoreCurated, type ResearchFixture } from '../scripts/research-eval-full.ts';
+import type { Finding } from '../src/research/verify.ts';
 import { evalRefusal, parseEvalArgs, runResearchEval, type EvalDeps } from '../scripts/research-eval.ts';
 import { cited, citedQuotes, message, messagesOf, scriptedModel, text, webResults, webSearch } from './helpers/chat-model.ts';
 
@@ -189,5 +190,18 @@ describe('research-eval --probe output (counts and shapes only)', () => {
     for (const secret of ['sk-secret-anthropic', 'g-secret-places', 'Sentinel', 'sentinel-page.example', 'place-1']) {
       expect(out).not.toContain(secret);
     }
+  });
+});
+
+describe('research-eval scoreCurated', () => {
+  const term = { id: 't', title: 'Fall term finals', start: '2026-11-20', end: '2026-11-25', kind: 'term', scope: 'town', group: null, groupLabel: null, confidence: 'high', sources: [] } as const;
+  const finding = (category: 'school' | 'sports', start: string): Finding => ({
+    title: 'Something else entirely', kind: 'event', category, start, end: start, weekdays: null, startTime: null, status: 'scheduled',
+    venueRef: null, hostRef: null, competitor: null, sources: [], grounded: true, codeConfidence: 'medium', confidence: 'medium',
+  });
+
+  it('finds a term row only by a school finding on its first or last day', () => {
+    expect(scoreCurated([term], [{ thread: 'sports', events: [finding('sports', '2026-11-25')], entities: [] }])[0]?.foundBy).toEqual([]);
+    expect(scoreCurated([term], [{ thread: 'schools', events: [finding('school', '2026-11-25')], entities: [] }])[0]?.foundBy).toEqual(['schools']);
   });
 });

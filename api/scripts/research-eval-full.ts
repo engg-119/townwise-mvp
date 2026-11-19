@@ -307,12 +307,13 @@ export interface CuratedScore {
 /**
  * Recall against the curated town rows in the window (the national holidays are not research's to find). An event or
  * season row is found when a finding is the same happening (dedupe.ts sameEvent, the rule the merge drops curated
- * duplicates by); a term row when a finding starts or ends on its first or last day, or is the same happening.
+ * duplicates by); a term row when a school finding starts or ends on its first or last day (the merge's own term-day
+ * rule, which a game on a term's last day must not meet), or is the same happening.
  */
 export function scoreCurated(curated: readonly TownEvent[], found: readonly ThreadFound[]): CuratedScore[] {
   return curated.filter((row) => row.scope === 'town').map((row) => {
     const foundBy = found.filter(({ events }) => events.some((event) => sameEvent(findingComparable(event), curatedComparable(row))
-      || (row.kind === 'term' && [row.start, row.end].some((day) => day === event.start || day === event.end)))).map(({ thread }) => thread);
+      || (row.kind === 'term' && event.category === 'school' && [row.start, row.end].some((day) => day === event.start || day === event.end)))).map(({ thread }) => thread);
     return { title: row.title, start: row.start, end: row.end, kind: row.kind, foundBy };
   });
 }
@@ -658,7 +659,7 @@ export async function runFullEval(options: FullEvalOptions, deps: FullEvalDeps):
   const totalSearches = perSearch.reduce((sum, s) => sum + s.searches, 0);
   if (totalSearches > 0) {
     const values = scores.flatMap((score) => score.threads.flatMap((t) => (t.tokensPerSearch === null ? [] : [t.tokensPerSearch]))).sort((a, b) => a - b);
-    deps.log(`tokens a search: mean ${String(Math.round(perSearch.reduce((sum, s) => sum + s.tokens, 0) / totalSearches))} over ${plural(totalSearches, 'search')}; per thread ${values.map((v) => String(Math.round(v))).join(', ')}`);
+    deps.log(`tokens a search: mean ${String(Math.round(perSearch.reduce((sum, s) => sum + s.tokens, 0) / totalSearches))} over ${String(totalSearches)} searches; per thread ${values.map((v) => String(Math.round(v))).join(', ')}`);
   }
 
   const ledgers = new Map(done.map((run) => [`${run.group}|${run.thread}`, buildLedger(run.outcome.messages)]));
