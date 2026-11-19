@@ -342,4 +342,57 @@ describe('updating and the last run (D65)', () => {
     await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now(), 'sales');
     expect(await stateAt(p)).toMatchObject({ state: 'not_calibrated', updating: null, lastRun: null });
   });
+
+  it('a first forecast the lab publishes and finishes during the read never reads not_calibrated with a published last run', async () => {
+    const p = await place(300, true);
+    const { calibrations, forecasts } = server.ctx.stores;
+    const id = new Types.ObjectId().toHexString();
+    const now = server.clock.now();
+    await calibrations.insertQueued(p.scope, {
+      id, locationId: p.locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['sales'], regimeStart: null,
+      championRunId: null, tokenExpiresAt: new Date(now.getTime() + 20 * MINUTE), now,
+    });
+    await calibrations.markRunning(p.scope, id, { now, imageDigest: null });
+    const file: ForecastRunFile = {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: LAST, madeAt: LAST, frozen: null,
+      interval: { level: 0.8, widened: true }, backtest: null, ...runDays(LAST, 70),
+    };
+    const { run } = await forecasts.upsertRun(p.scope, p.locationId, {
+      id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: null, lab: null, now,
+    });
+    await forecasts.setStatus(p.scope, run.id, { from: ['importing'], to: 'draft', at: now, by: null });
+    await calibrations.recordResult(p.scope, id, { runId: run.id, scorecardJson: '{}', codeVersion: 'c0de' });
+    await calibrations.recordGate(p.scope, id, { published: true, reason: 'published' });
+    // The lab's last two steps (storeDraft: publish, then finish) land during the read: after the published runs were
+    // read when the two reads run side by side, before the calibration is read.
+    let publishedRead: Promise<unknown> | undefined;
+    const ctx = {
+      ...server.ctx,
+      stores: {
+        ...server.ctx.stores,
+        calibrations: {
+          ...calibrations,
+          list: async (...args: Parameters<typeof calibrations.list>) => {
+            await Promise.resolve();
+            await publishedRead;
+            await forecasts.setStatus(p.scope, run.id, { from: ['draft'], to: 'published', at: now, by: null });
+            await calibrations.finish(p.scope, id, { status: 'succeeded' }, now);
+            return calibrations.list(...args);
+          },
+        },
+        forecasts: {
+          ...forecasts,
+          published: (...args: Parameters<typeof forecasts.published>) => {
+            const read = forecasts.published(...args);
+            publishedRead = read;
+            return read;
+          },
+        },
+      },
+    };
+    const read = await stateAt(p, ctx);
+    expect(read).toMatchObject({ state: 'calibrated', dataThrough: LAST, updating: null });
+    expect(read).not.toHaveProperty('lastRun');
+  });
 });

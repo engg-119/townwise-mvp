@@ -175,8 +175,8 @@ export function calibrationWords(calibration: Calibration, timeZone: string, now
  * guests has no next refresh: that refit was refused, so the next Monday finds the same data and records unchanged, and
  * the words say the days aren't in it yet rather than promise a refit that won't come.
  *
- * D65: it also reads the location's newest calibration for `updating`, and, with no published run, the refit mark, the
- * reference only when the mark is due, nextRefreshFor's conditions only with no reference, and the newest calibration's
+ * D65: it also reads the location's newest calibration for `updating`, and, with no published run, the refit mark
+ * unless that calibration is running, the reference only when the mark is due, nextRefreshFor's conditions only with no reference, and the newest calibration's
  * run only for a succeeded `lastRun`. It never writes.
  */
 export async function calibrationFor(
@@ -184,9 +184,12 @@ export async function calibrationFor(
 ): Promise<Calibration> {
   if (coverage.lastDate === null) return calibrationOf(coverage);
   const now = ctx.now();
-  const [[latest], [newest]] = await Promise.all([
-    ctx.stores.calibrations.list(scope, 1, location.id), ctx.stores.forecasts.published(scope, location.id),
-  ]);
+  // The newest calibration before the published runs, not beside them: the lab publishes a run before it finishes its
+  // calibration (lab/service.ts storeDraft), so a calibration read as finished always comes with its run already
+  // published. Read side by side, a publish landing between the two could answer not_calibrated with a published
+  // lastRun, and the pages' poll, seeing nothing updating, would stop on it.
+  const [latest] = await ctx.stores.calibrations.list(scope, 1, location.id);
+  const [newest] = await ctx.stores.forecasts.published(scope, location.id);
   const calibration = latest ?? null;
   if (newest === undefined) {
     const refit = calibration !== null && runningAt(calibration, now) ? null : await ctx.stores.locations.refitState(scope, location.id);

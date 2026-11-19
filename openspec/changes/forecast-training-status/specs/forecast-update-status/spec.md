@@ -50,7 +50,7 @@ Every calibration object the API answers (GET /api/org's location summaries, GET
 - **THEN** `updating` is null until the pass starts another calibration
 
 ### Requirement: Owners see updating where they look
-While `updating` is not null, the model card (P24) SHALL show a sentence saying the forecast is updating, or the first forecast is next or being built, with the days and the time it started when running; Home (P11) SHALL replace its no-forecast line with a first-forecast line for a location with no published run; the dashboard's Calibration cell (P9) SHALL add a second line in plain words, never a StatusTag, linked to the location's TownwiseAI activity; the upload result SHALL say the forecast is updating or the first forecast is next; and TownwiseAI's overview tool SHALL include the model card's sentence. A time SHALL be shown in the viewer's time zone, with the date added when it is not the viewer's today. The TownwiseAI page SHALL open its panel at What it's been doing when its address carries `?panel=activity`, at web and phone width. [CONFIRM: every updating sentence in design decision 3] [CONFIRM: no separate run-history page; the dashboard shows updating as words in the Calibration cell, linked to TownwiseAI's activity]
+While `updating` is not null, the model card (P24) SHALL show a sentence saying the forecast is updating, or the first forecast is next or being built, with the days and the time it started when running; Home (P11) SHALL replace its no-forecast line with a first-forecast line for a location with no published run; the dashboard's Calibration cell (P9) SHALL add a second line in plain words, never a StatusTag, linked to the location's TownwiseAI activity; the upload result SHALL say the forecast is updating or the first forecast is next; and TownwiseAI's overview tool SHALL include the model card's sentence. A time SHALL be shown in the viewer's time zone, with the date added when it is not the viewer's today; the overview tool, which has no viewer's time zone, SHALL use the town's. The TownwiseAI page SHALL open its panel at What it's been doing when its address carries `?panel=activity`, at web and phone width. [CONFIRM: every updating sentence in design decision 3] [CONFIRM: no separate run-history page; the dashboard shows updating as words in the Calibration cell, linked to TownwiseAI's activity]
 
 #### Scenario: Model card while a refit runs
 - **WHEN** a stale location with 6 newer days has a calibration running since 2:14 PM
@@ -83,7 +83,7 @@ A `not_calibrated` calibration SHALL carry `lastRun`: null, or, when `updating` 
 - **THEN** Home shows that the first forecast wasn't published, why, that Townwise tries again after the next sales upload, and a link to TownwiseAI's activity, which lists the run
 
 #### Scenario: A first run timed out
-- **WHEN** a location's first calibration is still stored `running` 30 minutes after it was requested
+- **WHEN** a location's first calibration is still stored `running` 30 minutes after it was requested, and no refit mark the hourly pass would take is left (with one, the location reads `waiting`, since the pass fails that run and starts another)
 - **THEN** `lastRun` reads `not_run` with reason `failed`, Home shows the notice, and TownwiseAI's activity lists the run
 
 #### Scenario: Waiting ends without a run
