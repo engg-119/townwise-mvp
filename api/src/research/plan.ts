@@ -109,7 +109,7 @@ export function townStamp(town: Town): string {
 }
 
 /** A town of the twelve as a Town. */
-function townOf(townId: TownId): Town {
+export function townOf(townId: TownId): Town {
   const found = TOWNS.find((town) => town.townId === townId);
   return { townId, name: found?.name ?? townId, state: found?.state ?? '' };
 }
@@ -119,7 +119,7 @@ function dueAt(key: string, timeZone: string, subject: string, now: Date): Date 
   return key.startsWith('w:') ? staggeredStart(key.slice(2), timeZone, subject) : now;
 }
 
-const isTownId = (value: string): value is TownId => (TOWN_IDS as readonly string[]).includes(value);
+export const isTownId = (value: string): value is TownId => (TOWN_IDS as readonly string[]).includes(value);
 
 function recent(last: RunRecordBase | null, now: Date): boolean {
   return last !== null && now.getTime() - last.createdAt.getTime() < RESEARCH_REPEAT_MS;

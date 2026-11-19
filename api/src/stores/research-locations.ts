@@ -11,7 +11,7 @@
 // stores/cross-tenant.ts's claim and merge sweep, as the files collection's claim index does (spec 6.10 rule 1's
 // exception). Deletion removes runs and threads first, so a live lane's heartbeat misses and its merge finds no run,
 // then events and entities. Nothing here logs.
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { LocationOrigin, ThreadId } from '../research/threads.ts';
@@ -156,6 +156,8 @@ export interface LocationResearchStore {
   lastRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
   /** The location's live (queued, running or merging) run, if any. */
   liveRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
+  /** The location's latest merged (`done` or `partial`) run: what a prompt's `known` rows were found again by (decision 4). */
+  lastFinishedRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
   /** Inserts the run's thread rows that are missing (unique `(orgId, runId, thread)`); resolves how many it inserted. */
   insertThreads(scope: OrgScope, run: { id: string; locationId: string }, threads: readonly { thread: ThreadId; notBefore: Date }[], now: Date): Promise<number>;
   threadsOf(scope: OrgScope, runId: string): Promise<LocationThreadRecord[]>;
@@ -177,6 +179,12 @@ export interface LocationResearchStore {
   upsertEntity(scope: OrgScope, locationId: string, input: Stamp & {
     type: EntityType; name: string; nameKey: string; townEntityId: string | null; sources: readonly SourceRef[]; now: Date;
   }): Promise<string>;
+  /**
+   * A merge's retention (decision 8 step 6): the location's events that ended before `endedBefore` (a day), entities
+   * last seen before `unseenBefore` that no event names, and ended runs and their threads created before
+   * `createdBefore`. Resolves the number deleted.
+   */
+  removeOld(scope: OrgScope, locationId: string, input: { endedBefore: string; unseenBefore: Date; createdBefore: Date }): Promise<number>;
   /** Location deletion: runs and threads first, then events and entities. Resolves the number deleted. */
   removeForLocation(scope: OrgScope, locationId: string): Promise<number>;
   /** Organization deletion, in the same order. Resolves the number deleted. */
@@ -225,6 +233,10 @@ export function createLocationResearchStore(connection: Connection): LocationRes
     },
     async liveRun(scope, locationId) {
       const doc = await Run.findOne({ ...org(scope), liveSubject: oid(locationId) }).lean();
+      return doc === null ? null : toLocationRun(doc);
+    },
+    async lastFinishedRun(scope, locationId) {
+      const doc = await Run.findOne({ ...at(scope, locationId), status: trusted({ $in: ['done', 'partial'] }) }).sort({ finishedAt: -1, _id: -1 }).lean();
       return doc === null ? null : toLocationRun(doc);
     },
     async insertThreads(scope, run, list, now) {
@@ -286,6 +298,21 @@ export function createLocationResearchStore(connection: Connection): LocationRes
         { upsert: true, returnDocument: 'after' },
       ).lean();
       return doc._id.toHexString();
+    },
+    async removeOld(scope, locationId, input) {
+      const where = at(scope, locationId);
+      let deleted = (await Event.deleteMany({ ...where, end: trusted({ $lt: input.endedBefore }) })).deletedCount;
+      const named = [
+        ...await Event.distinct('venueId', where), ...await Event.distinct('hostId', where), ...await Event.distinct('competitorEntityId', where),
+      ];
+      deleted += (await Entity.deleteMany({ ...where, lastSeenAt: trusted({ $lt: input.unseenBefore }), _id: trusted({ $nin: named }) })).deletedCount;
+      const old = await Run.find({ ...where, createdAt: trusted({ $lt: input.createdBefore }), liveSubject: trusted({ $exists: false }) }, { _id: 1 }).lean();
+      if (old.length > 0) {
+        const ids = old.map((doc) => doc._id);
+        deleted += (await Thread.deleteMany({ ...where, runId: trusted({ $in: ids }) })).deletedCount;
+        deleted += (await Run.deleteMany({ ...where, _id: trusted({ $in: ids }) })).deletedCount;
+      }
+      return deleted;
     },
     async removeForLocation(scope, locationId) {
       let deleted = 0;

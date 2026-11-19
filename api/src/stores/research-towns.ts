@@ -112,6 +112,8 @@ export interface TownResearchStore {
   lastRun(townKey: TownId): Promise<TownRunRecord | null>;
   /** The town's live (queued, running or merging) run, if any. */
   liveRun(townKey: TownId): Promise<TownRunRecord | null>;
+  /** The town's latest merged (`done` or `partial`) run: what a prompt's `known` rows were found again by (decision 4). */
+  lastFinishedRun(townKey: TownId): Promise<TownRunRecord | null>;
   /** Inserts the run's thread rows that are missing (unique `(runId, thread)`); resolves how many it inserted. */
   insertThreads(run: { id: string; townKey: TownId }, threads: readonly { thread: ThreadId; notBefore: Date }[], now: Date): Promise<number>;
   threadsOf(runId: string): Promise<TownThreadRecord[]>;
@@ -148,6 +150,12 @@ export interface TownResearchStore {
   entities(townKey: TownId): Promise<TownEntityRecord[]>;
   /** Inserts the entity or refreshes its name, sources and last seen; resolves its id. */
   upsertEntity(townKey: TownId, input: { type: EntityType; name: string; nameKey: string; sources: readonly SourceRef[]; now: Date }): Promise<string>;
+  /**
+   * A merge's retention (decision 8 step 6): events that ended before `endedBefore` (a day), entities last seen before
+   * `unseenBefore` that no event names, and ended runs and their threads created before `createdBefore`. Resolves the
+   * number deleted.
+   */
+  removeOld(townKey: TownId, input: { endedBefore: string; unseenBefore: Date; createdBefore: Date }): Promise<number>;
 }
 
 function toTownRun(doc: TownRunDoc): TownRunRecord {
@@ -188,6 +196,10 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
     },
     async liveRun(townKey) {
       const doc = await Run.findOne({ liveSubject: townKey }).lean();
+      return doc === null ? null : toTownRun(doc);
+    },
+    async lastFinishedRun(townKey) {
+      const doc = await Run.findOne({ townKey, status: trusted({ $in: ['done', 'partial'] }) }).sort({ finishedAt: -1, _id: -1 }).lean();
       return doc === null ? null : toTownRun(doc);
     },
     async insertThreads(run, list, now) {
@@ -255,6 +267,18 @@ export function createTownResearchStore(connection: Connection): TownResearchSto
         { upsert: true, returnDocument: 'after' },
       ).lean();
       return doc._id.toHexString();
+    },
+    async removeOld(townKey, input) {
+      let deleted = (await Event.deleteMany({ townKey, end: trusted({ $lt: input.endedBefore }) })).deletedCount;
+      const named = [...await Event.distinct('venueId', { townKey }), ...await Event.distinct('hostId', { townKey })];
+      deleted += (await Entity.deleteMany({ townKey, lastSeenAt: trusted({ $lt: input.unseenBefore }), _id: trusted({ $nin: named }) })).deletedCount;
+      const old = await Run.find({ townKey, createdAt: trusted({ $lt: input.createdBefore }), liveSubject: trusted({ $exists: false }) }, { _id: 1 }).lean();
+      if (old.length > 0) {
+        const ids = old.map((doc) => doc._id);
+        deleted += (await Thread.deleteMany({ townKey, runId: trusted({ $in: ids }) })).deletedCount;
+        deleted += (await Run.deleteMany({ townKey, _id: trusted({ $in: ids }) })).deletedCount;
+      }
+      return deleted;
     },
   };
 }

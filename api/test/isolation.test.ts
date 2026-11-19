@@ -37,7 +37,7 @@ describe('isolation (source)', () => {
     expect(importers).toEqual([
       'access/activity.ts', 'access/resolve.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/turn-sweeper.ts', 'files/ai-reader.ts', 'files/note-titles.ts', 'files/sweeper.ts', 'files/worker.ts',
       'handlers/admin.ts', 'handlers/deletion.ts',
-      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts', 'research/plan.ts',
+      'handlers/me.ts', 'handlers/overview.ts', 'lab/callback.ts', 'lab/schedule.ts', 'research/plan.ts', 'research/runner.ts',
     ]);
   });
 
@@ -124,7 +124,7 @@ describe('isolation (source)', () => {
 
   it('D66: only access/policy.ts mints research’s scope, and only the research planner and runner ask for it', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForResearch(')).map((file) => file.path).sort();
-    expect(callers).toEqual(['access/policy.ts', 'research/plan.ts']);
+    expect(callers).toEqual(['access/policy.ts', 'research/plan.ts', 'research/runner.ts']);
   });
 
   it('only access/policy.ts mints the title backfill’s scope, and only files/note-titles.ts asks for it', () => {
