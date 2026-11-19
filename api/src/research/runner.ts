@@ -20,7 +20,12 @@
 // itself if it was deleted meanwhile (removeLocation sweeps them too). Then retention, `found` cleared, the run ended.
 //
 // It reads the research stores for the prompts' base values only, never a revision (test/isolation.test.ts): a member's
-// edit never reaches Anthropic. Logs carry ids, codes and counts: never a title, a URL, a query or a name.
+// edit never reaches Anthropic. Google is asked (the restaurant's profile, its competitors: research/places.ts) only
+// while TOWNWISE_RESEARCH_PLACES_TO_AI lets Google's names go to Anthropic; with it off the restaurant is named by the
+// location's own typed name and competitors are found on the web, and nothing Google answered is sent (decision 10).
+// With it on and no profile (Places off, Google failing, a place it doesn't know), the restaurant's two threads end
+// `empty` with `places_off` and no call, since the typed name is not sent then; with a profile and no competitors list,
+// the competitors thread searches the web. Logs carry ids, codes and counts: never a title, a URL, a query or a name.
 import { randomUUID } from 'node:crypto';
 
 import type { Logger } from '@ckeith26/server-core';
@@ -45,12 +50,13 @@ import { townEvents } from '../town-calendar.ts';
 import type { Town, TownId } from '../towns.ts';
 import { GATHER_MAX_TOKENS, reserveMicroUsd, threadLimits } from './budget.ts';
 import { createThreadTally, RESEARCH_REQUEST_MS, runThread, type FetchSwitch, type ThreadOutcome } from './call.ts';
+import { competitorInputs, placesByN, type Competitor } from './competitors.ts';
 import { planMerge, type MergeInput, type StoredEvent, type ThreadFound } from './merge.ts';
 import { isTownId, MERGE_LEASE_MS, planTick, townOf, townStamp, type ClaimedMerge, type PlanContext, type PlanCounts } from './plan.ts';
 import {
   gatherPrompt, knownRows, promptTown, restaurantFor, seedsFrom, type GatherInput, type RestaurantProfile, type StoredBaseRow,
 } from './prompt.ts';
-import { researchWindow, threadDef } from './threads.ts';
+import { researchWindow, threadDef, type ThreadDef } from './threads.ts';
 
 const MINUTE = 60_000;
 const DAY_MS = 86_400_000;
@@ -91,9 +97,14 @@ export interface ResearchRunnerDeps {
   >;
   /**
    * The restaurant's Google profile (Place Details name and address), live and never stored; asked for only while
-   * Google's names may go to Anthropic. Absent, a location thread names no restaurant then.
+   * Google's names may go to Anthropic. Absent or null then, the restaurant's threads end `places_off`.
    */
   readonly profile?: (placeId: string) => Promise<RestaurantProfile | null>;
+  /**
+   * The restaurant's competitors (research/competitors.ts), live and never stored but their place ids; asked for only
+   * by the competitors thread while Google's names may go to Anthropic. Absent, null or empty, it searches the web.
+   */
+  readonly competitors?: (placeId: string) => Promise<readonly Competitor[] | null>;
   /** This replica's name in leases; a random one when absent. */
   readonly owner?: string;
   readonly lanes?: number;
@@ -249,7 +260,11 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
   // ---- A thread ------------------------------------------------------------------------------------------------------
 
   type Prepared =
-    | { readonly kind: 'ready'; readonly input: GatherInput; readonly location: LocationRecord | null }
+    | {
+      readonly kind: 'ready'; readonly input: GatherInput; readonly location: LocationRecord | null;
+      /** The competitors' place ids in `n` order, as sent; empty when none were. */
+      readonly competitorPlaceIds: readonly string[];
+    }
     | { readonly kind: 'end'; readonly status: 'empty' | 'failed'; readonly code: string };
 
   /** The base values of stored rows a prompt's `known` reads: no revision, never a suppressed row as known. */
@@ -274,7 +289,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
   }
 
   async function prepare(job: Job, run: RunRecordBase): Promise<Prepared> {
-    const def = threadDef(job.thread.thread, { placesToAi: config.researchPlacesToAi });
+    let def: ThreadDef = threadDef(job.thread.thread, { placesToAi: config.researchPlacesToAi });
     const at = now();
     let town: Town;
     let stored: StoredBaseRow[];
@@ -308,17 +323,28 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const window = researchWindow(at, timeZone);
     const curated = town.townId === null ? [] : townEvents(town.townId, window);
     let restaurant = null;
+    let competitors: readonly Competitor[] = [];
     if (def.namesRestaurant && location !== null) {
-      const profile = config.researchPlacesToAi && location.placeId !== null && deps.profile !== undefined
-        ? await deps.profile(location.placeId)
-        : null;
-      restaurant = restaurantFor(location, profile, config.researchPlacesToAi);
+      const placeId = location.placeId;
+      if (!config.researchPlacesToAi) {
+        // Nothing Google answered: the location's own typed name (decision 3), and Google is not asked.
+        restaurant = restaurantFor(location, null, false);
+      } else if (placeId !== null) {
+        const profile = deps.profile === undefined ? null : await deps.profile(placeId);
+        if (profile === null) return { kind: 'end', status: 'empty', code: 'places_off' };
+        restaurant = restaurantFor(location, profile, true);
+        if (def.id === 'competitors') {
+          competitors = (deps.competitors === undefined ? null : await deps.competitors(placeId)) ?? [];
+          // No list: the web-search focus, which names no listed competitor.
+          if (competitors.length === 0) def = threadDef(def.id, { placesToAi: false });
+        }
+      }
     }
     return {
-      kind: 'ready', location,
+      kind: 'ready', location, competitorPlaceIds: competitors.map((competitor) => competitor.placeId),
       input: {
         thread: def, town: promptTown(town), today: window.from, window, known: knownRows({ curated, stored, latestRunId }),
-        seeds: seedsFrom(curated), restaurant, competitors: null,
+        seeds: seedsFrom(curated), restaurant, competitors: competitors.length === 0 ? null : competitorInputs(competitors),
       },
     };
   }
@@ -422,7 +448,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       kept = verified.events.length;
       dropped = sum(verified.drops) + sum(verified.entityDrops);
       end = {
-        status: 'recorded', code: null, found: { events: verified.events, entities: verified.entities },
+        status: 'recorded', code: null, found: { events: verified.events, entities: verified.entities, competitorPlaceIds: prepared.competitorPlaceIds },
         drops: { events: verified.drops, entities: verified.entityDrops }, ...spent, now: now(),
       };
       // A location may have gone or moved while the model searched: what it found is not kept then.
@@ -561,7 +587,8 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     const plan = planMerge({
       runId, subject: 'location', found: foundOf(threads), stored: storedEvents(mine, entities),
       storedEntities: entities.map((entity) => ({ id: entity.id, type: entity.type, nameKey: entity.nameKey })),
-      curated: townId === null ? [] : townEvents(townId, window), townRows: storedEvents(townEventsStored, townEntities), competitorPlaces: null,
+      curated: townId === null ? [] : townEvents(townId, window), townRows: storedEvents(townEventsStored, townEntities),
+      competitorPlaces: placesByN(threads.find((thread) => thread.thread === 'competitors' && thread.status === 'recorded')?.found?.competitorPlaceIds),
     });
     const townEntityIds = new Map(townEntities.map((entity) => [`${entity.type}|${entity.nameKey}`, entity.id]));
     const entityIds = new Map<string, string>();

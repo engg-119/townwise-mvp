@@ -30,6 +30,7 @@ import { createAnthropicExtractModel, createAnthropicFileReaderModel, createAnth
 import { backfillNoteTitles } from './files/note-titles.ts';
 import { createFileSweeper } from './files/sweeper.ts';
 import { createFileWorker } from './files/worker.ts';
+import { pointOf } from './handlers/locations-map.ts';
 import { createEntraLabCaller, createLocalLabCaller, type LabCaller } from './lab/caller.ts';
 import { createAzureLabRunner, createLocalLabRunner, type LabRunner } from './lab/runner.ts';
 import { createAcsTransport } from './mail/acs.ts';
@@ -37,6 +38,7 @@ import { createMailer, OFF_MAILER } from './mail/mailer.ts';
 import { createGooglePlacesClient } from './places/google.ts';
 import { createStaticMapSigner, signingSecretSchema } from './places/static-map.ts';
 import { researchRuns } from './research/plan.ts';
+import { createResearchPlaces } from './research/places.ts';
 import { createResearchRunner } from './research/runner.ts';
 
 // ANTHROPIC_API_KEY and GOOGLE_PLACES_API_KEY are optional: absent, the tuning chat, the file reader's AI column
@@ -192,11 +194,17 @@ const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || files
 // D66, town research (research/runner.ts): leased lanes in this process, on only while TOWNWISE_RESEARCH, the
 // ANTHROPIC_API_KEY and TownwiseAI's web search are all set (research/plan.ts researchRuns). Its model is the tuning
 // chat's; location threads spend the organization's TownwiseAI month and town threads the system month
-// (TOWNWISE_RESEARCH_TOWN_MONTHLY_USD). Google's profile of the restaurant is wired with the competitors (task 4).
+// (TOWNWISE_RESEARCH_TOWN_MONTHLY_USD). With Places on, it may ask Google for the restaurant's profile and competitors
+// (research/places.ts, the points from Settings' Valkey cache), which it does only while TOWNWISE_RESEARCH_PLACES_TO_AI.
+const researchPlaces = places === undefined ? {} : createResearchPlaces({
+  places, pointOf: (placeId) => pointOf(aiContext, placeId, 'research.competitors'), logger,
+});
 const researchRunner = chat === undefined
   || !researchRuns({ research: resolvedConfig.research, chatWebSearch: resolvedConfig.chatWebSearch, anthropicKey: true })
   ? undefined
-  : createResearchRunner({ connection: mongo.connection, stores: createTownwiseStores(mongo.connection), logger, now, model: chat, config: resolvedConfig });
+  : createResearchRunner({
+    connection: mongo.connection, stores: createTownwiseStores(mongo.connection), logger, now, model: chat, config: resolvedConfig, ...researchPlaces,
+  });
 const deps = { ...baseDeps, aiReader };
 const api = createTownwiseApi(deps);
 const labRouter = createTownwiseLab(deps);

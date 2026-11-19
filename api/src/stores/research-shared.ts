@@ -32,8 +32,17 @@ export const THREAD_IDS: readonly ThreadId[] = [...TOWN_THREADS, ...LOCATION_THR
 export interface RunCounts { readonly found: number; readonly added: number; readonly updated: number; readonly dropped: number }
 export const NO_COUNTS: RunCounts = { found: 0, added: 0, updated: 0, dropped: 0 };
 
-/** What a recorded thread found, kept for the merge and cleared once the run is merged (decision 8 step 6). */
-export interface StoredFound { readonly events: readonly Finding[]; readonly entities: readonly FoundEntity[] }
+/**
+ * What a recorded thread found, kept for the merge and cleared once the run is merged (decision 8 step 6).
+ * `competitorPlaceIds`: the competitors thread's list as it was sent, in `n` order (place ids only, which Google lets
+ * us keep), so the merge can store the place id of an event naming a competitor; empty unless Google's names went to
+ * Anthropic.
+ */
+export interface StoredFound {
+  readonly events: readonly Finding[];
+  readonly entities: readonly FoundEntity[];
+  readonly competitorPlaceIds?: readonly string[];
+}
 export interface StoredDrops { readonly events: EventDrops; readonly entities: EntityDrops }
 
 const sub = { _id: false, strict: 'throw' } as const;
@@ -70,7 +79,9 @@ function foundSchema(): Schema<StoredFound> {
     name: { type: String, required: true },
     sources: { type: [sourceSchema()], required: true },
   }, sub);
-  return new Schema<StoredFound>({ events: { type: [event], required: true }, entities: { type: [entity], required: true } }, sub);
+  return new Schema<StoredFound>({
+    events: { type: [event], required: true }, entities: { type: [entity], required: true }, competitorPlaceIds: { type: [String], default: [] },
+  }, sub);
 }
 
 /** A run's fields both subjects share; `liveSubject` is added by each store with its own type. */

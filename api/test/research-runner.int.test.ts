@@ -5,7 +5,10 @@
 // seconds; a merge redone after a crash adds nothing twice; two lanes ending a run's last threads at once merge it once;
 // a location deleted mid-thread keeps no row; an organization's automatic research stops at its share; logs hold no
 // title, URL or query; and no request holds the organization's name, a revision's text or (by the switch) the typed or
-// Google name. Synthetic pages, hosts and names only.
+// Google name. Competitors (task 4.2): with Google's names kept from Anthropic, Google is never asked and a competitor
+// event is stored with its web-found business; with them allowed, the list goes in the request and an event naming one
+// keeps its place id only; with no profile the restaurant's threads end `places_off`, and with no list the competitors
+// thread searches the web. Synthetic pages, hosts and names only.
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 
@@ -17,6 +20,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
 import type { ChatModel } from '../src/chat/model.ts';
 import { messageCostMicroUsd } from '../src/chat/pricing.ts';
+import type { Competitor } from '../src/research/competitors.ts';
 import { researchRuns } from '../src/research/plan.ts';
 import { createResearchRunner, staleGraceMicroUsd, type ResearchRunner, type ResearchRunnerDeps } from '../src/research/runner.ts';
 import type { ThreadId } from '../src/research/threads.ts';
@@ -72,6 +76,24 @@ function answer(usage: { input?: number; output?: number } = {}): BetaMessage {
   const entity = { ref: 'v1', type: 'venue', name: 'Sentinel Green', sourceIds: ['S1'] };
   return message([text(JSON.stringify({ events: [event], entities: [entity] }))], { usage: { input: 900, output: 300, ...usage } });
 }
+
+/** The extract's answer for a competitors thread: a trivia night hosted by a business found on the web, naming `competitor`. */
+function competitorAnswer(competitor: number | null): BetaMessage {
+  const event = {
+    title: 'Sentinel Trivia Night', kind: 'event', category: 'dining', startDate: '2027-01-16', endDate: '2027-01-16', weekdays: null, startTime: '19:00',
+    status: 'scheduled', venueRef: null, hostRef: 'b1', competitor, sourceIds: ['S1'], dateQuote: 'January 16, 2027', confidence: 'high',
+  };
+  const entity = { ref: 'b1', type: 'business', name: 'Sentinel Tavern', sourceIds: ['S1'] };
+  return message([text(JSON.stringify({ events: [event], entities: [entity] }))], { usage: { input: 900, output: 300 } });
+}
+
+const PROFILE = { name: 'Fixture Google Bistro', address: '1 Fixture Lane, Hanover, NH' };
+/** Google's live competitors, as research/places.ts answers them. */
+const RIVALS: Competitor[] = [
+  { n: 1, placeId: 'ChIJFixtureRival0001', name: 'Fixture Rival Cafe', primaryType: 'cafe', family: 'cafe', website: null, distanceM: 120 },
+  { n: 2, placeId: 'ChIJFixtureRival0002', name: 'Fixture Rival Tavern', primaryType: 'bar', family: 'bar', website: 'https://rival.example.com/', distanceM: 300 },
+];
+const GOOGLE_CONTENT = ['Fixture Google Bistro', '1 Fixture Lane', 'Fixture Rival', 'rival.example.com'];
 
 /** A model answering each gather (a request with tools) and each extract by the given steps, recording what was sent. */
 function answering(steps: { gather?: () => Step; extract?: () => Step } = {}) {
@@ -395,7 +417,7 @@ describe('the runner: privacy', () => {
     const { model, calls } = answering();
     await run(runner(model, {
       config: { ...CONFIG, researchPlacesToAi: placesToAi },
-      profile: () => Promise.resolve({ name: 'Fixture Google Bistro', address: '1 Fixture Lane, Hanover, NH' }),
+      profile: () => Promise.resolve(PROFILE), competitors: () => Promise.resolve(RIVALS),
     }));
     expect(calls).toHaveLength(4);
     return calls.map((call) => JSON.stringify(call));
@@ -404,7 +426,7 @@ describe('the runner: privacy', () => {
   it('with Google names not allowed, the typed name goes only as restaurant.name, and no Google content goes at all', async () => {
     const bodies = await sentinelRequests(false);
     for (const body of bodies) {
-      for (const secret of ['Qwertyp', 'Zyxwvut private party', 'Fixture Google Bistro', '1 Fixture Lane']) expect(body).not.toContain(secret);
+      for (const secret of ['Qwertyp', 'Zyxwvut private party', ...GOOGLE_CONTENT]) expect(body).not.toContain(secret);
     }
     const gathers = bodies.filter((_body, index) => index % 2 === 0);
     for (const body of gathers) {
@@ -421,6 +443,94 @@ describe('the runner: privacy', () => {
     for (const body of bodies) for (const secret of ['Qwertyp', 'Zyxwvut']) expect(body).not.toContain(secret);
     expect(bodies[0]).toContain('Fixture Google Bistro');
     expect(bodies[0]).toContain('1 Fixture Lane');
+  });
+});
+
+describe('the runner: competitors (design decision 10)', () => {
+  /** The gather requests' user messages. */
+  const usersOf = (calls: BetaMessageStreamParams[]) => calls.filter((call) => call.tools !== undefined)
+    .map((call) => JSON.parse(typeof call.messages[0]?.content === 'string' ? call.messages[0].content : '{}') as Record<string, unknown>);
+
+  /** Every research document of the tenant collections, as text. */
+  async function storedText(): Promise<string> {
+    const names = ['tw_location_research_runs', 'tw_location_research_threads', 'tw_location_events', 'tw_location_entities'];
+    const docs = await Promise.all(names.map((name) => server.connection.collection(name).find({}).toArray()));
+    return JSON.stringify(docs);
+  }
+
+  it('with Google names not allowed, Google is never asked, and a competitor event is stored with its business entity', async () => {
+    const t = await tenant({ locations: ['Zyxwvut Kitchen'] });
+    const [locationId = ''] = t.locationIds;
+    const created = await locationRun(t, locationId, ['competitors']);
+    let asked = 0;
+    const { model, calls } = answering({ extract: () => ({ kind: 'message', message: competitorAnswer(null) }) });
+    await run(runner(model, {
+      profile: () => { asked += 1; return Promise.resolve(PROFILE); },
+      competitors: () => { asked += 1; return Promise.resolve(RIVALS); },
+    }));
+    expect(asked).toBe(0);
+    expect(calls).toHaveLength(2);
+    for (const body of calls.map((call) => JSON.stringify(call))) for (const secret of GOOGLE_CONTENT) expect(body).not.toContain(secret);
+    const [user] = usersOf(calls);
+    expect(user?.restaurant).toEqual({ name: 'Zyxwvut Kitchen' });
+    expect(user).not.toHaveProperty('competitors');
+    expect(user?.focus).toContain('Name each business');
+    expect(await stores.researchLocations.findRun(t.scope, created.id)).toMatchObject({ status: 'done', counts: { added: 1 } });
+    const [event] = await stores.researchLocations.events(t.scope, locationId);
+    const [business] = await stores.researchLocations.entities(t.scope, locationId);
+    expect(business).toMatchObject({ type: 'business', name: 'Sentinel Tavern', nameKey: 'sentinel tavern' });
+    expect(event).toMatchObject({ title: 'Sentinel Trivia Night', origin: 'competitor', competitorEntityId: business?.id, competitorPlaceId: null, hostId: business?.id });
+  });
+
+  it('with Google names allowed, the list goes in the request, and an event naming a competitor keeps its place id and nothing else of Google’s', async () => {
+    const t = await tenant({ locations: ['Zyxwvut Kitchen'] });
+    const [locationId = ''] = t.locationIds;
+    await locationRun(t, locationId, ['competitors']);
+    const { model, calls } = answering({ extract: () => ({ kind: 'message', message: competitorAnswer(2) }) });
+    await run(runner(model, {
+      config: { ...CONFIG, researchPlacesToAi: true }, profile: () => Promise.resolve(PROFILE), competitors: () => Promise.resolve(RIVALS),
+    }));
+    expect(calls).toHaveLength(2);
+    const [user] = usersOf(calls);
+    expect(user?.restaurant).toEqual(PROFILE);
+    expect(user?.competitors).toEqual([
+      { n: 1, name: 'Fixture Rival Cafe', type: 'cafe', website: null },
+      { n: 2, name: 'Fixture Rival Tavern', type: 'bar', website: 'https://rival.example.com/' },
+    ]);
+    expect(user?.focus).toContain('listed in the request');
+    const [event] = await stores.researchLocations.events(t.scope, locationId);
+    const [business] = await stores.researchLocations.entities(t.scope, locationId);
+    expect(event).toMatchObject({ origin: 'competitor', competitorEntityId: business?.id, competitorPlaceId: 'ChIJFixtureRival0002' });
+    // Merged: the kept list is cleared with the thread's findings, and no name, address or website of Google's is stored.
+    const stored = await storedText();
+    for (const secret of GOOGLE_CONTENT) expect(stored).not.toContain(secret);
+    expect(stored).not.toContain('ChIJFixtureRival0001');
+  });
+
+  it('with Google names allowed and no profile, the restaurant’s threads end `places_off` with no call', async () => {
+    const t = await tenant();
+    const [locationId = ''] = t.locationIds;
+    const created = await locationRun(t, locationId, ['neighborhood', 'competitors']);
+    const { model, calls } = answering();
+    await run(runner(model, { config: { ...CONFIG, researchPlacesToAi: true }, profile: () => Promise.resolve(null), competitors: () => Promise.resolve(RIVALS) }));
+    expect(calls).toHaveLength(0);
+    const threads = await stores.researchLocations.threadsOf(t.scope, created.id);
+    expect(threads.map((thread) => [thread.status, thread.code])).toEqual([['empty', 'places_off'], ['empty', 'places_off']]);
+    expect(await stores.researchLocations.findRun(t.scope, created.id)).toMatchObject({ status: 'done' });
+  });
+
+  it('with Google names allowed, a profile and no competitors list, the competitors thread searches the web', async () => {
+    const t = await tenant();
+    const [locationId = ''] = t.locationIds;
+    await locationRun(t, locationId, ['competitors']);
+    const { model, calls } = answering({ extract: () => ({ kind: 'message', message: competitorAnswer(null) }) });
+    await run(runner(model, { config: { ...CONFIG, researchPlacesToAi: true }, profile: () => Promise.resolve(PROFILE), competitors: () => Promise.resolve(null) }));
+    const [user] = usersOf(calls);
+    expect(user?.restaurant).toEqual(PROFILE);
+    expect(user).not.toHaveProperty('competitors');
+    expect(user?.focus).toContain('Name each business');
+    const [event] = await stores.researchLocations.events(t.scope, locationId);
+    expect(event).toMatchObject({ origin: 'competitor', competitorPlaceId: null });
   });
 });
 
