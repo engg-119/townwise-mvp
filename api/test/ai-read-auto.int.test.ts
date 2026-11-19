@@ -1,10 +1,10 @@
 // D59 (openspec change auto-apply-agent-reads, design decisions 1, 3 and 4): automatic reads end to end. A file added
-// to Your data, or dropped on onboarding, with its box checked (`aiAuto: true` on complete) is queued `auto` for its adder
-// once Townwise stored it; a sales export read into days, a calendar export, a file whose box was unchecked or that sent
-// no box at all, a file turned off, and any file while a switch is off are not. The reader skips a duplicate before
-// anything is reserved, the 21st automatic read of a day (not counting a retry of itself), and one that would leave $1
-// or less of the files month, while a press still runs. The model is a scripted fake: no call leaves the test. Every
-// file and figure is made up.
+// to Your data, or dropped on onboarding, with its box checked (`aiAuto: true` on complete, or since slice 4 on pasted
+// text's save) is queued `auto` for its adder once Townwise stored it; a sales export read into days, a calendar export,
+// a file whose box was unchecked or that sent no box at all, a file turned off, and any file while a switch is off are
+// not. The reader skips a duplicate before anything is reserved, the 21st automatic read of a day (not counting a retry
+// of itself), and one that would leave $1 or less of the files month, while a press still runs. The model is a scripted
+// fake: no call leaves the test. Every file and figure is made up.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -198,6 +198,34 @@ describe('automatic reads are queued when a file is stored (D59)', () => {
     expect(requests).toHaveLength(0);
     expect(await aiOf(queued)).toMatchObject({ status: 'skipped', reason: 'agent_auto_off' });
     expect(await usage(t)).toBe(0);
+  });
+
+  it('slice 4: pasted text saved with its box checked is queued auto for its adder and read with no press', async () => {
+    const t = await team();
+    const paste = (json: Record<string, unknown>): Promise<Response> => call(server, `/api/org/locations/${t.locationId}/data/text`, {
+      session: t.member, json: { title: `${SENTINEL} party`, text: `${SENTINEL} holiday party on Dec 12, about 40 guests.`, ...json },
+    });
+    const res = await paste({ aiAuto: true });
+    expect(res.status).toBe(201);
+    const id = (await res.json() as { file: { id: string } }).file.id;
+    expect(await aiOf(id)).toMatchObject({ status: 'queued', auto: true, requestedBy: t.member.userId, requestedByRole: 'member' });
+    await read();
+    expect(requests).toHaveLength(1);
+    expect(await aiOf(id)).toMatchObject({ status: 'done', auto: true });
+    expect(server.logs.join('\n')).not.toContain(SENTINEL);
+
+    // No box, or the box unchecked: kept for reference only, and a press still reads it.
+    for (const json of [{}, { aiAuto: false }]) {
+      const kept = await paste({ ...json, text: `${SENTINEL} ${randomUUID()}` });
+      expect(kept.status).toBe(201);
+      expect(await aiOf((await kept.json() as { file: { id: string } }).file.id)).toBeNull();
+    }
+    // The switch off: nothing is queued, box or not.
+    expect((await call(server, '/api/org/agent-auto', { method: 'PATCH', session: t.admin, json: { on: false } })).status).toBe(200);
+    const off = await paste({ aiAuto: true, text: `${SENTINEL} ${randomUUID()}` });
+    expect(await aiOf((await off.json() as { file: { id: string } }).file.id)).toBeNull();
+    await read();
+    expect(requests).toHaveLength(1);
   });
 
   it('a sales export read into days and a calendar export are never queued', async () => {

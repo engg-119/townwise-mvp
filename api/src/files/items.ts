@@ -61,6 +61,8 @@ export interface TextItemInput {
   readonly addedVia: 'townwise_ai' | null;
   /** A TownwiseAI read's summary item (spec 11A.9): the file it was read from. */
   readonly source?: AiSource;
+  /** D59 slice 4: pasted text saved with the box checked, which TownwiseAI then reads on its own. */
+  readonly aiAuto?: boolean;
   readonly now: Date;
 }
 
@@ -121,7 +123,7 @@ export async function saveTextItem(
       ...(input.openAsAdminGrantId === undefined ? {} : { openAsAdminGrantId: input.openAsAdminGrantId }),
       name: textItemName(input.title), sizeBytes: bytes.length,
       fingerprint: fingerprintOf(CHUNK_BYTES, [createHash('sha256').update(bytes).digest('hex')]), addedVia: input.addedVia,
-      ...(input.source === undefined ? {} : { source: input.source }),
+      ...(input.source === undefined ? {} : { source: input.source }), ...(input.aiAuto === true ? { aiAuto: true } : {}),
     });
   } catch (err) {
     await stores.uploadDays.refund(scope, day, bytes.length, input.now);

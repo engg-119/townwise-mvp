@@ -468,9 +468,11 @@ async function place(ctx: TownwiseContext, member: MemberPrincipal, file: FileRe
   }
 }
 
+// D59 slice 4: `aiAuto: true` only when the person left the box checked as they saved it, as on an upload's complete.
 const textBody = z.strictObject({
   title: z.string().trim().min(1).max(TEXT_ITEM_TITLE_MAX),
   text: z.string().min(1).max(TEXT_ITEM_MAX_CHARS),
+  aiAuto: z.boolean().optional(),
 });
 
 /**
@@ -481,7 +483,7 @@ const textBody = z.strictObject({
  */
 export async function keepTextItem(
   ctx: TownwiseContext, res: Response, member: MemberPrincipal, blobs: FileBlobs, locationId: string,
-  input: { id?: string; title: string; text: string; addedVia: 'townwise_ai' | null },
+  input: { id?: string; title: string; text: string; addedVia: 'townwise_ai' | null; aiAuto?: boolean },
 ): Promise<{ file: FileRecord; created: boolean } | null> {
   const { scope } = member;
   const now = ctx.now();
@@ -510,14 +512,23 @@ export async function keepTextItem(
   return saved;
 }
 
-/** POST /data/text: pasted text kept as a reference item, a `.txt` file named from its title. */
+/**
+ * POST /data/text: pasted text kept as a reference item, a `.txt` file named from its title. D59 slice 4: with its box
+ * checked (`aiAuto: true`), TownwiseAI reads it on its own as a stored file, while both switches are on.
+ */
 export async function addTextItem(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);
   const member = memberOf(principal);
   const body = parseInput(textBody, req.body);
   const location = await loadLocation(ctx, member.scope, req.params.locationId);
-  const saved = await keepTextItem(ctx, res, member, blobs, location.id, { title: body.title, text: body.text, addedVia: null });
-  if (saved !== null) res.status(201).json({ file: fileView(member, saved.file, saved.file.byStaff ? TOWNWISE_STAFF : member.email, null) });
+  const saved = await keepTextItem(ctx, res, member, blobs, location.id, {
+    title: body.title, text: body.text, addedVia: null, ...(body.aiAuto === true ? { aiAuto: true } : {}),
+  });
+  if (saved === null) return;
+  if (saved.created && await queueAutoRead({ stores: ctx.stores, logger: ctx.logger, now: ctx.now, on: ctx.config.agentAuto && ctx.aiReads !== null }, member.scope, saved.file)) {
+    ctx.aiReads?.nudge();
+  }
+  res.status(201).json({ file: fileView(member, saved.file, saved.file.byStaff ? TOWNWISE_STAFF : member.email, null) });
 }
 
 // ---- Reading the list ---------------------------------------------------------------------------------------------

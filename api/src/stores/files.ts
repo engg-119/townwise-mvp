@@ -609,6 +609,8 @@ export interface FileStore {
     openAsAdminGrantId?: string;
     /** A TownwiseAI read's summary item (spec 11A.9): the file it was read from. */
     source?: AiSource;
+    /** D59 slice 4: pasted text saved with the box checked, so TownwiseAI reads it on its own (files/ai-auto.ts). */
+    aiAuto?: boolean;
   }): Promise<FileRecord | 'exists'>;
   /**
    * Another live file of the location with this purpose and fingerprint: a copy kept for reference never blocks the same
@@ -936,6 +938,7 @@ export function createFileStore(connection: Connection): FileStore {
           answers: {}, attempts: 0,
           ...(input.addedVia === null ? {} : { addedVia: input.addedVia }),
           ...(input.source === undefined ? {} : { source: { via: 'ai_file', fileId: oid(input.source.fileId) } }),
+          ...(input.aiAuto === true ? { aiAuto: true } : {}),
         });
         return toFile(doc.toObject());
       } catch (err) {

@@ -1,10 +1,11 @@
 // Automatic reads (D59, openspec change auto-apply-agent-reads design decision 1): once Townwise has finished a stored
-// file (a reference item kept, or a dropped file read, kept or failed with its original), TownwiseAI reads it on its own,
-// as D34's read but queued `auto` with the file's adder as the person it reads for, while TOWNWISE_AGENT_AUTO and the
-// organization's own switch are both on and TownwiseAI can read files here. Never a file read into sales days (a
-// point-of-sale export, whose meaning is already in Townwise as numbers and which can hold diners' names), a calendar
-// export, a summary or item TownwiseAI kept, a file turned off (D28), or a file whose upload did not finish with its box
-// checked (`aiAuto: true` on complete: a chat attachment, an item's edit and an older client never send it). [CONFIRM: a file read into
+// file (a reference item kept, pasted text saved (slice 4), or a dropped file read, kept or failed with its original),
+// TownwiseAI reads it on its own, as D34's read but queued `auto` with the file's adder as the person it reads for, while
+// TOWNWISE_AGENT_AUTO and the organization's own switch are both on and TownwiseAI can read files here. Never a file
+// read into sales days (a point-of-sale export, whose meaning is already in Townwise as numbers and which can hold
+// diners' names), a calendar export, a summary or item TownwiseAI kept, a file turned off (D28), or a file whose upload
+// or paste did not finish with its box checked (`aiAuto: true` on complete or on pasted text's save: a chat attachment,
+// an item's edit, text TownwiseAI proposed keeping and an older client never send it). [CONFIRM: a file read into
 // sales days is not sent to TownwiseAI automatically] The reader (files/ai-reader.ts) bounds what runs: duplicates, 20 a
 // day and the $1 reserve. Logs carry ids only, never a file name.
 import type { Logger } from '@ckeith26/server-core';
