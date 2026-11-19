@@ -161,6 +161,14 @@ describe('planMerge', () => {
     }
   });
 
+  it('an ungrounded cancellation leaves even a low row scheduled: code confidence must reach medium', () => {
+    const plan = planMerge(input({
+      stored: [stored({ confidence: 'low' })],
+      found: [thread('arts_festivals', [finding({ status: 'cancelled', codeConfidence: 'low', confidence: 'low', grounded: false })])],
+    }));
+    expect(plan.updates[0]?.status).toBe('scheduled');
+  });
+
   it('only ever raises confidence', () => {
     const lower = planMerge(input({ stored: [stored({ confidence: 'high' })], found: [thread('arts_festivals', [finding({ confidence: 'low', codeConfidence: 'low' })])] }));
     expect(lower.updates[0]?.confidence).toBe('high');

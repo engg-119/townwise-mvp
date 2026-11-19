@@ -1,6 +1,6 @@
-// What a research thread reserves before its first call (D66 design decision 7). Pure. The reservation is the most the
-// thread's two calls can cost on any model a refusal fallback may move them to (pricing.ts ceilingCostMicroUsd), plus
-// every search it may make; a finished thread settles to what its messages cost, and the rest goes back.
+// What a research thread reserves before its first call (D66 design decision 7). Pure. The reservation prices the
+// thread's two calls on the most expensive model a refusal fallback may move them to (pricing.ts ceilingCostMicroUsd),
+// plus every search it may make; a finished thread settles to what its messages cost, and the rest goes back.
 //
 //   iterations    = S + F + 1 + MAX_CONTINUATIONS   (each search, each fetch, the last answer, each resent pause)
 //   gather input  = iterations x (S x SEARCH_TOKENS + F x FETCH_TOKENS) as input, and iterations x P as a cache write
@@ -11,8 +11,10 @@
 // S and F are the thread's search and fetch limits (F is 0 while fetch is off), P the gather prompt's tokens at 3
 // characters a token. Every iteration resends the whole conversation, so each is priced with every page the thread
 // may read and the prompt written to the cache again. The probe (task 0.2) found every resent prefix read from the
-// cache at a tenth of the input price, so this ceiling is far above a real thread's cost; SEARCH_TOKENS is calibrated
-// by the live eval (task 10.1) from `usage.iterations`.
+// cache at a tenth of the input price, so this is far above a real thread's cost; SEARCH_TOKENS is calibrated by the
+// live eval (task 10.1) from `usage.iterations`. It is not a strict bound: it leaves out the gather's own earlier output
+// resent by later iterations (up to the 48,000 output tokens it may write, on each later one), which pricing every
+// page at full input on every iteration covers in practice but not in a contrived worst case (design decision 7).
 import { ceilingCostMicroUsd, SEARCH_MICRO_USD, type TokenCounts } from '../chat/pricing.ts';
 import type { GatherPrompt } from './prompt.ts';
 import { MAX_FETCHES, type ThreadDef } from './threads.ts';

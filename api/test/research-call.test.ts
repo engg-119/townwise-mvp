@@ -7,7 +7,7 @@ import type { BetaMessage } from '@anthropic-ai/sdk/resources/beta/messages/mess
 import { describe, expect, it } from 'vitest';
 
 import { messageCostMicroUsd } from '../src/chat/pricing.ts';
-import { createThreadTally, runThread, type FetchSwitch, type RunThreadInput, type ThreadOutcome } from '../src/research/call.ts';
+import { createThreadTally, RESEARCH_REQUEST_MS, RESEARCH_THREAD_MS, runThread, type FetchSwitch, type RunThreadInput, type ThreadOutcome } from '../src/research/call.ts';
 import type { GatherInput, PromptTown } from '../src/research/prompt.ts';
 import { researchWindow, threadsFor, type ThreadDef } from '../src/research/threads.ts';
 import { EXTRACT_FORMAT } from '../src/research/verify.ts';
@@ -249,6 +249,34 @@ describe('research calls: the fetch fallback', () => {
     expect(offs).toBe(1);
   });
 
+  it('a thread fixes its tools at its start: another thread turning fetch off never drops the tool from its continuation', async () => {
+    const fetch: FetchSwitch = { on: true };
+    const scripted = scriptedModel();
+    scripted.script(
+      { kind: 'message', message: pause([webSearch('s1'), webResults('s1', [A])], { usage: { searches: 1 } }) },
+      { kind: 'message', message: gathered() }, { kind: 'message', message: answer() },
+    );
+    // Another thread of the process turns fetch off while this one's first request runs.
+    const model: ScriptedModel = { ...scripted, stream: (params, options) => { const stream = scripted.stream(params, options); fetch.on = false; return stream; } };
+    recorded(await run(model, { fetch }));
+    const names = (index: number): unknown[] => (scripted.calls[index]?.params.tools ?? []).map((tool) => ('name' in tool ? tool.name : null));
+    expect(names(0)).toEqual(['web_search', 'web_fetch']);
+    expect(names(1)).toEqual(['web_search', 'web_fetch']);
+  });
+
+  it('a thread refused after another already turned fetch off retries without it and logs nothing more', async () => {
+    const fetch: FetchSwitch = { on: true };
+    let offs = 0;
+    const scripted = scriptedModel();
+    scripted.script(
+      { kind: 'error', error: badRequest('web_fetch is not enabled') }, { kind: 'message', message: gathered() }, { kind: 'message', message: answer() },
+    );
+    const model: ScriptedModel = { ...scripted, stream: (params, options) => { const stream = scripted.stream(params, options); fetch.on = false; return stream; } };
+    recorded(await run(model, { fetch, onFetchOff: () => { offs += 1; } }));
+    expect(scripted.calls).toHaveLength(3);
+    expect(offs).toBe(0);
+  });
+
   it('retries only once', async () => {
     const model = scriptedModel();
     model.script({ kind: 'error', error: badRequest('web_fetch is not enabled') }, { kind: 'error', error: badRequest('web fetch: still no') });
@@ -265,6 +293,11 @@ describe('research calls: the fetch fallback', () => {
 });
 
 describe('research calls: time limits and aborts', () => {
+  it('limits a request to 150 seconds and a thread to 360 by default', () => {
+    expect(RESEARCH_REQUEST_MS).toBe(150_000);
+    expect(RESEARCH_THREAD_MS).toBe(360_000);
+  });
+
   it('a request past its time limit fails the thread as a timeout, to be retried', async () => {
     const model = scriptedModel();
     model.script({ kind: 'hang', before: [] });
