@@ -36,7 +36,7 @@ afterEach(async () => {
 });
 
 const TAB = '(gate)/(app)/(client)/locations/[locationId]/town';
-const AGENT = '(gate)/(app)/(client)/locations/[locationId]/agent';
+const AGENT = '(gate)/(app)/(client)/locations/[locationId]/agent/index';
 const HOME = '(gate)/(app)/(client)/locations/[locationId]/index';
 
 /** TownwiseAI's stand-in: the layout draws no header around it. */

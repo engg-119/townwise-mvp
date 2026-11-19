@@ -39,11 +39,12 @@ const ITEM_REF = '[ufc]_[0-9a-f]{24}';
 const ITEM_REF_ONLY = new RegExp(`^${ITEM_REF}$`);
 /**
  * Client app pages any member may open (P9, P11 to P15, P18, P24 Analytics, P25 TownwiseAI, P26 Your data and P27 an
- * item of it, P28 Calendar, P29 Business rules, P30 Orders and P31 its Ordering setup). `chat` is the tuning chat's old
- * address, which redirects to `agent`. The Calendar's `?day=` is a query, so it never changes this.
+ * item of it, P28 Calendar, P29 Business rules, P30 Orders and P31 its Ordering setup), and (D59) TownwiseAI's log of
+ * its changes, `agent/changes`. `chat` is the tuning chat's old address, which redirects to `agent`. The Calendar's
+ * `?day=` is a query, so it never changes this.
  */
 const MEMBER_PAGES = new RegExp(
-  `^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|data/${ITEM_REF}|notes|town|orders|orders/setup|agent|chat|calendar|rules))?)$`,
+  `^/(dashboard|settings|locations/${ID}(/(analytics|sales|sales/upload|data|data/${ITEM_REF}|notes|town|orders|orders/setup|agent|agent/changes|chat|calendar|rules))?)$`,
 );
 /** Client app pages for org admins only (P10, P16, P17). Checked before MEMBER_PAGES: /locations/new is not an id. */
 const ADMIN_PAGES = new RegExp(`^/(team|locations/new|locations/${ID}/settings)$`);
@@ -159,12 +160,12 @@ export function consoleNav(pathname: string, pendingCount: number | null): NavIt
 }
 
 /**
- * The section a location path belongs to. The old chat address belongs to TownwiseAI, where it redirects, and an
- * item's page to Your data.
+ * The section a location path belongs to. The old chat address and (D59) the log of TownwiseAI's changes belong to
+ * TownwiseAI, and an item's page to Your data.
  */
 export function tabOf(pathname: string): TabKey {
   const rest = /^\/locations\/[^/]+(\/.*)?$/.exec(normalize(pathname))?.[1] ?? '';
-  if (rest === '/chat') return 'agent';
+  if (rest === '/chat' || rest === '/agent/changes') return 'agent';
   if (isItemPath(rest, '/data')) return 'data';
   const found = (Object.keys(TAB_SUFFIX) as TabKey[]).find((key) => TAB_SUFFIX[key] === rest && key !== 'home');
   return found ?? 'home';

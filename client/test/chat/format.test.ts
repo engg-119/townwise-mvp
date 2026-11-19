@@ -52,11 +52,11 @@ test('the side panel reads questions in the shape the API documents', async () =
   const likely = { id: 'likely_closed_2026-03-14', kind: 'likely_closed', date: '2026-03-14', guests: 1, typicalGuests: 100 };
   api.panel = { questions: [weekday, likely, gap], activity: [] };
   // D46: an older API's weekday question is left out (the sales history suggests a closed weekday as a rule instead).
-  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [likely, gap], activity: [], suggestions: [], weeklySuggestions: null, ruleSuggestions: [] });
+  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [likely, gap], activity: [], suggestions: [], weeklySuggestions: null, ruleSuggestions: [], agentAuto: null, noteSuggestions: [], waiting: 0 });
   // A gap from an API without its usual guests still reads (its card then says only that there are no sales).
   const older = { id: 'gap_2026-03-02_2026-03-04', kind: 'gap', from: '2026-03-02', to: '2026-03-04', dayCount: 3 };
   api.panel = { questions: [older], activity: [] };
-  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [older], activity: [], suggestions: [], weeklySuggestions: null, ruleSuggestions: [] });
+  expect(await loadAgentPanel(api, 'l1')).toEqual({ questions: [older], activity: [], suggestions: [], weeklySuggestions: null, ruleSuggestions: [], agentAuto: null, noteSuggestions: [], waiting: 0 });
 });
 
 test('a short day drops the year', () => {

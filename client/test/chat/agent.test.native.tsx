@@ -486,7 +486,8 @@ describe('the side panel', () => {
       'It reads your sales, your notes, Hanover’s town profile, the town calendar, who’s likely in Hanover and what your team added on Your data, and shows you each thing it reads.',
       'It can search the web for public facts about the town, such as an event’s dates or the weather, and lists the pages it used.',
       'It can’t see your staffing, your bookings unless you add them as notes, or guest names.',
-      'It suggests notes; it never saves one without you.',
+      // D59: TownwiseAI works on its own by default, so it saves what it's sure of, with Undo.
+      'It saves what it’s sure of and shows each change here with Undo. Anything it isn’t sure of waits for you.',
     ]) expect(within(side).getByText(text)).toBeTruthy();
     expect(within(side).getByText(/Your messages and the data it reads go to Anthropic/)).toBeTruthy();
   });

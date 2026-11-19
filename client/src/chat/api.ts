@@ -6,6 +6,7 @@ import { dataItemSchema, type DataItem } from '../portal/data/api';
 import { createNote, NOTE_EFFECTS, NOTE_KINDS, noteSchema, type Note } from '../portal/locations/api';
 import { knownRuleSuggestions, ruleScheduleSchema, ruleSchema, type Rule, type RuleSuggestion } from '../portal/rules/api';
 import type { SseEvent } from '../api/sse';
+import { agentAutoSchema, agentChangeItemSchema, noteSuggestionSchema, type AgentAuto, type NoteSuggestion } from './agentChanges';
 import type { SourceLink } from './tools';
 import type { TreeNode } from './tree';
 import { visualSchema, type Visual } from './visuals/schema';
@@ -591,6 +592,8 @@ const activitySchema = z.discriminatedUnion('kind', [
   z.object({
     at: z.string(), kind: z.literal('file_processed'), fileId: z.string(), firstDate: dateSchema, lastDate: dateSchema, dayCount: z.number().int(),
   }),
+  /** D59: a change TownwiseAI saved on its own, with whether Undo is offered. */
+  agentChangeItemSchema,
 ]);
 export type ActivityItem = z.infer<typeof activitySchema>;
 
@@ -663,6 +666,7 @@ export type WeeklySuggestions = z.infer<typeof weeklySuggestionsSchema>;
 const panelSchema = z.object({
   questions: z.array(z.unknown()), activity: z.array(z.unknown()), suggestions: z.array(z.unknown()).optional(),
   weeklySuggestions: z.unknown().optional(), ruleSuggestions: z.array(z.unknown()).optional(),
+  agentAuto: z.unknown().optional(), noteSuggestions: z.array(z.unknown()).optional(), waiting: z.number().int().optional(),
 });
 
 export interface AgentPanel {
@@ -673,6 +677,12 @@ export interface AgentPanel {
   weeklySuggestions: WeeklySuggestions | null;
   /** D46: the open suggested closure rules from files and the sales history; none from an API before them. */
   ruleSuggestions: RuleSuggestion[];
+  /** D59: whether TownwiseAI works on its own; null from an API before it. */
+  agentAuto: AgentAuto | null;
+  /** D59: the events a file read wasn't sure of, waiting for a member; none from an API before them. */
+  noteSuggestions: NoteSuggestion[];
+  /** D59: how many things TownwiseAI wasn't sure of are waiting (these and the suggested rules); 0 from an API before it. */
+  waiting: number;
 }
 
 function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
@@ -685,10 +695,14 @@ function known<T>(items: readonly unknown[], schema: z.ZodType<T>): T[] {
 export async function loadAgentPanel(api: ApiClient, locationId: string): Promise<AgentPanel> {
   const panel = await api.json(`${locationPath(locationId)}/agent`, panelSchema);
   const weekly = weeklySuggestionsSchema.safeParse(panel.weeklySuggestions);
+  const agentAuto = agentAutoSchema.safeParse(panel.agentAuto);
   return {
     questions: known(panel.questions, questionSchema), activity: known(panel.activity, activitySchema),
     suggestions: known(panel.suggestions ?? [], suggestionSchema), weeklySuggestions: weekly.success ? weekly.data : null,
     ruleSuggestions: knownRuleSuggestions(panel.ruleSuggestions ?? []),
+    agentAuto: agentAuto.success ? agentAuto.data : null,
+    noteSuggestions: known(panel.noteSuggestions ?? [], noteSuggestionSchema),
+    waiting: panel.waiting ?? 0,
   };
 }
 

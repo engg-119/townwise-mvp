@@ -125,8 +125,11 @@ test('members see each suggestion with its why and calendar entries, and whether
   expect(within(note).queryByText(/^Closed\./)).toBeNull();
   const rule = card(panel, RULE_HEADING);
   expect(within(rule).getByText('Adds 40 guests on Jun 14, 2026, 6 pm to 10 pm')).toBeTruthy();
-  expect(within(panel).queryByRole('button', { name: 'Accept' })).toBeNull();
-  expect(within(panel).queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  // The weekly sections only: any member decides an event a file read wasn't sure of (D59), below them.
+  for (const weekly of [section(panel, SUGGESTED), section(panel, CHANGED)]) {
+    expect(within(weekly).queryByRole('button', { name: 'Accept' })).toBeNull();
+    expect(within(weekly).queryByRole('button', { name: 'Dismiss' })).toBeNull();
+  }
   expect(within(panel).getByText('Weekly suggestions are on.')).toBeTruthy();
   expect(within(panel).queryByRole('button', { name: 'Turn off weekly suggestions' })).toBeNull();
   expect(within(panel).getByText(SWITCH_WORDS, { exact: false })).toBeTruthy();

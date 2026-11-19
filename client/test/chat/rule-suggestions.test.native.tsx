@@ -61,7 +61,8 @@ test('the sheet shows Suggested rules first, with 44px Confirm, Edit and Dismiss
   expect(minHeightOf(within(side).getByRole('link', { name: 'Edit “Closed on Mondays”' }))).toBeGreaterThanOrEqual(44);
   await fireEvent.press(within(side).getByRole('button', { name: 'Confirm “Closed on Mondays”' }));
   expect(await within(side).findByText('Added the business rule “Closed on Mondays”.')).toBeTruthy();
-  // Suggested rules, then the fixture's calendar follow-ups and its weekly suggestions (calendar-event-suggestions).
-  expect(within(side).getAllByText(/^\d to decide$/).map((line) => line.props.children as unknown)).toEqual(['1 to decide', '2 to decide', '3 to decide']);
+  // Suggested rules, then the fixture's calendar follow-ups and its weekly suggestions (calendar-event-suggestions), then
+  // the event a file read wasn't sure of (D59).
+  expect(within(side).getAllByText(/^\d to decide$/).map((line) => line.props.children as unknown)).toEqual(['1 to decide', '2 to decide', '3 to decide', '1 to decide']);
   expect(chat.writes).toEqual([{ method: 'POST', path: '/api/org/locations/l1/agent/rule-suggestions/sales_weekday_1/accept', body: {} }]);
 });
