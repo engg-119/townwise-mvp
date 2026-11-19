@@ -9,6 +9,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 import { expectationOf, replayFixture, type ResearchFixture } from '../scripts/research-eval-full.ts';
+import { buildLedger } from '../src/research/ledger.ts';
 import { TOWN_THREADS } from '../src/research/threads.ts';
 
 const DIR = join(import.meta.dirname, 'fixtures', 'research');
@@ -33,14 +34,15 @@ describe('recorded Hanover research threads (D66 live eval)', () => {
     expect(fixture.fetch).toBe(false);
   });
 
-  it.each(fixtures)('%s stores only sources from the ledger, each https', (_name, fixture) => {
-    const pages = new Set(fixture.responses.flatMap((message) => message.content.flatMap((block) => (
-      block.type === 'web_search_tool_result' && Array.isArray(block.content) ? block.content.map((result) => new URL(result.url).href.replace(/#.*$/, '')) : []
-    ))));
+  it.each(fixtures)('%s stores only sources from the ledger, each https', async (_name, fixture) => {
+    // The ledger of the gather's own messages, not any URL that appears somewhere in the recorded text.
+    const outcome = await replayFixture(fixture);
+    const ledgerUrls = new Set(buildLedger(outcome.messages).sources.map((source) => source.url));
     const cited = fixture.expected.verified?.events.flatMap((event) => event.sources.map((source) => source.url)) ?? [];
+    expect(cited.length).toBeGreaterThan(0);
     for (const url of cited) {
       expect(url.startsWith('https://')).toBe(true);
-      expect(pages.has(url) || fixture.responses.some((message) => JSON.stringify(message).includes(url))).toBe(true);
+      expect(ledgerUrls.has(url)).toBe(true);
     }
   });
 });

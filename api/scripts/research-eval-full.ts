@@ -616,7 +616,7 @@ export async function runFullEval(options: FullEvalOptions, deps: FullEvalDeps):
   const jobs: Job[] = [];
   const groups = new Set(options.groups);
   if (groups.has('town-off')) for (const id of TOWN_THREADS) jobs.push(jobFor('town-off', threadDef(id, { placesToAi: false }), base, false));
-  if (groups.has('location')) {
+  if (groups.has('location') && saved === null) {
     if (options.restaurant === null) {
       deps.log('location threads: skipped, no --restaurant given');
     } else {
@@ -627,7 +627,7 @@ export async function runFullEval(options: FullEvalOptions, deps: FullEvalDeps):
   if (groups.has('town-on')) for (const id of TOWN_THREADS) jobs.push(jobFor('town-on', threadDef(id, { placesToAi: false }), base, true));
 
   const reserved = jobs.reduce((sum, job) => sum + job.reservedMicroUsd, 0);
-  deps.log(`research-eval: ${plural(jobs.length, 'thread')} over ${window.from} to ${window.to}; reservations $${usd(reserved)} in all (a ceiling; expected spend is far lower), cap $${options.maxUsd.toFixed(2)}, ${String(options.concurrency)} at once`);
+  if (saved === null) deps.log(`research-eval: ${plural(jobs.length, 'thread')} over ${window.from} to ${window.to}; reservations $${usd(reserved)} in all (a ceiling; expected spend is far lower), cap $${options.maxUsd.toFixed(2)}, ${String(options.concurrency)} at once`);
   let done: ThreadRun[];
   let skipped: number;
   if (saved === null) {

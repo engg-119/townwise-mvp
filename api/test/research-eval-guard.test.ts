@@ -136,6 +136,8 @@ describe('research-eval full run (scripted model)', () => {
       ...deps, model: () => scriptedModel(), log: (line) => { again.push(line); }, readJson: () => Promise.resolve(reread),
     })).resolves.toBe(0);
     expect(again.join('\n')).toMatch(/recall, curated event rows: 0\.667 \(2\/3\)/);
+    // Rescoring saved runs neither plans threads nor says it skipped any.
+    expect(again.join('\n')).not.toMatch(/reservations|skipped, no --restaurant/);
   });
 });
 
