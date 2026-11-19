@@ -136,10 +136,11 @@ export const configSchema = z.object({
   TOWNWISE_RESEARCH_WEB_FETCH: z.stringbool().default(false),
   /**
    * D66 decision 10: whether Google Places names, types, websites and addresses may go to Anthropic in a research
-   * prompt. On by default in code; api/production.env keeps it false until the Google terms question is answered.
+   * prompt. Off by default (fails closed while the terms question is open); api/production.env says false too, and the
+   * default turns on only once the decision is recorded.
    * [DECISION NEEDED: whether Google Maps Platform's terms allow sending Places names, types and websites to Anthropic]
    */
-  TOWNWISE_RESEARCH_PLACES_TO_AI: z.stringbool().default(true),
+  TOWNWISE_RESEARCH_PLACES_TO_AI: z.stringbool().default(false),
   /**
    * Development only: the secret a local lab job calls back with, shared by the API and the weekly worker so a job the
    * worker started can call back to the API (both refuse it in production, as they refuse TOWNWISE_LAB_RUNNER=local).

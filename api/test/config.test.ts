@@ -10,7 +10,7 @@ import { configSchema, filesBackendOf, googleCalendarOf, labRunnerOf, resolveTow
 /** D66: research's variables at their defaults, for the literal configs below. */
 const RESEARCH = {
   TOWNWISE_RESEARCH: true, TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: 40, TOWNWISE_RESEARCH_ORG_MONTHLY_USD: 6,
-  TOWNWISE_RESEARCH_WEB_FETCH: false, TOWNWISE_RESEARCH_PLACES_TO_AI: true,
+  TOWNWISE_RESEARCH_WEB_FETCH: false, TOWNWISE_RESEARCH_PLACES_TO_AI: false,
 };
 
 function parse(value: string | undefined): readonly string[] {
@@ -151,18 +151,18 @@ describe('config', () => {
       return resolveTownwiseConfig({ NODE_ENV: 'development', ...parsed });
     };
 
-    it('is on by default with $40 a month for towns and a $6 automatic share an organization, fetch off and Google names allowed', () => {
+    it('is on by default with $40 a month for towns and a $6 automatic share an organization, fetch off and Google names kept from Anthropic', () => {
       expect(resolved({})).toMatchObject({
-        research: true, researchTownMonthlyUsd: 40, researchOrgMonthlyUsd: 6, researchWebFetch: false, researchPlacesToAi: true,
+        research: true, researchTownMonthlyUsd: 40, researchOrgMonthlyUsd: 6, researchWebFetch: false, researchPlacesToAi: false,
       });
       expect(resolved({
         TOWNWISE_RESEARCH: '', TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: '', TOWNWISE_RESEARCH_ORG_MONTHLY_USD: '',
         TOWNWISE_RESEARCH_WEB_FETCH: '', TOWNWISE_RESEARCH_PLACES_TO_AI: '',
-      })).toMatchObject({ research: true, researchTownMonthlyUsd: 40, researchOrgMonthlyUsd: 6, researchWebFetch: false, researchPlacesToAi: true });
+      })).toMatchObject({ research: true, researchTownMonthlyUsd: 40, researchOrgMonthlyUsd: 6, researchWebFetch: false, researchPlacesToAi: false });
       expect(resolved({
         TOWNWISE_RESEARCH: 'false', TOWNWISE_RESEARCH_TOWN_MONTHLY_USD: '0', TOWNWISE_RESEARCH_ORG_MONTHLY_USD: '12.5',
-        TOWNWISE_RESEARCH_WEB_FETCH: 'true', TOWNWISE_RESEARCH_PLACES_TO_AI: 'false',
-      })).toMatchObject({ research: false, researchTownMonthlyUsd: 0, researchOrgMonthlyUsd: 12.5, researchWebFetch: true, researchPlacesToAi: false });
+        TOWNWISE_RESEARCH_WEB_FETCH: 'true', TOWNWISE_RESEARCH_PLACES_TO_AI: 'true',
+      })).toMatchObject({ research: false, researchTownMonthlyUsd: 0, researchOrgMonthlyUsd: 12.5, researchWebFetch: true, researchPlacesToAi: true });
     });
 
     it('refuses a switch that is not true or false, and a cap that is not a number from 0 to 1,000', () => {
@@ -182,7 +182,7 @@ describe('config', () => {
       const example = readFileSync(new URL('../.env.example', import.meta.url), 'utf8');
       for (const line of [
         /^TOWNWISE_RESEARCH=true$/m, /^TOWNWISE_RESEARCH_TOWN_MONTHLY_USD=40$/m, /^TOWNWISE_RESEARCH_ORG_MONTHLY_USD=6$/m,
-        /^TOWNWISE_RESEARCH_WEB_FETCH=false$/m, /^TOWNWISE_RESEARCH_PLACES_TO_AI=true$/m,
+        /^TOWNWISE_RESEARCH_WEB_FETCH=false$/m, /^TOWNWISE_RESEARCH_PLACES_TO_AI=false$/m,
       ]) expect(example).toMatch(line);
     });
   });

@@ -355,7 +355,7 @@ As built (task 7.3): the Town tab is `client/src/portal/town/ResearchSection.tsx
 - `TOWNWISE_RESEARCH_TOWN_MONTHLY_USD` (number, 0 to 1,000, default 40).
 - `TOWNWISE_RESEARCH_ORG_MONTHLY_USD` (number, 0 to 1,000, default 6; 0 stops automatic location research): decision 7.
 - `TOWNWISE_RESEARCH_WEB_FETCH` (stringbool, default false): turned on only if the live eval shows a recall or grounding gain worth its cost; then the Console must allow web fetch for the Anthropic organization.
-- `TOWNWISE_RESEARCH_PLACES_TO_AI` (stringbool, default true; false in `production.env` until the decision 10 question is answered).
+- `TOWNWISE_RESEARCH_PLACES_TO_AI` (stringbool, default false, failing closed; false in `production.env` too until the decision 10 question is answered, when the default may turn on).
 - Research also needs `ANTHROPIC_API_KEY` and `TOWNWISE_CHAT_WEB_SEARCH=true`.
 
 ### 18. Evals
