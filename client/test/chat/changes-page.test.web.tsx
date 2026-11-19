@@ -3,7 +3,7 @@ import { ExpoRoot } from 'expo-router';
 import Head from 'expo-router/head';
 import { getMockContext } from 'expo-router/testing-library';
 
-import { AGENT_AUTO_WORDS, undoErrorText } from '../../src/chat/agentChanges';
+import { AGENT_AUTO_WORDS, changeLine, undoErrorText } from '../../src/chat/agentChanges';
 import { CHANGES_INTRO } from '../../src/chat/ui/ChangesPage';
 import { resetProfiles } from '../../src/portal/profile/useProfile';
 import type { MeResponse } from '../../src/portal/schemas';
@@ -15,7 +15,8 @@ import { ACCESS, fakePortalApi, meOf, orgOf, viewAsMe } from '../helpers/portal'
 // D59: TownwiseAI's log of its changes (/locations/[locationId]/agent/changes) on web: every change, newest first,
 // with what it was made from, its why, Undo while offered and the next page on demand. Under view-as it reads, with no
 // why and no Undo. Slice 2: a calendar sorted on import is one line with how many events it labeled, and only an org
-// admin may undo it. Synthetic changes.
+// admin may undo it. Slice 3: a business rule from the weekly look ahead or the sales history has its own line.
+// Synthetic changes.
 
 const LOG = '/api/org/locations/l1/agent/changes';
 
@@ -155,9 +156,20 @@ test('slice 2: Undo on a calendar’s labels reads the log again, so the notes i
 
 test('the log’s intro and the switch’s words name calendar labels, and the switch says when a calendar file is sorted', () => {
   expect(CHANGES_INTRO).toBe(
-    'Each note, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.',
+    'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.',
   );
   expect(AGENT_AUTO_WORDS).toBe(
-    'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
+    'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week, and a change to your calendars brings that forward. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
   );
+});
+
+test('slice 3: a rule from the sales history or the weekly look ahead, and a weekly note, each have their own words', () => {
+  const base = { count: null, status: 'applied' as const };
+  expect(changeLine({ ...base, action: 'rule.add', sourceKind: 'sales', noteKind: 'closure', startDate: '2026-06-08', endDate: null }))
+    .toBe('Added a business rule: Closure, from Jun 8, 2026, from your sales history.');
+  expect(changeLine({ ...base, action: 'rule.add', sourceKind: 'weekly', noteKind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04' }))
+    .toBe('Added a business rule: Closure, Jul 4, 2026, from its weekly look ahead.');
+  expect(changeLine({ ...base, action: 'note.add', sourceKind: 'weekly', noteKind: 'private_event', startDate: '2026-06-13', endDate: '2026-06-13', status: 'undone' }))
+    .toBe('Added a note: Private event, Jun 13, 2026, from its weekly look ahead. Undone.');
+  expect(undoErrorText(refusal(409, 'changed_since'), 'rule.add')).toBe('You changed this since, so it’s yours now. Delete it from Business rules if you don’t want it.');
 });

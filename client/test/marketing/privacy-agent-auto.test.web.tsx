@@ -12,7 +12,8 @@ import { fakeAuth } from '../helpers/fakes';
 // D59 (openspec change auto-apply-agent-reads, design decision 14): the privacy page says which files TownwiseAI reads
 // with no press and which it never does, what it may add, that it never changes or deletes what exists, that each change
 // has Undo and a log, and that Anthropic receives the files it reads on its own; the old “never unless you ask” line is
-// gone. Marked [CONFIRM] until the owner approves it.
+// gone; (slice 3) what the weekly suggestions and the sales history save on its own, and a calendar change bringing the
+// weekly reading forward. Marked [CONFIRM] until the owner approves it.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -82,4 +83,20 @@ test('the Anthropic item names the files TownwiseAI reads on its own beside the 
   expect(anthropic?.textContent).toContain('Apart from TownwiseAI’s weekly suggestions and, where it works on its own, the files it reads on its own');
   expect(anthropic?.textContent).toContain('When TownwiseAI reads a file, on its own or because you let it, the whole file is sent to it');
   expect(anthropic?.textContent).toContain('TownwiseAI never reads a sales file Townwise read into days unless you let it read one.');
+});
+
+test('slice 3: the weekly suggestions it is sure of, sales history rules and the weekly reading brought forward', () => {
+  renderPrivacy();
+  const items = screen.getAllByRole('listitem');
+  const weekly = items.find((item) => item.textContent.startsWith('TownwiseAI’s weekly suggestions.'));
+  for (const words of [
+    'A suggestion changes nothing until an org admin accepts it, which saves it as that admin’s note or rule, except where TownwiseAI works on its own for your organization',
+    'at most 2 business rules a week for each location',
+    'brings that location’s weekly reading forward, at most once a day',
+  ]) expect(weekly?.textContent).toContain(words);
+  const changes = items.find((item) => item.textContent.startsWith('Changes TownwiseAI makes.'));
+  expect(changes?.textContent).toContain('from its weekly suggestions (a note, or a closure rule, at most 2 business rules a week for each location)');
+  expect(changes?.textContent).toContain('from your sales history (a business rule for a weekday with no sales on at least 9 in 10 of at least 8 counted weeks)');
+  const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
+  expect(anthropic?.textContent).toContain('once a week for each location (and, where TownwiseAI works on its own, sooner after a calendar change, at most once a day) Anthropic receives');
 });

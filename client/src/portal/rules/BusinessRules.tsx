@@ -55,9 +55,15 @@ const READ_ONLY_ID = 'rules-ro';
 const LIMIT_ID = 'rules-limit';
 /** The API's word for an author whose account is gone (api/src/people.ts DELETED_PERSON). */
 const DELETED_PERSON = 'Deleted person';
+/** The API's author for a rule TownwiseAI added on its own (api/src/people.ts TOWNWISE_AI, D59 slice 3). */
+const TOWNWISE_AI = 'TownwiseAI';
 
-/** “Added by owner@example.com, Mar 2, 2026”, or “Saved from TownwiseAI by …” for a rule saved from a chat card. */
+/**
+ * “Added by owner@example.com, Mar 2, 2026”, “Saved from TownwiseAI by …” for a rule saved from a chat card, or (D59
+ * slice 3) “Added by TownwiseAI on its own, …” for one it was sure of.
+ */
 function addedLine(rule: Rule): string {
+  if (rule.createdByEmail === TOWNWISE_AI) return `Added by TownwiseAI on its own, ${formatDate(rule.createdAt)}`;
   const who = rule.createdByEmail === DELETED_PERSON ? 'a deleted person' : rule.createdByEmail;
   return `${rule.addedVia === 'townwise_ai' ? 'Saved from TownwiseAI by' : 'Added by'} ${who}, ${formatDate(rule.createdAt)}`;
 }

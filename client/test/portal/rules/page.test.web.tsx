@@ -77,6 +77,15 @@ function expectReadOnly(control: HTMLElement, lineId: string): void {
   expect(document.getElementById(lineId)?.textContent).toBe('Read-only while viewing as gm@example.org.');
 }
 
+test('D59 slice 3: a rule TownwiseAI added on its own says so, with no person named', async () => {
+  const { api } = setup(meOf(ACCESS.member), [
+    ruleOf('r5', 'Closed on Mondays', { addedVia: 'townwise_ai', createdByEmail: 'TownwiseAI', canEdit: false, createdAt: '2026-06-01T15:00:00.000Z' }),
+  ]);
+  renderAt('/locations/l1/rules', api);
+  expect(await screen.findByText('Closed on Mondays')).toBeTruthy();
+  expect(within(rowOf('Closed on Mondays')).getByText(`Added by TownwiseAI on its own, ${formatDate('2026-06-01T15:00:00.000Z')}`)).toBeTruthy();
+});
+
 test('lists rules oldest first with who added them, and the lead says they never change the forecast', async () => {
   const { api } = setup();
   renderAt('/locations/l1/rules', api);

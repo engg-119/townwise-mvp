@@ -17,7 +17,8 @@ const NOTE_KIND = z.enum(['closure', 'private_event', 'opening', 'other']);
 export const CHANGE_ACTIONS = ['note.add', 'item.add', 'sales_days.add', 'rule.add', 'booking.label'] as const;
 const actionSchema = z.enum(CHANGE_ACTIONS);
 const statusSchema = z.enum(['applying', 'applied', 'undoing', 'undone', 'adopted']);
-const sourceKindSchema = z.enum(['file', 'calendar', 'weekly', 'chat']);
+/** Slice 3 adds `sales`: a closed weekday the sales history showed. */
+const sourceKindSchema = z.enum(['file', 'calendar', 'weekly', 'sales', 'chat']);
 /** How many records a change added (a calendar sort's labels, slice 2); null otherwise, absent from an older API. */
 const countSchema = z.number().int().nonnegative().nullable().optional().transform((count) => count ?? null);
 
@@ -106,8 +107,8 @@ function pageOf(action: AgentChange['action']): string {
 }
 
 /**
- * What a change added, in a few words: "a note: Private event, Jun 13, 2026", or (slice 2) "booking labels on 12
- * events, used for forecasts".
+ * What a change added, in a few words: "a note: Private event, Jun 13, 2026", (slice 2) "booking labels on 12
+ * events, used for forecasts", or (slice 3) "a business rule: Closure, from Jun 8, 2026".
  */
 function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count'>): string {
   const dates = change.startDate === null || change.endDate === null ? '' : rangeText(change.startDate, change.endDate);
@@ -115,7 +116,12 @@ function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 
     case 'note.add': return `a note: ${change.noteKind === null ? 'Note' : KIND_LABEL[change.noteKind]}${dates === '' ? '' : `, ${dates}`}`;
     case 'sales_days.add': return `sales days you didn’t have${dates === '' ? '' : ` for ${dates}`}`;
     case 'item.add': return 'a summary of a file';
-    case 'rule.add': return 'a business rule';
+    case 'rule.add': {
+      // Slice 3: a standing rule has a start and no end.
+      const from = change.startDate !== null && change.endDate === null ? `, from ${rangeText(change.startDate, change.startDate)}` : '';
+      const when = from !== '' ? from : dates === '' ? '' : `, ${dates}`;
+      return change.noteKind === null ? 'a business rule' : `a business rule: ${KIND_LABEL[change.noteKind]}${when}`;
+    }
     case 'booking.label':
       return change.count === null ? 'booking labels, used for forecasts'
         : `booking labels on ${change.count === 1 ? '1 event' : `${String(change.count)} events`}, used for forecasts`;
@@ -123,7 +129,8 @@ function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 
 }
 
 const SOURCE_WORDS: Readonly<Record<AgentChange['sourceKind'], string>> = {
-  file: 'from a file you added', calendar: 'from a calendar you imported', weekly: 'from its weekly look ahead', chat: 'from your message',
+  file: 'from a file you added', calendar: 'from a calendar you imported', weekly: 'from its weekly look ahead', sales: 'from your sales history',
+  chat: 'from your message',
 };
 
 /** The activity's and the log's line for a change. */
@@ -161,7 +168,7 @@ export function undoErrorFinal(error: unknown): boolean {
 }
 
 /** The switch's words (design decision 14). [CONFIRM: the panel's and switch's words] */
-export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
+export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week, and a change to your calendars brings that forward. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
 
 /** How TownwiseAI works' sentence, by the switch (design decision 14). [CONFIRM: the panel's and switch's words] */
 export function savesLine(on: boolean): string {

@@ -75,6 +75,6 @@ test('Sorting bookings: titles without emails or phones, dates and hours go to A
   expect(anthropic).toContain('the calendar files it sorts when they are imported (see Sorting bookings with TownwiseAI), nothing is sent to Anthropic unless you use it');
   expect(anthropic).toContain('When a calendar file is sorted, on its own when it is imported where TownwiseAI works on its own or when an org admin presses Sort with TownwiseAI, Anthropic receives that calendar’s event titles, with email addresses and phone numbers removed, and their dates and hours, once each time, never the calendar’s name (see Sorting bookings with TownwiseAI).');
   const changes = item('Your organization and team', 'Changes TownwiseAI makes.');
-  expect(changes).toContain('and from a calendar file you import (labels for its events, and notes for its upcoming buyouts and parties; see Sorting bookings with TownwiseAI)');
+  expect(changes).toContain('from a calendar file you import (labels for its events, and notes for its upcoming buyouts and parties; see Sorting bookings with TownwiseAI)');
   expect(screen.getByRole('main').textContent).not.toMatch(/—/);
 });
