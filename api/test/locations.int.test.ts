@@ -653,7 +653,7 @@ describe('D66: research after an org admin adds a location or changes its place'
     return (await res.json() as { location: LocationSummary }).location.id;
   }
 
-  it('creating a location queues its early run, due at once, and its town’s week’s run; a rename queues nothing', async () => {
+  it('creating a location queues its early run, due at once, and never its town’s run (another tenant would see it); a rename queues nothing', async () => {
     const t = await liveTeam();
     fake.script({ kind: 'json', body: hanoverPlace(PLACE_A) });
     const locationId = await created(t.admin, { name: 'Lantern Room', town: { townId: 'hanover-nh' }, placeId: PLACE_A });
@@ -661,7 +661,7 @@ describe('D66: research after an org admin adds a location or changes its place'
     expect(run).toMatchObject({ trigger: 'early', status: 'queued', placeId: PLACE_A, town: 'hanover-nh', threads: ['neighborhood', 'competitors'] });
     expect(String(run?.key)).toMatch(/^s:[0-9a-f]{24}$/);
     expect(await live.connection.collection('tw_location_research_threads').countDocuments({ runId: run?._id, notBefore: live.clock.now() })).toBe(2);
-    expect(await live.connection.collection('tw_town_research_runs').countDocuments({ townKey: 'hanover-nh' })).toBe(1);
+    expect(await live.connection.collection('tw_town_research_runs').countDocuments({ townKey: 'hanover-nh' })).toBe(0);
     expect((await patchAt(t.admin, locationId, { name: 'Lantern Hall' })).status).toBe(200);
     expect(await runsOf(locationId)).toHaveLength(1);
   });

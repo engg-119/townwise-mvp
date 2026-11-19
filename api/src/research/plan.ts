@@ -10,7 +10,9 @@
 //   run records no trigger and no requester.
 // - Location run: each such location, the same week's run, skipped the same way, so an early run counts as that week's.
 // - Weekly threads are due over the Monday by a hash of their subject (0 to 12 hours), so the Monday batch is spread.
-// - Early run (`s:{id}`): due at once; the location's town gets its week's run now unless it has one from the last 6 days.
+// - Early run (`s:{id}`): due at once, the location's own run only. It never asks for the town's run: a shared town run
+//   started off its weekly schedule would tell the town's other organizations that someone just added or moved a
+//   location there (its finish time shows in their research read). A new town gets its week's run at the next tick.
 // - A live run missing thread rows (a plan that crashed between the run and its threads) is completed.
 // - Merge sweep: claims the merge of any `running` run whose threads are all terminal, or a merge whose lease passed,
 //   and hands it to the runner's merge, so a run never stays `running` because the lane that settled its last thread
@@ -241,7 +243,7 @@ export async function planLocationRun(ctx: PlanContext, scope: OrgScope, locatio
 
 /**
  * The early run of a location just created or whose place or town just changed (design decision 2): due at once, for an
- * active organization with research on, with its town's week's run asked for now. The caller (handlers/locations.ts)
+ * active organization with research on. The town's run is left to the planner's tick, on its weekly key. The caller (handlers/locations.ts)
  * checks the deploy switch and that the caller is not staff with the organization open as admin, and never fails its
  * request on a throw from here.
  *
@@ -263,8 +265,6 @@ export async function queueEarlyRun(ctx: PlanContext, scope: OrgScope, location:
       inserted = await early() !== null;
     }
   }
-  const { townId } = location.town;
-  if (townId !== null && isTownId(townId)) await planTownRun(ctx, townId);
   return inserted ? 'inserted' : 'running';
 }
 

@@ -159,7 +159,7 @@ describe('the tick', () => {
     expect(await count('tw_location_research_runs')).toBe(1);
   });
 
-  it('an early run is due at once, asks for the town’s run, and counts as the week’s for a later tick', async () => {
+  it('an early run is due at once, never asks for the town’s run, and counts as the week’s for a later tick', async () => {
     const t = await tenant();
     const location = await stores.locations.find(t.scope, t.locationId);
     if (location === null) throw new Error('no location');
@@ -168,12 +168,29 @@ describe('the tick', () => {
     expect(run?.trigger).toBe('early');
     expect(run?.key).toMatch(/^s:[0-9a-f]{24}$/);
     for (const thread of await stores.researchLocations.threadsOf(t.scope, run?.id ?? '')) expect(thread.notBefore).toEqual(clock);
-    expect(await count('tw_town_research_runs', { townKey: 'hanover-nh', key: 'w:2026-11-16' })).toBe(1);
+    // A town run off its weekly schedule would tell the town's other organizations what this one did: only the tick
+    // inserts it, on the week's key.
+    expect(await count('tw_town_research_runs')).toBe(0);
     // A second early run while the first is live inserts nothing.
     expect(await queueEarlyRun(context(), t.scope, location)).toBe('running');
     await server.connection.collection('tw_location_research_runs').updateMany({}, { $set: { status: 'done' }, $unset: { liveSubject: '' } });
     expect(await planTick(context(), 'replica-a', noMerge)).toMatchObject({ locations: 0 });
     expect(await count('tw_location_research_runs')).toBe(1);
+  });
+
+  it('an early run for one organization’s location changes nothing another organization in the town can read', async () => {
+    const b = await tenant();
+    // Organization B's town was researched last week; it is past 6 days, so a town run now would show off schedule.
+    const last = await stores.researchTowns.insertRun({ townKey: 'hanover-nh', key: 'w:2026-11-09', threads: ['schools'], now: new Date(clock.getTime() - 7 * 86_400_000) });
+    await stores.researchTowns.finishRun(last?.id ?? '', { status: 'done', code: null, counts: { found: 0, added: 0, updated: 0, dropped: 0 }, costMicroUsd: 0, now: new Date(clock.getTime() - 6.5 * 86_400_000) });
+    const before = await stores.researchTowns.lastRun('hanover-nh');
+    const a = await tenant();
+    const location = await stores.locations.find(a.scope, a.locationId);
+    if (location === null) throw new Error('no location');
+    expect(await queueEarlyRun(context(), a.scope, location)).toBe('inserted');
+    expect(await stores.researchTowns.lastRun('hanover-nh')).toEqual(before);
+    expect(await count('tw_town_research_runs')).toBe(1);
+    expect(b.orgId).not.toBe(a.orgId);
   });
 
   it('an early run for a new place ends a live run a tick stamped with the old place, and runs now (not after 6 days)', async () => {

@@ -179,16 +179,14 @@ describe('GET /api/org/locations/:locationId/research', () => {
     expect(body.hidden).toEqual([{ id: `t-${hiddenRow.id}`, title: 'Craft Fair', start: '2026-07-04', end: '2026-07-04', head: hide?.id }]);
   });
 
-  it('organization A adding a location changes nothing in B’s read but the shared town run', async () => {
+  it('organization A adding a location changes nothing in B’s read, the shared town run included', async () => {
     const a = await tenant();
     const b = await tenant();
     const before = await research(b);
     const res = await call(server, '/api/org/locations', { session: a.admin, json: { name: 'Lantern Room', town: { townId: 'hanover-nh' } } });
     expect(res.status).toBe(201);
-    const after = await research(b);
-    expect(after.town).toMatchObject({ status: 'queued' });
-    expect(Object.keys(after.town ?? {}).sort()).toEqual(['counts', 'finishedAt', 'status', 'threads']);
-    expect({ ...after, town: null }).toEqual({ ...before, town: null });
+    // The early run is A's location's own: a town run started off its weekly schedule would tell B what A did.
+    expect(await research(b)).toEqual(before);
   });
 
   it('answers 404 for another organization’s location', async () => {
