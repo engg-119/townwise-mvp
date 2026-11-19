@@ -20,7 +20,7 @@ jobs:
   verify:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: verify
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 30
     env:
       TESTCONTAINERS_RYUK_DISABLED: 'true'
@@ -48,7 +48,7 @@ jobs:
   terraform:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: terraform
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 15
     defaults:
       run:
@@ -100,7 +100,7 @@ jobs:
     # an OIDC token. A check, not a gate (GitHub Free has no required checks); the federated credential's
     # job_workflow_ref match is the server-side control (infra/README.md, step 12).
     name: id-token-guard
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,7 +121,7 @@ jobs:
   lab:
     # The forecast lab (modeling/lab): its tests on the synthetic fixture, then the job image builds.
     name: lab
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 20
     permissions:
       contents: read
@@ -145,7 +145,7 @@ jobs:
   reorder:
     # The reorder package (reorder/): its tests; the ones that need data/synthetic skip where it is absent.
     name: reorder
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 10
     permissions:
       contents: read

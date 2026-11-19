@@ -20,7 +20,7 @@ jobs:
   osv-scanner:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: osv-scanner
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -47,7 +47,7 @@ jobs:
   semgrep:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: semgrep
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,7 +63,7 @@ jobs:
   checkov:
     # Stable check name (infra/README.md lists it); keep it if branch protection is added later.
     name: checkov
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

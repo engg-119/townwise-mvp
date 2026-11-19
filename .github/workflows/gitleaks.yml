@@ -20,7 +20,7 @@ jobs:
   gitleaks:
     # Required check; do not rename (T17).
     name: gitleaks
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-24.04"') }}
+    runs-on: [self-hosted, townwise-camo]
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
