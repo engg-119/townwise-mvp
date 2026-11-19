@@ -468,7 +468,7 @@ function forecastPart(date: string, input: CalendarInput): ForecastPart {
  * a buyout's other than 0 says how its party compares with Townwise's model, since its mark's direction must be in the
  * words too.
  */
-export function reasonOutcomeWords(outcome: string, guests: number | null, size = 0): string | null {
+export function reasonOutcomeWords(outcome: string, guests: number | null, size = 0, of: 'note' | 'rule' = 'rule'): string | null {
   switch (outcome) {
     case 'added': return `Adds ${plural(guests ?? 0, 'guest', 'guests')}`;
     case 'booked': return size === 0 ? 'Books the day' : `Books the day: about ${String(Math.abs(size))}% ${size > 0 ? 'more' : 'fewer'} guests than Townwise’s model`;
@@ -479,8 +479,9 @@ export function reasonOutcomeWords(outcome: string, guests: number | null, size 
     case 'day_closed': return 'The day is closed';
     case 'day_booked': return 'The day is booked';
     case 'past_day': return 'This day has passed';
-    // A rule's closure or buyout on a day a note decides: the note wins (D31).
-    case 'overridden': return 'A note on this day sets this rule aside';
+    // A rule's closure or buyout on a day a note decides: the note wins (D31). D59: a TownwiseAI note on a day a note your
+    // team made decides is set aside the same way.
+    case 'overridden': return of === 'note' ? 'A note your team made on this day sets this TownwiseAI note aside' : 'A note on this day sets this rule aside';
     default: return null;
   }
 }
@@ -618,7 +619,7 @@ function reasonLines(day: ForecastDay | null, past: boolean, notes: readonly Not
     const title = noteTitleOf(reason, notes);
     const label = title === null ? reason.label : `${reason.label}: ${title}`;
     const line = { key: `${String(index)}:${reason.kind}`, label, sources: reason.sources, ...markOf(size, applied === null) };
-    if (applied !== null) return { ...line, detail: reasonOutcomeWords(applied.outcome, applied.guests, size ?? 0) };
+    if (applied !== null) return { ...line, detail: reasonOutcomeWords(applied.outcome, applied.guests, size ?? 0, reason.note == null ? 'rule' : 'note') };
     if (effect !== null) return { ...line, detail: effectWords(reason.kind, effect) };
     return { ...line, detail: !past && AGAINST.has(reason.kind) ? NO_HISTORY : null };
   });
