@@ -162,6 +162,11 @@ interface StoredAutoSort {
   /** Why it was skipped or failed (a code); null otherwise. */
   reason: string | null;
   endedAt: Date | null;
+  /**
+   * The model's labels by uid, kept from the call until the end, so a retry writes them with no second call; absent
+   * before the call and once it ended. Like a row's label, never logged.
+   */
+  labels?: { uid: string; booking: Booking }[];
 }
 
 interface StoredBookings {
@@ -235,6 +240,10 @@ function sourceSchema(): Schema<SourceFields> {
         attempts: { type: Number, required: true },
         reason: { type: String, default: null },
         endedAt: { type: Date, default: null },
+        labels: {
+          type: [new Schema({ uid: { type: String, required: true }, booking: { type: String, required: true, enum: BOOKINGS } }, { _id: false, strict: 'throw' })],
+          default: undefined,
+        },
       }, { _id: false, strict: 'throw' }),
       default: undefined,
     },
@@ -512,8 +521,24 @@ export interface OwnerCalendarStore {
   releaseSort(scope: OrgScope, calendarId: string, attempt: number, notBefore: Date): Promise<boolean>;
   /** D59: the end of a sort attempt still held, by compare-and-set. False when it was no longer held. */
   finishSort(scope: OrgScope, calendarId: string, attempt: number, input: { status: 'done' | 'skipped' | 'failed'; reason: string | null; at: Date }): Promise<boolean>;
+  /** D59: the model's labels a sort attempt still holding it keeps until the sort ends. False when it was no longer held. */
+  saveSortLabels(scope: OrgScope, calendarId: string, attempt: number, labels: readonly { uid: string; booking: Booking }[]): Promise<boolean>;
+  /** D59: the labels a sort kept (saveSortLabels), or null when none are kept. */
+  sortLabels(scope: OrgScope, calendarId: string): Promise<{ uid: string; booking: Booking }[] | null>;
   /** D59: how many current rows of the file calendar carry TownwiseAI's label set at `at`. */
   aiLabelCount(scope: OrgScope, locationId: string, calendarId: string, at: Date): Promise<number>;
+  /**
+   * D59: the current rows carrying TownwiseAI's label set at `at`: how many, and the first and last day of their buyouts
+   * and parties (null with none). Null for a missing calendar or one that is not a file.
+   */
+  aiLabelFacts(scope: OrgScope, locationId: string, calendarId: string, at: Date): Promise<{ count: number; booked: { startDate: string; endDate: string } | null } | null>;
+  /** D59: how many current rows of the file calendar carry a label (or a cleared label) not set by TownwiseAI at `at`. */
+  otherLabelCount(scope: OrgScope, locationId: string, calendarId: string, at: Date): Promise<number>;
+  /**
+   * D59, Undo per calendar: a file calendar `sorted` whose current rows carry no label (nor a person's cleared label)
+   * goes back to unsorted, as if never sorted. Resolves whether it did.
+   */
+  unsortIfUnlabeled(scope: OrgScope, locationId: string, calendarId: string, now: Date): Promise<boolean>;
   /**
    * D59, Undo per calendar: TownwiseAI's labels set at `at` that nobody changed since are cleared (the rows read as never
    * labeled again). Resolves how many; null for a missing calendar or one that is not a file.
@@ -929,12 +954,57 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     async finishSort(scope, calendarId, attempt, input) {
       const finished = await Source.updateOne(heldSort(scope, calendarId, attempt), {
         $set: { 'autoSort.status': input.status, 'autoSort.reason': input.reason, 'autoSort.leaseUntil': null, 'autoSort.endedAt': input.at },
+        $unset: { 'autoSort.labels': 1 },
       });
       return finished.modifiedCount === 1;
+    },
+    async saveSortLabels(scope, calendarId, attempt, labels) {
+      const saved = await Source.updateOne(heldSort(scope, calendarId, attempt), {
+        $set: { 'autoSort.labels': labels.map((label) => ({ uid: label.uid, booking: label.booking })) },
+      });
+      return saved.matchedCount === 1;
+    },
+    async sortLabels(scope, calendarId) {
+      const doc = await Source.findOne({ orgId: new Types.ObjectId(scope.orgId), _id: new Types.ObjectId(calendarId) }, { autoSort: 1 }).lean();
+      const labels = doc?.autoSort?.labels;
+      return labels === undefined ? null : labels.map((label) => ({ uid: label.uid, booking: label.booking }));
     },
     async aiLabelCount(scope, locationId, calendarId, at) {
       const file = await fileRows(scope, locationId, calendarId);
       return file === null ? 0 : Event.countDocuments({ ...file.rows, bookingBy: 'ai', bookingAt: at });
+    },
+    async aiLabelFacts(scope, locationId, calendarId, at) {
+      const file = await fileRows(scope, locationId, calendarId);
+      if (file === null) return null;
+      const ours = { ...file.rows, bookingBy: 'ai' as const, bookingAt: at };
+      const [count, booked] = await Promise.all([
+        Event.countDocuments(ours),
+        Event.find({ ...ours, booking: trusted({ $in: ['buyout', 'party'] }) }, { startDate: 1, endDate: 1 }).lean(),
+      ]);
+      if (booked.length === 0) return { count, booked: null };
+      return {
+        count,
+        booked: {
+          startDate: booked.reduce((min, row) => (row.startDate < min ? row.startDate : min), booked[0]?.startDate ?? ''),
+          endDate: booked.reduce((max, row) => (row.endDate > max ? row.endDate : max), booked[0]?.endDate ?? ''),
+        },
+      };
+    },
+    async otherLabelCount(scope, locationId, calendarId, at) {
+      const file = await fileRows(scope, locationId, calendarId);
+      if (file === null) return 0;
+      return Event.countDocuments({ ...file.rows, bookingBy: trusted({ $exists: true }), $nor: [{ bookingBy: 'ai', bookingAt: at }] });
+    },
+    async unsortIfUnlabeled(scope, locationId, calendarId, now) {
+      const file = await fileRows(scope, locationId, calendarId);
+      if (file === null) return false;
+      const labeled = { ...file.rows, bookingBy: trusted({ $exists: true }) };
+      if ((await Event.exists(labeled)) !== null) return false;
+      const unsorted = await Source.updateOne({ ...file.key, 'bookings.state': 'sorted' }, { $unset: { bookings: 1 } });
+      if (unsorted.modifiedCount === 0) return false;
+      // A person's label that landed meanwhile marks it sorted again.
+      if ((await Event.exists(labeled)) !== null) await markSorted(file.key, now, false);
+      return true;
     },
     async clearAiLabels(scope, locationId, calendarId, at) {
       const file = await fileRows(scope, locationId, calendarId);

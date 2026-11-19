@@ -9,7 +9,7 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type { OrgScope } from '../src/access/policy.ts';
 import { autoSortKeyOf } from '../src/calendar/auto-sort.ts';
@@ -18,6 +18,7 @@ import type { FileReaderModel } from '../src/files/extract/reader.ts';
 import { createMemoryFileBlobs } from '../src/files/memory-blobs.ts';
 import type { AgentPanel } from '../src/handlers/agent.ts';
 import type { OwnerCalendarView } from '../src/handlers/owner-calendars.ts';
+import { claimNextAiRead, claimNextCalendarSort } from '../src/stores/cross-tenant.ts';
 import { addChatUsage, addLocation, addOpenAsAdminGrant, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { message, scriptedModel, text, type ScriptedModel } from './helpers/chat-model.ts';
 import { seedHistory } from './helpers/lab.ts';
@@ -231,6 +232,139 @@ describe('a calendar file imported while TownwiseAI works on its own', () => {
     expect((await source(calendar.id))?.autoSort).toMatchObject({ status: 'done', attempts: 2 });
     expect((await changesOf(t)).map((row): unknown => row.action)).toEqual(['booking.label', 'note.add']);
   });
+
+  it('keeps the model’s labels, so a retry after its ledger row went in writes them with no second call', async () => {
+    const t = await tenant();
+    const calls = model.calls.length;
+    model.script(ANSWER);
+    // The labels' write fails once (a transient DocumentDB error), after the ledger row went in.
+    const failOnce = vi.spyOn(server.connection.model('TwCalendarEvent'), 'bulkWrite').mockRejectedValueOnce(new Error('transient'));
+    try {
+      const calendar = await importExport(t);
+      expect((await source(calendar.id))?.autoSort).toMatchObject({ status: 'queued', attempts: 1 });
+      expect((await changesOf(t)).map((row): unknown[] => [row.action, row.status])).toEqual([['booking.label', 'applying']]);
+      server.clock.advance(61_000);
+      await settle();
+      expect(model.calls).toHaveLength(calls + 1);
+      expect(await labels(calendar.id)).toEqual({
+        p1: ['party', 'ai'], p2: ['own_event', 'ai'], u3: ['other', 'ai'], u1: ['buyout', 'ai'], u2: [null, null],
+      });
+      const stored = await source(calendar.id);
+      expect(stored?.bookings).toMatchObject({ state: 'confirmed', confirmedBy: 'townwise_ai' });
+      expect(stored?.autoSort).toMatchObject({ status: 'done', attempts: 2 });
+      // The kept answer goes once the sort ends.
+      expect((stored?.autoSort as Record<string, unknown>).labels).toBeUndefined();
+      expect((await changesOf(t)).map((row): unknown[] => [row.action, row.status, row.count ?? null, row.startDate, row.endDate])).toEqual([
+        ['booking.label', 'applied', 4, '2025-07-12', '2026-06-20'], ['note.add', 'applied', null, '2026-06-20', '2026-06-20'],
+      ]);
+    } finally {
+      failOnce.mockRestore();
+    }
+  });
+
+  it('checks the switches and the importer’s seat again when it is claimed, and skips with no call', async () => {
+    const cases: [string, (t: Tenant) => Promise<void>][] = [
+      ['titles_off', (t) => setOrg(t, { calendarTitlesToAi: { on: false, at: server.clock.now(), by: null } })],
+      ['agent_auto_off', (t) => setOrg(t, { agentAuto: { on: false, at: server.clock.now(), by: null } })],
+      ['requester_gone', async (t) => {
+        await server.connection.collection('tw_members').updateOne(
+          { orgId: new Types.ObjectId(t.orgId), activeUserId: t.member.userId }, { $set: { status: 'removed', activeUserId: null, removedAt: server.clock.now() } },
+        );
+      }],
+    ];
+    for (const [reason, change] of cases) {
+      const t = await tenant();
+      // The first attempt fails, so the sort waits in the queue while the switch or the seat changes.
+      model.script({ kind: 'error', error: new Error('overloaded') });
+      const calendar = await importExport(t);
+      expect((await source(calendar.id))?.autoSort).toMatchObject({ status: 'queued', attempts: 1 });
+      await change(t);
+      const calls = model.calls.length;
+      server.clock.advance(61_000);
+      await settle();
+      expect((await source(calendar.id))?.autoSort).toMatchObject({ status: 'skipped', reason, attempts: 2 });
+      expect(model.calls).toHaveLength(calls);
+      expect(await changesOf(t)).toEqual([]);
+    }
+  });
+
+  it('leaves a calendar an admin sorted while its sort was queued to them: no call, and no confirm of the press’s labels', async () => {
+    const t = await tenant();
+    model.script({ kind: 'error', error: new Error('overloaded') });
+    const calendar = await importExport(t);
+    expect((await source(calendar.id))?.autoSort).toMatchObject({ status: 'queued', attempts: 1 });
+    model.script(ANSWER);
+    expect(await send(`/api/org/locations/${t.locationId}/owner-calendars/${calendar.id}/bookings/sort`, t.admin, { method: 'POST' }))
+      .toMatchObject({ status: 200, body: { labeled: 4 } });
+    const calls = model.calls.length;
+    server.clock.advance(61_000);
+    await settle();
+    expect(model.calls).toHaveLength(calls);
+    const stored = await source(calendar.id);
+    expect(stored?.autoSort).toMatchObject({ status: 'skipped', reason: 'already_sorted' });
+    expect(stored?.bookings).toMatchObject({ state: 'sorted', confirmedBy: null });
+    expect(await changesOf(t)).toEqual([]);
+  });
+
+  it('sets the whole sort aside when a person labels an event during the call: none of its labels, no confirm, no change', async () => {
+    const t = await tenant();
+    const calls = model.calls.length;
+    let open = (): void => undefined;
+    const gate = new Promise<void>((resolve) => { open = resolve; });
+    model.script({ ...ANSWER, gate });
+    const added = await send(`/api/org/locations/${t.locationId}/owner-calendars`, t.member, { json: { kind: 'file', label: SENTINEL_LABEL, ics: EXPORT } });
+    expect(added.status).toBe(201);
+    const calendarId = (added.body.calendar as OwnerCalendarView).id;
+    server.aiReader?.nudge();
+    await vi.waitFor(() => { expect(model.calls).toHaveLength(calls + 1); });
+    // While the model answers, an admin labels the past party by hand.
+    expect((await send(`/api/org/locations/${t.locationId}/owner-calendars/${calendarId}/bookings`, t.admin, { method: 'PATCH', json: { uid: 'p1', booking: 'other' } })).status)
+      .toBe(200);
+    open();
+    await server.aiReader?.settled();
+    expect(await labels(calendarId)).toEqual({
+      p1: ['other', 'person'], p2: [null, null], u3: [null, null], u1: [null, null], u2: [null, null],
+    });
+    const stored = await source(calendarId);
+    expect(stored?.autoSort).toMatchObject({ status: 'skipped', reason: 'already_sorted' });
+    expect(stored?.bookings).toMatchObject({ state: 'sorted', confirmedBy: null });
+    expect(await changesOf(t)).toEqual([]);
+    expect(await notesOf(t)).toEqual([]);
+  });
+});
+
+describe('one job per organization across reads and sorts', () => {
+  it('claims no read while one of its calendars is sorted under a live lease, and no sort while one of its reads is', async () => {
+    const t = await tenant();
+    // Titles off: the import queues nothing, and the queue entries below are written by hand.
+    await setOrg(t, { calendarTitlesToAi: { on: false, at: server.clock.now(), by: null } });
+    const calendar = await importExport(t);
+    const now = server.clock.now();
+    const sources = server.connection.collection('tw_calendar_sources');
+    const files = server.connection.collection('tw_files');
+    const calendarKey = { _id: new Types.ObjectId(calendar.id) };
+    const fileId = new Types.ObjectId();
+    await sources.updateOne(calendarKey, {
+      $set: { autoSort: { status: 'sorting', queuedAt: now, notBefore: null, leaseUntil: new Date(now.getTime() + 60_000), attempts: 1, reason: null, endedAt: null } },
+    });
+    await files.insertOne({
+      _id: fileId, orgId: new Types.ObjectId(t.orgId), locationId: new Types.ObjectId(t.locationId), status: 'stored',
+      ai: { status: 'queued', notBefore: null, requestedAt: now, attempts: 0 },
+    });
+    try {
+      const lease = { now, leaseMs: 90_000 };
+      expect(await claimNextAiRead(server.connection, lease)).toBeNull();
+      // The sort goes back to the queue: the read is claimed, and the sort then waits for it.
+      await sources.updateOne(calendarKey, { $set: { 'autoSort.status': 'queued', 'autoSort.leaseUntil': null } });
+      expect(await claimNextAiRead(server.connection, lease)).toMatchObject({ id: fileId.toHexString(), orgId: t.orgId });
+      expect(await claimNextCalendarSort(server.connection, lease)).toBeNull();
+      await files.deleteOne({ _id: fileId });
+      expect(await claimNextCalendarSort(server.connection, lease)).toMatchObject({ calendarId: calendar.id, orgId: t.orgId });
+    } finally {
+      await files.deleteOne({ _id: fileId });
+      await sources.updateOne(calendarKey, { $unset: { autoSort: 1 } });
+    }
+  });
 });
 
 describe('Undo per calendar', () => {
@@ -273,5 +407,57 @@ describe('Undo per calendar', () => {
     // Again: the same answer, nothing recorded twice.
     expect(await undo(t.admin)).toMatchObject({ status: 200, body: { change: { status: 'undone' } } });
     expect((await auditEvents(server)).filter((each) => each.action === 'agent.change_undone' && each.orgId?.toString() === t.orgId)).toHaveLength(3);
+  });
+
+  it('leaves the calendar unsorted when no label is left, so its page offers Sort again', async () => {
+    const t = await tenant();
+    model.script(ANSWER);
+    const calendar = await importExport(t);
+    const labelChange = String((await changesOf(t))[0]?._id);
+    expect(await send(`/api/org/locations/${t.locationId}/agent/changes/${labelChange}/undo`, t.admin, { method: 'POST' }))
+      .toMatchObject({ status: 200, body: { change: { status: 'undone' } } });
+    expect(Object.values(await labels(calendar.id)).every(([booking, by]) => booking === null && by === null)).toBe(true);
+    expect((await source(calendar.id))?.bookings).toBeUndefined();
+    const view = (await send(`/api/org/locations/${t.locationId}/owner-calendars`, t.admin)).body.calendars as OwnerCalendarView[];
+    expect(view.find((each) => each.id === calendar.id)?.bookings).toMatchObject({ state: 'unsorted' });
+  });
+
+  it('is refused while the calendar’s sort still runs, and a sort stops writing notes once its labels are undone', async () => {
+    const t = await tenant();
+    model.script(answer({ e1: 'party', e2: 'own_event', e3: 'buyout', e4: 'buyout', e5: 'party' }));
+    // An admin's Undo lands as the first of the three notes is written.
+    const notes = server.connection.model('TwNote');
+    const create = notes.create.bind(notes);
+    let undoneAfterFirst = false;
+    const spy = vi.spyOn(notes, 'create').mockImplementation((async (...args: Parameters<typeof notes.create>) => {
+      const made = await (create as (...each: Parameters<typeof notes.create>) => Promise<unknown>)(...args);
+      if (!undoneAfterFirst) {
+        undoneAfterFirst = true;
+        await server.connection.collection('tw_agent_changes').updateOne(
+          { locationId: new Types.ObjectId(t.locationId), action: 'booking.label' }, { $set: { status: 'undoing' } },
+        );
+      }
+      return made;
+    }) as unknown as typeof notes.create);
+    try {
+      await importExport(t);
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await changesOf(t)).map((row): unknown => row.action)).toEqual(['booking.label', 'note.add']);
+    expect(await notesOf(t)).toHaveLength(1);
+
+    // Another calendar's sort, held as running: its Undo answers 409 and changes nothing until it ends.
+    const other = await tenant();
+    model.script(ANSWER);
+    const sorted = await importExport(other);
+    const labelChange = String((await changesOf(other))[0]?._id);
+    const sources = server.connection.collection('tw_calendar_sources');
+    await sources.updateOne({ _id: new Types.ObjectId(sorted.id) }, { $set: { 'autoSort.status': 'sorting' } });
+    const undo = () => send(`/api/org/locations/${other.locationId}/agent/changes/${labelChange}/undo`, other.admin, { method: 'POST' });
+    expect(await undo()).toMatchObject({ status: 409, body: { error: 'change_in_progress' } });
+    expect((await changesOf(other)).map((row): unknown => row.status)).toEqual(['applied', 'applied']);
+    await sources.updateOne({ _id: new Types.ObjectId(sorted.id) }, { $set: { 'autoSort.status': 'done' } });
+    expect(await undo()).toMatchObject({ status: 200, body: { change: { status: 'undone' } } });
   });
 });

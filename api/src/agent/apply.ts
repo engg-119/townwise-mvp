@@ -2,7 +2,8 @@
 // 9): every source calls applyChange with a typed candidate, and it answers `applied`, `duplicate`, `conflict` or
 // `invalid`. It only adds: a note (`note.add`), a summary item (`item.add`), missing sales days (`sales_days.add`) or
 // (slice 2) the labels of a file calendar sorted on import (`booking.label`, one change per calendar, whose writer labels
-// only events nobody labeled); it never changes or deletes anything that exists. There are no transactions (DocumentDB), so the writes are ordered
+// only a calendar nobody sorted, labeled or confirmed, and then confirms it for forecasts, so the confirm covers only its
+// own labels); it never changes or deletes anything else that exists. There are no transactions (DocumentDB), so the writes are ordered
 // for retries: the ledger row is inserted `applying` under the planned target id and a dedupe key unique per location in
 // every status; the target is written under that id (a second create fails on its primary key and counts as done); the
 // row is set `applied` with the target's updatedAt by compare-and-set; the audit event is recorded only by the call
@@ -71,7 +72,9 @@ export interface NoteCandidate extends CandidateBase {
  * An item, missing sales days or a calendar's labels, written by the caller's own writer under the planned id. `key` is
  * the content the dedupe key is made of. `write` is handed the ledger row (`applying`; a retry gets the same row, so its
  * `appliedAt` is a time planned before any write) and resolves the target's updatedAt, or null when it added nothing
- * after all (the row is then removed, and the answer is `invalid`); a second call must complete the first's write.
+ * after all (the row is then removed, and the answer is `invalid`); a second call must complete the first's write. A
+ * writer that only knows what it added once written (a calendar's labels, only on events nobody labeled) resolves
+ * WrittenFacts instead, and the row takes that count and those dates before it is marked applied.
  */
 export interface WrittenCandidate extends CandidateBase {
   readonly action: 'item.add' | 'sales_days.add' | 'booking.label';
@@ -80,7 +83,14 @@ export interface WrittenCandidate extends CandidateBase {
   readonly dates: { readonly startDate: string; readonly endDate: string } | null;
   /** How many records it adds, for the activity's words (a calendar's labels); left out otherwise. */
   readonly count?: number;
-  readonly write: (change: AgentChangeRecord) => Promise<Date | null>;
+  readonly write: (change: AgentChangeRecord) => Promise<Date | WrittenFacts | null>;
+}
+
+/** What a writer actually wrote: the target's updatedAt, how many records, and the dates they cover (or null). */
+export interface WrittenFacts {
+  readonly updatedAt: Date;
+  readonly count: number;
+  readonly dates: { readonly startDate: string; readonly endDate: string } | null;
 }
 
 export type ChangeCandidate = NoteCandidate | WrittenCandidate;
@@ -218,20 +228,31 @@ export async function applyChange(
     // Another change took the key between the read and the insert.
     if (!inserted.created && row.targetId !== candidate.targetId) return { outcome: 'duplicate', change: row };
   }
-  const wantRefit = async (): Promise<void> => {
-    const dates = datesOf(candidate);
+  // A written change's dates are the row's: its writer may set what it actually wrote (a calendar sort's labels).
+  const wantRefit = async (current: AgentChangeRecord): Promise<void> => {
+    const dates = candidate.action === 'note.add' ? datesOf(candidate)
+      : current.startDate === null || current.endDate === null ? null : { startDate: current.startDate, endDate: current.endDate };
     if (dates !== null) await wantRefitFor(ctx, scope, candidate.locationId, candidate.action === 'sales_days.add' ? 'always' : dates);
   };
   if (row.status !== 'applying') {
     // A retry of this change: an earlier attempt may have stopped between marking it applied and marking the refit.
-    if (row.status === 'applied') await wantRefit();
+    if (row.status === 'applied') await wantRefit(row);
     return { outcome: 'applied', change: row };
   }
   let updatedAt: Date | null;
   if (candidate.action === 'note.add') {
     updatedAt = (await writeNote(ctx, scope, candidate, row))?.updatedAt ?? null;
   } else {
-    updatedAt = await candidate.write(row);
+    const wrote = await candidate.write(row);
+    if (wrote === null || wrote instanceof Date) {
+      updatedAt = wrote;
+    } else {
+      // What was actually written, before the row reads applied (the activity's count and dates, and the refit's).
+      await stores.agentChanges.setWritten(scope, candidate.locationId, row.id, {
+        count: wrote.count, startDate: wrote.dates?.startDate ?? null, endDate: wrote.dates?.endDate ?? null,
+      });
+      updatedAt = wrote.updatedAt;
+    }
   }
   if (updatedAt === null) {
     // Nothing was added after all (a cap, or the target went): the key is freed, so a later read may try again.
@@ -243,7 +264,7 @@ export async function applyChange(
       ...candidate.actor, at: ctx.now(), orgId: scope.orgId, action: 'agent.change_applied', target: { type: 'location', id: candidate.locationId },
       details: { locationId: candidate.locationId, action: candidate.action, sourceKind: candidate.sourceKind },
     });
-    await wantRefit();
+    await wantRefit((await stores.agentChanges.find(scope, candidate.locationId, row.id)) ?? row);
   }
   const after = await stores.agentChanges.find(scope, candidate.locationId, row.id);
   return { outcome: 'applied', change: after ?? row };

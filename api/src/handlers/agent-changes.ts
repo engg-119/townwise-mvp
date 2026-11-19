@@ -8,7 +8,8 @@
 // leaves it `undone` (200). A retry of any step finishes it. A calibration already started is never undone. Undo per
 // calendar (slice 2, a `booking.label` change): the notes that calendar's sort made are undone first, each as its own
 // change (one a person changed since is theirs and stays), then the labels that sort set that nobody changed since are
-// cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again. [CONFIRM:
+// cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again (or reads as
+// never sorted when no label is left); it answers 409 change_in_progress while the calendar's sort still runs. [CONFIRM:
 // Undo per calendar takes back the notes, labels and confirm TownwiseAI made that nobody changed since] Logs and
 // audit events carry ids, the action and the source kind only: never a title, a why, a file name or a figure.
 import { objectId } from '@ckeith26/mongo';
@@ -162,6 +163,8 @@ async function removeTarget(ctx: TownwiseContext, caller: MemberPrincipal, locat
       const cleared = await calendars.clearAiLabels(scope, location.id, change.targetId, change.targetUpdatedAt ?? change.appliedAt);
       if (cleared === null) return 'gone';
       await calendars.unconfirmBy(scope, location.id, change.targetId, TOWNWISE_AI_AUTHOR);
+      // No label left at all: the calendar reads as never sorted, so its page offers Sort again, not an empty confirm.
+      await calendars.unsortIfUnlabeled(scope, location.id, change.targetId, ctx.now());
       return cleared > 0 ? 'removed' : 'gone';
     }
     case 'rule.add':
@@ -204,6 +207,11 @@ async function undoRow(
 ): Promise<AgentChangeRecord> {
   const { scope } = caller;
   let change: AgentChangeRecord | null = row;
+  // A calendar's labels while its sort still runs (its notes are being written): Undo waits until the sort ends.
+  if (change.action === 'booking.label' && change.status === 'applied'
+    && (await ctx.stores.ownerCalendars.find(scope, location.id, change.targetId))?.autoSort?.status === 'sorting') {
+    throw new AppError(409, 'change_in_progress', 'TownwiseAI is still saving this');
+  }
   if (change.status === 'applied') {
     change = await ctx.stores.agentChanges.markUndoing(scope, location.id, change.id, { by: caller.userId, now: ctx.now() })
       ?? await ctx.stores.agentChanges.find(scope, location.id, change.id);

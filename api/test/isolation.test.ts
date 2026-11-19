@@ -49,7 +49,7 @@ describe('isolation (source)', () => {
     expect(importers).toEqual(['agent/apply.ts', 'stores/cross-tenant.ts', 'stores/index.ts']);
     // The one writer: every change TownwiseAI saves goes through applyChange. Undo moves a row's status
     // (handlers/agent-changes.ts), and a file's own undo marks its rows (handlers/data.ts).
-    const writers = sourceFiles().filter((file) => /agentChanges\.(insertApplying|markApplied|removeApplying)\(/.test(file.text)).map((file) => file.path);
+    const writers = sourceFiles().filter((file) => /agentChanges\.(insertApplying|setWritten|markApplied|removeApplying)\(/.test(file.text)).map((file) => file.path);
     expect(writers).toEqual(['agent/apply.ts']);
     const undoers = sourceFiles().filter((file) => /agentChanges\.(markUndoing|markUndone|markAdopted|markSourceUndone)\(/.test(file.text)).map((file) => file.path).sort();
     expect(undoers.every((path) => ['handlers/agent-changes.ts', 'handlers/data.ts'].includes(path))).toBe(true);

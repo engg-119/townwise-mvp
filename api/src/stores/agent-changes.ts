@@ -153,6 +153,11 @@ export interface AgentChangeStore {
   insertApplying(scope: OrgScope, input: NewAgentChange): Promise<{ readonly record: AgentChangeRecord; readonly created: boolean }>;
   /** `applying` to `applied` with the target's updatedAt, by compare-and-set. False when another call did it first. */
   markApplied(scope: OrgScope, locationId: string, id: string, input: { targetUpdatedAt: Date; now: Date }): Promise<boolean>;
+  /**
+   * Slice 2: a row still `applying` gets what its writer actually wrote (a calendar sort's label count and the dates of
+   * its buyouts and parties), by compare-and-set, before it is marked applied. False when it was no longer `applying`.
+   */
+  setWritten(scope: OrgScope, locationId: string, id: string, input: { count: number; startDate: string | null; endDate: string | null }): Promise<boolean>;
   /** Deletes a row still `applying` whose target was never written (nothing to add after all). */
   removeApplying(scope: OrgScope, locationId: string, id: string): Promise<boolean>;
   /** `applied` to `undoing`, by compare-and-set; the row after, or null when it was not `applied`. */
@@ -234,6 +239,13 @@ export function createAgentChangeStore(connection: Connection): AgentChangeStore
         { $set: { status: 'applied', targetUpdatedAt: input.targetUpdatedAt, statusAt: input.now, statusBy: 'townwise_ai' } },
       );
       return result.modifiedCount === 1;
+    },
+    async setWritten(scope, locationId, id, input) {
+      const result = await Change.updateOne(
+        { ...one(scope, locationId, id), status: 'applying' },
+        { $set: { count: input.count, startDate: input.startDate, endDate: input.endDate } },
+      );
+      return result.matchedCount === 1;
     },
     async removeApplying(scope, locationId, id) {
       return (await Change.deleteOne({ ...one(scope, locationId, id), status: 'applying' })).deletedCount === 1;
