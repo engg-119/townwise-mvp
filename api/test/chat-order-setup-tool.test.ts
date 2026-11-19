@@ -193,9 +193,10 @@ describe('propose_order_setup', () => {
 });
 
 describe('propose_order_setup in a turn', () => {
-  it('is the last tool of the registry, after propose_order_rule', () => {
-    expect(TOOL_REGISTRY.at(-1)).toBe(proposeOrderSetupTool);
-    expect(TOOL_REGISTRY.at(-2)?.definition.name).toBe('propose_order_rule');
+  it('follows propose_order_rule in the registry, with only D66\'s correct_calendar_event after it', () => {
+    expect(TOOL_REGISTRY.at(-2)).toBe(proposeOrderSetupTool);
+    expect(TOOL_REGISTRY.at(-3)?.definition.name).toBe('propose_order_rule');
+    expect(TOOL_REGISTRY.at(-1)?.definition.name).toBe('correct_calendar_event');
     expect(toolNamed('propose_order_setup')).toBe(proposeOrderSetupTool);
     expect(inputViewOf('propose_order_setup', answer(), TODAY)).toEqual({ ref: REF, supplierCount: 1, itemCount: 1 });
   });
