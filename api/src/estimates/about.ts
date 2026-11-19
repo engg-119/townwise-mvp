@@ -11,7 +11,7 @@ import type { LiveAccuracy } from '../forecasts/score.ts';
 import type { PeopleData, PeopleSource } from '../people-in-town/sources.ts';
 
 /** Bumped whenever a sentence below changes, so a reader can tell which card it saw. */
-export const MODEL_CARD_VERSION = '2026-11-05';
+export const MODEL_CARD_VERSION = '2026-11-19';
 
 export interface ModelCardFacts {
   estimates: string;
@@ -23,7 +23,7 @@ export interface ModelCardFacts {
 }
 
 export const MODEL_CARD: ModelCardFacts = {
-  estimates: 'Guests per day and per week, each as a range (about 8 in 10 days should land inside it), never one exact number.',
+  estimates: 'Guests per day and per week, each as a range (about 8 in 10 days should land inside it), never one exact number. Up to a year ahead: the first 3 months are the forecast, and the rest an outlook with a wider range.',
   inputs: [
     'Your daily guests and net sales.',
     'Your notes: closures, private events and other unusual days.',
@@ -42,6 +42,7 @@ export const MODEL_CARD: ModelCardFacts = {
     'Big holiday nights rest on three nights from one year.',
     'Guest counts are entered by staff, and guests per order changed over 2025 and 2026.',
     'The model was built for one restaurant and is not yet trained for others.',
+    'Days more than 3 months ahead don’t yet know events the town hasn’t announced.',
   ],
   checked: 'Forecasts are saved before their days happen and scored openly afterwards, misses included.',
   whoCanSee: 'Townwise staff only. You see its outputs; TownwiseAI reads them for you.',

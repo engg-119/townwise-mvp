@@ -48,5 +48,5 @@ test('says what weekly suggestions keep and send to Anthropic, that an org admin
   // A note's detail and a rule's words go as written, so a name the team wrote there goes too (2026-11-17 review).
   // An owner-calendar event's title goes as written too (calendar-event-suggestions), with emails and phone numbers removed.
   expect(text).toContain('never your team’s names or email addresses (apart from any written in a note, a rule or an event’s title), a calendar’s name, or your organization’s or location’s name. Each week’s suggestions use your organization’s monthly TownwiseAI budget.');
-  expect(text).toContain('Last updated November 18, 2026.');
+  expect(text).toContain('Last updated November 19, 2026.');
 });

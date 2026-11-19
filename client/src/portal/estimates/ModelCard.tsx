@@ -58,7 +58,7 @@ export function runLines(run: ForecastRun): string[] {
   const lines = [
     `Forecast: ${run.model.label}, ${from}, made ${formatDate(run.madeAt)}. It saw no sales after ${formatDate(run.dataThrough)}.`,
     ...(baseline ? ['A baseline, not Townwise’s trained demand model: each day is its weekday’s recent level, times last year’s seasonal shape and the town calendar’s effects.'] : []),
-    'Each day and week is a range that about 8 in 10 days should land inside.',
+    'Each day and week of the first 3 months is a range that about 8 in 10 days should land inside; the outlook’s ranges are wider on purpose.',
   ];
   if (run.interval.widened) lines.push('Its ranges were widened after they ran narrow in backtests.');
   const { backtest } = run;
