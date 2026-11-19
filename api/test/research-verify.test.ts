@@ -139,6 +139,25 @@ describe('grounding and confidence', () => {
     expect(grounded({ dateQuote: 'Fair on May 15', startDate: '2027-05-15', weekdays: null }, withRecent, NOW)).toBe(true);
   });
 
+  it('does not ground a quote whose date names another year, however recent its page', () => {
+    const page = (quote: string, pageAge: string) => [{
+      id: 'S1', url: FAIR, host: 'example.com', title: null, pageAge, quotes: [quote], fetchedText: null,
+    }];
+    const on = (quote: string, startDate: string, pageAge = '3 days ago') =>
+      grounded({ dateQuote: quote, startDate, weekdays: null }, page(quote, pageAge), NOW);
+    // Last year's dates: a year on the date passed the staleness check before, whatever year it named.
+    expect(on('Fair on May 15, 2025', '2027-05-15', 'March 1, 2025')).toBe(false);
+    expect(on('Fair on Saturday, May 15, 2026', '2027-05-15')).toBe(false);
+    expect(on('the 15th of May 2026', '2027-05-15')).toBe(false);
+    expect(on('May 15-17, 2026', '2027-05-15')).toBe(false);
+    expect(on('on 5/15/26', '2027-05-15')).toBe(false);
+    // The start's own year on the date, or a year elsewhere in the quote, still grounds it.
+    expect(on('Fair on May 15, 2027', '2027-05-15', 'March 1, 2025')).toBe(true);
+    expect(on('May 15-17, 2027', '2027-05-15')).toBe(true);
+    expect(on('Class of 2002 reunion, May 15', '2027-05-15')).toBe(true);
+    expect(on('Dec 28 to Jan 3, 2027', '2026-12-28')).toBe(true);
+  });
+
   it('rates by code: high on 2 hosts, medium on 1, low ungrounded', () => {
     expect(codeConfidence(true, sources('S1', 'S2'))).toBe('high');
     expect(codeConfidence(true, sources('S1'))).toBe('medium');

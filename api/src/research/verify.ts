@@ -144,6 +144,27 @@ export function mentionsDate(quote: string, startDate: string, weekdays: readonl
   return weekdays.every((weekday) => new RegExp(`\\b${anyOf(WEEKDAY_NAMES[weekday] ?? [])}s?\\b`).test(lower));
 }
 
+/**
+ * The years the quote writes on its start date itself ("May 15, 2025", "15 May 2025", "May 15-17, 2025", "5/15/25"),
+ * not a year elsewhere in it ("Class of 2002 reunion, June 12").
+ */
+function yearsOnDate(quote: string, startDate: string): number[] {
+  const month = Number(startDate.slice(5, 7));
+  const day = Number(startDate.slice(8, 10));
+  const names = anyOf(MONTHS[month - 1] ?? []);
+  const d = `0?${String(day)}(?:st|nd|rd|th)?(?:\\s*-\\s*\\d{1,2}(?:st|nd|rd|th)?)?`;
+  const year = '((?:19|20)\\d{2})';
+  const patterns = [
+    new RegExp(`\\b${names}\\.?\\s+${d},?\\s+${year}\\b`, 'g'),
+    new RegExp(`\\b${d}\\s+(?:of\\s+)?${names},?\\s+${year}\\b`, 'g'),
+    new RegExp(`\\b0?${String(month)}/0?${String(day)}/((?:19|20)?\\d{2})\\b`, 'g'),
+  ];
+  return patterns.flatMap((pattern) => [...quote.matchAll(pattern)].map((match) => {
+    const value = Number(match[1]);
+    return value < 100 ? 2000 + value : value;
+  }));
+}
+
 /** Text as grounding compares it: one form of each character, curly quotes and dashes made plain, spaces collapsed. */
 function normalized(value: string): string {
   return value.normalize('NFKC').toLowerCase()
@@ -189,7 +210,8 @@ function allStale(sources: readonly LedgerSource[], now: Date): boolean {
 
 /**
  * Whether the event's date is grounded: its quote, normalized, is in the cited words or fetched text of one of its own
- * sources, it states the start date, and it states a year unless at least one source is recent enough.
+ * sources, it states the start date, a year written on that date is the start's own (last year's "May 15, 2025" never
+ * grounds a 2027 date, however recent its page), and it states a year unless at least one source is recent enough.
  */
 export function grounded(event: { dateQuote: string; startDate: string; weekdays: readonly number[] | null }, sources: readonly LedgerSource[], now: Date): boolean {
   const key = quoteKey(event.dateQuote);
@@ -197,6 +219,8 @@ export function grounded(event: { dateQuote: string; startDate: string; weekdays
   const found = sources.some((source) => [...source.quotes, ...(source.fetchedText === null ? [] : [source.fetchedText])]
     .some((textOf) => normalized(textOf).includes(key)));
   if (!found) return false;
+  const dated = yearsOnDate(key, event.startDate);
+  if (dated.length > 0) return dated.includes(Number(event.startDate.slice(0, 4)));
   return /\b(?:19|20)\d{2}\b/.test(key) || !allStale(sources, now);
 }
 

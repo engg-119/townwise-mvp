@@ -34,7 +34,7 @@ The ledger SHALL hold only https URLs returned in a web search result, a web fet
 - **THEN** the entity is dropped and its event is kept with no venue
 
 ### Requirement: Confidence is computed by code
-An event SHALL be grounded when its `dateQuote`, normalized, appears in a cited text or fetched text of one of its sources and mentions its start date (month and day, or the weekday names of a recurrence); a quote with no year whose sources are all more than 9 months old SHALL be ungrounded. Confidence SHALL be `high` when grounded with sources on at least 2 hosts, `medium` when grounded with 1 host, `low` otherwise, and the stored value SHALL be the lower of this and the model's. [CONFIRM: confidence high when a cited quote states the date and 2 sites agree, medium for 1 site, low otherwise]
+An event SHALL be grounded when its `dateQuote`, normalized, appears in a cited text or fetched text of one of its sources and mentions its start date (month and day, or the weekday names of a recurrence); a quote whose start date is written with another year than the start's SHALL be ungrounded, and a quote with no year whose sources are all more than 9 months old SHALL be ungrounded. Confidence SHALL be `high` when grounded with sources on at least 2 hosts, `medium` when grounded with 1 host, `low` otherwise, and the stored value SHALL be the lower of this and the model's. [CONFIRM: confidence high when a cited quote states the date and 2 sites agree, medium for 1 site, low otherwise]
 
 #### Scenario: Two sites agree
 - **WHEN** an event's quote "Saturday, May 16" appears in the cited text of sources on two hosts and the model said `medium`
@@ -43,6 +43,10 @@ An event SHALL be grounded when its `dateQuote`, normalized, appears in a cited 
 #### Scenario: Ungrounded date
 - **WHEN** an event's quote does not appear in any cited text of its sources
 - **THEN** it is stored `low`
+
+#### Scenario: Last year's date
+- **WHEN** an event on 2027-05-15 quotes "Fair on May 15, 2026" from a page found 3 days ago
+- **THEN** it is ungrounded and stored `low`
 
 ### Requirement: Findings merge into stored events without duplicates
 The merge SHALL be the only writer of researched events and entities. It SHALL dedupe findings across threads (start within a day or overlapping ranges, and title-token Jaccard at least 0.5; or the same venue, start and category), drop findings matching a curated town calendar row (`curated_dupe`) and `schools` findings on a curated term's start or end, drop location findings matching a stored town row, and match the rest against the subject's stored rows (Jaccard at least 0.6 and overlapping dates). A match SHALL update `lastSeenAt`, `lastRunId`, `seenCount`, sources (at most 5) and confidence (raised only), and SHALL change `status` to cancelled or postponed only on a finding of at least `medium` code confidence and at least the row's own; it SHALL never change its title or dates; no match SHALL insert a row. Location rows SHALL be stamped with the place and town they were researched for. Events that ended more than 400 days before SHALL be deleted, entities unseen for 365 days that no event names, and run and thread rows older than 400 days; a merged run's threads SHALL keep their counts and drops but not their raw candidates. [CONFIRM: a finding that repeats a curated row or a curated term date is dropped] [CONFIRM: researched events, runs and threads kept 400 days, a run's raw candidates cleared once merged, and a row not found again kept with its last confirmed date]

@@ -1,7 +1,7 @@
 // What a research thread sends Anthropic (D66 design decisions 4 and 16): the gather call's system prompt and user
 // message, and the extract call's input. Pure: the runner reads the stores and passes their rows' base values in, so
-// this file imports no store, and never a revision (test/isolation.test.ts): a member's typed edit never reaches a
-// prompt. No input here takes an organization's name, a note, a rule, a sales figure, an owner calendar title, an email
+// this file reads no store (it imports only the location record's type), and never a revision (test/isolation.test.ts):
+// a member's typed edit never reaches a prompt. No input here takes an organization's name, a note, a rule, a sales figure, an owner calendar title, an email
 // or a person's name, so none can be sent.
 //
 // The restaurant: while Google's names may go to Anthropic (TOWNWISE_RESEARCH_PLACES_TO_AI), its Google profile name
