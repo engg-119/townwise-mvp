@@ -9,7 +9,7 @@
 // 90-second lease whose 30-second heartbeat writes the spend tally, settles the reservation to what it cost, and ends
 // the thread recorded, empty, budget or failed (a retryable failure waits 10, then 60 minutes; a thread is tried at most
 // twice). A missed heartbeat (the thread was ended by a place change, a deletion or a reclaim) aborts the call: the lane
-// settles and writes nothing else. A graceful shutdown aborts the calls, settles and puts the threads back with the
+// settles (unless a reclaim already did) and writes nothing else. A graceful shutdown aborts the calls, settles and puts the threads back with the
 // attempt counted. A dead replica's thread is reclaimed by the stale sweep, which charges its last written tally plus 30
 // seconds of streaming at the ceiling rate and refunds the rest.
 //
@@ -129,6 +129,8 @@ interface Job {
   readonly locationId: string | null;
   readonly ids: Record<string, string>;
   findRun(): Promise<RunRecordBase | null>;
+  /** The thread's row as it is now; null once deleted. */
+  findThread(): Promise<ThreadRecordBase | null>;
   markRunning(now: Date): Promise<boolean>;
   reserveThread(input: { reservedMicroUsd: number; month: string }): Promise<boolean>;
   heartbeat(input: ThreadTallyWrite & { now: Date; leaseMs: number }): Promise<boolean>;
@@ -170,6 +172,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       subject: 'town', thread, owner, townKey: thread.townKey, scope: null, locationId: null,
       ids: { townKey: thread.townKey, runId: thread.runId, threadId: thread.id },
       findRun: () => store.findRun(thread.runId),
+      findThread: async () => (await store.threadsOf(thread.runId)).find((each) => each.id === thread.id) ?? null,
       markRunning: (at) => store.markRunRunning(thread.runId, at),
       reserveThread: (input) => store.reserveThread(thread.id, owner, input),
       heartbeat: (input) => store.heartbeat(thread.id, owner, input),
@@ -184,6 +187,7 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       subject: 'location', thread, owner, townKey: null, scope, locationId,
       ids: { orgId: scope.orgId, locationId, runId: thread.runId, threadId: thread.id },
       findRun: () => store.findRun(scope, thread.runId),
+      findThread: async () => (await store.threadsOf(scope, thread.runId)).find((each) => each.id === thread.id) ?? null,
       markRunning: (at) => store.markRunRunning(scope, thread.runId, at),
       reserveThread: (input) => store.reserveThread(scope, thread.id, owner, input),
       heartbeat: (input) => store.heartbeat(scope, thread.id, owner, input),
@@ -370,25 +374,44 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
     } finally {
       clearInterval(heartbeat);
     }
-    // The reservation becomes what the thread cost.
-    await settle(job, inMonth, outcome.costMicroUsd - reserved);
     const spent = { spentMicroUsd: outcome.costMicroUsd, searches: outcome.searches, fetches: outcome.fetches };
     const log = (status: string, code: string | null, kept = 0, dropped = 0): void => {
       logThread(job, { outcome: status, code, kept, dropped, ...spent, costMicroUsd: outcome.costMicroUsd, started });
     };
+    // The reservation becomes what the thread cost, settled exactly once. After this lane moved its own row (requeue or
+    // finish) it is the only one that can. When the row was moved under it, it settles only if the row still holds this
+    // attempt's reservation (a place change ended it) or is gone (a deletion); a stale reclaim gave the reservation up
+    // in its own write and settled it then. A crash between the move and the settle leaves the month charged the
+    // reservation: too much, never too little.
+    const settleOwn = (): Promise<void> => settle(job, inMonth, outcome.costMicroUsd - reserved);
+    const settleLost = async (): Promise<void> => {
+      const row = await job.findThread();
+      if (row === null || (row.attempts === job.thread.attempts && row.month === inMonth && row.reservedMicroUsd === reserved)) await settleOwn();
+    };
 
     if (outcome.kind === 'aborted') {
       if (lost.signal.aborted || !closing.signal.aborted) {
+        await settleLost();
         log('lost', null);
         return false;
       }
       // A graceful shutdown: back in the queue, the attempt counted.
-      if (await job.requeue({ ...spent, notBefore: now(), code: 'interrupted' })) log('requeued', 'interrupted');
+      if (await job.requeue({ ...spent, notBefore: now(), code: 'interrupted' })) {
+        await settleOwn();
+        log('requeued', 'interrupted');
+      } else {
+        await settleLost();
+      }
       return false;
     }
     if (outcome.kind === 'failed' && outcome.retry && job.thread.attempts < RESEARCH_MAX_ATTEMPTS) {
       const wait = waits[Math.min(job.thread.attempts, waits.length) - 1] ?? 0;
-      if (await job.requeue({ ...spent, notBefore: new Date(now().getTime() + wait), code: outcome.code })) log('retry', outcome.code);
+      if (await job.requeue({ ...spent, notBefore: new Date(now().getTime() + wait), code: outcome.code })) {
+        await settleOwn();
+        log('retry', outcome.code);
+      } else {
+        await settleLost();
+      }
       return false;
     }
     let end: ThreadEnd;
@@ -413,9 +436,11 @@ export function createResearchRunner(deps: ResearchRunnerDeps): ResearchRunner {
       end = { status: 'failed', code: outcome.code, found: null, drops: null, ...spent, now: now() };
     }
     if (!await job.finish(end)) {
+      await settleLost();
       log('lost', null);
       return false;
     }
+    await settleOwn();
     log(end.status, end.code, end.status === 'recorded' ? kept : 0, dropped);
     return true;
   }

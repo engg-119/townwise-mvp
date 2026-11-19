@@ -378,11 +378,14 @@ export const threadMoves = {
       { sort: { notBefore: 1, _id: 1 }, returnDocument: 'after' },
     ).lean<ThreadDoc>();
   },
-  /** Records the reservation and its month on `owner`'s running thread. */
+  /**
+   * Records the reservation and its month on `owner`'s running thread, and starts this attempt's tally at 0, so a stale
+   * reclaim charges this attempt's spend and not an earlier one's.
+   */
   async reserve(model: Model<ThreadDoc>, base: Filter, id: string, owner: string, input: { reservedMicroUsd: number; month: string }): Promise<boolean> {
     const result = await model.updateOne(
       { ...base, _id: new Types.ObjectId(id), status: 'running', owner },
-      { $set: { reservedMicroUsd: input.reservedMicroUsd, month: input.month } },
+      { $set: { reservedMicroUsd: input.reservedMicroUsd, month: input.month, spentMicroUsd: 0, searches: 0, fetches: 0 } },
     );
     return result.matchedCount === 1;
   },
@@ -412,14 +415,18 @@ export const threadMoves = {
     );
     return result.modifiedCount === 1;
   },
-  /** Puts `owner`'s running thread back in the queue until `notBefore` (a retry, or a graceful shutdown). */
+  /**
+   * Puts `owner`'s running thread back in the queue until `notBefore` (a retry, or a graceful shutdown). The lane settles
+   * the reservation itself, so the row no longer holds one: a later stale reclaim (a crash after the next claim, before
+   * its reservation) then gives nothing back twice.
+   */
   async requeue(model: Model<ThreadDoc>, base: Filter, id: string, owner: string, input: ThreadTallyWrite & { notBefore: Date; code: string | null }): Promise<boolean> {
     const result = await model.updateOne(
       { ...base, _id: new Types.ObjectId(id), status: 'running', owner },
       {
         $set: {
           status: 'queued', code: input.code, owner: null, leaseUntil: null, notBefore: input.notBefore,
-          spentMicroUsd: input.spentMicroUsd, searches: input.searches, fetches: input.fetches,
+          spentMicroUsd: input.spentMicroUsd, searches: input.searches, fetches: input.fetches, reservedMicroUsd: 0, month: null,
         },
       },
     );
@@ -427,12 +434,14 @@ export const threadMoves = {
   },
   /**
    * Takes back a running thread whose lease passed (a dead replica's), queued again or ended, and answers it as it was,
-   * so the caller settles its last written tally (decision 6). Null when it was not stale by then.
+   * so the caller settles its last written tally (decision 6). Null when it was not stale by then. The row gives up its
+   * reservation in the same write, so the caller is the only one to settle it: a lane still alive past its lease sees
+   * that and settles nothing, and a second reclaim before the next reservation gives nothing back again.
    */
   async reclaim(model: Model<ThreadDoc>, base: Filter, id: string, input: { now: Date; next: { status: 'queued'; notBefore: Date } | { status: 'failed'; code: string } }): Promise<ThreadDoc | null> {
     const set = input.next.status === 'queued'
-      ? { status: 'queued', owner: null, leaseUntil: null, notBefore: input.next.notBefore }
-      : { status: 'failed', code: input.next.code, owner: null, leaseUntil: null, finishedAt: input.now };
+      ? { status: 'queued', owner: null, leaseUntil: null, notBefore: input.next.notBefore, reservedMicroUsd: 0, month: null }
+      : { status: 'failed', code: input.next.code, owner: null, leaseUntil: null, finishedAt: input.now, reservedMicroUsd: 0, month: null };
     return model.findOneAndUpdate(
       { ...base, _id: new Types.ObjectId(id), status: 'running', leaseUntil: trusted({ $lte: input.now }) },
       { $set: set },

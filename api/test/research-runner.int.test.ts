@@ -217,8 +217,27 @@ describe('the runner: threads', () => {
     r.nudge();
     await until(async () => ((await threadDoc())?.reservedMicroUsd as number) > 0);
     await r.close();
-    expect(await threadDoc()).toMatchObject({ status: 'queued', code: 'interrupted', attempts: 1, owner: null });
+    // The lane settled the reservation, so the row holds none for a later reclaim to give back again.
+    expect(await threadDoc()).toMatchObject({ status: 'queued', code: 'interrupted', attempts: 1, owner: null, reservedMicroUsd: 0, month: null });
     expect(await stores.researchSpend.spent(MONTH, 'hanover-nh')).toEqual({ month: 0, town: 0 });
+  });
+
+  it('a lane whose lease the stale sweep took settles nothing itself: the sweep’s charge stands alone', async () => {
+    await townRun();
+    const { model } = answering({ gather: () => ({ kind: 'hang', before: [] }) });
+    // No heartbeat: the lane stalls past its lease while still alive.
+    const stalled = runner(model, { heartbeatMs: 3_600_000 });
+    stalled.nudge();
+    await until(async () => ((await threadDoc())?.reservedMicroUsd as number) > 0);
+    const reserved = (await threadDoc())?.reservedMicroUsd as number;
+    clock = new Date(NOW.getTime() + 10 * 60_000);
+    await runner(answering().model, { lanes: 0 }).plan();
+    expect(await threadDoc()).toMatchObject({ status: 'queued', owner: null, reservedMicroUsd: 0, month: null });
+    const charged = Math.min(reserved, staleGraceMicroUsd());
+    expect(await stores.researchSpend.spent(MONTH, 'hanover-nh')).toEqual({ month: charged, town: charged });
+    // The stalled lane's call ends; its row was taken, so it gives nothing back.
+    await stalled.close();
+    expect(await stores.researchSpend.spent(MONTH, 'hanover-nh')).toEqual({ month: charged, town: charged });
   });
 
   it('a dead replica’s thread is put back and charged its last tally plus 30 seconds, the rest refunded', async () => {
@@ -232,6 +251,13 @@ describe('the runner: threads', () => {
     expect(await threadDoc()).toMatchObject({ status: 'queued', owner: null, attempts: 1 });
     const charged = 1_000_000 + staleGraceMicroUsd();
     expect(charged).toBeLessThan(5_000_000);
+    expect(await stores.researchSpend.spent(MONTH, 'hanover-nh')).toEqual({ month: charged, town: charged });
+    // The next claim dies too, before its reservation: the second reclaim has nothing to give back.
+    await server.connection.collection('tw_town_research_threads').updateOne({ runId: new Types.ObjectId(created.id) }, {
+      $set: { status: 'running', owner: 'dead-2', leaseUntil: new Date(NOW.getTime() - 1000), attempts: 2 },
+    });
+    await runner(answering().model, { lanes: 0 }).plan();
+    expect(await threadDoc()).toMatchObject({ status: 'queued', owner: null, attempts: 2 });
     expect(await stores.researchSpend.spent(MONTH, 'hanover-nh')).toEqual({ month: charged, town: charged });
   });
 
