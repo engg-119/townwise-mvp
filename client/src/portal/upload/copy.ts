@@ -197,14 +197,16 @@ export function startedAt(since: string, now: Date = new Date()): string {
 
 /**
  * D65, the model card's updating sentence (P24), null while nothing updates. "Building" only while a first forecast
- * runs; `waiting` states no time and promises no publish (14.1). The API's overview tool says the same (calibrationWords).
+ * runs, with no day count: the coverage's days include likely-closed ones, so the count would disagree with the card's
+ * "Based on N days with a guest count" and the run's own days in the history. `waiting` states no time and promises no
+ * publish (14.1). The API's overview tool says the same (calibrationWords).
  */
 export function updatingLine(calibration: Calibration, now: Date = new Date()): string | null {
   const updating = updatingOf(calibration);
   if (updating === null) return null;
   if (updating.stage === 'waiting') return 'Your first forecast is next. Townwise starts building it soon.';
   const started = startedAt(updating.since, now);
-  if (calibration.state === 'not_calibrated') return `Building your first forecast from ${plural(calibration.dayCount, 'day', 'days')}, started ${started}.`;
+  if (calibration.state === 'not_calibrated') return `Building your first forecast, started ${started}.`;
   if (calibration.state === 'no_sales_data' || calibration.newerDays === 0) return `Updating your forecast, started ${started}.`;
   return `Updating your forecast with ${plural(calibration.newerDays, 'new day', 'new days')}, started ${started}.`;
 }
@@ -259,7 +261,9 @@ export const FIRST_FORECAST_REASONS: Readonly<Record<Exclude<OwnerReason, 'publi
 
 /**
  * D65 design decision 4, Home's notice: a `not_calibrated` location that isn't updating and whose last run wasn't
- * published, from the server's `lastRun`, so it shows whenever the owner comes back. The next step is left out for
+ * published, from the server's `lastRun`, so it shows whenever the owner comes back. "The first forecast" only while
+ * that run was to be the first (`lastRun.firstForecast`); once a forecast was published and since withdrawn, the
+ * history shows that first forecast, so the notice says "The newest forecast". The next step is left out for
  * `forecasts_off`, whose reason already says why. Null otherwise: with no last run Home keeps its plain line, and a
  * last run that was published (every run since withdrawn) wasn't "not published".
  */
@@ -268,7 +272,7 @@ export function notPublishedLine(calibration: Calibration, name: string): { text
   if (calibration.state !== 'not_calibrated' || updatingOf(calibration) !== null || last === null) return null;
   if (last.reason === 'published' || last.reason === 'published_by_staff') return null;
   return {
-    text: `The first forecast for ${name} wasn’t published: ${FIRST_FORECAST_REASONS[last.reason]}`,
+    text: `The ${last.firstForecast === false ? 'newest' : 'first'} forecast for ${name} wasn’t published: ${FIRST_FORECAST_REASONS[last.reason]}`,
     next: last.reason === 'forecasts_off' ? null : 'Townwise tries again after your next sales upload.',
   };
 }

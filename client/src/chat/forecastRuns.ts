@@ -8,7 +8,8 @@ import { rangeText } from './format';
 // in the owner's words: what happened (the outcome sentence), then what started it, then the days it used. The server
 // sends codes only; the staff GATE_WORDS and FAILURE_WORDS say what staff can do about a draft and never show here.
 // A first forecast has its own sentence for every reason, built on Home's not-published clauses (FIRST_FORECAST_REASONS),
-// so it never mentions a current forecast or says the forecast didn't change: there was none. No sentence states a
+// so it never mentions a current forecast or says the forecast didn't change: there was none. A later run of a location
+// with no forecast now (`currentForecast` false: every run since withdrawn) reads the same way. No sentence states a
 // minimum history (14.1) or promises a retry (a cleared refit mark is not retried until new data arrives); Home's notice
 // states the next step. `sales` covers staff setup's upload too, so it never says "your upload". Dates and day counts
 // are the only figures. Pure: nothing here reads or writes. [CONFIRM: the owner reasons, their later-run and
@@ -38,6 +39,19 @@ const FIRST_LEAD: Readonly<Record<Exclude<keyof typeof FIRST_FORECAST_REASONS, '
   forecasts_off: 'Not published', newer_forecast: 'Not used', staff_withdrew: 'Not used', not_judged: 'Not used',
 };
 
+/**
+ * A later run of a location with no forecast now (every published run since withdrawn or lapsed): what happened, with
+ * no "current" forecast and no "didn’t change", which the history's first forecast above it would contradict.
+ */
+function noForecastWords(reason: OwnerReason): string {
+  switch (reason) {
+    case 'published': return 'Published.';
+    case 'published_by_staff': return 'Published by Townwise staff after a review.';
+    case 'failed': return 'Couldn’t run.';
+    default: return `${FIRST_LEAD[reason]}: ${FIRST_FORECAST_REASONS[reason]}`;
+  }
+}
+
 /** What started a run. */
 export const CAUSE_WORDS: Readonly<Record<OwnerCause, string>> = {
   weekly: 'Weekly refresh',
@@ -50,8 +64,8 @@ export const CAUSE_WORDS: Readonly<Record<OwnerCause, string>> = {
 };
 
 /** The outcome sentence: the activity line itself. */
-export function runOutcomeLine(item: Pick<ForecastMadeItem, 'reason' | 'firstForecast'>): string {
-  if (!item.firstForecast) return LATER_WORDS[item.reason];
+export function runOutcomeLine(item: Pick<ForecastMadeItem, 'reason' | 'firstForecast' | 'currentForecast'>): string {
+  if (!item.firstForecast) return item.currentForecast === false ? noForecastWords(item.reason) : LATER_WORDS[item.reason];
   switch (item.reason) {
     case 'published': return 'Your first forecast was published.';
     case 'published_by_staff': return 'Your first forecast was published by Townwise staff after a review.';

@@ -19,7 +19,7 @@ import type { TownwiseContext } from './app.ts';
 import { daysBetween, utcDay } from './dates.ts';
 import { GATE } from './lab/gate.ts';
 import { guestSpan } from './lab/input.ts';
-import { ownerOutcomeOf, runningAt, type OwnerOutcome, type OwnerReason } from './lab/owner-outcome.ts';
+import { firstForecastOf, ownerOutcomeOf, runningAt, type OwnerOutcome, type OwnerReason } from './lab/owner-outcome.ts';
 import type { CalibrationRecord } from './stores/calibrations.ts';
 import type { RunState } from './stores/forecasts.ts';
 import { shortDate } from './orders/dates.ts';
@@ -41,8 +41,12 @@ interface PublishedFields extends HistoryFields { dataThrough: string; newerDays
 /** D65: the forecast is being updated since `since` (ISO): a live calibration, or a first forecast the pass will start. */
 export interface Updating { stage: 'running' | 'waiting'; since: string }
 
-/** D65: a not_calibrated location's newest calibration once it finished (ISO `finishedAt`), in owner codes. */
-export interface LastRun { outcome: OwnerOutcome; reason: OwnerReason; finishedAt: string }
+/**
+ * D65: a not_calibrated location's newest calibration once it finished (ISO `finishedAt`), in owner codes, and whether it
+ * was to be the location's first forecast, by the history's rule (false once a run was published before it, since
+ * withdrawn), so Home never calls it the first when the history shows a first forecast published.
+ */
+export interface LastRun { outcome: OwnerOutcome; reason: OwnerReason; firstForecast: boolean; finishedAt: string }
 
 export type Calibration =
   | { state: 'no_sales_data'; updating: null }
@@ -95,12 +99,20 @@ export function updatingOf(
 
 /**
  * D65 design decision 4, pure: the newest calibration's owner outcome (lab/owner-outcome.ts), null while the location
- * is updating or has none. `run` is its run's state (null when it has none, it is gone, or it was not read).
+ * is updating or has none. `run` is its run's state (null when it has none, it is gone, or it was not read); `first` is
+ * forecasts.firstPublished's answer, for `firstForecast` (firstForecastOf, as the history reads it).
  */
-export function lastRunOf(newest: CalibrationRecord | null, run: RunState | null, updating: Updating | null, now: Date): LastRun | null {
+export function lastRunOf(
+  newest: CalibrationRecord | null, run: RunState | null, first: { runId: string; publishedAt: Date } | null, updating: Updating | null,
+  now: Date,
+): LastRun | null {
   if (newest === null || updating !== null) return null;
   const result = ownerOutcomeOf(newest, run, now);
-  return result === null ? null : { outcome: result.outcome, reason: result.reason, finishedAt: result.finishedAt.toISOString() };
+  if (result === null) return null;
+  return {
+    outcome: result.outcome, reason: result.reason, firstForecast: firstForecastOf(first, newest.runId, result.finishedAt),
+    finishedAt: result.finishedAt.toISOString(),
+  };
 }
 
 /**
@@ -121,12 +133,15 @@ function daysSince(count: number): string {
   return count === 1 ? 'the 1 day since' : `the ${String(count)} days since`;
 }
 
-/** Words for `stale`, null for every other state. */
+/**
+ * Words for `stale`, null for every other state. D65: while a refit runs they say the days aren't in it yet rather than
+ * when Townwise refits, which the updating sentence after them would contradict.
+ */
 function staleWords(calibration: Calibration): string | null {
   if (calibration.state !== 'stale') return null;
   const made = `Forecast made from your sales through ${shortDate(calibration.dataThrough)}.`;
   const since = daysSince(calibration.newerDays);
-  if (calibration.nextRefresh === null) {
+  if (calibration.nextRefresh === null || calibration.updating?.stage === 'running') {
     return `${made} ${since.charAt(0).toUpperCase()}${since.slice(1)} ${calibration.newerDays === 1 ? 'isn’t' : 'aren’t'} in it yet.`;
   }
   return `${made} Townwise refits on ${shortDate(calibration.nextRefresh)} with ${since}.`;
@@ -146,14 +161,16 @@ const count = (n: number): string => n.toLocaleString('en-US');
 
 /**
  * D65: the model card's updating sentence (design decision 3), null while nothing updates. "Building" only while a
- * first forecast runs; `waiting` states no time and promises no publish (14.1).
+ * first forecast runs, with no day count: the coverage's days include likely-closed ones, so the count would disagree
+ * with the card's days with a guest count and the run's own in the history. `waiting` states no time and promises no
+ * publish (14.1).
  */
 function updatingWords(calibration: Calibration, timeZone: string, now: Date): string | null {
   const { updating } = calibration;
   if (updating === null) return null;
   if (updating.stage === 'waiting') return 'Your first forecast is next. Townwise starts building it soon.';
   const started = startedTime(updating.since, timeZone, now);
-  if (calibration.state === 'not_calibrated') return `Building your first forecast from ${count(calibration.dayCount)} days, started ${started}.`;
+  if (calibration.state === 'not_calibrated') return `Building your first forecast, started ${started}.`;
   if (calibration.newerDays === 0) return `Updating your forecast, started ${started}.`;
   const days = calibration.newerDays === 1 ? '1 new day' : `${count(calibration.newerDays)} new days`;
   return `Updating your forecast with ${days}, started ${started}.`;
@@ -176,8 +193,8 @@ export function calibrationWords(calibration: Calibration, timeZone: string, now
  * the words say the days aren't in it yet rather than promise a refit that won't come.
  *
  * D65: it also reads the location's newest calibration for `updating`, and, with no published run, the refit mark
- * unless that calibration is running, the reference only when the mark is due, nextRefreshFor's conditions only with no reference, and the newest calibration's
- * run only for a succeeded `lastRun`. It never writes.
+ * unless that calibration is running, the reference only when the mark is due, nextRefreshFor's conditions only with no reference, and, for a
+ * `lastRun`, the first published run and the newest calibration's run (only when it succeeded). It never writes.
  */
 export async function calibrationFor(
   ctx: TownwiseContext, scope: OrgScope, location: LocationRecord, coverage: Coverage,
@@ -197,9 +214,13 @@ export async function calibrationFor(
     const reference = due ? await ctx.stores.calibrations.reference(scope, location.id) : null;
     const on = due && reference === null && await refreshOn(ctx, scope, location, localDay(now, timeZoneOf(location.town).timeZone));
     const updating = updatingOf(calibration, refit, reference, false, on, now);
-    const runId = updating === null && calibration?.status === 'succeeded' ? calibration.runId : null;
-    const run = runId === null ? null : (await ctx.stores.forecasts.runStates(scope, [runId])).get(runId) ?? null;
-    return calibrationOf(coverage, null, null, updating, lastRunOf(calibration, run, updating, now));
+    if (updating !== null || calibration === null) return calibrationOf(coverage, null, null, updating);
+    const runId = calibration.status === 'succeeded' ? calibration.runId : null;
+    const [runs, first] = await Promise.all([
+      runId === null ? null : ctx.stores.forecasts.runStates(scope, [runId]), ctx.stores.forecasts.firstPublished(scope, location.id),
+    ]);
+    const run = runId === null ? null : runs?.get(runId) ?? null;
+    return calibrationOf(coverage, null, null, null, lastRunOf(calibration, run, first, null, now));
   }
   const { salesDays } = ctx.stores;
   const newerDays = await salesDays.guestDayCountAfter(scope, location.id, newest.dataThrough);

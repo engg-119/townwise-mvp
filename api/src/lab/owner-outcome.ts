@@ -86,6 +86,15 @@ export function ownerOutcomeOf(record: CalibrationRecord, run: RunState | null, 
 }
 
 /**
+ * Whether a calibration with run `runId` that finished at `finishedAt` made the location's first forecast: no run other
+ * than its own had been published by then. `first` is forecasts.firstPublished's answer (withdrawn runs included), so a
+ * location whose published runs were all withdrawn or lapsed is not on its first. The history and Home's `lastRun` read it.
+ */
+export function firstForecastOf(first: { runId: string; publishedAt: Date } | null, runId: string | null, finishedAt: Date): boolean {
+  return first === null || first.runId === runId || first.publishedAt > finishedAt;
+}
+
+/**
  * What started the calibration: a system start's stored causes; else who asked, read from `requestedBy.role` whatever
  * the `via`, so a staff start through chat or a file read with the organization open as admin reads `staff`, never the
  * team's; an older system start with none reads `unknown`.

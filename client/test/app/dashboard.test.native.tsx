@@ -100,12 +100,13 @@ describe('D65: a forecast updating, in the Calibration cell', () => {
     expect(router.getPathname()).toBe('/locations/l7/agent');
   });
 
-  test('a first forecast next, then building', async () => {
+  test('a first forecast next, as plain words with no link to its empty activity, then building, linked', async () => {
     const api = fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [first('waiting'), quiet]) });
     await renderApp('/dashboard', api);
     const table = await screen.findByLabelText('Locations');
     expect(within(table).getByText('Not calibrated yet')).toBeTruthy();
-    expect(within(table).getByRole('link', { name: 'First forecast next' })).toBeTruthy();
+    expect(within(table).getByText('First forecast next')).toBeTruthy();
+    expect(within(table).queryByRole('link', { name: 'First forecast next' })).toBeNull();
     await cleanup();
     await renderApp('/dashboard', fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member', [first('running'), quiet]) }));
     expect(within(await screen.findByLabelText('Locations')).getByRole('link', { name: 'Building the first forecast' })).toBeTruthy();

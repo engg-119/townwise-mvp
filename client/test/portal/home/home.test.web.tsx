@@ -844,11 +844,14 @@ describe('D65: the first forecast as it builds, and why one wasn’t published',
     await renderAt(portal(meOf(ACCESS.member), DAYS, located(first(null, held))), text);
     expect(screen.getByRole('link', { name: 'See what TownwiseAI did' }).getAttribute('href')).toBe('/locations/l1/agent?panel=activity');
     expect(screen.queryByText(NOT_PUBLISHED)).toBeNull();
+    // Nothing runs until the next upload, so the notice is plain words with no In progress tag (15.6).
+    expect(screen.queryByText('In progress')).toBeNull();
   });
 
   test('forecasts off: why, and no next step', async () => {
     const off = { outcome: 'kept', reason: 'forecasts_off', finishedAt: '2026-11-04T09:00:00.000Z' };
     await renderAt(portal(meOf(ACCESS.member), DAYS, located(first(null, off))), 'The first forecast for Main Street Bar wasn’t published: forecasts are off for your organization.');
     expect(pageText()).not.toContain('tries again');
+    expect(screen.queryByText('In progress')).toBeNull();
   });
 });

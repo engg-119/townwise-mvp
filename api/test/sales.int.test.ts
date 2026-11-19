@@ -361,7 +361,9 @@ describe('updating and the last run (D65)', () => {
     const before = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) });
     expect(await calibrationOf(locationId)).toEqual({
       state: 'not_calibrated', dayCount: 1, firstDate: '2026-04-01', lastDate: '2026-04-01', updating: null,
-      lastRun: { outcome: 'not_run', reason: 'failed', finishedAt: new Date(requestedAt.getTime() + 20 * MINUTE).toISOString() },
+      lastRun: {
+        outcome: 'not_run', reason: 'failed', firstForecast: true, finishedAt: new Date(requestedAt.getTime() + 20 * MINUTE).toISOString(),
+      },
     });
     expect(await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) })).toEqual(before);
     expect(before?.status).toBe('queued');

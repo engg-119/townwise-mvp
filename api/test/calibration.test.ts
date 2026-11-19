@@ -87,16 +87,16 @@ describe('calibrationWords', () => {
     const calibrated = calibrationOf(COVERAGE, { dataThrough: '2026-11-21', newerDays: 0 }, '2026-11-30', RUNNING);
     expect(calibrationWords(calibrated, ZONE, NOW)).toBe('Updating your forecast, started 2:14 PM.');
     const one = calibrationOf(COVERAGE, { dataThrough: '2026-11-20', newerDays: 1 }, '2026-11-30', RUNNING);
-    expect(calibrationWords(one, ZONE, NOW)).toBe('Forecast made from your sales through Fri, Nov 20. Townwise refits on Mon, Nov 30 with the 1 day since. Updating your forecast with 1 new day, started 2:14 PM.');
+    expect(calibrationWords(one, ZONE, NOW)).toBe('Forecast made from your sales through Fri, Nov 20. The 1 day since isn’t in it yet. Updating your forecast with 1 new day, started 2:14 PM.');
     const stale = calibrationOf(COVERAGE, { dataThrough: '2026-11-15', newerDays: 6 }, null, RUNNING);
     expect(calibrationWords(stale, ZONE, NOW)).toBe('Forecast made from your sales through Sun, Nov 15. The 6 days since aren’t in it yet. Updating your forecast with 6 new days, started 2:14 PM.');
   });
 
-  it('words a running first forecast with its days, and adds the date when it started on another day (D65)', () => {
+  it('words a running first forecast with no day count, and adds the date when it started on another day (D65)', () => {
     const first = calibrationOf({ ...COVERAGE, dayCount: 1041 }, null, null, RUNNING);
-    expect(calibrationWords(first, ZONE, NOW)).toBe('Building your first forecast from 1,041 days, started 2:14 PM.');
+    expect(calibrationWords(first, ZONE, NOW)).toBe('Building your first forecast, started 2:14 PM.');
     const lastNight = calibrationOf(COVERAGE, null, null, { stage: 'running', since: '2026-11-16T04:58:00.000Z' });
-    expect(calibrationWords(lastNight, ZONE, new Date('2026-11-16T05:10:00.000Z'))).toBe('Building your first forecast from 300 days, started Sun, Nov 15, 11:58 PM.');
+    expect(calibrationWords(lastNight, ZONE, new Date('2026-11-16T05:10:00.000Z'))).toBe('Building your first forecast, started Sun, Nov 15, 11:58 PM.');
   });
 
   it('words a waiting first forecast with no time, no “Building” and no promise of a publish (D65)', () => {
@@ -173,24 +173,36 @@ describe('updatingOf (D65)', () => {
 describe('lastRunOf (D65)', () => {
   it('a held first run reads kept with its owner reason, dated when it finished', () => {
     const held = record({ runId: 'r1', gate: { published: false, reason: 'baseline_not_beaten' } });
-    expect(lastRunOf(held, { status: 'draft', publishedAt: null, publishedBy: null }, null, NOW))
-      .toEqual({ outcome: 'kept', reason: 'not_beat_average', finishedAt: '2026-11-23T08:16:00.000Z' });
+    expect(lastRunOf(held, { status: 'draft', publishedAt: null, publishedBy: null }, null, null, NOW))
+      .toEqual({ outcome: 'kept', reason: 'not_beat_average', firstForecast: true, finishedAt: '2026-11-23T08:16:00.000Z' });
   });
 
   it('a failed first run reads not_run', () => {
-    expect(lastRunOf(record({ status: 'failed', failure: 'job_failed' }), null, null, NOW))
-      .toEqual({ outcome: 'not_run', reason: 'failed', finishedAt: '2026-11-23T08:16:00.000Z' });
+    expect(lastRunOf(record({ status: 'failed', failure: 'job_failed' }), null, null, null, NOW))
+      .toEqual({ outcome: 'not_run', reason: 'failed', firstForecast: true, finishedAt: '2026-11-23T08:16:00.000Z' });
+  });
+
+  it('is not the first forecast once a run was published before it finished, since withdrawn, as the history reads it', () => {
+    const failed = record({ status: 'failed', failure: 'job_failed' });
+    const withdrawn = { runId: 'r0', publishedAt: new Date('2026-11-01T10:00:00.000Z') };
+    expect(lastRunOf(failed, null, withdrawn, null, NOW)).toEqual({
+      outcome: 'not_run', reason: 'failed', firstForecast: false, finishedAt: '2026-11-23T08:16:00.000Z',
+    });
+    // Its own run, or one published only after it finished: still the first.
+    const held = record({ runId: 'r1', gate: { published: false, reason: 'baseline_not_beaten' } });
+    expect(lastRunOf(held, null, { runId: 'r1', publishedAt: NOW }, null, NOW)?.firstForecast).toBe(true);
+    expect(lastRunOf(failed, null, { runId: 'r0', publishedAt: NOW }, null, NOW)?.firstForecast).toBe(true);
   });
 
   it('a timed-out one, still stored live, reads not_run, failed, dated its request plus 20 minutes', () => {
     const stuck = record({ status: 'running', requestedAt: ago(30 * MINUTE), finishedAt: null });
-    expect(lastRunOf(stuck, null, null, NOW)).toEqual({ outcome: 'not_run', reason: 'failed', finishedAt: ago(10 * MINUTE).toISOString() });
+    expect(lastRunOf(stuck, null, null, null, NOW)).toEqual({ outcome: 'not_run', reason: 'failed', firstForecast: true, finishedAt: ago(10 * MINUTE).toISOString() });
   });
 
   it('null while updating, and with no calibration', () => {
     const failed = record({ status: 'failed', failure: 'job_failed' });
-    expect(lastRunOf(failed, null, { stage: 'waiting', since: NOW.toISOString() }, NOW)).toBeNull();
-    expect(lastRunOf(record({ status: 'queued', requestedAt: ago(MINUTE), finishedAt: null }), null, null, NOW)).toBeNull();
-    expect(lastRunOf(null, null, null, NOW)).toBeNull();
+    expect(lastRunOf(failed, null, null, { stage: 'waiting', since: NOW.toISOString() }, NOW)).toBeNull();
+    expect(lastRunOf(record({ status: 'queued', requestedAt: ago(MINUTE), finishedAt: null }), null, null, null, NOW)).toBeNull();
+    expect(lastRunOf(null, null, null, null, NOW)).toBeNull();
   });
 });

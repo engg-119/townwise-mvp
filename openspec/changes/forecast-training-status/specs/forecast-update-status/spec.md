@@ -50,15 +50,20 @@ Every calibration object the API answers (GET /api/org's location summaries, GET
 - **THEN** `updating` is null until the pass starts another calibration
 
 ### Requirement: Owners see updating where they look
-While `updating` is not null, the model card (P24) SHALL show a sentence saying the forecast is updating, or the first forecast is next or being built, with the days and the time it started when running; Home (P11) SHALL replace its no-forecast line with a first-forecast line for a location with no published run; the dashboard's Calibration cell (P9) SHALL add a second line in plain words, never a StatusTag, linked to the location's TownwiseAI activity; the upload result SHALL say the forecast is updating or the first forecast is next; and TownwiseAI's overview tool SHALL include the model card's sentence. A time SHALL be shown in the viewer's time zone, with the date added when it is not the viewer's today; the overview tool, which has no viewer's time zone, SHALL use the town's. The TownwiseAI page SHALL open its panel at What it's been doing when its address carries `?panel=activity`, at web and phone width. [CONFIRM: every updating sentence in design decision 3] [CONFIRM: no separate run-history page; the dashboard shows updating as words in the Calibration cell, linked to TownwiseAI's activity]
+While `updating` is not null, the model card (P24) SHALL show a sentence saying the forecast is updating, or the first forecast is next or being built, with the days and the time it started when running; Home (P11) SHALL replace its no-forecast line with a first-forecast line for a location with no published run; the dashboard's Calibration cell (P9) SHALL add a second line in plain words, never a StatusTag, linked to the location's TownwiseAI activity while a run is running and not linked while a first forecast is waiting, whose activity has no run yet; the upload result SHALL say the forecast is updating or the first forecast is next; and TownwiseAI's overview tool SHALL include the model card's sentence. A time SHALL be shown in the viewer's time zone, with the date added when it is not the viewer's today; the overview tool, which has no viewer's time zone, SHALL use the town's. The TownwiseAI page SHALL open its panel at What it's been doing when its address carries `?panel=activity`, at web and phone width. [CONFIRM: every updating sentence in design decision 3] [CONFIRM: no separate run-history page; the dashboard shows updating as words in the Calibration cell, linked to TownwiseAI's activity while a run is running]
 
 #### Scenario: Model card while a refit runs
 - **WHEN** a stale location with 6 newer days has a calibration running since 2:14 PM
 - **THEN** the model card reads "Updating your forecast with 6 new days, started 2:14 PM."
+- **AND** its stale line reads "The 6 days since aren’t in it yet." rather than when Townwise refits
 
 #### Scenario: Dashboard with two locations
 - **WHEN** one of an organization's two locations is updating
 - **THEN** its Calibration cell shows its heading and "Updating now" beneath it, in plain text, linking to that location's TownwiseAI page with its activity open
+
+#### Scenario: Dashboard while a first forecast waits
+- **WHEN** a location's first forecast is waiting
+- **THEN** its Calibration cell shows "First forecast next" beneath its heading as plain words, not a link, since its activity has no run yet
 
 #### Scenario: The activity link on a phone
 - **WHEN** the TownwiseAI page opens at 390px wide with `?panel=activity`
@@ -76,7 +81,7 @@ While any shown location is updating, the dashboard and the location's pages SHA
 - **THEN** no page re-reads GET /api/org on a timer
 
 ### Requirement: Home says why a first forecast was not published, from the server
-A `not_calibrated` calibration SHALL carry `lastRun`: null, or, when `updating` is null and the location's newest calibration finished or is live past its 20 minutes, `{ outcome, reason, finishedAt }` from the owner outcome rules (a live one past 20 minutes reads `not_run`, `failed`, dated its `requestedAt` plus 20 minutes), read without a write. Home SHALL show the not-published notice whenever the location is `not_calibrated`, not updating and has a `lastRun` whose reason is neither `published` nor `published_by_staff`, whether or not it saw the run: the reason's first-forecast sentence, the next step ("Townwise tries again after your next sales upload", left out for `forecasts_off`), and a link to TownwiseAI's activity. With no `lastRun`, or one that was published (every run since withdrawn), Home SHALL show its plain no-forecast line. The client SHALL accept a calibration without `lastRun` and read it as null. [CONFIRM: Home's words and next step when a first forecast was not published]
+A `not_calibrated` calibration SHALL carry `lastRun`: null, or, when `updating` is null and the location's newest calibration finished or is live past its 20 minutes, `{ outcome, reason, firstForecast, finishedAt }` from the owner outcome rules (a live one past 20 minutes reads `not_run`, `failed`, dated its `requestedAt` plus 20 minutes), `firstForecast` by the history's rule, read without a write. Home SHALL show the not-published notice whenever the location is `not_calibrated`, not updating and has a `lastRun` whose reason is neither `published` nor `published_by_staff`, whether or not it saw the run: the reason's first-forecast sentence (saying "the newest forecast", not "the first forecast", when `firstForecast` is false), the next step ("Townwise tries again after your next sales upload", left out for `forecasts_off`), and a link to TownwiseAI's activity. With no `lastRun`, or one that was published (every run since withdrawn), Home SHALL show its plain no-forecast line. The client SHALL accept a calibration without `lastRun` and read it as null. [CONFIRM: Home's words and next step when a first forecast was not published]
 
 #### Scenario: The first run is held by the gate
 - **WHEN** a location's first calibration succeeded with the gate holding it, and the owner opens Home a day later
@@ -85,6 +90,10 @@ A `not_calibrated` calibration SHALL carry `lastRun`: null, or, when `updating` 
 #### Scenario: A first run timed out
 - **WHEN** a location's first calibration is still stored `running` 30 minutes after it was requested, and no refit mark the hourly pass would take is left (with one, the location reads `waiting`, since the pass fails that run and starts another)
 - **THEN** `lastRun` reads `not_run` with reason `failed`, Home shows the notice, and TownwiseAI's activity lists the run
+
+#### Scenario: A run fails after every published run was withdrawn
+- **WHEN** a location's first forecast was published, staff withdrew it, and the next calibration failed
+- **THEN** `lastRun.firstForecast` is false and Home says the newest forecast wasn't published because it couldn't run, never the first
 
 #### Scenario: Waiting ends without a run
 - **WHEN** Home showed the first forecast as next and the pass cleared the mark without starting anything

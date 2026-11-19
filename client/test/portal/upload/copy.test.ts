@@ -183,7 +183,7 @@ describe('D65: the forecast updating, in each page’s words (design decisions 3
   });
 
   test('the model card: a first forecast building, and next', () => {
-    expect(updatingLine(first(running), now)).toBe('Building your first forecast from 1,035 days, started 2:14 PM.');
+    expect(updatingLine(first(running), now)).toBe('Building your first forecast, started 2:14 PM.');
     expect(updatingLine(first(waiting), now)).toBe('Your first forecast is next. Townwise starts building it soon.');
   });
 
@@ -205,7 +205,7 @@ describe('D65: the forecast updating, in each page’s words (design decisions 3
 
   test('the upload’s result', () => {
     expect(uploadUpdatingLine(stale(6, running), now)).toBe('Townwise is updating the forecast with these days.');
-    expect(uploadUpdatingLine(first(running), now)).toBe('Building your first forecast from 1,035 days, started 2:14 PM.');
+    expect(uploadUpdatingLine(first(running), now)).toBe('Building your first forecast, started 2:14 PM.');
     expect(uploadUpdatingLine(first(waiting), now)).toBe('Townwise starts on the first forecast soon.');
   });
 
@@ -242,6 +242,17 @@ describe('D65: the forecast updating, in each page’s words (design decisions 3
     expect(notPublishedLine(first(null), 'Main Street Bar')).toBeNull();
     expect(notPublishedLine({ state: 'not_calibrated', ...history }, 'Main Street Bar')).toBeNull();
     expect(notPublishedLine(first(null, { outcome: 'published', reason: 'published', finishedAt: held.finishedAt }), 'Main Street Bar')).toBeNull();
+  });
+
+  test('Home’s notice says the newest forecast, not the first, once a first forecast was published and since withdrawn', () => {
+    const failed: LastRun = { outcome: 'not_run', reason: 'failed', firstForecast: false, finishedAt: '2026-11-18T09:20:00.000Z' };
+    expect(notPublishedLine(first(null, failed), 'Main Street')).toEqual({
+      text: 'The newest forecast for Main Street wasn’t published: it couldn’t run.',
+      next: 'Townwise tries again after your next sales upload.',
+    });
+    // Marked the first, or from an API before the flag: the first forecast.
+    expect(notPublishedLine(first(null, { ...failed, firstForecast: true }), 'Main Street')?.text)
+      .toBe('The first forecast for Main Street wasn’t published: it couldn’t run.');
   });
 
   test('every reason a first forecast wasn’t published has words, none stating a minimum or a kept forecast', () => {

@@ -63,10 +63,28 @@ describe('the outcome sentence', () => {
     }
   });
 
+  test('a later run of a location with no forecast now (every run since withdrawn) never says current or didn’t change', () => {
+    const NO_FORECAST: Readonly<Record<OwnerReason, string>> = {
+      ...FIRST,
+      published: 'Published.',
+      published_by_staff: 'Published by Townwise staff after a review.',
+      failed: 'Couldn’t run.',
+    };
+    for (const reason of OWNER_REASONS) {
+      const line = runOutcomeLine(run({ reason, currentForecast: false }));
+      expect(line).toBe(NO_FORECAST[reason]);
+      expect(line).not.toMatch(/current|didn’t change|first forecast|forecast yet/i);
+      // With a forecast now, or from an API before the flag: the later-run words.
+      expect(runOutcomeLine(run({ reason, currentForecast: true }))).toBe(LATER[reason]);
+      // A first forecast keeps its own words either way.
+      expect(runOutcomeLine(run({ reason, firstForecast: true, currentForecast: false }))).toBe(FIRST[reason]);
+    }
+  });
+
   test('no sentence states a minimum history, promises a retry or uses the staff words', () => {
     for (const reason of OWNER_REASONS) {
-      for (const firstForecast of [false, true]) {
-        const line = runOutcomeLine(run({ reason, firstForecast }));
+      for (const [firstForecast, currentForecast] of [[false, true], [false, false], [true, false]] as const) {
+        const line = runOutcomeLine(run({ reason, firstForecast, currentForecast }));
         expect(line).not.toMatch(/\d/);
         expect(line).not.toMatch(/try again|retry|tries again|will run/i);
         // GATE_WORDS and FAILURE_WORDS are staff words: drafts staff review.

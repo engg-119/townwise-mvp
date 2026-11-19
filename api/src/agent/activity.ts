@@ -16,8 +16,8 @@
 // then left out, so the change shows once.
 //
 // D65 (openspec change forecast-training-status, design decisions 6 to 8): each finished forecast run of the location
-// among its newest calibrations, as `forecast_made { calibrationId, causes, outcome, reason, firstForecast, dayCount,
-// firstDate, lastDate, newDays }`, dated when it finished, in the owner codes lab/owner-outcome.ts derives from the
+// among its newest calibrations, as `forecast_made { calibrationId, causes, outcome, reason, firstForecast,
+// currentForecast, dayCount, firstDate, lastDate, newDays }`, dated when it finished, in the owner codes lab/owner-outcome.ts derives from the
 // calibration and what happened to its run (never the staff gate words). A live one past its 20 minutes is listed as a
 // failed run without a write, as the calibration answer reads it, so this GET stays a read (7.3); one still inside them
 // is the location's updating line, not history. Codes, dates and day counts only: no accuracy and no guest or sales
@@ -36,7 +36,9 @@ import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { AgentChangeAction, AgentChangeStatus, AgentSourceKind } from '../stores/agent-changes.ts';
 import type { NoteKind, NoteRecord } from '../stores/notes.ts';
 import type { AnswerRecord } from '../stores/agent-answers.ts';
-import { ownerCausesOf, ownerOutcomeOf, runningAt, type OwnerCause, type OwnerOutcome, type OwnerReason } from '../lab/owner-outcome.ts';
+import {
+  firstForecastOf, ownerCausesOf, ownerOutcomeOf, runningAt, type OwnerCause, type OwnerOutcome, type OwnerReason,
+} from '../lab/owner-outcome.ts';
 import { isTownId } from '../research/plan.ts';
 import { researchReadable } from '../research/read.ts';
 import type { ReportedRunStatus, RunRecordBase, RunStatus, ThreadRecordBase } from '../stores/research-shared.ts';
@@ -70,7 +72,8 @@ export type ActivityItem =
   }
   | {
     at: string; kind: 'forecast_made'; calibrationId: string; causes: OwnerCause[]; outcome: OwnerOutcome; reason: OwnerReason;
-    firstForecast: boolean; dayCount: number | null; firstDate: string | null; lastDate: string | null; newDays: number | null;
+    firstForecast: boolean; currentForecast: boolean; dayCount: number | null; firstDate: string | null; lastDate: string | null;
+    newDays: number | null;
   }
   | {
     at: string; kind: 'research_done'; subject: 'town' | 'location'; status: ReportedRunStatus; found: number; added: number;
@@ -176,22 +179,25 @@ export const agentChangeSource: ActivitySource = async ({ ctx, scope, locationId
  * location whose published runs lapsed is not on its first. One `firstPublished` read serves every item, so a calibration
  * whose run is the location's earliest published one reads as first even if another was published before it finished:
  * only a `not_judged` calibration (its run an older one) can be so, and its words are the same either way.
+ * `currentForecast`, the same on every item, is whether the location has a published run now, so a later run of a
+ * location whose runs were all withdrawn or lapsed is never worded as keeping a current forecast.
  */
 export const forecastMadeSource: ActivitySource = async ({ ctx, scope, locationId }) => {
   const now = ctx.now();
   const done = (await ctx.stores.calibrations.list(scope, CALIBRATIONS_READ, locationId)).filter((record) => !runningAt(record, now));
   if (done.length === 0) return [];
   const runIds = done.flatMap((record) => (record.runId === null ? [] : [record.runId]));
-  const [runs, first] = await Promise.all([
+  const [runs, first, current] = await Promise.all([
     ctx.stores.forecasts.runStates(scope, runIds), ctx.stores.forecasts.firstPublished(scope, locationId),
+    ctx.stores.forecasts.published(scope, locationId),
   ]);
   return done.flatMap((record): SourceItem[] => {
     const result = ownerOutcomeOf(record, record.runId === null ? null : runs.get(record.runId) ?? null, now);
     if (result === null) return [];
-    const firstForecast = first === null || first.runId === record.runId || first.publishedAt > result.finishedAt;
     return [{
       at: result.finishedAt.toISOString(), kind: 'forecast_made', calibrationId: record.id, causes: ownerCausesOf(record),
-      outcome: result.outcome, reason: result.reason, firstForecast, dayCount: record.dayCount, firstDate: record.dataFrom,
+      outcome: result.outcome, reason: result.reason, firstForecast: firstForecastOf(first, record.runId, result.finishedAt),
+      currentForecast: current.length > 0, dayCount: record.dayCount, firstDate: record.dataFrom,
       lastDate: record.dataThrough, newDays: record.newDays,
     }];
   });

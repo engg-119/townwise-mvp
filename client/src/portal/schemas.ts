@@ -132,10 +132,15 @@ export const OWNER_REASONS = [
 ] as const;
 export type OwnerReason = (typeof OWNER_REASONS)[number];
 
-/** D65 design decision 4: a `not_calibrated` location's newest calibration once it finished (or timed out). */
+/**
+ * D65 design decision 4: a `not_calibrated` location's newest calibration once it finished (or timed out), and whether
+ * it was to be the location's first forecast (false once a run was published before it, since withdrawn; absent from
+ * an API before it, read as the first).
+ */
 export const lastRunSchema = z.object({
   outcome: z.enum(['published', 'kept', 'not_run']),
   reason: z.enum(OWNER_REASONS),
+  firstForecast: z.boolean().optional(),
   finishedAt: z.string(),
 });
 export type LastRun = z.infer<typeof lastRunSchema>;
