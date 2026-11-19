@@ -75,6 +75,11 @@ export const ownerCalendarSchema = z.object({
   format: z.string().nullable().default(null),
   /** A file calendar's booking labels (D58); null for a link or a Google calendar, and from an API older than them. */
   bookings: bookingsSchema.nullable().default(null),
+  /**
+   * D61, on the list only: the Your data item (`f_<id>`) a file calendar was imported from, while that file is kept; null
+   * otherwise, on every other answer, and from an API older than it.
+   */
+  fromFile: z.string().nullable().default(null),
 });
 export type OwnerCalendar = z.infer<typeof ownerCalendarSchema>;
 

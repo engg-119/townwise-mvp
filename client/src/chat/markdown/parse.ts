@@ -3,8 +3,9 @@ import MarkdownIt from 'markdown-it';
 // TownwiseAI's replies are Markdown (spec P25). markdown-it parses them into a small typed tree that both platforms
 // draw with React Native primitives. Raw HTML is never rendered (html: false turns it into text), a link is a link
 // only for an absolute http(s) URL, with the host it leads to written after it as text, "words (example.com)", so its
-// words can never hide where it goes (D36: a reply may draw on a file), and an image is its alt text (it is never
-// fetched).
+// words can never hide where it goes (D36: a reply may draw on a file), or (D63) for the path of an item's page under
+// a location's Your data, a calendar's or a file's, ids only, opened in the app with "(Your data)" written after it;
+// and an image is its alt text (it is never fetched).
 
 export type MdInline =
   | { t: 'text'; text: string } | { t: 'code'; text: string } | { t: 'break' }
@@ -24,6 +25,14 @@ const md = new MarkdownIt('commonmark', { html: false, linkify: false }).enable(
 /** An absolute http: or https: URL, as the URL parser reads it; anything else (javascript:, data:, mailto:, relative) is null. */
 export function safeHref(raw: string): string | null {
   return hostOf(raw) === null ? null : raw;
+}
+
+/** D63: an item's page under a location's Your data (portal/routing.ts itemHref), a calendar's `c_` or a file's `f_`, ids only. */
+const DATA_ITEM_PATH = /^\/locations\/[0-9a-f]{24}\/data\/[cf]_[0-9a-f]{24}$/;
+
+/** D63: the path when `raw` is exactly one of the app's own pages a reply may link to (DATA_ITEM_PATH), else null. */
+export function appPath(raw: string): string | null {
+  return DATA_ITEM_PATH.test(raw) ? raw : null;
 }
 
 /** The host an absolute http(s) URL leads to, as the URL parser reads it (an international name in its xn-- form), else null. */
@@ -83,9 +92,11 @@ function inlineRun(tokens: readonly Token[], start: number, closeType: string | 
         const [children, next] = inlineRun(tokens, i + 1, 'link_close');
         const raw = token.attrGet('href') ?? '';
         const host = hostOf(raw);
-        out.push({ t: 'link', href: host === null ? null : raw, children });
+        const path = host === null ? appPath(raw) : null;
+        out.push({ t: 'link', href: host === null ? path : raw, children });
         // Outside the link, so it reads as where the link goes.
         if (host !== null) pushText(out, ` (${host})`);
+        if (path !== null) pushText(out, ' (Your data)');
         i = next;
         break;
       }

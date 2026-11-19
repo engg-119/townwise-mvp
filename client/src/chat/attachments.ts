@@ -2,9 +2,9 @@ import type { FileKind } from '../portal/files/api';
 import type { AttachmentKind, MessageAttachment } from './api';
 
 // The words for files attached to a TownwiseAI message (spec P25, D36), shared by the composer's chips and the person's
-// bubble. TownwiseAI reads a text file (CSV, TSV or text), a PNG, JPEG, GIF or WebP picture, and a PDF, Word (.docx) or
-// Excel (.xlsx) file as its text in the turn it is attached to; any other kind still attaches, and its chip says
-// TownwiseAI can't read it (an old Word or Excel file, what to save it as).
+// bubble. TownwiseAI reads a text file (CSV, TSV or text), a calendar file (.ics or .ical, D63), a PNG, JPEG, GIF or
+// WebP picture, and a PDF, Word (.docx) or Excel (.xlsx) file as its text in the turn it is attached to; any other kind
+// still attaches, and its chip says TownwiseAI can't read it (an old Word or Excel file, what to save it as).
 
 /** Files one message can attach (the API's limit, api/src/chat/attachments.ts). */
 export const MAX_ATTACHMENTS = 5;
@@ -21,20 +21,21 @@ export function isFileRef(ref: string): boolean {
 
 /** What a chip calls a file of each kind. */
 export const KIND_WORD: Readonly<Record<AttachmentKind, string>> = {
-  text: 'Text file', picture: 'Picture', pdf: 'PDF', word: 'Word file', excel: 'Excel file', zip: 'ZIP file', file: 'File',
+  text: 'Text file', picture: 'Picture', pdf: 'PDF', word: 'Word file', excel: 'Excel file', zip: 'ZIP file', calendar: 'Calendar file',
+  file: 'File',
 };
 
 /** Old Word and Excel files, which TownwiseAI doesn't read: their extension, and the one to save them as. */
 const OLD_OFFICE = { word: ['doc', 'docx'], excel: ['xls', 'xlsx'] } as const;
 
 /**
- * A file TownwiseAI reads in the turn it is attached to: a text file, a picture, a PDF, or a Word or Excel file that
- * isn't an old one (.doc, .xls). The server takes a file for an old one only by that extension (api/src/files/sniff.ts),
- * so the name tells.
+ * A file TownwiseAI reads in the turn it is attached to: a text or calendar file, a picture, a PDF, or a Word or Excel
+ * file that isn't an old one (.doc, .xls). The server takes a file for an old one only by that extension
+ * (api/src/files/sniff.ts), so the name tells.
  */
 export function readable(kind: AttachmentKind, name: string): boolean {
   if (kind === 'word' || kind === 'excel') return extensionOf(name) !== OLD_OFFICE[kind][0];
-  return kind === 'text' || kind === 'picture' || kind === 'pdf';
+  return kind === 'text' || kind === 'calendar' || kind === 'picture' || kind === 'pdf';
 }
 
 /**
@@ -52,6 +53,8 @@ export function unreadLine(kind: AttachmentKind): string {
 // As api/src/files/sniff.ts kindOfName reads a name, with the pictures the item page shows (viewer/kinds.ts).
 const TEXT = new Set(['csv', 'tsv', 'txt', 'text', 'tab', '']);
 const PICTURES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+/** D63: a calendar file, which the server stores as `other` and reads as text (api/src/files/sniff.ts isCalendarFileName). */
+const CALENDARS = new Set(['ics', 'ical']);
 const BY_FILE_KIND: Readonly<Record<FileKind, AttachmentKind>> = {
   text: 'text', xlsx: 'excel', xls: 'excel', pdf: 'pdf', docx: 'word', doc: 'word', zip: 'zip', other: 'file',
 };
@@ -63,13 +66,15 @@ function extensionOf(name: string): string {
 
 /**
  * A file's kind as a chip names it: from the stored file's kind once it is uploaded, else from its name. A picture is
- * a file of kind `other` named like one (the server reads its bytes, so a chip's word is only the client's guess).
+ * a file of kind `other` named like one (the server reads its bytes, so a chip's word is only the client's guess), and
+ * a calendar file one named .ics or .ical, as the server names it.
  */
 export function kindOfFile(name: string, fileKind: FileKind | null): AttachmentKind {
   const extension = extensionOf(name);
   const kind = fileKind === null ? null : BY_FILE_KIND[fileKind];
   if (kind !== null && kind !== 'file') return kind;
   if (PICTURES.has(extension)) return 'picture';
+  if (CALENDARS.has(extension)) return 'calendar';
   if (kind === 'file') return 'file';
   if (TEXT.has(extension)) return 'text';
   if (extension === 'xlsx' || extension === 'xlsm' || extension === 'xls') return 'excel';

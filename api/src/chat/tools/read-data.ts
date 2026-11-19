@@ -21,7 +21,7 @@ export interface ReadDataInput { ref: string }
 /** Why nothing was read, by the status the read answered. */
 const REASONS = {
   files_off: 'Townwise can’t read saved items yet.',
-  not_readable: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+  not_readable: 'TownwiseAI can read text items added for reference, and a picture, calendar (.ics), PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
   turned_off: 'That item is turned off. The owner can turn it on in Your data.',
   gone: 'That item’s file was deleted.',
   not_found: 'No item with that ref at this location.',

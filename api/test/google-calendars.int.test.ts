@@ -349,7 +349,8 @@ describe('Google’s access is sealed and never shown', () => {
     const listed = await send(calendarsPath(t), t.member.session);
     expect(JSON.stringify(listed.body)).not.toContain(PRIMARY_ID);
     expect(listed.body).toEqual({
-      calendars: [{ ...calendar }],
+      // D61: the list names the Your data file a calendar came from; a Google calendar has none.
+      calendars: [{ ...calendar, fromFile: null }],
       google: { available: true, connected: true, clientId: GOOGLE_CLIENT_ID, canConnect: true },
       // D58: Sort with TownwiseAI is off with no model here.
       bookingSort: { available: false },

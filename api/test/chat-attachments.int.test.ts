@@ -483,7 +483,7 @@ describe('with stored files on', () => {
         JSON.stringify({ ref: book, text: BOOK_TEXT, truncated: false }),
         JSON.stringify({
           available: false,
-          reason: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+          reason: 'TownwiseAI can read text items added for reference, and a picture, calendar (.ics), PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
         }),
       ]);
       // Saved as stubs: no picture's bytes, no file's text.
@@ -521,7 +521,7 @@ describe('with stored files on', () => {
       const result = blocksOf(messagesOf(model.calls.at(-1)).at(-1)).find((b): b is BetaToolResultBlockParam => b.type === 'tool_result');
       expect(JSON.parse(result?.content as string)).toEqual({
         available: false,
-        reason: 'TownwiseAI can read text items added for reference, and a picture, PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
+        reason: 'TownwiseAI can read text items added for reference, and a picture, calendar (.ics), PDF, Word (.docx) or Excel (.xlsx) file attached to a message in this conversation. It can’t read sales files, old Word or Excel files, ZIP files or other files.',
       });
       expect(JSON.stringify(model.calls.at(-1))).not.toContain(PDF_TEXT);
     }, 60_000);

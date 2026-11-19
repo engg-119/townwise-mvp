@@ -1,8 +1,8 @@
-import { KIND_WORD, kindOfFile, readable, unreadLine } from '../../src/chat/attachments';
+import { chipWords, KIND_WORD, kindOfFile, readable, unreadLine } from '../../src/chat/attachments';
 
-// Which attached files TownwiseAI reads in their turn (spec P25, D36), on web and native: a text file, a picture, a
-// PDF, and a Word (.docx) or Excel (.xlsx) file; an old Word or Excel file says what to save it as, and a ZIP or any
-// other file says TownwiseAI can't read it yet. The chip's kind word is the same either way.
+// Which attached files TownwiseAI reads in their turn (spec P25, D36, D63), on web and native: a text file, a calendar
+// file, a picture, a PDF, and a Word (.docx) or Excel (.xlsx) file; an old Word or Excel file says what to save it as,
+// and a ZIP or any other file says TownwiseAI can't read it yet. The chip's kind word is the same either way.
 
 test.each([
   ['hours.txt', 'text'],
@@ -27,6 +27,24 @@ test.each([
   expect(kindOfFile(name, null)).toBe(kind);
   expect(readable(kind, name)).toBe(false);
   expect(unreadLine(kind)).toBe(line);
+});
+
+// D63: an .ics or .ical file is a calendar file TownwiseAI reads, before its upload ends and once the server keeps it
+// as `other`; a calendar CSV is a text file, read as one.
+test.each([
+  ['bookings.ics', null],
+  ['sawtooth-master.ics', 'other'],
+  ['MASTER.ICAL', 'other'],
+] as const)('%s (stored kind %s) is a calendar file TownwiseAI reads', (name, fileKind) => {
+  expect(kindOfFile(name, fileKind)).toBe('calendar');
+  expect(readable('calendar', name)).toBe(true);
+  expect(KIND_WORD.calendar).toBe('Calendar file');
+  expect(chipWords({ ref: 'f_0123456789abcdef01234567', kind: kindOfFile(name, fileKind), name, state: 'on' })).toEqual({ title: name, line: 'Calendar file' });
+});
+
+test('a calendar CSV is a text file, read as one', () => {
+  expect(kindOfFile('master calendar.csv', 'text')).toBe('text');
+  expect(readable('text', 'master calendar.csv')).toBe(true);
 });
 
 test('a chip names a Word or Excel file by its kind, old or not', () => {

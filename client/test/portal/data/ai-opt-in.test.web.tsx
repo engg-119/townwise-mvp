@@ -23,8 +23,12 @@ class ResizeObserverPolyfill {
 if (typeof globalThis.ResizeObserver !== 'function') globalThis.ResizeObserver = ResizeObserverPolyfill;
 Object.defineProperty(document.documentElement, 'clientWidth', { configurable: true, value: 1280 });
 
+// D61: Your data's rows read as one table, Newest first, remembered for the person signed in.
+beforeEach(() => { window.localStorage.setItem('townwise.dataView.u1', 'newest'); });
+
 afterEach(() => {
   cleanup();
+  window.localStorage.clear();
 });
 
 const OPT_IN = 'Let TownwiseAI read these files and use what it finds';

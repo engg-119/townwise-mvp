@@ -1,7 +1,7 @@
 // The skeleton kit and the page skeletons (spec 15.7 Loading), in one import.
 export {
   Skeleton, SkeletonBlock, SkeletonButton, SkeletonChart, SkeletonDefinitions, SkeletonField, SkeletonFigure, SkeletonHeading,
-  SkeletonPanel, SkeletonTable, SkeletonText, type SkeletonColumn, type SkeletonType,
+  SkeletonPanel, SkeletonTable, SkeletonText, SkeletonWords, type SkeletonColumn, type SkeletonType,
 } from './kit';
 export { AuditSkeleton, OrgSkeleton, OrgsSkeleton, OverviewSkeleton, PeopleSkeleton, RequestsSkeleton } from './console';
 export {
