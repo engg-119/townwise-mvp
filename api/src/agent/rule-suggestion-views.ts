@@ -13,6 +13,7 @@ import { questionWindow, salesSuggestionsFor, weekdayEvidence, type SalesSuggest
 import type { RuleSuggestionSource, SalesEvidence, SuggestionRecord } from '../stores/agent-suggestions.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { LocationRecord } from '../stores/locations.ts';
+import type { NoteContent } from '../stores/notes.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 
 /** A suggested closure rule as the cards show it. */
@@ -91,4 +92,36 @@ export async function ruleSuggestionViews(ctx: TownwiseContext, caller: MemberPr
     }];
   });
   return [...stored, ...computed];
+}
+
+/**
+ * D59: an event a file read was not sure of (or that conflicts with a person's note or rule), as its card shows it: the
+ * note accepting writes, and the file it came from. Under view-as the note's title and detail are left out, as a read's
+ * event titles are (spec 11A.9).
+ */
+export interface NoteSuggestionView {
+  id: string;
+  source: 'file';
+  note: NoteContent;
+  file: { ref: string; title: string | null } | null;
+  /** Any member outside view-as confirms or dismisses it. */
+  canDecide: boolean;
+}
+
+/** D59: the location's open note suggestions from files that end today or later, oldest first. */
+export async function noteSuggestionViews(ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord): Promise<NoteSuggestionView[]> {
+  const { scope } = caller;
+  const rows = await ctx.stores.agentSuggestions.listOpenFileNotes(scope, location.id, townToday(ctx, location));
+  const fileIds = [...new Set(rows.flatMap((row) => (row.fileId === null ? [] : [row.fileId])))];
+  const files = new Map((await ctx.stores.files.byIds(scope, fileIds)).map((file) => [file.id, file]));
+  const hidden = caller.viewAs !== null;
+  return rows.flatMap((row): NoteSuggestionView[] => {
+    if (row.type !== 'note') return [];
+    const file = row.fileId === null ? undefined : files.get(row.fileId);
+    return [{
+      id: row.id, source: 'file', note: hidden ? { ...row.note, title: null, detail: null } : row.note,
+      file: file === undefined ? null : { ref: file.uploadId === null ? `f_${file.id}` : `u_${file.uploadId}`, title: hidden ? null : file.name },
+      canDecide: !hidden,
+    }];
+  });
 }

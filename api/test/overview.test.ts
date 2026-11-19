@@ -23,12 +23,13 @@ const DESIGN_TABLE = {
   townwiseAi: [
     'chat.turn_completed', 'chat.conversation_deleted', 'agent.question_answered', 'agent.suggestion_accepted', 'agent.suggestion_dismissed',
     'file.ai_read_requested', 'file.ai_undone', 'order.setup_read', 'order.card_saved', 'order.card_dismissed', 'calibration.requested',
-    'owner_calendar.bookings_sorted',
+    'owner_calendar.bookings_sorted', 'agent.change_undone',
   ],
   orders: ['order.setup_saved', 'order.count_saved', 'order.decision_saved', 'order.rule_saved', 'order.rule_turned_off'],
   team: [
     'member.invited', 'member.joined', 'member.role_changed', 'member.removed', 'member.left', 'location.created', 'location.updated',
     'location.deleted', 'org.renamed', 'org.weekly_suggestions_changed', 'org.calendar_titles_ai_changed',
+    'org.agent_auto_switched',
   ],
   none: [
     'access_request.created', 'access_request.approved', 'access_request.rejected', 'access_request.withdrawn', 'org.created',
@@ -36,6 +37,7 @@ const DESIGN_TABLE = {
     'forecast.published', 'forecast.withdrawn', 'forecast.deleted', 'calibration.finished', 'calibration.scheduled',
     'org.forecasts_switched', 'forecast_schedule.paused', 'forecast_schedule.resumed', 'view_as.started', 'view_as.ended',
     'open_as_admin.started', 'open_as_admin.ended', 'people.signed_out_everywhere', 'person.deleted', 'staff_action.not_applied',
+    'agent.change_applied',
   ],
 } as const;
 

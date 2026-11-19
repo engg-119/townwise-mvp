@@ -12,10 +12,12 @@ import { Button } from '../../portal/ui/Button';
 import { ErrorNotice, LoadingLine, StatusTag } from '../../portal/ui/feedback';
 import { Eyebrow, Heading } from '../../portal/ui/text';
 import { theme } from '../../theme';
+import { changeLine, savesLine } from '../agentChanges';
 import type { ActivityItem, Budget } from '../api';
 import { dayText, formatCount, KIND_LABEL, rangeText, weekdayName } from '../format';
 import { readsLine, type ToolContext } from '../tools';
 import { openQuestions, openRuleSuggestions, type AgentPanelState, type SendToChat } from '../useAgentPanel';
+import { ActivityChange, AgentAutoSwitch, NoteSuggestionsSection, WaitingLine } from './AgentChanges';
 import { ModelCardSheet } from './ModelCardSheet';
 import { QuestionCard, type QuestionChat } from './QuestionCard';
 import { SuggestionsSection } from './SuggestionCard';
@@ -28,6 +30,10 @@ import { SuggestionsSection } from './SuggestionCard';
 // client doesn't know shows as nothing. The page shows the four as Questions and activity on the new chat page only: a column
 // beside the landing from 641px, a row under its chips that opens in place at 640px and below. How TownwiseAI works says whether Townwise has a forecast for the location from
 // GET .../estimates/about (F10), and opens the model card in a sheet.
+// D59 (openspec change auto-apply-agent-reads): a change TownwiseAI saved on its own is an activity line with Undo,
+// above the activity a line counts what it wasn't sure of and links to the log of every change, the switch for working
+// on its own sits after the weekly suggestions' switches, the events a file read wasn't sure of wait under it in "Not
+// sure from your files", and How TownwiseAI works says it saves what it's sure of while that switch is on.
 
 const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
 const SHORT_MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -71,6 +77,9 @@ export function activityLine(item: ActivityItem): string {
     // F3: a stored file Townwise read. Never its name: the files list shows that, and this panel is read under view-as.
     case 'file_processed':
       return `Read your file for ${rangeText(item.firstDate, item.lastDate)}, ${formatCount(item.dayCount)} ${item.dayCount === 1 ? 'day' : 'days'}.`;
+    // D59: a change TownwiseAI saved on its own; the panel draws it with Undo (ActivityChange).
+    case 'agent_change':
+      return changeLine(item);
   }
 }
 
@@ -143,7 +152,7 @@ function RuleSuggestionsSection(props: { panel: AgentPanelState; locationId: str
   );
 }
 
-function ActivitySection(props: { panel: AgentPanelState }): React.JSX.Element {
+function ActivitySection(props: { panel: AgentPanelState; locationId: string; readOnlyId: string | null }): React.JSX.Element {
   const { state } = props.panel;
   let body: React.ReactNode;
   if (state.status === 'loading') body = <LoadingLine text="Loading activity" minHeight={80} />;
@@ -157,7 +166,9 @@ function ActivitySection(props: { panel: AgentPanelState }): React.JSX.Element {
           return (
             <View key={`${item.at}-${String(index)}`} style={styles.item}>
               <Text style={styles.when}>{when}</Text>
-              <Text style={styles.itemText}>{activityLine(item)}</Text>
+              {item.kind === 'agent_change'
+                ? <ActivityChange item={item} locationId={props.locationId} readOnlyId={props.readOnlyId} onOthersChanged={props.panel.reload} />
+                : <Text style={styles.itemText}>{activityLine(item)}</Text>}
             </View>
           );
         })}
@@ -170,6 +181,7 @@ function ActivitySection(props: { panel: AgentPanelState }): React.JSX.Element {
         <Eyebrow>Newest first</Eyebrow>
         <Heading>What it’s been doing</Heading>
       </View>
+      {state.status === 'ready' ? <WaitingLine waiting={state.data.waiting} locationId={props.locationId} /> : null}
       {body}
     </View>
   );
@@ -219,6 +231,8 @@ function HowItWorks(props: {
   locationId: string;
   about: LoadState<EstimatesAbout>;
   onRetryAbout: () => void;
+  /** D59: whether TownwiseAI works on its own here: the organization's switch on and TOWNWISE_AGENT_AUTO on. */
+  agentAuto: boolean;
 }): React.JSX.Element {
   const [open, setOpen] = useState(false);
   const [card, setCard] = useState(false);
@@ -240,7 +254,7 @@ function HowItWorks(props: {
           <Text style={styles.body}>{`It reads ${readsLine(props.ctx)}, and shows you each thing it reads.`}</Text>
           <Text style={styles.body}>It can search the web for public facts about the town, such as an event’s dates or the weather, and lists the pages it used.</Text>
           <Text style={styles.body}>It can’t see your staffing, your bookings unless you add them as notes, or guest names.</Text>
-          <Text style={styles.body}>It suggests notes; it never saves one without you.</Text>
+          <Text style={styles.body}>{savesLine(props.agentAuto)}</Text>
           {forecast === null ? null : <Text style={styles.body}>{forecast}</Text>}
           {props.about.status === 'failed' ? <Button variant="link" label="Try again" onPress={props.onRetryAbout} /> : null}
           <Button variant="link" label="How Townwise estimates" onPress={() => { setCard(true); }} />
@@ -271,6 +285,12 @@ export function AgentSidePanel(props: {
   /** False while the chat lists the questions itself (its landing, at 640px and below), so they aren't drawn twice. */
   showQuestions?: boolean;
 }): React.JSX.Element {
+  const ready = props.panel.state.status === 'ready' ? props.panel.state.data : null;
+  // D59: the organization's choice once switched here, until the panel loads it again.
+  const [switched, setSwitched] = useState<boolean | null>(null);
+  // Working on its own only while the organization's switch is on and it can run here (TOWNWISE_AGENT_AUTO): off while
+  // the panel loads, fails or comes from an API before it.
+  const working = (switched ?? ready?.agentAuto?.on ?? false) && ready?.agentAuto?.available === true;
   return (
     <View style={styles.panel}>
       <RuleSuggestionsSection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
@@ -278,9 +298,17 @@ export function AgentSidePanel(props: {
         <QuestionsSection panel={props.panel} locationName={props.locationName} readOnlyId={props.readOnlyId} chat={props.chat} send={props.send} />
       )}
       <SuggestionsSection panel={props.panel} town={props.ctx.town} readOnlyId={props.readOnlyId} />
-      <ActivitySection panel={props.panel} />
+      {ready === null ? null : <AgentAutoSwitch agentAuto={ready.agentAuto} readOnlyId={props.readOnlyId} on={switched} onSwitched={setSwitched} />}
+      {ready === null ? null : <NoteSuggestionsSection suggestions={ready.noteSuggestions} locationId={props.locationId} readOnlyId={props.readOnlyId} />}
+      <ActivitySection panel={props.panel} locationId={props.locationId} readOnlyId={props.readOnlyId} />
       <BudgetSection budget={props.budget} />
-      <HowItWorks ctx={props.ctx} locationId={props.locationId} about={props.about} onRetryAbout={props.onRetryAbout} />
+      <HowItWorks
+        ctx={props.ctx}
+        locationId={props.locationId}
+        about={props.about}
+        onRetryAbout={props.onRetryAbout}
+        agentAuto={working}
+      />
     </View>
   );
 }

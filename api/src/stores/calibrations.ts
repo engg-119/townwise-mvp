@@ -47,6 +47,12 @@ interface CalibrationFields {
   status: CalibrationStatus;
   championRunId: string | null;
   dataThrough: string | null;
+  /**
+   * The town's last researched term day the input named (D52, lab/input.ts termsThroughOf), which a model run's outlook
+   * may not pass (lab/result.ts outlook_past_terms); null for a town with none, absent before the input was fetched and
+   * on a calibration from before D52.
+   */
+  termsThrough?: string | null;
   inputSha256: string | null;
   /** The fingerprint the weekly refresh compares (D42, lab/input.ts labInputFingerprint); null on one from before it. */
   dataSha256: string | null;
@@ -85,6 +91,7 @@ function calibrationSchema(): Schema<CalibrationFields> {
     status: { type: String, required: true, enum: CALIBRATION_STATUSES },
     championRunId: { type: String, default: null },
     dataThrough: { type: String, default: null },
+    termsThrough: { type: String },
     inputSha256: { type: String, default: null },
     dataSha256: { type: String, default: null },
     imageDigest: { type: String, default: null },
@@ -122,6 +129,8 @@ export interface CalibrationRecord {
   readonly status: CalibrationStatus;
   readonly championRunId: string | null;
   readonly dataThrough: string | null;
+  /** The town's last researched term day the input named (D52); null for a town with none, before the fetch, or before D52. */
+  readonly termsThrough: string | null;
   readonly inputSha256: string | null;
   /** The fingerprint the weekly refresh compares (D42), set with the input; null before the fetch or on one from before D42. */
   readonly dataSha256: string | null;
@@ -157,11 +166,13 @@ export interface CalibrationStore {
   recordImageDigest(scope: OrgScope, id: string, imageDigest: string): Promise<boolean>;
   /**
    * The job's one input fetch, by compare-and-set on running with no input recorded yet: the hash of the input it is
-   * given, its fingerprint (D42), the last day it holds, and the sha256 of the result token the API hands only to that
-   * fetch, the one the result is posted with. False for any second fetch.
+   * given, its fingerprint (D42), the last day it holds, the town's last researched term day it names (D52), and the
+   * sha256 of the result token the API hands only to that fetch, the one the result is posted with. False for any
+   * second fetch.
    */
   recordInput(
-    scope: OrgScope, id: string, input: { inputSha256: string; dataSha256: string; dataThrough: string; resultTokenSha256: string },
+    scope: OrgScope, id: string,
+    input: { inputSha256: string; dataSha256: string; dataThrough: string; termsThrough: string | null; resultTokenSha256: string },
   ): Promise<boolean>;
   /** Compare-and-set on running with no run recorded yet: a run id, once set, is kept. */
   recordResult(scope: OrgScope, id: string, result: { runId: string; scorecardJson: string; codeVersion: string }): Promise<boolean>;
@@ -197,6 +208,7 @@ function toCalibration(doc: CalibrationDoc): CalibrationRecord {
     status: doc.status,
     championRunId: doc.championRunId,
     dataThrough: doc.dataThrough,
+    termsThrough: doc.termsThrough ?? null,
     inputSha256: doc.inputSha256,
     dataSha256: doc.dataSha256 ?? null,
     imageDigest: doc.imageDigest,
@@ -265,7 +277,12 @@ export function createCalibrationStore(connection: Connection): CalibrationStore
     async recordInput(scope, id, input) {
       const result = await Calibration.updateOne(
         { ...ofId(scope, id), status: 'running', inputSha256: null },
-        { $set: { inputSha256: input.inputSha256, dataSha256: input.dataSha256, dataThrough: input.dataThrough, tokenSha256: input.resultTokenSha256 } },
+        {
+          $set: {
+            inputSha256: input.inputSha256, dataSha256: input.dataSha256, dataThrough: input.dataThrough,
+            termsThrough: input.termsThrough, tokenSha256: input.resultTokenSha256,
+          },
+        },
       );
       return result.modifiedCount === 1;
     },

@@ -487,6 +487,57 @@ describe('proposal cards', () => {
     expect(added).toHaveBeenCalledTimes(1);
   });
 
+  test('D59 slice 4: a note TownwiseAI saved from the person’s message reads saved with Undo, and Undo takes it back once', async () => {
+    const api = fakeChatApi();
+    const added = jest.fn();
+    const chat = await ready(api, { onNoteAdded: added });
+    await send(chat, 'We have a dinner on Dec 20');
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Dinner' });
+      turn(api).emit('proposal', { ...PROPOSAL_EVENT, saved: { noteId: 'n1', changeId: 'ch1' } });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: null });
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(card(chat, PROPOSAL_ID)).toMatchObject({ status: 'saved', auto: { changeId: 'ch1', status: 'applied', undoable: true } });
+    expect(added).toHaveBeenCalledTimes(1);
+
+    const path = '/api/org/locations/l1/agent/changes/ch1/undo';
+    let release: (value: unknown) => void = () => undefined;
+    api.respond[path] = () => new Promise((resolve) => { release = resolve; });
+    await act(() => { chat.current.undo(PROPOSAL_ID); });
+    expect(card(chat, PROPOSAL_ID).auto).toMatchObject({ status: 'undoing' });
+    await act(() => { chat.current.undo(PROPOSAL_ID); });
+    expect(api.writes.filter((write) => write.path === path)).toHaveLength(1);
+    await act(() => {
+      release({
+        change: {
+          id: 'ch1', at: '2026-11-19T12:00:00.000Z', action: 'note.add', sourceKind: 'chat', sourceRef: null, status: 'undone',
+          startDate: '2026-12-20', endDate: '2026-12-20', noteKind: 'private_event', weekdays: null, count: null, why: null, undoable: false, targetId: 'n1',
+        },
+      });
+    });
+    expect(card(chat, PROPOSAL_ID)).toMatchObject({ status: 'saved', auto: { changeId: 'ch1', status: 'undone', undoable: false }, error: null });
+    expect(added).toHaveBeenCalledTimes(2);
+  });
+
+  test('D59 slice 4: an Undo the server refuses because the note changed since stops offering Undo and says why', async () => {
+    const api = fakeChatApi();
+    const chat = await ready(api);
+    await send(chat, 'We have a dinner on Dec 20');
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c2', title: 'Dinner' });
+      turn(api).emit('proposal', { ...PROPOSAL_EVENT, saved: { noteId: 'n1', changeId: 'ch1' } });
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: null });
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    api.respond['/api/org/locations/l1/agent/changes/ch1/undo'] = () => refusal(409, 'changed_since');
+    await act(() => { chat.current.undo(PROPOSAL_ID); });
+    await waitFor(() => { expect(card(chat, PROPOSAL_ID).auto).toEqual({ changeId: 'ch1', status: 'adopted', undoable: false }); });
+    expect(card(chat, PROPOSAL_ID).error).toBe('You changed this since, so it’s yours now. Delete it from Notes if you don’t want it.');
+  });
+
   test('Edit first saves the person’s edit through the same route; a refusal goes back to the form', async () => {
     const api = fakeChatApi();
     const chat = await ready(api);
@@ -1438,6 +1489,24 @@ describe('a turn that outlives its connection', () => {
     expect(reply(chat).parts.map((part) => part.key)).toEqual(streamed.parts.map((part) => part.key));
     expect(chat.current.state).toMatchObject({ leafId: 'a2', error: null });
     expect(api.turns).toHaveLength(1);
+  });
+
+  test('D59 slice 4: a note TownwiseAI saves in a turn the page reattached to marks the organization stale, as in a sent one', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE_VIEW;
+    const added = jest.fn();
+    const chat = await ready(api, { onNoteAdded: added });
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    api.conversation = SAVED_VIEW;
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c1', title: 'Earlier chat', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-9' }, 1);
+      turn(api).emit('proposal', { ...PROPOSAL_EVENT, saved: { noteId: 'n1', changeId: 'ch1' } }, 2);
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a2' }, 3);
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(added).toHaveBeenCalledTimes(1);
   });
 
   test('a dropped stream is read again from its last number after 1, 2 and 4 seconds, at once when the app comes back, and no text shows twice', async () => {

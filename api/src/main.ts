@@ -13,6 +13,7 @@ import {
   createAzureCliTokenSource, createManagedIdentityTokenSource, resolveManagedIdentity, usesAzureCli, type AzureTokenSource,
 } from './azure-identity.ts';
 import { createTownwiseStores } from './stores/index.ts';
+import { createCalendarSorts } from './calendar/auto-sort.ts';
 import { createGoogleCalendarClient, revokeGoogleGrant } from './calendar/google.ts';
 import { createCalendarRefresher } from './calendar/refresher.ts';
 import { createAnthropicChatModel } from './chat/model.ts';
@@ -114,9 +115,13 @@ async function fileBlobsFor(backend: FilesBackend | null): Promise<FileBlobs | u
 const files = await fileBlobsFor(filesBackendOf(config));
 // The file reader runs in this process while stored files are on (files/worker.ts). Its AI column step is on with the
 // same ANTHROPIC_API_KEY as the tuning chat, within TOWNWISE_FILES_MONTHLY_BUDGET_USD.
+// D59: a file the reader is done with may be read by TownwiseAI on its own, while TOWNWISE_AGENT_AUTO is true and the
+// TownwiseAI reader below runs.
+const aiReadsOn = files !== undefined && ANTHROPIC_API_KEY !== undefined && filesMonthlyBudgetUsd > 0;
 const fileWorker = files === undefined ? undefined : createFileWorker({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
   extract: ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicExtractModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
+  autoRead: config.TOWNWISE_AGENT_AUTO && aiReadsOn,
 });
 // The daily sweep (retention, unfinished uploads, orphans) runs while stored files are on; one replica takes it a day.
 const fileSweeper = files === undefined ? undefined : createFileSweeper({
@@ -173,10 +178,13 @@ const baseDeps = {
 // Reading with TownwiseAI (files/ai-reader.ts): a file a person opted in is read whole by Claude, with the same
 // ANTHROPIC_API_KEY and within the same TOWNWISE_FILES_MONTHLY_BUDGET_USD as the AI column step, whose 0 turns it off
 // too. Only while stored files are on; off, its route answers 503 ai_unavailable. What it finds is acted on through
-// the same stores, blobs and lab as the routes (files/ai-actions.ts).
+// the same stores, blobs and lab as the routes (files/ai-actions.ts). D59 slice 2: the same loop sorts a file calendar
+// imported while TownwiseAI works on its own (calendar/auto-sort.ts), with the tuning chat's model and month.
+const aiContext = createTownwiseContext(baseDeps);
 const aiReader = files === undefined || ANTHROPIC_API_KEY === undefined || filesMonthlyBudgetUsd <= 0 ? undefined : createAiReader({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
-  model: createAnthropicFileReaderModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd, onRead: createAiReadActions(createTownwiseContext(baseDeps)),
+  model: createAnthropicFileReaderModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd, onRead: createAiReadActions(aiContext),
+  agentAuto: config.TOWNWISE_AGENT_AUTO, sorts: createCalendarSorts(aiContext),
 });
 const deps = { ...baseDeps, aiReader };
 const api = createTownwiseApi(deps);

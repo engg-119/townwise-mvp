@@ -1,9 +1,10 @@
 // Suggested closure rules (openspec change suggest-closure-rules, D46): what a file read or the sales history suggests
 // is a closure schedule, never words from the file or a model. Pure: the closure key a suggestion is deduped on (one per
 // key at a location in any status, the unique index of stores/agent-suggestions.ts), the words Townwise writes for it,
-// and whether a location's rules already make it pointless.
+// whether a location's rules already make it pointless, and (D59 slice 3) whether the sales history is sure of it.
 import { isClosure } from '../closed-days.ts';
 import { dateWords, monthDayWords, weekdayList } from '../forecasts/reasons.ts';
+import type { SalesEvidence } from '../stores/agent-suggestions.ts';
 import { ruleKey, type BusinessRuleRecord, type RuleSchedule } from '../stores/business-rules.ts';
 
 /**
@@ -18,6 +19,19 @@ export function closureKeyOf(schedule: RuleSchedule): string {
   const when = season !== null ? `yearly=${season.from}..${season.to}`
     : schedule.endDate === null ? 'ongoing' : `${schedule.startDate}..${schedule.endDate}`;
   return `closed|w=${weekdays}|${when}`;
+}
+
+/**
+ * D59 slice 3: the sales history is sure of a closed weekday (beyond D46's bar of 60% of at least 4 counted days, with
+ * none of its last 4 having sales) when at least 8 of its days were counted and at least 90% of them had no sales; the
+ * weekly pass then adds it as a rule on its own. [CONFIRM: TownwiseAI adds a closed weekday on its own when at least 90%
+ * of at least 8 counted days had no sales]
+ */
+export const SURE_SALES_MIN_DAYS = 8;
+export const SURE_SALES_SHARE = 0.9;
+
+export function salesEvidenceSure(evidence: Pick<SalesEvidence, 'noSalesCount' | 'weekdayCount'>): boolean {
+  return evidence.weekdayCount >= SURE_SALES_MIN_DAYS && evidence.noSalesCount >= SURE_SALES_SHARE * evidence.weekdayCount;
 }
 
 /** A dated range in words: "Jan 4 to Mar 31, 2027", "Dec 20, 2026 to Jan 5, 2027", or one day "Jan 4, 2027". */

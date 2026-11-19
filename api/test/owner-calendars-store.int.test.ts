@@ -113,7 +113,7 @@ describe('adding and listing', () => {
       id: expect.any(String) as string, locationId: t.locationId, kind: 'file', label: 'Bookings', host: null, eventCount: 3, skippedRepeating: 2,
       status: 'ok', lastSuccessAt: now, lastAttemptAt: now, nextRefreshAt: null, leaseUntil: null, consecutiveFailures: 0,
       lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: 'ics',
-      bookings: { state: 'unsorted', sortedAt: null, confirmedAt: null, confirmedBy: null }, fromFileId: null,
+      bookings: { state: 'unsorted', sortedAt: null, confirmedAt: null, confirmedBy: null }, fromFileId: null, autoSort: null,
     });
     // A link is fetched again 6 hours after it is added; a file never is.
     expect(link).toMatchObject({
@@ -621,7 +621,7 @@ describe('Google calendars (connect-google-calendar)', () => {
     expect(google).toEqual({
       id: expect.any(String) as string, locationId: t.locationId, kind: 'google', label: 'Google calendar', host: null, eventCount: 1, skippedRepeating: 0,
       status: 'ok', lastSuccessAt: now, lastAttemptAt: now, nextRefreshAt: new Date(now.getTime() + REFRESH_INTERVAL_MS), leaseUntil: null,
-      consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: null, bookings: null, fromFileId: null,
+      consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: 'user-0001', createdAt: now, format: null, bookings: null, fromFileId: null, autoSort: null,
     });
     // The sixth calendar, a Google one, finds no slot.
     const before = await snapshotOf(t.orgId);

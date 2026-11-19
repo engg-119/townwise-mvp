@@ -1,9 +1,10 @@
 """The API's side of the lab contract: golden/api-input.json is an input the API built (api/test/lab-input.test.ts checks
-it equals what labInputOf makes, and regenerates it), and the lab must take it as it is. Version 2 only: version 1 and
+it equals what labInputOf makes, and regenerates it), and the lab must take it as it is. Version 3 only (D52: 400 future days and termsThrough): versions 1 and 2 and
 a calendar entry carrying a title or a URL are refused. Synthetic data only."""
 
 import copy
 import json
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -31,13 +32,40 @@ def api_input() -> dict:
     return json.loads(API_INPUT.read_text(encoding="utf-8"))
 
 
-def test_the_api_input_is_version_2_with_its_calendar_and_champion_engine():
+def test_the_api_input_is_version_3_with_its_calendar_champion_engine_and_terms_through():
     inp = api_input()
-    assert inp["schema"] == schema.INPUT_SCHEMA == "townwise.lab-input/2"
+    assert inp["schema"] == schema.INPUT_SCHEMA == "townwise.lab-input/3"
+    assert inp["horizonDays"] == 400
+    # Hanover's last researched term day (its spring 2028 finals), which caps a model run's outlook
+    assert inp["termsThrough"] == "2028-06-06"
     assert inp["champion"]["engine"] in schema.ENGINES
     kinds = {entry["kind"] for entry in inp["calendar"]}
     assert {"holiday", "term", "event"} <= kinds
     assert all(set(entry) == schema.CALENDAR_KEYS for entry in inp["calendar"])
+
+
+def test_a_version_2_input_is_refused():
+    inp = api_input()
+    inp["schema"] = "townwise.lab-input/2"
+    with pytest.raises(schema.InputError, match="^schema$"):
+        schema.validate_input(inp)
+    # As version 2 was: 182 future days and no termsThrough
+    del inp["termsThrough"]
+    inp["horizonDays"] = 182
+    inp["days"] = [d for d in inp["days"] if d["date"] <= (date.fromisoformat(inp["dataThrough"])
+                                                          + timedelta(days=182)).isoformat()]
+    assert calibrate(inp, "0" * 40) == {"schema": schema.RESULT_SCHEMA, "calibrationId": inp["calibrationId"],
+                                        "ok": False, "code": "invalid_input"}
+
+
+@pytest.mark.parametrize("value", ["2028-02-30", "June 2028", 20280606])
+def test_a_terms_through_that_is_not_a_date_is_refused(value):
+    inp = api_input()
+    inp["termsThrough"] = value
+    with pytest.raises(schema.InputError, match="^termsThrough$"):
+        schema.validate_input(inp)
+    inp["termsThrough"] = None
+    schema.validate_input(inp)
 
 
 def test_a_version_1_input_is_refused():

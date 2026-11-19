@@ -25,6 +25,8 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
+import { queueAutoSort } from '../calendar/auto-sort.ts';
+import { bringPassForward } from '../calendar/early-pass.ts';
 import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
@@ -428,7 +430,8 @@ function fileRefusal(code: FileCalendarRefusal): AppError {
  * the town's today and time zone in the file window (calendar/csv-events.ts parseCalendarFile; not_calendar), stored
  * with its format and, when its screen said so, `titlesNotice`, then recorded as `owner_calendar.added`. The add of
  * POST .../owner-calendars and (D60) of a calendar file kept in Your data (files/calendar-import.ts), which passes the
- * stored file's id: 'file_imported' when that file already made a calendar, and nothing is stored.
+ * stored file's id: 'file_imported' when that file already made a calendar, and nothing is stored. D59 slice 2: either
+ * add is then queued for TownwiseAI's sort on its own (calendar/auto-sort.ts queueAutoSort says when).
  */
 export async function addFileCalendar(
   ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord,
@@ -451,6 +454,8 @@ export async function addFileCalendar(
   // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
   await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
+  // D59 slice 2: TownwiseAI sorts a file on its own, after the add is recorded; it never fails the add.
+  await queueAutoSort(ctx, scope, added, { openAsAdmin: caller.openAsAdmin !== null });
   return { calendar: added, skippedRows: read.skippedRows };
 }
 
@@ -463,7 +468,8 @@ export async function addFileCalendar(
  * code); its address is stored sealed, with its host. A Google calendar is checked and read as googleToAdd says, stored
  * with its Google calendar id sealed and its connection, and checked again after storing: a connection ended meanwhile
  * takes the new calendar with it (409 google_not_connected). A sixth calendar answers 409 calendar_limit. 201 with the
- * calendar and `skippedRows`, a CSV's rows whose start could not be read (0 otherwise).
+ * calendar and `skippedRows`, a CSV's rows whose start could not be read (0 otherwise). D59 slice 2: a file is then
+ * queued for TownwiseAI's sort on its own (calendar/auto-sort.ts queueAutoSort says when).
  */
 export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -575,8 +581,12 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
   // A replace that loses to a concurrent one leaves that one's events, which are as new.
   if (read.ok) {
     const replaced = await calendars.replaceEvents(scope, location.id, found.id, read.parsed, now);
-    // Notes linked to its events follow them (calendar-event-suggestions); never fails the refresh.
-    if (replaced.switched) await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+    // Notes linked to its events follow them (calendar-event-suggestions), and (D59 slice 3) an event added or moved in
+    // the next 91 days brings the weekly pass forward; neither fails the refresh.
+    if (replaced.switched) {
+      await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+      await bringPassForward(ctx, scope, location, found.id, replaced.changed, now);
+    }
   } else {
     await calendars.recordFailure(scope, location.id, found.id, read.code, now);
   }

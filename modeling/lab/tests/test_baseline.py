@@ -24,7 +24,7 @@ def iso(day: pd.Timestamp) -> str:
 
 def make_input(first: str, through: str, guests: Callable[[pd.Timestamp], float | None],
                events: Callable[[pd.Timestamp], list[str]] = lambda day: [], calendar: list[dict] | None = None) -> dict:
-    """A valid LabInput from `first` to `through` + 182 days: guests from `guests` (None after `through`), interim days,
+    """A valid LabInput from `first` to `through` + 400 days: guests from `guests` (None after `through`), interim days,
     the events `events` names, the given calendar, and no champion."""
     end = ts(through) + pd.Timedelta(days=forecast.HORIZON_DAYS)
     days = []
@@ -33,7 +33,8 @@ def make_input(first: str, through: str, guests: Callable[[pd.Timestamp], float 
         days.append({"date": iso(day), "guests": count, "term": "interim", "weekOfTerm": -1, "events": events(day),
                      "closed": False, "privateEvent": False, "booked": False})
     inp = {"schema": schema.INPUT_SCHEMA, "calibrationId": "0" * 24, "metric": "guests", "today": through,
-           "dataThrough": through, "horizonDays": forecast.HORIZON_DAYS, "regimeStart": None, "days": days,
+           "dataThrough": through, "horizonDays": forecast.HORIZON_DAYS, "termsThrough": None, "regimeStart": None,
+           "days": days,
            "calendar": calendar or [], "champion": None}
     schema.validate_input(inp)
     return inp
@@ -187,6 +188,39 @@ def test_the_shape_is_one_without_three_days_last_year():
     inp = make_input("2025-01-06", "2025-08-31", weekly)  # under a year: no last year around the target
     _, history = prepared(inp)
     assert baseline.shape(history, ts("2025-10-01"), ts("2025-08-31")) == 1.0
+
+
+# Past 357 days of lead the 3 weeks a year back are not all history yet: the shape reads two years back (D52)
+
+def test_shape_two_years_back_past_357_days():
+    through, target = "2025-08-31", ts("2026-08-28")  # a Friday 362 days after the cutoff
+    around = {target - pd.Timedelta(days=728 + k) for k in (-7, 0, 7)}
+    inp = make_input("2023-06-05", through, lambda day: 2 * weekly(day) if day in around else weekly(day))
+    frame, history = prepared(inp)
+    assert baseline.shape(history, target, ts(through)) == pytest.approx(2.0)
+    rows = frame[frame.date == target]
+    assert baseline.predict(history, ts(through), rows.index).mid.iloc[0] == pytest.approx(2 * LEVEL["Friday"])
+    # A year back would read the cutoff's own future: the 3 weeks around 2025-08-29 end on 2025-09-05
+    assert target - pd.Timedelta(days=364 - 7) > ts(through)
+
+
+def test_shape_one_without_two_years():
+    through, target = "2025-08-31", ts("2026-08-28")
+    inp = make_input("2024-06-03", through, weekly)  # under two years: nothing two years back
+    _, history = prepared(inp)
+    assert baseline.shape(history, target, ts(through)) == 1.0
+
+
+def test_shape_unchanged_within_357_days():
+    through = "2025-08-31"
+    target = ts(through) + pd.Timedelta(days=357)  # its 3 weeks a year back end on the cutoff
+    last_year = {target - pd.Timedelta(days=364 + k) for k in (-7, 0, 7)}
+    two_years = {target - pd.Timedelta(days=728 + k) for k in (-7, 0, 7)}
+    inp = make_input("2023-06-05", through, lambda day: (1.5 * weekly(day) if day in last_year else
+                                                        3 * weekly(day) if day in two_years else weekly(day)))
+    _, history = prepared(inp)
+    assert baseline.shape(history, target, ts(through)) == pytest.approx(1.5)
+    assert baseline.shape(history, target + pd.Timedelta(days=1), ts(through)) == 1.0  # a Monday: two years back, unlifted
 
 
 def baseline_run(inp: dict) -> dict:

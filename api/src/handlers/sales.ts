@@ -6,6 +6,7 @@ import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { wantRefitFor } from '../agent/refit.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
@@ -235,6 +236,8 @@ export async function applyUpload(ctx: TownwiseContext, scope: OrgScope, locatio
   const counts = { inserted, replaced: replace ? matched : 0, kept: replace ? 0 : matched };
   await ctx.stores.uploads.finish(scope, started.id, counts);
   ctx.logger.info({ orgId: scope.orgId, locationId, uploadId: started.id, dayCount: days.length }, 'townwise.upload_applied');
+  // D59: new or replaced days change what the lab trains on.
+  await wantRefitFor(ctx, scope, locationId, 'always');
   return { ...started, ...counts, status: 'applied' };
 }
 

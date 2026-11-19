@@ -2,24 +2,24 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocalSearchParams, useNavigation } from 'expo-router';
 import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
 
-import { aboutDraft, orderDraft } from '../../../../../../src/chat/about';
-import { openToDecide, useAgentPanel, type SendToChat } from '../../../../../../src/chat/useAgentPanel';
-import { useTuningChat } from '../../../../../../src/chat/useTuningChat';
-import { AgentChat, landingShowsQuestions, type AgentChatContext, type AgentChatHandle } from '../../../../../../src/chat/ui/AgentChat';
-import { AgentSidePanel } from '../../../../../../src/chat/ui/AgentSidePanel';
-import { questionChatOf } from '../../../../../../src/chat/ui/QuestionCard';
-import { fetchEstimatesAbout } from '../../../../../../src/portal/estimates/api';
-import { fetchOrderBoard } from '../../../../../../src/portal/orders/api';
-import { useBreakpoint, useLoad } from '../../../../../../src/portal/hooks';
-import { localToday } from '../../../../../../src/portal/locations/dates';
-import { useOrgRefreshOnLeave } from '../../../../../../src/portal/locations/parts';
-import { usePortal, useReadOnly } from '../../../../../../src/portal/PortalProvider';
-import { useLocation } from '../../../../../../src/portal/shell/LocationShell';
-import { Hidden } from '../../../../../../src/chat/ui/controls';
-import { webAria } from '../../../../../../src/portal/ui/aria';
-import { Wrap } from '../../../../../../src/portal/ui/layout';
-import { theme } from '../../../../../../src/theme';
-import { allUploadsOff } from '../../../../../../src/portal/locations/sales';
+import { aboutDraft, orderDraft } from '../../../../../../../src/chat/about';
+import { openToDecide, useAgentPanel, type SendToChat } from '../../../../../../../src/chat/useAgentPanel';
+import { useTuningChat } from '../../../../../../../src/chat/useTuningChat';
+import { AgentChat, landingShowsQuestions, type AgentChatContext, type AgentChatHandle } from '../../../../../../../src/chat/ui/AgentChat';
+import { AgentSidePanel } from '../../../../../../../src/chat/ui/AgentSidePanel';
+import { questionChatOf } from '../../../../../../../src/chat/ui/QuestionCard';
+import { fetchEstimatesAbout } from '../../../../../../../src/portal/estimates/api';
+import { fetchOrderBoard } from '../../../../../../../src/portal/orders/api';
+import { useBreakpoint, useLoad } from '../../../../../../../src/portal/hooks';
+import { localToday } from '../../../../../../../src/portal/locations/dates';
+import { useOrgRefreshOnLeave } from '../../../../../../../src/portal/locations/parts';
+import { usePortal, useReadOnly } from '../../../../../../../src/portal/PortalProvider';
+import { useLocation } from '../../../../../../../src/portal/shell/LocationShell';
+import { Hidden } from '../../../../../../../src/chat/ui/controls';
+import { webAria } from '../../../../../../../src/portal/ui/aria';
+import { Wrap } from '../../../../../../../src/portal/ui/layout';
+import { theme } from '../../../../../../../src/theme';
+import { allUploadsOff } from '../../../../../../../src/portal/locations/sales';
 
 // P25 TownwiseAI (/locations/[locationId]/agent, members; spec 16.3, D26): the chat page and its panel, Questions
 // and activity (Questions for you, What it's been doing, the budget, How TownwiseAI works), which shows only on the new

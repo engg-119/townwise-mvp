@@ -110,6 +110,8 @@ interface Entry {
   sampleAt: number;
   sampleTransferred: number;
   sendingSince: number | null;
+  /** D59: the create said TownwiseAI reads files here on its own, so the box's choice is sent on complete. */
+  autoRead: boolean;
 }
 
 // A function, not an inline check: TypeScript would keep `signal.aborted` narrowed to false across awaits.
@@ -169,6 +171,12 @@ export function createUploadQueue(deps: {
   api: ApiClient;
   locationId: string;
   purpose?: FilePurpose;
+  /**
+   * D59: the box's choice, read as each file's upload completes: true sends `aiAuto: true`, which lets TownwiseAI read
+   * that file on its own, and only while the create said it does here (`autoRead`). Left out, or false, nothing is
+   * sent and the file is never read on its own, so unchecking the box keeps every file not yet finished.
+   */
+  aiAuto?: () => boolean;
   onChange: (snapshot: QueueSnapshot) => void;
   now?: () => number;
   random?: () => number;
@@ -334,6 +342,7 @@ export function createUploadQueue(deps: {
       name: source.name, sizeBytes: source.size, purpose,
     }));
     entry.fileId = created.file.id;
+    entry.autoRead = created.autoRead === true;
     importId ??= created.import?.id ?? null;
     limits = created.limits;
     // Create is never aborted, so a file canceled meanwhile is deleted once the server has it.
@@ -370,9 +379,10 @@ export function createUploadQueue(deps: {
     }
     set(entry, 'completing');
     let tried = false;
+    const letAiRead = entry.autoRead && deps.aiAuto?.() === true;
     const file = await attempt(entry, 'completing', true, async () => {
       try {
-        return (await completeUpload(deps.api, deps.locationId, fileId)).file;
+        return (await completeUpload(deps.api, deps.locationId, fileId, letAiRead)).file;
       } catch (error) {
         // A complete that landed but whose answer was lost: the file is no longer uploading.
         if (tried && error instanceof ApiError && error.status === 409 && error.code === 'file_not_uploading') {
@@ -438,7 +448,7 @@ export function createUploadQueue(deps: {
       keys.push(`u${String(counter)}`);
       const entry: Entry = {
         key: `u${String(counter)}`, source, state: 'waiting', fileId: null, file: null, error: null, controller: null,
-        acked: 0, loaded: 0, transferred: 0, speed: null, sampleAt: now(), sampleTransferred: 0, sendingSince: null,
+        acked: 0, loaded: 0, transferred: 0, speed: null, sampleAt: now(), sampleTransferred: 0, sendingSince: null, autoRead: false,
       };
       // The API refuses an empty file as an invalid request; say what it is instead, without a request.
       if (source.size === 0) {
@@ -482,23 +492,27 @@ export function createUploadQueue(deps: {
  * The queue for a screen (`onboarding/HistoryStep`, onboarding step 3 on Home): one per location, stopped when the
  * screen closes. Under view-as no queue is created and `add` does nothing.
  */
-export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose } = {}): UploadQueue {
+export function useUploadQueue(locationId: string, opts: { purpose?: FilePurpose; aiAuto?: () => boolean } = {}): UploadQueue {
   const { api } = usePortal();
   const { readOnly } = useReadOnly();
   const purpose = opts.purpose ?? 'history';
+  const { aiAuto } = opts;
   const engine = useRef<QueueEngine | null>(null);
   const owner = `${locationId}:${purpose}`;
   const [state, setState] = useState<{ owner: string; snapshot: QueueSnapshot }>({ owner: '', snapshot: EMPTY_SNAPSHOT });
 
   useEffect(() => {
     if (readOnly) return undefined;
-    const queue = createUploadQueue({ api, locationId, purpose, onChange: (snapshot) => { setState({ owner, snapshot }); } });
+    const queue = createUploadQueue({
+      api, locationId, purpose, onChange: (snapshot) => { setState({ owner, snapshot }); },
+      ...(aiAuto === undefined ? {} : { aiAuto }),
+    });
     engine.current = queue;
     return () => {
       queue.dispose();
       if (engine.current === queue) engine.current = null;
     };
-  }, [api, locationId, purpose, readOnly, owner]);
+  }, [api, locationId, purpose, readOnly, owner, aiAuto]);
 
   const add = useCallback((files: readonly UploadSource[]) => engine.current?.add(files) ?? [], []);
   const cancel = useCallback((key: string) => { engine.current?.cancel(key); }, []);

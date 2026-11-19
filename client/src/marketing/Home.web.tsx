@@ -49,7 +49,7 @@ function Lead(): React.JSX.Element {
   return (
     <div ref={ref} className={className} onFocus={revealNow}>
       <p className="eyebrow">Early access. Built at Dartmouth, testing in Hanover, NH.</p>
-      <p className="sub">We’re building forecasts of daily guests for restaurants and bars, up to three months ahead, from your town’s calendar, not the region’s.</p>
+      <p className="sub">We’re building forecasts of daily guests for restaurants and bars, up to a year ahead, the first three months as a forecast and the rest as a wider outlook, from your town’s calendar, not the region’s.</p>
       <div className="cta-row">
         <a className="btn" href={EARLY_ACCESS_HREF}>Request early access</a>
         <a className="btn-o" href={SIGN_IN_HREF}>Sign in</a>

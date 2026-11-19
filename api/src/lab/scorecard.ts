@@ -38,8 +38,10 @@ export const OUTLOOK_HORIZONS = [182, 365] as const;
 
 /**
  * One outlook horizon's backtest and the ratio it gives the outlook's ranges (D52 decision 5): reported, never gated.
- * `basis` says what set the ratio: the square-root-of-lead growth alone (under 8 backtest weeks), the larger of that
- * and the backtest (8 to 25), or the backtest (26 or more). weeklyWape is null with no backtest week.
+ * `basis` says what set the ratio: the square-root-of-lead growth alone (`growth`, under 8 backtest weeks), or the
+ * larger of that and the backtest's band (`growth_or_backtest`, from 8). `backtest`, the backtest alone from 26 weeks,
+ * was the rule first decided; release B's lab never sends it (the outlook's ranges never narrow under the growth).
+ * weeklyWape is null with no backtest week.
  */
 const outlookReportSchema = z.strictObject({
   horizon: z.union([z.literal(OUTLOOK_HORIZONS[0]), z.literal(OUTLOOK_HORIZONS[1])]),
@@ -140,19 +142,24 @@ export const scorecardSchema = z.strictObject({
   engines: enginesSchema.optional(),
   horizon91: horizonReportSchema.optional(),
   horizonReach: horizonReportSchema.optional(),
-  /** The outlook horizons' reports (D52), in order; absent before runs reach a year (release B makes it required). */
+  /** The outlook horizons' reports (D52), in order; absent on a scorecard from before runs reached a year. */
   horizonOutlook: z.array(outlookReportSchema).max(OUTLOOK_HORIZONS.length).optional(),
   /** Absent on a baseline run and on any run made before the lab recorded it; null when no fold was long enough. */
   learning: learningSchema.nullable().optional(),
 });
 
-/** The scorecard a lab result is posted with (lab-input/2): every engine field present, since the gate reads them. */
+/**
+ * The scorecard a lab result is posted with (lab-input/3): every engine field present, since the gate reads them, and
+ * both outlook horizons' reports, in order (D52 release B).
+ */
 export const labScorecardSchema = scorecardSchema.extend({
   engine: engineSchema,
   backtest: backtestSchema.extend({ weeklyBias: num }),
   engines: enginesSchema,
   horizon91: horizonReportSchema,
   horizonReach: horizonReportSchema,
+  horizonOutlook: z.array(outlookReportSchema).length(OUTLOOK_HORIZONS.length)
+    .refine((reports) => reports.every((report, i) => report.horizon === OUTLOOK_HORIZONS[i]), { message: 'not 182 then 365' }),
 });
 
 export type Scorecard = z.infer<typeof scorecardSchema>;

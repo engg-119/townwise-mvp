@@ -21,10 +21,14 @@ export const GATE = {
    * days later), its scored weeks start on the first Monday at least 28 days after that (up to 6 more), and a week's
    * range needs 8 earlier weeks that ended 28 days before it, so the 12th week with one is the 24th scored, ending 167
    * days after the first: 364 + 30 + 28 + 6 + 167. modeling/lab pins it (pipeline.MIN_HISTORY_DAYS and
-   * test_min_history_days_always_gives_twelve_weeks_with_a_range); the API refuses a start with less.
+   * test_min_history_days_always_gives_twelve_weeks_with_a_range); a calibration started with less runs the baseline
+   * engine alone (baselineMinHistoryDays).
    */
   minHistoryDays: 595,
-  /** The baseline's minimum span (D42), for scheduled calibrations only: modeling/lab pins it (baseline.MIN_HISTORY_DAYS). */
+  /**
+   * The baseline's minimum span (D42), the least history any calibration starts with (a person's too since 2026-11-19):
+   * modeling/lab pins it (baseline.MIN_HISTORY_DAYS).
+   */
   baselineMinHistoryDays: 230,
   currentHorizonDays: 28,
   /** A baseline draft's backtest weekly bias may be this far either way (D42). */

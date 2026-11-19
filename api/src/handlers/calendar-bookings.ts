@@ -150,17 +150,17 @@ export async function sortCalendarBookings(ctx: TownwiseContext, req: Request, r
   res.status(200).json({ calendar: await viewOf(ctx, caller, location, calendar.id), sent, labeled, batchesFailed: outcome.batchesFailed });
 }
 
-function isBooked(booking: Booking | null): booking is 'buyout' | 'party' {
+export function isBooked(booking: Booking | null): booking is 'buyout' | 'party' {
   return booking === 'buyout' || booking === 'party';
 }
 
-/** A booking note's id, from its calendar and uid: a retry or a racing request finds the one written. */
-function noteIdOf(calendarId: string, uid: string): string {
+/** A booking note's id, from its calendar and uid: a retry or a racing request finds the one written (D59's too). */
+export function noteIdOf(calendarId: string, uid: string): string {
   return createHash('sha256').update(`booking-note\u0000${calendarId}\u0000${uid}`).digest('hex').slice(0, 24);
 }
 
 /** The note an upcoming booking gets, as D53's accept writes one; null when even all day the note rules refuse it. */
-function bookingNote(event: LabeledEvent & { booking: 'buyout' | 'party' }, today: string): NoteContent | null {
+export function bookingNote(event: LabeledEvent & { booking: 'buyout' | 'party' }, today: string): NoteContent | null {
   const base = {
     kind: 'private_event', startDate: event.startDate, endDate: event.endDate, weekdays: null,
     effect: event.booking === 'buyout' ? 'closed' : 'more_guests', expectedGuests: null, detail: null, title: null,

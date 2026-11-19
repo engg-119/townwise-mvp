@@ -8,6 +8,7 @@ import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { wantRefitFor, type TouchedDates } from '../agent/refit.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
@@ -160,7 +161,22 @@ export async function addRule(
     target: { type: 'rule', id: rule.id },
     details: { locationId: location.id, via, scheduled: rule.schedule !== null },
   });
+  await wantRefitForRule(ctx, caller, location.id, [rule.schedule]);
   return rule;
+}
+
+/**
+ * D59: a rule's schedule reaching a day the lab trains on (from its start) wants a refit; a rule with no schedule is
+ * read by nothing the lab sees.
+ */
+async function wantRefitForRule(
+  ctx: TownwiseContext, caller: MemberPrincipal, locationId: string, schedules: readonly (RuleSchedule | null)[],
+): Promise<void> {
+  const starts = schedules.flatMap((schedule) => (schedule === null ? [] : [schedule.startDate])).sort();
+  const first = starts[0];
+  if (first === undefined) return;
+  const touched: TouchedDates = { startDate: first, endDate: first };
+  await wantRefitFor(ctx, caller.scope, locationId, touched);
 }
 
 /**
@@ -240,6 +256,7 @@ export async function updateRule(ctx: TownwiseContext, req: Request, res: Respon
       target: { type: 'rule', id: rule.id },
       details: { locationId: location.id, scheduled: rule.schedule !== null },
     });
+    if (change.schedule !== undefined) await wantRefitForRule(ctx, caller, location.id, [existing.schedule, rule.schedule]);
   }
   res.status(200).json({ rule: ruleView(rule, await authorEmail(ctx, rule.createdBy, rule.byStaff), caller) });
 }
@@ -256,5 +273,6 @@ export async function deleteRule(ctx: TownwiseContext, req: Request, res: Respon
     target: { type: 'rule', id: rule.id },
     details: { locationId: location.id },
   });
+  await wantRefitForRule(ctx, caller, location.id, [rule.schedule]);
   res.status(204).end();
 }

@@ -1,5 +1,5 @@
-// The forecast lab's input (pure, townwise.lab-input/2): every date from the first day with guests to dataThrough + 182,
-// the term and week of term from Hanover's calendar, the notes as three flags, the town's event groups, the town calendar's
+// The forecast lab's input (pure, townwise.lab-input/3): every date from the first day with guests to dataThrough + 400,
+// the town's last researched term day (D52), the term and week of term from Hanover's calendar, the notes as three flags, the town's event groups, the town calendar's
 // entries without a title or URL, and the current published run with its engine. The numbers are synthetic. The last
 // test holds the API's input to the lab's own validator through a golden file.
 import { readFileSync, writeFileSync } from 'node:fs';
@@ -8,7 +8,9 @@ import { describe, expect, it } from 'vitest';
 
 import { daysBetween } from '../src/dates.ts';
 import { canonicalSha256, eachDay } from '../src/forecasts/file.ts';
-import { HORIZON_DAYS, LAB_MODEL_VERSION, labInputFingerprint, labInputOf, labInputSchema, type LabInput } from '../src/lab/input.ts';
+import {
+  HORIZON_DAYS, LAB_MODEL_VERSION, labInputFingerprint, labInputOf, labInputSchema, termsThroughOf, type LabInput,
+} from '../src/lab/input.ts';
 import type { ScheduledRule } from '../src/forecasts/adjust.ts';
 import type { RuleSchedule } from '../src/stores/business-rules.ts';
 import type { ForecastRow, ForecastRunRecord } from '../src/stores/forecasts.ts';
@@ -37,7 +39,7 @@ function history(from: string, to: string, skip: readonly string[] = []): SalesD
 function note(overrides: Partial<NoteRecord> & Pick<NoteRecord, 'kind' | 'startDate'>): NoteRecord {
   return {
     id: 'b2'.repeat(12), endDate: overrides.startDate, weekdays: null, effect: 'unknown', expectedGuests: null,
-    detail: 'sentinel-note-detail', title: null, startTime: null, endTime: null, createdBy: 'c3'.repeat(12), byStaff: false, source: null, fromEvent: null, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
+    detail: 'sentinel-note-detail', title: null, startTime: null, endTime: null, createdBy: 'c3'.repeat(12), byStaff: false, source: null, fromEvent: null, agent: null, createdAt: new Date(0), updatedAt: new Date(0), ...overrides,
   };
 }
 
@@ -57,7 +59,7 @@ function dayOf(input: LabInput, date: string): LabInput['days'][number] {
 }
 
 describe('labInputOf', () => {
-  it('covers every date from the first day with guests to dataThrough + 182 with no gaps', () => {
+  it('covers every date from the first day with guests to dataThrough + 400 with no gaps (D52)', () => {
     const days = [
       day('2024-12-30', null), day('2024-12-31', 0),
       ...history('2025-01-02', '2026-05-31', ['2025-02-10', '2025-04-15']),
@@ -66,13 +68,13 @@ describe('labInputOf', () => {
     ];
     const input = inputOf(days);
     expect(input).toMatchObject({
-      schema: 'townwise.lab-input/2', calibrationId: CALIBRATION.id, metric: 'guests', today: TODAY, dataThrough: '2026-05-31',
-      horizonDays: 182, regimeStart: null, champion: null,
+      schema: 'townwise.lab-input/3', calibrationId: CALIBRATION.id, metric: 'guests', today: TODAY, dataThrough: '2026-05-31',
+      horizonDays: 400, termsThrough: '2028-06-06', regimeStart: null, champion: null,
     });
     expect(input.days[0]?.date).toBe('2025-01-02');
-    expect(input.days.at(-1)?.date).toBe('2026-11-29');
-    expect(daysBetween('2026-05-31', '2026-11-29')).toBe(HORIZON_DAYS);
-    expect(input.days).toHaveLength(daysBetween('2025-01-02', '2026-11-29') + 1);
+    expect(input.days.at(-1)?.date).toBe('2027-07-05');
+    expect(daysBetween('2026-05-31', '2027-07-05')).toBe(HORIZON_DAYS);
+    expect(input.days).toHaveLength(daysBetween('2025-01-02', '2027-07-05') + 1);
     input.days.forEach((each, index) => {
       if (index > 0) expect(daysBetween(input.days[index - 1]?.date ?? '', each.date)).toBe(1);
     });
@@ -372,8 +374,8 @@ describe('labInputOf', () => {
       calibration: CALIBRATION, location: { town: { townId: null, name: 'Elsewhere', state: 'VT' } },
       days: history('2025-01-02', '2026-05-31'), notes: [], rules: [], today: TODAY, champion: null,
     });
-    // 2025's after Jan 2 and 2026's through Nov 29: ten each.
-    expect(input?.calendar).toHaveLength(20);
+    // 2025's after Jan 2 (ten), 2026's eleven and 2027's through Jul 5, its Independence Day observed (six).
+    expect(input?.calendar).toHaveLength(27);
     expect(input?.calendar.every((entry) => entry.kind === 'holiday' && entry.id.startsWith('us:'))).toBe(true);
   });
 
@@ -410,10 +412,32 @@ describe('labInputOf', () => {
     expect(labInputSchema.safeParse({ ...input, champion: { ...input.champion, recordedWeekdayBiasMeanAbs: -0.01 } }).success).toBe(false);
   });
 
-  it('labInputSchema refuses version 1, as the lab does', () => {
+  it('labInputSchema refuses versions 1 and 2, as the lab does', () => {
     const input = inputOf(history('2025-01-02', '2026-05-31'));
     expect(labInputSchema.safeParse({ ...input, schema: 'townwise.lab-input/1' }).success).toBe(false);
     expect(labInputSchema.safeParse({ ...input, calendar: undefined }).success).toBe(false);
+    // Version 2: 182 future days and no termsThrough
+    const withoutTerms = Object.fromEntries(Object.entries(input).filter(([key]) => key !== 'termsThrough'));
+    expect(labInputSchema.safeParse({ ...withoutTerms, schema: 'townwise.lab-input/2', horizonDays: 182 }).success).toBe(false);
+    expect(labInputSchema.safeParse({ ...input, horizonDays: 182 }).success).toBe(false);
+    expect(labInputSchema.safeParse(withoutTerms).success).toBe(false);
+    expect(labInputSchema.safeParse({ ...input, termsThrough: '2028-02-30' }).success).toBe(false);
+  });
+
+  it('names the town’s last researched term day as termsThrough (D52), and null for a town with no terms', () => {
+    // Hanover's spring 2028 finals, however short the history: the term day is the town's, not the input's
+    expect(inputOf(history('2025-01-02', '2026-05-31')).termsThrough).toBe('2028-06-06');
+    expect(termsThroughOf('hanover-nh')).toBe('2028-06-06');
+    // A researched town with key dates but no term entries, and a town outside the researched twelve
+    const towns: LocationRecord['town'][] = [{ townId: 'amherst-ma', name: 'Amherst', state: 'MA' }, { townId: null, name: 'Elsewhere', state: 'VT' }];
+    for (const town of towns) {
+      const input = labInputOf({
+        calibration: CALIBRATION, location: { town }, days: history('2025-01-02', '2026-05-31'), notes: [], rules: [], today: TODAY,
+        champion: null,
+      });
+      expect(input?.termsThrough).toBeNull();
+      expect(labInputSchema.safeParse(input).success).toBe(true);
+    }
   });
 
   it('carries the calibration’s pattern change date', () => {
@@ -429,7 +453,7 @@ describe('labInputOf', () => {
     const input = inputOf(days);
     expect(input.dataThrough).toBe(TODAY);
     expect(dayOf(input, '2026-06-03').guests).toBeNull();
-    expect(input.days.at(-1)?.date).toBe('2026-12-01');
+    expect(input.days.at(-1)?.date).toBe('2027-07-07');
     // Only days after today: nothing to calibrate on.
     expect(labInputOf({ calibration: CALIBRATION, location: HANOVER, days: [day('2026-06-03', 77)], notes: [], rules: [], today: TODAY, champion: null }))
       .toBeNull();
@@ -462,10 +486,12 @@ describe('labInputFingerprint (D42, the weekly refresh’s “changed since its 
   it('is a sha256 of the input without its calibration id, today and current run, with the schema and LAB_MODEL_VERSION', () => {
     expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
     expect(fingerprint).not.toBe(canonicalSha256(base));
-    const { schema, metric, dataThrough, horizonDays, regimeStart, calendar } = base;
+    const { schema, metric, dataThrough, horizonDays, termsThrough, regimeStart, calendar } = base;
     expect(fingerprint).toBe(canonicalSha256({
-      modelVersion: LAB_MODEL_VERSION, input: { schema, metric, dataThrough, horizonDays, regimeStart, days: base.days, calendar },
+      modelVersion: LAB_MODEL_VERSION, input: { schema, metric, dataThrough, horizonDays, termsThrough, regimeStart, days: base.days, calendar },
     }));
+    // A newly researched term moves termsThrough, and so the fingerprint: the town's locations refit (D52)
+    expect(labInputFingerprint({ ...base, termsThrough: '2028-11-22' })).not.toBe(fingerprint);
   });
 
   it('is unchanged when only the calibration, today or the current run changes', () => {
@@ -489,7 +515,7 @@ describe('labInputFingerprint (D42, the weekly refresh’s “changed since its 
       { ...base, regimeStart: '2026-01-05' },
     ];
     for (const input of changed) expect(labInputFingerprint(input)).not.toBe(fingerprint);
-    expect(labInputFingerprint(base, 'v10')).not.toBe(fingerprint);
+    expect(labInputFingerprint(base, 'v11')).not.toBe(fingerprint);
     expect(labInputFingerprint(base, LAB_MODEL_VERSION)).toBe(fingerprint);
   });
 });
@@ -614,5 +640,55 @@ describe('the input the API builds, against the lab', () => {
     const text = `${JSON.stringify(input, null, 1)}\n`;
     if (process.env.TOWNWISE_UPDATE_LAB_GOLDEN === '1') writeFileSync(GOLDEN, text);
     expect(readFileSync(GOLDEN, 'utf8')).toBe(text);
+  });
+
+  /**
+   * Hanover's days and calendar as labInputOf builds them from 2024-06-12 to 2028-07-15 (four years of history and the
+   * 400 days after a cut three years in), for the lab's outlook coverage check (modeling/lab/tests/test_outlook_coverage.py,
+   * D52 decision 6): each day's term, week of term and event groups, and the calendar entries starting by the last day.
+   * The guests are left out: the check makes its own.
+   */
+  it('writes the Hanover days the lab’s outlook coverage check reads (D52)', () => {
+    const HANOVER_GOLDEN = new URL('../../modeling/lab/tests/golden/hanover-calendar.json', import.meta.url);
+    const [first, last] = ['2024-06-12', '2028-07-15'];
+    const input = labInputOf({
+      calibration: { id: 'ab'.repeat(12), regimeStart: null }, location: HANOVER,
+      days: eachDay(first, last).map((date) => day(date, 50)), notes: [], rules: [], today: last, champion: null,
+    });
+    if (input === null) throw new Error('no input');
+    const days = input.days.filter((each) => each.date <= last)
+      .map(({ date, term, weekOfTerm, events }) => ({ date, term, weekOfTerm, events }));
+    const calendar = input.calendar.filter((entry) => entry.start <= last);
+    expect(days.map((each) => each.date)).toEqual(eachDay(first, last));
+    expect(new Set(days.map((each) => each.term))).toEqual(new Set(['interim', 'fall', 'winter', 'spring', 'summer']));
+    const lines = (rows: readonly unknown[]): string => rows.map((row) => JSON.stringify(row)).join(',\n');
+    const text = `{"calendar": [\n${lines(calendar)}\n],\n"days": [\n${lines(days)}\n]}\n`;
+    if (process.env.TOWNWISE_UPDATE_LAB_GOLDEN === '1') writeFileSync(HANOVER_GOLDEN, text);
+    expect(readFileSync(HANOVER_GOLDEN, 'utf8')).toBe(text);
+  });
+});
+
+describe('owner beats agent in the lab input (D59)', () => {
+  const AT = new Date('2026-05-10T00:00:00Z');
+  const days = history('2025-06-01', '2026-05-31');
+
+  it('a person’s note that decides a history day sets aside TownwiseAI’s note there, in the flags', () => {
+    const agentClosure = note({
+      id: 'd4'.repeat(12), kind: 'closure', startDate: '2026-05-16', effect: 'closed', createdBy: 'townwise_ai',
+      agent: { changeId: 'e5'.repeat(12), at: AT }, createdAt: AT, updatedAt: AT,
+    });
+    const party = note({ kind: 'private_event', startDate: '2026-05-16', effect: 'more_guests', expectedGuests: null });
+    expect(dayOf(inputOf(days, [agentClosure]), '2026-05-16')).toMatchObject({ closed: true });
+    expect(dayOf(inputOf(days, [agentClosure, party]), '2026-05-16')).toMatchObject({ closed: false, privateEvent: true, booked: false });
+    // Once a person edits it, the note is theirs and both count.
+    const edited = { ...agentClosure, updatedAt: new Date(AT.getTime() + 1000) };
+    expect(dayOf(inputOf(days, [edited, party]), '2026-05-16')).toMatchObject({ closed: true, privateEvent: true });
+  });
+
+  it('a TownwiseAI note alone sets its flags as any note does, and a D34 note from a file counts as TownwiseAI’s until edited', () => {
+    const fromFile = note({ kind: 'private_event', startDate: '2026-05-20', effect: 'closed', source: { via: 'ai_file', fileId: 'f6'.repeat(12) } });
+    expect(dayOf(inputOf(days, [fromFile]), '2026-05-20')).toMatchObject({ booked: true, privateEvent: true });
+    const closure = note({ kind: 'closure', startDate: '2026-05-20', effect: 'closed' });
+    expect(dayOf(inputOf(days, [fromFile, closure]), '2026-05-20')).toMatchObject({ closed: true, booked: false, privateEvent: false });
   });
 });

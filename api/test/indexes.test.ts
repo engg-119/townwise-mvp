@@ -24,6 +24,8 @@ describe('indexes', () => {
       'tw_access_requests',
       // U9, TownwiseAI's questions, and its weekly suggestions with their pass rows.
       'tw_agent_answers', 'tw_agent_suggestions', 'tw_suggestion_passes',
+      // D59: the ledger of the changes TownwiseAI saved on its own.
+      'tw_agent_changes',
       'tw_audit_events', 'tw_chat_conversations', 'tw_chat_live_turns', 'tw_chat_proposals', 'tw_chat_usage',
       // A TownwiseAI turn's progress (openspec change resumable-chat-turns).
       'tw_chat_turns',
@@ -50,6 +52,17 @@ describe('indexes', () => {
       // The days each person used the app (openspec change staff-overview).
       'tw_activity_days',
     ].sort());
+  });
+
+  it('holds one TownwiseAI change per fact at a location, and reads a location’s newest first (D59)', () => {
+    const connection = registered();
+    const indexes = indexesOf(connection, 'TwAgentChange');
+    expect(indexes.map(([fields]) => fields)).toEqual([
+      { orgId: 1, locationId: 1, dedupeKey: 1 }, { orgId: 1, locationId: 1, appliedAt: -1, _id: -1 },
+      { orgId: 1, locationId: 1, sourceKind: 1, sourceId: 1 },
+    ]);
+    expect(indexes[0]?.[1]).toMatchObject({ unique: true });
+    expect(connection.models.TwAgentChange?.schema.get('strict')).toBe('throw');
   });
 
   it('reads active days by organization and day, by day across organizations, and by person (staff-overview)', () => {
@@ -112,7 +125,7 @@ describe('indexes', () => {
     ]);
   });
 
-  it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person and the files sweep', () => {
+  it('leads every tenant compound index with orgId, except the two seat indexes keyed by the person, the files sweep and the cross-organization claims', () => {
     const connection = registered();
     for (const model of [
       'TwMember', 'TwLocation', 'TwSalesDay', 'TwUpload', 'TwNote', 'TwChatConversation', 'TwChatLiveTurn', 'TwChatUsage',
@@ -135,6 +148,8 @@ describe('indexes', () => {
         // The TownwiseAI reader's claim (spec 11A.9) spans organizations too: the oldest read asked for, in any.
         if (model === 'TwFile' && keys[0] === 'ai.status') continue;
         if (model === 'TwImport' && keys[0] === 'status') continue;
+        // D59 slice 2: the TownwiseAI reader's claim of a queued automatic sort spans organizations (stores/cross-tenant.ts).
+        if (model === 'TwCalendarSource' && keys[0] === 'autoSort.status') continue;
         // The lab callback finds a calibration by its id and token hash, before any organization is known.
         if (model === 'TwCalibration' && keys[0] === '_id') continue;
         expect(keys[0]).toBe('orgId');

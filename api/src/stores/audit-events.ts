@@ -84,6 +84,11 @@ export const AUDIT_DETAIL_KEYS = {
   // Sending the calendars' event titles to TownwiseAI's weekly call (calendar-event-suggestions): the switch's state only.
   // A decided suggestion's `type` above is also `event`, `move` or `remove`; never a title, uid or date of an owner event.
   'org.calendar_titles_ai_changed': ['on'],
+  // D59, TownwiseAI working on its own: the org admin's switch, and each change it saved or someone undid, by its typed
+  // action and source kind. Never a title, a why, a file name, a date or a figure.
+  'org.agent_auto_switched': ['on'],
+  'agent.change_applied': ['locationId', 'action', 'sourceKind'],
+  'agent.change_undone': ['locationId', 'action', 'sourceKind'],
   // Orders: ids, dates, counts and a card's kind (change, rule or setup), never an item or supplier name, a servings
   // figure, a quantity, or the owner's reason or situation. A setup card (D56) is only ever dismissed: nothing saves
   // from it, so it never writes order.card_saved.

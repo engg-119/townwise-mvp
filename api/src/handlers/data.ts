@@ -9,6 +9,7 @@ import { AppError, parseInput } from '@ckeith26/server-core';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
 
+import { wantRefitFor } from '../agent/refit.ts';
 import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
@@ -31,7 +32,7 @@ import type { CalendarKind, CalendarStatus, OwnerCalendarRecord } from '../store
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
 import { calendarOfFile, shownView } from './owner-calendars.ts';
-import { finishAccepted } from './rule-suggestions.ts';
+import { finishAccepted, finishAcceptedNote } from './rule-suggestions.ts';
 import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
 
@@ -469,8 +470,9 @@ function dataCalendarView(calendar: OwnerCalendarRecord, member: MemberPrincipal
  * `next` is the cursor for the page after, or null on the last. D61: `calendars`, the same on every page, are the
  * scope's calendars (oldest first, each location's in turn), each an item of the Calendars folder; a stored file a
  * calendar was imported from (D60) is left out of `items` while that calendar exists, so it shows once, as the
- * calendar (a page may then hold fewer than 100 with more to come). Each item carries its `folder`. A read: it logs
- * nothing and records nothing.
+ * calendar (a page may then hold fewer than 100 with more to come). Each item carries its `folder`. D59: `agentAuto`,
+ * whether TownwiseAI reads a file added here on its own (TOWNWISE_AGENT_AUTO, TownwiseAI reading files and the
+ * organization's switch), so Add a file's box starts checked. A read: it logs nothing and records nothing.
  */
 export async function listData(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const member = memberOf(principal);
@@ -484,10 +486,12 @@ export async function listData(ctx: TownwiseContext, req: Request, res: Response
   ]);
   const imported = new Set(calendars.flatMap((calendar) => calendar.fromFileId ?? []));
   const items = page.items.filter((item) => item.ref.type !== 'file' || !imported.has(item.ref.id));
+  const agentAuto = ctx.config.agentAuto && ctx.aiReads !== null && (await ctx.stores.orgs.findById(scope.orgId))?.agentAuto.on === true;
   res.status(200).json({
     items: await itemViews(ctx, member, items),
     next: page.next === null ? null : `${page.next.at.toISOString()}_${page.next.id}`,
     calendars: calendars.map((calendar) => dataCalendarView(calendar, member)),
+    agentAuto,
   });
 }
 
@@ -881,7 +885,10 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
   let suggestions = 0;
   for (const open of await ctx.stores.agentSuggestions.openFromFile(scope, location.id, file.id)) {
     const rule = await ctx.stores.businessRules.find(scope, location.id, open.id);
+    // D59: a note suggestion whose note an accept already wrote under its id is finished as accepted, as a rule is.
+    const accepted = open.type === 'note' ? await ctx.stores.notes.find(scope, location.id, open.id) : null;
     if (rule !== null && open.type === 'rule') await finishAccepted(ctx, member, location, open, rule);
+    else if (accepted !== null && open.type === 'note') await finishAcceptedNote(ctx, member, location, open);
     else if (await ctx.stores.agentSuggestions.removeOpen(scope, location.id, open.id)) suggestions += 1;
   }
   let days = 0;
@@ -894,6 +901,9 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
     ctx.logger.info({ fileId: summary.id }, 'townwise.file_deleted');
     items += 1;
   }
+  // D59: the file's changes in TownwiseAI's ledger read as undone, so none of them is ever made again.
+  await ctx.stores.agentChanges.markSourceUndone(scope, location.id, { kind: 'file', id: file.id }, { by: member.userId, now: ctx.now() });
+  if (notes > 0 || days > 0) await wantRefitFor(ctx, scope, location.id, 'always');
   if (await ctx.stores.files.finishAiUndo(scope, location.id, file.id)) {
     await recordAfter(ctx, {
       ...actorOf(member), at: ctx.now(), orgId: scope.orgId, action: 'file.ai_undone',
@@ -914,7 +924,7 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
  * may still have had a write in flight: days it landed meanwhile go too. Shared by DELETE .../data/:ref and an undo of
  * a TownwiseAI read (whose upload no stored file wrote).
  */
-async function removeUpload(ctx: TownwiseContext, scope: OrgScope, locationId: string, uploadId: string): Promise<{ deletedDays: number; deletedFiles: number }> {
+export async function removeUpload(ctx: TownwiseContext, scope: OrgScope, locationId: string, uploadId: string): Promise<{ deletedDays: number; deletedFiles: number }> {
   // Read whether files are on or not: an upload read from a stored file keeps it, and its blobs, while files are off.
   const files = await ctx.stores.files.byUploadIds(scope, [uploadId]);
   if (files.length > 0) {

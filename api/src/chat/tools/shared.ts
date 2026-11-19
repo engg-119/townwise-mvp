@@ -1,7 +1,18 @@
 // Pieces the tools share.
 import { z } from 'zod';
 
+import { TOWNWISE_AI_AUTHOR } from '../../agent/apply.ts';
+import type { NoteRecord } from '../../stores/notes.ts';
 import type { ToolView } from './registry.ts';
+
+/**
+ * D59 slice 4: whether a note's words may be ones nobody typed into Townwise: TownwiseAI wrote it from a file or a
+ * calendar (its author, or a file `source`), or it was made from a calendar event (`fromEvent`). Edited or not, its
+ * title and detail may still be the source's words. A tool that lists one sets ToolContext.turn.readNotTyped.
+ */
+export function notTypedNote(note: Pick<NoteRecord, 'createdBy' | 'source' | 'fromEvent'>): boolean {
+  return note.createdBy === TOWNWISE_AI_AUTHOR || note.source !== null || note.fromEvent !== null;
+}
 
 export const NO_INPUT = { type: 'object', properties: {}, additionalProperties: false } as const;
 

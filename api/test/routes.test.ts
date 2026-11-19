@@ -78,6 +78,23 @@ describe('route table', () => {
     }]);
   });
 
+  it('D59: the switch is an org_admin PATCH (2kb), the log a member GET, and Undo a member POST with no body, all open as admin', () => {
+    const ids = ['org.agent_auto.switch', 'org.agent.changes', 'org.agent.change_undo'];
+    const rows = TOWNWISE_ROUTES.filter((r) => ids.includes(r.id))
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'org.agent_auto.switch', method: 'PATCH', path: '/org/agent-auto', policy: 'org_admin', bodyLimit: '2kb', limiter: undefined, openAsAdmin: true },
+      {
+        id: 'org.agent.changes', method: 'GET', path: '/org/locations/:locationId/agent/changes', policy: 'member', bodyLimit: 'none',
+        limiter: undefined, openAsAdmin: true,
+      },
+      {
+        id: 'org.agent.change_undo', method: 'POST', path: '/org/locations/:locationId/agent/changes/:changeId/undo', policy: 'member',
+        bodyLimit: 'none', limiter: undefined, openAsAdmin: true,
+      },
+    ]);
+  });
+
   it('places.map is a signed_in POST with a 32kb body and the places limiter, open as admin', () => {
     const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'places.map')
       .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));

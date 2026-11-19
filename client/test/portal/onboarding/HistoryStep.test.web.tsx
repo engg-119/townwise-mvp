@@ -182,6 +182,7 @@ test('many files upload at once, each with its own progress and line, then Read 
   // The names travel in the create bodies only, never in a path.
   expect(api.calls.some((call) => call.path.includes('sales_2024'))).toBe(false);
   expect(files.calls.filter((call) => call.method === 'POST' && call.path === '/files').map((call) => call.body)).toContainEqual(
+    // D59: nothing about the TownwiseAI box goes on create, so an API before it never refuses the upload.
     { name: 'sales_2024.csv', sizeBytes: 8, purpose: 'history' },
   );
   expect(setItem).not.toHaveBeenCalled();

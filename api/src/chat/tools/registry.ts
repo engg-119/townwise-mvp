@@ -33,6 +33,8 @@ import { showVisualTool, type Visual } from './visual.ts';
 
 export interface ToolContext {
   readonly ctx: TownwiseContext;
+  /** The conversation the turn is in: D59 slice 4 keys a note propose_note saves itself by it (tw_chat_proposals, the ledger's sourceId). */
+  readonly conversationId: string;
   readonly scope: OrgScope;
   readonly location: LocationRecord;
   /** U13A: today in the location's town (time-zones.ts), YYYY-MM-DD. */
@@ -52,9 +54,13 @@ export interface ToolContext {
    * results, which the API puts back in the model's context on every later request too: from the start when the history
    * holds one, and otherwise before the client tools of the message that got one run. `readWeb` says which refusal.
    * `pictureBytes` (D36) is the bytes of the pictures the turn's requests carry: the message's, then each picture
-   * read_data_item reads, which it refuses past MESSAGE_PICTURE_BYTES.
+   * read_data_item reads, which it refuses past MESSAGE_PICTURE_BYTES. D59 slice 4: `readNotTyped` is set by a tool
+   * whose result carries words nobody typed into Townwise themselves: get_owner_calendar once it lists an event (a
+   * title anyone who sends an invitation or runs a subscribed feed can write), and list_notes or get_day once they list
+   * a note TownwiseAI wrote from a file or a calendar, or one made from a calendar event (notTypedNote). While it or
+   * `readUntrusted` is set, propose_note saves nothing itself and only shows its card. start_calibration does not read it.
    */
-  readonly turn: { readUntrusted: boolean; readWeb: boolean; pictureBytes: number };
+  readonly turn: { readUntrusted: boolean; readWeb: boolean; readNotTyped: boolean; pictureBytes: number };
   readonly files: TurnFiles;
 }
 
@@ -84,6 +90,9 @@ export interface TurnFiles {
 /** What a turn's requests carry of one file: its text as sent (and whether it was cut), or a picture. */
 export type SentFile = { readonly text: string; readonly truncated: boolean } | { readonly picture: true };
 
+/** D59 slice 4: a note TownwiseAI saved from the person's own words: its id and its row in tw_agent_changes. */
+export interface SavedNote { readonly noteId: string; readonly changeId: string }
+
 export type JsonValue = string | number | boolean | null | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 
 /**
@@ -105,6 +114,8 @@ export interface ToolRun {
    */
   readonly picture?: { readonly mediaType: BetaBase64ImageSource['media_type']; readonly base64: string };
   readonly proposal?: NoteContent;
+  /** D59 slice 4: the note propose_note saved itself (the person stated it plainly) and its ledger row, for the card's Undo. */
+  readonly saved?: SavedNote;
   readonly visual?: Visual;
   readonly prompts?: string[];
 }
@@ -119,7 +130,8 @@ export interface ChatTool<I> {
   readonly invalidInput: string;
   /** `today` is the town's local date, YYYY-MM-DD (U13A); only date rules read it. */
   parse(raw: unknown, today: string): I | null;
-  run(tc: ToolContext, input: I): Promise<ToolRun>;
+  /** `callId` is the tool_use block's id; runTool always passes it (propose_note keys a note it saves by it). */
+  run(tc: ToolContext, input: I, callId?: string): Promise<ToolRun>;
   inputView(input: I): ToolView | null;
   /** Recomputed from the result the model read, so a stored conversation shows the same card. Null when unreadable. */
   resultView(content: string): ToolView | null;
@@ -134,13 +146,15 @@ export interface ToolOutcome {
   readonly result: BetaToolResultBlockParam;
   /** Set only when propose_note got a valid note. */
   readonly proposal: NoteContent | null;
+  /** D59 slice 4: set only when propose_note saved that note itself. */
+  readonly saved: SavedNote | null;
   /** Set only when show_visual drew one. */
   readonly visual: Visual | null;
   /** Set only when suggest_next got three valid prompts. */
   readonly prompts: string[] | null;
 }
 
-const NOTHING_SHOWN = { proposal: null, visual: null, prompts: null } as const;
+const NOTHING_SHOWN = { proposal: null, saved: null, visual: null, prompts: null } as const;
 
 /** In this order on every request. Append only. */
 export const TOOL_REGISTRY: readonly ChatTool<unknown>[] = [
@@ -196,14 +210,14 @@ export async function runTool(tc: ToolContext, block: BetaToolUseBlock): Promise
   if (tool === undefined) return { result: failed(block, 'Unknown tool.'), ...NOTHING_SHOWN };
   const input = tool.parse(block.input, tc.today);
   if (input === null) return { result: failed(block, tool.invalidInput), ...NOTHING_SHOWN };
-  const run = await tool.run(tc, input);
+  const run = await tool.run(tc, input, block.id);
   const content: BetaToolResultBlockParam['content'] = run.picture === undefined ? run.content : [
     { type: 'text', text: run.content },
     { type: 'image', source: { type: 'base64', media_type: run.picture.mediaType, data: run.picture.base64 } },
   ];
   return {
     result: { type: 'tool_result', tool_use_id: block.id, content },
-    proposal: run.proposal ?? null, visual: run.visual ?? null, prompts: run.prompts ?? null,
+    proposal: run.proposal ?? null, saved: run.saved ?? null, visual: run.visual ?? null, prompts: run.prompts ?? null,
   };
 }
 
