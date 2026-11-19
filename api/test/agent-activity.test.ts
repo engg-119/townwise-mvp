@@ -24,7 +24,8 @@ function change(over: Partial<AgentChangeRecord> = {}): AgentChangeRecord {
   return {
     id: n, locationId: LOCATION, sourceKind: 'file', sourceId: 'f'.repeat(24), action: 'note.add', targetId: `t${n.slice(1)}`,
     dedupeKey: `key-${n}`, confidence: 'high', why: SENTINEL, onBehalfOf: 'adder', status: 'applied', targetUpdatedAt: AT,
-    startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', count: null, appliedAt: AT, statusAt: AT, statusBy: 'townwise_ai', ...over,
+    startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', weekdays: null, count: null, appliedAt: AT, statusAt: AT,
+    statusBy: 'townwise_ai', ...over,
   };
 }
 
@@ -72,7 +73,7 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
     expect(items).toEqual([
       {
         at: AT.toISOString(), kind: 'agent_change', changeId: note.id, action: 'note.add', sourceKind: 'file', status: 'applied',
-        startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', count: null, undoable: true,
+        startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', weekdays: null, count: null, undoable: true,
       },
       expect.objectContaining({ changeId: undone.id, status: 'undone', undoable: false }),
     ]);
@@ -109,7 +110,7 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
 describe('a rule TownwiseAI added (D59 slice 3)', () => {
   it('is undoable by any member while unchanged, not once a person edited it or it is gone', async () => {
     const rule = (over: Partial<AgentChangeRecord> = {}) => change({ action: 'rule.add', sourceKind: 'sales', noteKind: 'closure', endDate: null, ...over });
-    const kept = rule();
+    const kept = rule({ weekdays: [1] });
     const edited = rule();
     const gone = rule();
     const ctx = contextWith([kept, edited, gone], { rules: { [kept.targetId]: AT, [edited.targetId]: new Date(AT.getTime() + 1) } });
@@ -117,6 +118,8 @@ describe('a rule TownwiseAI added (D59 slice 3)', () => {
     expect(items.map((item) => (item.kind === 'agent_change' ? [item.action, item.sourceKind, item.undoable] : null))).toEqual([
       ['rule.add', 'sales', true], ['rule.add', 'sales', false], ['rule.add', 'sales', false],
     ]);
+    // Its weekdays, so "Closed on Mondays" does not read as every day.
+    expect(items[0]).toMatchObject({ weekdays: [1], endDate: null });
     expect(JSON.stringify(items)).not.toContain(SENTINEL);
   });
 });
@@ -159,7 +162,7 @@ describe('who may undo, and the log’s view (D59)', () => {
     const there = await activityFor(input(contextWith([labels], { labels: { [calendarId]: 3 } }), ADMIN), [agentChangeSource]);
     expect(there).toEqual([{
       at: AT.toISOString(), kind: 'agent_change', changeId: labels.id, action: 'booking.label', sourceKind: 'calendar', status: 'applied',
-      startDate: '2025-07-12', endDate: '2026-06-20', noteKind: null, count: 12, undoable: true,
+      startDate: '2025-07-12', endDate: '2026-06-20', noteKind: null, weekdays: null, count: 12, undoable: true,
     }]);
     expect(await activityFor(input(contextWith([labels], { labels: { [calendarId]: 3 } }), MEMBER), [agentChangeSource]))
       .toEqual([expect.objectContaining({ undoable: false })]);
@@ -175,7 +178,8 @@ describe('who may undo, and the log’s view (D59)', () => {
     const states = new Map<string, Target>([[row.id, { state: 'there', author: 'townwise_ai' }]]);
     expect(changeView(MEMBER, row, states)).toEqual({
       id: row.id, at: AT.toISOString(), action: 'note.add', sourceKind: 'file', sourceRef: `f_${'f'.repeat(24)}`, status: 'applied',
-      startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', count: null, why: SENTINEL, undoable: true, targetId: row.targetId,
+      startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', weekdays: null, count: null, why: SENTINEL, undoable: true,
+      targetId: row.targetId,
     });
     expect(changeView(VIEW_AS, row, states)).toMatchObject({ why: null, undoable: false });
     expect(changeView(MEMBER, { ...row, status: 'applying' }, states)).toMatchObject({ targetId: null, undoable: false });

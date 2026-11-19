@@ -9,7 +9,7 @@
       { "at": "2026-06-01T10:00:00.000Z", "kind": "question_answered", "questionId": "gap_2026-02-03_2026-02-04", "answer": "not_sure" },
       { "at": "2026-06-01T09:00:00.000Z", "kind": "upload_applied", "firstDate": "2026-03-01", "lastDate": "2026-05-31", "dayCount": 78 },
       { "at": "2026-06-01T08:30:00.000Z", "kind": "file_processed", "fileId": "0000000000000000000000f1", "firstDate": "2026-01-05", "lastDate": "2026-01-11", "dayCount": 7 },
-      { "at": "2026-06-01T08:00:00.000Z", "kind": "agent_change", "changeId": "0000000000000000000000e1", "action": "note.add", "sourceKind": "file", "status": "applied", "startDate": "2026-07-04", "endDate": "2026-07-04", "noteKind": "private_event", "count": null, "undoable": true },
+      { "at": "2026-06-01T08:00:00.000Z", "kind": "agent_change", "changeId": "0000000000000000000000e1", "action": "note.add", "sourceKind": "file", "status": "applied", "startDate": "2026-07-04", "endDate": "2026-07-04", "noteKind": "private_event", "weekdays": null, "count": null, "undoable": true },
       { "at": "2026-06-01T07:00:00.000Z", "kind": "question_answered", "questionId": "gap_2026-01-20_2026-01-21", "answer": "other" }
     ],
     "suggestions": [

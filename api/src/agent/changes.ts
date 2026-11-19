@@ -100,6 +100,8 @@ export interface AgentChangeView {
   startDate: string | null;
   endDate: string | null;
   noteKind: NoteKind | null;
+  /** Slice 3: the weekdays a note or rule covers (0 is Sunday), or null for every day. */
+  weekdays: readonly number[] | null;
   /** How many records it added (a calendar sort's labels); null otherwise. */
   count: number | null;
   why: string | null;
@@ -114,7 +116,8 @@ export function changeView(
   return {
     id: change.id, at: change.appliedAt.toISOString(), action: change.action, sourceKind: change.sourceKind,
     sourceRef: change.sourceKind === 'file' && change.sourceId !== null ? `f_${change.sourceId}` : null, status: change.status,
-    startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, count: change.count, why: caller.viewAs === null ? change.why : null,
+    startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, weekdays: change.weekdays, count: change.count,
+    why: caller.viewAs === null ? change.why : null,
     undoable: undoable(caller, change, states), targetId: change.status === 'applying' ? null : change.targetId,
   };
 }

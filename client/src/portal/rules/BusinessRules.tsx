@@ -60,10 +60,14 @@ const TOWNWISE_AI = 'TownwiseAI';
 
 /**
  * “Added by owner@example.com, Mar 2, 2026”, “Saved from TownwiseAI by …” for a rule saved from a chat card, or (D59
- * slice 3) “Added by TownwiseAI on its own, …” for one it was sure of.
+ * slice 3) “Added by TownwiseAI on its own, …” for one it was sure of, with “, changed since” once someone edited it (it
+ * is then a person's, and TownwiseAI's Undo no longer takes it back). [CONFIRM: the words for what TownwiseAI saves from
+ * its weekly suggestions and the sales history]
  */
 function addedLine(rule: Rule): string {
-  if (rule.createdByEmail === TOWNWISE_AI) return `Added by TownwiseAI on its own, ${formatDate(rule.createdAt)}`;
+  if (rule.createdByEmail === TOWNWISE_AI) {
+    return `Added by TownwiseAI on its own, ${formatDate(rule.createdAt)}${rule.updatedAt === rule.createdAt ? '' : ', changed since'}`;
+  }
   const who = rule.createdByEmail === DELETED_PERSON ? 'a deleted person' : rule.createdByEmail;
   return `${rule.addedVia === 'townwise_ai' ? 'Saved from TownwiseAI by' : 'Added by'} ${who}, ${formatDate(rule.createdAt)}`;
 }

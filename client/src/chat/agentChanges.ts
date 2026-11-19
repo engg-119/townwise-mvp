@@ -4,7 +4,7 @@ import type { ApiClient } from '../api/client';
 import { ApiError } from '../api/client';
 import { withOrgId } from '../portal/api';
 import { noteSchema, type Note } from '../portal/locations/api';
-import { KIND_LABEL, rangeText } from './format';
+import { KIND_LABEL, rangeText, weekdaysText } from './format';
 
 // D59 (openspec change auto-apply-agent-reads): TownwiseAI working on its own, as the client reads it: the
 // organization's switch (GET .../agent's `agentAuto`, PATCH /api/org/agent-auto), each change TownwiseAI saved (the
@@ -21,12 +21,14 @@ const statusSchema = z.enum(['applying', 'applied', 'undoing', 'undone', 'adopte
 const sourceKindSchema = z.enum(['file', 'calendar', 'weekly', 'sales', 'chat']);
 /** How many records a change added (a calendar sort's labels, slice 2); null otherwise, absent from an older API. */
 const countSchema = z.number().int().nonnegative().nullable().optional().transform((count) => count ?? null);
+/** Slice 3: the weekdays a note or rule covers (0 is Sunday); null for every day, absent from an older API. */
+const weekdaysSchema = z.array(z.number().int().min(0).max(6)).nullable().optional().transform((weekdays) => weekdays ?? null);
 
 /** The activity's item for one change: no title, why, file name or figure. */
 export const agentChangeItemSchema = z.object({
   at: z.string(), kind: z.literal('agent_change'), changeId: z.string(), action: actionSchema, sourceKind: sourceKindSchema,
   status: statusSchema, startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(),
-  count: countSchema, undoable: z.boolean(),
+  weekdays: weekdaysSchema, count: countSchema, undoable: z.boolean(),
 });
 export type AgentChangeItem = z.infer<typeof agentChangeItemSchema>;
 
@@ -50,8 +52,8 @@ export type NoteSuggestion = z.infer<typeof noteSuggestionSchema>;
 /** A change as the log lists it: the why is null under view-as. */
 export const agentChangeSchema = z.object({
   id: z.string(), at: z.string(), action: actionSchema, sourceKind: sourceKindSchema, sourceRef: z.string().nullable(), status: statusSchema,
-  startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(), count: countSchema, why: z.string().nullable(),
-  undoable: z.boolean(), targetId: z.string().nullable(),
+  startDate: dateSchema.nullable(), endDate: dateSchema.nullable(), noteKind: NOTE_KIND.nullable(), weekdays: weekdaysSchema, count: countSchema,
+  why: z.string().nullable(), undoable: z.boolean(), targetId: z.string().nullable(),
 });
 export type AgentChange = z.infer<typeof agentChangeSchema>;
 
@@ -108,19 +110,23 @@ function pageOf(action: AgentChange['action']): string {
 
 /**
  * What a change added, in a few words: "a note: Private event, Jun 13, 2026", (slice 2) "booking labels on 12
- * events, used for forecasts", or (slice 3) "a business rule: Closure, from Jun 8, 2026".
+ * events, used for forecasts", or (slice 3) "a business rule: Closure on Mondays, from Jun 8, 2026", its weekdays named
+ * so a weekday rule does not read as every day. [CONFIRM: the words for what TownwiseAI saves from its weekly
+ * suggestions and the sales history]
  */
-function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count'>): string {
+function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'weekdays'>): string {
   const dates = change.startDate === null || change.endDate === null ? '' : rangeText(change.startDate, change.endDate);
+  const which = weekdaysText(change.weekdays);
+  const on = which === null ? '' : ` on ${which.replace(/ only$/, '')}`;
   switch (change.action) {
-    case 'note.add': return `a note: ${change.noteKind === null ? 'Note' : KIND_LABEL[change.noteKind]}${dates === '' ? '' : `, ${dates}`}`;
+    case 'note.add': return `a note: ${change.noteKind === null ? 'Note' : `${KIND_LABEL[change.noteKind]}${on}`}${dates === '' ? '' : `, ${dates}`}`;
     case 'sales_days.add': return `sales days you didn’t have${dates === '' ? '' : ` for ${dates}`}`;
     case 'item.add': return 'a summary of a file';
     case 'rule.add': {
       // Slice 3: a standing rule has a start and no end.
       const from = change.startDate !== null && change.endDate === null ? `, from ${rangeText(change.startDate, change.startDate)}` : '';
       const when = from !== '' ? from : dates === '' ? '' : `, ${dates}`;
-      return change.noteKind === null ? 'a business rule' : `a business rule: ${KIND_LABEL[change.noteKind]}${when}`;
+      return change.noteKind === null ? 'a business rule' : `a business rule: ${KIND_LABEL[change.noteKind]}${on}${when}`;
     }
     case 'booking.label':
       return change.count === null ? 'booking labels, used for forecasts'
@@ -128,14 +134,17 @@ function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 
   }
 }
 
+/** [CONFIRM: the words for what TownwiseAI saves from its weekly suggestions and the sales history] */
 const SOURCE_WORDS: Readonly<Record<AgentChange['sourceKind'], string>> = {
   file: 'from a file you added', calendar: 'from a calendar you imported', weekly: 'from its weekly look ahead', sales: 'from your sales history',
   chat: 'from your message',
 };
 
 /** The activity's and the log's line for a change. */
-export function changeLine(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status'>): string {
-  const added = `Added ${whatOf(change)}, ${SOURCE_WORDS[change.sourceKind]}.`;
+export function changeLine(
+  change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status'> & Partial<Pick<AgentChange, 'weekdays'>>,
+): string {
+  const added = `Added ${whatOf({ ...change, weekdays: change.weekdays ?? null })}, ${SOURCE_WORDS[change.sourceKind]}.`;
   if (change.status === 'undone') return `${added} Undone.`;
   if (change.status === 'adopted') return `${added} You changed it since, so it’s yours.`;
   return added;
@@ -147,9 +156,15 @@ export function waitingLine(waiting: number): string | null {
   return waiting === 1 ? '1 thing TownwiseAI wasn’t sure of is waiting for you.' : `${String(waiting)} things TownwiseAI wasn’t sure of are waiting for you.`;
 }
 
-/** An Undo that failed, in words; 409 changed_since names the page the target lives on. */
-export function undoErrorText(error: unknown, action: AgentChange['action']): string {
+/**
+ * An Undo that failed, in words; 409 changed_since names the page the target lives on. A business rule TownwiseAI added
+ * is deleted there only by an org admin, so a member (`admin` false) is told to ask one.
+ */
+export function undoErrorText(error: unknown, action: AgentChange['action'], admin = true): string {
   if (error instanceof ApiError && error.kind === 'http') {
+    if (error.code === 'changed_since' && action === 'rule.add' && !admin) {
+      return 'Someone changed this since, so it’s no longer TownwiseAI’s to undo. Ask an org admin to delete it from Business rules if you don’t want it.';
+    }
     if (error.code === 'changed_since') return `You changed this since, so it’s yours now. Delete it from ${pageOf(action)} if you don’t want it.`;
     if (error.code === 'view_as_read_only') return 'View-as is read-only, so you can’t undo this.';
     if (error.code === 'forbidden') {
@@ -167,8 +182,12 @@ export function undoErrorFinal(error: unknown): boolean {
   return error.status === 404 || ['changed_since', 'view_as_read_only', 'forbidden'].includes(error.code ?? '');
 }
 
-/** The switch's words (design decision 14). [CONFIRM: the panel's and switch's words] */
-export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week, and a change to your calendars brings that forward. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
+/**
+ * The switch's words (design decision 14). [CONFIRM: the panel's and switch's words] [CONFIRM: the words for what
+ * TownwiseAI saves from its weekly suggestions and the sales history] Only a link or Google calendar's refresh brings the
+ * weekly look ahead forward (api/src/calendar/early-pass.ts), and only while the titles switch is on, so they say so.
+ */
+export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
 
 /** How TownwiseAI works' sentence, by the switch (design decision 14). [CONFIRM: the panel's and switch's words] */
 export function savesLine(on: boolean): string {

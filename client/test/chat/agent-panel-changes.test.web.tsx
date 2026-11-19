@@ -126,6 +126,22 @@ test('Undo on a note a person changed since says it is theirs now, and where to 
   expect(within(panel).queryByRole('button', { name: `Undo: ${LINE}` })).toBeNull();
 });
 
+test('slice 3: a weekday rule names its weekdays, and a member whose Undo finds it changed is told to ask an org admin', async () => {
+  const rule = {
+    at: '2026-06-01T08:00:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e1', action: 'rule.add', sourceKind: 'sales',
+    status: 'applied', startDate: '2026-06-08', endDate: null, noteKind: 'closure', weekdays: [1], count: null, undoable: true,
+  };
+  const api = chatApi({ ...fixture.panel, activity: [rule] });
+  api.respond[CHANGE] = () => refusal(409, 'changed_since');
+  renderAt(api);
+  const panel = await side();
+  const line = 'Added a business rule: Closure on Mondays, from Jun 8, 2026, from your sales history.';
+  fireEvent.click(within(panel).getByRole('button', { name: `Undo: ${line}` }));
+  expect(await within(panel).findByText(
+    'Someone changed this since, so it’s no longer TownwiseAI’s to undo. Ask an org admin to delete it from Business rules if you don’t want it.',
+  )).toBeTruthy();
+});
+
 test('the waiting line counts what it wasn’t sure of and links to the log; an unsure event has Add the note and Dismiss', async () => {
   const api = chatApi();
   const base = '/api/org/locations/l1/agent/rule-suggestions/0000000000000000000000d2';

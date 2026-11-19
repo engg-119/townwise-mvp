@@ -77,7 +77,7 @@ describe('applyChange', () => {
     expect(String((note?.agent as { changeId: unknown }).changeId)).toBe(result.change?.id);
     expect(result.change).toMatchObject({
       status: 'applied', action: 'note.add', sourceKind: 'file', targetId: c.targetId, confidence: 'high', onBehalfOf: 'adder',
-      startDate: '2026-12-12', endDate: '2026-12-12', noteKind: 'private_event', dedupeKey: dedupeKeyOf({ action: 'note.add', note: c.note }),
+      startDate: '2026-12-12', endDate: '2026-12-12', noteKind: 'private_event', weekdays: null, dedupeKey: dedupeKeyOf({ action: 'note.add', note: c.note }),
     });
     expect(result.change?.targetUpdatedAt).toEqual(note?.updatedAt);
     const events = (await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId);
@@ -252,7 +252,7 @@ describe('applyChange, slice 3: rules', () => {
     expect((rule?.agent as { at: Date }).at).toEqual(rule?.updatedAt);
     expect(String((rule?.agent as { changeId: unknown }).changeId)).toBe(result.change?.id);
     expect(result.change).toMatchObject({
-      action: 'rule.add', sourceKind: 'sales', status: 'applied', startDate: '2026-06-08', endDate: null, noteKind: 'closure', count: null,
+      action: 'rule.add', sourceKind: 'sales', status: 'applied', startDate: '2026-06-08', endDate: null, noteKind: 'closure', weekdays: [1], count: null,
       dedupeKey: dedupeKeyOf({ action: 'rule.add', schedule: MONDAYS }),
     });
     expect(result.change?.targetUpdatedAt).toEqual(rule?.updatedAt);

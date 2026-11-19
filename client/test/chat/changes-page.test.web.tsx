@@ -159,17 +159,24 @@ test('the log’s intro and the switch’s words name calendar labels, and the s
     'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.',
   );
   expect(AGENT_AUTO_WORDS).toBe(
-    'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week, and a change to your calendars brings that forward. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
+    'Let TownwiseAI work on its own. It reads each file you add to Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
   );
 });
 
 test('slice 3: a rule from the sales history or the weekly look ahead, and a weekly note, each have their own words', () => {
   const base = { count: null, status: 'applied' as const };
-  expect(changeLine({ ...base, action: 'rule.add', sourceKind: 'sales', noteKind: 'closure', startDate: '2026-06-08', endDate: null }))
-    .toBe('Added a business rule: Closure, from Jun 8, 2026, from your sales history.');
-  expect(changeLine({ ...base, action: 'rule.add', sourceKind: 'weekly', noteKind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04' }))
+  // A weekday rule names its weekdays, so it does not read as a closure of every day.
+  expect(changeLine({ ...base, action: 'rule.add', sourceKind: 'sales', noteKind: 'closure', startDate: '2026-06-08', endDate: null, weekdays: [1] }))
+    .toBe('Added a business rule: Closure on Mondays, from Jun 8, 2026, from your sales history.');
+  expect(changeLine({ ...base, action: 'rule.add', sourceKind: 'weekly', noteKind: 'closure', startDate: '2026-12-01', endDate: '2027-03-01', weekdays: [2, 1] }))
+    .toBe('Added a business rule: Closure on Mondays and Tuesdays, Dec 1, 2026 to Mar 1, 2027, from its weekly look ahead.');
+  expect(changeLine({ ...base, action: 'rule.add', sourceKind: 'weekly', noteKind: 'closure', startDate: '2026-07-04', endDate: '2026-07-04', weekdays: null }))
     .toBe('Added a business rule: Closure, Jul 4, 2026, from its weekly look ahead.');
   expect(changeLine({ ...base, action: 'note.add', sourceKind: 'weekly', noteKind: 'private_event', startDate: '2026-06-13', endDate: '2026-06-13', status: 'undone' }))
     .toBe('Added a note: Private event, Jun 13, 2026, from its weekly look ahead. Undone.');
   expect(undoErrorText(refusal(409, 'changed_since'), 'rule.add')).toBe('You changed this since, so it’s yours now. Delete it from Business rules if you don’t want it.');
+  // A member has no Delete on a rule TownwiseAI added: they ask an org admin.
+  expect(undoErrorText(refusal(409, 'changed_since'), 'rule.add', false))
+    .toBe('Someone changed this since, so it’s no longer TownwiseAI’s to undo. Ask an org admin to delete it from Business rules if you don’t want it.');
+  expect(undoErrorText(refusal(409, 'changed_since'), 'note.add', false)).toBe('You changed this since, so it’s yours now. Delete it from Notes if you don’t want it.');
 });

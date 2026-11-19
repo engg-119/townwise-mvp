@@ -277,6 +277,15 @@ async function writeNote(ctx: ApplyContext, scope: OrgScope, candidate: NoteCand
   }
 }
 
+/**
+ * Slice 3: the weekdays a note or rule covers, sorted, for the activity's words (so "Closed on Mondays" does not read as
+ * every day); null for every day, or a change of another kind.
+ */
+function weekdaysOf(candidate: ChangeCandidate): number[] | null {
+  const weekdays = candidate.action === 'note.add' ? candidate.note.weekdays : candidate.action === 'rule.add' ? candidate.schedule.weekdays : null;
+  return weekdays === null || weekdays.length === 0 || weekdays.length >= 7 ? null : [...new Set(weekdays)].sort((a, b) => a - b);
+}
+
 /** The dates a change covers, for its row; null for an item. A rule's end is null when it has none (slice 3). */
 function datesOf(candidate: ChangeCandidate): { startDate: string; endDate: string | null } | null {
   if (candidate.action === 'note.add') return { startDate: candidate.note.startDate, endDate: candidate.note.endDate };
@@ -320,12 +329,14 @@ export async function applyChange(
       if (conflictsWith(checked, entries, today)) return { outcome: 'conflict', change: null };
     }
     const dates = datesOf(candidate);
+    const weekdays = weekdaysOf(candidate);
     const inserted = await stores.agentChanges.insertApplying(scope, {
       id: new Types.ObjectId().toHexString(), locationId: candidate.locationId, sourceKind: candidate.sourceKind, sourceId: candidate.sourceId,
       action: candidate.action, targetId: candidate.targetId, dedupeKey, confidence: candidate.confidence, why: cutWhy(candidate.why),
       onBehalfOf: candidate.onBehalfOf, startDate: dates?.startDate ?? null, endDate: dates?.endDate ?? null,
       ...(candidate.action === 'note.add' ? { noteKind: candidate.note.kind } : {}),
       ...(candidate.action === 'rule.add' ? { noteKind: candidate.schedule.kind } : {}),
+      ...(weekdays === null ? {} : { weekdays }),
       ...((candidate.action === 'item.add' || candidate.action === 'sales_days.add' || candidate.action === 'booking.label') && candidate.count !== undefined
         ? { count: candidate.count } : {}),
       now: ctx.now(),

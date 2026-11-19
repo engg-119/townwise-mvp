@@ -57,6 +57,8 @@ interface ChangeFields {
   endDate: string | null;
   /** A note's kind (slice 3: a rule schedule's), for the activity's words; absent otherwise. */
   noteKind?: NoteKind;
+  /** Slice 3: the weekdays a note or rule covers (0 is Sunday), for the activity's words; absent for every day. */
+  weekdays?: number[];
   /** How many records the change added, for the activity's words (a calendar sort's labels); absent otherwise. */
   count?: number;
   appliedAt: Date;
@@ -82,6 +84,7 @@ function changeSchema(): Schema<ChangeFields> {
     startDate: { type: String, default: null },
     endDate: { type: String, default: null },
     noteKind: { type: String, enum: ['closure', 'private_event', 'opening', 'other'] },
+    weekdays: { type: [{ type: Number, min: 0, max: 6 }], default: undefined },
     count: { type: Number, min: 0 },
     appliedAt: { type: Date, required: true },
     statusAt: { type: Date, required: true },
@@ -118,6 +121,8 @@ export interface AgentChangeRecord {
   readonly startDate: string | null;
   readonly endDate: string | null;
   readonly noteKind: NoteKind | null;
+  /** Slice 3: the weekdays a note or rule covers, sorted; null for every day (and for an older row). */
+  readonly weekdays: readonly number[] | null;
   readonly count: number | null;
   readonly appliedAt: Date;
   readonly statusAt: Date;
@@ -139,6 +144,7 @@ export interface NewAgentChange {
   readonly startDate: string | null;
   readonly endDate: string | null;
   readonly noteKind?: NoteKind;
+  readonly weekdays?: readonly number[];
   readonly count?: number;
   readonly now: Date;
 }
@@ -213,6 +219,7 @@ function toChange(doc: ChangeDoc): AgentChangeRecord {
     startDate: doc.startDate,
     endDate: doc.endDate,
     noteKind: doc.noteKind ?? null,
+    weekdays: doc.weekdays ?? null,
     count: doc.count ?? null,
     appliedAt: doc.appliedAt,
     statusAt: doc.statusAt,
@@ -233,6 +240,7 @@ export function createAgentChangeStore(connection: Connection): AgentChangeStore
           action: input.action, targetId: new Types.ObjectId(input.targetId), dedupeKey: input.dedupeKey, confidence: input.confidence,
           why: input.why, onBehalfOf: input.onBehalfOf, status: 'applying', targetUpdatedAt: null, startDate: input.startDate,
           endDate: input.endDate, ...(input.noteKind === undefined ? {} : { noteKind: input.noteKind }),
+          ...(input.weekdays === undefined ? {} : { weekdays: [...input.weekdays] }),
           ...(input.count === undefined ? {} : { count: input.count }), appliedAt: input.now,
           statusAt: input.now, statusBy: 'townwise_ai',
         });

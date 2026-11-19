@@ -28,7 +28,7 @@ export function changesHref(locationId: string): string {
 
 /** One change: its line, and Undo while it may be undone here. */
 export function ChangeLine(props: {
-  change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status' | 'undoable'> & { id: string };
+  change: Pick<AgentChange, 'action' | 'noteKind' | 'weekdays' | 'startDate' | 'endDate' | 'count' | 'sourceKind' | 'status' | 'undoable'> & { id: string };
   locationId: string;
   readOnlyId: string | null;
   /** The line's own style (the activity's or the log's). */
@@ -39,8 +39,10 @@ export function ChangeLine(props: {
    */
   onOthersChanged?: () => void;
 }): React.JSX.Element {
-  const { api } = usePortal();
+  const { api, me } = usePortal();
   const { change, onOthersChanged } = props;
+  // Who may delete a business rule TownwiseAI added, for an Undo refused as changed since.
+  const admin = me.access.state === 'member' && me.access.role === 'org_admin';
   const [state, setState] = useState<{ status: AgentChange['status']; undoing: boolean; error: string | null; final: boolean }>({
     status: change.status, undoing: false, error: null, final: false,
   });
@@ -53,7 +55,7 @@ export function ChangeLine(props: {
         if (change.action === 'booking.label' && after.status === 'undone') onOthersChanged?.();
       },
       (error: unknown) => {
-        setState((current) => ({ ...current, undoing: false, error: undoErrorText(error, change.action), final: undoErrorFinal(error) }));
+        setState((current) => ({ ...current, undoing: false, error: undoErrorText(error, change.action, admin), final: undoErrorFinal(error) }));
       },
     );
   };
