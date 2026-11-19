@@ -199,9 +199,10 @@ describe('get_people_in_town', () => {
     const history = parsed.yourHistory as { metric: string; cells: { state: string; weekday: string; days: number; mean: number | null }[] };
     expect(history.metric).toBe('guests');
     // Of eight Saturdays in fall 2026 classes, Sep 26 (Family Weekend), Oct 3 (Homecoming) and Oct 17 (home football)
-    // are event days and Oct 10 carries a note. December 2025's three Saturdays fall between terms.
+    // are event days, Oct 31 is Halloween (a holiday, D68) and Oct 10 carries a note. December 2025's three Saturdays
+    // fall between terms.
     expect(history.cells).toEqual([
-      { state: 'in_session', weekday: 'Sat', days: 4, mean: 200 },
+      { state: 'in_session', weekday: 'Sat', days: 3, mean: 200 },
       { state: 'between_terms', weekday: 'Sat', days: 3, mean: 90 },
     ]);
   });
@@ -217,22 +218,24 @@ describe('get_people_in_town', () => {
   ];
 
   it('counts a near-empty day in that history only when a business rule’s schedule says it had fewer guests (D32, D31)', async () => {
-    // Oct 31 (before today, Nov 5) is likely closed, and left out, until a rule says the day was open.
+    // Oct 24 (before today, Nov 5) is likely closed, and left out, until a rule says the day was open. The regular
+    // Saturdays are then Sep 19, Oct 24 and Nov 7 (Oct 31 is Halloween, D68).
     const rule: BusinessRuleRecord = {
       id: '0000000000000000000000bb', text: 'Sentinel rule text', addedVia: 'page', createdBy: SENTINEL_USER, byStaff: false,
       createdAt: new Date('2026-11-01T00:00:00Z'), updatedAt: new Date('2026-11-01T00:00:00Z'),
       schedule: {
-        kind: 'other', effect: 'fewer_guests', startDate: '2026-10-31', endDate: null, weekdays: null,
+        kind: 'other', effect: 'fewer_guests', startDate: '2026-10-24', endDate: null, weekdays: null,
         expectedGuests: null, startTime: null, endTime: null,
       },
     };
-    expect(await inSession(nearEmptyOn('2026-10-31'))).toEqual({ state: 'in_session', weekday: 'Sat', days: 3, mean: 200 });
-    expect(await inSession(nearEmptyOn('2026-10-31'), [rule])).toEqual({ state: 'in_session', weekday: 'Sat', days: 4, mean: 150 });
+    // Two days are under MIN_CELL_DAYS, so no mean.
+    expect(await inSession(nearEmptyOn('2026-10-24'))).toEqual({ state: 'in_session', weekday: 'Sat', days: 2, mean: null });
+    expect(await inSession(nearEmptyOn('2026-10-24'), [rule])).toEqual({ state: 'in_session', weekday: 'Sat', days: 3, mean: 134 });
   });
 
   it('never calls a day on or after the town’s today likely closed in that history, since its upload may be partial (D32)', async () => {
-    // Nov 7 is after today (Nov 5): its 1 guest counts as recorded, not as a likely closure.
-    expect(await inSession(nearEmptyOn('2026-11-07'))).toEqual({ state: 'in_session', weekday: 'Sat', days: 4, mean: 150 });
+    // Nov 7 is after today (Nov 5): its 1 guest counts as recorded, not as a likely closure (Sep 19, Oct 24, Nov 7).
+    expect(await inSession(nearEmptyOn('2026-11-07'))).toEqual({ state: 'in_session', weekday: 'Sat', days: 3, mean: 134 });
   });
 
   it('answers available false for a town outside the twelve, and visitors_unknown for a seasonal town', async () => {
