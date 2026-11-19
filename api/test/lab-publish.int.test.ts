@@ -2,22 +2,28 @@
 // that passes the gate is published by the system when the organization's forecasts are switched on, and stays a draft
 // when they are off or the organization is suspended; a current forecast withdrawn while the job ran; two result posts
 // at once; a result equal to a run that already exists; a published lab run read by owners and withdrawn by staff; the
-// forecasts switch; and the system's events in the org admins' staff activity. Every number is synthetic.
+// forecasts switch; the system's events in the org admins' staff activity; and the first-forecast email (D65), sent once
+// per location to its active org admins after the publish, which never stops the publish. Every number is synthetic.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
 import type { StaffActivityView } from '../src/audit.ts';
 import type { ForecastWindow } from '../src/forecasts/reader.ts';
 import { gateWords, GATE_WORDS } from '../src/lab/gate.ts';
 import { labInputSchema, type LabInput } from '../src/lab/input.ts';
 import type { LabSuccess } from '../src/lab/result.ts';
+import { ingestLabResult } from '../src/lab/service.ts';
 import type { CalibrationView } from '../src/lab/views.ts';
-import { addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { OFF_MAILER } from '../src/mail/mailer.ts';
+import { SUBJECTS } from '../src/mail/templates.ts';
+import { addInvite, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
 import { holdCalls } from './helpers/hold.ts';
 import { fakeLabRunner, jobCall, labResultFor, runDays, seedHistory, type FakeLabRunner } from './helpers/lab.ts';
 import { metricsWith, scorecardWith } from './helpers/lab-scorecard.ts';
+import { createCapturingTransport } from './helpers/mail.ts';
 import {
   call, logLines, signIn, signInStaff, STAFF_EMAIL, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -25,16 +31,17 @@ import {
 let server: TownwiseTestServer;
 let staff: TestSession;
 let runner: FakeLabRunner;
+const mail = createCapturingTransport();
 
 beforeAll(async () => {
   runner = fakeLabRunner();
-  server = await startTownwiseServer({ labRunner: runner });
+  server = await startTownwiseServer({ labRunner: runner, mailTransport: mail });
   staff = await signInStaff(server);
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => { await server.redis.flushdb(); });
 
-interface Team { orgId: string; locationId: string; admin: TestSession }
+interface Team { orgId: string; locationId: string; admin: TestSession; adminEmail: string }
 interface Job { calibrationId: string }
 
 const ON = { on: true, ownerAgreed: true } as const;
@@ -58,7 +65,7 @@ async function team(opts?: { forecastsOn?: boolean; from?: string; to?: string; 
   const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
   await seedHistory(server, { orgId, locationId, from: opts?.from ?? '2024-10-01', to: opts?.to ?? '2026-05-31' });
   if (opts?.forecastsOn === true) expect((await switchForecasts({ orgId }, ON)).status).toBe(200);
-  return { orgId, locationId, admin };
+  return { orgId, locationId, admin, adminEmail: email };
 }
 
 async function started(t: Team): Promise<{ calibration: CalibrationView; job: Job }> {
@@ -136,6 +143,16 @@ async function forecastOf(t: Team, from: string, to: string): Promise<ForecastWi
 }
 
 const SUCCEEDED = { status: 200, body: { status: 'succeeded' } };
+
+/** The first-forecast emails sent so far to `to`, once every queued send has settled. */
+async function firstForecastMails(to: string): Promise<{ to: string; text: string }[]> {
+  await server.mailer.idle();
+  return mail.sent.filter((message) => message.subject === SUBJECTS.first_forecast && message.to === to);
+}
+
+async function mailedAt(locationId: string): Promise<unknown> {
+  return (await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(locationId) }))?.firstForecastMailedAt;
+}
 
 describe('the gate decides', () => {
   it('a passing draft with forecasts on is published, with forecast.published by the system actor before the effect', async () => {
@@ -385,6 +402,8 @@ describe('retries, races and existing runs', () => {
     expect(events.filter((event) => event.action === 'forecast.published')).toHaveLength(1);
     expect(events.filter((event) => event.action === 'calibration.finished')).toHaveLength(1);
     expect(await actionsOf(t.orgId, 'staff_action.not_applied')).toEqual([]);
+    // D65: both posts reach the mail step; only the one that claims the marker sends.
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
   }
 
   it('two concurrent result posts make one run, one publish and one finished event', async () => {
@@ -604,5 +623,117 @@ describe('the forecasts switch', () => {
       { staffEmail: STAFF_EMAIL, summary: 'Started a calibration', applied: true },
       { staffEmail: STAFF_EMAIL, summary: 'Switched forecasts on, with the owner’s agreement', applied: true },
     ]);
+  });
+});
+
+describe('the first-forecast email (D65)', () => {
+  const SENT = 'townwise.email_sent';
+
+  it('the first publish mails each active org admin once, members none, and skips a deleted admin', async () => {
+    const t = await team({ forecastsOn: true });
+    const secondEmail = `admin2-${randomUUID().slice(0, 8)}@example.test`;
+    const second = await signIn(server, secondEmail);
+    await addSeat(server, { orgId: t.orgId, userId: second.userId, email: secondEmail, role: 'org_admin' });
+    const memberEmail = `member-${randomUUID().slice(0, 8)}@example.test`;
+    const member = await signIn(server, memberEmail);
+    await addSeat(server, { orgId: t.orgId, userId: member.userId, email: memberEmail, role: 'member' });
+    // An admin seat whose kit user is gone.
+    await addSeat(server, { orgId: t.orgId, userId: new Types.ObjectId().toHexString(), email: 'gone@example.test', role: 'org_admin' });
+    const { job } = await started(t);
+    server.logs.length = 0;
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+
+    const [toFirst] = await firstForecastMails(t.adminEmail);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    expect(await firstForecastMails(secondEmail)).toHaveLength(1);
+    expect(await firstForecastMails(memberEmail)).toEqual([]);
+    expect(await firstForecastMails('gone@example.test')).toEqual([]);
+    expect(toFirst?.text).toContain('Townwise published the first forecast for Hanover Room in Hanover, NH.');
+    expect(toFirst?.text).toContain('because you’re an admin of Publish Kitchen');
+    expect(await mailedAt(t.locationId)).toEqual(server.clock.now());
+    const sent = logLines(server).filter((line) => line.msg === SENT);
+    expect(sent).toHaveLength(2);
+    for (const line of sent) expect(line).toMatchObject({ kind: 'first_forecast', orgId: t.orgId, locationId: t.locationId });
+    for (const secret of [t.adminEmail, secondEmail, 'Hanover Room', 'Publish Kitchen']) expect(server.logs.join('\n')).not.toContain(secret);
+    // Sending writes no audit event.
+    expect((await orgEvents(t.orgId)).map((event) => String(event.action)).filter((action) => action.includes('mail'))).toEqual([]);
+  });
+
+  it('a later run of the location mails no one, and neither does a retried result post', async () => {
+    const t = await team({ forecastsOn: true });
+    const first = await started(t);
+    const result = labResultFor(await inputFor(first.job));
+    expect(await post(first.job, result)).toEqual(SUCCEEDED);
+    expect((await post(first.job, result)).status).toBe(404);
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    const later = await started(t);
+    expect(await post(later.job, labResultFor(await inputFor(later.job)))).toEqual(SUCCEEDED);
+    expect(await runDoc((await viewOf(t, later.calibration.id)).runId ?? '')).toMatchObject({ status: 'published' });
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+  });
+
+  it('a location whose earlier run was published and withdrawn mails none, even with no marker', async () => {
+    const t = await team({ forecastsOn: true });
+    const championId = await publishedChampion(t);
+    expect((await changeRun(t, championId, 'withdraw')).status).toBe(200);
+    // The staff publish above was the location's first and mailed; drop its marker so only the first-run rule is left.
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(t.locationId) }, { $unset: { firstForecastMailedAt: 1 } });
+    const { calibration, job } = await started(t);
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+    expect(await runDoc((await viewOf(t, calibration.id)).runId ?? '')).toMatchObject({ status: 'published' });
+    expect(await firstForecastMails(t.adminEmail)).toHaveLength(1);
+    expect(await mailedAt(t.locationId)).toBeUndefined();
+  });
+
+  it('with email off the first forecast publishes as before, and no marker is kept', async () => {
+    const t = await team({ forecastsOn: true });
+    const { calibration, job } = await started(t);
+    const result = labResultFor(await inputFor(job));
+    const scope = { orgId: t.orgId } as OrgScope;
+    expect(await ingestLabResult({ ...server.ctx, mailer: OFF_MAILER }, scope, calibration.id, result)).toEqual(SUCCEEDED);
+    const view = await viewOf(t, calibration.id);
+    expect(view).toMatchObject({ status: 'succeeded', gate: { published: true } });
+    expect(await runDoc(view.runId ?? '')).toMatchObject({ status: 'published' });
+    expect(await firstForecastMails(t.adminEmail)).toEqual([]);
+    expect(await mailedAt(t.locationId)).toBeUndefined();
+  });
+
+  it('an organization whose only admin seat is an invitation mails none and leaves the marker absent', async () => {
+    const orgId = await createOrg(server, { name: `Unjoined Kitchen ${randomUUID().slice(0, 6)}`, forecastsOn: false });
+    const inviteEmail = `invited-${randomUUID().slice(0, 8)}@example.test`;
+    await addInvite(server, { orgId, email: inviteEmail, invitedBy: staff.userId, role: 'org_admin', addedByStaff: true });
+    const locationId = await addLocation(server, { orgId, name: 'Hanover Room' });
+    await seedHistory(server, { orgId, locationId, from: '2024-10-01', to: '2026-05-31' });
+    expect((await switchForecasts({ orgId }, ON)).status).toBe(200);
+    const t = { orgId, locationId, admin: staff, adminEmail: inviteEmail };
+    const { calibration, job } = await started(t);
+    expect(await post(job, labResultFor(await inputFor(job)))).toEqual(SUCCEEDED);
+    expect(await runDoc((await viewOf(t, calibration.id)).runId ?? '')).toMatchObject({ status: 'published' });
+    expect(await firstForecastMails(inviteEmail)).toEqual([]);
+    expect(await mailedAt(locationId)).toBeUndefined();
+  });
+
+  it('a member read that throws still finishes the calibration with the run published and answers 200', async () => {
+    const t = await team({ forecastsOn: true });
+    const { calibration, job } = await started(t);
+    const result = labResultFor(await inputFor(job));
+    // The /lab router has its own context, so the member read fails at the model, which only the mail step reads here.
+    const list = vi.spyOn(server.connection.model('TwMember'), 'find').mockImplementation(() => { throw new Error(`sentinel ${t.adminEmail}`); });
+    server.logs.length = 0;
+    try {
+      expect(await post(job, result)).toEqual(SUCCEEDED);
+    } finally {
+      list.mockRestore();
+    }
+    const view = await viewOf(t, calibration.id);
+    expect(view).toMatchObject({ status: 'succeeded', gate: { published: true } });
+    expect(await runDoc(view.runId ?? '')).toMatchObject({ status: 'published' });
+    expect(await firstForecastMails(t.adminEmail)).toEqual([]);
+    expect(await mailedAt(t.locationId)).toBeUndefined();
+    const failed = logLines(server).filter((line) => line.msg === 'townwise.first_forecast_mail_failed');
+    expect(failed).toHaveLength(1);
+    expect(failed[0]).toMatchObject({ orgId: t.orgId, locationId: t.locationId });
+    expect(server.logs.join('\n')).not.toContain('sentinel');
   });
 });

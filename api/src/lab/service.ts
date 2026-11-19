@@ -15,6 +15,7 @@ import { runFileSha256, type FileIssue, type LabRunFile } from '../forecasts/fil
 import { engineOf } from '../forecasts/reader.ts';
 import { forecastThrough } from '../forecasts/tiers.ts';
 import { rowsOf } from '../handlers/forecast-runs.ts';
+import { mailFirstForecast } from '../mail/first-forecast.ts';
 import { LIVE_STATUSES, type CalibrationFailure, type CalibrationOutcome, type CalibrationRecord } from '../stores/calibrations.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { ForecastRunRecord } from '../stores/forecasts.ts';
@@ -417,6 +418,9 @@ async function storeDraft(
   await finishCalibration(ctx, scope, calibration, { status: 'succeeded' }, {
     runId: run.id, gate: gated?.gate?.reason ?? null, heldOutWeeks: heldOutWeeksOf(result),
   });
+  // D65: a first forecast mails the org admins once, after the finish, so the mail step (which never throws) cannot stop
+  // it. It checks that the run is published now (a staff withdrawal meanwhile wins) and is the location's first.
+  if (gated?.gate?.published === true) await mailFirstForecast(ctx, scope, location.id, run.id);
   const current = await calibrations.find(scope, calibration.id);
   return { status: 200, body: { status: current?.status ?? 'succeeded' } };
 }

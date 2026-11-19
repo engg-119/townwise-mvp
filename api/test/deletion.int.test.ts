@@ -156,6 +156,8 @@ async function populatedOrg(name: string, status: 'active' | 'suspended'): Promi
   const locationNames = [`${name} Main Room`, `${name} Patio`];
   const locationIds = [await addLocation(server, { orgId, name: locationNames[0] ?? '' }), await addLocation(server, { orgId, name: locationNames[1] ?? '' })];
   const locationId = locationIds[0] ?? '';
+  // D65: the date its first-forecast email was sent, which goes with the location.
+  await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(locationId) }, { $set: { firstForecastMailedAt: server.clock.now() } });
   await addSalesDay(server, { orgId, locationId, date: '2026-05-01', guests: 120, netSalesCents: 345_600 });
   await addSalesDay(server, { orgId, locationId, date: '2026-05-02', guests: 98, netSalesCents: 287_100 });
   await addUpload(server, { orgId, locationId, uploadedAt: server.clock.now(), status: 'applied' });
@@ -250,6 +252,8 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
     const doomed = await populatedOrg('Doomed Harbor Grill', 'suspended');
     const kept = await populatedOrg('Surviving Pine Cafe', 'suspended');
     const keptBefore = await snapshotOf(kept);
+    const mailed = { orgId: new Types.ObjectId(doomed.orgId), firstForecastMailedAt: { $exists: true } };
+    expect(await count('tw_locations', mailed)).toBe(1);
 
     let res: Response | undefined;
     const writes = await writesDuring(server, async () => { res = await deleteOrg(doomed.orgId); });
@@ -272,6 +276,7 @@ describe('DELETE /api/admin/orgs/:orgId', () => {
 
     const orgId = new Types.ObjectId(doomed.orgId);
     for (const name of TENANT_COLLECTIONS) expect({ name, n: await count(name, { orgId }) }).toEqual({ name, n: 0 });
+    expect(await count('tw_locations', mailed)).toBe(0);
     expect(await count('tw_orgs', { _id: orgId })).toBe(0);
     expect(await count('tw_access_requests', { _id: new Types.ObjectId(doomed.requestId) })).toBe(0);
     // The member's Google grant was revoked (connect-google-calendar), and the other organization's was not.

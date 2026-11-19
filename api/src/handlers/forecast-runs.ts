@@ -19,6 +19,7 @@ import { checkForecastRunFile, runFileSha256, type ForecastRunFile } from '../fo
 import { runView, type ForecastRunView } from '../forecasts/reader.ts';
 import { storedRef } from '../forecasts/reasons.ts';
 import { runTrainingView } from '../lab/training.ts';
+import { mailFirstForecast } from '../mail/first-forecast.ts';
 import { currentEmail } from '../people.ts';
 import type { AuditAction, AuditEventInput } from '../stores/audit-events.ts';
 import type { ForecastRowInput, ForecastRunRecord, RunStatus } from '../stores/forecasts.ts';
@@ -202,6 +203,8 @@ async function changeStatus(ctx: TownwiseContext, req: Request, res: Response, p
   if (current === null) throw notFound();
   if (current.status !== change.to) throw change.refused(current.status);
   ctx.logger.info({ orgId: scope.orgId, runId: run.id, status: change.to }, 'townwise.forecast_status');
+  // D65: the publish that applied mails the org admins when the run is the location's first; the step never throws.
+  if (changed && change.to === 'published') await mailFirstForecast(ctx, scope, run.locationId, run.id);
   res.status(200).json({ run: await staffView(ctx, current) });
 }
 

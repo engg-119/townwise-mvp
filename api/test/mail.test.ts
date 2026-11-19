@@ -1,4 +1,4 @@
-// Townwise's two emails (spec D14): the exact copy, the layout's rules, the ACS transport over a fake fetch, and the
+// Townwise's three emails (spec D14, D65): the exact copy, the layout's rules, the ACS transport over a fake fetch, and the
 // mailer's never-throw, never-log-the-address contract.
 import { createLogger } from '@ckeith26/server-core';
 import { describe, expect, it } from 'vitest';
@@ -16,6 +16,7 @@ const TO = 'person@example.test';
 const HANOVER: Town = { townId: 'hanover-nh', name: 'Hanover', state: 'NH' };
 const RECEIVED: TownwiseEmail = { kind: 'request_received', orgName: 'Example Bistro', town: HANOVER };
 const APPROVED: TownwiseEmail = { kind: 'request_approved', orgName: 'Example Bistro', town: HANOVER };
+const FIRST: TownwiseEmail = { kind: 'first_forecast', orgName: 'Example Bistro', locationName: 'Main Street', town: HANOVER };
 const LINKS = { webUrl: WEB_URL, replies: true };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 
@@ -64,10 +65,44 @@ describe('templates', () => {
     expect(email.html).toContain('APPROVED');
   });
 
-  it('only two subjects exist, and no user text reaches one', () => {
-    expect(Object.keys(SUBJECTS).sort()).toEqual(['request_approved', 'request_received']);
+  it('first forecast: the fixed subject, the exact plain text, an admin footer and no figure', () => {
+    const email = renderEmail(FIRST, TO, LINKS);
+    expect(email.subject).toBe('Your first Townwise forecast is ready');
+    expect(email.text).toBe([
+      'Your first forecast for Main Street is ready.',
+      '',
+      'Townwise published the first forecast for Main Street in Hanover, NH. Open Townwise to see the days ahead on Home and the Calendar.',
+      '',
+      'Townwise refreshes it each week as new sales come in.',
+      '',
+      'Open Townwise: https://townwise.test/sign-in',
+      'Sign in with the Google account for person@example.test.',
+      '',
+      'You’re getting this email because you’re an admin of Example Bistro on Townwise. Reply to this email to reach the Townwise team.',
+      'Townwise · https://townwise.test · Privacy: https://townwise.test/privacy',
+      '',
+    ].join('\n'));
+    expect(email.html).toContain('The first forecast for Main Street is on Townwise.');
+    expect(email.html).toContain('FIRST FORECAST');
+    // No figure of any kind: no digit anywhere in the words (the HTML's markup has digits, so the text part is checked).
+    expect(email.text).not.toMatch(/\d/);
+    expect(email.subject).not.toMatch(/\d/);
+  });
+
+  it('only three subjects exist, and no user text reaches one', () => {
+    expect(Object.keys(SUBJECTS).sort()).toEqual(['first_forecast', 'request_approved', 'request_received']);
     const sneaky = renderEmail({ ...RECEIVED, orgName: 'Sentinel\r\nBcc: other@example.test' }, TO, LINKS);
     expect(sneaky.subject).toBe(SUBJECTS.request_received);
+    const sneakyLocation = renderEmail({ ...FIRST, locationName: 'Sentinel\r\nBcc: other@example.test' }, TO, LINKS);
+    expect(sneakyLocation.subject).toBe(SUBJECTS.first_forecast);
+  });
+
+  it('the footer says why, per kind: the access emails to the person who asked, the first forecast to an admin', () => {
+    const footers = [RECEIVED, APPROVED, FIRST].map((email) => renderEmail(email, TO, { webUrl: WEB_URL, replies: false }).text);
+    expect(footers[0]).toContain('You’re getting this email because you asked for access to Townwise with this address.\n');
+    expect(footers[1]).toContain('You’re getting this email because you asked for access to Townwise with this address.\n');
+    expect(footers[2]).toContain('You’re getting this email because you’re an admin of Example Bistro on Townwise.\n');
+    expect(footers[2]).not.toContain('asked for access');
   });
 
   it('without a Reply-To, the footer does not offer replies', () => {
@@ -79,8 +114,12 @@ describe('templates', () => {
 
   it('escapes user text in the HTML and keeps it verbatim in the text part', () => {
     const orgName = '<b>"Bistro" & Co\'s</b><script>alert(1)</script>';
-    for (const kind of ['request_received', 'request_approved'] as const) {
-      const email = renderEmail({ kind, orgName, town: { townId: null, name: 'Smallville <i>', state: 'VT' } }, TO, LINKS);
+    const town: Town = { townId: null, name: 'Smallville <i>', state: 'VT' };
+    for (const email of [
+      renderEmail({ kind: 'request_received', orgName, town }, TO, LINKS),
+      renderEmail({ kind: 'request_approved', orgName, town }, TO, LINKS),
+      renderEmail({ kind: 'first_forecast', orgName, locationName: orgName, town }, TO, LINKS),
+    ]) {
       expect(email.html).toContain(escapeHtml(orgName));
       expect(email.html).toContain('&lt;b&gt;&quot;Bistro&quot; &amp; Co&#39;s&lt;/b&gt;');
       expect(email.html).not.toContain('<b>');
@@ -92,7 +131,11 @@ describe('templates', () => {
 });
 
 describe('layout', () => {
-  const emails = [renderEmail(RECEIVED, TO, LINKS), renderEmail(APPROVED, TO, LINKS)];
+  const emails = [renderEmail(RECEIVED, TO, LINKS), renderEmail(APPROVED, TO, LINKS), renderEmail(FIRST, TO, LINKS)];
+
+  it('covers every kind', () => {
+    expect(emails.map((email) => email.subject).sort()).toEqual(Object.values(SUBJECTS).sort());
+  });
 
   it('is a dark, declared-dark document titled with the subject', () => {
     for (const email of emails) {
@@ -263,7 +306,7 @@ function capturedLogger(): { logger: ReturnType<typeof createLogger>; lines: () 
   return { logger, raw: () => logs.join('\n'), lines: () => logs.map((line) => JSON.parse(line) as Record<string, unknown>) };
 }
 
-const LOG_KEYS = ['kind', 'requestId', 'orgId', 'code', 'status', 'upstreamCode', 'errType'];
+const LOG_KEYS = ['kind', 'requestId', 'orgId', 'locationId', 'code', 'status', 'upstreamCode', 'errType'];
 
 describe('mailer', () => {
   const REF = { requestId: '000000000000000000000001', orgId: '000000000000000000000002' };
@@ -304,6 +347,26 @@ describe('mailer', () => {
       for (const key of keys) expect(LOG_KEYS).toContain(key);
     }
     for (const secret of [TO, 'Sentinel Org', 'sentinel error text', 'Hanover']) expect(log.raw()).not.toContain(secret);
+  });
+
+  it('a first-forecast send logs the organization and location ids and no request id, never a name or the address', async () => {
+    const transport = createCapturingTransport();
+    const log = capturedLogger();
+    const mailer = createMailer({ transport, logger: log.logger, webUrl: WEB_URL, replyTo: null });
+    const ref = { orgId: '000000000000000000000002', locationId: '000000000000000000000003' };
+    transport.failNext(1);
+    mailer.send(FIRST, TO, ref);
+    mailer.send(FIRST, TO, ref);
+    await mailer.idle();
+    const lines = log.lines().filter((l) => String(l.msg).startsWith('townwise.email'));
+    expect(lines.map((l) => l.msg)).toEqual(['townwise.email_failed', 'townwise.email_sent']);
+    for (const line of lines) {
+      expect(line).toMatchObject({ kind: 'first_forecast', ...ref });
+      expect(line).not.toHaveProperty('requestId');
+      const keys = Object.keys(line).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key));
+      for (const key of keys) expect(LOG_KEYS).toContain(key);
+    }
+    for (const secret of [TO, 'Example Bistro', 'Main Street', 'Hanover']) expect(log.raw()).not.toContain(secret);
   });
 
   it('never throws, even when the transport throws before returning a promise', async () => {

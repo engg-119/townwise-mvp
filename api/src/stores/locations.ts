@@ -1,5 +1,5 @@
 import { isDuplicateKeyError } from '@ckeith26/mongo';
-import { Schema, Types, type Connection, type Model } from 'mongoose';
+import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import { CAUSES, type Cause } from '../lab/causes.ts';
@@ -39,6 +39,12 @@ export interface LocationFields {
    * hourly pass read. Absent until the first.
    */
   earlyPass?: { wantedAt?: Date };
+  /**
+   * D65 (openspec change forecast-training-status, design decision 9): when the location's first-forecast email was
+   * claimed for sending, by compare-and-set on absent, so it goes at most once. Absent until then, and for ever on a
+   * location whose first forecast was published before D65 or with no admin to send to.
+   */
+  firstForecastMailedAt?: Date;
 }
 
 function locationSchema(): Schema<LocationFields> {
@@ -58,6 +64,7 @@ function locationSchema(): Schema<LocationFields> {
       }, { _id: false, strict: true }),
     },
     earlyPass: { type: new Schema({ wantedAt: { type: Date } }, { _id: false, strict: true }) },
+    firstForecastMailedAt: { type: Date },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, nameKey: 1 }, { unique: true });
   schema.index({ orgId: 1, createdAt: 1 });
@@ -130,6 +137,11 @@ export interface LocationStore {
   wantEarlyPass(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
   /** D59 slice 3: clears that mark only while it is still `wantedAt` (a compare-and-set), so a refresh meanwhile stays. */
   clearEarlyPass(scope: OrgScope, locationId: string, wantedAt: Date): Promise<boolean>;
+  /**
+   * D65: claims the location's first-forecast email at `at`, only while no claim exists (a compare-and-set on absent).
+   * True for the one caller that won; false when it was claimed before or the location is gone.
+   */
+  claimFirstForecastMail(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
 }
 
 /** D59: the refit starts a location keeps: at most one a day, so a week's worth and one more. */
@@ -252,6 +264,12 @@ export function createLocationStore(connection: Connection): LocationStore {
     async clearRefitWanted(scope, locationId, wantedAt) {
       const result = await Location.updateOne(
         { _id: locationId, orgId: scope.orgId, 'refit.wantedAt': wantedAt }, { $unset: { 'refit.wantedAt': 1, 'refit.causes': 1 } },
+      );
+      return result.modifiedCount === 1;
+    },
+    async claimFirstForecastMail(scope, locationId, at) {
+      const result = await Location.updateOne(
+        { _id: locationId, orgId: scope.orgId, firstForecastMailedAt: trusted({ $exists: false }) }, { $set: { firstForecastMailedAt: at } },
       );
       return result.modifiedCount === 1;
     },
