@@ -28,7 +28,7 @@ import { dayText } from './format';
 // misses included; how far its town's calendar is researched; and whether any headcount input is (Planned until one
 // is). A baseline run (D42) is named as Townwise's baseline, built from the sales rather than trained, and says what it
 // is; inside a location's pages, a `stale` calibration says when Townwise refits it and with how many days, and (D65) a
-// forecast being updated says so, linked to its runs in TownwiseAI's activity; when that run ends the card reads its
+// forecast being updated says so, a running one linked to its runs in TownwiseAI's activity; when that run ends the card reads its
 // estimates again in place. Mounted on Analytics and opened from the Agent page's "How TownwiseAI works".
 
 export const MODEL_CARD_TITLE = 'How Townwise estimates';
@@ -118,7 +118,12 @@ function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.E
   const calibration = org?.locations.find((location) => location.id === props.locationId)?.calibration;
   const stale = calibration === undefined ? null : staleLine(calibration);
   const updating = calibration === undefined ? null : updatingLine(calibration);
-  const updatingLink = updating === null ? null : <LinkButton variant="link" href={activityHref(props.locationId)} label={updating} />;
+  // A running sentence links to its run in TownwiseAI's activity; the waiting one is plain words, since the activity has
+  // no run of it yet (design decision 4: never point at an empty activity).
+  const running = calibration !== undefined && updatingOf(calibration)?.stage === 'running';
+  const updatingSentence = updating === null ? null
+    : running ? <LinkButton variant="link" href={activityHref(props.locationId)} label={updating} />
+    : <Small white>{updating}</Small>;
   const { card, today } = about;
   const noHeadcount = about.people.headcountInputs.length === 0;
   const { run } = about.forecast;
@@ -128,7 +133,7 @@ function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.E
         <View style={styles.state}>
           <StatusTag kind="progress" label="In progress" />
           <Small white>{noForecastLine(about, name)}</Small>
-          {updatingLink}
+          {updatingSentence}
         </View>
       ) : (
         // U13B: the published run, then how it has done.
@@ -136,7 +141,7 @@ function Card(props: { about: EstimatesAbout; locationId: string }): React.JSX.E
           {runLines(run).map((line, index) => (index === 0 ? <Small key={line} white>{line}</Small> : <Small key={line}>{line}</Small>))}
           <Small white>{liveLine(about.forecast.live)}</Small>
           {stale === null ? null : <Small white>{stale}</Small>}
-          {updatingLink}
+          {updatingSentence}
         </Stack>
       )}
       <DefinitionList items={[

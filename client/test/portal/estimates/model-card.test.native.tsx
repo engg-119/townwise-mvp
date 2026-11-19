@@ -237,7 +237,9 @@ describe('D65: a forecast being updated, on a location page', () => {
     expect(appScreen.getByText('In progress')).toBeTruthy();
     await cleanupApp();
     await withState({ state: 'not_calibrated', ...SALES, updating: { stage: 'waiting', since }, lastRun: null }, noRun);
-    expect(await appScreen.findByRole('link', { name: 'Your first forecast is next. Townwise starts building it soon.' })).toBeTruthy();
+    // Plain words, not a link: TownwiseAI's activity has no run of it yet (design decision 4).
+    expect(await appScreen.findByText('Your first forecast is next. Townwise starts building it soon.')).toBeTruthy();
+    expect(appScreen.queryByRole('link', { name: 'Your first forecast is next. Townwise starts building it soon.' })).toBeNull();
   });
 
   test('nothing updating, or an API from before D65: no line', async () => {
