@@ -1,6 +1,6 @@
 import {
-  buildGrid, buildWeek, cardWords, cellSize, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove, gridRange, headLine, inGrid, pastRangeFor,
-  readRangeFor, shownFor, stepWeek, weekDays, weekLabel, weekRange, weekStartFor, type DayCell, type GridSlot, type WeekCard, type WeekDay, type WeekSlot,
+  buildDays, buildGrid, buildWeek, cardWords, cellSize, columnGrow, columnTemplate, entryLines, GRID_DAYS, gridDays, gridHeight, gridMonthFor, gridMove,
+  gridRange, headLine, inGrid, pastRangeFor, readRangeFor, SELECTED_GROW, selectedColumn, shownFor, stepWeek, weekDays, weekLabel, weekRange, weekStartFor, type DayCell, type GridSlot, type WeekCard, type WeekDay, type WeekSlot,
 } from '../../../src/portal/calendar/grid';
 import {
   ALL_FILTERS, calendarMonth, dayCell, dayView, monthBounds, stepMonth, tooltipLines, type CalendarInput, type ImportedEvent,
@@ -606,4 +606,35 @@ describe('gridMove in the week view’s columns and its agenda', () => {
     // Today Nov 11, 2026: the block of Oct 29 to Nov 4, 2025 starts before the first.
     expect(move('agenda', '2025-11-02', 'Home')).toEqual({ date: '2025-11-01', month: null });
   });
+});
+
+// The selected day (D64): its weekday column is a little wider in every row, so the grid's height never changes.
+
+test('the selected day’s column is its weekday, Monday first', () => {
+  expect(selectedColumn('2026-11-16')).toBe(0);
+  expect(selectedColumn('2026-11-21')).toBe(5);
+  expect(selectedColumn('2026-11-22')).toBe(6);
+});
+
+test('every row’s columns: the selected weekday 1.3 times as wide as the others', () => {
+  expect(SELECTED_GROW).toBe(1.3);
+  expect(columnTemplate(5)).toBe(
+    'minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1.3fr) minmax(0, 1fr)',
+  );
+  expect(columnTemplate(null)).toBe(Array.from({ length: 7 }, () => 'minmax(0, 1fr)').join(' '));
+  expect([0, 1, 2, 3, 4, 5, 6].map((column) => columnGrow(column, 2))).toEqual([1, 1, 1.3, 1, 1, 1, 1]);
+});
+
+// The scrolling week (D64): the strip's days are built as a block's are, inert past the 25 months, pending outside the reads.
+
+test('buildDays builds any run of days as buildWeek builds a block', () => {
+  const reads: CalendarInput = {
+    today: TODAY, covered: { from: '2026-11-11', to: '2026-11-17' }, forecast: windowOf([forecastDay({ date: '2026-11-14' })]), salesDays: [],
+    events: [], notes: [], rules: [], imported: [], filters: ALL_FILTERS,
+  };
+  const bounds = monthBounds(TODAY);
+  expect(buildDays(weekDays(TODAY), reads, bounds)).toEqual(buildWeek(TODAY, TODAY, reads, bounds));
+  const days = buildDays(['2026-11-17', '2026-11-18'], reads, bounds);
+  expect(days.map((slot) => (slot.kind === 'day' ? slot.pending : 'inert'))).toEqual([false, true]);
+  expect(buildDays(['2025-10-31'], reads, bounds)[0]?.kind).toBe('inert');
 });

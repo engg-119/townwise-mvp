@@ -129,6 +129,28 @@ export function gridHeight(width: number): number {
   return WEEKDAY_ROW + 6 * cellSize(width).height + 6 * CELL_GAP;
 }
 
+// The selected day (D64): its weekday column is 1.3 times as wide as the others in every row and the weekday head, so
+// it stands out and the grid's height never changes. [CONFIRM: the selected day in the month grid outlined in `mint`
+// 2px over the `state` fill with its weekday column 1.3 times as wide, easing over 150ms]
+
+/** How much wider the selected day's column is than the others. */
+export const SELECTED_GROW = 1.3;
+
+/** The selected day's column: its weekday, 0 for Monday to 6 for Sunday. */
+export function selectedColumn(date: string): number {
+  return (new Date(`${date}T00:00:00.000Z`).getUTCDay() + 6) % 7;
+}
+
+/** A column's share of the row (native's flex grow): SELECTED_GROW for the selected column, else 1. */
+export function columnGrow(column: number, selected: number | null): number {
+  return column === selected ? SELECTED_GROW : 1;
+}
+
+/** Every row's `grid-template-columns` on web, the selected column wider; all equal with none. */
+export function columnTemplate(selected: number | null): string {
+  return Array.from({ length: 7 }, (_, column) => `minmax(0, ${String(columnGrow(column, selected))}fr)`).join(' ');
+}
+
 /** What a month cell's entry rows show: every entry when there are three or fewer, else the first two and “+N more”. */
 export function entryLines(cell: Pick<CalendarCell, 'chips' | 'more'>): { lines: string[]; more: string | null } {
   if (cell.more === 0) return { lines: cell.chips, more: null };
@@ -280,7 +302,12 @@ export function headLine(day: Pick<WeekDay, 'range' | 'figure'>): string | null 
  * inert and pending days have no cards.
  */
 export function buildWeek(selected: string, today: string, input: CalendarInput, bounds: MonthBounds): WeekSlot[] {
-  return weekDays(weekStartFor(selected, today)).map((date): WeekSlot => {
+  return buildDays(weekDays(weekStartFor(selected, today)), input, bounds);
+}
+
+/** Any run of days as the week view shows them (buildWeek's block, or the scrolling week's strip, D64). */
+export function buildDays(dates: readonly string[], input: CalendarInput, bounds: MonthBounds): WeekSlot[] {
+  return dates.map((date): WeekSlot => {
     const slot = slotFor(date, null, input, bounds);
     if (slot.kind === 'inert') return slot;
     if (slot.pending) return { ...slot, cards: [], range: null };
