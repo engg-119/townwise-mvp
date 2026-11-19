@@ -632,9 +632,10 @@ describe('D66: research after an org admin adds a location or changes its place'
     fake.script({ kind: 'json', body: hanoverPlace(PLACE_A) });
     const locationId = await created(t.admin, { name: 'Mill Room', town: { townId: 'hanover-nh' }, placeId: PLACE_A });
     const [first] = await runsOf(locationId);
+    if (first === undefined) throw new Error('no early run');
     // A lane is running one of its threads, and an earlier run found an event for place A that a member edited.
-    await live.connection.collection('tw_location_research_runs').updateOne({ _id: first?._id }, { $set: { status: 'running' } });
-    await live.connection.collection('tw_location_research_threads').updateOne({ runId: first?._id, thread: 'neighborhood' }, {
+    await live.connection.collection('tw_location_research_runs').updateOne({ _id: first._id }, { $set: { status: 'running' } });
+    await live.connection.collection('tw_location_research_threads').updateOne({ runId: first._id, thread: 'neighborhood' }, {
       $set: { status: 'running', owner: 'lane-a', leaseUntil: new Date(live.clock.now().getTime() + 90_000) },
     });
     const eventId = await addResearchRecords(live, { orgId: t.orgId, locationId });
