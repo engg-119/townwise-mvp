@@ -28,7 +28,7 @@ import type { ResolvedTownwiseConfig } from '../config.ts';
 import { claimLocationResearchMerge, researchLocationCandidates, researchTownsInUse } from '../stores/cross-tenant.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
-import type { RunTrigger } from '../stores/research-locations.ts';
+import type { LocationRunRecord, RunTrigger } from '../stores/research-locations.ts';
 import type { RunRecordBase } from '../stores/research-shared.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { TOWN_IDS, TOWNS, type Town, type TownId } from '../towns.ts';
@@ -204,16 +204,16 @@ async function completeLocationThreads(ctx: PlanContext, scope: OrgScope, locati
 /** Inserts one location run and its threads; null when the location already has a live run or a run of this key. */
 async function insertLocationRun(
   ctx: PlanContext, scope: OrgScope, location: LocationRecord, input: { key: string; trigger: RunTrigger },
-): Promise<boolean> {
+): Promise<LocationRunRecord | null> {
   const now = ctx.now();
   const threads = locationThreads(location);
   const run = await ctx.stores.researchLocations.insertRun(scope, {
     locationId: location.id, key: input.key, trigger: input.trigger, placeId: location.placeId, town: townStamp(location.town), threads, now,
   });
-  if (run === null) return false;
+  if (run === null) return null;
   const notBefore = dueAt(run.key, timeZoneOf(location.town).timeZone, location.id, now);
   await ctx.stores.researchLocations.insertThreads(scope, run, threads.map((thread) => ({ thread, notBefore })), now);
-  return true;
+  return run;
 }
 
 /** The location's week's run, unless one was created in the last 6 days or one is live. */
@@ -225,7 +225,7 @@ export async function planLocationRun(ctx: PlanContext, scope: OrgScope, locatio
     return 'recent';
   }
   const key = weekKey(now, timeZoneOf(location.town).timeZone);
-  if (await insertLocationRun(ctx, scope, location, { key, trigger: 'weekly' })) return 'inserted';
+  if (await insertLocationRun(ctx, scope, location, { key, trigger: 'weekly' }) !== null) return 'inserted';
   await completeLocationThreads(ctx, scope, location);
   return 'running';
 }
@@ -240,10 +240,19 @@ export async function queueEarlyRun(ctx: PlanContext, scope: OrgScope, location:
   if (ctx.config.researchOrgMonthlyUsd <= 0) return 'off';
   const org = await ctx.stores.orgs.findById(scope.orgId);
   if (org?.status !== 'active' || !org.research.on) return 'off';
-  const inserted = await insertLocationRun(ctx, scope, location, { key: `s:${new Types.ObjectId().toHexString()}`, trigger: 'early' });
+  const inserted = await insertLocationRun(ctx, scope, location, { key: `s:${new Types.ObjectId().toHexString()}`, trigger: 'early' }) !== null;
   const { townId } = location.town;
   if (townId !== null && isTownId(townId)) await planTownRun(ctx, townId);
   return inserted ? 'inserted' : 'running';
+}
+
+/**
+ * Research now (design decisions 2 and 13): a run of the location's own threads, key `p:{id}`, trigger `press`, due at
+ * once. It never asks for the town's run. Null when the location already has a live run (the one-live-run index), which
+ * the route answers 409 research_running. The route checks the switches, the 6 hours and the caller first.
+ */
+export async function queuePressRun(ctx: PlanContext, scope: OrgScope, location: LocationRecord): Promise<LocationRunRecord | null> {
+  return insertLocationRun(ctx, scope, location, { key: `p:${new Types.ObjectId().toHexString()}`, trigger: 'press' });
 }
 
 // ---- The tick --------------------------------------------------------------------------------------------------------

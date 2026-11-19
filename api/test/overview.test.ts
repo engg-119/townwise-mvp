@@ -29,7 +29,7 @@ const DESIGN_TABLE = {
   team: [
     'member.invited', 'member.joined', 'member.role_changed', 'member.removed', 'member.left', 'location.created', 'location.updated',
     'location.deleted', 'org.renamed', 'org.weekly_suggestions_changed', 'org.calendar_titles_ai_changed',
-    'org.agent_auto_switched',
+    'org.agent_auto_switched', 'org.research_switched',
   ],
   none: [
     'access_request.created', 'access_request.approved', 'access_request.rejected', 'access_request.withdrawn', 'org.created',

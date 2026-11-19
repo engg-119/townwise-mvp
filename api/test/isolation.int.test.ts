@@ -455,8 +455,8 @@ describe('isolation of id-bearing tenant routes, generated from the route table'
       'org.members.update', 'org.members.remove', 'org.locations.update', 'org.locations.remove', 'org.sales.get',
       'org.sales.days', 'org.sales.upload', 'org.sales.remove', 'org.notes.list', 'org.notes.create', 'org.notes.update',
       'org.notes.remove', 'org.sales.history', 'org.calendar.get',
-      // D66, the research agent's Town tab read.
-      'org.research.get', 'org.competition.get', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
+      // D66, the research agent's Town tab read and Research now.
+      'org.research.get', 'org.competition.get', 'org.research.run', 'org.chat.get', 'org.chat.conversation', 'org.chat.turn', 'org.chat.remove',
       'org.chat.proposal', 'org.chat.rename', 'org.chat.active', 'org.chat.feedback',
       // Weekly suggestions (weekly-forecast-suggestions), and suggested closure rules (suggest-closure-rules).
       'org.agent.suggestion_accept', 'org.agent.suggestion_dismiss', 'org.agent.rule_suggestion_accept', 'org.agent.rule_suggestion_dismiss',

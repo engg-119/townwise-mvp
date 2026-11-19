@@ -87,6 +87,8 @@ export const AUDIT_DETAIL_KEYS = {
   // D59, TownwiseAI working on its own: the org admin's switch, and each change it saved or someone undid, by its typed
   // action and source kind. Never a title, a why, a file name, a date or a figure.
   'org.agent_auto_switched': ['on'],
+  // D66, the research agent: the organization's switch, by its state only.
+  'org.research_switched': ['on'],
   'agent.change_applied': ['locationId', 'action', 'sourceKind'],
   'agent.change_undone': ['locationId', 'action', 'sourceKind'],
   // D59 slice 5: a run in which the location's calendars answered open suggestions, by count. Never a title, uid or date.

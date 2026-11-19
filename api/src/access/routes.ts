@@ -46,7 +46,7 @@ import {
 } from '../handlers/owner-calendars.ts';
 import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
-import { getCompetition, getResearch } from '../handlers/research.ts';
+import { getCompetition, getResearch, pressResearch, switchResearch } from '../handlers/research.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { acceptRuleSuggestion, dismissRuleSuggestion } from '../handlers/rule-suggestions.ts';
 import { createRule, deleteRule, listRules, updateRule } from '../handlers/rules.ts';
@@ -68,10 +68,10 @@ export interface TownwiseRoute {
   readonly policy: Policy;
   /**
    * 'none' for GET and DELETE; '1kb' on a TownwiseAI question's answer, a TownwiseAI turn's stop, accepting or dismissing a weekly suggestion, a conversation's rename, a version switch, a reply's rating, the profile
-   * edit, an order rule's turn-off and open as admin's start (its reason);
+   * edit, an order rule's turn-off, open as admin's start (its reason) and (D66) Research now;
    * '2kb' on the Places, files, imports and (D28) Your data JSON routes, the start of a calibration, the forecasts
-   * switch, the weekly suggestions switch, (D31) a business rule, the order decisions and rules, the item and order change cards, and connecting a
-   * Google calendar;
+   * switch, the weekly suggestions switch, (D31) a business rule, the order decisions and rules, the item and order change cards, connecting a
+   * Google calendar and (D66) the research switch;
    * '8kb' on a TownwiseAI proposal; '32kb' on the other JSON writes, among them (D29) the Places map, whose 25 place
    * ids may reach 13 KB, and an order count; '256kb' only on the upload routes (the member one, D23 staff setup's, and
    * the item sales upload) and (U13B) the staff forecast import; '1mb' only on the ordering setup's save (300 items
@@ -85,7 +85,7 @@ export interface TownwiseRoute {
   /** 'writes' applies to every non-GET automatically, before access is resolved. */
   readonly limiter?:
     | 'uploads' | 'item_sales' | 'requests' | 'view-as' | 'chat' | 'chat_tail' | 'places' | 'files' | 'file_chunks' | 'downloads'
-    | 'ai_reads' | 'google_calendars';
+    | 'ai_reads' | 'google_calendars' | 'research';
   /**
    * Runs while staff have the organization open as its admin (D25), as the grant organization's org admin. Without it
    * the route is refused then (403 `open_as_admin_refused`; staff routes 409 `open_as_admin_active`), so a new route
@@ -189,6 +189,12 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.competition.get', method: 'GET', path: '/org/locations/:locationId/competition', policy: 'member', bodyLimit: 'none',
     limiter: 'places', openAsAdmin: true, handler: getCompetition,
+  },
+  // D66: Research now, the location's own threads. It spends the organization's month and sends to Anthropic, so it is
+  // never open as admin (the bookings_sort precedent) and has its own limiter.
+  {
+    id: 'org.research.run', method: 'POST', path: '/org/locations/:locationId/research/run', policy: 'org_admin', bodyLimit: '1kb',
+    limiter: 'research', handler: pressResearch,
   },
   {
     id: 'org.sales.upload', method: 'POST', path: '/org/locations/:locationId/sales/uploads', policy: 'member',
@@ -492,6 +498,11 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
     id: 'org.agent_auto.switch', method: 'PATCH', path: '/org/agent-auto', policy: 'org_admin', bodyLimit: '2kb', openAsAdmin: true,
     handler: switchAgentAuto,
   },
+  // D66: the organization's research switch, as the one above (open as admin may turn it off only).
+  {
+    id: 'org.research.switch', method: 'PATCH', path: '/org/research', policy: 'org_admin', bodyLimit: '2kb', openAsAdmin: true,
+    handler: switchResearch,
+  },
   {
     id: 'org.agent.changes', method: 'GET', path: '/org/locations/:locationId/agent/changes', policy: 'member', bodyLimit: 'none',
     openAsAdmin: true, handler: listAgentChanges,
@@ -736,6 +747,9 @@ export const ROUTE_LIMITS = {
   // connect-google-calendar, design decision 8: every call is a Google call, so a store outage denies, as for Places.
   // [CONFIRM: 30 Google calendar calls an account an hour]
   google_calendars: { name: 'townwise:google-calendars', limit: 30, windowSeconds: 3600, whenStoreDown: 'deny' },
+  // D66, Research now: each press spends the organization's TownwiseAI month and sends to Anthropic, so a store outage
+  // denies. [CONFIRM: Research now for org admins, the location's threads only, 3 a day per person, not within 6 hours of the last run]
+  research: { name: 'townwise:research', limit: 3, windowSeconds: 86400, whenStoreDown: 'deny' },
 } as const;
 
 /** The only route that may stream its body. */
