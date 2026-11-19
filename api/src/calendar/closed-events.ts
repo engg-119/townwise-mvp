@@ -4,7 +4,10 @@
 // part of a day), its dates make a closure note under Section 12's rules, and its title plainly says closed: folded
 // (accents dropped, lower case, apostrophes dropped, every other mark a space), with no `?` and no digit, its words an
 // optional few naming the business ("we are", "were", "restaurant", "cafe", "shop", "store", "business"), then
-// "closed", then nothing that names part of a day or of the place, a booking, doubt or opening. Pure; the title is read
+// "closed", then only words from a fixed list: a few joining words, a day or a time of year, a holiday, or a plain
+// reason a whole business shuts (a vacation, repairs, the weather, a family emergency). Any other word after "closed"
+// ("door", "session", "meeting", "catering", "road", "early", "kitchen", a name) makes the title not plain, so a
+// closed-door meeting, a catered buyout or a part of a day never answers a closure question. Pure; the title is read
 // here and never leaves: callers keep only ids and dates, and nothing logs. [CONFIRM: an all-day keyed calendar event
 // whose title plainly says closed, by this word rule, answers a closure question]
 import { readNoteContent } from '../handlers/notes.ts';
@@ -18,19 +21,26 @@ export type CalendarEvent = StoredEvent & { readonly calendarId: string };
 /** Words naming the business that may come before "closed" ("we are" as two words; "we're" folds to "were"). */
 const PREFIXES: readonly (readonly string[])[] = [['we', 'are'], ['were'], ['restaurant'], ['cafe'], ['shop'], ['store'], ['business']];
 
-/** Words that make a "closed" title not plain: part of a day or of the place, a booking, doubt, or opening. */
-const NOT_PLAIN = new Set([
-  // Part of a day.
-  'early', 'late', 'until', 'till', 'til', 'from', 'at', 'after', 'before', 'noon', 'midnight', 'am', 'pm', 'morning', 'afternoon',
-  'evening', 'night', 'lunch', 'dinner', 'brunch', 'breakfast', 'hours', 'hour', 'half', 'partial', 'partially', 'part',
-  // Part of the place.
-  'kitchen', 'bar', 'patio', 'deck', 'dining', 'room', 'upstairs', 'downstairs', 'takeout', 'delivery',
-  // A booking.
-  'private', 'party', 'event', 'buyout', 'booked', 'booking', 'public', 'wedding', 'rehearsal', 'reception',
-  // Doubt.
-  'maybe', 'tentative', 'tentatively', 'possibly', 'probably', 'tbd', 'if', 'unless', 'except', 'but', 'not',
-  // Opening.
-  'open', 'opens', 'opening', 'reopen', 'reopens', 'reopening',
+/**
+ * The only words that may follow "closed" (anything else makes the title not plain). "to" counts only right after
+ * "due" ("Closed due to snow"), so "Closed to walk-ins" and "Closed to the public" do not.
+ */
+const PLAIN_AFTER = new Set([
+  // Joining words.
+  'for', 'the', 'a', 'an', 'our', 'and', 'of', 'on', 'due', 'all',
+  // Days and times of year.
+  'day', 'days', 'today', 'tomorrow', 'week', 'weekend', 'weekends', 'monday', 'tuesday', 'wednesday', 'thursday', 'friday',
+  'saturday', 'sunday', 'mondays', 'tuesdays', 'wednesdays', 'thursdays', 'fridays', 'saturdays', 'sundays', 'season', 'winter',
+  'summer', 'spring', 'autumn', 'annual',
+  // Holidays.
+  'holiday', 'holidays', 'new', 'year', 'years', 'eve', 'christmas', 'xmas', 'thanksgiving', 'easter', 'memorial', 'labor',
+  'independence', 'fourth', 'july', 'juneteenth', 'presidents', 'veterans', 'columbus', 'indigenous', 'peoples', 'mlk', 'martin',
+  'luther', 'king', 'jr', 'good', 'halloween', 'hanukkah', 'chanukah', 'passover', 'rosh', 'hashanah', 'yom', 'kippur', 'boxing',
+  'mothers', 'fathers', 'patriots',
+  // Plain reasons a whole business shuts.
+  'vacation', 'vacations', 'break', 'family', 'staff', 'training', 'renovation', 'renovations', 'renovating', 'remodel',
+  'remodeling', 'repair', 'repairs', 'maintenance', 'construction', 'inventory', 'cleaning', 'weather', 'snow', 'storm', 'ice',
+  'power', 'outage', 'emergency', 'funeral', 'bereavement', 'illness', 'sick',
 ]);
 
 /** The title's words, folded; null when it holds a `?` or a digit. */
@@ -46,7 +56,7 @@ export function plainlyClosed(title: string): boolean {
   if (words === null) return false;
   const prefix = PREFIXES.find((each) => each.every((word, i) => words[i] === word));
   const rest = words.slice(prefix?.length ?? 0);
-  return rest[0] === 'closed' && !rest.slice(1).some((word) => NOT_PLAIN.has(word));
+  return rest[0] === 'closed' && rest.every((word, i) => i === 0 || PLAIN_AFTER.has(word) || (word === 'to' && rest[i - 1] === 'due'));
 }
 
 /** The closure note an event makes: its dates, all day, no title; null when Section 12's rules refuse it. */

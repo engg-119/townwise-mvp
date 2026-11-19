@@ -1,7 +1,7 @@
 // D59 slice 5 (openspec change auto-apply-agent-reads design decision 16): which calendar events plainly say the business
 // is closed (src/calendar/closed-events.ts): a keyed all-day event whose folded title is "closed", optionally after a few
-// words naming the business, followed by nothing that names part of a day or of the place, a booking, doubt or opening,
-// with no `?` or digit, and whose dates make a closure note. Every title here is made up.
+// words naming the business, followed only by words from a fixed list (joining words, days, holidays, plain reasons a
+// whole business shuts), with no `?` or digit, and whose dates make a closure note. Every title here is made up.
 import { describe, expect, it } from 'vitest';
 
 import { closedDaysOf, closedEventsOf, closureNoteOfEvent, plainlyClosed, type CalendarEvent } from '../src/calendar/closed-events.ts';
@@ -18,8 +18,9 @@ function event(title: string, extra: Partial<CalendarEvent> = {}): CalendarEvent
 describe('plainlyClosed', () => {
   it.each([
     'Closed', 'CLOSED', 'closed for Thanksgiving', 'We’re closed', "We're closed", 'We are closed', 'Closed (family vacation)',
-    'Closed - staff retreat', 'Restaurant closed', 'Café closed', 'Store closed for inventory', 'Closed today', 'Closed all day',
-    '  closed  ', 'Closed for the holidays',
+    'Restaurant closed', 'Café closed', 'Store closed for inventory', 'Closed today', 'Closed all day',
+    '  closed  ', 'Closed for the holidays', 'Closed due to snow', 'Closed on Mondays', 'Closed for staff training',
+    'Closed for New Year’s Day', 'Closed for renovations',
   ])('%s plainly says closed', (title) => {
     expect(plainlyClosed(title)).toBe(true);
   });
@@ -30,6 +31,10 @@ describe('plainlyClosed', () => {
     'Closed for lunch', 'Closed, open for dinner', 'Reopening', 'Open', 'Staff meeting', 'Close books', 'Closing shift', '',
     'Closed for the Smith wedding', 'Tentatively closed', 'Closed except takeout', 'Closed but delivery', 'Closed upstairs',
     'Holiday: closed', 'Closed Dec 25',
+    // Words a closure of the whole business would not use: a meeting, a session, a buyout, a road, a booking rule.
+    'Closed-door meeting', 'Closed-door strategy meeting', 'Closed door staff meeting', 'Closed session', 'Closed meeting',
+    'Closed for catering', 'Closed for a corporate retreat', 'Closed - staff retreat', 'Closed to walk-ins',
+    'Closed, reservations only', 'Closed road', 'Closed for the Quillfeather holidays',
   ])('%s does not', (title) => {
     expect(plainlyClosed(title)).toBe(false);
   });
