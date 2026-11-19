@@ -383,6 +383,12 @@ function TileLines(props: { widths: readonly DimensionValue[] }): React.JSX.Elem
  * back; `n` ran 7 to 19% wider and wrapped the tile three lines early. In mono every glyph is one width.
  */
 const masked = (words: string): string => words.replace(/[\p{L}\p{N}]/gu, 's');
+/**
+ * `masked` for a line of plain text, without the bold figures that widen the tile's: `x`, which the font's own advance
+ * widths (Instrument Sans at 14px, 2026-11-18) put at 99 to 105% of Who's in town's and Past years' real lines, where
+ * `s` came to 86 to 91% and so wrapped a line short at 1280, 1100 and 375.
+ */
+const maskedPlain = (words: string): string => words.replace(/[\p{L}\p{N}]/gu, 'x');
 const PLACEHOLDER_TOWN = { townId: 'town', name: 'Hanover', state: 'NH' };
 const PLACEHOLDER_WEEK = { from: '2026-11-18', to: '2026-11-24' };
 
@@ -542,12 +548,12 @@ export function InTownPeopleShapes(): React.JSX.Element {
   return (
     <View style={styles.inTown}>
       <View style={styles.townTagRow}>
-        <View style={styles.townTag}><SkeletonText type="label" width={56} /></View>
-        <View style={styles.townShrink}><SkeletonWords type="small">{masked(TOWN_WORDS.noNumber)}</SkeletonWords></View>
+        <View style={styles.townTag}><SkeletonBlock outline height={6} width={6} /><SkeletonText type="label" width={54} /></View>
+        <View style={styles.townShrink}><SkeletonWords type="small">{maskedPlain(TOWN_WORDS.noNumber)}</SkeletonWords></View>
       </View>
       {group(72, (
         <>
-          <Text style={phone ? theme.type.h3Phone : theme.type.h3}><SkeletonWords>{masked(TOWN_WORDS.now)}</SkeletonWords></Text>
+          <Text style={phone ? theme.type.h3Phone : theme.type.h3}><SkeletonWords>{maskedPlain(TOWN_WORDS.now)}</SkeletonWords></Text>
           <TownRunSkeleton />
         </>
       ))}
@@ -555,7 +561,7 @@ export function InTownPeopleShapes(): React.JSX.Element {
       <View style={styles.townFoot}><SkeletonWords type="mono">{masked(TOWN_WORDS.between)}</SkeletonWords><ChipSkeleton /></View>
       {group(130, (
         <>
-          <SkeletonWords type="small">{masked(TOWN_WORDS.history)}</SkeletonWords>
+          <SkeletonWords type="small">{maskedPlain(TOWN_WORDS.history)}</SkeletonWords>
           <SkeletonWords type="mono">{masked(TOWN_WORDS.provenance)}</SkeletonWords>
         </>
       ))}
@@ -739,7 +745,7 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
               node: (
                 <SkeletonPanel>
                   <BlockHeadSkeleton eyebrow={120} width={280} />
-                  <SkeletonWords type="small">{masked(PAST_YEAR_WORDS)}</SkeletonWords>
+                  <SkeletonWords type="small">{maskedPlain(PAST_YEAR_WORDS)}</SkeletonWords>
                   <SkeletonWords type="mono">Averages leave out closed days.</SkeletonWords>
                 </SkeletonPanel>
               ),
@@ -1073,7 +1079,7 @@ const styles = StyleSheet.create({
   // InTown.tsx's group, row and tag (ui/feedback.tsx StatusTag: its label line, 3px padding and 1px border).
   inTownGroup: { gap: theme.space[3], paddingTop: theme.space[4], borderTopWidth: 1, borderTopColor: c.border, minWidth: 0 },
   townTagRow: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[3], rowGap: theme.space[2] },
-  townTag: { borderWidth: 1, borderColor: c.line, paddingVertical: 3, paddingHorizontal: 6 },
+  townTag: { flexDirection: 'row', alignItems: 'center', columnGap: 6, borderWidth: 1, borderColor: c.line, paddingVertical: 3, paddingHorizontal: 6 },
   townRun: { flexDirection: 'row', alignItems: 'center', columnGap: theme.space[4], minWidth: 0 },
   townRunPhone: { gap: 2, minWidth: 0 },
   townRunWhen: { width: 112 },
