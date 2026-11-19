@@ -231,6 +231,7 @@ function Data(): React.JSX.Element {
             {adding && !readOnly ? (
               <PasteText
                 locationId={location.id}
+                auto={agentAuto}
                 onCancel={() => { setAdding(false); }}
                 onSaved={(title) => { setAdding(false); setNotice(`Saved ${title}.`); setEnded((n) => n + 1); fresh(); }}
               />

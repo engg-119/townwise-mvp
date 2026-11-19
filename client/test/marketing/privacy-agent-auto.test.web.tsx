@@ -80,7 +80,7 @@ test('a Changes TownwiseAI makes item says what it may add, that it changes and 
 test('the Anthropic item names the files TownwiseAI reads on its own beside the weekly suggestions', () => {
   renderPrivacy();
   const anthropic = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem').find((item) => item.textContent.startsWith('Anthropic,'));
-  expect(anthropic?.textContent).toContain('Apart from TownwiseAI’s weekly suggestions and, where it works on its own, the files it reads on its own');
+  expect(anthropic?.textContent).toContain('Apart from TownwiseAI’s weekly suggestions and, where it works on its own, the files and pasted text it reads on its own');
   expect(anthropic?.textContent).toContain('When TownwiseAI reads a file, on its own or because you let it, the whole file is sent to it');
   expect(anthropic?.textContent).toContain('TownwiseAI never reads a sales file Townwise read into days unless you let it read one.');
 });
@@ -99,4 +99,14 @@ test('slice 3: the weekly suggestions it is sure of, sales history rules and the
   expect(changes?.textContent).toContain('from your sales history (a business rule for a weekday with no sales on at least 9 in 10 of at least 8 counted weeks)');
   const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
   expect(anthropic?.textContent).toContain('once a week for each location (and, where TownwiseAI works on its own, sooner after a calendar change, at most once a day) Anthropic receives');
+});
+
+test('slice 4: a note saved from your own message, and pasted text read on its own', () => {
+  const text = renderPrivacy();
+  expect(text).toContain('Text you paste on Your data is read the same way when you save it with the box under Paste text checked; that box shows, checked, only where TownwiseAI works on its own.');
+  const items = screen.getAllByRole('listitem');
+  const conversations = items.find((item) => item.textContent.startsWith('TownwiseAI conversations.'));
+  expect(conversations?.textContent).toContain('Where TownwiseAI works on its own, a note for a dated event you state plainly in your own message is saved to your notes for you, as yours, and its card shows Undo');
+  const changes = items.find((item) => item.textContent.startsWith('Changes TownwiseAI makes.'));
+  expect(changes?.textContent).toContain('from a file you add or text you paste on Your data (a note, a summary on Your data, or sales days you didn’t have), from a message you send it (a note for a dated event you state plainly in your own words)');
 });

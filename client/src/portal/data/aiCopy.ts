@@ -42,6 +42,10 @@ export const AI = {
   optInHelp: 'Each file you add is sent whole to Anthropic’s Claude to read. You can undo what TownwiseAI adds from a file on its page.',
   // D59: while TownwiseAI works on its own the box starts checked. [CONFIRM: privacy wording for TownwiseAI working on its own]
   optInHelpAuto: 'TownwiseAI reads each file you add on its own: the whole file is sent to Anthropic’s Claude, a sales export too, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep these files from it.',
+  // D59 slice 4: the box under Paste text, shown only while TownwiseAI works on its own. [CONFIRM: the words for pasted
+  // text TownwiseAI reads and a note it saves from your message]
+  pasteOptIn: 'Let TownwiseAI read this text and use what it finds',
+  pasteOptInHelp: 'TownwiseAI reads it on its own once you save it: the text is sent to Anthropic’s Claude, and TownwiseAI saves what it’s sure of, each change with Undo in TownwiseAI’s activity. Uncheck this to keep it from TownwiseAI.',
 } as const;
 
 /** What TownwiseAI found a file to be, in a sentence. */

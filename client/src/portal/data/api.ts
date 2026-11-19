@@ -165,7 +165,8 @@ export function removeItem(api: ApiClient, locationId: string, ref: string): Pro
 }
 
 /** Pasted text kept for reference, as a `.txt` file named from its title. */
-export async function addText(api: ApiClient, locationId: string, input: { title: string; text: string }): Promise<FileView> {
+/** D59 slice 4: `aiAuto: true` only when the person left the box checked, so TownwiseAI reads the text on its own. */
+export async function addText(api: ApiClient, locationId: string, input: { title: string; text: string; aiAuto?: true }): Promise<FileView> {
   const body = await api.json(`/api/org/locations/${encodeURIComponent(locationId)}/data/text`, textSchema, { method: 'POST', body: input });
   return body.file;
 }

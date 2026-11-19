@@ -220,3 +220,42 @@ test('with it off (or an API before it) the box starts unchecked, as D34 had it'
   expect((box as HTMLInputElement).checked).toBe(false);
   expect(screen.queryByText(AUTO_HELP)).toBeNull();
 });
+
+describe('D59 slice 4: Paste text’s box while TownwiseAI works on its own', () => {
+  const PASTE_OPT_IN = 'Let TownwiseAI read this text and use what it finds';
+
+  async function paste(title: string): Promise<void> {
+    fireEvent.click(await screen.findByRole('button', { name: 'Paste text' }));
+    fireEvent.change(await screen.findByLabelText('Title'), { target: { value: title } });
+    fireEvent.change(screen.getByLabelText('Text'), { target: { value: 'Private party on Dec 12.' } });
+  }
+
+  test('starts checked and sends aiAuto with the text, and says what it sends', async () => {
+    const fake = setup(meOf(ACCESS.admin), true);
+    await paste('Party');
+    const box = await screen.findByRole('checkbox', { name: PASTE_OPT_IN });
+    expect((box as HTMLInputElement).checked).toBe(true);
+    expect(screen.getByText(/TownwiseAI reads it on its own once you save it/)).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved Party.');
+    expect(fake.texts).toEqual([{ locationId: 'l1', body: { title: 'Party', text: 'Private party on Dec 12.', aiAuto: true } }]);
+  });
+
+  test('unchecked, the text is only kept: no aiAuto is sent', async () => {
+    const fake = setup(meOf(ACCESS.admin), true);
+    await paste('Kept');
+    fireEvent.click(await screen.findByRole('checkbox', { name: PASTE_OPT_IN }));
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved Kept.');
+    expect(fake.texts).toEqual([{ locationId: 'l1', body: { title: 'Kept', text: 'Private party on Dec 12.' } }]);
+  });
+
+  test('while TownwiseAI doesn’t work on its own here there is no box, and nothing asks for a read', async () => {
+    const fake = setup(meOf(ACCESS.admin), false);
+    await paste('Plain');
+    expect(screen.queryByRole('checkbox', { name: PASTE_OPT_IN })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    await screen.findByText('Saved Plain.');
+    expect(fake.texts).toEqual([{ locationId: 'l1', body: { title: 'Plain', text: 'Private party on Dec 12.' } }]);
+  });
+});
