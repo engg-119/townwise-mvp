@@ -25,10 +25,12 @@ import type { ChartDay, WeekChart as Model } from './weekChartData';
 // nothing published no column says anything. Shapes and dashes tell the series apart as well as color, and the key
 // names only what is drawn. The scale is printed. The drawing is aria-hidden: each day's column is a button whose name
 // says everything the column shows and the day's calendar in words, and Show the numbers (ThisWeek.tsx) gives the
-// table. A mouse or pen over a column (web; never touch) previews its day in the panel beside or under the chart; a
-// tap, a click, Enter or focus chooses it, and the panel keeps the chosen day (today at first): its forecast and
-// range, its actual, Why and On the calendar in This month's day detail's words (DayDetail.tsx), the same weekday last
-// year, and a link that opens the day on the Calendar.
+// table. A tap, a click, Enter or Space chooses a day (focus alone does not, so Tab passes the later days and reaches
+// the panel with the chosen day still in it), and the panel beside or under the chart shows the chosen day (today at
+// first): its forecast and range, its actual, Why and On the calendar in This month's day detail's words
+// (DayDetail.tsx), the same weekday last year, and a link that opens the day on the Calendar. The chosen column is lit;
+// a mouse or pen over another (web; never touch) lights that one instead and leaves the panel alone, so the pointer
+// never shows content it can't reach and never hides a keyboard choice (WCAG 1.4.13).
 
 const C = theme.color;
 const HEIGHT = 140;
@@ -134,7 +136,7 @@ function Key(props: { model: Model; metric: Metric }): React.JSX.Element | null 
   );
 }
 
-/** The chosen (or pointed-at) day: its forecast, actual, Why, calendar and last year, and its link to the Calendar. */
+/** The chosen day: its forecast, actual, Why, calendar and last year, and its link to the Calendar. */
 function DayPanel(props: {
   day: ChartDay; input: CalendarInput; metric: Metric; history: boolean; published: boolean; locationId: string;
 }): React.JSX.Element {
@@ -170,10 +172,9 @@ export function WeekChart(props: {
   const [chosen, setChosen] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
   const first = model.days[0];
-  const shownDate = hovered ?? chosen ?? first?.date ?? null;
-  const active = model.days.findIndex((day) => day.date === shownDate);
-  const shown = model.days[active];
   const chosenDate = chosen ?? first?.date ?? null;
+  const shown = model.days.find((day) => day.date === chosenDate);
+  const active = model.days.findIndex((day) => day.date === (hovered ?? chosenDate));
   const noun = metric === 'guests' ? ' guests' : '';
   const onLayout = (event: LayoutChangeEvent): void => {
     const next = Math.round(event.nativeEvent.layout.width);
@@ -196,7 +197,6 @@ export function WeekChart(props: {
                   accessibilityState={{ selected: isChosen }}
                   {...webAria({ 'aria-pressed': isChosen, 'aria-controls': WEEK_PANEL_ID })}
                   onPress={() => { setChosen(day.date); }}
-                  onFocus={() => { setChosen(day.date); }}
                   onHoverIn={() => { setHovered(day.date); }}
                   onHoverOut={() => { setHovered((prev) => (prev === day.date ? null : prev)); }}
                   style={styles.slot}
@@ -219,7 +219,7 @@ export function WeekChart(props: {
         </View>
         <Key model={model} metric={metric} />
         <Mono tone="text3">{`Scale 0 to ${metricNumber(model.top, metric)}${noun}. Scale fitted to this location.`}</Mono>
-        <Mono tone="text3">{Platform.OS === 'web' ? 'Point at a day or choose one to see it in full.' : 'Tap a day to see it in full.'}</Mono>
+        <Mono tone="text3">{Platform.OS === 'web' ? 'Choose a day to see it in full.' : 'Tap a day to see it in full.'}</Mono>
       </View>
       {shown === undefined ? null : (
         <View style={styles.panelSide}>

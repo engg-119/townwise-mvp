@@ -4,7 +4,7 @@ import { forecastRange, thisWeek, weekDates, type HomeInput } from '../../../src
 import { ALL_FILTERS, type CalendarInput } from '../../../src/portal/calendar/model';
 import type { ForecastDay, ForecastWindow } from '../../../src/portal/estimates/api';
 import type { Metric } from '../../../src/portal/analytics/words';
-import { weekChart } from '../../../src/portal/home/weekChartData';
+import { chartShows, weekChart } from '../../../src/portal/home/weekChartData';
 import { day, run } from '../analytics/fakes';
 import { forecastDay } from '../calendar/fakes';
 
@@ -73,4 +73,17 @@ test('with nothing published no day says a word, and with no history last year i
   expect(bare.days[1]?.label).toBe('Fri, Nov 6, 2026.');
   // The scale fits what is drawn: today's 120 alone.
   expect(bare.top).toBe(200);
+});
+
+test('the chart shows only when it draws something, and the forecast when one is published', () => {
+  const open = windowOf(WEEK.map((date) => forecastDay({ date })));
+  expect(chartShows(chartOf(open), true)).toBe(true);
+  // In net sales the forecast is not drawn, so the days (with their Forecast row) stay in view, last year or not.
+  expect(chartShows(chartOf(open, 'netSales'), true)).toBe(false);
+  // Nothing published: last year or today's figure is enough.
+  expect(chartShows(chartOf(null), false)).toBe(true);
+  expect(chartShows(chartOf(null, 'guests', false), false)).toBe(true);
+  // Nothing at all to draw: no forecast, no last year, no figure for today.
+  const empty = { ...chartOf(null, 'guests', false), drawn: { forecast: false, actual: false, lastYear: false } };
+  expect(chartShows(empty, false)).toBe(false);
 });

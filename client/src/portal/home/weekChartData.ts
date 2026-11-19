@@ -87,3 +87,14 @@ export function weekChart(week: Pick<ThisWeek, 'rows'>, input: CalendarInput, me
     },
   };
 }
+
+/**
+ * Whether This week shows the chart in place of its days: only when it draws something, and, with a forecast published,
+ * only when it draws that forecast (in guests). Otherwise the strip or table stays in view (with its Forecast row when
+ * one is published), and an empty plot never stands in for it (no last year yet, today not in, or a forecast in net
+ * sales).
+ */
+export function chartShows(chart: WeekChart, published: boolean): boolean {
+  if (published) return chart.drawn.forecast;
+  return chart.drawn.lastYear || chart.drawn.actual;
+}

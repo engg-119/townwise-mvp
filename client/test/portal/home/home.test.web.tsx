@@ -250,7 +250,12 @@ const NEAR_EMPTY = DAYS.map((day) => (day.date === '2026-11-03' ? { ...day, gues
 
 test('a near-empty day before today reads Likely closed (spec D32) in This month; This week starts today, without it', async () => {
   await renderAt(portal(meOf(ACCESS.member), NEAR_EMPTY));
+  // The days are behind Show the numbers while the chart shows, so open them: today's day is there, Tuesday's is not.
+  openWeekNumbers();
+  expect(screen.getByTestId('home-day-2026-11-05')).toBeTruthy();
   expect(screen.queryByTestId('home-day-2026-11-03')).toBeNull();
+  expect(screen.getByTestId('home-week-chart-2026-11-05')).toBeTruthy();
+  expect(screen.queryByTestId('home-week-chart-2026-11-03')).toBeNull();
   expect(cellOf('2026-11-03').getAttribute('aria-label')).toBe('Tue, Nov 3, 2026. Likely closed (1 guest recorded).');
 });
 

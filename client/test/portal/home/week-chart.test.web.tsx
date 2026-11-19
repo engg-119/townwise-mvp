@@ -15,9 +15,11 @@ import { NOVEMBER } from '../estimates/fakes';
 
 // This week's chart on Home, on web (spec P11, owner request 2026-11-18): the published forecast's middle as points on
 // a dashed line with its range as a band, today's stored guests as the actual beside it, the same weekdays last year as
-// a faint line, closed, booked and uncovered days in words; each day a button with a full name that a mouse previews
-// (never a touch) and a click, Enter or focus chooses, the chosen day's panel with its link to the Calendar; Show the
-// numbers with the day-by-day table; and At a glance and This month as they were. Synthetic days and made-up figures.
+// a faint line, closed, booked and uncovered days in words, each mark at its value in its column; each day a button
+// with a full name that a click or Enter chooses (never focus alone) and a mouse lights (never a touch, never the
+// panel), the chosen day's panel with its link to the Calendar; Show the numbers with the day-by-day table; the days
+// in view whenever the chart would draw nothing or not the published forecast; and At a glance and This month as they
+// were. Synthetic days and made-up figures.
 
 class ResizeObserverPolyfill {
   observe(): void { return undefined; }
@@ -199,22 +201,82 @@ test('each day is a button named with everything its column shows and its calend
   expect(within(panel()).getByText('120 guests')).toBeTruthy();
 });
 
-test('a mouse over a day previews it in the panel and lights its column; leaving restores the chosen day; a touch does nothing', async () => {
+/** The drawing's width, from its viewBox (the plot is measured, so it is not fixed). */
+function plotWidth(): number {
+  return Number(week().querySelector('svg')?.getAttribute('viewBox')?.split(' ')[2]);
+}
+
+/** The lit column's index, from its rect's left edge. */
+function litColumn(): number {
+  const lit = week().querySelectorAll('svg [data-hover="day"]');
+  expect(lit).toHaveLength(1);
+  const left = Number(/^M([\d.]+) /.exec(lit[0]?.getAttribute('d') ?? '')?.[1]);
+  return Math.round(left / (plotWidth() / 7));
+}
+
+/**
+ * Enter or Space on a day: each is a native `<button>`, which react-native-web leaves to the browser, and the browser
+ * turns either key into a click (jsdom does not, so the click is sent here).
+ */
+function pressEnter(element: HTMLElement): void {
+  expect(element.tagName).toBe('BUTTON');
+  fireEvent.click(element);
+}
+
+test('the chosen column is lit; a mouse over another lights that one instead and leaves the panel alone; a touch does nothing', async () => {
+  await renderAt(portal());
+  await forecastIn();
+  expect(litColumn()).toBe(0);
+  hover(dayButton('2026-11-09'), 'mouseenter');
+  expect(litColumn()).toBe(4);
+  // Hover shows no content to reach (WCAG 1.4.13): the panel keeps the chosen day.
+  expect(within(panel()).getByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
+  hover(dayButton('2026-11-09'), 'mouseleave');
+  expect(litColumn()).toBe(0);
+  hover(dayButton('2026-11-10'), 'mouseenter', 'touch');
+  expect(litColumn()).toBe(0);
+});
+
+test('a pointer resting on a column never hides a keyboard choice: Enter on another day shows that day', async () => {
   await renderAt(portal());
   await forecastIn();
   hover(dayButton('2026-11-09'), 'mouseenter');
-  expect(within(panel()).getByRole('heading', { name: 'Mon, Nov 9, 2026' })).toBeTruthy();
-  expect(within(panel()).getByText('About 212 guests, likely 180 to 240.')).toBeTruthy();
-  expect(within(panel()).getByText('Why')).toBeTruthy();
-  expect(within(panel()).getByText(/^Monday/)).toBeTruthy();
-  expect(week().querySelectorAll('svg [data-hover="day"]')).toHaveLength(1);
-  hover(dayButton('2026-11-09'), 'mouseleave');
-  expect(within(panel()).getByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
-  hover(dayButton('2026-11-10'), 'mouseenter', 'touch');
-  expect(within(panel()).getByRole('heading', { name: 'Today, Thu, Nov 5, 2026' })).toBeTruthy();
+  pressEnter(dayButton('2026-11-11'));
+  expect(dayButton('2026-11-11').getAttribute('aria-pressed')).toBe('true');
+  expect(within(panel()).getByRole('heading', { name: 'Wed, Nov 11, 2026' })).toBeTruthy();
 });
 
-test('a click or focus chooses a day: its forecast, calendar, last year and a link that opens it on the Calendar', async () => {
+test('focus alone never chooses a day, so Tab past the later days reaches the chosen day’s link', async () => {
+  await renderAt(portal());
+  await forecastIn();
+  fireEvent.focus(dayButton('2026-11-09'));
+  pressEnter(dayButton('2026-11-09'));
+  for (const date of ['2026-11-10', '2026-11-11']) fireEvent.focus(dayButton(date));
+  expect(dayButton('2026-11-09').getAttribute('aria-pressed')).toBe('true');
+  expect(within(panel()).getByRole('heading', { name: 'Mon, Nov 9, 2026' })).toBeTruthy();
+  expect(within(panel()).getByRole('link', { name: 'Open this day on the Calendar' }).getAttribute('href')).toBe('/locations/l1/calendar?day=2026-11-09');
+});
+
+test('each mark sits in its day’s column at its value on the printed scale', async () => {
+  await renderAt(portal());
+  await forecastIn();
+  // “Scale 0 to 250 guests” (the first test); the drawing is 140 high with 12 of inset top and bottom.
+  const round = (value: number): number => Math.round(value * 100) / 100;
+  const x = (index: number): number => round((index + 0.5) * (plotWidth() / 7));
+  const y = (value: number): number => round(12 + (1 - value / 250) * (140 - 24));
+  const at = (mark: Element | undefined): number[] => [Number(mark?.getAttribute('cx')), Number(mark?.getAttribute('cy'))];
+  // Middles of 212 on Thu (column 0) and Mon to Wed (columns 4 to 6).
+  expect(marks('forecast-point').map(at)).toEqual([[x(0), y(212)], [x(4), y(212)], [x(5), y(212)], [x(6), y(212)]]);
+  // Last year: 100 a day, and 140 on Sat, Nov 8, 2025, under Sat, Nov 7 (column 2).
+  expect(marks('last-year-point').map(at)).toEqual([0, 1, 2, 3, 4, 5, 6].map((index) => [x(index), y(index === 2 ? 140 : 100)]));
+  // Today's 120 guests.
+  expect(at(marks('actual')[0])[1]).toBe(y(120));
+  // Mon to Wed's range runs forward along the low (180) and back along the high (240).
+  const path = (points: [number, number][]): string => points.map(([px, py], index) => `${index === 0 ? 'M' : 'L'}${String(px)} ${String(py)}`).join(' ');
+  expect(marks('range')[1]?.getAttribute('d')).toBe(`${path([[x(4), y(180)], [x(5), y(180)], [x(6), y(180)], [x(6), y(240)], [x(5), y(240)], [x(4), y(240)]])} Z`);
+});
+
+test('a click chooses a day: its forecast, calendar, last year and a link that opens it on the Calendar', async () => {
   await renderAt(portal());
   await forecastIn();
   fireEvent.click(dayButton('2026-11-11'));
@@ -227,7 +289,7 @@ test('a click or focus chooses a day: its forecast, calendar, last year and a li
   // A booked day: the buyout's words; a note's day: the note.
   fireEvent.click(dayButton('2026-11-07'));
   expect(within(panel()).getByText('Booked: a private buyout, 40 guests. No walk-in forecast.')).toBeTruthy();
-  fireEvent.focus(dayButton('2026-11-10'));
+  fireEvent.click(dayButton('2026-11-10'));
   expect(within(panel()).getByRole('heading', { name: 'Tue, Nov 10, 2026' })).toBeTruthy();
   expect(within(panel()).getByText(/^Your note: Private event/)).toBeTruthy();
   // An uncovered day says it has no figure.
@@ -288,4 +350,24 @@ test('with no history and nothing published there is nothing to draw, so the day
   expect(week().querySelector('svg [data-series]')).toBeNull();
   expect(document.querySelector('[data-testid^="home-week-chart-"]')).toBeNull();
   expect(within(week()).getByRole('table', { name: 'This week, day by day' })).toBeTruthy();
+});
+
+test('with history but nothing to draw (no last year yet, today not in, nothing published) the days stay in view', async () => {
+  await renderAt(portal(NO_FORECAST, run('2026-08-01', '2026-11-04', () => 100)));
+  expect(document.querySelector('[data-testid^="home-week-chart-"]')).toBeNull();
+  expect(within(week()).queryByText(/^Scale 0 to/)).toBeNull();
+  expect(within(week()).getByRole('table', { name: 'This week, day by day' })).toBeTruthy();
+});
+
+test('a published forecast with no stored days (net sales, so not drawn) keeps the days and their Forecast row in view', async () => {
+  await renderAt(portal(published(), []));
+  await waitFor(() => { expect(within(week()).getByRole('table', { name: 'This week, day by day' }).querySelector('[role="rowheader"]')?.textContent).toBe('Forecast'); });
+  expect(document.querySelector('[data-testid^="home-week-chart-"]')).toBeNull();
+  expect(within(week()).queryByText(/^Scale 0 to/)).toBeNull();
+});
+
+test('net sales history with a published forecast keeps each day’s forecast in view, since the chart cannot draw it', async () => {
+  await renderAt(portal(published(), DAYS.map((each) => ({ ...each, guests: null }))));
+  await waitFor(() => { expect(within(week()).getByRole('table', { name: 'This week, day by day' }).querySelector('[role="rowheader"]')?.textContent).toBe('Forecast'); });
+  expect(document.querySelector('[data-testid^="home-week-chart-"]')).toBeNull();
 });

@@ -21,7 +21,7 @@ import { Mono, Small } from '../ui/text';
 import { Block } from './Block';
 import { PastCell } from './PastCell';
 import { WeekChart } from './WeekChart';
-import { weekChart } from './weekChartData';
+import { chartShows, weekChart } from './weekChartData';
 
 // This week (spec P11): the seven days from today, today first (owner request, 2026-11-15), each day with what is on
 // the town calendar and the location's notes, beside the same weekday last year and two years ago. Last year's total for the week is the first
@@ -37,9 +37,10 @@ import { weekChart } from './weekChartData';
 // rows for the calendar, last year (a bar scaled to the week's busiest day last year, aria-hidden, beside the printed
 // figure) and two years ago. It is a table, so each cell is read with its day and its row. Below 1024px it is the
 // day-by-day table, which stacks at 640px and below.
-// The chart (owner request, 2026-11-18; WeekChart.tsx): with a published forecast or any history, the week opens with
-// its chart and chosen day, on web and native, and the strip or table moves behind Show the numbers, above the past
-// years' table. With neither there is nothing to draw, so the strip or table stays in view as before.
+// The chart (owner request, 2026-11-18; WeekChart.tsx): when it draws the published forecast, or with none published
+// draws last year or today's figure (weekChartData.ts chartShows), the week opens with its chart and chosen day, on web
+// and native, and the strip or table moves behind Show the numbers, above the past years' table. Otherwise (nothing to
+// draw, or a forecast it can't draw because Home's metric is net sales) the strip or table stays in view as before.
 
 /** An entry's kind words under its words: “Your note”, “Your rule”, “Holiday”, “Town event” or “Your calendar”. */
 function entryKind(entry: DayEntry): string {
@@ -178,11 +179,11 @@ export function ThisWeek(props: {
     [props.forecast],
   );
   const number = (value: number | null): string => (value === null ? 'No data' : metricNumber(value, metric));
-  // With a published forecast or any history there is something to draw; with neither, the days stay in view.
-  const chart = useMemo(
-    () => (forecast === null && !history ? null : weekChart(week, props.entries, metric, forecast !== null, history)),
-    [forecast, history, week, props.entries, metric],
-  );
+  // The chart shows only when it draws something (and the forecast, when one is published); otherwise the days stay in view.
+  const chart = useMemo(() => {
+    const model = weekChart(week, props.entries, metric, forecast !== null, history);
+    return chartShows(model, forecast !== null) ? model : null;
+  }, [forecast, history, week, props.entries, metric]);
   const days = desktop
     ? <WeekStrip week={week} metric={metric} history={history} forecast={forecast} />
     : <WeekTable week={week} metric={metric} history={history} forecast={forecast} />;
