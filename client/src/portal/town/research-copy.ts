@@ -115,8 +115,8 @@ export function gapLine(gap: ResearchGap, opts: { town: string; admin: boolean; 
         : 'Town research is off for your organization, so nothing new is being found.';
     case 'no_place':
       return opts.admin
-        ? 'This location isn’t linked to its place on Google Maps, so there is no map of nearby competitors. Link it in Location settings.'
-        : 'This location isn’t linked to its place on Google Maps, so there is no map of nearby competitors. An admin can link it in Location settings.';
+        ? 'This location isn’t linked to its place on Google Maps, so research skips your restaurant and its competitors and there is no map of them. Link it in Location settings.'
+        : 'This location isn’t linked to its place on Google Maps, so research skips your restaurant and its competitors and there is no map of them. An admin can link it in Location settings.';
     case 'not_researched_town':
       return `${opts.town} isn’t one of the towns Townwise researches each week, so this restaurant’s research covers the town too.`;
     case 'budget':
@@ -233,6 +233,8 @@ export const RESTORE_NOTICES = {
 // ---- The Competition card --------------------------------------------------------------------------------------------
 
 export const COMPETITION_HEADING = 'Competition';
+/** How far ahead the card lists competitors' events (the API's COMPETITION_DAYS). */
+export const COMPETITION_DAYS = 60;
 export const COMPETITION_LEAD = 'Restaurants, bars and cafes near you, with the public events research found for the next 60 days.';
 export const COMPETITION_NO_PLACE = 'Link this location to its place on Google Maps in Location settings to see nearby competitors on a map.';
 export const COMPETITION_PLACES_OFF = 'The map of nearby places isn’t available right now.';

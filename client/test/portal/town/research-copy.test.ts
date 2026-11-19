@@ -64,6 +64,8 @@ describe('gaps', () => {
     expect(gapLine('off', { ...opts, on: false })).toBe('Town research is off for your organization, so nothing new is being found.');
     expect(gapLine('off', { ...opts, available: false })).toBe('Town research isn’t running here right now, so nothing new is being found.');
     expect(gapLine('no_place', opts)).toMatch(/Link it in Location settings\.$/);
+    // No place picked: the neighborhood and competitors topics end empty (design decision 4), not only the map.
+    expect(gapLine('no_place', opts)).toMatch(/so research skips your restaurant and its competitors/);
     expect(gapLine('no_place', { ...opts, admin: false })).toMatch(/An admin can link it in Location settings\.$/);
     expect(gapLine('not_researched_town', opts)).toBe('Lebanon isn’t one of the towns Townwise researches each week, so this restaurant’s research covers the town too.');
     expect(gapLine('budget', opts)).toMatch(/or press Research now\.$/);

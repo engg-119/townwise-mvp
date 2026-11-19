@@ -3,6 +3,7 @@ import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
 import type { ResearchedEvent } from '../analytics/api';
+import { addDays, localToday } from '../locations/dates';
 import { shownLocationName } from '../locations/naming';
 import { useMapTheme } from '../places/map';
 import { PlaceMap } from '../places/PlaceMap';
@@ -12,10 +13,10 @@ import type { LocationSummary, OrgResponse } from '../schemas';
 import { ErrorNotice, LoadingLine } from '../ui/feedback';
 import { Section } from '../ui/layout';
 import {
-  COMPETITION_FAILED, COMPETITION_HEADING, COMPETITION_LEAD, COMPETITION_NO_EVENTS, COMPETITION_NO_PLACE, COMPETITION_NONE,
+  COMPETITION_DAYS, COMPETITION_FAILED, COMPETITION_HEADING, COMPETITION_LEAD, COMPETITION_NO_EVENTS, COMPETITION_NO_PLACE, COMPETITION_NONE,
   COMPETITION_PLACES_OFF, COMPETITION_SOURCE, COMPETITION_WEB_HEADING, competitionMapLabel, competitorLine,
 } from './research-copy';
-import { EventItem } from './EventItem';
+import { EventItem, firstDay } from './EventItem';
 
 // P15's Competition card (D66, OpenSpec change town-research-agent, design decisions 10 and 15): GET .../competition
 // in the portal's mode, Google's nearby restaurants, bars and cafes (read live for this view; Townwise keeps none of
@@ -116,9 +117,13 @@ function Competitors(props: {
 
 function Events(props: { locationId: string; events: readonly ResearchedEvent[] }): React.JSX.Element {
   if (props.events.length === 0) return <Text style={styles.help}>{COMPETITION_NO_EVENTS}</Text>;
+  const today = localToday();
+  const last = addDays(today, COMPETITION_DAYS);
   return (
     <View role="list" style={styles.events}>
-      {props.events.map((event) => <EventItem key={event.id} locationId={props.locationId} event={event} />)}
+      {props.events.map((event) => (
+        <EventItem key={event.id} locationId={props.locationId} event={event} day={firstDay(event, today, last)} />
+      ))}
     </View>
   );
 }

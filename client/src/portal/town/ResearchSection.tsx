@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { ApiError } from '../../api/client';
+import { lastChatStore } from '../../chat/lastChatStore';
 import { theme } from '../../theme';
 import { fetchCalendar, type ResearchedEvent } from '../analytics/api';
 import { openAsAdminOrgId } from '../api';
@@ -13,6 +14,7 @@ import { usePortal, useReadOnly } from '../PortalProvider';
 import {
   fetchResearch, runResearch, setResearch, updateResearchedEvent, type HiddenEvent, type Research,
 } from '../research/api';
+import { markSeen } from '../research/seen';
 import { calendarHref } from '../routing';
 import type { LocationSummary, OrgResponse } from '../schemas';
 import { Button } from '../ui/Button';
@@ -20,7 +22,7 @@ import { ErrorNotice, LoadingLine, Notice, ReadOnlyLine, useNoticeState } from '
 import { Section } from '../ui/layout';
 import { Heading } from '../ui/text';
 import { CompetitionCard } from './CompetitionCard';
-import { EventItem } from './EventItem';
+import { EventItem, firstDay } from './EventItem';
 import {
   entityLine, eventWhen, finishedNotice, gapLine, hiddenHeading, isLive, moreLine, nextLine, pressRefusal,
   RESEARCH_HEADING, RESEARCH_KICKER, RESEARCH_NOW, RESEARCH_NOW_HELP, RESEARCH_NOW_RUNNING, RESEARCH_STARTED, RESTORE,
@@ -102,6 +104,11 @@ export function ResearchSection(props: { location: LocationSummary; org: OrgResp
     if (words !== null) setNotice(words);
   }, [locationRun, setNotice]);
   useWhenDone(isLive(locationRun), onLocationDone);
+  // Opening the Town tab clears the Calendar's research banner for the run it shows (research/seen.ts), as Dismiss does.
+  const startedAt = locationRun?.startedAt;
+  useEffect(() => {
+    if (startedAt !== undefined) void markSeen(lastChatStore, me.user.id, location.id, { startedAt });
+  }, [me.user.id, location.id, startedAt]);
 
   const week = useWeekFound(location.id, tick);
 
@@ -240,14 +247,22 @@ function WeekList(props: { locationId: string; week: Load<ResearchedEvent[] | nu
   const { week } = props;
   if (week.status === 'loading') return <LoadingLine text="Loading this week" minHeight={48} />;
   if (week.status === 'failed' || week.data === null) return <Text style={styles.body}>{WEEK_FAILED}</Text>;
-  const events = [...week.data].sort((a, b) => (a.start < b.start ? -1 : a.start > b.start ? 1 : a.title < b.title ? -1 : 1));
+  // Each event on its first day this week (a season that began earlier, or a weekly market, is not listed by its start).
+  const from = localToday();
+  const to = addDays(from, 6);
+  const events = week.data
+    .flatMap((event) => {
+      const day = firstDay(event, from, to);
+      return day === null ? [] : [{ event, day }];
+    })
+    .sort((a, b) => (a.day < b.day ? -1 : a.day > b.day ? 1 : a.event.title < b.event.title ? -1 : 1));
   if (events.length === 0) return <Text style={styles.body}>{WEEK_EMPTY}</Text>;
   const shown = events.slice(0, WEEK_MAX);
   const more = moreLine(events.length - shown.length);
   return (
     <View style={styles.block}>
       <View role="list" style={styles.list}>
-        {shown.map((event) => <EventItem key={event.id} locationId={props.locationId} event={event} />)}
+        {shown.map(({ event, day }) => <EventItem key={event.id} locationId={props.locationId} event={event} day={day} />)}
       </View>
       {more === null ? null : <Link href={calendarHref(props.locationId)} style={styles.link}>{more}</Link>}
     </View>

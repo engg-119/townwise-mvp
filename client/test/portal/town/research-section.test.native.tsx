@@ -2,15 +2,18 @@ jest.mock('@react-native-google-signin/google-signin', () => {
   const mocked: unknown = jest.requireActual('../../helpers/googleSigninMock');
   return mocked;
 });
+jest.mock('expo-secure-store');
 jest.mock('expo-splash-screen', () => ({
   preventAutoHideAsync: jest.fn(() => Promise.resolve()),
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
+import * as SecureStore from 'expo-secure-store';
 import { act, cleanup, fireEvent, screen, waitFor } from 'expo-router/testing-library';
 
 import { addDays, localToday } from '../../../src/portal/locations/dates';
 import { resetProfiles } from '../../../src/portal/profile/useProfile';
+import { researchSeenKey } from '../../../src/portal/research/seen';
 import { RESEARCH_NOW, RESTORE_NOTICES, switchWords } from '../../../src/portal/town/research-copy';
 import {
   ACCESS, fakePortalApi, meOf, openAsAdminMe, orgOf, refusal, viewAsMe, writes, type FakePortalApi,
@@ -70,7 +73,9 @@ const COMPETITION = { gap: null, map: null, competitors: [], web: [] };
 
 interface Setup { api: FakePortalApi; body: { research: Record<string, unknown> } }
 
-function setup(opts: { me?: ReturnType<typeof meOf>; role?: 'org_admin' | 'member'; research?: Record<string, unknown> } = {}): Setup {
+function setup(opts: {
+  me?: ReturnType<typeof meOf>; role?: 'org_admin' | 'member'; research?: Record<string, unknown>; found?: Record<string, unknown>[];
+} = {}): Setup {
   const role = opts.role ?? 'org_admin';
   const api = fakePortalApi({ me: opts.me ?? meOf(role === 'org_admin' ? ACCESS.admin : ACCESS.member), org: orgOf(role) });
   const body = { research: opts.research ?? research() };
@@ -79,7 +84,7 @@ function setup(opts: { me?: ReturnType<typeof meOf>; role?: 'org_admin' | 'membe
     gets: {
       [`${BASE}/research`]: () => body.research,
       [`${BASE}/calendar?from=${from}&to=${addDays(from, 6)}`]: () => ({
-        town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, researched: true, covers: null, events: [], found: [found()],
+        town: { townId: 'hanover-nh', name: 'Hanover', state: 'NH' }, researched: true, covers: null, events: [], found: opts.found ?? [found()],
       }),
       [`${BASE}/competition?theme=dark`]: () => COMPETITION,
       '/api/me/profile': () => ({ displayName: null, askName: false }),
@@ -228,4 +233,31 @@ test('polls while a run is live and, when it ends, re-reads the organization, th
   // Nothing live: no more reads.
   await act(() => jest.advanceTimersByTimeAsync(90_000));
   expect(gets(api, `${BASE}/research`)).toBe(3);
+});
+
+test('opening the Town tab marks the location’s run seen, so the Calendar’s banner for it clears', async () => {
+  const { api } = setup({ research: research({ location: locationRun('done', { trigger: 'press' }) }) });
+  await renderApp('/locations/l1/town', api);
+  expect(await screen.findByText(/^Your restaurant and nearby: last researched/)).toBeTruthy();
+  await waitFor(() => {
+    expect(SecureStore.setItemAsync).toHaveBeenCalledWith(researchSeenKey('u1', 'l1'), '2026-11-17T15:30:00.000Z');
+  });
+});
+
+test('coming up this week links a season to a day this week and leaves out a weekly event with no day in it', async () => {
+  const today = localToday();
+  const lastWeek = addDays(today, -7);
+  const { api } = setup({
+    found: [
+      found({ id: `t-${'c'.repeat(24)}`, title: 'Ski season', kind: 'season', start: '2026-01-01', end: addDays(today, 90) }),
+      // Held only on the weekday of the 7th day, and ends the day before it: no day in the next 7.
+      found({
+        id: `t-${'d'.repeat(24)}`, title: 'Trivia night', start: lastWeek, end: addDays(today, 5),
+        weekdays: [(new Date(`${addDays(today, 6)}T00:00:00.000Z`).getUTCDay())],
+      }),
+    ],
+  });
+  await renderApp('/locations/l1/town', api);
+  expect((await screen.findByRole('link', { name: 'Ski season' })).props.href).toBe(`/locations/l1/calendar?day=${today}`);
+  expect(screen.queryByText('Trivia night')).toBeNull();
 });
