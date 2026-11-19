@@ -288,4 +288,57 @@ describe('isolation (source)', () => {
     const callers = sourceFiles().filter((file) => file.text.includes('scopeForOpenAsAdmin(')).map((file) => file.path).sort();
     expect(callers).toEqual(['access/policy.ts', 'access/resolve.ts']);
   });
+
+  describe('D66, town research (design decisions 4, 9 and 14)', () => {
+    /** The files a file imports by a relative path, resolved from src/; `values` leaves out type-only imports. */
+    const importsOf = (file: { path: string; text: string }, values: boolean): string[] => [
+      ...file.text.matchAll(values ? /^import (?!type )[^;]*from '(\.[^']+)';/gm : /^import [^;]*from '(\.[^']+)';/gm),
+    ].map((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')));
+    const importersOf = (target: string): string[] => sourceFiles()
+      .filter((file) => importsOf(file, true).includes(target)).map((file) => file.path).sort();
+
+    it('pins who imports the research stores', () => {
+      // The registry builds them, and person deletion clears a deleted person's id from the edits (spec 10.7); the two
+      // stores share their sub-schemas and moves through research-shared.ts. The planner and the runner (tasks 3.2 to
+      // 3.4), the reader and the revisions (task 5 and 6) reach them through ctx.stores and join a list only by a value
+      // import.
+      expect(importersOf('stores/research-shared.ts')).toEqual(['stores/research-locations.ts', 'stores/research-revisions.ts', 'stores/research-towns.ts']);
+      expect(importersOf('stores/research-towns.ts')).toEqual(['stores/index.ts']);
+      expect(importersOf('stores/research-spend.ts')).toEqual(['stores/index.ts']);
+      expect(importersOf('stores/research-locations.ts')).toEqual(['stores/index.ts']);
+      expect(importersOf('stores/research-revisions.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
+    });
+
+    it('nothing under research/ reaches notes, sales, owner calendars, chat conversations or turns, files or orders', () => {
+      // Research sends only public facts (decision 16), so it never holds what these keep. Type imports count too: a
+      // record's type in a research file means its data passes through. call.ts takes the model name and the failure
+      // mapping from chat/turn.ts, as lab/suggestions.ts does, never a conversation.
+      const privateStores = [
+        'notes', 'sales-days', 'uploads', 'upload-days', 'item-sales', 'owner-calendars', 'chat-conversations', 'chat-live-turns',
+        'chat-turns', 'chat-proposals', 'files', 'file-entries', 'files-usage', 'imports', 'orders', 'order-setups', 'order-counts',
+      ].map((name) => `stores/${name}.ts`);
+      // A read of one of their stores, dotted or destructured from `stores` (`ctx.stores.notes`, `{ notes } = ctx.stores`).
+      const names = 'notes|salesDays|uploads|uploadDays|itemSales|ownerCalendars|chatConversations|chatLiveTurns|chatTurns|chatProposals|files|fileEntries|filesUsage|imports|orders|orderSetups|orderCounts';
+      const accessors = new RegExp(`\\bstores\\??\\.(${names})\\b|\\{[^}]*\\b(${names})\\b[^}]*\\}\\s*=\\s*[\\w.]*\\bstores\\b`);
+      const research = sourceFiles().filter((file) => file.path.startsWith('research/'));
+      expect(research.length).toBeGreaterThan(0);
+      for (const file of research) {
+        const reached = importsOf(file, false).filter((path) => privateStores.includes(path) || /^(files|orders|calendar)\//.test(path));
+        expect({ file: file.path, reached, accessor: accessors.exec(file.text)?.[0] ?? null }).toEqual({ file: file.path, reached: [], accessor: null });
+      }
+    });
+
+    it('under research/ only read.ts and revisions.ts reach the edits, and the prompt, the calls and the runner reach neither', () => {
+      // A member's typed edit (a title, a `where`) never reaches Anthropic: prompts are built from base values (decision 4).
+      const research = sourceFiles().filter((file) => file.path.startsWith('research/'));
+      const reachesEdits = (file: { path: string; text: string }): boolean => importsOf(file, false).includes('stores/research-revisions.ts')
+        || /\bresearchRevisions\b|\btw_research_revisions\b/.test(file.text);
+      expect(research.filter(reachesEdits).map((file) => file.path).every((path) => ['research/read.ts', 'research/revisions.ts'].includes(path))).toBe(true);
+      for (const path of ['research/prompt.ts', 'research/call.ts', 'research/runner.ts']) {
+        const file = research.find((each) => each.path === path);
+        const reached = file === undefined ? [] : importsOf(file, false).filter((each) => ['research/read.ts', 'research/revisions.ts', 'stores/research-revisions.ts'].includes(each));
+        expect({ path, reached, edits: file !== undefined && reachesEdits(file) }).toEqual({ path, reached: [], edits: false });
+      }
+    });
+  });
 });
