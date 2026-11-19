@@ -18,7 +18,9 @@ import { getTurnEvents, stopTurn } from '../handlers/chat-turns.ts';
 import { actOnItemProposal, getItemProposal } from '../handlers/chat-item-proposals.ts';
 import { actOnOrderProposal, getOrderProposal } from '../handlers/chat-order-proposals.ts';
 import { actOnProposal } from '../handlers/chat-proposals.ts';
-import { getDataItem, listData, removeDataItem, replaceDataItem, requestAiRead, undoAiRead, updateDataItem } from '../handlers/data.ts';
+import {
+  getDataItem, listData, removeDataItem, replaceDataItem, requestAiRead, retryDataCalendar, undoAiRead, updateDataItem,
+} from '../handlers/data.ts';
 import { deleteOrg, deletePerson, purgeOriginals } from '../handlers/deletion.ts';
 import { getEstimatesAbout, getForecast, getPeopleInTown } from '../handlers/estimates.ts';
 import { deleteItemSales, getOrderSetup, saveOrderCount, saveOrderSetup, uploadItemSales } from '../handlers/order-setup.ts';
@@ -348,6 +350,12 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.data.remove', method: 'DELETE', path: '/org/locations/:locationId/data/:ref', policy: 'member', bodyLimit: 'none',
     openAsAdmin: true, handler: removeDataItem,
+  },
+  // D60: importing a calendar file kept in Your data again, after a refusal a retry may mend. Every member, as Your
+  // calendars' import, open as admin included; it fetches nothing, so no route limiter.
+  {
+    id: 'org.data.calendar', method: 'POST', path: '/org/locations/:locationId/data/:ref/calendar', policy: 'member', bodyLimit: '2kb',
+    openAsAdmin: true, handler: retryDataCalendar,
   },
   {
     id: 'org.originals.remove', method: 'DELETE', path: '/org/locations/:locationId/originals', policy: 'org_admin',

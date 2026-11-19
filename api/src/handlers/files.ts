@@ -16,6 +16,7 @@ import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import { utcDay } from '../dates.ts';
 import { BlobMissingError, BlobUnavailableError, type BlobRef, type FileBlobs } from '../files/blobs.ts';
+import { importIfCalendar } from '../files/calendar-import.ts';
 import { importEta, type ImportEta } from '../files/eta.ts';
 import {
   CHUNK_BYTES, DAILY_UPLOAD_BYTES, FILES_PER_IMPORT, FILES_PER_LOCATION, MAX_CHUNKS, MAX_FILE_BYTES, RAW_PART_BYTES, RAW_RETENTION_DAYS,
@@ -357,7 +358,11 @@ async function receive(ctx: TownwiseContext, req: Request, res: Response, princi
   });
 }
 
-/** POST /files/:fileId/complete: commits the chunks, tells the kind, and queues the file if its import started. */
+/**
+ * POST /files/:fileId/complete: commits the chunks, tells the kind, and queues the file if its import started. A
+ * reference file that is a calendar file is then imported as one of the location's calendars (D60,
+ * files/calendar-import.ts), which never fails the upload; the answer is the same either way.
+ */
 export async function completeFile(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const blobs = filesOn(ctx);
   const member = memberOf(principal);
@@ -381,7 +386,8 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
     throw storageUnavailable(ctx, 'commit', new BlobUnavailableError('BlockMissing', null));
   });
   const fingerprint = fingerprintOf(session.chunkSize, session.chunks.map((chunk) => chunk?.sha256 ?? ''));
-  const { kind } = sniff(file.name, Buffer.from(session.head ?? '', 'base64'));
+  const head = Buffer.from(session.head ?? '', 'base64');
+  const { kind } = sniff(file.name, head);
   const duplicate = await ctx.stores.files.duplicateOf(scope, location.id, file.purpose, fingerprint, file.id);
   if (duplicate !== null) {
     await blobCall(ctx, 'delete_raw', () => blobs.deleteRaw(scope, ref), () => undefined);
@@ -398,6 +404,7 @@ export async function completeFile(ctx: TownwiseContext, req: Request, res: Resp
     const kept = await ctx.stores.files.finishUpload(scope, file.id, { fingerprint, kind, status: 'kept', outcome: 'reference' });
     if (kept === null) throw new AppError(409, 'file_not_uploading', 'This file is not uploading');
     await recordUploaded(ctx, member, kept);
+    await importIfCalendar(ctx, blobs, member, location, kept, head);
     res.status(200).json({ file: fileView(member, kept, kept.byStaff ? TOWNWISE_STAFF : member.email, null), import: null });
     return;
   }

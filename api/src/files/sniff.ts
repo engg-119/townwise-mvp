@@ -12,7 +12,8 @@ export interface Sniffed {
 
 const TEXT_EXTENSIONS = new Set(['csv', 'tsv', 'txt', 'text', 'tab', '']);
 
-function extensionOf(name: string): string {
+/** A name's last extension, lower case, or '' with none. */
+export function extensionOf(name: string): string {
   const base = name.slice(name.lastIndexOf('/') + 1);
   const dot = base.lastIndexOf('.');
   return dot <= 0 ? '' : base.slice(dot + 1).toLowerCase();

@@ -27,6 +27,7 @@ import {
   turnedOnLine,
 } from './copy';
 import { AiSection } from './item/AiSection';
+import { CalendarImport } from './item/CalendarImport';
 import { CalendarItem } from './item/CalendarItem';
 import { addedByLine, EDIT, editedLine, ITEM, itemDaysLine, kindLine, renamedLine, statusLine, tooBigToEditLine } from './item/copy';
 import type { Editable, Saved } from './item/edit';
@@ -40,6 +41,8 @@ import { RenameForm } from './item/RenameForm';
 // so, with the way back. Opening is a read, so it works under view-as, which sends no name and opens no file; there
 // Turn off and Delete are disabled in place under the read-only line, as Your data's rows once had them. A file kept
 // as a calendar export (D58, `calendar_export`) links under its status to the Calendar, where Your calendars imports it.
+// A calendar file kept for reference says under its status what importing it as a calendar did (D60,
+// item/CalendarImport.tsx).
 //
 // The actions Your data's rows used to carry are here (the list's rows only open this page): Turn off or on (acts at
 // once), the downloads (web), then, in a Delete section of their own below the item, as Sales data's Delete sales
@@ -343,6 +346,7 @@ function Item(props: {
         {item.state === 'kept' && item.outcome === 'calendar_export'
           ? <LinkButton variant="link" href={calendarHref(item.locationId)} label={ITEM.importCalendar} />
           : null}
+        <CalendarImport item={item} readOnlyId={props.viewAs ? READ_ONLY_ID : null} showItem={props.showItem} />
         {item.fromAiRead === null ? null : <LinkButton href={itemHref(item.locationId, item.fromAiRead)} label={AI.madeBy} />}
         {props.viewAs ? <ReadOnlyLine text={line} nativeID={READ_ONLY_ID} /> : null}
         {(canRaw || canClean) && !CAN_SAVE_FILES ? <Small>{DATA.nativeDownload}</Small> : null}

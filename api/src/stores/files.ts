@@ -20,6 +20,18 @@ export type FileStatus = (typeof FILE_STATUSES)[number];
 export const FILE_PURPOSES = ['history', 'reference'] as const;
 export type FilePurpose = (typeof FILE_PURPOSES)[number];
 
+/**
+ * D60: what importing a calendar file kept in Your data did. `added`: a file calendar was made from it (the calendar,
+ * which keeps the file's id, says which, while it exists). `refused`: no calendar was made, for `code`:
+ * `calendar_limit` (the location had 5), `too_large` (over 1 MB), `not_calendar` (an .ics or .ical file that is not
+ * one, or one with nothing to read) or `unavailable` (its original could not be read, or the add failed).
+ */
+export const CALENDAR_IMPORT_CODES = ['calendar_limit', 'too_large', 'not_calendar', 'unavailable'] as const;
+export type CalendarImportCode = (typeof CALENDAR_IMPORT_CODES)[number];
+export type CalendarImport =
+  | { readonly state: 'added'; readonly at: Date }
+  | { readonly state: 'refused'; readonly code: CalendarImportCode; readonly at: Date };
+
 /** One received chunk: its byte count and SHA-256 (hex). */
 export interface ChunkRecord { readonly bytes: number; readonly sha256: string }
 
@@ -305,6 +317,8 @@ interface FileFields {
   ai?: StoredAiRead;
   /** On the summary item a TownwiseAI read kept: the file it was read from. Absent otherwise. */
   source?: { via: 'ai_file'; fileId: Types.ObjectId };
+  /** D60: importing it as a calendar, once tried; absent for a file that is not a calendar file. */
+  calendarImport?: { state: 'added' | 'refused'; code?: CalendarImportCode; at: Date };
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -353,6 +367,13 @@ function fileSchema(): Schema<FileFields> {
     source: {
       type: new Schema({
         via: { type: String, required: true, enum: ['ai_file'] }, fileId: { type: Schema.Types.ObjectId, required: true },
+      }, { _id: false, strict: 'throw' }),
+    },
+    calendarImport: {
+      type: new Schema({
+        state: { type: String, required: true, enum: ['added', 'refused'] },
+        code: { type: String, enum: CALENDAR_IMPORT_CODES },
+        at: { type: Date, required: true },
       }, { _id: false, strict: 'throw' }),
     },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
@@ -431,6 +452,8 @@ export interface FileRecord {
   readonly ai: FileAiRead | null;
   /** A summary item TownwiseAI kept from a read: the file it was read from; null for anything else. */
   readonly source: AiSource | null;
+  /** D60: importing it as a calendar, once tried; null for a file that is not a calendar file. */
+  readonly calendarImport: CalendarImport | null;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -477,7 +500,14 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     editedByStaff: doc.editedByStaff === true,
     ai: doc.ai === undefined ? null : { ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true, notBefore: doc.ai.notBefore ?? null },
     source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
+    calendarImport: calendarImportOf(doc.calendarImport),
   };
+}
+
+function calendarImportOf(stored: FileFields['calendarImport']): CalendarImport | null {
+  if (stored === undefined) return null;
+  if (stored.state === 'added') return { state: 'added', at: stored.at };
+  return { state: 'refused', code: stored.code ?? 'unavailable', at: stored.at };
 }
 
 export interface NewFile {
@@ -582,6 +612,8 @@ export interface FileStore {
    * bytes uploaded as sales history, nor the other way round.
    */
   duplicateOf(scope: OrgScope, locationId: string, purpose: FilePurpose, fingerprint: string, exceptId: string): Promise<string | null>;
+  /** D60: records what importing the file as a calendar did, replacing an earlier record. False when the file is gone. */
+  setCalendarImport(scope: OrgScope, fileId: string, record: CalendarImport): Promise<boolean>;
   /** Every stored file of the import becomes queued. Resolves the number changed. */
   queueStored(scope: OrgScope, importId: string): Promise<number>;
   /** Compare-and-set one file from `from` to `to`. */
@@ -973,6 +1005,10 @@ export function createFileStore(connection: Connection): FileStore {
     },
     async setUploadId(scope, fileId, uploadId) {
       await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { uploadId: oid(uploadId) } });
+    },
+    async setCalendarImport(scope, fileId, record) {
+      const set = record.state === 'added' ? { state: 'added', at: record.at } : { state: 'refused', code: record.code, at: record.at };
+      return (await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { calendarImport: set } })).matchedCount === 1;
     },
     async addModelCall(scope, fileId, costMicroUsd, saved) {
       const update: Record<string, unknown> = { $inc: { modelCalls: 1, costMicroUsd } };

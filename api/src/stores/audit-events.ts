@@ -53,8 +53,9 @@ export const AUDIT_DETAIL_KEYS = {
   'rule.updated': ['locationId', 'scheduled'],
   'rule.deleted': ['locationId'],
   // Owner calendars (openspec change connect-owner-calendar, design decision 10): ids, the kind ('file', 'link' or
-  // 'google'), the event count and the status code only. Never the calendar's label, host or address, or an event's title.
-  'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
+  // 'google'), the event count and the status code only, and (D59) on an add from a calendar file kept in Your data, the
+  // stored file's id. Never the calendar's label, host or address, or an event's title.
+  'owner_calendar.added': ['locationId', 'calendarId', 'kind', 'eventCount', 'status', 'fileId'],
   'owner_calendar.removed': ['locationId', 'calendarId', 'kind', 'eventCount'],
   'owner_calendar.refreshed': ['locationId', 'calendarId', 'kind', 'eventCount', 'status'],
   // Booking labels (D58, learn-from-calendar-bookings design decision 14): counts and the label set, never an event's uid,
