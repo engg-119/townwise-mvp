@@ -20,11 +20,25 @@ MIN_REGIME_DAYS = 4
 RECENT_DAYS = 364
 
 
+def halloween_weekend(dates: pd.Series) -> pd.Series:
+    """Oct 31, the Friday from Oct 27 to Nov 2, and the Saturday after it: the nights a town goes out for Halloween.
+
+    The notebook flagged Oct 31 alone. Since v11 the lab flags the weekend too, so a Sunday Halloween (2027) still has
+    its Friday and Saturday, and the other weekend night is not held to a plain one (2026: Fri Oct 30 ran 1.57 times its
+    nearby Fridays, Sat Oct 31 1.58 times its Saturdays).
+    """
+    friday = dates - pd.to_timedelta((dates.dt.day_of_week == 5).astype(int), unit="D")  # a Saturday's Friday
+    md = friday.dt.month * 100 + friday.dt.day
+    weekend = dates.dt.day_of_week.isin([4, 5]) & (md.between(1027, 1031) | md.between(1101, 1102))
+    return weekend | ((dates.dt.month == 10) & (dates.dt.day == 31))
+
+
 def holiday_flags(dates: pd.Series) -> pd.DataFrame:
     """The notebook's holiday rules (section 1, used from section 8b): rules, not a table, so they reach future dates.
 
-    hol_big_night: Thanksgiving Eve, Dec 23 and Dec 31. hol_halloween: Oct 31. hol_closed: Thanksgiving, Jan 1, Jul 4,
-    Dec 24 and Dec 25. federal_holiday: any US federal holiday (observed dates included).
+    hol_big_night: Thanksgiving Eve, Dec 23 and Dec 31. hol_halloween: Halloween weekend (halloween_weekend; the
+    notebook's was Oct 31 alone). hol_closed: Thanksgiving, Jan 1, Jul 4, Dec 24 and Dec 25. federal_holiday: any US
+    federal holiday (observed dates included).
     """
     first, last = dates.min(), dates.max()
     # One day past the last date, so a frame ending on Thanksgiving Eve still knows Thanksgiving
@@ -36,7 +50,7 @@ def holiday_flags(dates: pd.Series) -> pd.DataFrame:
                                    for m, d in ((1, 1), (7, 4), (12, 24), (12, 25))]
     return pd.DataFrame({
         "hol_big_night": dates.isin(big_night).astype(int),
-        "hol_halloween": ((dates.dt.month == 10) & (dates.dt.day == 31)).astype(int),
+        "hol_halloween": halloween_weekend(dates).astype(int),
         "hol_closed": dates.isin(closed).astype(int),
         "federal_holiday": dates.isin(federal.index).astype(int),
     }, index=dates.index)
