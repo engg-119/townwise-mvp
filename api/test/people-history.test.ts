@@ -128,6 +128,20 @@ describe('yourHistory', () => {
     expect(yourHistory(days, [], [], stateOf, rules).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 5, mean: 160 }]);
   });
 
+  it('leaves a guest count marked wrong (D67) out of every mean, and out of its neighbors’ likely-closed test', () => {
+    const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 20), day('2026-10-17', 900)];
+    const mark = (date: string) => ({ kind: 'other' as const, startDate: date, endDate: date, weekdays: null, effect: 'wrong_guest_count' as const });
+    expect(yourHistory(days, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 5, mean: 304 }]);
+    // Oct 17 marked: its count is in no mean, and the Saturday is noted, not regular.
+    expect(yourHistory(days, [mark('2026-10-17')], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 4, mean: 155 }]);
+    // A marked day is never counted under the netSales metric either: it is noted.
+    expect(yourHistory([day('2026-10-10', 0, 50_000)], [mark('2026-10-10')], [], stateOf)).toMatchObject({ cells: [], first: null });
+    // Oct 3's 10 marked: too few Saturdays remain for Oct 10's typical guests, so its 18 is a slow Saturday, not likely closed.
+    const slow = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 10), day('2026-10-10', 18)];
+    expect(yourHistory(slow, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 137 }]);
+    expect(yourHistory(slow, [mark('2026-10-03')], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 3, mean: 139 }]);
+  });
+
   it('leaves out a likely-closed day (spec D32): its guests are not a slow Saturday', () => {
     const days = [day('2026-09-19', 200), day('2026-09-26', 200), day('2026-10-03', 200), day('2026-10-10', 2), day('2026-10-17', 200)];
     expect(yourHistory(days, [], [], stateOf).cells).toEqual([{ state: 'in_session', weekday: 'Sat', days: 4, mean: 200 }]);

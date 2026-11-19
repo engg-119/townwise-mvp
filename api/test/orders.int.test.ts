@@ -848,5 +848,16 @@ describe('the live board scaled to a published forecast, read at 03:30Z (E13)', 
       forecastGuests: new Map(), closedDays: new Set(), historyGuests: [], today: TODAY, nowMinutes: 23 * 60 + 30,
     })[0]?.lines.find((planned) => planned.itemId === lager);
     expect(line.mu).toBeCloseTo((plain?.mu ?? 0) * 1.5, 9);
+
+    // D67: a past Wednesday's stored count of 1,000 moves the Wednesdays' baseline; marked wrong, it is in no baseline.
+    const salesDays = server.connection.collection('tw_sales_days');
+    await salesDays.updateOne({ locationId: new Types.ObjectId(locationId), date: '2026-05-27' }, { $set: { guests: 1000 } });
+    expect(lineOf(await board(locationId, owner), lager).mu).not.toBeCloseTo(line.mu ?? 0, 6);
+    await server.connection.collection('tw_notes').insertOne({
+      orgId: new Types.ObjectId(forecastOrgId), locationId: new Types.ObjectId(locationId), kind: 'other', startDate: '2026-05-27',
+      endDate: '2026-05-27', weekdays: null, effect: 'wrong_guest_count', expectedGuests: null, detail: null, title: null, startTime: null,
+      endTime: null, createdBy: owner.session.userId, createdAt: server.clock.now(), updatedAt: server.clock.now(),
+    });
+    expect(lineOf(await board(locationId, owner), lager).mu).toBeCloseTo(line.mu ?? 0, 9);
   });
 });

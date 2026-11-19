@@ -5,6 +5,7 @@
 // weekday's carries the average open day's guests it is held against. Synthetic notes and days.
 import { describe, expect, it } from 'vitest';
 
+import { trustedGuestDays } from '../src/closed-days.ts';
 import { utcDay } from '../src/dates.ts';
 import { effectFrom, effectHistory, reasonEffects, type EffectHistory } from '../src/forecasts/effects.ts';
 import type { ReasonKind } from '../src/forecasts/file.ts';
@@ -41,6 +42,7 @@ describe('note reasons', () => {
       noteReasonView(note({ kind: 'other', expectedGuests: null }), 'not_counted'),
       noteReasonView(note({ expectedGuests: 1 }), 'past_day'),
       noteReasonView(note({ expectedGuests: null, startTime: '12:00', endTime: '13:15' }), 'no_guest_count'),
+      noteReasonView(note({ kind: 'other', effect: 'wrong_guest_count', expectedGuests: null }), 'past_day'),
     ].map((view) => view.label);
     expect(labels).toEqual([
       'Your private buyout, 70 guests',
@@ -51,6 +53,7 @@ describe('note reasons', () => {
       'Your note',
       'Your private event, 1 guest',
       'Your private event, noon to 1:15 pm',
+      'Your note: guest count marked wrong',
     ]);
     expect(noteReasonView(note({ effect: 'closed', expectedGuests: null }), 'day_closed').note).toEqual({ id: ID, guests: null, outcome: 'day_closed' });
     expect(JSON.stringify([added, labels])).not.toContain('sentinel');
@@ -256,6 +259,19 @@ describe('reason effects', () => {
     expect(effectOf('2026-11-26', reason('holiday'), hanover('2026-11-26'))).toEqual({ direction: 'fewer', pct: 70, basis: 'history', days: 1, averageGuests: null });
     const closed = reasonEffects(history(guestsOf, { covering: (date) => ({ notes: date === '2025-11-27' ? [{ kind: 'closure', effect: 'closed' }] : [], rules: [] }) }));
     expect(closed('2026-11-26', reason('holiday'), hanover('2026-11-26'))).toBeNull();
+  });
+
+  it('holiday: a day whose guest count is marked wrong (D67) is on neither side, as the reader masks it', () => {
+    // Thanksgiving 2025 had 30 guests; the Thursday before it 20, against Thursdays of 100.
+    const guestsOf = (date: string): number => (date === '2025-11-27' ? 30 : date === '2025-11-20' ? 20 : base(date));
+    const plain = history(guestsOf);
+    const marked = (date: string): EffectHistory => ({
+      ...plain, days: trustedGuestDays(plain.days, [{ startDate: date, endDate: date, weekdays: null, effect: 'wrong_guest_count' }]),
+    });
+    const thanksgiving = (from: EffectHistory) => reasonEffects(from)('2026-11-26', reason('holiday'), hanover('2026-11-26'));
+    expect(thanksgiving(plain)).not.toEqual(thanksgiving(marked('2025-11-20')));
+    expect(thanksgiving(marked('2025-11-20'))).toEqual({ direction: 'fewer', pct: 70, basis: 'history', days: 1, averageGuests: null });
+    expect(thanksgiving(marked('2025-11-27'))).toBeNull();
   });
 
   it('level, closure and booking reasons, and a holiday reason on a day with none, carry no history effect', () => {

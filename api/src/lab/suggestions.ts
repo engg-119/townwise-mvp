@@ -85,7 +85,7 @@ import { answerFromCalendars } from '../calendar/answers.ts';
 import type { ChatModel } from '../chat/model.ts';
 import { ceilingCostMicroUsd, costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from '../chat/pricing.ts';
 import { CHAT_MODEL } from '../chat/turn.ts';
-import { closureOf, isClosure, typicalByDate } from '../closed-days.ts';
+import { closureOf, isClosure, trustedGuestDays, typicalByDate } from '../closed-days.ts';
 import { utcDay } from '../dates.ts';
 import { effectHistory, reasonEffects } from '../forecasts/effects.ts';
 import { eachDay } from '../forecasts/file.ts';
@@ -887,14 +887,17 @@ export async function suggestionsInput(
   const to = at(SUGGESTIONS_DAYS);
   const { townId } = location.town;
   const history = effectHistory(today);
-  const [notes, allNotes, rules, stored, coverage] = await Promise.all([
+  // The history's notes from its typical guests' lookback, so a guest count marked wrong there (D67) is read too.
+  const [notes, allNotes, rules, storedRows, coverage] = await Promise.all([
     stores.notes.overlapping(scope, location.id, { from, to }),
-    stores.notes.overlapping(scope, location.id, { from: history.from, to: history.to }),
+    stores.notes.overlapping(scope, location.id, { from: history.readFrom, to: history.to }),
     stores.businessRules.list(scope, location.id),
     stores.salesDays.days(scope, location.id, { from: history.readFrom, to: history.to }),
     stores.salesDays.coverage(scope, location.id),
   ]);
   const scheduled = rules.flatMap((rule) => (rule.schedule === null ? [] : [{ text: rule.text, schedule: rule.schedule }]));
+  // D67: a marked day has sales and no guest count: open in pastDays, and in no effect or typical guests.
+  const stored = trustedGuestDays(storedRows, allNotes);
   const covering = (date: string) => ({
     notes: allNotes.filter((note) => noteCovers(note, date)),
     rules: scheduled.filter((rule) => noteCovers(rule.schedule, date)).map((rule) => rule.schedule),

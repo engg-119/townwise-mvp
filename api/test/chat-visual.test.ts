@@ -429,6 +429,23 @@ describe('show_visual’s run', () => {
     expect(table.visual).toMatchObject({ rows: [{ date: '2026-10-05', guests: 2, likelyClosed: true }] });
   });
 
+  it('draws a day whose guest count is marked wrong (D67) with no guests and its sales as stored, in every kind and comparison', async () => {
+    const mark = (date: string) => ({
+      id: '0000000000000000000000ab', kind: 'other', startDate: date, endDate: date, weekdays: null, effect: 'wrong_guest_count', expectedGuests: null,
+      detail: null, title: null, startTime: null, endTime: null, createdBy: 'u', byStaff: false, source: null, fromEvent: null, agent: null, createdAt: new Date(0), updatedAt: new Date(0),
+    }) satisfies NoteRecord;
+    const days = [day('2026-10-01', 400, 10_000), day('2026-10-02', 40, 10_000), day('2025-10-02', 300), day('2025-10-03', 30)];
+    const { tc } = context(days, undefined, { notes: [mark('2026-10-01'), mark('2025-10-02')] });
+    const guests = await shown(tc, { kind: 'daily', metric: 'guests', from: '2026-10-01', to: '2026-10-02', by: null, compare: null });
+    expect(guests.visual).toMatchObject({ days: [{ date: '2026-10-01', value: null }, { date: '2026-10-02', value: 40 }] });
+    const sales = await shown(tc, { kind: 'daily', metric: 'net_sales', from: '2026-10-01', to: '2026-10-02', by: null, compare: null });
+    expect(sales.visual).toMatchObject({ days: [{ value: 100 }, { value: 100 }] });
+    const table = await shown(tc, { kind: 'days_table', metric: null, from: '2026-10-01', to: '2026-10-01', by: null, compare: null });
+    expect(table.visual).toMatchObject({ rows: [{ date: '2026-10-01', guests: null, netSales: 100 }] });
+    const totals = await shown(tc, { kind: 'metrics', metric: 'guests', from: '2026-10-01', to: '2026-10-03', by: null, compare: 'last_year' });
+    expect(totals.visual).toMatchObject({ total: 40, compare: { total: 30, dayCount: 1 } });
+  });
+
   it('visualOf rebuilds a stored visual and drops one that does not parse', () => {
     const visual = metricsVisual(req('metrics', 'guests', '2026-10-01', '2026-10-03'), [day('2026-10-01', 40)], null);
     expect(visualOf(JSON.stringify({ shown: SHOWN, visual }))).toEqual(visual);
