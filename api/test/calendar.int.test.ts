@@ -1,5 +1,6 @@
 // GET /api/org/locations/:locationId/calendar?from=&to= (spec 10.10, 13.1): the public calendar of the location's
-// town, honest about what is researched, strict about the range, and 404 across organizations.
+// town, honest about what is researched, strict about the range, and 404 across organizations. D66 (task 5.2): the
+// additive `found` holds what the research agent found, after the location's edits, and leaves `events` unchanged.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -16,6 +17,7 @@ interface CalendarResponse {
   researched: boolean;
   covers: { from: string; to: string } | null;
   events: TownEvent[];
+  found: { id: string; head: string; title: string; origin: string }[] | null;
 }
 
 let server: TownwiseTestServer;
@@ -58,7 +60,7 @@ async function ok(locationId: string, from: string, to: string): Promise<Calenda
 describe('GET /api/org/locations/:locationId/calendar', () => {
   it('gives a Hanover location its term dates, events, key dates and holidays, each with sources, and says it is researched', async () => {
     const body = await ok(hanover, '2026-11-15', '2026-11-30');
-    expect(Object.keys(body).sort()).toEqual(['covers', 'events', 'researched', 'town']);
+    expect(Object.keys(body).sort()).toEqual(['covers', 'events', 'found', 'researched', 'town']);
     expect(body.town).toEqual({ townId: 'hanover-nh', name: 'Hanover', state: 'NH' });
     expect(body.researched).toBe(true);
     expect(body.covers).toEqual({ from: '2025-01-06', to: '2028-06-11' });
@@ -127,6 +129,54 @@ describe('GET /api/org/locations/:locationId/calendar', () => {
       expect(text).not.toContain('Secretville');
     }
     expect((await calendar('not-an-id', '?from=2026-01-01&to=2026-01-31')).status).toBe(400);
+  });
+
+  it('adds researched events in `found`, after the location’s edits, and leaves `events` unchanged (D66)', async () => {
+    const before = await ok(hanover, '2026-11-15', '2026-11-30');
+    expect(before.found).toEqual([]);
+    const runId = new Types.ObjectId();
+    const sources = [{ label: 'example.test', url: 'https://example.test/carnival' }];
+    const base = {
+      kind: 'event', category: 'festival', end: '2026-11-22', weekdays: null, startTime: null, status: 'scheduled', venueId: null,
+      hostId: null, confidence: 'medium', sources, firstRunId: runId, lastRunId: runId, firstSeenAt: server.clock.now(),
+      lastSeenAt: server.clock.now(), seenCount: 1,
+    };
+    const townRow = new Types.ObjectId();
+    const hiddenRow = new Types.ObjectId();
+    await server.connection.collection('tw_town_events').insertMany([
+      { _id: townRow, townKey: 'hanover-nh', title: 'Green Lantern Walk', titleKey: 'green lantern walk', start: '2026-11-22', ...base, suppressed: null },
+      { _id: hiddenRow, townKey: 'hanover-nh', title: 'Hidden Craft Fair', titleKey: 'hidden craft fair', start: '2026-11-22', ...base, suppressed: null },
+    ]);
+    const ownRow = new Types.ObjectId();
+    await server.connection.collection('tw_location_events').insertOne({
+      _id: ownRow, orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(hanover), placeId: null, town: 'hanover-nh',
+      title: 'Back Room Trivia', titleKey: 'back room trivia', start: '2026-11-19', ...base, end: '2026-11-19', origin: 'neighborhood',
+      competitorEntityId: null, competitorPlaceId: null,
+    });
+    await server.connection.collection('tw_research_revisions').insertOne({
+      orgId: new Types.ObjectId(orgId), locationId: new Types.ObjectId(hanover), eventId: `t-${hiddenRow.toHexString()}`, op: 'hide',
+      fields: null, reverts: null, basedOn: 'base', by: { kind: 'person', userId: null }, createdAt: server.clock.now(),
+    });
+    try {
+      server.logs.length = 0;
+      const after = await ok(hanover, '2026-11-15', '2026-11-30');
+      expect(after.events).toEqual(before.events);
+      expect(after.found?.map(({ id, head, title, origin }) => ({ id, head, title, origin }))).toEqual([
+        { id: `l-${ownRow.toHexString()}`, head: 'base', title: 'Back Room Trivia', origin: 'neighborhood' },
+        { id: `t-${townRow.toHexString()}`, head: 'base', title: 'Green Lantern Walk', origin: 'town' },
+      ]);
+      expect(server.logs.filter((line) => line.includes('townwise.'))).toEqual([]);
+      // The organization's switch off: nothing researched is read, and the rest is unchanged.
+      await server.connection.collection('tw_orgs').updateOne({ _id: new Types.ObjectId(orgId) }, { $set: { research: { on: false, at: server.clock.now(), by: null } } });
+      const off = await ok(hanover, '2026-11-15', '2026-11-30');
+      expect(off.found).toEqual([]);
+      expect(off.events).toEqual(before.events);
+    } finally {
+      await server.connection.collection('tw_orgs').updateOne({ _id: new Types.ObjectId(orgId) }, { $unset: { research: '' } });
+      await server.connection.collection('tw_town_events').deleteMany({ _id: { $in: [townRow, hiddenRow] } });
+      await server.connection.collection('tw_location_events').deleteOne({ _id: ownRow });
+      await server.connection.collection('tw_research_revisions').deleteMany({ locationId: new Types.ObjectId(hanover) });
+    }
   });
 
   it('logs nothing of its own', async () => {
