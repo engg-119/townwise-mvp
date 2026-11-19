@@ -80,7 +80,7 @@ const feedbackSchema = z.object({ rating: z.enum(['up', 'down']), reason: feedba
 const treeNodeSchema = z.object({ id: z.string(), parentId: z.string().nullable(), role: z.enum(['user', 'assistant']) });
 
 /** What a file attached to a message is (D36), in the server's words; a kind this client doesn't know reads as `file`. */
-export const ATTACHMENT_KINDS = ['text', 'picture', 'pdf', 'word', 'excel', 'zip', 'file'] as const;
+export const ATTACHMENT_KINDS = ['text', 'picture', 'pdf', 'word', 'excel', 'zip', 'calendar', 'file'] as const;
 export type AttachmentKind = (typeof ATTACHMENT_KINDS)[number];
 
 /**

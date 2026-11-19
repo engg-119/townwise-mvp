@@ -7,8 +7,8 @@ import { parseMarkdown, type MdBlock, type MdInline } from './parse';
 
 // A reply drawn from its Markdown (spec P25): paragraphs in `sub`, headings in bold `ui`, lists with mono markers,
 // code in mono on `panel` with a 1px `border`, quotes with a 2px `line` rule, links underlined (a new tab on web,
-// the system browser on native), and tables in NumbersTable cells inside a horizontal scroller so the page never
-// scrolls sideways. `caret` appends a static U+258D to the last block that holds text, or on its own line after a
+// the system browser on native; a Your data page in the app, D63), and tables in NumbersTable cells inside a
+// horizontal scroller so the page never scrolls sideways. `caret` appends a static U+258D to the last block that holds text, or on its own line after a
 // table, code block or rule; assistive technology skips it.
 
 const CARET = '▍';
@@ -33,6 +33,10 @@ function Inlines(props: { nodes: readonly MdInline[] }): React.JSX.Element {
           case 'del': return <Text key={index} style={styles.del}><Inlines nodes={node.children} /></Text>;
           case 'link':
             if (node.href === null) return <Text key={index}><Inlines nodes={node.children} /></Text>;
+            // D63: a page of the app's own (parse.ts appPath) opens in the app.
+            if (node.href.startsWith('/')) {
+              return <Link key={index} href={node.href} style={styles.link}><Inlines nodes={node.children} /></Link>;
+            }
             return (
               <Link key={index} href={node.href} target="_blank" rel="noopener noreferrer" style={styles.link}>
                 <Inlines nodes={node.children} />

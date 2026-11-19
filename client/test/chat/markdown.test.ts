@@ -1,4 +1,4 @@
-import { hostOf, parseMarkdown, safeHref } from '../../src/chat/markdown/parse';
+import { appPath, hostOf, parseMarkdown, safeHref } from '../../src/chat/markdown/parse';
 
 // TownwiseAI's replies are Markdown (spec P25): the tree the renderers draw, never raw HTML or an unsafe link.
 
@@ -28,6 +28,21 @@ it('writes the host an http(s) link leads to after it, outside the link, so its 
   expect(hostOf('https://exämple.com/')).toBe('xn--exmple-cua.com');
   // An unsafe link has no host after it.
   expect(parseMarkdown('[a](mailto:a@example.com)')).toEqual([{ t: 'paragraph', children: [{ t: 'link', href: null, children: [{ t: 'text', text: 'a' }] }] }]);
+});
+it('links only a Your data item\'s exact path in the app, with "(Your data)" after it (D63)', () => {
+  const loc = 'a'.repeat(24);
+  const cal = `c_${'b'.repeat(24)}`;
+  expect(parseMarkdown(`Added [Bookings](/locations/${loc}/data/${cal}).`)).toEqual([{ t: 'paragraph', children: [
+    { t: 'text', text: 'Added ' },
+    { t: 'link', href: `/locations/${loc}/data/${cal}`, children: [{ t: 'text', text: 'Bookings' }] },
+    { t: 'text', text: ' (Your data).' },
+  ] }]);
+  expect(appPath(`/locations/${loc}/data/f_${'c'.repeat(24)}`)).toBe(`/locations/${loc}/data/f_${'c'.repeat(24)}`);
+  // Any other path, a query, a sales upload's ref, another section or a protocol-relative URL stays text.
+  for (const raw of [
+    `/locations/${loc}/data/${cal}?x=1`, `/locations/${loc}/data/u_${'b'.repeat(24)}`, `/locations/${loc}/settings`, `//evil.example/locations/${loc}/data/${cal}`,
+    `/locations/${loc}/data/${cal}/../../settings`, '/admin',
+  ]) expect(JSON.stringify(parseMarkdown(`[x](${raw})`))).not.toContain('"href":"');
 });
 it('keeps half-written syntax literal while it streams', () => {
   expect(parseMarkdown('Sales were **up')).toEqual([{ t: 'paragraph', children: [{ t: 'text', text: 'Sales were **up' }] }]);
