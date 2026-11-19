@@ -69,7 +69,7 @@ test('the banner: only a run a person started, while it runs and after, in plain
   expect(bannerWords({ trigger: 'weekly', status: 'running', counts: COUNTS }, 'Main Street Bar')).toBeNull();
   for (const status of ['queued', 'running', 'merging'] as const) {
     expect(bannerWords({ trigger: 'press', status, counts: COUNTS }, 'Main Street Bar'))
-      .toBe('Researching Main Street Bar and its town. What it finds shows on the calendar when it finishes.');
+      .toBe('Researching Main Street Bar and nearby. What it finds shows on the calendar when it finishes.');
   }
   expect(bannerWords({ trigger: 'early', status: 'done', counts: { ...COUNTS, added: 1 } }, 'Main Street Bar'))
     .toBe('Research for Main Street Bar finished: 1 new event on the calendar.');

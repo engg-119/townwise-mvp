@@ -115,11 +115,13 @@ export const BANNER_DISMISS = 'Dismiss';
 
 /**
  * The Calendar's banner for the location's last run, only for one a person started (Research now, or the early run
- * after the location was created or its place picked); null for a weekly run or none.
+ * after the location was created or its place picked); null for a weekly run or none. Such a run looks at the
+ * restaurant, its block and its competitors, not the town (a town of the twelve is researched by its own weekly run),
+ * so the words say "and nearby".
  */
 export function bannerWords(run: Pick<LocationRun, 'trigger' | 'status' | 'counts'> | null, locationName: string): string | null {
   if (run === null || run.trigger === 'weekly') return null;
-  if (LIVE_RUN_STATUSES.includes(run.status)) return `Researching ${locationName} and its town. What it finds shows on the calendar when it finishes.`;
+  if (LIVE_RUN_STATUSES.includes(run.status)) return `Researching ${locationName} and nearby. What it finds shows on the calendar when it finishes.`;
   if (run.status === 'done' || run.status === 'partial') {
     const added = run.counts.added;
     const found = added === 0 ? 'nothing new this time' : `${formatCount(added)} new ${added === 1 ? 'event' : 'events'} on the calendar`;
