@@ -1,0 +1,20 @@
+# camo's CI runners for engg-119/engg-119-mvp, started only while camo has compute to spare (infra/README.md,
+# "CI on camo"). A user unit: install as ~/.config/systemd/user/townwise-ci-runners.service, with this folder copied
+# to ~/townwise-ci-runners. Linger is on for this user, so it runs without a login.
+[Unit]
+Description=Townwise CI runners on camo, only while camo has compute to spare (label townwise-ci)
+After=network-online.target
+
+[Service]
+ExecStart=%h/townwise-ci-runners/camo-runners.sh
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+Restart=on-failure
+RestartSec=60
+# TERM goes to the script alone, which removes its containers, job folders and registrations and exits 143;
+# whatever is left after TimeoutStopSec is killed.
+KillMode=mixed
+TimeoutStopSec=120
+SuccessExitStatus=129 130 143
+
+[Install]
+WantedBy=default.target
