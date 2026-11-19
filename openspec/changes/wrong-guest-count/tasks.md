@@ -23,8 +23,10 @@ Spec decision D67 (reserved for this change). CONFIRM index items from 220 (219 
 
 ## 3. The lab input (decision 4)
 
-- [ ] 3.1 `lab/input.ts` `labInputOf`: trusted days for `typicalByDate`, the likely-closed test and the guests sent; `guestSpan` on the stored days. Tests in `api/test/lab-input.test.ts` (new cases; the golden unchanged): Halloween weekend marked goes out `guests` null and `closed` false; a marked last day stays `dataThrough`; a neighbor's likely-closed result ignores the marked count; the fingerprint changes with the note and not without; the golden test passes untouched. `npm test -w @townwise/api -- test/lab-input.test.ts test/lab-contract.test.ts`
-- [ ] 3.2 Lab side, no change: `cd modeling/lab && uv run pytest tests/test_contract.py tests/test_parity.py`
+- [x] 3.1 `lab/input.ts` `labInputOf`: trusted days for `typicalByDate`, the likely-closed test and the guests sent; `guestSpan` on the stored days. Tests in `api/test/lab-input.test.ts` (new cases; the golden unchanged): Halloween weekend marked goes out `guests` null and `closed` false; a marked last day stays `dataThrough`; a neighbor's likely-closed result ignores the marked count; the fingerprint changes with the note and not without; the golden test passes untouched. `npm test -w @townwise/api -- test/lab-input.test.ts test/lab-contract.test.ts`
+  Done: as designed (trusted rows for typical guests, the likely-closed test, rule closures and the guests sent; `guestSpan` on stored days). Five new cases, including a TownwiseAI party beside a mark keeping privateEvent. lab-input plus lab-contract: 47 pass, golden unchanged.
+- [x] 3.2 Lab side, no change: `cd modeling/lab && uv run pytest tests/test_contract.py tests/test_parity.py`
+  Done: 27 passed; `modeling/lab/tests/golden/` unchanged.
 
 ## 4. Forecast read, scoring and other analyses (decisions 3, 5 and 7)
 
