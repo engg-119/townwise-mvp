@@ -59,8 +59,11 @@ export interface ToolContext {
    * title anyone who sends an invitation or runs a subscribed feed can write), and list_notes or get_day once they list
    * a note TownwiseAI wrote from a file or a calendar, or one made from a calendar event (notTypedNote). While it or
    * `readUntrusted` is set, propose_note saves nothing itself and only shows its card. start_calibration does not read it.
+   * D66 (design decision 12): `readResearchedDays` holds the days of the researched events get_town_calendar and get_day
+   * handed the model in this turn (absent: none); propose_note saves nothing itself on one of those days, and still saves
+   * a plainly stated note on any other day.
    */
-  readonly turn: { readUntrusted: boolean; readWeb: boolean; readNotTyped: boolean; pictureBytes: number };
+  readonly turn: { readUntrusted: boolean; readWeb: boolean; readNotTyped: boolean; pictureBytes: number; readResearchedDays?: Set<string> };
   readonly files: TurnFiles;
 }
 
