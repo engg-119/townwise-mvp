@@ -58,7 +58,7 @@ test('/totp has no line under the card, as on the board’s second step; the rul
   const access = document.querySelector('.pg-signin .access');
   expect(access).not.toBeNull();
   expect(access?.textContent).toBe('');
-  expect(document.body.textContent).not.toContain('No forecasts are for sale');
+  expect(document.body.textContent).not.toContain('Forecasts are live for early-access restaurants');
   expect(within(screen.getByRole('list', { name: 'Legal' })).getAllByRole('link').map((link) => link.textContent)).toEqual(['Privacy', 'Terms', 'Security']);
 });
 
