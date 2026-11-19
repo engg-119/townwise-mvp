@@ -206,6 +206,29 @@ test('D65: a reload started after a refresh wins over the refresh’s later answ
   expect(screen.queryByText('Probe: Old Name, org_admin')).toBeNull();
 });
 
+test('D65: a refresh started after a reload, and answered first, wins over the reload’s later answer', async () => {
+  const api = adminApi();
+  await renderTab(api);
+  await screen.findByText('Probe: Main Street Bar, org_admin');
+  const gate = deferred<null>();
+  const json = api.json.bind(api);
+  // The reload's read is held and answers the name from before; the poll's refresh, started after it, answers at once.
+  let first = true;
+  api.json = (path, schema, opts) => {
+    if (path !== '/api/org' || !first) return json(path, schema, opts);
+    first = false;
+    const stale = orgOf('org_admin', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, name: 'Old Name' } : location)));
+    return gate.promise.then(() => schema.parse(stale));
+  };
+  await fireEvent.press(screen.getByRole('button', { name: 'Reload' }));
+  api.org = orgOf('org_admin', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, name: 'New Name' } : location)));
+  await fireEvent.press(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByText('Probe: New Name, org_admin')).toBeTruthy();
+  await act(async () => { gate.resolve(null); await gate.promise; });
+  expect(screen.getByText('Probe: New Name, org_admin')).toBeTruthy();
+  expect(screen.queryByText('Probe: Old Name, org_admin')).toBeNull();
+});
+
 test('a reload whose answer lacks the location says it isn’t available, with a way back to Locations', async () => {
   const api = adminApi();
   const router = await renderTab(api);

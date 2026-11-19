@@ -35,7 +35,7 @@ The `first_forecast` email SHALL have a fixed subject with no user text, SHALL n
 - **THEN** the subject is "Your first Townwise forecast is ready", the body names Main Street and Hanover, NH, and no number appears in it
 
 ### Requirement: Home shows the first forecast as it builds and once it lands
-For a location with no published run, Home SHALL show a first-forecast line while its calibration `updating` is not null ("next" while waiting, "Building" while running), SHALL show the published forecast once it is published without a reload, and SHALL otherwise keep its no-forecast line, which states no minimum history, or the not-published notice when the location has a `lastRun`. The onboarding history step SHALL keep opening Home once the history is read.
+For a location with no published run, Home SHALL show a first-forecast line while its calibration `updating` is not null ("next" while waiting, "Building" while running), SHALL show the published forecast once it is published without a reload, and SHALL otherwise keep its no-forecast line, which states no minimum history, or the not-published notice when the location has a `lastRun` that was not published. The onboarding history step SHALL keep opening Home once the history is read.
 
 #### Scenario: History under the minimum
 - **WHEN** a location's history is too short for the pass to start a forecast
