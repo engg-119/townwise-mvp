@@ -34,6 +34,14 @@
 // is cleared by compare-and-set on the value read, so a change landing during the pass keeps it for a later one. A
 // location the live or weekly cap holds keeps its mark. [CONFIRM: a training change refits as the system after 15 quiet
 // minutes, at most once a day per location]
+// D59 slice 3 (design decisions 1 and 4): after the week's suggestions, under the same lease and deadline, the pass takes
+// each location a calendar refresh marked (calendar/early-pass.ts) and brings its weekly suggestions forward: while
+// TOWNWISE_AGENT_AUTO and the organization's `agentAuto` and calendar titles switch are on (suggestFor checks its weekly
+// suggestions switch), unless a pass of the location ran since the mark (it read the change already), and at most once a
+// day: a location whose pass ran earlier today keeps its mark for tomorrow. The pass is suggestFor's, keyed by the town's
+// day (its row's `week`), so a day makes at most one call per location, and a Monday's brings the week's forward. The
+// mark is cleared by compare-and-set on the value read, so a refresh during the pass keeps it. [CONFIRM: a calendar change
+// brings the weekly pass forward at most once a day]
 // A pass has SCHEDULE_PASS_BUDGET_MS (inside the job's replica timeout): it takes another location only while it could
 // finish it in the time left, and otherwise ends that part `deadline`, leaving the rest to the next hour's pass.
 // Nothing here names a town, an organization or a location. The pass logs one line of counts and its state for each
@@ -52,14 +60,14 @@ import { FORECAST_TIER_DAYS, forecastThrough, tierEnd } from '../forecasts/tiers
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
 import type { ChatModel } from '../chat/model.ts';
 import {
-  countedWeekRows, countRefitStartsSince, liveScheduledCalibrations, refitCandidates, staleStartingWeeks, staleSuggestionPasses,
-  suggestionCandidates, weeklyCandidates, type RefitCandidate, type WeeklyCandidate,
+  countedWeekRows, countRefitStartsSince, earlyPassCandidates, liveScheduledCalibrations, refitCandidates, staleStartingWeeks,
+  staleSuggestionPasses, suggestionCandidates, weeklyCandidates, type RefitCandidate, type WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import { localDay, localMinutes, timeZoneOf } from '../time-zones.ts';
 import { currentChampion, GATE } from './gate.ts';
 import { buildLabInput, labInputFingerprint } from './input.ts';
 import { checkStart, expireStale, launch, regimeStartFits, SYSTEM_REQUESTER, type LabStartContext, type StartRequest } from './service.ts';
-import { suggestFor, SUGGESTIONS_TIME_MS, suggestionsWeek } from './suggestions.ts';
+import { suggestFor, SUGGESTIONS_TIME_MS, suggestionsWeek, type SuggestionsOutcome } from './suggestions.ts';
 
 /** The lease a pass holds and renews before each location. */
 export const SCHEDULE_LEASE_MS = 10 * 60_000;
@@ -140,6 +148,8 @@ export interface SuggestionsCounts {
   ownerEvents: number;
   /** D59 slice 3: changes TownwiseAI saved on its own (sure suggestions and the sales history's closed weekdays). */
   applied: number;
+  /** D59 slice 3: passes a calendar refresh brought forward that made their call (or found the budget spent). */
+  early: number;
 }
 
 export interface SuggestionsResult extends SuggestionsCounts { state: SuggestionsState; ms: number }
@@ -416,6 +426,50 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
     }
   }
 
+  /** One location's suggestFor outcome, counted. */
+  function tally(outcome: SuggestionsOutcome, counts: SuggestionsCounts): void {
+    counts.ownerEvents += outcome.ownerEvents ?? 0;
+    counts.applied += outcome.applied ?? 0;
+    if (outcome.status === 'suggested') {
+      counts.passes += 1;
+      counts.suggested += outcome.suggested;
+    } else if (outcome.status === 'none') counts.none += 1;
+    else if (outcome.status === 'budget') counts.budget += 1;
+    else if (outcome.status === 'failed') counts.failed += 1;
+  }
+
+  /**
+   * D59 slice 3: one location whose weekly pass a calendar refresh brought forward (see the top). The mark is kept while
+   * a pass ran earlier today, and cleared once the switches are off, a pass since the mark read the change, or this one ran.
+   */
+  async function considerEarly(model: ChatModel, candidate: RefitCandidate, counts: SuggestionsCounts): Promise<void> {
+    const scope = scopeForWeeklyRefresh(candidate);
+    const clear = (): Promise<boolean> => stores.locations.clearEarlyPass(scope, candidate.locationId, candidate.wantedAt);
+    const location = await stores.locations.find(scope, candidate.locationId);
+    if (location === null) return;
+    const org = await stores.orgs.findById(scope.orgId);
+    if (!ctx.config.agentAuto || org?.agentAuto.on !== true || !org.calendarTitlesToAi.on) {
+      await clear();
+      return;
+    }
+    const timeZone = timeZoneOf(location.town).timeZone;
+    const today = localDay(dueClock(), timeZone);
+    const latest = await stores.agentSuggestions.latestPassAt(scope, location.id);
+    if (latest !== null && latest.getTime() >= candidate.wantedAt.getTime()) {
+      await clear();
+      return;
+    }
+    // At most once a day: a pass that ran earlier today leaves this one for tomorrow.
+    if (latest !== null && localDay(latest, timeZone) === today) return;
+    const outcome = await suggestFor({ config: ctx.config, now: ctx.now, stores, logger: ctx.logger, chat: model }, scope, location, today);
+    if (outcome.status === 'already') return;
+    if (outcome.status !== 'off') {
+      counts.early += 1;
+      tally(outcome, counts);
+    }
+    await clear();
+  }
+
   /** The weekly suggestions for each due location, until the lease is lost or a call could outlast the pass's deadline. */
   async function suggestAll(model: ChatModel, counts: SuggestionsCounts, deadline: number): Promise<SuggestionsState> {
     const roomForCall = (): boolean => deadline - ctx.now().getTime() >= SUGGESTIONS_TIME_MS + SCHEDULE_STEP_MS;
@@ -433,15 +487,18 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
         const at = dueClock();
         const week = suggestionsWeek(localDay(at, timeZone), localMinutes(at, timeZone), SCHEDULE_START_HOUR);
         if (week === null || await stores.agentSuggestions.findPass(scope, location.id, week) !== null) continue;
-        const outcome = await suggestFor({ config: ctx.config, now: ctx.now, stores, logger: ctx.logger, chat: model }, scope, location, week);
-        counts.ownerEvents += outcome.ownerEvents ?? 0;
-        counts.applied += outcome.applied ?? 0;
-        if (outcome.status === 'suggested') {
-          counts.passes += 1;
-          counts.suggested += outcome.suggested;
-        } else if (outcome.status === 'none') counts.none += 1;
-        else if (outcome.status === 'budget') counts.budget += 1;
-        else if (outcome.status === 'failed') counts.failed += 1;
+        tally(await suggestFor({ config: ctx.config, now: ctx.now, stores, logger: ctx.logger, chat: model }, scope, location, week), counts);
+      } catch {
+        counts.failed += 1;
+        ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_suggestions_location_failed');
+      }
+    }
+    // D59 slice 3: the passes calendar refreshes brought forward, after the week's.
+    for (const candidate of await earlyPassCandidates(ctx.connection)) {
+      if (!roomForCall()) return 'deadline';
+      if (!(await stores.forecastSchedule.renew({ owner, now: ctx.now(), leaseMs: SCHEDULE_LEASE_MS }))) return 'lease_lost';
+      try {
+        await considerEarly(model, candidate, counts);
       } catch {
         counts.failed += 1;
         ctx.logger.warn({ orgId: candidate.orgId, locationId: candidate.locationId }, 'townwise.weekly_suggestions_location_failed');
@@ -456,7 +513,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       const deadline = ctx.now().getTime() + SCHEDULE_PASS_BUDGET_MS;
       const counts: PassCounts = { started: 0, failed: 0, skipped: 0, capped: 0 };
       const refits: RefitCounts = { started: 0, cleared: 0, held: 0, failed: 0 };
-      const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0, ownerEvents: 0, applied: 0 };
+      const suggestionCounts: SuggestionsCounts = { passes: 0, suggested: 0, none: 0, budget: 0, failed: 0, ownerEvents: 0, applied: 0, early: 0 };
       const model = ctx.config.weeklySuggestions ? ctx.chat ?? null : null;
       const refreshOn = ctx.labRunner !== null && ctx.config.weeklyForecasts;
       let suggestionsBegan = performance.now();

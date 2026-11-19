@@ -356,15 +356,25 @@ export interface StoredEvent {
  * What a replace did. A switched one also answers the generation it switched to and, of the generation it replaced,
  * how many keyed uids that generation held (`hadKeys`) and how many of them the new events keep (`keptKeys`).
  */
+/** D59 slice 3: a keyed event a replace added or moved: its dates now (and, moved, its dates before too). */
+export interface ChangedDates { readonly startDate: string; readonly endDate: string }
+
 export type ReplaceResult =
   | { readonly switched: false }
-  | { readonly switched: true; readonly generation: number; readonly keptKeys: number; readonly hadKeys: number };
+  | {
+    readonly switched: true; readonly generation: number; readonly keptKeys: number; readonly hadKeys: number;
+    /**
+     * D59 slice 3: the keyed events whose uid the replaced generation did not hold, or held at other dates or hours,
+     * with their dates now, and a moved one's dates before too; empty for a calendar's first generation.
+     */
+    readonly changed: readonly ChangedDates[];
+  };
 
 /**
  * An add's replace: a new calendar's first generation (its reservedGeneration starts at 0, and no one else knows its id
  * until the add answers), with no generation before it.
  */
-export const ADDED_REPLACE = { switched: true, generation: 1, keptKeys: 0, hadKeys: 0 } as const satisfies ReplaceResult;
+export const ADDED_REPLACE = { switched: true, generation: 1, keptKeys: 0, hadKeys: 0, changed: [] } as const satisfies ReplaceResult;
 
 /**
  * A keyed event for the weekly suggestions call (lab/suggestions.ts): with its calendar's id, kind, whether its add
@@ -648,9 +658,11 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     const mine = { orgId: key.orgId, sourceId: key._id, generation };
     // The keyed uids of the generation this replace switches from, read before anything is written or deleted. If this
     // replace switches, that generation was still current, so its rows were all there.
-    const hadUids = new Set(previous === 0 ? [] : (await Event.find(
-      { orgId: key.orgId, sourceId: key._id, generation: previous, keyed: true }, { uid: 1 },
-    ).lean()).map((row) => row.uid));
+    const had = previous === 0 ? [] : await Event.find(
+      { orgId: key.orgId, sourceId: key._id, generation: previous, keyed: true }, { uid: 1, startDate: 1, endDate: 1, startTime: 1, endTime: 1 },
+    ).lean();
+    const hadUids = new Set(had.map((row) => row.uid));
+    const hadByUid = new Map(had.map((row) => [row.uid, row]));
     if (events.length > 0) {
       await Event.insertMany(events.map((event) => ({
         ...mine, locationId: key.locationId, uid: event.uid, title: event.title, startDate: event.startDate,
@@ -670,7 +682,17 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     // Older only: a later replace may already be writing a newer generation.
     await Event.deleteMany({ orgId: key.orgId, sourceId: key._id, generation: trusted({ $lt: generation }) });
     const keptKeys = events.filter((event) => event.keyed && hadUids.has(event.uid)).length;
-    return { switched: true, generation, keptKeys, hadKeys: hadUids.size };
+    // D59 slice 3: what a refresh added or moved (a calendar's first generation changes nothing it had).
+    const changed = previous === 0 ? [] : events.flatMap((event) => {
+      if (!event.keyed) return [];
+      const before = hadByUid.get(event.uid);
+      const now = { startDate: event.startDate, endDate: event.endDate };
+      if (before === undefined) return [now];
+      const moved = before.startDate !== event.startDate || before.endDate !== event.endDate
+        || (before.startTime ?? null) !== event.startTime || (before.endTime ?? null) !== event.endTime;
+      return moved ? [now, { startDate: before.startDate, endDate: before.endDate }] : [];
+    });
+    return { switched: true, generation, keptKeys, hadKeys: hadUids.size, changed };
   }
 
   /**

@@ -171,6 +171,7 @@ interface SuggestionFields {
 interface PassFields {
   orgId: Types.ObjectId;
   locationId: Types.ObjectId;
+  /** The town's Monday of the week, or (D59 slice 3) the town's day a pass brought forward ran on. */
   week: string;
   status: SuggestionPassStatus;
   /** Suggestions kept and stored. */
@@ -400,6 +401,8 @@ export interface AgentSuggestionStore {
    */
   releasePass(scope: OrgScope, input: { locationId: string; week: string }): Promise<HeldReservation | null>;
   findPass(scope: OrgScope, locationId: string, week: string): Promise<SuggestionPassRecord | null>;
+  /** D59 slice 3: when the location's newest pass row (a week's, or one brought forward) was made; null with none. */
+  latestPassAt(scope: OrgScope, locationId: string): Promise<Date | null>;
   /** Stores a pass's kept suggestions, each `open` (D59 slice 3: one TownwiseAI applied, `accepted` under its id). */
   insert(scope: OrgScope, input: { locationId: string; week: string; suggestions: readonly NewSuggestion[]; now: Date }): Promise<SuggestionRecord[]>;
   /**
@@ -637,6 +640,10 @@ export function createAgentSuggestionStore(connection: Connection): AgentSuggest
     async findPass(scope, locationId, week) {
       const doc = await Pass.findOne({ ...of(scope, locationId), week }).lean();
       return doc === null ? null : { locationId, week: doc.week, status: doc.status, suggested: doc.suggested };
+    },
+    async latestPassAt(scope, locationId) {
+      const doc = await Pass.findOne(of(scope, locationId), { createdAt: 1 }).sort({ createdAt: -1 }).lean();
+      return doc?.createdAt ?? null;
     },
     async insert(scope, input) {
       if (input.suggestions.length === 0) return [];

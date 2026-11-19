@@ -30,6 +30,12 @@ export interface LocationFields {
    * one, the last REFIT_STARTS_KEPT (the weekly cap counts them). Absent until the first.
    */
   refit?: { wantedAt?: Date; startedAt?: Date; starts?: Date[] };
+  /**
+   * D59 slice 3 (design decision 1): a calendar refresh added or moved a keyed event in the next 91 days, so the weekly
+   * pass is brought forward: `wantedAt`, the latest such refresh (`$max`), cleared by compare-and-set on the value the
+   * hourly pass read. Absent until the first.
+   */
+  earlyPass?: { wantedAt?: Date };
 }
 
 function locationSchema(): Schema<LocationFields> {
@@ -43,6 +49,7 @@ function locationSchema(): Schema<LocationFields> {
     createdBy: { type: String, required: true },
     byStaff: { type: Boolean },
     refit: { type: new Schema({ wantedAt: { type: Date }, startedAt: { type: Date }, starts: { type: [Date], default: undefined } }, { _id: false, strict: true }) },
+    earlyPass: { type: new Schema({ wantedAt: { type: Date } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, nameKey: 1 }, { unique: true });
   schema.index({ orgId: 1, createdAt: 1 });
@@ -105,6 +112,10 @@ export interface LocationStore {
    * which the weekly cap counts.
    */
   markRefitStarted(scope: OrgScope, locationId: string, at: Date, started: boolean): Promise<boolean>;
+  /** D59 slice 3: marks the location's weekly pass as brought forward at `at`, or later (`$max`). False when it is gone. */
+  wantEarlyPass(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
+  /** D59 slice 3: clears that mark only while it is still `wantedAt` (a compare-and-set), so a refresh meanwhile stays. */
+  clearEarlyPass(scope: OrgScope, locationId: string, wantedAt: Date): Promise<boolean>;
 }
 
 /** D59: the refit starts a location keeps: at most one a day, so a week's worth and one more. */
@@ -205,6 +216,15 @@ export function createLocationStore(connection: Connection): LocationStore {
     },
     async wantRefit(scope, locationId, at) {
       return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $max: { 'refit.wantedAt': at } })).matchedCount === 1;
+    },
+    async wantEarlyPass(scope, locationId, at) {
+      return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $max: { 'earlyPass.wantedAt': at } })).matchedCount === 1;
+    },
+    async clearEarlyPass(scope, locationId, wantedAt) {
+      const result = await Location.updateOne(
+        { _id: locationId, orgId: scope.orgId, 'earlyPass.wantedAt': wantedAt }, { $unset: { 'earlyPass.wantedAt': 1 } },
+      );
+      return result.modifiedCount === 1;
     },
     async refitState(scope, locationId) {
       const doc = await Location.findOne({ _id: locationId, orgId: scope.orgId }, { refit: 1 }).lean();

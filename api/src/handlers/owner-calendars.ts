@@ -26,6 +26,7 @@ import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
 import { queueAutoSort } from '../calendar/auto-sort.ts';
+import { bringPassForward } from '../calendar/early-pass.ts';
 import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
@@ -491,8 +492,12 @@ export async function refreshOwnerCalendar(ctx: TownwiseContext, req: Request, r
   // A replace that loses to a concurrent one leaves that one's events, which are as new.
   if (read.ok) {
     const replaced = await calendars.replaceEvents(scope, location.id, found.id, read.parsed, now);
-    // Notes linked to its events follow them (calendar-event-suggestions); never fails the refresh.
-    if (replaced.switched) await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+    // Notes linked to its events follow them (calendar-event-suggestions), and (D59 slice 3) an event added or moved in
+    // the next 91 days brings the weekly pass forward; neither fails the refresh.
+    if (replaced.switched) {
+      await followLinkedNotes(ctx, scope, location, found.id, replaced, now);
+      await bringPassForward(ctx, scope, location, found.id, replaced.changed, now);
+    }
   } else {
     await calendars.recordFailure(scope, location.id, found.id, read.code, now);
   }

@@ -1095,3 +1095,31 @@ describe('the connection check', () => {
     expect(logged('townwise.google_access_ended')).toEqual([{ connectionId, calendars: 0, reason: 'unused' }]);
   });
 });
+
+describe('bringing the weekly pass forward (D59 slice 3)', () => {
+  async function earlyPassOf(t: Tenant): Promise<unknown> {
+    return (await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(t.locationId) }))?.earlyPass;
+  }
+
+  it('a refresh that adds or moves a keyed event in the next 91 days marks the location; one that changes nothing ahead does not', async () => {
+    const t = await tenant();
+    const { calendar } = await addLink(t);
+    // Moves the dinner by a day and drops the party: the location's weekly pass is brought forward.
+    expect(await refresherOf(fakeFetcher(() => feed(ics(
+      vevent('UID:dinner@example.test', 'SUMMARY:Rehearsal dinner', 'DTSTART:20260611T180000', 'DTEND:20260611T210000'),
+    )))).drain()).toBe(1);
+    expect(await earlyPassOf(t)).toEqual({ wantedAt: server.clock.now() });
+    expect(logged('townwise.weekly_pass_brought_forward')).toEqual([{ calendarId: calendar.id, changed: 2 }]);
+    expect(logs.join('\n')).not.toContain('Rehearsal dinner');
+
+    // The same event again, and one past the 91 days: nothing new ahead.
+    await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(t.locationId) }, { $unset: { earlyPass: 1 } });
+    server.clock.advance(MINUTE);
+    await makeDue(calendar.id);
+    expect(await refresherOf(fakeFetcher(() => feed(ics(
+      vevent('UID:dinner@example.test', 'SUMMARY:Rehearsal dinner', 'DTSTART:20260611T180000', 'DTEND:20260611T210000'),
+      vevent('UID:gala@example.test', 'SUMMARY:Autumn gala', 'DTSTART;VALUE=DATE:20261010'),
+    )))).drain()).toBe(1);
+    expect(await earlyPassOf(t)).toBeUndefined();
+  });
+});

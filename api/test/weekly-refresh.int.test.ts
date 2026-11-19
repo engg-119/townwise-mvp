@@ -689,7 +689,7 @@ describe('weekly suggestions', () => {
     await pass({ chat: answering([JULY_4]) });
     const line = logLines(server).filter((each) => each.msg === 'townwise.weekly_suggestions_pass').at(-1);
     const keys = Object.keys(line ?? {}).filter((key) => !['level', 'time', 'pid', 'hostname', 'msg'].includes(key)).sort();
-    expect(keys).toEqual(['applied', 'budget', 'failed', 'ms', 'none', 'ownerEvents', 'passes', 'state', 'suggested']);
+    expect(keys).toEqual(['applied', 'budget', 'early', 'failed', 'ms', 'none', 'ownerEvents', 'passes', 'state', 'suggested']);
     const textOf = JSON.stringify(logLines(server));
     for (const absent of [p.orgId, p.locationId, JULY_4.why]) expect(JSON.stringify(line)).not.toContain(absent);
     expect(textOf).not.toContain(JULY_4.why);
@@ -809,6 +809,60 @@ describe('weekly suggestions', () => {
     });
     expect((await pass({ chat: answering() })).suggestions).toMatchObject({ failed: 0 });
     expect(await passRow(p)).toMatchObject({ status: 'running', reservedMicroUsd: SUGGESTIONS_RESERVE_MICRO_USD });
+  });
+
+  describe('a pass a calendar refresh brought forward (D59 slice 3)', () => {
+    async function mark(p: Place): Promise<void> {
+      await server.ctx.stores.locations.wantEarlyPass(p.scope, p.locationId, server.clock.now());
+    }
+
+    async function earlyPassOf(p: Place): Promise<unknown> {
+      return (await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(p.locationId) }))?.earlyPass;
+    }
+
+    it('runs the location’s pass early, keyed by the town’s day, at most once a day, after a pass that already read the change', async () => {
+      const p = await place();
+      // Monday: the week's pass runs after the mark, so it read the change and the mark goes.
+      await mark(p);
+      expect((await pass({ chat: answering([]) })).suggestions).toMatchObject({ early: 0 });
+      expect(await passRow(p)).toMatchObject({ status: 'none' });
+      expect(await earlyPassOf(p)).toEqual({});
+
+      // Wednesday 08:00 in Hanover: a refresh marks it, and the pass runs it early as Wednesday's.
+      server.clock.advance(2 * DAY);
+      await mark(p);
+      expect((await pass({ chat: answering([{ ...JULY_4, confidence: 'medium' }]) })).suggestions).toMatchObject({ early: 1, passes: 1, suggested: 1 });
+      expect(await passRow(p, '2026-06-03')).toMatchObject({ status: 'suggested', suggested: 1 });
+      expect(await earlyPassOf(p)).toEqual({});
+
+      // Another refresh that day waits for tomorrow: no call, and the mark stays.
+      server.clock.advance(HOUR);
+      await mark(p);
+      expect((await pass({ chat: answering() })).suggestions).toMatchObject({ early: 0 });
+      expect(await server.connection.collection('tw_suggestion_passes').countDocuments({ locationId: new Types.ObjectId(p.locationId) })).toBe(2);
+      expect(await earlyPassOf(p)).toEqual({ wantedAt: server.clock.now() });
+
+      // Thursday: it runs.
+      server.clock.advance(DAY);
+      expect((await pass({ chat: answering([]) })).suggestions).toMatchObject({ early: 1 });
+      expect(await passRow(p, '2026-06-04')).toMatchObject({ status: 'none' });
+      expect(await earlyPassOf(p)).toEqual({});
+    });
+
+    it('with TownwiseAI’s own work or the calendar titles switch off, clears the mark and makes no call', async () => {
+      for (const off of ['agentAuto', 'titles'] as const) {
+        const p = await place();
+        await pass({ chat: answering([]) });
+        server.clock.advance(DAY);
+        if (off === 'agentAuto') await server.ctx.stores.orgs.setAgentAuto(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
+        else await server.ctx.stores.orgs.setCalendarTitlesToAi(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
+        await mark(p);
+        expect((await pass({ chat: answering() })).suggestions).toMatchObject({ early: 0 });
+        expect(await passRow(p, '2026-06-02')).toBeNull();
+        expect(await earlyPassOf(p)).toEqual({});
+        server.clock.advance(-DAY);
+      }
+    });
   });
 
   describe('a large request', () => {

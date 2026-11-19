@@ -849,6 +849,26 @@ export async function suggestionCandidates(connection: Connection): Promise<Week
   return docs.map((doc) => ({ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString() }));
 }
 
+/**
+ * D59 slice 3: the locations whose weekly pass a calendar refresh brought forward (stores/locations.ts `earlyPass`),
+ * among the weekly suggestions' candidates (an active organization with its weekly suggestions on), with the mark the
+ * pass read (its clear compares it). Ids and the mark only, oldest mark first; scoped by scopeForWeeklyRefresh.
+ */
+export async function earlyPassCandidates(connection: Connection): Promise<RefitCandidate[]> {
+  const orgs = await orgModel(connection).find(
+    { status: 'active', $or: [{ weeklySuggestions: trusted({ $exists: false }) }, { weeklySuggestions: null }, { 'weeklySuggestions.on': true }] },
+    { _id: 1 },
+  ).lean();
+  if (orgs.length === 0) return [];
+  const docs = await locationModel(connection).find(
+    { orgId: trusted({ $in: orgs.map((org) => org._id) }), 'earlyPass.wantedAt': trusted({ $type: 'date' }) }, { _id: 1, orgId: 1, earlyPass: 1 },
+  ).sort({ 'earlyPass.wantedAt': 1, _id: 1 }).lean();
+  return docs.flatMap((doc) => {
+    const wantedAt = doc.earlyPass?.wantedAt;
+    return wantedAt === undefined ? [] : [{ orgId: doc.orgId.toHexString(), locationId: doc._id.toHexString(), wantedAt }];
+  });
+}
+
 /** A live calibration the weekly refresh started, in any organization (ids and when it was asked for). */
 export interface LiveScheduledCalibration {
   readonly id: string;
