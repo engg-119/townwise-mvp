@@ -39,7 +39,7 @@ import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Types } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
-import { agentAutoOn, applyChange, TOWNWISE_AI_AUTHOR, type PersonsEntries } from '../agent/apply.ts';
+import { agentAutoOn, applyChange, isAgentRule, TOWNWISE_AI_AUTHOR, type PersonsEntries } from '../agent/apply.ts';
 import { wantRefitFor } from '../agent/refit.ts';
 import { closureKeyOf, closureRuleText, isSuggestable } from '../agent/closure-suggestions.ts';
 import type { Role } from '../access/resolve.ts';
@@ -283,7 +283,8 @@ export function createAiReadActions(ctx: TownwiseContext): OnAiRead {
     const actor = ledger ? await actorOf(requester) : null;
     const persons: PersonsEntries | null = ledger ? {
       notes: existing,
-      rules: (await stores.businessRules.scheduled(scope, file.locationId)).flatMap((rule) => (rule.schedule === null ? [] : [rule.schedule])),
+      // A person's rules (slice 3: not one TownwiseAI added that nobody edited since).
+      rules: (await stores.businessRules.scheduled(scope, file.locationId)).flatMap((rule) => (rule.schedule === null || isAgentRule(rule) ? [] : [rule.schedule])),
     } : null;
     let openNotes = ledger ? (await stores.agentSuggestions.listOpenFileNotes(scope, file.locationId, townToday)).length : 0;
     /** D59: the event as an open note suggestion from the file, or not kept (ended, or the location's 20 open). */
