@@ -164,7 +164,10 @@ export function runDays(dataThrough: string, days: number): Pick<LabSuccess['run
   };
 }
 
-/** The lab's answer to `input`: a draft run for the 14 days after its last day, compared with its champion if it has one. */
+/**
+ * The lab's answer to `input`: a draft run for the 14 days after its last day, compared with its champion if it has one,
+ * its widening the forecast tier's entries and the outlook anchors its scorecard's horizonOutlook reports (D52).
+ */
 export function labResultFor(input: LabInput, overrides?: { scorecard?: LabScorecard; run?: Partial<LabSuccess['run']> }): LabSuccess {
   const firstDate = input.days[0]?.date ?? '';
   const scorecard = overrides?.scorecard ?? scorecardWith({
@@ -188,6 +191,10 @@ export function labResultFor(input: LabInput, overrides?: { scorecard?: LabScore
       },
       holidayLambdas: { hol_big_night: 3, hol_halloween: 3 }, holidayEffects: { hol_big_night: 0.3, hol_halloween: 0.1 },
       widenK: 1.2, weeklyLogRange: { lo: -0.1, hi: 0.2 }, refitEveryMonths: 3, horizonDays: 28, minPastWeeks: 8, floor: 1,
+      widening: [
+        { fromLead: 29, ratio: 1.1 }, { fromLead: 92, ratio: 1.2 },
+        ...scorecard.horizonOutlook.map((report) => ({ fromLead: report.horizon === 182 ? 93 : 365, ratio: report.ratio, horizon: report.horizon })),
+      ],
     },
     scorecard,
     run: {

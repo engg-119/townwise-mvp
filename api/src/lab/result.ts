@@ -2,12 +2,14 @@
 // its scorecard and the parameters that reproduce it, or a failure code. checkLabResult also holds it to the
 // calibration it answers (the same id, the same last day of data, the same current forecast compared, no scorecard week
 // after that last day), and the engine its scorecard names to its run and its params (D42). Since D52 it also checks
-// the outlook for sanity only: the run ends by its year, and its widening grows with lead and matches the outlook
-// reports. Issues carry a path and a code only, never a value. Pure.
+// the outlook for sanity only: the run ends by its year, its widening grows with lead and matches the outlook reports,
+// and a model run's outlook stops at the town's last researched term. Issues carry a path and a code only, never a
+// value. Pure.
 import { z } from 'zod';
 
 import { isoDate, utcDay } from '../dates.ts';
 import { checkLabRunFile, issueOf, labRunFileSchema, MAX_ISSUES, type FileIssue } from '../forecasts/file.ts';
+import { tierEnd } from '../forecasts/tiers.ts';
 import type { CalibrationRecord } from '../stores/calibrations.ts';
 import { engineOf } from '../forecasts/reader.ts';
 import { labScorecardSchema } from './scorecard.ts';
@@ -103,17 +105,23 @@ function plusDays(day: string, days: number): string {
 
 /**
  * The outlook's sanity checks (D52 decision 10; the gate judges nothing else about it): the run ends by
- * min(madeAt + 365, dataThrough + 400) (outlook_too_far), and its widening's fromLead strictly increases, its ratios are
- * at least 1 and never decrease, and its outlook anchors are horizonOutlook's ratios when that is reported
- * (widening_out_of_order).
+ * min(madeAt + 365, dataThrough + 400) (outlook_too_far); a model run (the trained model reads the term, and a day no
+ * researched term covers as a break) ends by the later of its forecast tier's end and `termsThrough`, the town's last
+ * researched term day, when the calibration has one (outlook_past_terms), so its forecast tier is never refused for
+ * it; and its widening's fromLead strictly increases, its ratios are at least 1 and never decrease, and its outlook
+ * anchors are horizonOutlook's ratios (widening_out_of_order).
  */
-function outlookIssues(result: LabSuccess): FileIssue[] {
+function outlookIssues(result: LabSuccess, termsThrough: string | null): FileIssue[] {
   const issues: FileIssue[] = [];
   const { run } = result;
   const last = run.days.reduce((max, day) => (day.date > max ? day.date : max), run.days[0]?.date ?? '');
   const reach = plusDays(run.madeAt, OUTLOOK_DAYS);
   const cap = plusDays(run.dataThrough, OUTLOOK_CAP_DAYS);
   if (last > (reach < cap ? reach : cap)) issues.push({ path: 'run.days', code: 'outlook_too_far' });
+  if (termsThrough !== null && engineOf(run.model.family) === 'model') {
+    const tier = tierEnd(run);
+    if (last > (tier > termsThrough ? tier : termsThrough)) issues.push({ path: 'run.days', code: 'outlook_past_terms' });
+  }
   const widening = result.params.widening ?? [];
   const ordered = widening.every((entry, i) => {
     const before = widening[i - 1];
@@ -121,8 +129,8 @@ function outlookIssues(result: LabSuccess): FileIssue[] {
   });
   const reported = result.scorecard.horizonOutlook;
   const anchors = widening.filter((entry) => entry.horizon !== undefined);
-  const matched = reported === undefined || (anchors.length === reported.length
-    && reported.every((report) => anchors.some((entry) => entry.horizon === report.horizon && entry.ratio === report.ratio)));
+  const matched = anchors.length === reported.length
+    && reported.every((report) => anchors.some((entry) => entry.horizon === report.horizon && entry.ratio === report.ratio));
   if (!ordered || !matched) issues.push({ path: 'params.widening', code: 'widening_out_of_order' });
   return issues;
 }
@@ -132,11 +140,12 @@ function outlookIssues(result: LabSuccess): FileIssue[] {
  * the calibration's id, the last day of the input it was given, the current forecast it was compared with, and that
  * every scorecard week starts on or before that last day: those weeks reach TownwiseAI (lab/components.ts), and a later
  * one would be a forecast week, not the owner's history. The engine the scorecard names (which the gate judges by) is
- * the run's (its model family), the params' (the baseline's carry `engine`), and has its own figures in `engines`.
+ * the run's (its model family), the params' (the baseline's carry `engine`), and has its own figures in `engines`. The
+ * outlook's sanity checks (outlookIssues) read the term day the calibration's input named.
  */
 export function checkLabResult(
   raw: unknown,
-  calibration: Pick<CalibrationRecord, 'id' | 'dataThrough' | 'championRunId'>,
+  calibration: Pick<CalibrationRecord, 'id' | 'dataThrough' | 'championRunId' | 'termsThrough'>,
   today: string,
 ): LabResultCheck {
   const parsed = labResultSchema.safeParse(raw);
@@ -167,7 +176,7 @@ export function checkLabResult(
       const { learning } = result.scorecard;
       if (learning != null && learning.to > through) issues.push({ path: 'scorecard.learning.to', code: 'after_data_through' });
     }
-    issues.push(...outlookIssues(result));
+    issues.push(...outlookIssues(result, calibration.termsThrough));
   }
   return issues.length > 0 ? { ok: false, issues: issues.slice(0, MAX_ISSUES) } : { ok: true, result };
 }

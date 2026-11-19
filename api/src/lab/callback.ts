@@ -129,7 +129,7 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
     const resultToken = randomBytes(32).toString('base64url');
     const recorded = await calibrations.recordInput(scope, calibration.id, {
       inputSha256: canonicalSha256(input), dataSha256: labInputFingerprint(input), dataThrough: input.dataThrough,
-      resultTokenSha256: sha256(resultToken),
+      termsThrough: input.termsThrough, resultTokenSha256: sha256(resultToken),
     });
     // A concurrent fetch recorded its input first.
     if (!recorded) throw refused(ctx, 'input', 'not_live');

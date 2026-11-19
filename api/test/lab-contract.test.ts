@@ -41,9 +41,12 @@ describe('lab contract', () => {
     expect(result.run.dataThrough).toBe(input.dataThrough);
     expect(result.scorecard.comparison?.championRunId).toBe(input.champion?.runId);
     // As the callback checks it, for the calibration the input was built for.
-    const calibration = { id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null };
+    const calibration = {
+      id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null, termsThrough: input.termsThrough,
+    };
     expect(checkLabResult(golden('result.json'), calibration, input.today)).toMatchObject({ ok: true });
-    // Small enough for the callback's body limit with room to spare.
+    // Small enough for the callback's body limit with room to spare: a year-long run (D52) stays under the 192 KB that
+    // would raise LAB_RESULT_LIMIT (design decision 13).
     expect(JSON.stringify(result).length).toBeLessThan(128 * 1024);
   });
 
@@ -60,15 +63,17 @@ describe('lab contract', () => {
     expect(engines.baseline.weeklyWape).toBeLessThanOrEqual(engines.model.weeklyWape - 0.005);
     expect(engines.baseline.weeks).toBe(engines.model.weeks);
     expect(horizon91?.weeks).toBeGreaterThanOrEqual(8);
-    // Its today is two days after its last day of sales, so the run reaches 93 days: past 91, with the reach reported.
+    // Its today is two days after its last day of sales, so its forecast tier reaches 93 days: past 91, with the reach
+    // reported. Its forecast tier is backed, so the run goes on to its today plus 365, the outlook (D52).
     expect(horizonReach?.weeks).toBeGreaterThanOrEqual(8);
-    expect(result.run.days.at(-1)?.date).toBe(new Date(Date.parse(`${input.today}T00:00:00Z`) + 91 * 86_400_000).toISOString().slice(0, 10));
+    expect(result.run.days.at(-1)?.date).toBe(new Date(Date.parse(`${input.today}T00:00:00Z`) + 365 * 86_400_000).toISOString().slice(0, 10));
+    expect(result.scorecard.horizonOutlook.map((report) => report.horizon)).toEqual([182, 365]);
   });
 
   it('checkLabResult holds a result to its calibration: its id, its input’s last day and its current forecast', () => {
     const input = labInputSchema.parse(golden('input.json'));
-    const calibration: Pick<CalibrationRecord, 'id' | 'dataThrough' | 'championRunId'> = {
-      id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null,
+    const calibration: Pick<CalibrationRecord, 'id' | 'dataThrough' | 'championRunId' | 'termsThrough'> = {
+      id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null, termsThrough: input.termsThrough,
     };
     const issuesOf = (changes: Partial<typeof calibration>) => {
       const check = checkLabResult(golden('result.json'), { ...calibration, ...changes }, input.today);
@@ -85,7 +90,9 @@ describe('lab contract', () => {
 
   it('checkLabResult refuses a scorecard week after the calibration’s last day of data', () => {
     const input = labInputSchema.parse(golden('input.json'));
-    const calibration = { id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null };
+    const calibration = {
+      id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null, termsThrough: input.termsThrough,
+    };
     const result = labResultSchema.parse(golden('result.json'));
     if (!result.ok || result.scorecard.comparison === null) return expect.unreachable('the golden result compares with a champion');
     const { backtest, comparison } = result.scorecard;

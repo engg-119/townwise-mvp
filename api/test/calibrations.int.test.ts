@@ -183,7 +183,7 @@ describe('calibrated and stale (14.3, D42)', () => {
       tokenExpiresAt: new Date(now.getTime() + 20 * 60_000), now,
     });
     await calibrations.markRunning(p.scope, id, { now, imageDigest: null });
-    await calibrations.recordInput(p.scope, id, { inputSha256: 'a'.repeat(64), dataSha256: 'b'.repeat(64), dataThrough: LAST, resultTokenSha256: 'c'.repeat(64) });
+    await calibrations.recordInput(p.scope, id, { inputSha256: 'a'.repeat(64), dataSha256: 'b'.repeat(64), dataThrough: LAST, termsThrough: null, resultTokenSha256: 'c'.repeat(64) });
     await calibrations.recordGate(p.scope, id, { published: false, reason: 'refresh_worse' });
     await calibrations.finish(p.scope, id, { status: 'succeeded' }, now);
     const stale = await stateOf(p);

@@ -321,7 +321,9 @@ describe('the job’s callback', () => {
     const championId = await publishedChampion(t);
     const { calibration, job } = await started(t);
     const input = await inputFor(job);
-    expect(input).toMatchObject({ calibrationId: calibration.id, today: '2026-06-01', dataThrough: '2026-05-31', horizonDays: 182, regimeStart: null });
+    expect(input).toMatchObject({
+      calibrationId: calibration.id, today: '2026-06-01', dataThrough: '2026-05-31', horizonDays: 400, termsThrough: '2028-06-06', regimeStart: null,
+    });
     expect(input.days[0]?.date).toBe('2024-10-01');
     expect(input.days.find((day) => day.date === '2026-02-03')).toMatchObject({ closed: true });
     expect(input.champion?.runId).toBe(championId);
@@ -330,7 +332,8 @@ describe('the job’s callback', () => {
     expect(JSON.stringify(input)).not.toContain('private reason');
     const stored = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(calibration.id) });
     expect(stored).toMatchObject({
-      championRunId: championId, dataThrough: '2026-05-31', inputSha256: canonicalSha256(input), dataSha256: labInputFingerprint(input),
+      championRunId: championId, dataThrough: '2026-05-31', termsThrough: '2028-06-06', inputSha256: canonicalSha256(input),
+      dataSha256: labInputFingerprint(input),
     });
 
     const result = labResultFor(input);
@@ -441,8 +444,8 @@ describe('the job’s callback', () => {
     const other = (await started(await team())).job;
     await inputFor(other);
     const result = labResultFor(labInputSchema.parse({
-      schema: 'townwise.lab-input/2', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
-      horizonDays: 182, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false }],
+      schema: 'townwise.lab-input/3', calibrationId: calibration.id, metric: 'guests', today: '2026-06-01', dataThrough: '2026-05-31',
+      horizonDays: 400, termsThrough: null, regimeStart: null, days: [{ date: '2026-05-31', guests: 1, term: 'interim', weekOfTerm: -1, events: [], closed: false, privateEvent: false, booked: false }],
       calendar: [], champion: null,
     }));
     server.logs.length = 0;

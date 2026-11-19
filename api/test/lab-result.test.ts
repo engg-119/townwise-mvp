@@ -1,11 +1,13 @@
-// The lab result as the callback receives it (D42, lab-input/2): its scorecard names the engine, both engines' figures,
-// its weekly bias and the longer-horizon reports, which the gate reads, so a result without them is refused while a
-// stored scorecard from before still parses (lab-scorecard.test.ts). checkLabResult also holds the engine the scorecard
-// names to its run's model family and its params. The golden result is the lab's own (modeling/lab/tests/golden).
+// The lab result as the callback receives it (D42, lab-input/3): its scorecard names the engine, both engines' figures,
+// its weekly bias, the longer-horizon reports, which the gate reads, and both outlook horizons' reports (D52), so a
+// result without them is refused while a stored scorecard from before still parses (lab-scorecard.test.ts).
+// checkLabResult also holds the engine the scorecard names to its run's model family and its params, and checks the
+// outlook for sanity. The golden result is the lab's own (modeling/lab/tests/golden), a year-long baseline run.
 import { readFileSync } from 'node:fs';
 
 import { describe, expect, it } from 'vitest';
 
+import { tierEnd } from '../src/forecasts/tiers.ts';
 import { labInputSchema } from '../src/lab/input.ts';
 import { checkLabResult, labResultSchema, type LabSuccess } from '../src/lab/result.ts';
 import { labScorecardSchema, scorecardSchema } from '../src/lab/scorecard.ts';
@@ -16,7 +18,9 @@ function golden(name: string): unknown {
 }
 
 const input = labInputSchema.parse(golden('input.json'));
-const calibration = { id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null };
+const calibration = {
+  id: input.calibrationId, dataThrough: input.dataThrough, championRunId: input.champion?.runId ?? null, termsThrough: input.termsThrough,
+};
 
 function goldenResult(): LabSuccess {
   const result = labResultSchema.parse(golden('result.json'));
@@ -38,6 +42,7 @@ describe('labResultSchema (D42)', () => {
     expect(typeof scorecard.backtest.weeklyBias).toBe('number');
     expect(scorecard.horizon91?.weeks).toBeGreaterThanOrEqual(8);
     expect(scorecard.horizonReach).not.toBeUndefined();
+    expect(scorecard.horizonOutlook.map((report) => report.horizon)).toEqual([182, 365]);
     expect(issuesOf(golden('result.json'))).toEqual([]);
   });
 
@@ -53,6 +58,10 @@ describe('labResultSchema (D42)', () => {
       { ...result.scorecard, horizon91: undefined },
       { ...result.scorecard, horizonReach: undefined },
       { ...result.scorecard, backtest },
+      // Release B (D52): both outlook horizons, 182 then 365
+      { ...result.scorecard, horizonOutlook: undefined },
+      { ...result.scorecard, horizonOutlook: result.scorecard.horizonOutlook.slice(0, 1) },
+      { ...result.scorecard, horizonOutlook: [...result.scorecard.horizonOutlook].reverse() },
     ]) {
       expect(labResultSchema.safeParse({ ...result, scorecard: without }).success).toBe(false);
     }
@@ -81,8 +90,7 @@ describe('labResultSchema (D42)', () => {
 describe('checkLabResult’s outlook sanity checks (D52)', () => {
   const plus = (day: string, days: number) => new Date(Date.parse(`${day}T00:00:00Z`) + days * 86_400_000).toISOString().slice(0, 10);
   /** The golden result with its run's days running through `last` (each a copy of its first day). */
-  function reaching(last: string): unknown {
-    const result = goldenResult();
+  function reaching(last: string, result: LabSuccess = goldenResult()): LabSuccess {
     const [first] = result.run.days;
     if (first === undefined) throw new Error('the golden run has days');
     const days = [];
@@ -93,17 +101,34 @@ describe('checkLabResult’s outlook sanity checks (D52)', () => {
     { horizon: 182, weeks: 15, weeklyWape: 0.14, coverage80: { inside: 11, weeks: 15 }, ratio: ratios[0], basis: 'growth_or_backtest' },
     { horizon: 365, weeks: 0, weeklyWape: null, coverage80: { inside: 0, weeks: 0 }, ratio: ratios[1], basis: 'growth' },
   ];
-  /** The golden result with `widening` in its params and, when given, `horizonOutlook` in its scorecard. */
-  function widened(widening: unknown[], horizonOutlook?: unknown[]): unknown {
+  const tier = [{ fromLead: 29, ratio: 1 }, { fromLead: 92, ratio: 1.1 }];
+  const anchors = (r182: number, r365: number) => [{ fromLead: 183, ratio: r182, horizon: 182 }, { fromLead: 365, ratio: r365, horizon: 365 }];
+  /** The golden result with `widening` in its params and `horizonOutlook` in its scorecard. */
+  function widened(widening: unknown[], horizonOutlook: unknown[] = outlook([1.6, 2.2])): unknown {
     const result = goldenResult();
+    return { ...result, params: { ...result.params, widening }, scorecard: { ...result.scorecard, horizonOutlook } };
+  }
+  /** `result` as the trained model's: its run's family, its scorecard's engine and model params, which D42 holds together. */
+  function asModel(result: LabSuccess): LabSuccess {
+    const { regimeStart, widenK, weeklyLogRange, widening, horizonDays, minPastWeeks, floor } = result.params;
     return {
-      ...result, params: { ...result.params, widening },
-      scorecard: horizonOutlook === undefined ? result.scorecard : { ...result.scorecard, horizonOutlook },
+      ...result,
+      scorecard: { ...result.scorecard, engine: 'model' },
+      run: { ...result.run, model: { ...result.run.model, family: 'hybrid_linear_xgboost' } },
+      params: {
+        target: 'guests', baseCols: ['dow_Monday'], eventCols: [], regimeStart, widenK, weeklyLogRange, widening, horizonDays, minPastWeeks, floor,
+        xgb: {
+          objective: 'reg:quantileerror', n_estimators: 400, learning_rate: 0.05, max_depth: 4, min_child_weight: 1, subsample: 0.8,
+          colsample_bytree: 0.8, reg_lambda: 1, random_state: 0, n_jobs: 1,
+        },
+        holidayLambdas: { hol_big_night: 1, hol_halloween: 1 }, holidayEffects: { hol_big_night: 1.1, hol_halloween: 1 }, refitEveryMonths: 3,
+      },
     };
   }
 
-  it('passes today’s golden result, and a run reaching a year from its made-at date within 400 days of its data', () => {
+  it('passes today’s golden result, a year-long run, and a run reaching a year from its made-at date within 400 days of its data', () => {
     const result = goldenResult();
+    expect(result.run.days.at(-1)?.date).toBe(plus(result.run.madeAt, 365));
     expect(issuesOf(golden('result.json'))).toEqual([]);
     const year = plus(result.run.madeAt, 365);
     expect(year <= plus(result.run.dataThrough, 400)).toBe(true);
@@ -115,7 +140,7 @@ describe('checkLabResult’s outlook sanity checks (D52)', () => {
     expect(issuesOf(reaching(plus(result.run.madeAt, 366)))).toEqual([{ path: 'run.days', code: 'outlook_too_far' }]);
     // Sales lagging 49 days: the run may reach 400 days after the data (351 after its today), the run file's own limit.
     const madeLate = (lag: number): unknown => {
-      const lagging = reaching(plus(result.run.dataThrough, 400)) as LabSuccess;
+      const lagging = reaching(plus(result.run.dataThrough, 400));
       return { ...lagging, run: { ...lagging.run, madeAt: plus(result.run.dataThrough, lag) } };
     };
     const asOf = (lag: number) => checkLabResult(madeLate(lag), calibration, plus(result.run.dataThrough, lag));
@@ -124,30 +149,47 @@ describe('checkLabResult’s outlook sanity checks (D52)', () => {
     expect(asOf(30)).toMatchObject({ ok: false, issues: [{ path: 'run.days', code: 'outlook_too_far' }] });
   });
 
-  it('refuses widening whose leads do not increase, or whose ratios fall under 1 or decrease, with widening_out_of_order', () => {
-    const refused = [{ path: 'params.widening', code: 'widening_out_of_order' }];
-    const forecastTier = [{ fromLead: 29, ratio: 1 }, { fromLead: 92, ratio: 1.1 }];
-    expect(issuesOf(widened(forecastTier))).toEqual([]);
-    expect(issuesOf(widened([{ fromLead: 29, ratio: 1 }, { fromLead: 29, ratio: 1.1 }]))).toEqual(refused);
-    expect(issuesOf(widened([{ fromLead: 92, ratio: 1.1 }, { fromLead: 29, ratio: 1.2 }]))).toEqual(refused);
-    expect(issuesOf(widened([{ fromLead: 29, ratio: 0.9 }]))).toEqual(refused);
-    expect(issuesOf(widened([{ fromLead: 29, ratio: 1.2 }, { fromLead: 92, ratio: 1.1 }]))).toEqual(refused);
+  it('refuses a model run whose outlook passes the town’s last researched term with outlook_past_terms, never its forecast tier', () => {
+    const result = goldenResult();
+    const tierLast = tierEnd(result.run);
+    const issuesWith = (raw: unknown, termsThrough: string | null) => {
+      const check = checkLabResult(raw, { ...calibration, termsThrough }, input.today);
+      return check.ok ? [] : check.issues;
+    };
+    const refused = [{ path: 'run.days', code: 'outlook_past_terms' }];
+    const terms = plus(tierLast, 120);
+    expect(issuesWith(asModel(reaching(plus(tierLast, 200))), terms)).toEqual(refused);
+    expect(issuesWith(asModel(reaching(terms)), terms)).toEqual([]);
+    // A last researched term before the forecast tier ends cuts the outlook only: the tier is never refused for it
+    expect(issuesWith(asModel(reaching(tierLast)), plus(tierLast, -40))).toEqual([]);
+    expect(issuesWith(asModel(reaching(plus(tierLast, 1))), plus(tierLast, -40))).toEqual(refused);
+    // A town with no researched terms, and the baseline, whose run is never cut
+    expect(issuesWith(asModel(result), null)).toEqual([]);
+    expect(issuesWith(reaching(plus(tierLast, 200)), terms)).toEqual([]);
+    expect(issuesWith(result, plus(tierLast, -40))).toEqual([]);
   });
 
-  it('holds the outlook anchors to horizonOutlook’s ratios when it is reported: a narrowing outlook is refused', () => {
+  it('refuses widening whose leads do not increase, or whose ratios fall under 1 or decrease, with widening_out_of_order', () => {
     const refused = [{ path: 'params.widening', code: 'widening_out_of_order' }];
-    const tier = [{ fromLead: 29, ratio: 1 }, { fromLead: 92, ratio: 1.1 }];
-    const anchors = (r182: number, r365: number) => [...tier, { fromLead: 183, ratio: r182, horizon: 182 }, { fromLead: 366, ratio: r365, horizon: 365 }];
-    expect(issuesOf(widened(anchors(1.6, 2.2), outlook([1.6, 2.2])))).toEqual([]);
-    // Up to 8 entries; anchors with no report (release A) are held only to their order
-    expect(issuesOf(widened(anchors(1.6, 2.2)))).toEqual([]);
+    const outlookAnchors = anchors(1.6, 2.2);
+    expect(issuesOf(widened([...tier, ...outlookAnchors]))).toEqual([]);
+    expect(issuesOf(widened([{ fromLead: 29, ratio: 1 }, { fromLead: 29, ratio: 1.1 }, ...outlookAnchors]))).toEqual(refused);
+    expect(issuesOf(widened([{ fromLead: 92, ratio: 1.1 }, { fromLead: 29, ratio: 1.2 }, ...outlookAnchors]))).toEqual(refused);
+    expect(issuesOf(widened([{ fromLead: 29, ratio: 0.9 }, ...outlookAnchors]))).toEqual(refused);
+    expect(issuesOf(widened([{ fromLead: 29, ratio: 1.2 }, { fromLead: 92, ratio: 1.1 }, ...outlookAnchors]))).toEqual(refused);
+  });
+
+  it('holds the outlook anchors to horizonOutlook’s ratios: a narrowing outlook is refused', () => {
+    const refused = [{ path: 'params.widening', code: 'widening_out_of_order' }];
+    expect(issuesOf(widened([...tier, ...anchors(1.6, 2.2)], outlook([1.6, 2.2])))).toEqual([]);
     // The 365-day anchor lower than the 182-day one
-    expect(issuesOf(widened(anchors(1.6, 1.5), outlook([1.6, 1.5])))).toEqual(refused);
+    expect(issuesOf(widened([...tier, ...anchors(1.6, 1.5)], outlook([1.6, 1.5])))).toEqual(refused);
     // Anchors that differ from the reports, or are missing
-    expect(issuesOf(widened(anchors(1.6, 2.2), outlook([1.6, 2.3])))).toEqual(refused);
+    expect(issuesOf(widened([...tier, ...anchors(1.6, 2.2)], outlook([1.6, 2.3])))).toEqual(refused);
     expect(issuesOf(widened(tier, outlook([1.6, 2.2])))).toEqual(refused);
-    expect(labResultSchema.safeParse(widened([...anchors(1.6, 2.2), ...anchors(2.3, 2.4).slice(2), { fromLead: 400, ratio: 3 }, { fromLead: 401, ratio: 3 }])).success)
-      .toBe(true);
-    expect(labResultSchema.safeParse(widened([...anchors(1.6, 2.2), ...anchors(2.3, 2.4), { fromLead: 400, ratio: 3 }])).success).toBe(false);
+    // Up to 8 entries
+    const many = [...tier, ...anchors(1.6, 2.2), { fromLead: 380, ratio: 2.3 }, { fromLead: 390, ratio: 2.4 }, { fromLead: 400, ratio: 3 }];
+    expect(labResultSchema.safeParse(widened([...many, { fromLead: 401, ratio: 3 }])).success).toBe(true);
+    expect(labResultSchema.safeParse(widened([...many, { fromLead: 401, ratio: 3 }, { fromLead: 402, ratio: 3 }])).success).toBe(false);
   });
 });

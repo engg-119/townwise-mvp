@@ -17,8 +17,9 @@ export function metricsWith(overrides: Partial<Metrics> = {}): Metrics {
 }
 
 /**
- * A lab-input/2 scorecard (D42): a model run by default, its `engines` figures its backtest's (the baseline's a point
- * worse) unless given, a weekly bias of 0 and no longer-horizon reports.
+ * A lab-input/3 scorecard (D42, D52): a model run by default, its `engines` figures its backtest's (the baseline's a
+ * point worse) unless given, a weekly bias of 0, no longer-horizon reports, and the outlook horizons' reports (OUTLOOK,
+ * the growth floor's ratios from a 91-day ratio of 1.2; helpers/lab.ts labResultFor's widening carries their anchors).
  */
 export function scorecardWith(overrides: {
   engine?: LabScorecard['engine'];
@@ -66,8 +67,15 @@ export function scorecardWith(overrides: {
     engines: overrides.engines ?? (engine === 'model' ? { model: own, baseline: other } : { model: other, baseline: own }),
     horizon91: null,
     horizonReach: null,
+    horizonOutlook: OUTLOOK.map((report) => ({ ...report, coverage80: { ...report.coverage80 } })),
   };
 }
+
+/** The outlook horizons' reports scorecardWith gives (D52): no year-ahead backtest, so the growth floor alone. */
+export const OUTLOOK: LabScorecard['horizonOutlook'] = [
+  { horizon: 182, weeks: 0, weeklyWape: null, coverage80: { inside: 0, weeks: 0 }, ratio: 1.2 * Math.sqrt(2), basis: 'growth' },
+  { horizon: 365, weeks: 0, weeklyWape: null, coverage80: { inside: 0, weeks: 0 }, ratio: 1.2 * Math.sqrt(365 / 91), basis: 'growth' },
+];
 
 export function comparisonWith(
   champion: Partial<Metrics>,
