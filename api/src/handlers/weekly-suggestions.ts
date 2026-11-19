@@ -43,6 +43,7 @@ import type { NoteContent, NoteDates, NoteRecord } from '../stores/notes.ts';
 import type { OwnerCalendarRecord, StoredEvent } from '../stores/owner-calendars.ts';
 import { SUGGESTIONS_SEEN_MS } from '../lab/schedule.ts';
 import { coversEvent } from '../lab/suggestions.ts';
+import { isResearchedId, researchedEventsFor } from '../research/read.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
 import { townEvents } from '../town-calendar.ts';
 import { utcDay } from '../dates.ts';
@@ -125,10 +126,19 @@ export function decides(caller: MemberPrincipal): boolean {
   return caller.role === 'org_admin' && caller.viewAs === null;
 }
 
-/** The calendar entries the views name, by id: the town's, from a year back to 400 days on. */
-function calendarById(location: LocationRecord, today: string): Map<string, SuggestionCalendarView> {
+/**
+ * The calendar entries the views name, by id: the town's, from a year back to 400 days on, and (D66) when one of
+ * `records` cites a researched id, the location's researched events in that range after its revisions (research/read.ts;
+ * none while research is off for the organization, when the read fails, or for a hidden one, so its card names nothing).
+ */
+async function calendarById(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, today: string, records: readonly SuggestionRecord[],
+): Promise<Map<string, SuggestionCalendarView>> {
   const at = (days: number): string => utcDay(new Date(`${today}T00:00:00.000Z`), days);
-  return new Map(townEvents(location.town.townId, { from: at(-366), to: at(400) })
+  const range = { from: at(-366), to: at(400) };
+  const cites = records.some((record) => record.calendarIds.some(isResearchedId));
+  const found = cites ? await researchedEventsFor(ctx, caller.scope, location, range) ?? [] : [];
+  return new Map([...townEvents(location.town.townId, range), ...found]
     .map((event) => [event.id, { id: event.id, title: event.title, start: event.start, end: event.end }]));
 }
 
@@ -267,8 +277,7 @@ export async function suggestionsPanel(
     ctx.stores.forecastSchedule.suggestionsState(),
   ]);
   const seen = worker.ranAt !== null && ctx.now().getTime() - worker.ranAt.getTime() <= SUGGESTIONS_SEEN_MS;
-  const calendar = calendarById(location, today);
-  const footing = await footingOf(ctx, caller, location, open);
+  const [calendar, footing] = await Promise.all([calendarById(ctx, caller, location, today, open), footingOf(ctx, caller, location, open)]);
   return {
     suggestions: open.flatMap((record) => suggestionView(caller, record, calendar, footing) ?? []),
     weeklySuggestions: {

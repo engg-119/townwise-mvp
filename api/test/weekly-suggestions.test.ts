@@ -6,14 +6,18 @@
 // titles as sent (no email or phone number), the spotted events kept and the sentinel titles no kept suggestion repeats.
 // D59 slice 3: each item's confidence (required in the schema sent, read leniently), a spotted event's effect choice,
 // and what TownwiseAI would save of a kept suggestion it is sure of (sureChangeOf). Every date, number and title is synthetic.
+// D66 (openspec change town-research-agent, task 5.6): researched events as calendar entries (researchedEntries), the
+// prompt's added sentence only when one is sent, their ids kept, and a suggestion citing one never sure.
 import { describe, expect, it } from 'vitest';
 
 import {
-  GENERIC_TITLE_WORDS, keptSuggestions, MAX_EVENT_SUGGESTIONS, MAX_SUGGESTIONS, sentTitle, SUGGESTIONS_EVENTS_FORMAT, SUGGESTIONS_FORMAT,
-  SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_OWNER_EVENTS_PROMPT, SUGGESTIONS_RESERVE_MICRO_USD, SUGGESTIONS_SYSTEM_PROMPT, suggestionsRequest,
-  suggestionsReserveMicroUsd, suggestionsWeek, sureChangeOf, type OwnerEventEntry, type SentOwnerEvent, type SuggestionChecks, type SuggestionsInput,
+  GENERIC_TITLE_WORDS, keptSuggestions, MAX_EVENT_SUGGESTIONS, MAX_SUGGESTIONS, researchedEntries, sentTitle, SUGGESTIONS_EVENTS_FORMAT, SUGGESTIONS_FORMAT,
+  SUGGESTIONS_MAX_RESEARCHED, SUGGESTIONS_MAX_TOKENS, SUGGESTIONS_OWNER_EVENTS_PROMPT, SUGGESTIONS_RESEARCHED_PROMPT, SUGGESTIONS_RESERVE_MICRO_USD,
+  SUGGESTIONS_SYSTEM_PROMPT, suggestionsRequest, suggestionsReserveMicroUsd, suggestionsWeek, sureChangeOf, type OwnerEventEntry, type SentOwnerEvent,
+  type SuggestionChecks, type SuggestionsInput,
 } from '../src/lab/suggestions.ts';
 import { ceilingCostMicroUsd } from '../src/chat/pricing.ts';
+import type { ResearchedEventView } from '../src/research/read.ts';
 import type { NoteContent } from '../src/stores/notes.ts';
 
 const TODAY = '2026-11-16';
@@ -454,3 +458,72 @@ describe('confidence and what TownwiseAI is sure of (D59 slice 3)', () => {
   });
 });
 
+
+describe('researched events (D66, task 5.6)', () => {
+  const TOWN_ID = 't-0123456789abcdef01234567';
+  const OWN_ID = 'l-89abcdef0123456789abcdef';
+
+  function view(over: Partial<ResearchedEventView> = {}): ResearchedEventView {
+    return {
+      id: TOWN_ID, head: 'base', title: 'Riverbank Trivia Night', start: '2026-12-01', end: '2027-01-26', weekdays: [2], startTime: '19:00',
+      kind: 'event', category: 'dining', status: 'scheduled', origin: 'town', confidence: 'medium', where: 'Riverbank Hall', who: 'Riverbank Club',
+      competitor: null, sources: [
+        { label: 'Riverbank', url: 'https://www.riverbank.example/trivia?week=1' }, { label: 'Riverbank again', url: 'https://www.riverbank.example/events' },
+        { label: 'Town news', url: 'https://news.example/calendar' },
+      ],
+      lastSeenAt: '2026-11-15T12:00:00.000Z', edited: false, hidden: false, ...over,
+    };
+  }
+
+  it('maps a view into a calendar entry: scope researched, its hosts once, its weekdays, no group, history or past days', () => {
+    expect(researchedEntries([view()])).toEqual([{
+      id: TOWN_ID, title: 'Riverbank Trivia Night', start: '2026-12-01', startWeekday: 'Tue', end: '2027-01-26', endWeekday: 'Tue', weekdays: [2],
+      kind: 'event', scope: 'researched', groupLabel: null, confidence: 'medium', sources: ['www.riverbank.example', 'news.example'],
+      history: null, pastDays: null,
+    }]);
+    // Every day of its range: no weekdays key. A closure keeps its kind.
+    const [closure] = researchedEntries([view({ id: OWN_ID, kind: 'closure', weekdays: null, confidence: 'high', start: '2026-12-05', end: '2026-12-05' })]);
+    expect(closure).not.toHaveProperty('weekdays');
+    expect(closure).toMatchObject({ id: OWN_ID, kind: 'closure', scope: 'researched', confidence: 'high' });
+    // No venue, host, status, category, place id or page path is sent.
+    expect(JSON.stringify(researchedEntries([view()]))).not.toMatch(/Riverbank Hall|Riverbank Club|trivia\?|dining|scheduled|lastSeen/);
+  });
+
+  it('leaves out hidden, cancelled and low-confidence views, and keeps the first 60 of the rest in order', () => {
+    const at = (n: number) => `t-${n.toString(16).padStart(24, '0')}`;
+    const kept = researchedEntries([
+      view({ id: at(1), hidden: true }), view({ id: at(2), status: 'cancelled' }), view({ id: at(3), confidence: 'low' }),
+      view({ id: at(4), status: 'postponed' }),
+      ...Array.from({ length: 70 }, (_, i) => view({ id: at(100 + i) })),
+    ]);
+    expect(SUGGESTIONS_MAX_RESEARCHED).toBe(60);
+    expect(kept).toHaveLength(60);
+    expect(kept.map((entry) => entry.id).slice(0, 2)).toEqual([at(4), at(100)]);
+    expect(kept.at(-1)?.id).toBe(at(158));
+  });
+
+  it('adds the researched sentence to the prompt only when one is sent', () => {
+    const base: SuggestionsInput = {
+      today: TODAY, from: '2026-11-17', to: TO, town: { name: 'Hanover', state: 'NH' }, calendar: [], notes: [], rules: [], suggested: [],
+    };
+    expect(suggestionsRequest(base).system).toBe(SUGGESTIONS_SYSTEM_PROMPT);
+    const params = suggestionsRequest({ ...base, calendar: researchedEntries([view()]) });
+    expect(params.system).toBe(`${SUGGESTIONS_SYSTEM_PROMPT}\n\n${SUGGESTIONS_RESEARCHED_PROMPT}`);
+    expect(JSON.parse((params.messages[0]?.content ?? '') as string)).toMatchObject({ calendar: [{ id: TOWN_ID, scope: 'researched', weekdays: [2] }] });
+  });
+
+  it('keeps a suggestion citing a sent researched id, and is never sure of it, whatever its rating', () => {
+    const over = { calendarIds: new Set(['us:thanksgiving:2026', TOWN_ID, OWN_ID]) };
+    const [both, own, unsent] = keptSuggestions(answer(
+      { ...CLOSURE, calendarIds: ['us:thanksgiving:2026', TOWN_ID], confidence: 'high' },
+      { ...CLOSURE, type: 'rule', ruleText: 'Closed for the parade', startDate: '2026-12-05', endDate: '2026-12-05', calendarIds: [OWN_ID], confidence: 'high' },
+      { ...CLOSURE, startDate: '2026-12-06', endDate: '2026-12-06', calendarIds: ['l-ffffffffffffffffffffffff'], confidence: 'high' },
+    ), checks(over));
+    expect(both?.calendarIds).toEqual(['us:thanksgiving:2026', TOWN_ID]);
+    expect(own?.calendarIds).toEqual([OWN_ID]);
+    expect(unsent?.calendarIds).toEqual([]);
+    for (const kept of [both, own]) expect(kept === undefined ? undefined : sureChangeOf(kept, TODAY)).toBeNull();
+    // The same note citing only the holiday is still sure.
+    expect(unsent === undefined ? undefined : sureChangeOf(unsent, TODAY)).toMatchObject({ type: 'note' });
+  });
+});
