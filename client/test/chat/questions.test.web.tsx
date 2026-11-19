@@ -634,3 +634,32 @@ describe('?panel=questions (Home’s link)', () => {
     expect(wrap.nextElementSibling).toBe(screen.getByTestId('chat-landing-questions'));
   });
 });
+
+describe('D65: ?panel=activity (the links to a forecast’s runs)', () => {
+  test('at 390px it opens the row with What it’s been doing first, brings it into view, and drops the parameter', async () => {
+    setWidth(390);
+    const scrolled: string[] = [];
+    // jsdom lays nothing out and may have no scrollIntoView: a stand-in records which element asked.
+    const original = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'scrollIntoView');
+    Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
+      configurable: true, writable: true, value: function scrollIntoView(this: HTMLElement) { scrolled.push(this.id); },
+    });
+    try {
+      renderAt('/locations/l1/agent?panel=activity', chatApi());
+      const side = await screen.findByTestId('agent-side');
+      expect(screen.getByRole('button', { name: /^Questions and activity/ }).getAttribute('aria-expanded')).toBe('true');
+      expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
+      await waitFor(() => { expect(scrolled).toContain('agent-activity'); });
+      await waitFor(() => { expect(window.location.search).not.toContain('panel'); });
+    } finally {
+      if (original === undefined) Reflect.deleteProperty(HTMLElement.prototype, 'scrollIntoView');
+      else Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', original);
+    }
+  });
+
+  test('at 1280px the column opens with What it’s been doing first', async () => {
+    renderAt('/locations/l1/agent?panel=activity', chatApi());
+    const side = await screen.findByTestId('agent-side');
+    expect(within(side).getAllByRole('heading')[0]?.textContent).toBe('What it’s been doing');
+  });
+});

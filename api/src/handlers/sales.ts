@@ -238,7 +238,7 @@ export async function applyUpload(ctx: TownwiseContext, scope: OrgScope, locatio
   await ctx.stores.uploads.finish(scope, started.id, counts);
   ctx.logger.info({ orgId: scope.orgId, locationId, uploadId: started.id, dayCount: days.length }, 'townwise.upload_applied');
   // D59: new or replaced days change what the lab trains on.
-  await wantRefitFor(ctx, scope, locationId, 'always');
+  await wantRefitFor(ctx, scope, locationId, 'always', 'sales');
   // D59 slice 5: the location's calendars answer the sales history's suggestions these days make (it never throws).
   const location = await ctx.stores.locations.find(scope, locationId);
   if (location !== null) {

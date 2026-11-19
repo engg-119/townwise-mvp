@@ -7,7 +7,7 @@ import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import type { TownwiseContext } from '../src/app.ts';
-import { scopeForNewOrg, type Principal } from '../src/access/policy.ts';
+import { scopeForNewOrg, type OrgScope, type Principal } from '../src/access/policy.ts';
 import { createLocation, type LocationSummary } from '../src/handlers/locations.ts';
 import type { TownProfile } from '../src/handlers/towns.ts';
 import { createGooglePlacesClient } from '../src/places/google.ts';
@@ -30,7 +30,7 @@ beforeEach(async () => { await server.redis.flushdb(); });
 const NO_SALES = {
   placeId: null,
   coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
-  calibration: { state: 'no_sales_data' },
+  calibration: { state: 'no_sales_data', updating: null },
   notesCount: 0,
   lastUploadAt: null,
   offDayCount: 0,
@@ -89,7 +89,7 @@ describe('GET /api/org', () => {
         {
           id: busy, name: 'Busy Room', town, placeId: null,
           coverage: { dayCount: 2, guestsDayCount: 1, netSalesDayCount: 1, firstDate: '2026-05-01', lastDate: '2026-05-04', missingDays: 2 },
-          calibration: { state: 'not_calibrated', dayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04' },
+          calibration: { state: 'not_calibrated', dayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04', updating: null, lastRun: null },
           notesCount: 1, lastUploadAt: uploadedAt.toISOString(), offDayCount: 0, researching: null,
         },
         { id: quiet, name: 'Quiet Room', town, ...NO_SALES },
@@ -108,6 +108,45 @@ describe('GET /api/org', () => {
     expect(await (await call(server, '/api/org', { session: t.admin })).json()).toMatchObject({ locations: [], requestedLocationCount: null });
     const outsider = await signIn(server, `outside-${randomUUID().slice(0, 8)}@example.test`);
     expect(await errorOf(await call(server, '/api/org', { session: outsider }))).toEqual({ status: 403, error: 'no_access' });
+  });
+});
+
+describe('GET /api/org while a forecast updates (D65)', () => {
+  const MINUTE = 60_000;
+
+  it('reads running for the location whose calibration is live, and a failed last run with no write once it is past 20 minutes', async () => {
+    const t = await team('Updating Diner');
+    const busy = await addLocation(server, { orgId: t.orgId, name: 'Busy Room' });
+    const stuck = await addLocation(server, { orgId: t.orgId, name: 'Stuck Room' });
+    const quiet = await addLocation(server, { orgId: t.orgId, name: 'Quiet Room' });
+    for (const locationId of [busy, stuck, quiet]) {
+      await addSalesDay(server, { orgId: t.orgId, locationId, date: '2026-05-01', guests: 80, netSalesCents: null });
+    }
+    const queue = async (locationId: string, requestedAt: Date): Promise<string> => {
+      const id = new Types.ObjectId().toHexString();
+      await server.ctx.stores.calibrations.insertQueued({ orgId: t.orgId } as OrgScope, {
+        id, locationId, requestedBy: { userId: t.admin.userId, role: 'org_admin', via: 'chat' }, regimeStart: null, championRunId: null,
+        tokenExpiresAt: new Date(requestedAt.getTime() + 20 * MINUTE), now: requestedAt,
+      });
+      return id;
+    };
+    const now = server.clock.now();
+    await queue(busy, now);
+    const old = new Date(now.getTime() - 25 * MINUTE);
+    const id = await queue(stuck, old);
+    const before = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) });
+    let read: Record<string, unknown> = {};
+    const writes = await writesDuring(server, async () => {
+      const body = await (await call(server, '/api/org', { session: t.member })).json() as { locations: LocationSummary[] };
+      read = Object.fromEntries(body.locations.map((location) => [location.id, location.calibration]));
+    });
+    expect(writes.filter((write) => write.includes('tw_calibrations'))).toEqual([]);
+    expect(read[busy]).toMatchObject({ state: 'not_calibrated', updating: { stage: 'running', since: now.toISOString() }, lastRun: null });
+    expect(read[stuck]).toMatchObject({
+      updating: null, lastRun: { outcome: 'not_run', reason: 'failed', finishedAt: new Date(old.getTime() + 20 * MINUTE).toISOString() },
+    });
+    expect(read[quiet]).toMatchObject({ state: 'not_calibrated', updating: null, lastRun: null });
+    expect(await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(id) })).toEqual(before);
   });
 });
 

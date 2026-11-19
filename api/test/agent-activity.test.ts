@@ -3,14 +3,21 @@
 // applied is left out; Undo is offered only on an applied change whose target is still as it was, to a caller the
 // action's role allows, never under view-as; a `sales_days.add` change shows once, in place of its upload; and the
 // log's view carries the why outside view-as only; (slice 3) a rule TownwiseAI added is undoable while unchanged.
+// D65 (openspec change forecast-training-status, design decision 6): each finished forecast run as `forecast_made`, a
+// live one past its 20 minutes as a failed run, with codes, dates and day counts only, the newest 5 kept through the cut.
 // Synthetic records.
 import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
-import { activityFor, agentChangeSource, ACTIVITY_SOURCES, type ActivityInput } from '../src/agent/activity.ts';
+import {
+  activityFor, agentChangeSource, ACTIVITY_SOURCES, forecastMadeSource, MAX_ACTIVITY, type ActivityInput, type ActivitySource,
+} from '../src/agent/activity.ts';
 import { changeView, mayUndo, targetStates, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import type { AgentChangeRecord } from '../src/stores/agent-changes.ts';
+import type { CalibrationRecord } from '../src/stores/calibrations.ts';
+import type { RunState } from '../src/stores/forecasts.ts';
+import { calibrationRecord } from './helpers/calibration-record.ts';
 
 const SCOPE = { orgId: 'a'.repeat(24) } as unknown as OrgScope;
 const LOCATION = 'b'.repeat(24);
@@ -78,7 +85,7 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
       expect.objectContaining({ changeId: undone.id, status: 'undone', undoable: false }),
     ]);
     expect(JSON.stringify(items)).not.toContain(SENTINEL);
-    expect(ACTIVITY_SOURCES.at(-1)).toBe(agentChangeSource);
+    expect(ACTIVITY_SOURCES.at(-2)).toBe(agentChangeSource);
   });
 
   it('offers no Undo once a person edited the note, once it is gone, under view-as, or with no caller', async () => {
@@ -183,5 +190,146 @@ describe('who may undo, and the log’s view (D59)', () => {
     });
     expect(changeView(VIEW_AS, row, states)).toMatchObject({ why: null, undoable: false });
     expect(changeView(MEMBER, { ...row, status: 'applying' }, states)).toMatchObject({ targetId: null, undoable: false });
+  });
+});
+
+describe('finished forecast runs in its activity (D65)', () => {
+  const NOW = new Date('2026-11-23T09:00:00.000Z');
+  const MINUTE = 60_000;
+
+  /** A context whose stores answer these calibrations (newest first, as the store reads them), their runs and the first published run. */
+  function runsContext(
+    records: readonly CalibrationRecord[],
+    { runs = {}, first = null, changes = [] }: {
+      runs?: Record<string, RunState>; first?: { runId: string; publishedAt: Date } | null; changes?: readonly AgentChangeRecord[];
+    } = {},
+  ): { ctx: TownwiseContext; reads: { runIds: string[][]; firsts: number } } {
+    const reads = { runIds: [] as string[][], firsts: 0 };
+    const base = contextWith(changes);
+    const ctx = {
+      ...base,
+      now: () => NOW,
+      stores: {
+        ...base.stores,
+        calibrations: { list: (_scope: OrgScope, limit: number) => Promise.resolve(records.slice(0, limit)) },
+        forecasts: {
+          runStates: (_scope: OrgScope, runIds: readonly string[]) => {
+            reads.runIds.push([...runIds]);
+            return Promise.resolve(new Map(runIds.flatMap((id) => (runs[id] === undefined ? [] : [[id, runs[id]] as const]))));
+          },
+          firstPublished: () => {
+            reads.firsts += 1;
+            return Promise.resolve(first);
+          },
+        },
+      },
+    } as unknown as TownwiseContext;
+    return { ctx, reads };
+  }
+
+  const minutesAgo = (minutes: number): Date => new Date(NOW.getTime() - minutes * MINUTE);
+  const draft: RunState = { status: 'draft', publishedAt: null, publishedBy: null };
+
+  it('lists a run the gate kept with its causes and days, and nothing else; the source is the last one', async () => {
+    const kept = calibrationRecord({
+      id: 'k1', requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['sales'], runId: 'r1',
+      gate: { published: false, reason: 'not_better' }, dayCount: 1041, dataFrom: '2024-01-01', dataThrough: '2026-11-21', newDays: 6,
+      scorecardJson: '{"mae":12.5}', requestedAt: minutesAgo(50), finishedAt: minutesAgo(44),
+    });
+    const { ctx } = runsContext([kept], {
+      runs: { r1: draft }, first: { runId: 'r0', publishedAt: new Date('2026-01-05T10:00:00.000Z') },
+    });
+    const items = await activityFor(input(ctx, ADMIN), [forecastMadeSource]);
+    expect(items).toEqual([{
+      at: minutesAgo(44).toISOString(), kind: 'forecast_made', calibrationId: 'k1', causes: ['sales'], outcome: 'kept',
+      reason: 'not_more_accurate', firstForecast: false, dayCount: 1041, firstDate: '2024-01-01', lastDate: '2026-11-21', newDays: 6,
+    }]);
+    // No accuracy and no figure of the scorecard.
+    expect(JSON.stringify(items)).not.toContain('12.5');
+    expect(ACTIVITY_SOURCES.at(-1)).toBe(forecastMadeSource);
+  });
+
+  it('merges with uploads by when each finished, reading the runs once and the first run once', async () => {
+    const older = calibrationRecord({ id: 'o1', status: 'failed', failure: 'timeout', requestedAt: minutesAgo(300), finishedAt: minutesAgo(280) });
+    const newer = calibrationRecord({
+      id: 'n1', runId: 'r2', gate: { published: true, reason: 'published' }, requestedAt: minutesAgo(30), finishedAt: minutesAgo(24),
+    });
+    const { ctx, reads } = runsContext([newer, older], {
+      runs: { r2: { status: 'published', publishedAt: minutesAgo(24), publishedBy: null } }, first: { runId: 'r2', publishedAt: minutesAgo(24) },
+    });
+    const upload: ActivitySource = () => Promise.resolve([{
+      at: minutesAgo(100).toISOString(), kind: 'upload_applied', firstDate: '2026-11-01', lastDate: '2026-11-21', dayCount: 21,
+    }]);
+    const items = await activityFor(input(ctx, ADMIN), [upload, forecastMadeSource]);
+    expect(items.map((item) => [item.kind, item.kind === 'forecast_made' ? [item.calibrationId, item.outcome, item.reason, item.firstForecast] : null]))
+      .toEqual([
+        ['forecast_made', ['n1', 'published', 'published', true]],
+        ['upload_applied', null],
+        ['forecast_made', ['o1', 'not_run', 'failed', true]],
+      ]);
+    expect(reads).toEqual({ runIds: [['r2']], firsts: 1 });
+  });
+
+  it('leaves a live run under its 20 minutes out, and lists one past them as failed at its request plus 20 minutes, read only', async () => {
+    const running = calibrationRecord({ id: 'l1', status: 'running', finishedAt: null, requestedAt: minutesAgo(19) });
+    const stale = calibrationRecord({ id: 'l0', status: 'queued', finishedAt: null, requestedAt: minutesAgo(21) });
+    const { ctx } = runsContext([running, stale]);
+    expect(await activityFor(input(ctx, ADMIN), [forecastMadeSource])).toEqual([expect.objectContaining({
+      at: minutesAgo(1).toISOString(), calibrationId: 'l0', outcome: 'not_run', reason: 'failed', firstForecast: true,
+    })]);
+    // Only live ones under 20 minutes: nothing is read beyond the calibrations.
+    const { ctx: quiet, reads } = runsContext([running]);
+    expect(await activityFor(input(quiet, ADMIN), [forecastMadeSource])).toEqual([]);
+    expect(reads).toEqual({ runIds: [], firsts: 0 });
+  });
+
+  it('keeps the newest 5 runs through the cut when 20 TownwiseAI changes are newer', async () => {
+    const changes = Array.from({ length: MAX_ACTIVITY }, (_, i) => change({ appliedAt: minutesAgo(10 + i) }));
+    const runs = Array.from({ length: 7 }, (_, i) => calibrationRecord({
+      id: `run${String(i)}`, status: 'failed', failure: 'job_failed', requestedAt: minutesAgo(200 + i * 60), finishedAt: minutesAgo(190 + i * 60),
+    }));
+    const { ctx } = runsContext(runs, { changes });
+    const items = await activityFor(input(ctx, ADMIN), [agentChangeSource, forecastMadeSource]);
+    expect(items).toHaveLength(MAX_ACTIVITY);
+    expect(items.flatMap((item) => (item.kind === 'forecast_made' ? [item.calibrationId] : [])))
+      .toEqual(['run0', 'run1', 'run2', 'run3', 'run4']);
+    // The newest 15 changes fill the rest, newest first, and the runs come after them.
+    expect(items.slice(0, 15).every((item) => item.kind === 'agent_change')).toBe(true);
+    // With room to spare, older runs past the 5 are listed too.
+    const { ctx: roomy } = runsContext(runs);
+    expect(await activityFor(input(roomy, ADMIN), [forecastMadeSource])).toHaveLength(7);
+  });
+
+  it('a run is the first forecast only when no other run was published at or before it finished', async () => {
+    const finished = minutesAgo(44);
+    const record = calibrationRecord({ id: 'f1', runId: 'r5', gate: { published: false, reason: 'baseline_not_beaten' }, finishedAt: finished });
+    const first = async (published: { runId: string; publishedAt: Date } | null): Promise<unknown> => {
+      const { ctx } = runsContext([record], { runs: { r5: draft }, first: published });
+      const [item] = await activityFor(input(ctx, ADMIN), [forecastMadeSource]);
+      return item?.kind === 'forecast_made' ? [item.reason, item.firstForecast] : null;
+    };
+    expect(await first(null)).toEqual(['not_beat_average', true]);
+    // A run published (and since lapsed or withdrawn) before: not a first forecast.
+    expect(await first({ runId: 'r0', publishedAt: new Date('2026-03-01T10:00:00.000Z') })).toEqual(['not_beat_average', false]);
+    expect(await first({ runId: 'r0', publishedAt: finished })).toEqual(['not_beat_average', false]);
+    // Another run published after it finished, or its own run: still the first.
+    expect(await first({ runId: 'r0', publishedAt: new Date(finished.getTime() + 1) })).toEqual(['not_beat_average', true]);
+    expect(await first({ runId: 'r5', publishedAt: new Date(finished.getTime() + MINUTE) })).toEqual(['not_beat_average', true]);
+  });
+
+  it('answers the same items under view-as as to the owner, and with no caller, with codes, dates and counts only', async () => {
+    const staffRun = calibrationRecord({
+      id: 's1', requestedBy: { userId: 'staff-1', role: 'superadmin', via: 'chat' }, runId: 'r6', gate: { published: false, reason: 'jump_held' },
+      dayCount: 400, dataFrom: '2025-10-01', newDays: null,
+    });
+    const { ctx } = runsContext([staffRun], { runs: { r6: { status: 'published', publishedAt: NOW, publishedBy: 'staff-1' } } });
+    const owner = await activityFor(input(ctx, ADMIN), [forecastMadeSource]);
+    expect(await activityFor(input(ctx, VIEW_AS), [forecastMadeSource])).toEqual(owner);
+    expect(await activityFor(input(ctx), [forecastMadeSource])).toEqual(owner);
+    expect(owner).toEqual([{
+      at: '2026-11-23T08:16:00.000Z', kind: 'forecast_made', calibrationId: 's1', causes: ['staff'], outcome: 'published',
+      reason: 'published_by_staff', firstForecast: true, dayCount: 400, firstDate: '2025-10-01', lastDate: '2026-11-15', newDays: null,
+    }]);
+    expect(JSON.stringify(owner)).not.toContain('staff-1');
   });
 });

@@ -7,7 +7,7 @@ jest.mock('expo-splash-screen', () => ({
   hideAsync: jest.fn(() => Promise.resolve()),
 }));
 
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { act, cleanup, fireEvent, renderRouter, screen, waitFor, within } from 'expo-router/testing-library';
 import { Dimensions, Pressable, Text, View } from 'react-native';
 import type { z } from 'zod';
@@ -23,7 +23,7 @@ import {
 } from '../helpers/portal';
 
 // The location layout (spec 15.2) around stand-in pages: the first load, a reload of the organization
-// (reloadOrg, after a write), a reload whose answer lacks the location, a failed reload, and a new GET /api/me,
+// (reloadOrg, after a write), a refresh in place (refreshOrg, D65's poll while a forecast updates), a reload whose answer lacks the location, a failed reload, and a new GET /api/me,
 // after which cached organization data is cleared (4.3). When the layout puts its loading line or error in place
 // of the page, expo-router moves the address to the location's first page, so those tests open the page again
 // from the top bar's sections. Home's title greets the person by the name they gave Townwise (P11); TownwiseAI has
@@ -63,12 +63,21 @@ let mounts = 0;
 
 function Probe(): React.JSX.Element {
   const { location, org } = useLocation();
-  const { reloadOrg, refreshMe } = usePortal();
+  const { reloadOrg, refreshMe, refreshOrg } = usePortal();
+  const [refreshed, setRefreshed] = useState<string | null>(null);
   useEffect(() => { mounts += 1; }, []);
   return (
     <View>
       <Text>{`Probe: ${location.name}, ${org.role}`}</Text>
+      {refreshed === null ? null : <Text>{`Refresh: ${refreshed}`}</Text>}
       <Pressable role="button" accessibilityLabel="Reload" onPress={reloadOrg}><Text>Reload</Text></Pressable>
+      <Pressable
+        role="button"
+        accessibilityLabel="Refresh"
+        onPress={() => { refreshOrg().then(() => { setRefreshed('read'); }, () => { setRefreshed('failed'); }); }}
+      >
+        <Text>Refresh</Text>
+      </Pressable>
       <Pressable role="button" accessibilityLabel="Read access again" onPress={() => { void refreshMe(); }}>
         <Text>Read access again</Text>
       </Pressable>
@@ -150,6 +159,74 @@ test('a reload keeps the page mounted on its tab with the answer before it, then
   expect(await screen.findByText('Probe: Main Street Tavern, org_admin')).toBeTruthy();
   expect(router.getPathname()).toBe('/locations/l1/town');
   expect(mounts).toBe(1);
+});
+
+test('D65: a refresh reads the organization in place, with no loading state, and a failed one keeps what shows', async () => {
+  const api = adminApi();
+  await renderTab(api);
+  await screen.findByText('Probe: Main Street Bar, org_admin');
+  const held = holdOrg(api);
+  api.org = orgOf('org_admin', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, name: 'Main Street Tavern' } : location)));
+  await fireEvent.press(screen.getByRole('button', { name: 'Refresh' }));
+  expect(screen.queryByTestId('skeleton-location')).toBeNull();
+  expect(screen.getByText('Probe: Main Street Bar, org_admin')).toBeTruthy();
+  await held.release();
+  expect(await screen.findByText('Probe: Main Street Tavern, org_admin')).toBeTruthy();
+  expect(screen.getByText('Refresh: read')).toBeTruthy();
+  expect(mounts).toBe(1);
+  // Offline: the refresh rejects, and the page keeps the answer it had, with no error in its place.
+  api.org = offline();
+  await fireEvent.press(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByText('Refresh: failed')).toBeTruthy();
+  expect(screen.getByText('Probe: Main Street Tavern, org_admin')).toBeTruthy();
+  expect(screen.queryByText('Can’t reach Townwise. Check your connection and try again.')).toBeNull();
+  expect(mounts).toBe(1);
+});
+
+test('D65: a reload started after a refresh wins over the refresh’s later answer', async () => {
+  const api = adminApi();
+  await renderTab(api);
+  await screen.findByText('Probe: Main Street Bar, org_admin');
+  const gate = deferred<null>();
+  const json = api.json.bind(api);
+  // The refresh's read is held; the reload's answers at once with a newer name.
+  let first = true;
+  api.json = (path, schema, opts) => {
+    if (path !== '/api/org' || !first) return json(path, schema, opts);
+    first = false;
+    const stale = orgOf('org_admin', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, name: 'Old Name' } : location)));
+    return gate.promise.then(() => schema.parse(stale));
+  };
+  await fireEvent.press(screen.getByRole('button', { name: 'Refresh' }));
+  api.org = orgOf('org_admin', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, name: 'New Name' } : location)));
+  await fireEvent.press(screen.getByRole('button', { name: 'Reload' }));
+  expect(await screen.findByText('Probe: New Name, org_admin')).toBeTruthy();
+  await act(async () => { gate.resolve(null); await gate.promise; });
+  expect(screen.getByText('Probe: New Name, org_admin')).toBeTruthy();
+  expect(screen.queryByText('Probe: Old Name, org_admin')).toBeNull();
+});
+
+test('D65: a refresh started after a reload, and answered first, wins over the reload’s later answer', async () => {
+  const api = adminApi();
+  await renderTab(api);
+  await screen.findByText('Probe: Main Street Bar, org_admin');
+  const gate = deferred<null>();
+  const json = api.json.bind(api);
+  // The reload's read is held and answers the name from before; the poll's refresh, started after it, answers at once.
+  let first = true;
+  api.json = (path, schema, opts) => {
+    if (path !== '/api/org' || !first) return json(path, schema, opts);
+    first = false;
+    const stale = orgOf('org_admin', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, name: 'Old Name' } : location)));
+    return gate.promise.then(() => schema.parse(stale));
+  };
+  await fireEvent.press(screen.getByRole('button', { name: 'Reload' }));
+  api.org = orgOf('org_admin', LOCATIONS.map((location) => (location.id === 'l1' ? { ...location, name: 'New Name' } : location)));
+  await fireEvent.press(screen.getByRole('button', { name: 'Refresh' }));
+  expect(await screen.findByText('Probe: New Name, org_admin')).toBeTruthy();
+  await act(async () => { gate.resolve(null); await gate.promise; });
+  expect(screen.getByText('Probe: New Name, org_admin')).toBeTruthy();
+  expect(screen.queryByText('Probe: Old Name, org_admin')).toBeNull();
 });
 
 test('a reload whose answer lacks the location says it isn’t available, with a way back to Locations', async () => {

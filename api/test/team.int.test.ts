@@ -15,7 +15,7 @@ import {
 import { createCapturingTransport } from './helpers/mail.ts';
 
 let server: TownwiseTestServer;
-/** Nothing in this file may send an email (spec D14: only a request and its approval do). */
+/** Nothing in this file may send an email (spec D14: only a request, its approval and a location's first forecast do). */
 const mail = createCapturingTransport();
 
 beforeAll(async () => { server = await startTownwiseServer({ mailTransport: mail }); });

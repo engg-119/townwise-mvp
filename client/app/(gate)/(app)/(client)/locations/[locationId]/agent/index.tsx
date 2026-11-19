@@ -36,7 +36,9 @@ import { allUploadsOff } from '../../../../../../../src/portal/locations/sales';
 // for what TownwiseAI says it reads and How TownwiseAI works' forecast line. `?order=YYYY-MM-DD` (and `&item=`, from
 // Orders) fills it with a question about that order, drafted only from the location's own live board (GET .../orders,
 // never the sample); an order or item the board doesn't have fills nothing. `?panel=questions` (Home's "N questions
-// from TownwiseAI") opens the panel on load, Questions for you first, and the address drops it.
+// from TownwiseAI") opens the panel on load, Questions for you first, and the address drops it. `?panel=activity` (D65:
+// the dashboard's, Home's and the model card's links to a forecast's runs) opens it with What it’s been doing first,
+// in view on web, and the address drops it too.
 // A question's Something else… sends its message through the chat drawn here, and on web focus goes to the composer,
 // as after a chip. The turn opens a conversation, so the panel goes with the landing; a turn refused outright leaves
 // the landing and the panel, with the card's words and the reason in view.
@@ -84,16 +86,20 @@ export default function TownwiseAIScreen(): React.JSX.Element {
   // Open by default beside the landing from 641px, collapsed under the chips at 640px and below, until the person chooses.
   const [chosen, setChosen] = useState<boolean | null>(null);
   const panelOpen = chosen ?? !phone;
-  // ?panel=questions opens the panel once per arrival; the person can close it, and the address drops it. At 640px and
-  // below it opens with Questions for you first, until the person opens or closes the row.
-  const askedPanel = params.panel === 'questions';
-  const [openedFor, setOpenedFor] = useState(false);
+  // ?panel=questions and ?panel=activity open the panel once per arrival; the person can close it, and the address drops
+  // it. Questions open with Questions for you first at 640px and below, and activity with What it’s been doing first at
+  // every width, until the person opens or closes the panel.
+  const askedFor = params.panel === 'questions' || params.panel === 'activity' ? params.panel : null;
+  const askedPanel = askedFor !== null;
+  const [openedFor, setOpenedFor] = useState<'questions' | 'activity' | null>(null);
   const [questionsFirst, setQuestionsFirst] = useState(false);
-  if (askedPanel !== openedFor) {
-    setOpenedFor(askedPanel);
-    if (askedPanel) {
+  const [activityFirst, setActivityFirst] = useState(false);
+  if (askedFor !== openedFor) {
+    setOpenedFor(askedFor);
+    if (askedFor !== null) {
       setChosen(true);
-      setQuestionsFirst(true);
+      setQuestionsFirst(askedFor === 'questions');
+      setActivityFirst(askedFor === 'activity');
     }
   }
   // This screen's own navigation: the router's setParams goes to the focused route, which isn't ready while the page mounts.
@@ -141,6 +147,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
       about={about.state}
       onRetryAbout={about.reload}
       showQuestions={!landingShowsQuestions(chat.state, panel, phone)}
+      activityFirst={activityFirst}
     />
   );
 
@@ -162,6 +169,7 @@ export default function TownwiseAIScreen(): React.JSX.Element {
             onTogglePanel={() => {
               setChosen(!panelOpen);
               setQuestionsFirst(false);
+              setActivityFirst(false);
             }}
             openQuestions={questions}
             panelSections={sections}

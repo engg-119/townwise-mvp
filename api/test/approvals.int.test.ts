@@ -782,7 +782,7 @@ describe('email (spec D14)', () => {
     expect(await approvedTo(racer.email)).toHaveLength(1);
   });
 
-  it('a rejection sends no email (only the two emails exist), and an approve and reject race mails only an approval that won', async () => {
+  it('a rejection sends no email (no email reports one), and an approve and reject race mails only an approval that won', async () => {
     const person = await requester('mail-reject');
     mail.sent.length = 0;
     expect((await reject(person.requestId, { message: 'Sentinel decision' })).status).toBe(200);

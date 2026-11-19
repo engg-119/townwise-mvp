@@ -96,6 +96,18 @@ test('a change TownwiseAI saved shows in its activity with Undo, which sends to 
   expect(api.writes).toEqual([{ method: 'POST', path: CHANGE, body: undefined }]);
 });
 
+test('D65: the API’s forecast run shows its outcome, then what started it and the days it used, with no Undo', async () => {
+  renderAt(chatApi());
+  const panel = await side();
+  const outcome = 'Not published: it wasn’t more accurate than a simple weekday average.';
+  expect(within(panel).getByText(outcome)).toBeTruthy();
+  expect(within(panel).getByText('After new sales history was added and after your notes or rules changed. 412 days, Mar 1, 2025 to May 31, 2026.')).toBeTruthy();
+  expect(within(panel).queryByRole('button', { name: `Undo: ${outcome}` })).toBeNull();
+  // In the API's order, newest first: after the file read.
+  const text = within(panel).getByTestId('agent-activity').textContent;
+  expect(text.indexOf('Read your file')).toBeLessThan(text.indexOf(outcome));
+});
+
 test('slice 2: Undo on a calendar’s labels reads the panel again, since it also took back that calendar’s notes', async () => {
   const labels = {
     at: '2026-06-01T08:00:00.000Z', kind: 'agent_change', changeId: '0000000000000000000000e1', action: 'booking.label', sourceKind: 'calendar',

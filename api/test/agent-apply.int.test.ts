@@ -100,7 +100,7 @@ describe('applyChange', () => {
     await addSalesDay(server, { orgId: p.orgId, locationId: p.locationId, date: '2026-05-31', guests: 100, netSalesCents: null });
     expect((await applyChange(server.ctx, p.scope, candidate(p, { note: content({ startDate: '2026-05-30', endDate: '2026-05-30' }) }))).outcome)
       .toBe('applied');
-    expect(await refitOf(p)).toEqual({ wantedAt: server.clock.now() });
+    expect(await refitOf(p)).toEqual({ wantedAt: server.clock.now(), causes: ['townwise_ai'] });
   });
 
   it('a retry of a change applied before its refit mark landed marks the refit', async () => {
@@ -111,7 +111,7 @@ describe('applyChange', () => {
     // As if the first attempt stopped between marking the row applied and marking the refit.
     await server.connection.collection('tw_locations').updateOne({ _id: new Types.ObjectId(p.locationId) }, { $unset: { refit: 1 } });
     expect((await applyChange(server.ctx, p.scope, c)).outcome).toBe('applied');
-    expect(await refitOf(p)).toEqual({ wantedAt: server.clock.now() });
+    expect(await refitOf(p)).toEqual({ wantedAt: server.clock.now(), causes: ['townwise_ai'] });
   });
 
   it('a retry finishes a change that stopped after its row, or after its note, with one note and one event', async () => {
@@ -319,7 +319,7 @@ describe('applyChange, slice 3: rules', () => {
     const q = await place();
     await addSalesDay(server, { orgId: q.orgId, locationId: q.locationId, date: '2026-05-31', guests: 100, netSalesCents: null });
     expect((await applyChange(server.ctx, q.scope, ruleCandidate(q, { schedule: { ...MONDAYS, startDate: '2026-05-04' } }))).outcome).toBe('applied');
-    expect(await refitOf(q)).toEqual({ wantedAt: server.clock.now() });
+    expect(await refitOf(q)).toEqual({ wantedAt: server.clock.now(), causes: ['townwise_ai'] });
   });
 
   it('TownwiseAI’s own rule nobody edited blocks no candidate; once a person edits it, it is theirs and does', async () => {

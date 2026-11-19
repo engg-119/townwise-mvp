@@ -54,14 +54,14 @@ import { Types } from 'mongoose';
 import { scopeForWeeklyRefresh, type OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter, SYSTEM_ACTOR } from '../audit.ts';
-import { SCHEDULE_START_HOUR } from '../calibration.ts';
+import { REFIT_EVERY_MS, SCHEDULE_START_HOUR } from '../calibration.ts';
 import { daysBetween, utcDay } from '../dates.ts';
 import { FORECAST_TIER_DAYS, forecastThrough, tierEnd } from '../forecasts/tiers.ts';
 import { LIVE_STATUSES } from '../stores/calibrations.ts';
 import type { ChatModel } from '../chat/model.ts';
 import {
   countedWeekRows, countRefitStartsSince, earlyPassCandidates, liveScheduledCalibrations, refitCandidates, staleStartingWeeks,
-  staleSuggestionPasses, suggestionCandidates, weeklyCandidates, type RefitCandidate, type WeeklyCandidate,
+  staleSuggestionPasses, suggestionCandidates, weeklyCandidates, type RefitCandidate, type RefitMark, type WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import { localDay, localMinutes, timeZoneOf } from '../time-zones.ts';
 import { currentChampion, GATE } from './gate.ts';
@@ -73,9 +73,9 @@ import { suggestFor, SUGGESTIONS_TIME_MS, suggestionsWeek, type SuggestionsOutco
 export const SCHEDULE_LEASE_MS = 10 * 60_000;
 /** Scheduled calibrations live at once across all organizations. [CONFIRM] */
 export const SCHEDULE_LIVE_CAP = 3;
-// SCHEDULE_START_HOUR lives with the calibration state, whose next refresh reads it too (calibration.ts cannot import
-// this module, which reaches it back through the chat's tools).
-export { SCHEDULE_START_HOUR };
+// SCHEDULE_START_HOUR and REFIT_EVERY_MS live with the calibration state, whose next refresh and `waiting` (D65) read
+// them too (calibration.ts cannot import this module, which reaches it back through the chat's tools).
+export { REFIT_EVERY_MS, SCHEDULE_START_HOUR };
 /** Starts a location's job may fail (the runner refusing it) on its Monday before its row records start_failed. [CONFIRM] */
 export const SCHEDULE_START_TRIES = 3;
 /**
@@ -90,8 +90,6 @@ export const SCHEDULE_PASS_BUDGET_MS = 8 * 60_000;
 export const SCHEDULE_STEP_MS = 60_000;
 /** D59: how long a location's refit mark must be quiet before the pass refits it. */
 export const REFIT_QUIET_MS = 15 * 60_000;
-/** D59: a location's refits start at most once in this long. */
-export const REFIT_EVERY_MS = 24 * 60 * 60_000;
 /** D59: the weekly cap counts the refits started in this long, beside the week's rows, on both paths. */
 const REFIT_CAP_WINDOW_MS = 7 * 24 * 60 * 60_000;
 
@@ -297,7 +295,8 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       return;
     }
     const req: StartRequest = {
-      id: new Types.ObjectId().toHexString(), scope, location, requester: SYSTEM_REQUESTER, regimeStart, today: localDay(now, timeZone),
+      id: new Types.ObjectId().toHexString(), scope, location, requester: SYSTEM_REQUESTER, causes: ['weekly'], regimeStart,
+      today: localDay(now, timeZone),
     };
     const refusal = await checkStart(ctx, req);
     if (refusal === 'in_progress') {
@@ -344,7 +343,7 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
    * D59: one location a training change marked (see the top). The mark is kept when the location is busy or a cap holds
    * it, and cleared by compare-and-set on the value read once nothing changed or a refit started.
    */
-  async function considerRefit(candidate: RefitCandidate, pass: PassRun, refits: RefitCounts): Promise<void> {
+  async function considerRefit(candidate: RefitMark, pass: PassRun, refits: RefitCounts): Promise<void> {
     const scope = scopeForWeeklyRefresh(candidate);
     const location = await stores.locations.find(scope, candidate.locationId);
     if (location === null) return;
@@ -382,7 +381,10 @@ export function createForecastSchedule(deps: { ctx: ScheduleContext; owner?: str
       refits.held += 1;
       return;
     }
-    const req: StartRequest = { id: new Types.ObjectId().toHexString(), scope, location, requester: SYSTEM_REQUESTER, regimeStart, today };
+    // D65: the calibration carries what wanted the refit, as the pass read it with the mark.
+    const req: StartRequest = {
+      id: new Types.ObjectId().toHexString(), scope, location, requester: SYSTEM_REQUESTER, causes: candidate.causes, regimeStart, today,
+    };
     const refusal = await checkStart(ctx, req);
     if (refusal === 'in_progress') {
       refits.held += 1;

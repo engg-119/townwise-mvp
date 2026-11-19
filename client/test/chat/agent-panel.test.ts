@@ -19,7 +19,7 @@ test('the fixture holds every question kind and every activity kind the API send
   // D46: the sales history's weekday question became a suggested rule, so the API sends no weekday question.
   expect(fixture.panel.questions.map((q) => (q as { kind: string }).kind)).toEqual(['likely_closed', 'gap']);
   expect(fixture.panel.activity.map((a) => (a as { kind: string }).kind)).toEqual([
-    'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'agent_change', 'question_answered',
+    'note_saved', 'question_answered', 'upload_applied', 'file_processed', 'forecast_made', 'agent_change', 'question_answered',
   ]);
   // Every answer an activity item can name, `other` (Something else…) included.
   expect(fixture.panel.activity.flatMap((a) => {
@@ -32,6 +32,16 @@ test('the side panel reads every question and activity item the API answers, dro
   const api = fakeChatApi();
   api.panel = fixture.panel;
   expect(await loadAgentPanel(api, 'l1')).toEqual(fixture.panel);
+});
+
+test('D65: a forecast run with a cause, reason or outcome this client does not know is left out, and the rest kept', async () => {
+  const api = fakeChatApi();
+  const run = fixture.panel.activity.find((a) => (a as { kind: string }).kind === 'forecast_made') as Record<string, unknown>;
+  api.panel = {
+    ...fixture.panel,
+    activity: [run, { ...run, causes: ['research'] }, { ...run, reason: 'later_reason' }, { ...run, outcome: 'paused' }, { ...run, dayCount: undefined }],
+  };
+  expect((await loadAgentPanel(api, 'l1')).activity).toEqual([run]);
 });
 
 test('an answer sends the body the API takes and reads the response it gives', async () => {

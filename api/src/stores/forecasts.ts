@@ -193,6 +193,15 @@ export interface ForecastRow {
   readonly reasons: readonly ReasonFields[];
 }
 
+/** D65: what happened to a run, as the owner's run history reads it (lab/owner-outcome.ts). */
+export interface RunState {
+  readonly status: RunStatus;
+  /** Kept after a withdrawal. */
+  readonly publishedAt: Date | null;
+  /** The staff member who published it; null when the lab did, or before a publish. */
+  readonly publishedBy: string | null;
+}
+
 /** A row to write, as the import builds it from the file. */
 export type ForecastRowInput = Omit<ForecastRow, 'runId'>;
 
@@ -227,6 +236,13 @@ export interface ForecastStore {
   list(scope: OrgScope, limit: number): Promise<ForecastRunRecord[]>;
   /** The location's published runs, newest `dataThrough` first (then newest published). */
   published(scope: OrgScope, locationId: string): Promise<ForecastRunRecord[]>;
+  /** D65: these runs' states by id, in one read; a run that is gone (or another organization's) is left out. */
+  runStates(scope: OrgScope, runIds: readonly string[]): Promise<Map<string, RunState>>;
+  /**
+   * D65: the location's run with the earliest `publishedAt`, of any status (a withdrawn run keeps its `publishedAt`), or
+   * null when none was ever published: what makes a run the location's first forecast.
+   */
+  firstPublished(scope: OrgScope, locationId: string): Promise<{ runId: string; publishedAt: Date } | null>;
   /** Rows of these runs of the location that overlap [from, to], or all of them when no range is given. */
   rows(scope: OrgScope, locationId: string, runIds: readonly string[], range?: { from: string; to: string }): Promise<ForecastRow[]>;
   /** The run's rows, then the run, so a retry finishes. False when the run was not there. */
@@ -394,6 +410,22 @@ export function createForecastStore(connection: Connection): ForecastStore {
         .sort({ dataThrough: -1, publishedAt: -1, _id: -1 })
         .lean();
       return docs.map(toRun);
+    },
+    async runStates(scope, runIds) {
+      const states = new Map<string, RunState>();
+      if (runIds.length === 0) return states;
+      const docs = await Run.find(
+        { ...org(scope), _id: trusted({ $in: runIds.map((id) => new Types.ObjectId(id)) }) },
+        { status: 1, publishedAt: 1, publishedBy: 1 },
+      ).lean();
+      for (const doc of docs) states.set(doc._id.toHexString(), { status: doc.status, publishedAt: doc.publishedAt, publishedBy: doc.publishedBy });
+      return states;
+    },
+    async firstPublished(scope, locationId) {
+      const doc = await Run.findOne(
+        { ...org(scope), locationId: new Types.ObjectId(locationId), publishedAt: trusted({ $ne: null }) }, { publishedAt: 1 },
+      ).sort({ publishedAt: 1, _id: 1 }).lean();
+      return doc?.publishedAt == null ? null : { runId: doc._id.toHexString(), publishedAt: doc.publishedAt };
     },
     async rows(scope, locationId, runIds, range) {
       if (runIds.length === 0) return [];

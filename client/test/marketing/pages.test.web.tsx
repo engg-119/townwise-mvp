@@ -462,19 +462,24 @@ test('Privacy says what Townwise reads from Google for a connected calendar, who
   expect(limitedUse?.textContent).toBe('Google user data. Townwise’s use and transfer of information received from Google APIs adheres to the Google API Services User Data Policy, including the Limited Use requirements.');
   if (limitedUse === undefined) throw new Error('no Limited Use statement');
   expect(within(limitedUse).getByRole('link', { name: 'Google API Services User Data Policy' }).getAttribute('href')).toBe('https://developers.google.com/terms/api-services-user-data-policy');
-  expect(paragraphs.find((p) => p.textContent.startsWith('Apart from'))?.textContent).toBe('Apart from Google’s sign-in script on the sign-in page, Google’s window when you connect a Google calendar (which gets your email address, so it opens on your account), and the two emails Microsoft delivers, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.');
+  expect(paragraphs.find((p) => p.textContent.startsWith('Apart from'))?.textContent).toBe('Apart from Google’s sign-in script on the sign-in page, Google’s window when you connect a Google calendar (which gets your email address, so it opens on your account), and the three emails Microsoft delivers, the Townwise app and server send your account and sign-in information to no one else. Townwise does not sell personal data.');
 });
 
-test('Privacy says which two emails Townwise sends, through whom, and that it keeps only a log line with ids', () => {
+test('Privacy says which three emails Townwise sends, to whom, through whom, and that it keeps a log line with ids and the first-forecast email’s date', () => {
   renderAt('/privacy');
   const email = [...screen.getByRole('region', { name: 'Email' }).querySelectorAll('p')].map((p) => p.textContent);
-  expect(email[0]).toBe('Townwise sends two emails, each only to the person it concerns: “request received”, after you send an access request, and “you’re in”, after Townwise staff approve it. They come from no-reply@townwise.tech through Microsoft’s Azure Communication Services, with open and click tracking off. Each holds your organization’s name, its town and the address you sign in with, never sales figures, files or notes. Townwise sends no other email, for sign-in, invitations or anything else.');
-  expect(email[1]).toContain('Townwise keeps nothing about a send except one line in our server log: which email it was, the ids of the access request and, for “you’re in”, the organization, and an error code if it failed, never your address.');
+  // D65: the third email goes to every org admin, once per location, and leaves its date on the location.
+  expect(email[0]).toBe('Townwise sends three emails. Two go only to the person they concern: “request received”, after you send an access request, and “you’re in”, after Townwise staff approve it; each holds your organization’s name, its town and the address you sign in with. The third, “your first forecast is ready”, goes to every org admin of an organization, once per location, when that location’s first forecast is published; it holds the organization’s and the location’s names, its town and the address you sign in with. They come from no-reply@townwise.tech through Microsoft’s Azure Communication Services, with open and click tracking off, and never hold sales figures, forecast figures, files or notes. Townwise sends no other email, for sign-in, invitations or anything else.');
+  expect(email[1]).toContain('Townwise keeps nothing about a send except one line in our server log and, for the first-forecast email, the date it was sent, which we keep on the location so that email goes only once.');
+  expect(email[1]).toContain('The log line says which email it was, the ids of the access request (and, for “you’re in”, the organization) or, for the first-forecast email, of the organization and the location, and an error code if it failed, never your address.');
   const text = screen.getByRole('main').textContent;
   expect(text).not.toContain('Townwise does not send email');
+  expect(text).not.toContain('two emails');
   expect(text).toContain('Townwise does not email them.');
+  const summary = within(screen.getByRole('region', { name: 'The short version' })).getAllByRole('listitem');
+  expect(summary.find((item) => item.textContent.startsWith('Townwise sends'))?.textContent).toBe('Townwise sends three emails: two only to the person they concern, when we receive your access request and when you’re approved, and one to every org admin of an organization, once per location, when that location’s first forecast is published. Open and click tracking is off.');
   const items = within(screen.getByRole('region', { name: 'Who else sees it' })).getAllByRole('listitem');
-  expect(items.find((item) => item.textContent.startsWith('Microsoft Azure,'))?.textContent).toContain('delivers our two emails through Azure Communication Services');
+  expect(items.find((item) => item.textContent.startsWith('Microsoft Azure,'))?.textContent).toContain('delivers our three emails through Azure Communication Services');
 });
 
 test('on phones the Privacy tables stack into rows, each cell after the first labeled with its column name', () => {

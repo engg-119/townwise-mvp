@@ -1,12 +1,14 @@
-// Every word of the two Townwise emails (spec D14). Pure. Subjects are fixed strings: no user text goes in a subject or
-// any header. There is no greeting by name (contactName is free text) and no figure of any kind: an email says what
-// happened and what comes next, with the organization's name, its town and the address the person signs in with.
+// Every word of the three Townwise emails (spec D14, D65). Pure. Subjects are fixed strings: no user text goes in a
+// subject or any header. There is no greeting by name (contactName is free text) and no figure of any kind: an email
+// says what happened and what comes next, with the organization's name, its town and the address the person signs in
+// with, and for the first-forecast email the location's name. The footer says why this person got it, per kind.
 import type { Town } from '../towns.ts';
 import { htmlLayout, textLayout, type LayoutParts } from './layout.ts';
 
 export type TownwiseEmail =
   | { readonly kind: 'request_received'; readonly orgName: string; readonly town: Town }
-  | { readonly kind: 'request_approved'; readonly orgName: string; readonly town: Town };
+  | { readonly kind: 'request_approved'; readonly orgName: string; readonly town: Town }
+  | { readonly kind: 'first_forecast'; readonly orgName: string; readonly locationName: string; readonly town: Town };
 
 export type EmailKind = TownwiseEmail['kind'];
 
@@ -26,10 +28,22 @@ export interface EmailLinks {
 export const SUBJECTS: Readonly<Record<EmailKind, string>> = {
   request_received: 'We’ve received your Townwise request',
   request_approved: 'You’re in: welcome to Townwise',
+  first_forecast: 'Your first Townwise forecast is ready',
 };
 
 function townText(town: Town): string {
   return `${town.name}, ${town.state}`;
+}
+
+/** Why this person got the email: the access emails go to the person who asked, the first-forecast one to each admin. */
+function footerOf(email: TownwiseEmail): string {
+  switch (email.kind) {
+    case 'request_received':
+    case 'request_approved':
+      return 'You’re getting this email because you asked for access to Townwise with this address.';
+    case 'first_forecast':
+      return `You’re getting this email because you’re an admin of ${email.orgName} on Townwise.`;
+  }
 }
 
 function parts(email: TownwiseEmail, to: string, links: EmailLinks): LayoutParts {
@@ -38,8 +52,7 @@ function parts(email: TownwiseEmail, to: string, links: EmailLinks): LayoutParts
     subject: SUBJECTS[email.kind],
     button: { label: 'Open Townwise', href: `${links.webUrl}/sign-in` },
     small: `Sign in with the Google account for ${to}.`,
-    footer: 'You’re getting this email because you asked for access to Townwise with this address.'
-      + (links.replies ? ' Reply to this email to reach the Townwise team.' : ''),
+    footer: footerOf(email) + (links.replies ? ' Reply to this email to reach the Townwise team.' : ''),
     footerLinks: [
       { label: 'Townwise' },
       { label: new URL(links.webUrl).host, href: links.webUrl, text: links.webUrl },
@@ -69,6 +82,18 @@ function parts(email: TownwiseEmail, to: string, links: EmailLinks): LayoutParts
         paragraphs: [
           `We’ve approved your request. ${email.orgName} in ${town} is set up on Townwise, and you’re its admin.`,
           'Next, upload your sales history so Townwise can show your town’s busy and quiet days.',
+        ],
+      };
+    case 'first_forecast':
+      // Sent once per location (mail/first-forecast.ts). No figure: the forecast itself is on Home, behind sign-in.
+      return {
+        ...shared,
+        preheader: `The first forecast for ${email.locationName} is on Townwise.`,
+        eyebrow: 'FIRST FORECAST',
+        heading: `Your first forecast for ${email.locationName} is ready.`,
+        paragraphs: [
+          `Townwise published the first forecast for ${email.locationName} in ${town}. Open Townwise to see the days ahead on Home and the Calendar.`,
+          'Townwise refreshes it each week as new sales come in.',
         ],
       };
   }

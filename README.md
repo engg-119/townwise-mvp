@@ -30,7 +30,7 @@ This is an MVP in active development. Townwise does not charge for early access.
 |---|---|
 | Public website: a homepage with a map of twelve Northeast towns, plus about, privacy, terms and security pages | Built. The homepage is web only. |
 | Sign-in with Google; two-step sign-in, required for staff | Built |
-| Access: request access (with a Google Places search when it is on), invitations from an org admin, approval by staff, and Townwise's two emails (request received, you're in) | Built |
+| Access: request access (with a Google Places search when it is on), invitations from an org admin, approval by staff, and Townwise's access emails (request received, you're in) | Built |
 | Portal for a location: Home, TownwiseAI, Calendar, Orders, Analytics, Notes, Rules, Town and Your data, plus Team and Settings | Built (`client/`), on web, iOS and Android. Light and dark mode on web; native is dark only. |
 | Sales history: a daily-totals upload read in the browser, or stored files that Townwise reads on the server, all listed in Your data, where a stored file can be opened and viewed in the browser | Built. The daily-totals upload and the file viewer are web only. Stored files are off until `FILES_BLOB_ACCOUNT_URL` is set. |
 | TownwiseAI (Claude through the Anthropic API): reads a location's sales, notes, business rules, town calendar, published forecast and orders; draws charts; takes files attached from Your data; proposes notes and order changes for the owner to save | Built in the API and the app. Off until `ANTHROPIC_API_KEY` is set. |

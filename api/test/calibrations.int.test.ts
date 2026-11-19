@@ -179,14 +179,14 @@ describe('calibrated and stale (14.3, D42)', () => {
 
   it('reads the newest published run: stale with the days with guests after it, calibrated when it holds the last one', async () => {
     const p = await place(300, true);
-    expect((await stateOf(p)).state).toBe('not_calibrated');
+    expect(await stateOf(p)).toMatchObject({ state: 'not_calibrated', updating: null, lastRun: null });
     await publishRun(p, '2026-05-24');
     // Today is Mon, Jun 1 in Hanover: the weekly refresh next considers the location on Mon, Jun 8
     const stale = await stateOf(p);
-    expect(stale).toMatchObject({ state: 'stale', dataThrough: '2026-05-24', newerDays: 7, nextRefresh: '2026-06-08', lastDate: LAST });
-    expect(calibrationWords(stale)).toBe('Forecast made from your sales through Sun, May 24. Townwise refits on Mon, Jun 8 with the 7 days since.');
+    expect(stale).toMatchObject({ state: 'stale', dataThrough: '2026-05-24', newerDays: 7, nextRefresh: '2026-06-08', lastDate: LAST, updating: null });
+    expect(calibrationWords(stale, 'America/New_York', server.clock.now())).toBe('Forecast made from your sales through Sun, May 24. Townwise refits on Mon, Jun 8 with the 7 days since.');
     await publishRun(p, LAST);
-    expect(await stateOf(p)).toMatchObject({ state: 'calibrated', dataThrough: LAST, newerDays: 0, nextRefresh: '2026-06-08' });
+    expect(await stateOf(p)).toMatchObject({ state: 'calibrated', dataThrough: LAST, newerDays: 0, nextRefresh: '2026-06-08', updating: null });
   });
 
   it('an organization nobody switched has its next refresh (forecasts on by default); none with the switch false or the schedule paused', async () => {
@@ -200,7 +200,7 @@ describe('calibrated and stale (14.3, D42)', () => {
     if (location === null) throw new Error('no location');
     const coverage = await server.ctx.stores.salesDays.coverage(p.scope, p.locationId);
     const switchedOff = { ...server.ctx, config: { ...server.ctx.config, weeklyForecasts: false } };
-    expect(await calibrationFor(switchedOff, p.scope, location, coverage)).toMatchObject({ state: 'stale', nextRefresh: null });
+    expect(await calibrationFor(switchedOff, p.scope, location, coverage)).toMatchObject({ state: 'stale', nextRefresh: null, updating: null });
     await server.ctx.stores.forecastSchedule.setPaused({ at: server.clock.now(), by: 'staff-0000', email: 'staff@townwise.test' }, server.clock.now());
     try {
       expect(await stateOf(p)).toMatchObject({ state: 'stale', nextRefresh: null });
@@ -229,7 +229,7 @@ describe('calibrated and stale (14.3, D42)', () => {
     await calibrations.finish(p.scope, id, { status: 'succeeded' }, now);
     const stale = await stateOf(p);
     expect(stale).toMatchObject({ state: 'stale', newerDays: 7, nextRefresh: null });
-    expect(calibrationWords(stale)).toBe('Forecast made from your sales through Sun, May 24. The 7 days since aren’t in it yet.');
+    expect(calibrationWords(stale, 'America/New_York', server.clock.now())).toBe('Forecast made from your sales through Sun, May 24. The 7 days since aren’t in it yet.');
     // A new day with guests is one the reference hasn't read: the next Monday refits again.
     await seedHistory(server, { orgId: p.orgId, locationId: p.locationId, from: '2026-06-01', to: '2026-06-01' });
     expect(await stateOf(p)).toMatchObject({ state: 'stale', newerDays: 8, nextRefresh: '2026-06-08' });
@@ -241,7 +241,7 @@ describe('calibrated and stale (14.3, D42)', () => {
     await publishRun(p, '2026-05-24');
     const stale = await stateOf(p);
     expect(stale).toMatchObject({ state: 'stale', newerDays: 7, nextRefresh: null });
-    expect(calibrationWords(stale)).toBe('Forecast made from your sales through Sun, May 24. The 7 days since aren’t in it yet.');
+    expect(calibrationWords(stale, 'America/New_York', server.clock.now())).toBe('Forecast made from your sales through Sun, May 24. The 7 days since aren’t in it yet.');
     // From 230 days it is refit.
     expect(await stateOf(await withRun(await place(230, true)))).toMatchObject({ state: 'stale', nextRefresh: '2026-06-08' });
   });
@@ -255,5 +255,144 @@ describe('calibrated and stale (14.3, D42)', () => {
     const p = await place(300);
     await publishRun(p, '2026-05-24');
     expect(await stateOf(p)).toMatchObject({ state: 'stale', newerDays: 7, nextRefresh: null });
+  });
+});
+
+describe('updating and the last run (D65)', () => {
+  const MINUTE = 60_000;
+  /** The server's context with its clock moved on by `ms`, so a read sees a later now without moving the shared clock. */
+  const later = (ms: number) => ({ ...server.ctx, now: () => new Date(server.clock.now().getTime() + ms) });
+
+  async function stateAt(p: Place, ctx = server.ctx) {
+    const location = await server.ctx.stores.locations.find(p.scope, p.locationId);
+    if (location === null) throw new Error('no location');
+    return calibrationFor(ctx, p.scope, location, await server.ctx.stores.salesDays.coverage(p.scope, p.locationId));
+  }
+
+  it('a first forecast reads waiting from its mark, then running from its start, then a failed last run past 20 minutes, writing nothing', async () => {
+    const p = await place(300, true);
+    const wantedAt = server.clock.now();
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, wantedAt, 'sales');
+    expect(await stateAt(p)).toMatchObject({ state: 'not_calibrated', updating: { stage: 'waiting', since: wantedAt.toISOString() }, lastRun: null });
+    expect(calibrationWords(await stateAt(p), 'America/New_York', server.clock.now())).toBe('Your first forecast is next. Townwise starts building it soon.');
+    // The weekly forecasts switched off: the pass would not take it.
+    const switchedOff = { ...server.ctx, config: { ...server.ctx.config, weeklyForecasts: false } };
+    expect(await stateAt(p, switchedOff)).toMatchObject({ updating: null, lastRun: null });
+    const launched = await launch(server.ctx, await request(p, SYSTEM_REQUESTER));
+    if (!launched.ok) return expect.unreachable('the start starts');
+    const since = launched.calibration.requestedAt.toISOString();
+    expect(await stateAt(p)).toMatchObject({ updating: { stage: 'running', since }, lastRun: null });
+    expect(await stateAt(p, switchedOff)).toMatchObject({ updating: { stage: 'running', since } });
+    expect(await stateAt(p, later(19 * MINUTE))).toMatchObject({ updating: { stage: 'running', since } });
+    const before = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(launched.calibration.id) });
+    server.commands.length = 0;
+    // Past its 20 minutes it reads as a failed run; the mark is still due (never started by the pass), so it reads waiting
+    // again until the pass takes it, and the stuck record is left as it is.
+    const timedOut = await stateAt(p, later(21 * MINUTE));
+    expect(timedOut).toMatchObject({ updating: { stage: 'waiting', since: wantedAt.toISOString() }, lastRun: null });
+    expect(await stateAt(p, { ...later(21 * MINUTE), config: { ...server.ctx.config, weeklyForecasts: false } })).toMatchObject({
+      updating: null,
+      lastRun: { outcome: 'not_run', reason: 'failed', finishedAt: new Date(launched.calibration.requestedAt.getTime() + 20 * MINUTE).toISOString() },
+    });
+    expect(server.commands.filter((name) => ['insert', 'update', 'delete', 'findAndModify'].includes(name))).toEqual([]);
+    expect(await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(launched.calibration.id) })).toEqual(before);
+  });
+
+  it('a first run the gate held reads its last run, and no waiting for a new mark (the reference)', async () => {
+    const p = await place(300, true);
+    const { calibrations } = server.ctx.stores;
+    const id = new Types.ObjectId().toHexString();
+    const now = server.clock.now();
+    await calibrations.insertQueued(p.scope, {
+      id, locationId: p.locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['sales'], regimeStart: null,
+      championRunId: null, tokenExpiresAt: new Date(now.getTime() + 20 * MINUTE), now,
+    });
+    await calibrations.markRunning(p.scope, id, { now, imageDigest: null });
+    await calibrations.recordInput(p.scope, id, { inputSha256: 'a'.repeat(64), dataSha256: 'b'.repeat(64), dataThrough: LAST, termsThrough: null, resultTokenSha256: 'c'.repeat(64) });
+    await calibrations.recordGate(p.scope, id, { published: false, reason: 'baseline_not_beaten' });
+    await calibrations.finish(p.scope, id, { status: 'succeeded' }, now);
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, now, 'sales');
+    expect(await stateAt(p)).toMatchObject({
+      state: 'not_calibrated', updating: null, lastRun: { outcome: 'kept', reason: 'not_beat_average', finishedAt: now.toISOString() },
+    });
+  });
+
+  it('a published location reads running while a refit runs, never waiting for its mark', async () => {
+    const p = await place(300, true);
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now(), 'sales');
+    const file: ForecastRunFile = {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-05-24', madeAt: '2026-05-24', frozen: null,
+      interval: { level: 0.8, widened: true }, backtest: null, ...runDays('2026-05-24', 70),
+    };
+    const { run } = await server.ctx.stores.forecasts.upsertRun(p.scope, p.locationId, {
+      id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: 'staff-0000', lab: null, now: server.clock.now(),
+    });
+    await server.ctx.stores.forecasts.setStatus(p.scope, run.id, { from: ['importing'], to: 'published', at: server.clock.now(), by: 'staff-0000' });
+    const stale = await stateAt(p);
+    expect(stale).toMatchObject({ state: 'stale', updating: null });
+    expect(stale).not.toHaveProperty('lastRun');
+    const launched = await launch(server.ctx, await request(p, PERSON));
+    if (!launched.ok) return expect.unreachable('the start starts');
+    expect(await stateAt(p)).toMatchObject({ state: 'stale', updating: { stage: 'running', since: launched.calibration.requestedAt.toISOString() } });
+  });
+
+  it('a history under the pass’s 230 days never reads waiting', async () => {
+    const p = await place(120, true);
+    await server.ctx.stores.locations.wantRefit(p.scope, p.locationId, server.clock.now(), 'sales');
+    expect(await stateAt(p)).toMatchObject({ state: 'not_calibrated', updating: null, lastRun: null });
+  });
+
+  it('a first forecast the lab publishes and finishes during the read never reads not_calibrated with a published last run', async () => {
+    const p = await place(300, true);
+    const { calibrations, forecasts } = server.ctx.stores;
+    const id = new Types.ObjectId().toHexString();
+    const now = server.clock.now();
+    await calibrations.insertQueued(p.scope, {
+      id, locationId: p.locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['sales'], regimeStart: null,
+      championRunId: null, tokenExpiresAt: new Date(now.getTime() + 20 * MINUTE), now,
+    });
+    await calibrations.markRunning(p.scope, id, { now, imageDigest: null });
+    const file: ForecastRunFile = {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: LAST, madeAt: LAST, frozen: null,
+      interval: { level: 0.8, widened: true }, backtest: null, ...runDays(LAST, 70),
+    };
+    const { run } = await forecasts.upsertRun(p.scope, p.locationId, {
+      id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: null, lab: null, now,
+    });
+    await forecasts.setStatus(p.scope, run.id, { from: ['importing'], to: 'draft', at: now, by: null });
+    await calibrations.recordResult(p.scope, id, { runId: run.id, scorecardJson: '{}', codeVersion: 'c0de' });
+    await calibrations.recordGate(p.scope, id, { published: true, reason: 'published' });
+    // The lab's last two steps (storeDraft: publish, then finish) land during the read: after the published runs were
+    // read when the two reads run side by side, before the calibration is read.
+    let publishedRead: Promise<unknown> | undefined;
+    const ctx = {
+      ...server.ctx,
+      stores: {
+        ...server.ctx.stores,
+        calibrations: {
+          ...calibrations,
+          list: async (...args: Parameters<typeof calibrations.list>) => {
+            await Promise.resolve();
+            await publishedRead;
+            await forecasts.setStatus(p.scope, run.id, { from: ['draft'], to: 'published', at: now, by: null });
+            await calibrations.finish(p.scope, id, { status: 'succeeded' }, now);
+            return calibrations.list(...args);
+          },
+        },
+        forecasts: {
+          ...forecasts,
+          published: (...args: Parameters<typeof forecasts.published>) => {
+            const read = forecasts.published(...args);
+            publishedRead = read;
+            return read;
+          },
+        },
+      },
+    };
+    const read = await stateAt(p, ctx);
+    expect(read).toMatchObject({ state: 'calibrated', dataThrough: LAST, updating: null });
+    expect(read).not.toHaveProperty('lastRun');
   });
 });

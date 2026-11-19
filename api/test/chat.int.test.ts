@@ -14,6 +14,7 @@ import type { BetaMessageParam, BetaToolResultBlockParam } from '@anthropic-ai/s
 import { Types } from 'mongoose';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
+import type { OrgScope } from '../src/access/policy.ts';
 import { SYSTEM_PROMPT } from '../src/chat/prompt.ts';
 import { TOOLS } from '../src/chat/tools/registry.ts';
 import type { ChatSummary, ConversationView } from '../src/handlers/chat.ts';
@@ -351,6 +352,29 @@ describe('tools', () => {
     const [result] = toolResults(messagesOf(model.calls[1])[2]);
     expect(JSON.parse(result?.content as string)).toMatchObject({ location: { name: 'Solo Tavern Group', town: { name: 'Hanover', state: 'NH' } } });
     expect(JSON.stringify(model.calls[1]?.params.messages)).not.toContain('Solo Tavern Group, Hanover');
+  });
+
+  it('get_location_overview carries the model card’s updating sentence while a first forecast runs, in a result, never the prefix (D65)', async () => {
+    const building = await addLocation(server, { orgId, name: 'Cellar' });
+    await addSalesDay(server, { orgId, locationId: building, date: '2026-05-01', guests: 60, netSalesCents: null });
+    await addSalesDay(server, { orgId, locationId: building, date: '2026-05-02', guests: 70, netSalesCents: null });
+    const requestedAt = new Date(server.clock.now().getTime() - 6 * MINUTE);
+    await server.ctx.stores.calibrations.insertQueued({ orgId } as OrgScope, {
+      id: new Types.ObjectId().toHexString(), locationId: building, requestedBy: { userId: admin.session.userId, role: 'org_admin', via: 'chat' },
+      regimeStart: null, championRunId: null, tokenExpiresAt: new Date(requestedAt.getTime() + 20 * MINUTE), now: requestedAt,
+    });
+    model.script(
+      { kind: 'message', message: message([toolUse('t1', 'get_location_overview', {})]) },
+      { kind: 'message', message: message([text('It’s being built now.')]) },
+    );
+    const { events } = await turn({ content: 'Is my forecast ready?' }, author, building);
+    expect(events.at(-1)?.event).toBe('done');
+    const [result] = toolResults(messagesOf(model.calls[1])[2]);
+    const overview = JSON.parse(result?.content as string) as { calibration: string; calibrationWords: string };
+    expect(overview.calibration).toBe('not_calibrated');
+    // In the town's time (Eastern): the test clock's 12:00 UTC less 6 minutes, on the town's today.
+    expect(overview.calibrationWords).toBe('Building your first forecast from 2 days, started 7:54 AM.');
+    expect(JSON.stringify(model.calls[1]?.params.system)).not.toContain('Building');
   });
 
   it('a valid propose_note streams a proposal, writes no note, and the proposal posts unchanged to the notes route', async () => {

@@ -11,12 +11,14 @@ import { ORDER_CHANGE_RESULT } from '../src/chat/tools/orders.ts';
 import { utcDay } from '../src/dates.ts';
 import { createItemReader } from '../src/files/items.ts';
 import { createMemoryFileBlobs, type MemoryFileBlobs } from '../src/files/memory-blobs.ts';
+import { runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
 import { createTownwiseStores } from '../src/stores/index.ts';
 import {
   addChatTurn, addConversation, addInvite, addLocation, addNote, addOpenAsAdminGrant, addOrderRecords, addOwnerCalendar, addRequest, addSalesDay, addSeat,
   addUpload, createOrg, ORDER_COLLECTIONS,
 } from './helpers/fixtures.ts';
 import { seedReadFile } from './helpers/files.ts';
+import { runDays } from './helpers/lab.ts';
 import { PROBE_ROUTES } from './helpers/probe.ts';
 import { call, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
 
@@ -59,6 +61,15 @@ interface Tenant {
   turnId: string;
   /** D59: a change TownwiseAI applied at the location (its note), its why named after the organization. */
   changeId: string;
+  /**
+   * D65: the location's calibrations, a live one (queued `liveMinutesAgo` minutes ago) and a finished one (succeeded,
+   * its gate held, with a draft run), and that run's id.
+   */
+  liveCalibrationId: string;
+  doneCalibrationId: string;
+  calibrationRunId: string;
+  /** When the live calibration was requested. */
+  liveRequestedAt: Date;
 }
 
 /**
@@ -97,7 +108,40 @@ let staffSession: TestSession;
 /** B's invitation addressed to A's member. */
 let bInvitesAMember: string;
 
-async function tenant(name: string): Promise<Tenant> {
+/** D65: a finished calibration of the location (succeeded, its gate held, with a draft run), then a live one. */
+async function addCalibrations(orgId: string, locationId: string, liveMinutesAgo: number) {
+  const scope = { orgId } as OrgScope;
+  const stores = createTownwiseStores(server.connection);
+  const now = server.clock.now();
+  const at = (minutesAgo: number): Date => new Date(now.getTime() - minutesAgo * 60_000);
+  const queue = async (requestedAt: Date): Promise<string> => {
+    const id = new Types.ObjectId().toHexString();
+    await stores.calibrations.insertQueued(scope, {
+      id, locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['weekly'], regimeStart: null,
+      championRunId: null, tokenExpiresAt: new Date(requestedAt.getTime() + 20 * 60_000), now: requestedAt,
+    });
+    return id;
+  };
+  const doneCalibrationId = await queue(at(120));
+  const file: ForecastRunFile = {
+    schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+    trainingSource: 'files_from_owner', trainedFrom: '2025-01-01', dataThrough: '2026-04-30', madeAt: '2026-04-30', frozen: null,
+    interval: { level: 0.8, widened: true }, backtest: null, ...runDays('2026-04-30', 14),
+  };
+  const { run } = await stores.forecasts.upsertRun(scope, locationId, {
+    id: new Types.ObjectId().toHexString(), file, fileSha256: runFileSha256(file), importedBy: null, lab: null, now: at(110),
+  });
+  await stores.forecasts.setStatus(scope, run.id, { from: ['importing'], to: 'draft', at: at(110), by: null });
+  await stores.calibrations.markRunning(scope, doneCalibrationId, { now: at(119), imageDigest: null });
+  await stores.calibrations.recordResult(scope, doneCalibrationId, { runId: run.id, scorecardJson: '{}', codeVersion: 'c0de' });
+  await stores.calibrations.recordGate(scope, doneCalibrationId, { published: false, reason: 'not_better' });
+  await stores.calibrations.finish(scope, doneCalibrationId, { status: 'succeeded' }, at(110));
+  const liveRequestedAt = at(liveMinutesAgo);
+  const liveCalibrationId = await queue(liveRequestedAt);
+  return { liveCalibrationId, doneCalibrationId, calibrationRunId: run.id, liveRequestedAt };
+}
+
+async function tenant(name: string, liveMinutesAgo: number): Promise<Tenant> {
   const orgId = await createOrg(server, { name });
   const adminEmail = `admin-${randomUUID().slice(0, 8)}@example.test`;
   const memberEmail = `member-${randomUUID().slice(0, 8)}@example.test`;
@@ -133,7 +177,7 @@ async function tenant(name: string): Promise<Tenant> {
   });
   return {
     orgId, name, admin, member, inviteId, seatIds, locationId, locationName, noteId, conversationId, fileId, importId, uploadId, refFileId,
-    ruleId, calendarId, suggestionId, turnId, changeId,
+    ruleId, calendarId, suggestionId, turnId, changeId, ...await addCalibrations(orgId, locationId, liveMinutesAgo),
   };
 }
 
@@ -267,6 +311,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
     'tw_business_rules',
     // Owner calendars.
     'tw_calendar_sources', 'tw_calendar_events',
+    // D65: a read of B's calibrations never expires or changes them.
+    'tw_calibrations',
   ]) {
     docs.push(await server.connection.collection(name).find({ orgId }).sort({ _id: 1 }).toArray());
   }
@@ -278,8 +324,8 @@ async function snapshotOf(org: Tenant): Promise<string> {
 beforeAll(async () => {
   blobs = createMemoryFileBlobs();
   server = await startTownwiseServer({ probe: PROBE_ROUTES, files: blobs });
-  a = await tenant('Alpine Tavern');
-  b = await tenant('Beachside Bistro');
+  a = await tenant('Alpine Tavern', 3);
+  b = await tenant('Beachside Bistro', 6);
   bInvitesAMember = await addInvite(server, { orgId: b.orgId, email: a.member.email, invitedBy: b.admin.session.userId });
   await addRequest(server, { userId: b.member.session.userId, email: b.member.email, status: 'withdrawn' });
   staffSession = await signInStaff(server);
@@ -306,6 +352,8 @@ function bSecrets(): string[] {
     b.ruleId, `${b.name} private rule`,
     b.calendarId, `${b.name} bookings`, `${b.name} private booking`, b.suggestionId, `${b.name} private why`, b.turnId,
     b.changeId, `${b.name} private change why`,
+    // D65: B's calibrations and their run, and when B's live one started.
+    b.liveCalibrationId, b.doneCalibrationId, b.calibrationRunId, b.liveRequestedAt.toISOString(),
   ];
 }
 
@@ -676,6 +724,19 @@ describe('isolation, case by case', () => {
     } finally {
       await server.connection.collection('tw_chat_turns').updateOne({ turnId: a.turnId }, { $set: { state: 'running', endedAt: null } });
     }
+  });
+
+  it('A’s GET /api/org reads A’s location updating from A’s own calibration, none of B’s', async () => {
+    const before = await snapshotOf(b);
+    const res = await call(server, '/api/org', { session: a.member.session });
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    for (const secret of bSecrets()) expect(text).not.toContain(secret);
+    const { locations } = JSON.parse(text) as { locations: { id: string; calibration: { updating: unknown } }[] };
+    expect(locations.map((location) => [location.id, location.calibration.updating])).toEqual([
+      [a.locationId, { stage: 'running', since: a.liveRequestedAt.toISOString() }],
+    ]);
+    expect(await snapshotOf(b)).toBe(before);
   });
 
   it('a member route takes the organization only from the principal, never from the request', async () => {

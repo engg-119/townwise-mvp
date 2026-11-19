@@ -9,10 +9,12 @@ import { readFileSync } from 'node:fs';
 import { Types } from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
-import { scopeForNewOrg } from '../src/access/policy.ts';
+import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
+import { runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
 import type { AgentPanel, AnswerResult } from '../src/handlers/agent.ts';
 import { createAgentAnswerStore } from '../src/stores/agent-answers.ts';
 import { addGrant, addLocation, addSeat, auditEvents, createOrg } from './helpers/fixtures.ts';
+import { runDays } from './helpers/lab.ts';
 import {
   call, logLines, removeStaffFactor, signIn, signInStaff, startTownwiseServer, type TestSession, type TownwiseTestServer,
 } from './helpers/server.ts';
@@ -915,6 +917,34 @@ describe('the answers the client reads (fixtures/agent-panel.json)', () => {
         detail: null, startTime: null, endTime: null, title: 'Sentinel-unsure-event',
       },
     }));
+
+    // D65: a refit the pass started at 08:05 after new sales and a changed note, whose run the gate held because it was
+    // no more accurate than a weekday average, finished at 08:15: the location's first forecast, not published.
+    const calibrationId = '0000000000000000000000e7';
+    const scope = { orgId } as OrgScope;
+    const { calibrations, forecasts } = server.ctx.stores;
+    await calibrations.insertQueued(scope, {
+      id: calibrationId, locationId, requestedBy: { userId: null, role: 'system', via: 'scheduled' }, causes: ['sales', 'person_change'],
+      regimeStart: null, championRunId: null, tokenExpiresAt: new Date('2026-06-01T08:25:00.000Z'), now: new Date('2026-06-01T08:05:00.000Z'),
+    });
+    await calibrations.markRunning(scope, calibrationId, { now: new Date('2026-06-01T08:06:00.000Z'), imageDigest: null });
+    await calibrations.recordInput(scope, calibrationId, {
+      inputSha256: 'a'.repeat(64), dataSha256: 'b'.repeat(64), dataThrough: TO, termsThrough: null, dayCount: 412, dataFrom: '2025-03-01',
+      newDays: null, resultTokenSha256: 'c'.repeat(64),
+    });
+    const file: ForecastRunFile = {
+      schema: 'townwise.forecast-run/1', metric: 'guests', model: { family: 'seasonal_baseline', version: 'v7', notebookCommit: 'abcdef0' },
+      trainingSource: 'files_from_owner', trainedFrom: '2025-03-01', dataThrough: TO, madeAt: TO, frozen: null,
+      interval: { level: 0.8, widened: true }, backtest: null, ...runDays(TO, 14),
+    };
+    const runAt = new Date('2026-06-01T08:14:00.000Z');
+    const { run } = await forecasts.upsertRun(scope, locationId, {
+      id: '0000000000000000000000e8', file, fileSha256: runFileSha256(file), importedBy: null, lab: null, now: runAt,
+    });
+    await forecasts.setStatus(scope, run.id, { from: ['importing'], to: 'draft', at: runAt, by: null });
+    await calibrations.recordResult(scope, calibrationId, { runId: run.id, scorecardJson: '{}', codeVersion: 'c0de' });
+    await calibrations.recordGate(scope, calibrationId, { published: false, reason: 'baseline_not_beaten' });
+    await calibrations.finish(scope, calibrationId, { status: 'succeeded' }, new Date('2026-06-01T08:15:00.000Z'));
 
     expect(await panel(locationId)).toEqual({ status: 200, body: fixture.panel });
     expect(await answer(locationId, fixture.answer.questionId, fixture.answer.body)).toEqual({ status: 200, body: fixture.answer.response });

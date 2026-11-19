@@ -117,13 +117,52 @@ const historyFields = { dayCount: z.number(), firstDate: z.string(), lastDate: z
  */
 const publishedFields = { ...historyFields, dataThrough: z.string(), newerDays: z.number(), nextRefresh: z.string().nullable() };
 
+/**
+ * D65 (design decision 1): a forecast being updated, a field beside the state and never a state of its own, so a client
+ * from before strips it. `running` is a live calibration inside its 20 minutes, since its request; `waiting` a first
+ * forecast the hourly pass will start, since its refit mark.
+ */
+export const updatingSchema = z.object({ stage: z.enum(['running', 'waiting']), since: z.string() });
+export type Updating = z.infer<typeof updatingSchema>;
+
+/** D65 design decision 7: what happened to a run, in the codes the owner's pages word (the API's lab/owner-outcome.ts). */
+export const OWNER_REASONS = [
+  'published', 'published_by_staff', 'not_more_accurate', 'not_beat_average', 'failed_checks', 'held_for_review', 'too_soon',
+  'needs_more_history', 'forecasts_off', 'newer_forecast', 'staff_withdrew', 'not_judged', 'failed',
+] as const;
+export type OwnerReason = (typeof OWNER_REASONS)[number];
+
+/** D65 design decision 4: a `not_calibrated` location's newest calibration once it finished (or timed out). */
+export const lastRunSchema = z.object({
+  outcome: z.enum(['published', 'kept', 'not_run']),
+  reason: z.enum(OWNER_REASONS),
+  finishedAt: z.string(),
+});
+export type LastRun = z.infer<typeof lastRunSchema>;
+
+// Optional for an API from before D65, which reads as not updating with no last run (read through `updatingOf` and
+// `lastRunOf`). An answer this client can't read (a stage or reason added later) reads the same, so it never fails
+// GET /api/org's parse.
+const updating = updatingSchema.nullable().optional().catch(null);
+const lastRun = lastRunSchema.nullable().optional().catch(null);
+
 export const calibrationSchema = z.discriminatedUnion('state', [
-  z.object({ state: z.literal('no_sales_data') }),
-  z.object({ state: z.literal('not_calibrated'), ...historyFields }),
-  z.object({ state: z.literal('calibrated'), ...publishedFields }),
-  z.object({ state: z.literal('stale'), ...publishedFields }),
+  z.object({ state: z.literal('no_sales_data'), updating }),
+  z.object({ state: z.literal('not_calibrated'), ...historyFields, updating, lastRun }),
+  z.object({ state: z.literal('calibrated'), ...publishedFields, updating }),
+  z.object({ state: z.literal('stale'), ...publishedFields, updating }),
 ]);
 export type Calibration = z.infer<typeof calibrationSchema>;
+
+/** D65: whether the location's forecast is updating; null from an API before it. */
+export function updatingOf(calibration: Calibration): Updating | null {
+  return calibration.updating ?? null;
+}
+
+/** D65: a `not_calibrated` location's last run; null in every other state and from an API before it. */
+export function lastRunOf(calibration: Calibration): LastRun | null {
+  return calibration.state === 'not_calibrated' ? calibration.lastRun ?? null : null;
+}
 
 export const locationSummarySchema = z.object({
   id: z.string(),
