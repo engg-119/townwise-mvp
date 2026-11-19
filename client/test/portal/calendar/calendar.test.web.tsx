@@ -1017,6 +1017,22 @@ describe('found by research (D66)', () => {
     expect(within(panel()).getByText('Nothing else on the calendar this day.')).toBeTruthy();
   });
 
+  test('Save after another member hid the event closes the sheet and says so, never offering an edit of a hidden event', async () => {
+    const { api, fake } = setup(meOf(ACCESS.member), { found: [foundEvent()] });
+    await renderAt('/locations/l1/calendar?day=2026-11-21', api);
+    fireEvent.click(within(panel()).getByRole('button', { name: 'Edit Trivia night' }));
+    const sheet = screen.getByRole('dialog', { name: 'Edit event' });
+    fireEvent.change(within(sheet).getByLabelText('Title'), { target: { value: 'Quiz night' } });
+    api.answers[TRIVIA_PATH] = () => {
+      fake.found = [];
+      return new ApiError('http', 'The request was refused.', { status: 409, code: 'changed_since', detail: { event: { ...foundEvent({ head: 'r5' }), hidden: true } } });
+    };
+    fireEvent.click(within(sheet).getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText('Someone hid this event for this location since you opened it, so nothing changed. Restore it from the Town tab to edit it.')).toBeTruthy();
+    expect(screen.queryByRole('dialog', { name: 'Edit event' })).toBeNull();
+    expect(writes(api)).toHaveLength(1);
+  });
+
   test('Edit sends the head as basedOn; a 409 shows the event as it reads now, and Save again sends the new head', async () => {
     const { api, fake } = setup(meOf(ACCESS.member), { found: [foundEvent()] });
     await renderAt('/locations/l1/calendar?day=2026-11-21', api);

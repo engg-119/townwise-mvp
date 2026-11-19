@@ -336,10 +336,10 @@ function CalendarView(): React.JSX.Element {
 
   // A found event's Save, Hide or Reset, with the event's head as basedOn; the range's calendar reads again after any
   // answer. 'conflict': someone changed it since, `current` the event as it reads now when the answer carried it.
-  const changeFound = useCallback(async (event: ResearchedEvent, change: ResearchedEventChange): Promise<'saved' | { conflict: ResearchedEvent | null } | 'gone'> => {
+  const changeFound = useCallback(async (event: ResearchedEvent, change: ResearchedEventChange): Promise<'saved' | { conflict: ResearchedEvent | null; hidden: boolean } | 'gone'> => {
     try {
       const result = await updateResearchedEvent(api, location.id, event.id, change);
-      return result.status === 'saved' ? 'saved' : { conflict: result.current };
+      return result.status === 'saved' ? 'saved' : { conflict: result.current, hidden: result.hidden };
     } catch (error) {
       if (hasCode(error, 404, 'not_found')) return 'gone';
       throw error;
@@ -357,6 +357,10 @@ function CalendarView(): React.JSX.Element {
       openerGone.current = true;
       setForm(null);
       setNotice({ text: FOUND_NOTICES.gone, stays: true });
+    } else if (answer.hidden) {
+      // Another member hid it meanwhile: an edit would change an event the Calendar no longer shows.
+      setForm(null);
+      setNotice({ text: FOUND_NOTICES.hiddenSince, stays: true });
     } else {
       // The sheet opens again on the event as it reads now (the answer's, else the calendar read again's).
       setForm(answer.conflict === null

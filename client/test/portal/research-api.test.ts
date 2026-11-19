@@ -116,7 +116,7 @@ describe('the research routes (design decision 13)', () => {
     expect(result.status === 'changed_since' ? [result.current?.head, result.current?.title] : null).toEqual(['r9', 'Pub quiz']);
     // Without a view in the body it still answers changed_since, and the page reads the calendar again.
     fake.answers[`${BASE}/research/events/l-${HEX}`] = () => refusal(409, 'changed_since');
-    expect(await updateResearchedEvent(fake, 'l1', `l-${HEX}`, { op: 'restore', basedOn: 'r1' })).toEqual({ status: 'changed_since', current: null });
+    expect(await updateResearchedEvent(fake, 'l1', `l-${HEX}`, { op: 'restore', basedOn: 'r1' })).toEqual({ status: 'changed_since', current: null, hidden: false });
   });
 
   test('every other refusal throws: too_many_edits, a 404 and view-as', async () => {

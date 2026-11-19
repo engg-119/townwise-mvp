@@ -102,11 +102,12 @@ export type ResearchedEventChange =
 /**
  * An edit's answer: saved (with the event as it is now, when the API sent it), or 409 `changed_since`, someone changed
  * it since this view was read, with the event's current view when the API sent one (its new `head` is what a retry
- * sends). Every other failure throws.
+ * sends), and whether that view is hidden (another member hid it meanwhile: the schema keeps no `hidden`, so it is read
+ * apart). Every other failure throws.
  */
 export type ResearchedEventResult =
   | { status: 'saved'; event: ResearchedEvent | null }
-  | { status: 'changed_since'; current: ResearchedEvent | null };
+  | { status: 'changed_since'; current: ResearchedEvent | null; hidden: boolean };
 
 function viewOf(value: unknown): ResearchedEvent | null {
   const parsed = researchedEventSchema.safeParse(value);
@@ -127,7 +128,8 @@ export async function updateResearchedEvent(
     return { status: 'saved', event: viewOf(body.event) };
   } catch (error) {
     if (error instanceof ApiError && error.status === 409 && error.code === 'changed_since') {
-      return { status: 'changed_since', current: viewOf(error.detail?.event) };
+      const hidden = z.object({ hidden: z.boolean() }).safeParse(error.detail?.event);
+      return { status: 'changed_since', current: viewOf(error.detail?.event), hidden: hidden.success && hidden.data.hidden };
     }
     throw error;
   }
