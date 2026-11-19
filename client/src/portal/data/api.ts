@@ -112,11 +112,35 @@ export const dataItemSchema = z.object({
     z.object({ status: z.literal('removed') }),
     z.object({ status: z.literal('refused'), reason: z.string(), retry: z.boolean() }),
   ]).nullable().optional(),
+  /**
+   * D61: the folder the item is in (folders.ts), read as a string so a folder a later API adds files the item under Not
+   * sorted yet; Not sorted yet from an API older than folders.
+   */
+  folder: z.string().default('unsorted'),
 });
 export type DataItem = z.infer<typeof dataItemSchema>;
 export type DataItemCalendar = NonNullable<DataItem['calendar']>;
 
-const listSchema = z.object({ items: z.array(dataItemSchema), next: z.string().nullable() });
+/**
+ * D61: one of the list's calendars, an item of the Calendars folder opening at `c_<id>`: never its address. `kind` and
+ * `status` are read as strings, as Your calendars reads them.
+ */
+export const dataCalendarSchema = z.object({
+  id: z.string(),
+  locationId: z.string(),
+  label: z.string(),
+  kind: z.string(),
+  host: z.string().nullable(),
+  eventCount: z.number(),
+  skippedRepeating: z.number(),
+  status: z.string(),
+  lastSuccessAt: z.string().nullable(),
+  createdAt: z.string(),
+});
+export type DataCalendar = z.infer<typeof dataCalendarSchema>;
+
+/** `calendars` are the same on every page; none from an API older than D61. */
+const listSchema = z.object({ items: z.array(dataItemSchema), next: z.string().nullable(), calendars: z.array(dataCalendarSchema).default([]) });
 const itemSchema = z.object({ item: dataItemSchema });
 const removedSchema = z.object({ deletedDays: z.number(), deletedFiles: z.number() });
 const undoneSchema = z.object({ item: dataItemSchema, calibrationKept: z.string().nullable() });
@@ -126,8 +150,13 @@ function itemPath(locationId: string, ref: string): `/${string}` {
   return `/api/org/locations/${encodeURIComponent(locationId)}/data/${encodeURIComponent(ref)}`;
 }
 
-/** Newest first, 100 a page; one location's items, or every location's without `locationId`. `after` is the last page's `next`. */
-export function listData(api: ApiClient, opts: { locationId?: string; after?: string }): Promise<{ items: DataItem[]; next: string | null }> {
+/**
+ * Newest first, 100 a page; one location's items, or every location's without `locationId`. `after` is the last page's
+ * `next`. D61: with the scope's calendars, and without a file a calendar was imported from while that calendar exists.
+ */
+export function listData(
+  api: ApiClient, opts: { locationId?: string; after?: string },
+): Promise<{ items: DataItem[]; next: string | null; calendars: DataCalendar[] }> {
   const query = new URLSearchParams();
   if (opts.locationId !== undefined) query.set('locationId', opts.locationId);
   if (opts.after !== undefined) query.set('after', opts.after);

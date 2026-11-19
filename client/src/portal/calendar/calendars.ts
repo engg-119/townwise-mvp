@@ -319,7 +319,7 @@ export function refreshable(kind: string): boolean {
 }
 
 /** A calendar row's lines but its name and status (statusWords, which a link's or Google calendar's row shows before `updated`). */
-export function rowLines(calendar: OwnerCalendar): RowLines {
+export function rowLines(calendar: Pick<OwnerCalendar, 'kind' | 'host' | 'eventCount' | 'skippedRepeating' | 'lastSuccessAt'>): RowLines {
   const events = plural(calendar.eventCount, 'event', 'events');
   const at = calendar.lastSuccessAt;
   const summary = calendar.kind === 'link'

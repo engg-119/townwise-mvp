@@ -6,6 +6,7 @@ import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
 import type { OrgScope } from '../access/policy.ts';
 import type { Role } from '../access/resolve.ts';
+import { FILEABLE_FOLDERS, type FileableFolder } from '../data/folders.ts';
 import type { RuleSchedule } from './business-rules.ts';
 
 export const FILES_COLLECTION = 'tw_files';
@@ -319,6 +320,11 @@ interface FileFields {
   source?: { via: 'ai_file'; fileId: Types.ObjectId };
   /** D60: importing it as a calendar, once tried; absent for a file that is not a calendar file. */
   calendarImport?: { state: 'added' | 'refused'; code?: CalendarImportCode; at: Date };
+  /**
+   * D61: the Your data folder it was filed in (data/folders.ts): `notes` for saved text (insertStored), or one set later
+   * by setFolder. Absent means filed by what Townwise knows of it.
+   */
+  folder?: FileableFolder;
 }
 
 function fileSchema(): Schema<FileFields> {
@@ -376,6 +382,7 @@ function fileSchema(): Schema<FileFields> {
         at: { type: Date, required: true },
       }, { _id: false, strict: 'throw' }),
     },
+    folder: { type: String, enum: FILEABLE_FOLDERS },
   }, { strict: 'throw', versionKey: false, read: 'primary', minimize: false });
   schema.index({ orgId: 1, locationId: 1, uploadedAt: -1 });
   schema.index({ orgId: 1, importId: 1, uploadedAt: 1 });
@@ -454,6 +461,8 @@ export interface FileRecord {
   readonly source: AiSource | null;
   /** D60: importing it as a calendar, once tried; null for a file that is not a calendar file. */
   readonly calendarImport: CalendarImport | null;
+  /** D61: the Your data folder it was filed in, or null to file it by what Townwise knows of it (data/folders.ts). */
+  readonly folder: FileableFolder | null;
 }
 
 function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
@@ -501,6 +510,7 @@ function toFile(doc: FileFields & { _id: Types.ObjectId }): FileRecord {
     ai: doc.ai === undefined ? null : { ...doc.ai, actions: doc.ai.actions ?? null, undoing: doc.ai.undoing === true, notBefore: doc.ai.notBefore ?? null },
     source: doc.source === undefined ? null : { via: 'ai_file', fileId: doc.source.fileId.toHexString() },
     calendarImport: calendarImportOf(doc.calendarImport),
+    folder: doc.folder ?? null,
   };
 }
 
@@ -614,6 +624,11 @@ export interface FileStore {
   duplicateOf(scope: OrgScope, locationId: string, purpose: FilePurpose, fingerprint: string, exceptId: string): Promise<string | null>;
   /** D60: records what importing the file as a calendar did, replacing an earlier record. False when the file is gone. */
   setCalendarImport(scope: OrgScope, fileId: string, record: CalendarImport): Promise<boolean>;
+  /**
+   * D61: files the item in a Your data folder (data/folders.ts), replacing an earlier one; null forgets it, so the item
+   * is filed by what Townwise knows of it again. False when the file is gone. The hook D59's agent files items with.
+   */
+  setFolder(scope: OrgScope, fileId: string, folder: FileableFolder | null): Promise<boolean>;
   /** Every stored file of the import becomes queued. Resolves the number changed. */
   queueStored(scope: OrgScope, importId: string): Promise<number>;
   /** Compare-and-set one file from `from` to `to`. */
@@ -852,6 +867,7 @@ export function createFileStore(connection: Connection): FileStore {
       carry('byStaff', from.byStaff);
       carry('openAsAdminGrantId', from.openAsAdminGrantId);
       carry('addedVia', from.addedVia);
+      carry('folder', from.folder);
       // An edit of a TownwiseAI read's summary item stays that read's, so undoing the read removes it too.
       carry('source', from.source === null ? null : { via: 'ai_file', fileId: oid(from.source.fileId) });
       carry('disabledAt', from.disabledAt);
@@ -912,7 +928,8 @@ export function createFileStore(connection: Connection): FileStore {
           uploadedBy: input.uploadedBy, uploaderRole: input.uploaderRole, uploadedAt: input.uploadedAt, name: input.name,
           ...(input.openAsAdminGrantId === undefined ? {} : { byStaff: true, openAsAdminGrantId: input.openAsAdminGrantId }),
           kind: 'text', sizeBytes: input.sizeBytes, fingerprint: input.fingerprint, upload: null, status: 'kept', outcome: 'reference',
-          answers: {}, attempts: 0,
+          // D61: saved text (pasted, or kept by TownwiseAI) is filed in Notes and pasted text.
+          answers: {}, attempts: 0, folder: 'notes',
           ...(input.addedVia === null ? {} : { addedVia: input.addedVia }),
           ...(input.source === undefined ? {} : { source: { via: 'ai_file', fileId: oid(input.source.fileId) } }),
         });
@@ -1009,6 +1026,10 @@ export function createFileStore(connection: Connection): FileStore {
     async setCalendarImport(scope, fileId, record) {
       const set = record.state === 'added' ? { state: 'added', at: record.at } : { state: 'refused', code: record.code, at: record.at };
       return (await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, { $set: { calendarImport: set } })).matchedCount === 1;
+    },
+    async setFolder(scope, fileId, folder) {
+      const update = folder === null ? { $unset: { folder: 1 } } : { $set: { folder } };
+      return (await File.updateOne({ _id: oid(fileId), orgId: org(scope) }, update)).matchedCount === 1;
     },
     async addModelCall(scope, fileId, costMicroUsd, saved) {
       const update: Record<string, unknown> = { $inc: { modelCalls: 1, costMicroUsd } };
