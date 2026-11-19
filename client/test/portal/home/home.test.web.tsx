@@ -321,8 +321,17 @@ test('D66: This week lists found events after the day’s own entries; Unconfirm
   expect(within(strip).getByText('Found by research')).toBeTruthy();
   expect(within(strip).queryByText('Maybe a market')).toBeNull();
   expect(within(strip).queryByText('Trivia night')).toBeNull();
+  // The chart, which shows in place of the days, reads them too: Saturday's column names it, and so does its chosen day.
+  const column = screen.getByTestId('home-week-chart-2026-11-07');
+  expect(column.getAttribute('aria-label')).toContain('Found by research: Winter carnival');
+  expect(column.getAttribute('aria-label')).not.toContain('Maybe a market');
+  fireEvent.click(column);
+  const chosen = screen.getByRole('region', { name: 'This week’s chosen day' });
+  expect(within(chosen).getByText('Found by research: Winter carnival')).toBeTruthy();
+  expect(within(chosen).queryByText(/Maybe a market|Trivia night/)).toBeNull();
   // Only This week reads them: no other part of Home names one.
-  expect(screen.getAllByText('Winter carnival')).toHaveLength(1);
+  const month = screen.getByRole('grid', { name: 'November 2026' });
+  expect(within(month).queryByText(/Winter carnival/)).toBeNull();
 });
 
 test('the month calendar: the arrow keys and a pointer preview the days beside the grid', async () => {

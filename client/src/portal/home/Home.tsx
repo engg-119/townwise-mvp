@@ -173,8 +173,10 @@ function HomeView(props: {
     today, covered: forecastRange(today), forecast, salesDays: [...input.byDate.values()], events: calendar.events, notes, rules, imported,
     filters: ALL_FILTERS,
   }), [today, forecast, input.byDate, calendar.events, notes, rules, imported]);
-  // D66: This Week alone reads found events, last on each day and without Unconfirmed or competitors' ones (homeFound).
-  const week = useMemo(() => thisWeek(input, { ...entries, found: homeFound(calendar.found) }), [input, entries, calendar.found]);
+  // D66: This Week alone reads found events, last on each day and without Unconfirmed or competitors' ones (homeFound):
+  // its days, and its chart's columns and chosen day, which show in place of the days whenever the chart draws.
+  const weekInput = useMemo<CalendarInput>(() => ({ ...entries, found: homeFound(calendar.found) }), [entries, calendar.found]);
+  const week = useMemo(() => thisWeek(input, weekInput), [input, weekInput]);
   const lastWeek = useMemo(() => lastWeekComparison(input, lastWeekForecast), [input, lastWeekForecast]);
   const share = useMemo(() => lateWeekShare(input), [input]);
   const facts = useMemo(() => monthFacts(input), [input]);
@@ -212,7 +214,7 @@ function HomeView(props: {
         />
       )}
       <ThisWeek
-        week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} entries={entries}
+        week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} entries={weekInput}
         locationId={locationId}
       />
       <BlockRow
