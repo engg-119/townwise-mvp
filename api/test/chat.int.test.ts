@@ -199,7 +199,7 @@ describe('a plain answer', () => {
 
     const list = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
     expect(list.enabled).toBe(true);
-    expect(list.budget).toEqual({ month: '2026-06', usedUsd: 0.03, limitUsd: 20, exhausted: false });
+    expect(list.budget).toEqual({ month: '2026-06', usedUsd: 0.03, limitUsd: 20, exhausted: false, researchUsd: 0 });
     expect(list.conversations[0]).toEqual({ id, title: 'What changed in May?', updatedAt: server.clock.now().toISOString(), turnCount: 1, running: false });
 
     const view = await (await call(server, `/api/org/locations/${locationId}/chat/${id}`, { session: author.session })).json() as ConversationView;
@@ -773,6 +773,15 @@ describe('caps, budget and limits', () => {
     expect((await turn({ conversationId: almost, content: 'Last one' })).status).toBe(200);
   });
 
+  it('D66: the budget says what location research used of the month, in cents, inside usedUsd', async () => {
+    const usage = server.connection.collection('tw_chat_usage');
+    await usage.insertOne({
+      orgId: new Types.ObjectId(orgId), month: '2026-06', costMicroUsd: 4_255_000, researchMicroUsd: 3_554_999, updatedAt: server.clock.now(),
+    });
+    const summary = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
+    expect(summary.budget).toEqual({ month: '2026-06', usedUsd: 4.26, limitUsd: 20, exhausted: false, researchUsd: 3.55 });
+  });
+
   it('a spent budget is 409 chat_budget_exhausted before any model call; a turn under it may overrun by its own cost', async () => {
     const usage = server.connection.collection('tw_chat_usage');
     await usage.insertOne({ orgId: new Types.ObjectId(orgId), month: '2026-06', costMicroUsd: 19_999_999, updatedAt: server.clock.now() });
@@ -785,7 +794,7 @@ describe('caps, budget and limits', () => {
     const refused = await turn({ content: 'Over budget' });
     expect(refused).toMatchObject({ status: 409, error: 'chat_budget_exhausted' });
     const summary = await (await call(server, `/api/org/locations/${locationId}/chat`, { session: author.session })).json() as ChatSummary;
-    expect(summary.budget).toEqual({ month: '2026-06', usedUsd: 20.03, limitUsd: 20, exhausted: true });
+    expect(summary.budget).toEqual({ month: '2026-06', usedUsd: 20.03, limitUsd: 20, exhausted: true, researchUsd: 0 });
   });
 
   it('a budget spent during a turn ends it with budget after its last complete step, and makes no further call', async () => {
