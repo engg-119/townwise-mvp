@@ -16,17 +16,19 @@ import {
   DATA_PAGE, listDataItems, loadDataItem, parseRef, refString, type DataCursor, type DataItemRecord, type DataState, type DataVia,
 } from '../data/library.ts';
 import type { FileBlobs } from '../files/blobs.ts';
+import { RETRYABLE_IMPORTS, runCalendarImport } from '../files/calendar-import.ts';
 import { renamedItemName, replaceClaimLive, replaceClaimStaleBefore, TEXT_ITEM_TITLE_MAX } from '../files/items.ts';
 import { AI_READS_IN_FLIGHT } from '../files/limits.ts';
 import { currentEmail, DELETED_PERSON, TOWNWISE_STAFF } from '../people.ts';
 import type {
-  AiActionsOutcome, AiCalibration, AiDaysReason, AiEventEffect, AiEventKind, AiFileKind, AiItemReason, AiReadStatus, FileKind, FileRecord,
-  FileStatus,
+  AiActionsOutcome, AiCalibration, AiDaysReason, AiEventEffect, AiEventKind, AiFileKind, AiItemReason, AiReadStatus, CalendarImportCode,
+  FileKind, FileRecord, FileStatus,
 } from '../stores/files.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { NoteRecord } from '../stores/notes.ts';
 import { fileView, isUploaderOrAdmin, removeWholeFile } from './files.ts';
 import { loadLocation, memberOf } from './locations.ts';
+import { calendarOfFile } from './owner-calendars.ts';
 import { finishAccepted } from './rule-suggestions.ts';
 import { filesUnavailable } from './sales.ts';
 import { actorOf } from './team.ts';
@@ -73,7 +75,21 @@ export interface DataItemView {
    * stored files are off.
    */
   fromAiRead: string | null;
+  /**
+   * D60: on one item's view only (GET .../data/:ref and POST .../data/:ref/calendar), never the list's, what importing
+   * the stored file (`f_`) as a calendar did: `added` while its calendar exists (its id, label and event count);
+   * `removed` once that calendar was removed (the file stays, and is never imported again); `refused` with the code and
+   * whether a retry may mend it (`retry`: the location had 5 calendars, or the original couldn't be read, and the
+   * original is still stored); null for any other item, and while stored files are off.
+   */
+  calendar?: DataItemCalendarView | null;
 }
+
+/** What importing a calendar file kept in Your data did (DataItemView.calendar, D60). */
+export type DataItemCalendarView =
+  | { status: 'added'; calendarId: string; label: string; eventCount: number }
+  | { status: 'removed' }
+  | { status: 'refused'; reason: CalendarImportCode; retry: boolean };
 
 /**
  * A read's state and, once done, what TownwiseAI found and what it made (spec 11A.9). `kind`, `summary`, `facts` and
@@ -379,13 +395,31 @@ async function itemViews(ctx: TownwiseContext, member: MemberPrincipal, items: r
 
 /**
  * One item as the client sees it, with its emails read now (also Keep on a TownwiseAI card, chat-item-proposals.ts);
- * with `events`, its read's events too (DataItemAiView.events, D49).
+ * with `events`, its read's events too (DataItemAiView.events, D49); with `calendar`, its calendar import (D60).
  */
 export async function itemView(
-  ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord, opts: { events?: boolean } = {},
+  ctx: TownwiseContext, member: MemberPrincipal, item: DataItemRecord, opts: { events?: boolean; calendar?: boolean } = {},
 ): Promise<DataItemView> {
-  const [emails, links] = await Promise.all([emailsFor(ctx, [item]), aiLinksFor(ctx, member.scope, [item])]);
-  return dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links, opts.events === true);
+  const [emails, links, calendar] = await Promise.all([
+    emailsFor(ctx, [item]), aiLinksFor(ctx, member.scope, [item]), opts.calendar === true ? calendarOf(ctx, member.scope, item) : undefined,
+  ]);
+  const view = dataItemView(member, item, emails(item), ctx.files !== null, ctx.aiReads !== null, ctx.now(), links, opts.events === true);
+  return calendar === undefined ? view : { ...view, calendar };
+}
+
+/**
+ * A stored file's calendar import (DataItemCalendarView): the calendar that keeps its id says it was added, also when
+ * the file's own record was never written; else the file's record says whether it was added once or refused.
+ */
+async function calendarOf(ctx: TownwiseContext, scope: OrgScope, item: DataItemRecord): Promise<DataItemCalendarView | null> {
+  const file = item.file;
+  if (ctx.files === null || item.ref.type !== 'file' || file === null) return null;
+  const calendar = await calendarOfFile(ctx, scope, item.locationId, file.id);
+  if (calendar !== null) return { status: 'added', calendarId: calendar.id, label: calendar.label, eventCount: calendar.eventCount };
+  const record = file.calendarImport;
+  if (record === null) return null;
+  if (record.state === 'added') return { status: 'removed' };
+  return { status: 'refused', reason: record.code, retry: RETRYABLE_IMPORTS.has(record.code) && file.rawDeletedAt === null };
 }
 
 const listQuery = z.object({ locationId: objectId.optional(), after: z.string().max(64).optional() });
@@ -429,7 +463,35 @@ export async function getDataItem(ctx: TownwiseContext, req: Request, res: Respo
   const location = await loadLocation(ctx, member.scope, req.params.locationId);
   const item = await loadDataItem(ctx, member.scope, location.id, ref, member.userId);
   if (item === null) throw notFound();
-  res.status(200).json({ item: await itemView(ctx, member, item, { events: true }) });
+  res.status(200).json({ item: await itemView(ctx, member, item, { events: true, calendar: true }) });
+}
+
+/**
+ * POST /locations/:locationId/data/:ref/calendar {}: imports a calendar file kept in Your data again (D60), after its
+ * import was refused for a cause a retry may mend (`calendar.retry`: the location had 5 calendars, or its original
+ * couldn't be read). Any member, as Your calendars' import; never under view-as (the chain refuses it). In order: 400
+ * for the body and the ref, 404 for another organization's or an unknown location or item, 503 files_unavailable while
+ * stored files are off, and 400 invalid_request for an item that is no calendar file. 200 with the item and its
+ * `calendar` as they are after it: a retry refused again says so there, and an item already added, removed or refused
+ * for good is answered as it is, so a double press is harmless and never imports a file twice.
+ */
+export async function retryDataCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
+  const member = memberOf(principal);
+  const { scope } = member;
+  parseInput(z.strictObject({}), req.body);
+  const ref = parseRef(req.params.ref);
+  const location = await loadLocation(ctx, scope, req.params.locationId);
+  const blobs = ctx.files;
+  if (blobs === null) throw filesUnavailable();
+  const item = await loadDataItem(ctx, scope, location.id, ref, member.userId);
+  if (item === null) throw notFound();
+  const calendar = await calendarOf(ctx, scope, item);
+  if (calendar === null || item.file === null) throw invalidRequest();
+  let shown = item;
+  if (calendar.status === 'refused' && calendar.retry) {
+    shown = { ...item, file: { ...item.file, calendarImport: await runCalendarImport(ctx, blobs, member, location, item.file) } };
+  }
+  res.status(200).json({ item: await itemView(ctx, member, shown, { calendar: true }) });
 }
 
 /** The location, then the item by its ref; a stored file answers 503 files_unavailable while files are off. */

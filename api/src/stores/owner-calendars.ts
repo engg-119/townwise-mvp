@@ -45,6 +45,11 @@
 // person's, and confirmBookings marks the calendar confirmed by compare-and-set. bookingsBetween reads the confirmed
 // calendars' buyout and party rows as dates and label only, never a title or uid, for the lab input (lab/input.ts). A
 // label is not a customer's data but sits on a row whose title is, so it follows the title's rules: never logged.
+//
+// A calendar file kept in Your data (D60) is imported as a file calendar that keeps `fromFileId`, the tw_files row it
+// came from, under a unique index on (orgId, fromFileId): the same stored file is never imported twice, also when two
+// imports race (the second insert is refused, and its add answers 'file_imported'). Removing the calendar leaves the
+// file, and deleting the file leaves the calendar, whose fromFileId then names no file.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 
@@ -136,6 +141,8 @@ interface SourceFields {
   format?: 'ics' | 'csv';
   /** A file calendar's bookings once sorted, labeled or confirmed (D58); absent reads unsorted. */
   bookings?: StoredBookings;
+  /** D60: the stored file (tw_files) a file calendar was imported from in Your data; absent otherwise. */
+  fromFileId?: Types.ObjectId;
 }
 
 interface StoredBookings {
@@ -200,8 +207,11 @@ function sourceSchema(): Schema<SourceFields> {
       }, { _id: false, strict: 'throw' }),
       default: undefined,
     },
+    fromFileId: { type: Schema.Types.ObjectId },
   }, { strict: 'throw', versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, locationId: 1, slot: 1 }, { unique: true });
+  // D60: a stored file imports at most one calendar.
+  schema.index({ orgId: 1, fromFileId: 1 }, { unique: true, partialFilterExpression: { fromFileId: { $type: 'objectId' } } });
   // The refresh loop's claim of a due link, across organizations (stores/cross-tenant.ts); a file's is null.
   schema.index({ nextRefreshAt: 1 });
   return schema;
@@ -269,6 +279,8 @@ export interface OwnerCalendarRecord {
     readonly confirmedAt: Date | null;
     readonly confirmedBy: string | null;
   } | null;
+  /** D60: the stored file a file calendar was imported from in Your data; null otherwise. */
+  readonly fromFileId: string | null;
 }
 
 /** A stored event with its calendar's name. */
@@ -405,6 +417,14 @@ export interface OwnerCalendarStore {
    */
   add(scope: OrgScope, locationId: string, calendar: NewCalendar, parsed: ParsedCalendar, input: { createdBy: string; now: Date }): Promise<OwnerCalendarRecord | 'calendar_limit'>;
   /**
+   * D60: add's file calendar made from a stored file (tw_files), which it keeps as `fromFileId`; 'file_imported' when a
+   * calendar of that file already exists (also one another import stored meanwhile), and nothing is stored.
+   */
+  addFromFile(
+    scope: OrgScope, locationId: string, fileId: string, calendar: NewCalendar & { kind: 'file' }, parsed: ParsedCalendar,
+    input: { createdBy: string; now: Date },
+  ): Promise<OwnerCalendarRecord | 'calendar_limit' | 'file_imported'>;
+  /**
    * Replaces the calendar's events by generation (the first 2,000) and records the counts and the success. Not switched
    * when the calendar is gone, or when another replace switched it first: this one's rows are then deleted.
    */
@@ -502,6 +522,7 @@ function toCalendar(doc: SourceDoc): OwnerCalendarRecord {
     createdAt: doc.createdAt,
     format: doc.kind === 'file' ? doc.format ?? 'ics' : null,
     bookings: bookingsOf(doc),
+    fromFileId: doc.fromFileId?.toHexString() ?? null,
   };
 }
 
@@ -633,6 +654,60 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     return (await removeWhere(events, key)) === 1;
   }
 
+  /** add and addFromFile: the calendar, in a free slot, then its events; with `fromFileId`, a stored file's (D60). */
+  async function insert(
+    scope: OrgScope, locationId: string, calendar: NewCalendar, parsed: ParsedCalendar,
+    input: { createdBy: string; now: Date; fromFileId: Types.ObjectId | null },
+  ): Promise<OwnerCalendarRecord | 'calendar_limit' | 'file_imported'> {
+    const location = ofLocation(scope, locationId);
+    const { fromFileId } = input;
+    const imported = async (): Promise<boolean> => fromFileId !== null && (await Source.exists({ orgId: location.orgId, fromFileId })) !== null;
+    if (await imported()) return 'file_imported';
+    const taken = new Set(await Source.distinct('slot', location));
+    const free = Array.from({ length: MAX_CALENDARS }, (_, slot) => slot).filter((slot) => !taken.has(slot));
+    const fields: Omit<SourceDoc, 'slot'> = {
+      _id: new Types.ObjectId(), ...location, kind: calendar.kind, label: calendar.label,
+      sealedAddress: calendar.kind === 'file' ? null : calendar.sealedAddress,
+      host: calendar.kind === 'link' ? calendar.host : null,
+      googleConnectionId: calendar.kind === 'google' ? new Types.ObjectId(calendar.googleConnectionId) : null,
+      generation: 0, reservedGeneration: 0, eventCount: 0, skippedRepeating: 0, status: 'ok',
+      lastSuccessAt: null, lastAttemptAt: input.now,
+      nextRefreshAt: calendar.kind === 'file' ? null : new Date(input.now.getTime() + REFRESH_INTERVAL_MS),
+      leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: input.createdBy, createdAt: input.now,
+      ...(calendar.kind !== 'google' && calendar.titlesNotice === WEEKLY_TITLES_NOTICE ? { titlesNotice: WEEKLY_TITLES_NOTICE } : {}),
+      ...(calendar.kind === 'file' && calendar.format !== undefined ? { format: calendar.format } : {}),
+      ...(fromFileId === null ? {} : { fromFileId }),
+    };
+    let added: SourceDoc | null = null;
+    for (const slot of free) {
+      try {
+        added = (await Source.create({ ...fields, slot })).toObject();
+        break;
+      } catch (err) {
+        if (!isDuplicateKeyError(err)) throw err;
+        // Another import of the same stored file got there first (D60).
+        if (await imported()) return 'file_imported';
+        // Another add took this slot after it was read: try the next free one.
+      }
+    }
+    if (added === null) return 'calendar_limit';
+    // If the events are not switched in (an error, or the calendar removed or refreshed meanwhile), the calendar goes
+    // with every row written and the add fails, so it holds no slot and a retry adds it once. Only a crash before
+    // that removal leaves the calendar empty, with no lastSuccessAt: removing it, or a link's next refresh, completes
+    // the work.
+    const calendarId = added._id.toHexString();
+    let replaced = false;
+    try {
+      replaced = (await replaceEvents(scope, locationId, calendarId, parsed, input.now)).switched;
+    } finally {
+      if (!replaced) await remove(scope, locationId, calendarId);
+    }
+    if (!replaced) throw new Error('the calendar was removed or refreshed before its events were stored');
+    return toCalendar({
+      ...added, eventCount: Math.min(parsed.events.length, MAX_EVENTS), skippedRepeating: parsed.skippedRepeating, lastSuccessAt: input.now,
+    });
+  }
+
   return {
     async list(scope, locationId) {
       const docs = await Source.find(ofLocation(scope, locationId)).sort({ createdAt: 1, _id: 1 }).lean();
@@ -668,47 +743,12 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
       return (await Source.updateMany(ofConnection(scope, connectionId), { $set: { nextRefreshAt: now } })).matchedCount;
     },
     async add(scope, locationId, calendar, parsed, input) {
-      const location = ofLocation(scope, locationId);
-      const taken = new Set(await Source.distinct('slot', location));
-      const free = Array.from({ length: MAX_CALENDARS }, (_, slot) => slot).filter((slot) => !taken.has(slot));
-      const fields: Omit<SourceDoc, 'slot'> = {
-        _id: new Types.ObjectId(), ...location, kind: calendar.kind, label: calendar.label,
-        sealedAddress: calendar.kind === 'file' ? null : calendar.sealedAddress,
-        host: calendar.kind === 'link' ? calendar.host : null,
-        googleConnectionId: calendar.kind === 'google' ? new Types.ObjectId(calendar.googleConnectionId) : null,
-        generation: 0, reservedGeneration: 0, eventCount: 0, skippedRepeating: 0, status: 'ok',
-        lastSuccessAt: null, lastAttemptAt: input.now,
-        nextRefreshAt: calendar.kind === 'file' ? null : new Date(input.now.getTime() + REFRESH_INTERVAL_MS),
-        leaseUntil: null, consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: input.createdBy, createdAt: input.now,
-        ...(calendar.kind !== 'google' && calendar.titlesNotice === WEEKLY_TITLES_NOTICE ? { titlesNotice: WEEKLY_TITLES_NOTICE } : {}),
-        ...(calendar.kind === 'file' && calendar.format !== undefined ? { format: calendar.format } : {}),
-      };
-      let added: SourceDoc | null = null;
-      for (const slot of free) {
-        try {
-          added = (await Source.create({ ...fields, slot })).toObject();
-          break;
-        } catch (err) {
-          // Another add took this slot after it was read: try the next free one.
-          if (!isDuplicateKeyError(err)) throw err;
-        }
-      }
-      if (added === null) return 'calendar_limit';
-      // If the events are not switched in (an error, or the calendar removed or refreshed meanwhile), the calendar goes
-      // with every row written and the add fails, so it holds no slot and a retry adds it once. Only a crash before
-      // that removal leaves the calendar empty, with no lastSuccessAt: removing it, or a link's next refresh, completes
-      // the work.
-      const calendarId = added._id.toHexString();
-      let replaced = false;
-      try {
-        replaced = (await replaceEvents(scope, locationId, calendarId, parsed, input.now)).switched;
-      } finally {
-        if (!replaced) await remove(scope, locationId, calendarId);
-      }
-      if (!replaced) throw new Error('the calendar was removed or refreshed before its events were stored');
-      return toCalendar({
-        ...added, eventCount: Math.min(parsed.events.length, MAX_EVENTS), skippedRepeating: parsed.skippedRepeating, lastSuccessAt: input.now,
-      });
+      const added = await insert(scope, locationId, calendar, parsed, { ...input, fromFileId: null });
+      if (added === 'file_imported') throw new Error('an add with no stored file answered file_imported');
+      return added;
+    },
+    addFromFile(scope, locationId, fileId, calendar, parsed, input) {
+      return insert(scope, locationId, calendar, parsed, { ...input, fromFileId: new Types.ObjectId(fileId) });
     },
     replaceEvents,
     async claimManualRefresh(scope, locationId, calendarId, now) {

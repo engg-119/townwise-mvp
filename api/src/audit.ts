@@ -242,7 +242,7 @@ export function summaryOf(action: AuditAction, d: AuditDetails): string {
     case 'rule.created': return d.via === 'townwise_ai' ? 'Added a business rule, from TownwiseAI' : 'Added a business rule';
     case 'rule.updated': return 'Edited a business rule';
     case 'rule.deleted': return 'Deleted a business rule';
-    case 'owner_calendar.added': return `Added ${calendarWords(d)} with ${text(d.eventCount)} events`;
+    case 'owner_calendar.added': return `Added ${calendarWords(d)}${d.fileId === undefined ? '' : ' from Your data'} with ${text(d.eventCount)} events`;
     case 'owner_calendar.removed': return `Removed ${calendarWords(d)}`;
     case 'owner_calendar.refreshed':
       return d.status === 'ok' ? `Refreshed ${calendarWords(d)}: ${text(d.eventCount)} events` : `Refreshing ${calendarWords(d)} failed (${text(d.status)})`;
