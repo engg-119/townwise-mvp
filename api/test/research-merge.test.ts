@@ -102,6 +102,19 @@ describe('planMerge', () => {
     expect(plan.inserts.map((row) => row.title)).toEqual(['Sentinel road paving']);
   });
 
+  // Live eval 2026-11-19: the tourism thread stored "Dartmouth Fall Term Final Examinations" over the curated "Fall term
+  // finals" (Nov 20 to 25), since the term-day rule read only the schools thread and the titles share 2 of 6 words.
+  it('drops a school finding of any thread on a curated term\'s first or last day', () => {
+    const term = curated.find((row) => row.kind === 'term' && row.title === 'Winter term finals');
+    if (term === undefined) throw new Error('no curated term');
+    const plan = planMerge(input({
+      curated,
+      found: [thread('tourism_seasonal', [finding({ title: 'Dartmouth Winter Term Final Examinations', category: 'school', start: term.start, end: term.end })])],
+    }));
+    expect(plan.drops.curated_dupe).toBe(1);
+    expect(plan.inserts).toEqual([]);
+  });
+
   it('drops a location finding that repeats one of its town\'s stored rows; a town run has none to repeat', () => {
     const townRows = [stored({ id: 'town-row' })];
     const found = [thread('neighborhood', [finding()])];
