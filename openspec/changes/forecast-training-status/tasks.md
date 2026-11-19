@@ -7,7 +7,7 @@ D65 makes no model call, so it has no eval; D66 (`town-research-agent`) carries 
 ## 0. Coordination
 
 - [x] 0.1 Rebase on develop; re-read the spec's decisions table and 22.2, and the open branches (`git branch -r`, PR #126, `fix/ui-review-1119`, `feat/town-research-agent`), and keep D65, 14.7 and 240 to 252 only if still free; tell the D66 session which numbers this change holds.
-  Done (2026-11-19): the branch is on origin/develop (cb8e3f53). Decisions end at D63 on develop and D64 on `feat/calendar-forecast-view`; 22.2 ends at 199 on develop, 214 on `feat/calendar-forecast-view`, 233 on `fix/ui-review-1119`; `town-research-agent` (D66) claims 260 to 293. D65, 14.7 and 240 to 252 are still free. The D66 session is told through the lead.
+  Done (2026-11-19): the branch is on origin/develop (cb8e3f53). Decisions end at D63 on develop and D64 on `feat/calendar-forecast-view`; 22.2 ends at 199 on develop, 214 on `feat/calendar-forecast-view`, 233 on `fix/ui-review-1119`; `town-research-agent` (D66) claims 260 to 292. D65, 14.7 and 240 to 252 are still free. The D66 session is told through the lead.
 - [ ] 0.2 At merge, renumber the CONFIRM items after develop's last, here, in `proposal.md` and in the spec; code comments cite markers by their words, not numbers.
 
 ## 1. Causes on refit marks and system calibrations (design decision 5)

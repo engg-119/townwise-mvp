@@ -64,7 +64,7 @@ interface CalibrationFields {
   /** The fingerprint the weekly refresh compares (D42, lab/input.ts labInputFingerprint); null on one from before it. */
   dataSha256: string | null;
   /**
-   * D65 (design decision 6), set with the input: the history days with guests it trains on (`dayCount`), its first day
+   * D65 (design decision 6), set with the input: the input's history days with guests (`dayCount`), its first day
    * (`dataFrom`), and how many of those days come after the last day of data of the location's newest published run,
    * current or lapsed (`newDays`, null with none). Absent before the fetch and on a calibration from before D65.
    */
@@ -201,8 +201,8 @@ export interface CalibrationStore {
   /**
    * The job's one input fetch, by compare-and-set on running with no input recorded yet: the hash of the input it is
    * given, its fingerprint (D42), the last day it holds, the town's last researched term day it names (D52), the days
-   * it used (D65: `dayCount`, `dataFrom`, `newDays`, each stored only when given), and the sha256 of the result token the API hands only to that
-   * fetch, the one the result is posted with. False for any second fetch.
+   * it used (D65: `dayCount`, `dataFrom`, `newDays`, each stored only when given), and the sha256 of the result token
+   * the API hands only to that fetch, the one the result is posted with. False for any second fetch.
    */
   recordInput(
     scope: OrgScope, id: string,

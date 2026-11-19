@@ -152,10 +152,10 @@ export function createLabCallbackRouter(ctx: TownwiseContext): Router {
 
 /**
  * D65 (openspec change forecast-training-status, design decision 6): the days a calibration used, for the owner's run
- * history. Counted are the history days the lab trains on, those with guests on or before dataThrough (the input also
- * holds the 400 days ahead, and a day with no row or one likely closed has none); `newDays` counts those after
- * `publishedThrough`, the last day of data of the location's newest published run, current or lapsed (null with none).
- * Counts and a date only.
+ * history. Counted are the input's history days with guests, on or before dataThrough (the input also holds the 400
+ * days ahead, and a day with no row or one likely closed has none); a day a note or booking marks closed or booked still
+ * counts, though the lab leaves it out of training. `newDays` counts those after `publishedThrough`, the last day of
+ * data of the location's newest published run, current or lapsed (null with none). Counts and a date only.
  */
 function daysUsed(input: LabInput, publishedThrough: string | null): { dayCount: number; dataFrom: string; newDays: number | null } {
   const used = input.days.filter((day) => day.date <= input.dataThrough && day.guests !== null);
