@@ -117,9 +117,9 @@ export const SUGGESTIONS_TIME_MS = 120_000;
  * sized to the request's own ceiling (suggestionsReserveMicroUsd), so a long one never takes the month past its budget.
  */
 export const SUGGESTIONS_MAX_NOTES = 200;
-/** At most this many owner-calendar events are sent (soonest first). [CONFIRM: at most 150 owner-calendar events a weekly call, soonest first] */
+/** At most this many owner-calendar events are sent (soonest first). */
 export const SUGGESTIONS_MAX_OWNER_EVENTS = 150;
-/** A pass keeps at most this many spotted events, read apart from its notes and rules. [CONFIRM] */
+/** A pass keeps at most this many spotted events, read apart from its notes and rules. */
 export const MAX_EVENT_SUGGESTIONS = 5;
 /** D59 slice 3: at most this many rules TownwiseAI adds on its own a week (7 days) per location. [CONFIRM: at most 2 rules applied a week per location] */
 export const MAX_RULES_APPLIED_A_WEEK = 2;

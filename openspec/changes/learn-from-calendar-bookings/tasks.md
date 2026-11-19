@@ -83,6 +83,7 @@ Spec decision D58 (check develop's spec section 2 and the reservation list again
 - [x] 10.2 `client/app/(marketing)/privacy.tsx`: design decision 14's words. Owner approves the wording before push. Test: a new `client/test/marketing/privacy-calendar-csv.test.web.tsx` beside `privacy-calendar-titles.test.web.tsx`. `npm test -w @ckeith26/expo-shell -- test/marketing/privacy-calendar-csv.test.web.tsx test/marketing/privacy-calendar-titles.test.web.tsx --selectProjects web`
   Done: words as decision 14, plus one sentence in the Anthropic item; marked [CONFIRM] in the code and the CONFIRM index as shipped awaiting the owner's approval (as item 113 did for D56), since the owner said to use the defaults. Test: `client/test/marketing/privacy-calendar-csv.test.web.tsx`.
   - Owner approved the privacy page's words on 2026-11-19.
+  - Owner approved on 2026-11-19: the import popover's and the Bookings section's words (spec 22.2 item 142); the Bookings section's `[CONFIRM]` was removed.
 
 ## 11. Verification and landing
 

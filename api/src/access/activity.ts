@@ -15,8 +15,7 @@ import { removeOldActivityDays } from '../stores/cross-tenant.ts';
 import type { Principal } from './policy.ts';
 
 /**
- * Days kept: today and the 179 before it (owner, 2026-11-17). [CONFIRM: Townwise keeps the dates on which each signed-in
- * person used the app, for 180 days]
+ * Days kept: today and the 179 before it (owner, 2026-11-17; approved by the owner on 2026-11-19).
  */
 export const ACTIVITY_KEEP_DAYS = 180;
 

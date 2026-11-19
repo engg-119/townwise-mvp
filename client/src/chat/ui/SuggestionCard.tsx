@@ -40,9 +40,8 @@ export function weeklyWords(town: string): string {
 }
 
 /**
- * The titles switch's words (calendar-event-suggestions design decision 9). [CONFIRM: the switch's words] D59 slice 2:
- * the switch also stops a calendar file's sort on import, so they say so. [CONFIRM: the import screen's and the titles
- * switch's words on a calendar file sorted on import]
+ * The titles switch's words (calendar-event-suggestions design decision 9). D59 slice 2: the switch also stops a
+ * calendar file's sort on import, so they say so. Approved by the owner on 2026-11-19.
  */
 export const TITLES_WORDS = 'Read your calendars’ event titles. Once a week TownwiseAI also reads the titles, dates and hours of the next 3 months of events on this location’s calendars, to suggest notes for private events, and where it works on its own it reads every event in a calendar file when it is imported, to label your bookings. They are sent to Anthropic, which doesn’t train on them.';
 
