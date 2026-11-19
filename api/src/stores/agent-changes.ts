@@ -22,7 +22,8 @@ export const AGENT_CHANGES_COLLECTION = 'tw_agent_changes';
 export type AgentChangeAction = 'note.add' | 'item.add' | 'sales_days.add' | 'rule.add' | 'booking.label';
 /**
  * Where the change came from: `file` (slice 1), `calendar` (slice 2), and (slice 3) `weekly` (the weekly pass's notes,
- * rules and spotted calendar events) and `sales` (a closed weekday the sales history shows, D46). `chat` is slice 4's.
+ * rules and spotted calendar events) and `sales` (a closed weekday the sales history shows, D46), and (slice 4) `chat` (a
+ * note the person stated plainly in a TownwiseAI message; its `sourceId` is the conversation's id).
  */
 export type AgentSourceKind = 'file' | 'calendar' | 'weekly' | 'sales' | 'chat';
 export const AGENT_SOURCE_KINDS: readonly AgentSourceKind[] = ['file', 'calendar', 'weekly', 'sales', 'chat'];

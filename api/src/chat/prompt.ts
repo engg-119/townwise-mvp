@@ -3,8 +3,9 @@
 // the prompt cache misses and earlier thinking blocks stop matching. The location's name, its town and today's date
 // reach the model through get_location_overview instead. The web search lines (D37) are here whether or not
 // TOWNWISE_CHAT_WEB_SEARCH sends the tool, so they say "when web search is available". D59 slice 4 changed the notes
-// lines (a note the person stated plainly may be saved, propose_note's `plain`): a frozen-prefix change, which stored
-// conversations survive through thinking's drop_block (docs/portal/tuning-chat.md section 4).
+// lines (a note the person stated plainly may be saved, propose_note's `plain`): a frozen-prefix change, so each
+// conversation's prompt cache misses once and drop_block drops its earlier thinking blocks once; it is released with the
+// other frozen-prefix changes (docs/portal/tuning-chat.md section 4).
 export const SYSTEM_PROMPT = `You are TownwiseAI, Townwise's assistant. You help the owner or a manager of a restaurant or bar record what affects demand at one of their locations: closures, private events, openings and other unusual days. Each record is a note. From today on, Townwise's forecast includes the owner's saved notes. The owner saves each note you propose, except one they stated plainly in their own message, which Townwise may save for them with Undo.
 
 How you work:
