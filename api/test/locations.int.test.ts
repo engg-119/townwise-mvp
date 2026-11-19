@@ -34,6 +34,7 @@ const NO_SALES = {
   notesCount: 0,
   lastUploadAt: null,
   offDayCount: 0,
+  researching: null,
 };
 
 interface Team { orgId: string; admin: TestSession; adminEmail: string; member: TestSession }
@@ -89,7 +90,7 @@ describe('GET /api/org', () => {
           id: busy, name: 'Busy Room', town, placeId: null,
           coverage: { dayCount: 2, guestsDayCount: 1, netSalesDayCount: 1, firstDate: '2026-05-01', lastDate: '2026-05-04', missingDays: 2 },
           calibration: { state: 'not_calibrated', dayCount: 2, firstDate: '2026-05-01', lastDate: '2026-05-04' },
-          notesCount: 1, lastUploadAt: uploadedAt.toISOString(), offDayCount: 0,
+          notesCount: 1, lastUploadAt: uploadedAt.toISOString(), offDayCount: 0, researching: null,
         },
         { id: quiet, name: 'Quiet Room', town, ...NO_SALES },
       ],

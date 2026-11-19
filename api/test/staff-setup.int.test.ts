@@ -177,7 +177,7 @@ describe('in setup', () => {
     expect(location).toEqual({
       id: location.id, name: 'Main Street', town: HANOVER, placeId: null,
       coverage: { dayCount: 0, guestsDayCount: 0, netSalesDayCount: 0, firstDate: null, lastDate: null, missingDays: 0 },
-      calibration: { state: 'no_sales_data' }, notesCount: 0, lastUploadAt: null, offDayCount: 0,
+      calibration: { state: 'no_sales_data' }, notesCount: 0, lastUploadAt: null, offDayCount: 0, researching: null,
     });
     expect(await doc('tw_locations', location.id)).toMatchObject({ name: 'Main Street', createdBy: staff.userId, byStaff: true });
     expect((await eventsIn(org.orgId)).at(-1)).toMatchObject({

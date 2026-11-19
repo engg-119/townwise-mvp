@@ -46,6 +46,7 @@ import {
 } from '../handlers/owner-calendars.ts';
 import { placesAutocomplete, placesDetails, placesMap } from '../handlers/places.ts';
 import { getProfile, updateProfile } from '../handlers/profile.ts';
+import { getCompetition, getResearch } from '../handlers/research.ts';
 import { createAccessRequest } from '../handlers/requests.ts';
 import { acceptRuleSuggestion, dismissRuleSuggestion } from '../handlers/rule-suggestions.ts';
 import { createRule, deleteRule, listRules, updateRule } from '../handlers/rules.ts';
@@ -178,6 +179,16 @@ export const TOWNWISE_ROUTES: readonly TownwiseRoute[] = [
   {
     id: 'org.calendar.get', method: 'GET', path: '/org/locations/:locationId/calendar', policy: 'member', bodyLimit: 'none',
     openAsAdmin: true, handler: getLocationCalendar,
+  },
+  // D66: what the research agent did and found for the location and its town (the Town tab).
+  {
+    id: 'org.research.get', method: 'GET', path: '/org/locations/:locationId/research', policy: 'member', bodyLimit: 'none',
+    openAsAdmin: true, handler: getResearch,
+  },
+  // D66: the location's competitors, live from Google's Nearby Search, with their researched events (the Competition card).
+  {
+    id: 'org.competition.get', method: 'GET', path: '/org/locations/:locationId/competition', policy: 'member', bodyLimit: 'none',
+    limiter: 'places', openAsAdmin: true, handler: getCompetition,
   },
   {
     id: 'org.sales.upload', method: 'POST', path: '/org/locations/:locationId/sales/uploads', policy: 'member',

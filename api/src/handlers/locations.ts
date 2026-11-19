@@ -19,6 +19,7 @@ import { endUnusedGoogleAccess, googleAccessDeps, markLocationForCheck } from '.
 import { calibrationFor, type Calibration } from '../calibration.ts';
 import { placeIdSchema } from '../place-id.ts';
 import { queueEarlyRun, researchRuns, townStamp } from '../research/plan.ts';
+import { researchReadable } from '../research/read.ts';
 import { PlacesUnavailableError, type PlaceDetails } from '../places/google.ts';
 import type { AuditDetails } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -34,6 +35,11 @@ export interface LocationSummary {
   notesCount: number; lastUploadAt: string | null;
   /** D28: days that turned-off uploads hold, which `coverage` leaves out. */
   offDayCount: number;
+  /**
+   * D66 (design decision 15): set while the location's research run is running or merging (a thread waiting to retry
+   * included), from the run's status; null otherwise, and while research is off for the organization. Additive.
+   */
+  researching: { stage: 'running'; since: string } | null;
 }
 
 /** Spec 6.4. [CONFIRM: 25 locations] */
@@ -145,18 +151,24 @@ export async function loadLocation(ctx: TownwiseContext, scope: OrgScope, rawId:
  * reading the location's newest published run for its calibration state (D42).
  */
 export async function summarizer(ctx: TownwiseContext, scope: OrgScope): Promise<(location: LocationRecord) => Promise<LocationSummary>> {
-  const [coverage, notes, uploads, offDays] = await Promise.all([
+  const [coverage, notes, uploads, offDays, liveRuns, readable] = await Promise.all([
     ctx.stores.salesDays.coverageByLocation(scope),
     ctx.stores.notes.countByLocation(scope),
     ctx.stores.uploads.lastUploadByLocation(scope),
     ctx.stores.salesDays.offDayCountByLocation(scope),
+    ctx.stores.researchLocations.liveRuns(scope),
+    researchReadable(ctx, scope),
   ]);
+  const researching = new Map(liveRuns
+    .filter((run) => readable && (run.status === 'running' || run.status === 'merging'))
+    .map((run) => [run.locationId, { stage: 'running' as const, since: (run.startedAt ?? run.createdAt).toISOString() }]));
   return async (location) => {
     const covered = coverage.get(location.id) ?? NO_COVERAGE;
     return {
       id: location.id, name: location.name, town: location.town, placeId: location.placeId, coverage: covered,
       calibration: await calibrationFor(ctx, scope, location, covered), notesCount: notes.get(location.id) ?? 0,
       lastUploadAt: uploads.get(location.id)?.toISOString() ?? null, offDayCount: offDays.get(location.id) ?? 0,
+      researching: researching.get(location.id) ?? null,
     };
   };
 }

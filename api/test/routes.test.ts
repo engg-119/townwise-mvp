@@ -112,6 +112,15 @@ describe('route table', () => {
     ]);
   });
 
+  it('D66: the research read is a member GET with no limiter, the Competition card one with the places limiter, both open as admin', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.research.get' || r.id === 'org.competition.get')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([
+      { id: 'org.research.get', method: 'GET', path: '/org/locations/:locationId/research', policy: 'member', bodyLimit: 'none', limiter: undefined, openAsAdmin: true },
+      { id: 'org.competition.get', method: 'GET', path: '/org/locations/:locationId/competition', policy: 'member', bodyLimit: 'none', limiter: 'places', openAsAdmin: true },
+    ]);
+  });
+
   it('U13A: people in town and how Townwise estimates are member reads with no body and no limiter', () => {
     const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.people.get' || r.id === 'org.estimates.about')
       .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));

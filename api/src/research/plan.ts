@@ -130,6 +130,19 @@ function dueAt(key: string, timeZone: string, subject: string, now: Date): Date 
 
 export const isTownId = (value: string): value is TownId => (TOWN_IDS as readonly string[]).includes(value);
 
+/**
+ * The day (in `timeZone`) the planner will next insert a subject's weekly run and its threads fall due, by the rule
+ * above: not within 6 days of the subject's last run, once a week by its `w:{Monday}` key, due over that Monday by the
+ * subject's stagger. For the research read's `next` (the Town tab); the caller answers null while a run is live.
+ */
+export function nextWeeklyRunDay(last: { readonly key: string; readonly createdAt: Date } | null, now: Date, timeZone: string, subject: string): string {
+  let at = last === null ? now : new Date(Math.max(now.getTime(), last.createdAt.getTime() + RESEARCH_REPEAT_MS));
+  // This week's run already exists: the next one is next week's.
+  if (last?.key === weekKey(at, timeZone)) at = startOfLocalDay(plusDays(mondayOf(at, timeZone), 7), timeZone);
+  const due = staggeredStart(mondayOf(at, timeZone), timeZone, subject);
+  return localDay(new Date(Math.max(at.getTime(), due.getTime())), timeZone);
+}
+
 function recent(last: RunRecordBase | null, now: Date): boolean {
   return last !== null && now.getTime() - last.createdAt.getTime() < RESEARCH_REPEAT_MS;
 }

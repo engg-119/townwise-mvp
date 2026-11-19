@@ -156,6 +156,8 @@ export interface LocationResearchStore {
   lastRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
   /** The location's live (queued, running or merging) run, if any. */
   liveRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
+  /** The organization's live runs, at most one a location (GET /api/org's `researching`). */
+  liveRuns(scope: OrgScope): Promise<LocationRunRecord[]>;
   /** The location's latest merged (`done` or `partial`) run: what a prompt's `known` rows were found again by (decision 4). */
   lastFinishedRun(scope: OrgScope, locationId: string): Promise<LocationRunRecord | null>;
   /** Inserts the run's thread rows that are missing (unique `(orgId, runId, thread)`); resolves how many it inserted. */
@@ -244,6 +246,9 @@ export function createLocationResearchStore(connection: Connection): LocationRes
     async liveRun(scope, locationId) {
       const doc = await Run.findOne({ ...org(scope), liveSubject: oid(locationId) }).lean();
       return doc === null ? null : toLocationRun(doc);
+    },
+    async liveRuns(scope) {
+      return (await Run.find({ ...org(scope), liveSubject: trusted({ $type: 'objectId' }) }).lean()).map(toLocationRun);
     },
     async lastFinishedRun(scope, locationId) {
       const doc = await Run.findOne({ ...at(scope, locationId), status: trusted({ $in: ['done', 'partial'] }) }).sort({ finishedAt: -1, _id: -1 }).lean();
