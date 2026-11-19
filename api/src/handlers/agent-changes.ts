@@ -23,6 +23,7 @@ import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { TOWNWISE_AI_AUTHOR } from '../agent/apply.ts';
 import { changeView, mayUndo, targetStates, type AgentChangeView } from '../agent/changes.ts';
 import { wantRefitFor } from '../agent/refit.ts';
+import { isAnswerChange } from '../calendar/answers.ts';
 import type { AgentChangeRecord } from '../stores/agent-changes.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { LocationRecord } from '../stores/locations.ts';
@@ -155,9 +156,12 @@ async function removeTarget(ctx: TownwiseContext, caller: MemberPrincipal, locat
       return 'removed';
     }
     case 'booking.label': {
-      // Its notes first, so a retry after the labels went still finds them.
+      // Its notes first, so a retry after the labels went still finds them. Only the sort's own (a booking's): a closure
+      // note a calendar's answer saved (D59 slice 5) is not part of the labels, and keeps its own Undo.
       for (const row of await ctx.stores.agentChanges.listBySource(scope, location.id, { kind: 'calendar', id: change.targetId })) {
-        if (row.action === 'note.add' && (row.status === 'applied' || row.status === 'undoing')) await undoRow(ctx, caller, location, row, { pastChanged: true });
+        if (row.action === 'note.add' && !isAnswerChange(row) && (row.status === 'applied' || row.status === 'undoing')) {
+          await undoRow(ctx, caller, location, row, { pastChanged: true });
+        }
       }
       const calendars = ctx.stores.ownerCalendars;
       const cleared = await calendars.clearAiLabels(scope, location.id, change.targetId, change.targetUpdatedAt ?? change.appliedAt);

@@ -334,3 +334,35 @@ describe('the reader bounds automatic reads (D59)', () => {
     expect(await aiOf(pressed)).toMatchObject({ status: 'done' });
   });
 });
+
+describe('a calendar answers what a read leaves open (D59 slice 5)', () => {
+  it('a closure the read was not sure of is answered at once by a calendar that already says closed', async () => {
+    const t = await team();
+    const calendar = await call(server, `/api/org/locations/${t.locationId}/owner-calendars`, {
+      session: t.member,
+      json: {
+        kind: 'file', label: 'Front desk',
+        ics: [
+          'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Townwise test//EN', 'BEGIN:VEVENT', 'UID:holidays-read@example.test', 'SUMMARY:Closed',
+          'DTSTART;VALUE=DATE:20261224', 'DTEND;VALUE=DATE:20261227', 'END:VEVENT', 'END:VCALENDAR', '',
+        ].join('\r\n'),
+      },
+    });
+    expect(calendar.status).toBe(201);
+    answers = [{
+      kind: 'answered', costMicroUsd: 2000,
+      output: {
+        ...ANSWER, confidence: 'medium',
+        events: [{ title: 'Closed', startDate: '2026-12-24', endDate: '2026-12-26', kind: 'closure', effect: 'closed', expectedGuests: null, detail: '', confidence: 'medium' }],
+      },
+    }];
+    await seeded(t, { ai: autoAi(t) });
+    await read();
+    const rows = await server.connection.collection('tw_agent_suggestions').find({ locationId: new Types.ObjectId(t.locationId), type: 'note' }).toArray();
+    expect(rows.map((row): unknown[] => [row.source, row.status])).toEqual([['file', 'answered']]);
+    const notes = await server.connection.collection('tw_notes').find({ locationId: new Types.ObjectId(t.locationId) }).toArray();
+    expect(notes.map((note): unknown[] => [note.startDate, note.endDate, (note.fromEvent as { uid?: string } | null)?.uid])).toEqual([
+      ['2026-12-24', '2026-12-26', 'holidays-read@example.test'],
+    ]);
+  });
+});

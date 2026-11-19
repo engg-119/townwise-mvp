@@ -28,6 +28,7 @@ import { findActiveSeat, hasGoogleConnectionElsewhere, latestRemovedSeat } from 
 import type { GoogleConnectionRecord } from '../stores/google-connections.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { CalendarFailure, ParsedCalendar } from '../stores/owner-calendars.ts';
+import { takeBackAnswers } from './answers.ts';
 import { GoogleCalendarError, type GoogleCalendarClient, type revokeGoogleGrant } from './google.ts';
 import { readGoogleCalendar } from './google-events.ts';
 import type { IcsTown } from './ics.ts';
@@ -104,7 +105,8 @@ export async function revokeAccessToken(deps: GoogleAccessDeps, accessToken: str
 
 /**
  * Ends a connection (design decision 11), in an order a retry or the connection check completes: marks it for a check,
- * removes the organization's Google calendars it backs with their events, revokes the grant at Google unless the person
+ * removes the organization's Google calendars it backs with their events (then, D59 slice 5, takes back the closure notes
+ * their answers saved that nobody changed since), revokes the grant at Google unless the person
  * holds a connection in another organization (best effort; skipped when no key opens the token), deletes the row
  * whether or not the revoke worked, removes the connection's calendars again (one an add stored during the revoke),
  * and logs `townwise.google_access_ended`. Resolves how many calendars it removed.
@@ -116,7 +118,13 @@ export async function endGoogleAccess(deps: GoogleAccessDeps, scope: OrgScope, c
   const stopped = (): boolean => deps.signal?.aborted === true;
   const found = await googleConnections.find(scope, connectionId);
   await googleConnections.markForCheck(scope, connectionId, deps.now());
+  // D59 slice 5: the closure notes the removed calendars' answers saved, that nobody changed since, are taken back.
+  const takeBack = async (backed: readonly { id: string; locationId: string }[]): Promise<void> => {
+    for (const each of backed) await takeBackAnswers(deps, scope, each.locationId, each.id);
+  };
+  const first = await ownerCalendars.listForConnection(scope, connectionId);
   let calendars = await ownerCalendars.removeForConnection(scope, connectionId);
+  await takeBack(first);
   if (found !== null) {
     if (stopped()) return calendars;
     if (!(await hasGoogleConnectionElsewhere(deps.connection, found.userId, scope.orgId))) {
@@ -129,7 +137,9 @@ export async function endGoogleAccess(deps: GoogleAccessDeps, scope: OrgScope, c
     // An add that stored a calendar for this connection while the revoke ran found the row still there, so its own
     // check after storing kept it: the calendars go once more now that the row is gone, and an add storing later finds
     // no row and removes its calendar itself.
+    const late = await ownerCalendars.listForConnection(scope, connectionId);
     calendars += await ownerCalendars.removeForConnection(scope, connectionId);
+    await takeBack(late);
   }
   deps.logger.info({ connectionId, calendars, reason }, 'townwise.google_access_ended');
   return calendars;
@@ -298,6 +308,7 @@ export async function readGoogleSource(
   const connection = await deps.stores.googleConnections.find(scope, source.connectionId);
   if (connection === null) {
     await deps.stores.ownerCalendars.remove(scope, locationId, calendarId);
+    await takeBackAnswers(deps, scope, locationId, calendarId);
     return { kind: 'removed' };
   }
   const seat = await seatOf(deps, scope, connection.userId);

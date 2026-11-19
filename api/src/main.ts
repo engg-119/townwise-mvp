@@ -121,7 +121,7 @@ const aiReadsOn = files !== undefined && ANTHROPIC_API_KEY !== undefined && file
 const fileWorker = files === undefined ? undefined : createFileWorker({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now,
   extract: ANTHROPIC_API_KEY === undefined ? undefined : createAnthropicExtractModel(ANTHROPIC_API_KEY), filesMonthlyBudgetUsd,
-  autoRead: config.TOWNWISE_AGENT_AUTO && aiReadsOn,
+  autoRead: config.TOWNWISE_AGENT_AUTO && aiReadsOn, agentAuto: config.TOWNWISE_AGENT_AUTO,
 });
 // The daily sweep (retention, unfinished uploads, orphans) runs while stored files are on; one replica takes it a day.
 const fileSweeper = files === undefined ? undefined : createFileSweeper({
@@ -139,7 +139,7 @@ const revokeGoogle = TOWNWISE_CALENDAR_KEY === undefined ? undefined : revokeGoo
 // and due Google connections are checked there; each due calendar or check is claimed by one replica at a time.
 const calendarRefresher = TOWNWISE_CALENDAR_KEY === undefined ? undefined : createCalendarRefresher({
   connection: mongo.connection, stores: createTownwiseStores(mongo.connection), key: TOWNWISE_CALENDAR_KEY, logger, now,
-  googleCalendar, revokeGoogle,
+  googleCalendar, revokeGoogle, agentAuto: config.TOWNWISE_AGENT_AUTO,
 });
 // The forecast lab (calibrations) is off unless TOWNWISE_LAB_RUNNER is set: in Azure the API's identity starts the
 // Container Apps job, which calls back on /lab signed in as the lab identity (lab/caller.ts checks its Entra token);

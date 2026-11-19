@@ -89,6 +89,8 @@ export const AUDIT_DETAIL_KEYS = {
   'org.agent_auto_switched': ['on'],
   'agent.change_applied': ['locationId', 'action', 'sourceKind'],
   'agent.change_undone': ['locationId', 'action', 'sourceKind'],
+  // D59 slice 5: a run in which the location's calendars answered open suggestions, by count. Never a title, uid or date.
+  'agent.calendar_answered': ['locationId', 'count'],
   // Orders: ids, dates, counts and a card's kind (change, rule or setup), never an item or supplier name, a servings
   // figure, a quantity, or the owner's reason or situation. A setup card (D56) is only ever dismissed: nothing saves
   // from it, so it never writes order.card_saved.
