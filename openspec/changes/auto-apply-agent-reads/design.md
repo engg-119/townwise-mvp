@@ -232,7 +232,7 @@ Optional fields only: `agentAuto` on orgs, `ai.auto` on reads, `agent` on notes 
 Owner questions (only the first blocks production; none blocks building slice 1):
 
 1. Do you approve that, by default, TownwiseAI sends every file added to Your data (PDFs, sheets, Word documents, photos, ZIPs; not sales exports Townwise read into days) to Anthropic without a press, and the privacy wording in decision 14? Will you tell Sawtooth's owner first?
-   Answered by the owner on 2026-11-19: yes, on by default, and the privacy wording in decision 14 is approved. Production keeps `TOWNWISE_AGENT_AUTO=false` only until the owner confirms Sawtooth's owner has been told (decision 14), then it flips to true.
+   Answered by the owner on 2026-11-19: yes, on by default, and the privacy wording in decision 14 is approved. Production turned it on on 2026-11-19 (`TOWNWISE_AGENT_AUTO=true` in `api/production.env`), at the owner's request, without waiting on decision 14's notice.
 2. In slice 3, should business rules TownwiseAI is sure of be applied (default: yes, at most 2 a week), or always wait?
 
 [DECISION NEEDED] items (gaps shown honestly, not settled here):

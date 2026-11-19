@@ -17,10 +17,11 @@
 
 ## 3. S3a: client, files not shared with other work
 
-- [ ] 3.1 Item page TownwiseAI section: status, summary and facts, what it made, Let TownwiseAI read this file, Undo (in progress)
-- [ ] 3.2 Add a file opt-in on Your data, with one line that the whole file goes to Anthropic's Claude and a privacy link
-- [ ] 3.3 API client types for `canAiRead`, `ai`, `fromAiRead`; console labels for the new audit events and log words
-- [ ] 3.4 Client tests (web and native projects) for the section, the opt-in, view-as and the unavailable states
+- [x] 3.1 Item page TownwiseAI section: status, summary and facts, what it made, Let TownwiseAI read this file, Undo
+- [x] 3.2 Add a file opt-in on Your data, with one line that the whole file goes to Anthropic's Claude and a privacy link
+- [x] 3.3 API client types for `canAiRead`, `ai`, `fromAiRead`; console labels for the new audit events and log words
+- [x] 3.4 Client tests (web and native projects) for the section, the opt-in, view-as and the unavailable states
+  Done: merged to develop as #69 (b411ba1b, 2026-11-14); the item page's section is client/src/portal/data/item/AiSection.tsx, with tests item-ai.test.web.tsx and item-ai.test.native.tsx.
 
 ## 4. S3b: client, after session 64's PR lands
 
@@ -41,7 +42,8 @@
 - [ ] 6.1 `npm run verify` passes
 - [ ] 6.2 Real-app QA with synthetic files only (a calendar, a sales PDF, an inventory sheet, a ZIP, a picture): opt in, see the notes and days, Undo, ask again; never a real customer file
 - [ ] 6.3 Resolve nothing marked `[CONFIRM]` without the team; list them in the PR
-- [ ] 6.4 Open the PR into `develop`
+- [x] 6.4 Open the PR into `develop`
+  Done: merged to develop as #69 (b411ba1b, 2026-11-14); the item page's section is client/src/portal/data/item/AiSection.tsx, with tests item-ai.test.web.tsx and item-ai.test.native.tsx.
 
 ## 7. F: API fixes from the reviews
 
