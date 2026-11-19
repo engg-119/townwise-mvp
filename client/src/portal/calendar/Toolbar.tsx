@@ -79,24 +79,31 @@ export function Toolbar(props: {
 
 /**
  * “Show on the calendar”: the filters hide marks and list items, never a figure; "Your calendar" shows only when the
- * location has a calendar. Filters are page state, not stored.
+ * location has a calendar. The last chip, “Forecast chart”, shows or hides the forecast chart (D64), on by default.
+ * Filters and the chart's chip are page state, not stored.
  */
 export function CalendarFilters(props: {
   filters: Filters;
   onFilter: (key: FilterKey) => void;
   /** Whether the location has a calendar, so its chip shows. */
   imported: boolean;
+  /** Whether the forecast chart shows (D64), and its chip's press. */
+  chart: boolean;
+  onChart: () => void;
 }): React.JSX.Element {
   const keys = FILTER_KEYS.filter((key) => key !== 'imported' || props.imported);
   return (
-    <ToggleGroup
+    <ToggleGroup<FilterKey | 'chart'>
       label="Show on the calendar"
-      options={keys.map((key) => ({ value: key, label: FILTER_LABEL[key] }))}
-      isPressed={(key) => props.filters[key]}
-      onPress={props.onFilter}
+      options={[...keys.map((key) => ({ value: key, label: FILTER_LABEL[key] })), { value: 'chart' as const, label: CHART_CHIP }]}
+      isPressed={(key) => (key === 'chart' ? props.chart : props.filters[key])}
+      onPress={(key) => { if (key === 'chart') props.onChart(); else props.onFilter(key); }}
     />
   );
 }
+
+/** The last chip of “Show on the calendar”: the forecast chart above the month grid and atop the week's days (D64). */
+export const CHART_CHIP = 'Forecast chart';
 
 const styles = StyleSheet.create({
   row: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', columnGap: theme.space[3], rowGap: theme.space[4] },

@@ -88,13 +88,24 @@ export function weekRange(start: string, bounds: MonthBounds): DateRange {
  * What every read of the page covers (the town calendar, the sales days through pastRangeFor, the stored calendar
  * events and the forecast, one request of at most 42 days each): the grid's range in the month view, and in the week
  * view too while the week's days inside the 25 months (weekRange, not its raw 7 days, which at the range's ends run past
- * the grid) lie inside it, so switching views reads nothing; else the week's own days, which run past the grid.
+ * the grid) lie inside it, so switching views reads nothing. Past it, the grid of the month that holds the view's first
+ * day, or else its last (D64): the scrolling week moves a day at a time, and a grid keeps the reads still over a run of
+ * stops rather than reading again at each. One of the two always holds the 7 days (a Monday-first grid runs at least 5
+ * weeks past its month's 1st); the week's own days only where neither month is one of the 25. [CONFIRM: the week view
+ * reading the grid of the month that holds its first or last day in view once it leaves the selected month's grid]
  */
 export function readRangeFor(view: 'month' | 'week', month: string, weekStart: string, bounds: MonthBounds): DateRange {
   const grid = gridRange(month, bounds);
   if (view === 'month') return grid;
   const week = weekRange(weekStart, bounds);
-  return week.from >= grid.from && week.to <= grid.to ? grid : week;
+  const holds = (range: DateRange): boolean => week.from >= range.from && week.to <= range.to;
+  if (holds(grid)) return grid;
+  for (const other of [week.from.slice(0, 7), week.to.slice(0, 7)]) {
+    if (other < bounds.first || other > bounds.last) continue;
+    const range = gridRange(other, bounds);
+    if (holds(range)) return range;
+  }
+  return week;
 }
 
 /**
@@ -127,6 +138,28 @@ export const CELL_GAP = 3;
 /** The month grid's height at `width`: 658px from 1024px, 418px from 641px, 346px below. */
 export function gridHeight(width: number): number {
   return WEEKDAY_ROW + 6 * cellSize(width).height + 6 * CELL_GAP;
+}
+
+// The selected day (D64): its weekday column is 1.3 times as wide as the others in every row and the weekday head, so
+// it stands out and the grid's height never changes. [CONFIRM: the selected day in the month grid outlined in `mint`
+// 2px over the `state` fill with its weekday column 1.3 times as wide, easing over 150ms]
+
+/** How much wider the selected day's column is than the others. */
+export const SELECTED_GROW = 1.3;
+
+/** The selected day's column: its weekday, 0 for Monday to 6 for Sunday. */
+export function selectedColumn(date: string): number {
+  return (new Date(`${date}T00:00:00.000Z`).getUTCDay() + 6) % 7;
+}
+
+/** A column's share of the row (native's flex grow): SELECTED_GROW for the selected column, else 1. */
+export function columnGrow(column: number, selected: number | null): number {
+  return column === selected ? SELECTED_GROW : 1;
+}
+
+/** Every row's `grid-template-columns` on web, the selected column wider; all equal with none. */
+export function columnTemplate(selected: number | null): string {
+  return Array.from({ length: 7 }, (_, column) => `minmax(0, ${String(columnGrow(column, selected))}fr)`).join(' ');
 }
 
 /** What a month cell's entry rows show: every entry when there are three or fewer, else the first two and “+N more”. */
@@ -280,7 +313,12 @@ export function headLine(day: Pick<WeekDay, 'range' | 'figure'>): string | null 
  * inert and pending days have no cards.
  */
 export function buildWeek(selected: string, today: string, input: CalendarInput, bounds: MonthBounds): WeekSlot[] {
-  return weekDays(weekStartFor(selected, today)).map((date): WeekSlot => {
+  return buildDays(weekDays(weekStartFor(selected, today)), input, bounds);
+}
+
+/** Any run of days as the week view shows them (buildWeek's block, or the scrolling week's strip, D64). */
+export function buildDays(dates: readonly string[], input: CalendarInput, bounds: MonthBounds): WeekSlot[] {
+  return dates.map((date): WeekSlot => {
     const slot = slotFor(date, null, input, bounds);
     if (slot.kind === 'inert') return slot;
     if (slot.pending) return { ...slot, cards: [], range: null };

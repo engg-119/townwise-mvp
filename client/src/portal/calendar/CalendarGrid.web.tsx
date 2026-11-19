@@ -6,7 +6,7 @@ import { useBreakpoint } from '../hooks';
 import { MARK } from '../home/MonthKey';
 import type { CalendarGridProps } from './CalendarGrid';
 import { anchorOf, DayTooltip, type TooltipAnchor } from './DayTooltip.web';
-import { CELL_GAP, cellSize, entryLines, gridMove, slotOf, WEEKDAY_ROW, type DayCell } from './grid';
+import { CELL_GAP, cellSize, columnTemplate, entryLines, gridMove, selectedColumn, slotOf, WEEKDAY_ROW, type DayCell } from './grid';
 import { figureTone, markedFigure, statusTakesFigure, statusWord, topRightOf } from './model';
 
 // The Calendar's month grid on web (P28, spec 16.3): DOM, as Home's month grid is, because each day
@@ -24,16 +24,22 @@ const C = theme.color;
 const HEAD = WEEK_ORDER.map((day) => WEEKDAY_NAMES[day] ?? '');
 
 // Hover is a ring: each cell's fill and border are inline styles, which a stylesheet rule can't override, but its
-// box-shadow is not.
+// box-shadow is not. The selected day (D64) has a 2px `mint` outline (its border and an inset ring), a `mintRing` halo
+// and the `state` fill, and every row gives its weekday column 1.3 times the width (grid.ts columnTemplate); the rows'
+// columns and the cells' fill and ring ease over 150ms, and at once under reduced motion.
+const MOVE = `${String(theme.motion.select)}ms cubic-bezier(${theme.motion.easeInOut.join(',')})`;
+const FADE = `${String(theme.motion.select)}ms cubic-bezier(${theme.motion.ease.join(',')})`;
 const CSS = [
   '.tw-cg [data-date]{cursor:pointer}',
   `@media (hover:hover){.tw-cg [data-date]:hover:not([data-sel="1"]){box-shadow:0 0 0 1px ${C.white}}}`,
+  `.tw-cg [role="row"]{transition:grid-template-columns ${MOVE}}`,
+  `.tw-cg [data-date]{transition:background-color ${FADE},box-shadow ${FADE}}`,
+  '@media (prefers-reduced-motion: reduce){.tw-cg [role="row"],.tw-cg [data-date]{transition:none}}',
 ].join('\n');
 
 const mono = { fontFamily: theme.font.mono, fontSize: 12, lineHeight: '16px', fontVariantNumeric: 'tabular-nums' } as const;
 const small = { fontFamily: theme.font.mono, fontSize: 10, lineHeight: '14px' } as const;
 const square = { position: 'absolute', width: MARK, height: MARK, pointerEvents: 'none' } as const;
-const row = { display: 'grid', gridTemplateColumns: 'repeat(7, minmax(0, 1fr))', gap: CELL_GAP } as const;
 const line = { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } as const;
 const block = { display: 'block' } as const;
 
@@ -85,7 +91,8 @@ function Day(props: { cell: DayCell; selected: boolean; width: number }): React.
       style={{
         position: 'relative', height: size.height, minWidth: 0, boxSizing: 'border-box', padding: 4, overflow: 'hidden',
         display: 'flex', flexDirection: 'column', gap: 2,
-        backgroundColor: muted ? 'transparent' : C.raised, borderWidth: 1, borderStyle: 'solid', borderColor: border,
+        backgroundColor: props.selected ? C.state : muted ? 'transparent' : C.raised, borderWidth: 1, borderStyle: 'solid', borderColor: border,
+        ...(props.selected ? { boxShadow: `inset 0 0 0 1px ${C.mint}, 0 0 0 2px ${C.mintRing}` } : {}),
       }}
     >
       <span aria-hidden="true" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 4, height: 16, flexShrink: 0 }}>
@@ -128,6 +135,8 @@ export function CalendarGrid(props: CalendarGridProps): React.JSX.Element {
   const { rows, selected, onSelect, tooltip } = props;
   const { width } = useBreakpoint();
   const size = cellSize(width);
+  // Every row's columns, the selected weekday's wider (D64).
+  const row = { display: 'grid', gridTemplateColumns: columnTemplate(selectedColumn(selected)), gap: CELL_GAP } as const;
   const box = useRef<HTMLDivElement>(null);
   /** The day whose cell takes focus after this render: a key moved there. */
   const focusNext = useRef<string | null>(null);
