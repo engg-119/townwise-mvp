@@ -130,7 +130,9 @@ export async function deleteOrg(ctx: TownwiseContext, req: Request, res: Respons
     // U13B: a staff forecast import already past its organization check can still write a run and rows.
     await stores.forecasts.removeForOrg(scope);
     // D66: a planner tick, a merge or an edit already past its organization check can still write a run, its threads,
-    // an event, an entity or an edit (with a member's words) after the first sweep.
+    // an event, an entity or an edit (with a member's words) after the first sweep. A research lane still in a call
+    // settles its reservation when its heartbeat misses (up to 30 seconds later), but only into an existing month
+    // (chatUsage.addResearch never upserts), so it cannot bring back the usage swept above.
     await stores.researchLocations.removeForOrg(scope);
     await stores.researchRevisions.removeForOrg(scope);
     return { deletedDays: firstDays + lateDays, deletedUploads, deletedNotes, deletedLocations, deletedSeats, redactedEvents };

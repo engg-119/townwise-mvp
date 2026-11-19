@@ -396,6 +396,16 @@ describe('the TownwiseAI month’s research part', () => {
     expect(await stores.chatUsage.costMicroUsd(t.scope, month)).toBe(20 * USD);
   });
 
+  it('never recreates a deleted month on a settle (a late lane of a deleted organization)', async () => {
+    const t = await tenant();
+    const month = '2026-11';
+    expect(await stores.chatUsage.reserveResearch(t.scope, month, 2 * USD, { budgetMicroUsd: 20 * USD, automatic: null }, NOW)).toBe(true);
+    await stores.chatUsage.removeForOrg(t.scope);
+    await stores.chatUsage.addResearch(t.scope, month, -2 * USD, NOW);
+    await stores.chatUsage.addResearch(t.scope, month, 1 * USD, NOW);
+    expect(await server.connection.collection('tw_chat_usage').countDocuments({ orgId: new Types.ObjectId(t.scope.orgId) })).toBe(0);
+  });
+
   it('reads a month chat began before research as no research yet, and refuses a first reservation past the share', async () => {
     const t = await tenant();
     const month = '2026-10';

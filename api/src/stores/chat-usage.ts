@@ -59,7 +59,10 @@ export interface ChatUsageStore {
   reserveResearch(scope: OrgScope, month: string, costMicroUsd: number, limits: {
     budgetMicroUsd: number; automatic: { shareMicroUsd: number; headroomMicroUsd: number } | null;
   }, now: Date): Promise<boolean>;
-  /** D66: adds a research cost to the month and its research part (a negative one settles a reservation). */
+  /**
+   * D66: adds a research cost to the month and its research part (a negative one settles a reservation). Only to a month
+   * a reservation made: a deleted organization's month is not recreated.
+   */
   addResearch(scope: OrgScope, month: string, costMicroUsd: number, now: Date): Promise<void>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
@@ -124,14 +127,12 @@ export function createChatUsageStore(connection: Connection): ChatUsageStore {
       }
     },
     async addResearch(scope, month, costMicroUsd, now) {
-      const filter = { orgId: new Types.ObjectId(scope.orgId), month };
-      const update = { $inc: { costMicroUsd, researchMicroUsd: costMicroUsd }, $set: { updatedAt: now } };
-      try {
-        await Usage.updateOne(filter, update, { upsert: true });
-      } catch (err) {
-        if (!isDuplicateKeyError(err)) throw err;
-        await Usage.updateOne(filter, update);
-      }
+      // Never an upsert: every settle follows a reservation that created the month's document, so a missing one was
+      // deleted with its organization (handlers/deletion.ts), and a late lane's refund must not bring it back.
+      await Usage.updateOne(
+        { orgId: new Types.ObjectId(scope.orgId), month },
+        { $inc: { costMicroUsd, researchMicroUsd: costMicroUsd }, $set: { updatedAt: now } },
+      );
     },
     async removeForOrg(scope) {
       return (await Usage.deleteMany({ orgId: new Types.ObjectId(scope.orgId) })).deletedCount;
