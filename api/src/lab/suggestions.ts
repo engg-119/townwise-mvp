@@ -590,16 +590,19 @@ function answerJson(message: BetaMessage): unknown {
   }
 }
 
-type CallResult =
+export type CallResult =
   | { readonly kind: 'answered'; readonly output: unknown; readonly costMicroUsd: number }
   | { readonly kind: 'failed'; readonly costMicroUsd: number };
 
 /**
  * The call: streamed through the chat's model port, its events tallied so a call that fails mid-stream is charged what
  * it had reported (the answering model, its input tokens and the output counted so far); one that fails before any
- * event costs nothing. A refusal or an answer cut at max_tokens is charged and suggests nothing.
+ * event costs nothing. A refusal or an answer cut at max_tokens is charged and suggests nothing. Sort with TownwiseAI
+ * (calendar/booking-sort.ts, D58) makes its calls through it too, with its own `signal`.
  */
-async function callModel(model: ChatModel, params: BetaMessageStreamParams): Promise<CallResult> {
+export async function callModel(
+  model: ChatModel, params: BetaMessageStreamParams, signal: AbortSignal = AbortSignal.timeout(SUGGESTIONS_TIME_MS),
+): Promise<CallResult> {
   const seen: { model: string | null; tokens: TokenCounts } = { model: null, tokens: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 } };
   const tally = (event: BetaRawMessageStreamEvent): void => {
     if (event.type === 'message_start') {
@@ -612,7 +615,7 @@ async function callModel(model: ChatModel, params: BetaMessageStreamParams): Pro
     }
   };
   try {
-    const stream = model.stream(params, { signal: AbortSignal.timeout(SUGGESTIONS_TIME_MS) });
+    const stream = model.stream(params, { signal });
     for await (const event of stream) tally(event);
     const message = await stream.finalMessage();
     const spent = messageCostMicroUsd(message);
