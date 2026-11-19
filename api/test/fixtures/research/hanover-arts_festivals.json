@@ -1,0 +1,1463 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover arts_festivals thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "arts_festivals",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 5542219,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2QAEzZNxZdMsLL6uwN",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_012hgjmEuDr4w3rFzH7M12KJ",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH events December 2026 Hopkins Center concert"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_012hgjmEuDr4w3rFzH7M12KJ",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Hopkins Center for the Arts, Dartmouth College Hanover, Tickets ...",
+              "url": "https://www.songkick.com/venues/455991-hopkins-center-for-the-arts-dartmouth-college",
+              "page_age": "397 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover, New Hampshire Concert Tickets 2026 - 2027",
+              "url": "https://www.jambase.com/concerts/us/new-hampshire/concerts-in-hanover",
+              "page_age": "196 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover, New Hampshire Concert Tickets 2026 - 2027 - Page 643 of ...",
+              "url": "https://www.jambase.com/concerts/us/new-hampshire/concerts-in-hanover/page/643?radius=3000",
+              "page_age": "128 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Mister Chris & Friends",
+              "url": "https://hop.dartmouth.edu/events/mister-chris-friends",
+              "page_age": "14 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Discover Concerts Events & Activities in Hanover, NH",
+              "url": "https://www.eventbrite.com/d/nh--hanover/concerts/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Explore the Arts 2026",
+              "url": "https://hop.dartmouth.edu/events/explore-arts-2026",
+              "page_age": "93 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hopkins Center for the Arts",
+              "url": "http://hanover.chambermaster.com/list/member/hopkins-center-for-the-arts-538",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "An Evening at the Hopkins Center",
+              "url": "https://www.hanoverinn.com/offers/an-evening-at-the-hopkins-center/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hopkins Center for the Arts at Dartmouth College",
+              "url": "https://www.livemusicproject.org/events/venues/25868/hopkins-center-for-the-arts-at-dartmouth-college",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hopkins Center for the Arts",
+              "url": "https://www.uppervalleybusinessalliance.com/connections/84184-hopkins-center-for-the-arts/",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01WExZGw4YQs4ZWJsaK5HtBp",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth Winter Carnival 2027 dates"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01JecNR9oQauDHtV5R3CHY1M",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH holiday tree lighting 2026"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01WExZGw4YQs4ZWJsaK5HtBp",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "page_age": "34 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_05292026.pdf",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Carnival",
+              "url": "https://students.dartmouth.edu/collis/events/winter-carnival",
+              "page_age": "317 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Winter Carnival",
+              "url": "https://home.dartmouth.edu/about/winter-carnival",
+              "page_age": "1744 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Winter Carnival - Schedule of Events",
+              "url": "https://sites.google.com/dartmouth.edu/winter-carnival-2026/schedule-of-events",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Ice Festival",
+              "url": "https://www.downtowndartmouth.ca/icefestival",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Carnival to Light Up the Night With Frost Lights",
+              "url": "https://home.dartmouth.edu/news/2026/01/winter-carnival-light-night-frost-lights",
+              "page_age": "295 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Quebec Winter Carnival",
+              "url": "https://en.wikipedia.org/wiki/Quebec_Winter_Carnival",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dartmouth Tradition: Winter Carnival",
+              "url": "https://admissions.dartmouth.edu/follow/blog/paulina-cuadra/dartmouth-tradition-winter-carnival",
+              "page_age": "1373 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01JecNR9oQauDHtV5R3CHY1M",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Tree lightings will light up the sky across the suburbs",
+              "url": "https://www.dailyherald.com/2026/11/17/tree-lightings-will-light-up-the-sky-across-the-suburbs/",
+              "page_age": "1 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendar • Celebrate the Season",
+              "url": "https://www.hanovernh.org/Calendar.aspx?EID=2710",
+              "page_age": "349 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Santa to Light Christmas Tree at Cedar Knolls Fire Department - ...",
+              "url": "https://morrisfocus.com/2026/11/18/santa-to-light-christmas-tree-at-cedar-knolls-fire-department/",
+              "page_age": "1 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Visit NH",
+              "url": "https://www.visitnh.gov/things-to-do/events-calendar/settlers-green-holiday-festival-tree-lighting",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Discover Hanover Christmas Tree Lighting Events & Activities in ...",
+              "url": "https://www.eventbrite.com/d/nh--hanover/hanover-christmas-tree-lighting/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Visit NH",
+              "url": "https://www.visitnh.gov/things-to-do/events-calendar/tree-lighting-ceremony-fireworks-show",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Visit NH",
+              "url": "https://www.visitnh.gov/blog/holiday-lights-tours-events",
+              "page_age": "728 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "New Hampshire Christmas & Winter Events 2026",
+              "url": "https://www.nowhereonearth.com/new-hampshire-winter-holiday-events/",
+              "page_age": "13 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01NDbrvATRpfoqtFHUhybjnM",
+          "name": "web_search",
+          "input": {
+            "query": "hop.dartmouth.edu events 2027 January February March"
+          }
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01Loi4Gx38DqjzZyUoa5FA3Z",
+          "name": "web_search",
+          "input": {
+            "query": "Dartmouth commencement 2027 Green Key 2027 dates"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01NDbrvATRpfoqtFHUhybjnM",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "All Events",
+              "url": "https://hop.dartmouth.edu/events/listing?date=2026-02",
+              "page_age": "892 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "All Events",
+              "url": "https://hop.dartmouth.edu/events/listing",
+              "page_age": "892 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season",
+              "page_age": "36 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Top of the Hop Happenings",
+              "url": "https://hop.dartmouth.edu/events/live-events/top-hop-happenings",
+              "page_age": "3 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Season Preview Party",
+              "url": "https://hop.dartmouth.edu/events/season-preview-party",
+              "page_age": "121 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Ananta, The Eternal",
+              "url": "https://hop.dartmouth.edu/events/ananta-eternal",
+              "page_age": "14 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "End-of-Year Student Events",
+              "url": "https://hop.dartmouth.edu/events/end-year-student-events",
+              "page_age": "167 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "The 4th Witch",
+              "url": "https://hop.dartmouth.edu/events/4th-witch",
+              "page_age": "52 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hopkins Center for the Arts at Dartmouth",
+              "url": "https://hop.dartmouth.edu/?__hsfp=150561067&__hssc=134571182.1.1750550400177&__hstc=134571182.2f3f33a24b44870ec4a577029c49e44b.1750550400174.1750550400175.1750550400176.1",
+              "page_age": "163 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Dance at the Hop",
+              "url": "https://hop.dartmouth.edu/events/live-arts/dance-hop",
+              "page_age": "62 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01Loi4Gx38DqjzZyUoa5FA3Z",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Commencement For Students",
+              "url": "https://home.dartmouth.edu/events/commencement/students",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Commencement",
+              "url": "https://home.dartmouth.edu/events/commencement",
+              "page_age": "1257 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-2027 Key Dates",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2026-2027-key-dates",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Frequently Ask Questions Commencement",
+              "url": "https://home.dartmouth.edu/events/commencement/frequently-ask-questions-commencement",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_01232026.pdf",
+              "page_age": "300 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2027-2028 Key Dates",
+              "url": "https://registrar.dartmouth.edu/calendars/academic-institutional-calendars/2027-2028-key-dates",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026-2027 Key Dates Academic Calendar",
+              "url": "https://www.dartmouth.edu/reg/calendar/academic/26_27.html",
+              "page_age": "710 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "page_age": "34 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_04162026.pdf",
+              "page_age": "217 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01N6nJyfMuYsYE3wuo9zqqAz",
+          "name": "web_search",
+          "input": {
+            "query": "Hopkins Center Dartmouth November December 2026 performance Coast Jazz Orchestra Dance Showcase"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01N6nJyfMuYsYE3wuo9zqqAz",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Hopkins Center for the Arts at Dartmouth",
+              "url": "https://hop.dartmouth.edu/?__hsfp=150561067&__hssc=134571182.1.1750550400177&__hstc=134571182.2f3f33a24b44870ec4a577029c49e44b.1750550400174.1750550400175.1750550400176.1",
+              "page_age": "163 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Coast Jazz Orchestra",
+              "url": "https://hop.dartmouth.edu/events/coast-jazz-orchestra-10",
+              "page_age": "121 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Discover the Nets",
+              "url": "https://hop.dartmouth.edu/events/discover-nets",
+              "page_age": "45 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Coast Jazz Orchestra",
+              "url": "https://hop.dartmouth.edu/events/coast-jazz-orchestra-13",
+              "page_age": "121 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Explore the Arts 2026",
+              "url": "https://hop.dartmouth.edu/events/explore-arts-2026",
+              "page_age": "93 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season",
+              "page_age": "36 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Coast Jazz Orchestra",
+              "url": "https://hop.dartmouth.edu/events/coast-jazz-orchestra-6",
+              "page_age": "121 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "All Events",
+              "url": "https://hop.dartmouth.edu/events/listing",
+              "page_age": "892 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hopkins Center for the Arts",
+              "url": "https://en.wikipedia.org/wiki/Hopkins_Center_for_the_Arts",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "End-of-Year Student Events",
+              "url": "https://hop.dartmouth.edu/events/end-year-student-events",
+              "page_age": "167 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found 15 arts and holiday events in Hanover between November 19, 2026 and May 18, 2027. Most come from official Dartmouth, Hopkins Center (\"the Hop\") and Town of Hanover pages. None are reported cancelled or postponed. Many Hop listings give dates but no times, so I've noted where a time is missing. Some Hop pages are shared across events and their excerpts list several dates in one place; a few findings below rely on that kind of listing.\n\nEVENT: Celebrate the Season and Tree Lighting. Friday, December 4, 2026, 4–7 PM, on the Dartmouth Green and around downtown Hanover. Hosted by the Upper Valley Business Alliance (UVBA) and held every year. The town's page says "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "## 2026 Event Schedule\n### UVBA's Celebrate the Season in Downtown Hanover\n**Friday, December 4, 2026, 4–7 PM**\n\nJoin the Upper Valley Business Allian...",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "\"Friday, December 4, 2026, 4–7 PM Join the Upper Valley Business Alliance on the Dartmouth Green for the annual tree lighting, then stay for Celebrate the Season festivities throughout Downtown Hanover.\""
+        },
+        {
+          "type": "text",
+          "text": " Dartmouth's calendar also lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "\"Friday, December 4, 2026 … Christmas Tree Lighting (tentative)\""
+        },
+        {
+          "type": "text",
+          "text": ". The same night, Hanover Parks & Recreation runs holiday wagon rides from Ledyard Park: "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**Holiday Wagon Rides with Hanover Parks & Recreation**\n\nClimb aboard at Ledyard Park, Hanover's new downtown park on South Main Street, and ride thro...",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "\"Climb aboard at Ledyard Park, Hanover's new downtown park on South Main Street, and ride through a town lit up for the holidays.\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Gingerbread Festival. December 4–20, 2026, every day, with gingerbread houses shown in local businesses. Hosted by The Family Place and UVBA. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "### Gingerbread Festival\n**December 4-20, 2026**\n\nThe Family Place and Upper Valley Business Alliance are proud to bring present a collection of ginge...",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays",
+              "title": "Home for the Holidays"
+            }
+          ],
+          "type": "text",
+          "text": "\"Gingerbread Festival December 4-20, 2026 The Family Place and Upper Valley Business Alliance are proud to bring present a collection of gingerbread houses all month long that will be displayed at Upper Valley businesses.\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Cookie Contest with holiday tunes. December 5, 2026, one day only, free family event at the Hopkins Center, 4 East Wheelock Street. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "# Mister Chris & Friends\n## More HopStops\n### Drama Discovery Lab\nMay 15, 2027 Free Family\n\nHop Stops in Hanover and Claremont\n\n## Visiting Informatio...",
+              "url": "https://hop.dartmouth.edu/events/mister-chris-friends",
+              "title": "Mister Chris & Friends"
+            }
+          ],
+          "type": "text",
+          "text": "\"'Tis the season to celebrate with holiday tunes and cookies!\""
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "December 05, 2026 Free Family\n\nThe Magic Flute\n\nMet Opera in HD\n\nMet Opera in HD\n\n### The Magic Flute\nMozart - Special Encore for Families (abridged)\n...",
+              "url": "https://hop.dartmouth.edu/events/mister-chris-friends",
+              "title": "Mister Chris & Friends"
+            }
+          ],
+          "type": "text",
+          "text": "\"December 05, 2026 Free Family\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: The Magic Flute, a special abridged encore for families (Met Opera in HD screening). December 12, 2026, one day only, at the Hopkins Center. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "December 05, 2026 Free Family\n\nThe Magic Flute\n\nMet Opera in HD\n\nMet Opera in HD\n\n### The Magic Flute\nMozart - Special Encore for Families (abridged)\n...",
+              "url": "https://hop.dartmouth.edu/events/mister-chris-friends",
+              "title": "Mister Chris & Friends"
+            }
+          ],
+          "type": "text",
+          "text": "\"Mozart - Special Encore for Families (abridged) December 12, 2026 Family\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Complexions Contemporary Ballet. January 8–9, 2027, two shows at the Hopkins Center. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "# Season Preview Party\n## Live Arts\n### Complexions Contemporary Ballet\nFierce grace and technical brilliance that will leave you breathless, set to b...",
+              "url": "https://hop.dartmouth.edu/events/season-preview-party",
+              "title": "Season Preview Party"
+            }
+          ],
+          "type": "text",
+          "text": "\"Complexions Contemporary Ballet Fierce grace and technical brilliance that will leave you breathless, set to beloved classical works and the electric guitar-driven anthems of Lenny Kravitz. January 08 - 09, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Claudia Acuña Quartet (jazz). January 12, 2027, at the Hopkins Center, one night. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 08 - 09, 2027\n\nClaudia Acuña\n\nPerformance\n\n### Claudia Acuña Quartet\nFrom the streets of Chile to the stages of New York, Acuña's luminous voi...",
+              "url": "https://hop.dartmouth.edu/events/season-preview-party",
+              "title": "Season Preview Party"
+            }
+          ],
+          "type": "text",
+          "text": "\"Claudia Acuña Quartet From the streets of Chile to the stages of New York, Acuña's luminous voice traverses South American folklore, American jazz, folk-rock and global rhythms. January 12, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: The 4th Witch, a shadow-puppet show by Manual Cinema. Friday, January 15, 2027 at 7:30 PM and Saturday, January 16, 2027 at 2:00 PM, at the Moore Theater in the Hopkins Center. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**March 30 - April 01, 2027**\n\n# The 4th Witch\nJanuary 15 - 16, 2027\n\nPerformance\n\nManual Cinema\n\nJanuary 15 - 16, 2027\n\nJan 15\n\nFriday 7:30 PM\n\nThe M...",
+              "url": "https://hop.dartmouth.edu/events/4th-witch",
+              "title": "The 4th Witch"
+            }
+          ],
+          "type": "text",
+          "text": "\"January 15 - 16, 2027 Performance Manual Cinema January 15 - 16, 2027 Jan 15 Friday 7:30 PM The Moore Theater 1h05m Get Tickets Jan 16 Saturday 2:00 PM\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Five to Seven at the Top of the Hop. A free weekly student series, January 14 – February 25, 2027, at the Hopkins Center. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**January 14 - February 25, 2027** Free\n\n# Top of the Hop Happenings\n## Events at the Top of the Hop\n### Five to Seven\nBy students … a free weekly ser...",
+              "url": "https://hop.dartmouth.edu/events/live-events/top-hop-happenings",
+              "title": "Top of the Hop Happenings"
+            }
+          ],
+          "type": "text",
+          "text": "\"January 14 - February 25, 2027 Free\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Ananta, The Eternal, by Ragamala Dance Company. Thursday, January 28, 2027 and Friday, January 29, 2027, both at 7:30 PM, at the Daryl Roth Studio Theater in the Hopkins Center. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**February 26 - March 06, 2027**\n\n# Ananta, The Eternal\nJanuary 28 - 29, 2027\n\nPerformance\n\nRagamala Dance Company\n\nby Aparna Ramaswamy\n\nJanuary 28 - ...",
+              "url": "https://hop.dartmouth.edu/events/ananta-eternal",
+              "title": "Ananta, The Eternal"
+            }
+          ],
+          "type": "text",
+          "text": "\"January 28 - 29, 2027 Jan 28 Thursday 7:30 PM Daryl Roth Studio Theater 1h30m Get Tickets Jan 29 Friday 7:30 PM Daryl Roth Studio Theater\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Selected Shorts: Daring & Courage (live readings in the Writers Salon Series). January 30, 2027, at the Hopkins Center, one night. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 21 - 22, 2027\n\nSelected Shorts\n\nPerformance\n\nWriters Salon Series\n\n### Selected Shorts\nDaring & Courage\n\nThe spellbinding series returns to th...",
+              "url": "https://hop.dartmouth.edu/events/4th-witch",
+              "title": "The 4th Witch"
+            }
+          ],
+          "type": "text",
+          "text": "\"The spellbinding series returns to the Hop, this time taking up tales of bold and brave acts. January 30, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Dartmouth Winter Carnival. Thursday, February 4 to Sunday, February 7, 2027, on campus across Hanover. Held every year since 1911. Dartmouth's calendar lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Winter Carnival\n\n**December-2026**\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n**January-2027**\n\nTuesda...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "\"Thursday, February 4, 2027 | Sunday, February 7, 2027 Winter Carnival\""
+        },
+        {
+          "type": "text",
+          "text": ". "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Begun in 1911, Dartmouth's Winter Carnival celebrates the beauty of the winter season in the Upper Valley and the achievements of Dartmouth's many win...",
+              "url": "https://students.dartmouth.edu/collis/events/winter-carnival",
+              "title": "Winter Carnival"
+            }
+          ],
+          "type": "text",
+          "text": "Begun in 1911, Dartmouth's Winter Carnival celebrates the beauty of the winter season in the Upper Valley and the achievements of Dartmouth's many winter sports teams."
+        },
+        {
+          "type": "text",
+          "text": " The calendar gives no times, and these dates were also on the calendar's tentative page.\n\nEVENT: Student ensemble concerts at the Hopkins Center in winter 2027. Each is one night, and no times were listed:\n- Dartmouth College Wind Ensemble on February 13, 2027\n- Gospel Choir on February 25, 2027\n- Coast Jazz Orchestra on February 27, 2027\n- Glee Club and a free Dance Ensemble work-in-progress showing on February 28, 2027\n\nThe season page lists "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "March 30 - **April 01, 2027**\n\n2/13  **Dartmouth College Wind Ensemble**\n\n2/25  **Dartmouth College Gospel Choir**\n\n2/27  **Coast Jazz Orchestra at Da...",
+              "url": "https://hop.dartmouth.edu/202627-season",
+              "title": "2026/27 Season"
+            }
+          ],
+          "type": "text",
+          "text": "\"2/13 Dartmouth College Wind Ensemble 2/25 Dartmouth College Gospel Choir 2/27 Coast Jazz Orchestra at Dartmouth\""
+        },
+        {
+          "type": "text",
+          "text": ", and "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "February 25, 2027\n\nFebruary 27, 2027\n\nFebruary 28, 2027 Free Family\n\nDartmouth Dance Ensemble\n\nFebruary 28, 2027\n\n### Dartmouth College Glee Club\n\nFeb...",
+              "url": "https://hop.dartmouth.edu/202627-season",
+              "title": "2026/27 Season"
+            }
+          ],
+          "type": "text",
+          "text": "\"February 28, 2027 Dartmouth College Glee Club February 28, 2027\""
+        },
+        {
+          "type": "text",
+          "text": ".\n\nEVENT: The Language of Mermaids. February 26 – March 6, 2027, a multi-night run at the Hopkins Center. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "11/10 Dartmouth Dance Showcase hosted by the Dartmouth Dance Ensemble\n\n# 2026/27 Season\n## 2026/27 Season\n### Fall\n11/6–14  **Dartmouth Department of ...",
+              "url": "https://hop.dartmouth.edu/202627-season",
+              "title": "2026/27 Season"
+            }
+          ],
+          "type": "text",
+          "text": "\"The Language of Mermaids February 26 - March 06, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Dartmouth Symphony Orchestra, 'Trees – in Six Parts' with Holst's 'The Planets'. March 6, 2027, at the Hopkins Center, one night. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "February 13, 2027\n\nGospel Choir\n\nPerformance\n\nResident Ensemble\n\n### 'Trees - in Six Parts' Sam Green, Caroline Shaw & Rebecca Solnit\nAlso featuring G...",
+              "url": "https://hop.dartmouth.edu/events/end-year-student-events",
+              "title": "End-of-Year Student Events"
+            }
+          ],
+          "type": "text",
+          "text": "\"Immerse yourself in a stunning live cinema experience that explores our relationship to trees enlivened by the Hop's resident orchestra. Paired with a symphonic journey to the edge of the universe. March 06, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Hop Oscars Party. March 14, 2027, free, at the Hopkins Center, one night. It is for Hop Members and Dartmouth Film Society passholders, and is the third one held. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "March 06, 2027\n\nMarch 09, 2027\n\n### Hop Oscars Party\nHop Members and Dartmouth Film Society Passholders are invited to toast this year's celebrated fi...",
+              "url": "https://hop.dartmouth.edu/202627-season",
+              "title": "2026/27 Season"
+            }
+          ],
+          "type": "text",
+          "text": "\"Hop Members and Dartmouth Film Society Passholders are invited to toast this year's celebrated films in style at our third annual Oscars Party! March 14, 2027 Free\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: A Teen Odyssey by La Mecànica (immersive theater). March 30 – April 1, 2027, a three-day run at the Hopkins Center. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 30, 2027\n\nTeen Odyssey\n\nPerformance\n\nLa Mecànica\n\n### A Teen Odyssey\nStep into an immersive theater experience for all generations that celebr...",
+              "url": "https://hop.dartmouth.edu/events/4th-witch",
+              "title": "The 4th Witch"
+            }
+          ],
+          "type": "text",
+          "text": "\"A Teen Odyssey Step into an immersive theater experience for all generations that celebrates anyone who is (or ever was) a teenager. March 30 - April 01, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Gravity & Other Myths. April 16, 2027, at the Hopkins Center, one night. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "January 28 - 29, 2027\n\nDance Ensemble\n\nPerformance\n\nDartmouth Dance Ensemble\n\n### Work-in-Progress Showing\nFebruary 28, 2027\n\nBodyVox\n\nPerformance\n\nBo...",
+              "url": "https://hop.dartmouth.edu/events/ananta-eternal",
+              "title": "Ananta, The Eternal"
+            }
+          ],
+          "type": "text",
+          "text": "\"Gravity & Other Myths April 16, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Dartmouth Symphony Orchestra, Handel Society and Glee Club, performing Beethoven's Ninth Symphony. May 8, 2027, at the Hopkins Center, one night. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "March 06, 2027\n\nDSO, Glee & Handel\n\nPerformance\n\nResident Ensemble\n\n### Dartmouth Symphony Orchestra, Handel Society & Glee Club\nThe three ensembles u...",
+              "url": "https://hop.dartmouth.edu/events/end-year-student-events",
+              "title": "End-of-Year Student Events"
+            }
+          ],
+          "type": "text",
+          "text": "\"The three ensembles unite for a sweeping program featuring Beethoven's Symphony No. 9, whose iconic final movement, \"Ode to Joy,\" is a lasting symbol of hope and unity. May 08, 2027\""
+        },
+        {
+          "type": "text",
+          "text": " Dartmouth's calendar also lists a Pow Wow and Lū'au for "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Friday, June 4, 2027: Sunday, June 13, 2027; Commencement\n\n| Friday, December 4, 2026 |  | Christmas Tree Lighting (tentative) |\n| --- | --- | --- |\n*...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_01232026.pdf",
+              "title": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ..."
+            }
+          ],
+          "type": "text",
+          "text": "\"Saturday, May 8, 2027 | Sunday, May 9, 2027 PowWow Lu au\""
+        },
+        {
+          "type": "text",
+          "text": ".\n\nEVENT: Carlota by Goat in the Road Productions (theater). May 12–14, 2027, a three-day run at the Hopkins Center. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "March 30 - April 01, 2027\n\nCarlota\n\nPerformance\n\nGoat in the Road Productions\n\n### Carlota\nMay 12 - 14, 2027\n\nNoli Timere\n\n2026/27 Season",
+              "url": "https://hop.dartmouth.edu/events/4th-witch",
+              "title": "The 4th Witch"
+            }
+          ],
+          "type": "text",
+          "text": "\"Carlota May 12 - 14, 2027\""
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Drama Discovery Lab (HopStop). May 15, 2027, a free family event at the Hopkins Center. No time was listed. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "# Mister Chris & Friends\n## More HopStops\n### Drama Discovery Lab\nMay 15, 2027 Free Family\n\nHop Stops in Hanover and Claremont\n\n## Visiting Informatio...",
+              "url": "https://hop.dartmouth.edu/events/mister-chris-friends",
+              "title": "Mister Chris & Friends"
+            }
+          ],
+          "type": "text",
+          "text": "\"Drama Discovery Lab May 15, 2027 Free Family Hop Stops in Hanover and Claremont\""
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 214,
+        "cache_creation_input_tokens": 38603,
+        "cache_read_input_tokens": 65631,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 3025,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 3983,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 6,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 206,
+            "output_tokens": 67,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 3025,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 3025,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 125,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 5940,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 5940,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 131,
+            "cache_read_input_tokens": 8965,
+            "cache_creation_input_tokens": 12217,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 12217,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 160,
+            "cache_read_input_tokens": 21182,
+            "cache_creation_input_tokens": 11277,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 11277,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 3500,
+            "cache_read_input_tokens": 32459,
+            "cache_creation_input_tokens": 6144,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 6144,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 96
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2SdVdYMsSx1MagubQi",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"Celebrate the Season and Tree Lighting\",\"kind\":\"event\",\"category\":\"festival\",\"startDate\":\"2026-12-04\",\"endDate\":\"2026-12-04\",\"weekdays\":null,\"startTime\":\"16:00\",\"status\":\"scheduled\",\"venueRef\":\"green\",\"hostRef\":\"uvba\",\"competitor\":null,\"sourceIds\":[\"S19\",\"S10\"],\"dateQuote\":\"**Friday, December 4, 2026, 4–7 PM**\",\"confidence\":\"high\"},{\"title\":\"Gingerbread Festival\",\"kind\":\"event\",\"category\":\"festival\",\"startDate\":\"2026-12-04\",\"endDate\":\"2026-12-20\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"uvba\",\"competitor\":null,\"sourceIds\":[\"S19\"],\"dateQuote\":\"**December 4-20, 2026**\",\"confidence\":\"high\"},{\"title\":\"Cookie Contest with Holiday Tunes\",\"kind\":\"event\",\"category\":\"community\",\"startDate\":\"2026-12-05\",\"endDate\":\"2026-12-05\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S4\"],\"dateQuote\":\"December 05, 2026 Free Family\",\"confidence\":\"medium\"},{\"title\":\"Complexions Contemporary Ballet\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-01-08\",\"endDate\":\"2027-01-09\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S32\"],\"dateQuote\":\"January 08 - 09, 2027\",\"confidence\":\"high\"},{\"title\":\"Claudia Acuña Quartet\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-01-12\",\"endDate\":\"2027-01-12\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S32\"],\"dateQuote\":\"Claudia Acuña Performance ### Claudia Acuña Quartet\",\"confidence\":\"medium\"},{\"title\":\"The 4th Witch by Manual Cinema\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-01-15\",\"endDate\":\"2027-01-16\",\"weekdays\":null,\"startTime\":\"19:30\",\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S35\"],\"dateQuote\":\"January 15 - 16, 2027 Jan 15 Friday 7:30 PM\",\"confidence\":\"high\"},{\"title\":\"Five to Seven at the Top of the Hop\",\"kind\":\"season\",\"category\":\"arts\",\"startDate\":\"2027-01-14\",\"endDate\":\"2027-02-25\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S31\"],\"dateQuote\":\"**January 14 - February 25, 2027** Free\",\"confidence\":\"medium\"},{\"title\":\"Ananta, The Eternal – Ragamala Dance Company\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-01-28\",\"endDate\":\"2027-01-29\",\"weekdays\":null,\"startTime\":\"19:30\",\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S33\"],\"dateQuote\":\"# Ananta, The Eternal January 28 - 29, 2027\",\"confidence\":\"high\"},{\"title\":\"Dartmouth Winter Carnival\",\"kind\":\"event\",\"category\":\"festival\",\"startDate\":\"2027-02-04\",\"endDate\":\"2027-02-07\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"dartmouth\",\"competitor\":null,\"sourceIds\":[\"S10\",\"S12\"],\"dateQuote\":\"Winter Carnival **December-2026**\",\"confidence\":\"low\"},{\"title\":\"Dartmouth College Wind Ensemble\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-02-13\",\"endDate\":\"2027-02-13\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S30\"],\"dateQuote\":\"2/13 **Dartmouth College Wind Ensemble**\",\"confidence\":\"high\"},{\"title\":\"Dartmouth College Gospel Choir\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-02-25\",\"endDate\":\"2027-02-25\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S30\"],\"dateQuote\":\"2/25 **Dartmouth College Gospel Choir**\",\"confidence\":\"high\"},{\"title\":\"Coast Jazz Orchestra at Dartmouth\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-02-27\",\"endDate\":\"2027-02-27\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S30\"],\"dateQuote\":\"2/27 **Coast Jazz Orchestra at Da\",\"confidence\":\"high\"},{\"title\":\"Dartmouth College Glee Club\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-02-28\",\"endDate\":\"2027-02-28\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S30\"],\"dateQuote\":\"### Dartmouth College Glee Club Feb\",\"confidence\":\"medium\"},{\"title\":\"Dartmouth Dance Ensemble Work-in-Progress Showing\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-02-28\",\"endDate\":\"2027-02-28\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S30\"],\"dateQuote\":\"Free Family Dartmouth Dance Ensemble February 28, 2027\",\"confidence\":\"high\"},{\"title\":\"Carlota by Goat in the Road Productions\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-05-12\",\"endDate\":\"2027-05-14\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S35\"],\"dateQuote\":\"### Carlota May 12 - 14, 2027\",\"confidence\":\"high\"},{\"title\":\"Drama Discovery Lab (HopStop)\",\"kind\":\"event\",\"category\":\"arts\",\"startDate\":\"2027-05-15\",\"endDate\":\"2027-05-15\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"hop\",\"hostRef\":null,\"competitor\":null,\"sourceIds\":[\"S4\"],\"dateQuote\":\"### Drama Discovery Lab May 15, 2027 Free Family\",\"confidence\":\"high\"}],\"entities\":[{\"ref\":\"hop\",\"type\":\"venue\",\"name\":\"Hopkins Center for the Arts\",\"sourceIds\":[\"S30\"]},{\"ref\":\"green\",\"type\":\"venue\",\"name\":\"Dartmouth Green\",\"sourceIds\":[\"S19\"]},{\"ref\":\"uvba\",\"type\":\"organization\",\"name\":\"Upper Valley Business Alliance\",\"sourceIds\":[\"S19\"]},{\"ref\":\"dartmouth\",\"type\":\"school\",\"name\":\"Dartmouth College\",\"sourceIds\":[\"S10\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 9446,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 2618,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 9446,
+            "output_tokens": 2618,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 436802,
+    "searches": 6,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 50,
+    "verified": {
+      "events": [
+        {
+          "title": "Celebrate the Season and Tree Lighting",
+          "kind": "event",
+          "category": "festival",
+          "start": "2026-12-04",
+          "end": "2026-12-04",
+          "weekdays": null,
+          "startTime": "16:00",
+          "status": "scheduled",
+          "venueRef": "green",
+          "hostRef": "uvba",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            },
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "high",
+          "confidence": "high"
+        },
+        {
+          "title": "Gingerbread Festival",
+          "kind": "event",
+          "category": "festival",
+          "start": "2026-12-04",
+          "end": "2026-12-20",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "uvba",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Cookie Contest with Holiday Tunes",
+          "kind": "event",
+          "category": "community",
+          "start": "2026-12-05",
+          "end": "2026-12-05",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Mister Chris & Friends",
+              "url": "https://hop.dartmouth.edu/events/mister-chris-friends"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Complexions Contemporary Ballet",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-01-08",
+          "end": "2027-01-09",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Season Preview Party",
+              "url": "https://hop.dartmouth.edu/events/season-preview-party"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Claudia Acuña Quartet",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-01-12",
+          "end": "2027-01-12",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Season Preview Party",
+              "url": "https://hop.dartmouth.edu/events/season-preview-party"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "The 4th Witch by Manual Cinema",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-01-15",
+          "end": "2027-01-16",
+          "weekdays": null,
+          "startTime": "19:30",
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "The 4th Witch",
+              "url": "https://hop.dartmouth.edu/events/4th-witch"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Five to Seven at the Top of the Hop",
+          "kind": "season",
+          "category": "arts",
+          "start": "2027-01-14",
+          "end": "2027-02-25",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Top of the Hop Happenings",
+              "url": "https://hop.dartmouth.edu/events/live-events/top-hop-happenings"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Ananta, The Eternal – Ragamala Dance Company",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-01-28",
+          "end": "2027-01-29",
+          "weekdays": null,
+          "startTime": "19:30",
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Ananta, The Eternal",
+              "url": "https://hop.dartmouth.edu/events/ananta-eternal"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Dartmouth Winter Carnival",
+          "kind": "event",
+          "category": "festival",
+          "start": "2027-02-04",
+          "end": "2027-02-07",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "dartmouth",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            },
+            {
+              "label": "Winter Carnival",
+              "url": "https://students.dartmouth.edu/collis/events/winter-carnival"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Dartmouth College Wind Ensemble",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-02-13",
+          "end": "2027-02-13",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Dartmouth College Gospel Choir",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-02-25",
+          "end": "2027-02-25",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Coast Jazz Orchestra at Dartmouth",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-02-27",
+          "end": "2027-02-27",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Dartmouth College Glee Club",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-02-28",
+          "end": "2027-02-28",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Dartmouth Dance Ensemble Work-in-Progress Showing",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-02-28",
+          "end": "2027-02-28",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Carlota by Goat in the Road Productions",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-05-12",
+          "end": "2027-05-14",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "The 4th Witch",
+              "url": "https://hop.dartmouth.edu/events/4th-witch"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Drama Discovery Lab (HopStop)",
+          "kind": "event",
+          "category": "arts",
+          "start": "2027-05-15",
+          "end": "2027-05-15",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "hop",
+          "hostRef": null,
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Mister Chris & Friends",
+              "url": "https://hop.dartmouth.edu/events/mister-chris-friends"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "hop",
+          "type": "venue",
+          "name": "Hopkins Center for the Arts",
+          "sources": [
+            {
+              "label": "2026/27 Season",
+              "url": "https://hop.dartmouth.edu/202627-season"
+            }
+          ]
+        },
+        {
+          "ref": "green",
+          "type": "venue",
+          "name": "Dartmouth Green",
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ]
+        },
+        {
+          "ref": "uvba",
+          "type": "organization",
+          "name": "Upper Valley Business Alliance",
+          "sources": [
+            {
+              "label": "Home for the Holidays",
+              "url": "https://www.hanovernh.org/701/Home-for-the-Holidays"
+            }
+          ]
+        },
+        {
+          "ref": "dartmouth",
+          "type": "school",
+          "name": "Dartmouth College",
+          "sources": [
+            {
+              "label": "FIVE YEAR CALENDAR Dates subject to change 1 2 3 4 5 6 7 8 9 10 ...",
+              "url": "https://www.dartmouth.edu/cse/docs/5_year_calendar_10162026.pdf"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}

@@ -197,4 +197,31 @@ describe('the extract\'s input', () => {
     expect('competitors' in user).toBe(false);
     expect(JSON.stringify(user.sources)).not.toContain('https://');
   });
+  // Live eval 2026-11-19: cited words keep a page's line breaks, which the JSON string escaped as \\n, and the extract
+  // copied the escape into dateQuote ("Giant\\n\\nDec 05"), so grounding never found it in the page's words.
+  it('collapses the cited words\' line breaks and runs of spaces, so a quote copied from them grounds', () => {
+    const page = 'https://example.org/hop';
+    const messages = [message([webSearch('s1'), webResults('s1', [page]), citedQuotes('EVENT: Giant.', [{ url: page, quote: '### Broadway in HD Giant\n\n2:00 PM  Spaulding\tAuditorium\n\nDec 05' }])])];
+    const ledger = buildLedger(messages);
+    const inline = citedText(messages, ledger);
+    expect(inline).toBe('EVENT: Giant. [S1] "### Broadway in HD Giant 2:00 PM Spaulding Auditorium Dec 05"');
+    expect(extractPrompt({ messages, ledger, window, thread: firstTownThread(), competitors: null }).user).not.toContain('\\n');
+    // The ledger keeps the page's own words; grounding compares with spaces collapsed.
+    expect(ledger.sources[0]?.quotes).toEqual(['### Broadway in HD Giant\n\n2:00 PM  Spaulding\tAuditorium\n\nDec 05']);
+  });
+
+  // Live eval 2026-11-19: 7 of 52 town findings quoted the gather's own sentence, not the cited words, so they could
+  // never ground; and the gather's citations often quoted a page heading without the date.
+  it('asks the extract to copy dateQuote from inside a cited quote of the event\'s own sources', () => {
+    const { system } = extractPrompt({ messages: [], ledger: buildLedger([]), window, thread: firstTownThread(), competitors: null });
+    expect(system).toMatch(/dateQuote: words copied exactly from inside the quotes after one of the event's own \[S#\] marks/);
+    expect(system).toMatch(/never from the research text outside the quotes/);
+  });
+
+  it('asks the gather to state each date in the sentence that cites it', () => {
+    const { system } = gatherPrompt({
+      thread: firstTownThread(), town: promptTown(location.town), today: window.from, window, known: [], seeds: [], restaurant: null, competitors: null,
+    });
+    expect(system[0]?.text).toMatch(/Write each finding's date, with its year, in the sentence that cites it/);
+  });
 });

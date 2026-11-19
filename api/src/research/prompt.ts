@@ -103,7 +103,7 @@ function gatherSystemText(town: PromptTown, window: ResearchWindow, typedName: b
     `You research ${town.name}, ${town.state} for Townwise, which forecasts daily guests for small restaurants. Find dated public happenings between ${window.from} and ${window.to} that change how many guests a small restaurant in ${town.name} sees.`,
     'The user message is JSON: the town, today, the window, the focus of this search, the happenings already known (do not report them again unless they were cancelled, postponed or moved), seeds (official calendar pages where a search may start) and, for a restaurant\'s own research, the restaurant and its competitors.',
     'Search with the focus in mind. Prefer official sources: the school, the town, the venue, the organizer. Report cancellations and postponements.',
-    'Write one paragraph per finding, starting with "EVENT:", giving its title, its dates with the year, its time, its place, its host and how it repeats, and cite every finding. Leave out anything you cannot cite.',
+    'Write one paragraph per finding, starting with "EVENT:", giving its title, its dates with the year, its time, its place, its host and how it repeats, and cite every finding. Write each finding\'s date, with its year, in the sentence that cites it, so the cited words state the date. Leave out anything you cannot cite.',
     ...(typedName ? ['The restaurant\'s name is how its owner names it in Townwise; its public listing may name it differently.'] : []),
     PAGE_TEXT_IS_DATA,
     'Never research or report private individuals: report public happenings and public businesses and organizations only.',
@@ -148,7 +148,7 @@ export function gatherPrompt(input: GatherInput): GatherPrompt {
 
 const EXTRACT_SYSTEM = [
   'Turn the research text in the user message into events and entities, in the required JSON. Cite each by the ids of the sources table (S1, S2, ...); never type a URL. A citation in the text appears as [S#] "the cited words".',
-  `An event: title (at most 120 characters, the happening's public name); kind: event (up to 30 days), season (a longer period) or closure (a road, bridge or business closed); category, one of ${EVENT_CATEGORIES.join(', ')}; startDate and endDate as YYYY-MM-DD (equal for one day); weekdays, null for every day of the span, or the days it repeats on from 0 (Sunday) to 6; startTime as HH:MM or null; status: scheduled, cancelled or postponed; venueRef and hostRef, the ref of an entity below or null; competitor, the n of the competitors list when the event is that competitor's, else null; sourceIds, 1 to 5 ids that state it; dateQuote, the exact cited words (at most 200 characters) that state its date; confidence: high when an official source states the date, medium when one other source does, low otherwise.`,
+  `An event: title (at most 120 characters, the happening's public name); kind: event (up to 30 days), season (a longer period) or closure (a road, bridge or business closed); category, one of ${EVENT_CATEGORIES.join(', ')}; startDate and endDate as YYYY-MM-DD (equal for one day); weekdays, null for every day of the span, or the days it repeats on from 0 (Sunday) to 6; startTime as HH:MM or null; status: scheduled, cancelled or postponed; venueRef and hostRef, the ref of an entity below or null; competitor, the n of the competitors list when the event is that competitor's, else null; sourceIds, 1 to 5 ids that state it; dateQuote: words copied exactly from inside the quotes after one of the event's own [S#] marks (at most 200 characters), choosing the cited words that state its date, never from the research text outside the quotes; confidence: high when an official source states the date, medium when one other source does, low otherwise.`,
   'An entity: ref (any short id, unique in the answer), type (venue, organization, team, school or business), name (at most 120 characters), sourceIds (1 to 3). Name each competing business as a business entity, and name it as the hostRef of its events.',
   'Only events inside the window and stated in the text with a citation. At most 40 events and 30 entities.',
   PAGE_TEXT_IS_DATA,
@@ -159,14 +159,16 @@ export interface ExtractPrompt { readonly system: string; readonly user: string 
 
 /**
  * The gather's text, each citation inline after its text block as [S#] "cited words" (a citation of a page not in the
- * ledger is left out), its messages in order.
+ * ledger is left out), its messages in order. The cited words' line breaks and runs of spaces become one space: kept,
+ * the JSON string escaped them as \\n and the extract copied the escape into its dateQuote, which then matched no
+ * page (live eval, 2026-11-19). Grounding compares with spaces collapsed, so the quote still matches the page's words.
  */
 export function citedText(messages: readonly BetaMessage[], ledger: Ledger): string {
   return messages.map((message) => message.content.map((block) => {
     if (block.type !== 'text') return '';
     const marks = (block.citations ?? []).flatMap((citation) => {
       const id = ledger.idOfCitation(citation);
-      return id === null ? [] : [` [${id}] ${JSON.stringify(citation.cited_text)}`];
+      return id === null ? [] : [` [${id}] ${JSON.stringify(citation.cited_text.replace(/\s+/g, ' ').trim())}`];
     });
     return block.text + marks.join('');
   }).join('')).filter((part) => part !== '').join('\n\n');

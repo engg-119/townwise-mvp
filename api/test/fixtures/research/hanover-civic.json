@@ -1,0 +1,1111 @@
+{
+  "about": "D66 live eval recording (research-eval.ts --record), Hanover civic thread, web fetch off, Google names not allowed. Encrypted fields and signatures stripped; the location's name redacted. Public pages only.",
+  "thread": "civic",
+  "fetch": false,
+  "placesToAi": false,
+  "now": "2026-11-19T21:49:49.068Z",
+  "today": "2026-11-19",
+  "window": {
+    "from": "2026-11-19",
+    "to": "2027-05-18"
+  },
+  "reservedMicroUsd": 5543319,
+  "responses": [
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2RuYkwYQeGfAod734b",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01YVV2G4Hdx3GD2RgE14yMbW",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH town meeting 2027"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01YVV2G4Hdx3GD2RgE14yMbW",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "The 2026 Hanover Town Meeting Live Updates: The business meeting ...",
+              "url": "https://www.thedartmouth.com/article/2026/05/hubbard-sapper-the-2026-hanover-town-meeting-live-updates",
+              "page_age": "191 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendar • Hanover, NH • CivicEngage",
+              "url": "https://www.hanovernh.org/calendar",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover, NH Annual Reports",
+              "url": "https://scholars.unh.edu/hanover_nh_reports/",
+              "page_age": "1783 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Town Meetings",
+              "url": "https://www.hanovernh.org/362/Town-Meetings",
+              "page_age": "189 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendar • Hanover, NH • CivicEngage",
+              "url": "https://www.hanovernh.org/Calendar.aspx",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Selectboard approves budget and warrant articles for May town meeting ...",
+              "url": "https://www.thedartmouth.com/article/2026/04/hubbard-sapper-selectboard-approves-budget-and-warrant-articles-for-may-town-meeting",
+              "page_age": "230 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Voter Information - SAU 70",
+              "url": "https://www.sau70.org/resources/voter-information",
+              "page_age": "625 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Sustainable Hanover Committee",
+              "url": "https://www.hanovernh.org/462/Sustainable-Hanover-Committee",
+              "page_age": "10 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "memorandum",
+              "url": "https://www.hanovernh.org/AgendaCenter/ViewFile/Item/581?fileID=3451",
+              "page_age": "500 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Selectboard",
+              "url": "https://www.hanovernh.org/518/Selectboard",
+              "page_age": "147 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_0193zP69hXSRBkfzijVWrWrA",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH Main Street Wheelock construction 2027 road closure"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_0193zP69hXSRBkfzijVWrWrA",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Hanover mulls $14.9M project, South Main Street parking cut - Valley ...",
+              "url": "https://vnews.com/2026/03/26/hanover-infrastructure-upgrade-plan/",
+              "page_age": "232 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover officials look at reducing downtown traffic lanes - Valley ...",
+              "url": "https://vnews.com/Hanover-considering-lane-closures-in-two-downtown-intersections-54860306",
+              "page_age": "940 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FY27 Paving Projects Bid Specifications Town of Hanover",
+              "url": "https://www.hanovernh.org/DocumentCenter/View/9684/FY27-Paving-Project-Bid-Specifications",
+              "page_age": "149 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover's $15M project to cut on-street parking - Valley News",
+              "url": "https://vnews.com/2026/04/03/hanover-parking-infrastructure-project-editorial/",
+              "page_age": "227 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Town of Hanover South Main Street Corridor Improvements",
+              "url": "https://hanovernh.org/DocumentCenter/View/8689/January-13-2026-Presentation?bidId=",
+              "page_age": "310 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "News Flash • Hanover, NH",
+              "url": "https://www.hanovernh.org/m/NewsFlash",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Lane Drop Pilots on East Wheelock & South Main Street • Hanover, NH",
+              "url": "https://www.hanovernh.org/m/newsflash/Home/Detail/269?arc=434",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover considers tiered parking, higher rates on South Main Street",
+              "url": "https://www.mynbc5.com/article/hanover-nh-main-street-parking-rate-increase/74188363",
+              "page_age": "30 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "HANOVER BIKE WALK COMMITTEE",
+              "url": "https://www.hanovernh.org/AgendaCenter/ViewFile/Minutes/_02122024-1040",
+              "page_age": "1011 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover Crossing",
+              "url": "https://en.wikipedia.org/wiki/Hanover_Crossing",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01NSmwy1yqfGNpvuv4XZtvN3",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover selectboard parking rates approved South Main Street effective"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01NSmwy1yqfGNpvuv4XZtvN3",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Hanover increases parking fees, effective in January - Valley News",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/",
+              "page_age": "9 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Selectboard unanimously approves higher parking rates on South ...",
+              "url": "https://www.thedartmouth.com/article/2026/11/jones-park-selectboard-nov-12",
+              "page_age": "13 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover changes parking rates, effective January 2027 - WPTZ",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870",
+              "page_age": "13 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover considers tiered parking, higher rates on South Main Street",
+              "url": "https://www.mynbc5.com/article/hanover-nh-main-street-parking-rate-increase/74188363",
+              "page_age": "30 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "ORDINANCE #6 TOWN OF HANOVER",
+              "url": "https://www.hanovernh.org/DocumentCenter/View/458/Ordinance-Number-6---Parking-Ordinance-PDF",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Selectboard considers tiered parking rates for South Main Street ...",
+              "url": "https://www.thedartmouth.com/article/2026/10/jones-park-selectboard-considers-tiered-parking-rates-for-south-main-street",
+              "page_age": "27 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover Selectboard bans parking on Occom Ridge - The Dartmouth",
+              "url": "https://www.thedartmouth.com/article/2026/05/hubbard-hanover-selectboard-bans-parking-on-occom-ridge",
+              "page_age": "196 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Town of Hanover Ordinance #43 Allen Street Placemaking ...",
+              "url": "https://www.hanovernh.org/DocumentCenter/View/5548/Ord-43-Allen-Street-Pilot-Placemaking-Temporary-Ordinance",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover mulls $14.9M project, South Main Street parking cut - Valley ...",
+              "url": "https://vnews.com/2026/03/26/hanover-infrastructure-upgrade-plan/",
+              "page_age": "232 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "ORDINANCE #6 TOWN OF HANOVER",
+              "url": "https://www.hanovernh.org/DocumentCenter/View/270/Parking-Rules-and-Regulations-PDF",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_014xvNxSoNDrgS3ycPSm7czU",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH winter overnight parking ban 2026-2027"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_014xvNxSoNDrgS3ycPSm7czU",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Hanover mulls $14.9M project, South Main Street parking cut - Valley ...",
+              "url": "https://vnews.com/2026/03/26/hanover-infrastructure-upgrade-plan/",
+              "page_age": "232 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "News Flash • Hanover, NH • CivicEngage",
+              "url": "https://www.hanovernh.org/CivicAlerts.aspx?AID=452&ARC=712",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Parking",
+              "url": "https://www.hanovernh.org/243/Parking",
+              "page_age": "302 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Overnight parking bans issued for multiple NH cities - WMUR",
+              "url": "https://www.wmur.com/article/overnight-parking-bans-new-hampshire-01182026/70041702",
+              "page_age": "304 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover Selectboard bans parking on Occom Ridge - The Dartmouth",
+              "url": "https://www.thedartmouth.com/article/2026/05/hubbard-hanover-selectboard-bans-parking-on-occom-ridge",
+              "page_age": "196 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Winter Parking Ban Notice",
+              "url": "https://www.hanovernh.org/258/Winter-Parking-Ban-Notice",
+              "page_age": "204 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Explore Parking in Hanover NH: Tips & Options [2024]",
+              "url": "https://prked.com/post/parking-in-hanover-nh-guide-tips",
+              "page_age": "790 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "FAQs • What is the Winter Parking Ban?",
+              "url": "https://www.hanovernh.org/FAQ.aspx?QID=111",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover changes parking rates, effective January 2027 - WPTZ",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870",
+              "page_age": "13 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01NtpRqARzwaHjGMM18S3USL",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover NH free parking holiday season 2026"
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01NtpRqARzwaHjGMM18S3USL",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "News Flash • Free Parking Dates for 2025 Holiday Season",
+              "url": "https://www.hanovernh.org/CivicAlerts.aspx?AID=452",
+              "page_age": "365 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Free Parking Dates for 2025 Holiday Season",
+              "url": "https://www.hanovernh.org/CivicAlerts.aspx?AID=452&ARC=712",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "City Council Approves Holiday Gift of Three Hours of Free Parking ...",
+              "url": "https://www.portsmouthnh.gov/city/press-releases/city-council-approves-holiday-gift-three-hours-free-parking-city-garages-0",
+              "page_age": "352 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Public Holidays - Free Parking",
+              "url": "https://www.hanovernh.org/253/Public-Holidays---Free-Parking",
+              "page_age": "1231 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Hanover increases parking fees, effective in January - Valley News",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/",
+              "page_age": "9 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "An early gift for you from Town of Hanover, NH - FREE Parking ...",
+              "url": "https://www.facebook.com/UpperValleyBusinessAlliance/videos/an-early-gift-for-you-from-town-of-hanover-nh-free-parking-saturdays-december-17/851794119425777/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "The Town of Hanover, NH has a special holiday gift for you 🎁 ...",
+              "url": "https://www.facebook.com/UpperValleyBusinessAlliance/videos/the-town-of-hanover-nh-has-a-special-holiday-gift-for-you-free-parking-saturdays/1019087442827543/",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Visitor Parking",
+              "url": "https://www.hanovernh.org/257/Visitor-Parking",
+              "page_age": "204 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Explore Parking in Hanover NH: Tips & Options [2024]",
+              "url": "https://prked.com/post/parking-in-hanover-nh-guide-tips",
+              "page_age": "790 days ago"
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "server_tool_use",
+          "id": "srvtoolu_01JNgRzBzdbp9cwcs4xa9qBE",
+          "name": "web_search",
+          "input": {
+            "query": "Hanover town meeting \"May 11, 2027\""
+          }
+        },
+        {
+          "type": "web_search_tool_result",
+          "tool_use_id": "srvtoolu_01JNgRzBzdbp9cwcs4xa9qBE",
+          "content": [
+            {
+              "type": "web_search_result",
+              "title": "Hanover, Massachusetts |",
+              "url": "https://www.hanover-ma.gov/",
+              "page_age": "32 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Town Meetings",
+              "url": "https://www.hanovernh.org/362/Town-Meetings",
+              "page_age": "189 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Selectboard approves budget and warrant articles for May town meeting ...",
+              "url": "https://www.thedartmouth.com/article/2026/04/hubbard-sapper-selectboard-approves-budget-and-warrant-articles-for-may-town-meeting",
+              "page_age": "230 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "The 2026 Hanover Town Meeting Live Updates: The business meeting ...",
+              "url": "https://www.thedartmouth.com/article/2026/05/hubbard-sapper-the-2026-hanover-town-meeting-live-updates",
+              "page_age": "191 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Calendar • Town Meeting",
+              "url": "https://www.hanovernh.org/Calendar.aspx?EID=1065",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Board Meeting Schedule",
+              "url": "https://www.hanover-ma.gov/select-board/pages/board-meeting-schedule",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Annual Budget",
+              "url": "https://www.hanover-ma.gov/annual-budget",
+              "page_age": null
+            },
+            {
+              "type": "web_search_result",
+              "title": "Warrant for Annual Town Meeting",
+              "url": "https://www.hanover-ma.gov/select-board/files/3-30-26-6-draft-annual-town-meeting-warrant",
+              "page_age": "234 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Voter Information - SAU 70",
+              "url": "https://www.sau70.org/resources/voter-information",
+              "page_age": "625 days ago"
+            },
+            {
+              "type": "web_search_result",
+              "title": "Agenda Center • Hanover Township, NJ • CivicEngage",
+              "url": "https://www.hanovertownship.com/AgendaCenter",
+              "page_age": null
+            }
+          ],
+          "caller": {
+            "type": "direct"
+          }
+        },
+        {
+          "type": "thinking",
+          "thinking": "",
+          "signature": ""
+        },
+        {
+          "type": "text",
+          "text": "I found six civic happenings in Hanover for 2026-11-19 to 2027-05-18. None were cancelled or postponed. The town hasn't posted a 2026–27 list of free holiday parking days yet, and the South Main Street rebuild isn't funded for construction, so neither is listed below.\n\nEVENT: New South Main Street parking rates. They start January 11, 2027, all day, at the meters on South Main Street. The host is the Hanover Selectboard and the Hanover Police Parking and Downtown Division. This is a one-time change that stays in place. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Updated: 7:39 AM EST Nov 6, 2026\n\n**HANOVER, N.H. —**\n\nStarting in January, you can expect a change to the way you pay to park in downtown Hanover.\n\n",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870",
+              "title": "Hanover changes parking rates, effective January 2027 - WPTZ"
+            }
+          ],
+          "type": "text",
+          "text": "Starting in January, you can expect a change to the way you pay to park in downtown Hanover."
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The change will take effect starting Jan. 11.",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870",
+              "title": "Hanover changes parking rates, effective January 2027 - WPTZ"
+            }
+          ],
+          "type": "text",
+          "text": "The change will take effect starting Jan. 11."
+        },
+        {
+          "type": "text",
+          "text": " Valley News also gives Jan. 11, but a cut-off line in The Dartmouth could be read as Jan. 1, 2027. The zone is "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "South Main Street from Wheelock Street to Lebanon Street, known as Parking Zone 7533 that encompasses about 43 parking spaces, will see an increase fr...",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/",
+              "title": "Hanover increases parking fees, effective in January - Valley News"
+            }
+          ],
+          "type": "text",
+          "text": "South Main Street from Wheelock Street to Lebanon Street, known as Parking Zone 7533 that encompasses about 43 parking spaces"
+        },
+        {
+          "type": "text",
+          "text": ". Parking there "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "South Main Street from Wheelock Street to Lebanon Street, known as Parking Zone 7533 that encompasses about 43 parking spaces, will see an increase fr...",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/",
+              "title": "Hanover increases parking fees, effective in January - Valley News"
+            }
+          ],
+          "type": "text",
+          "text": "will see an increase from the original rate of about $1.50 per hour to $2 an hour for the first three hours, then $5 an hour for hours four through eight."
+        },
+        {
+          "type": "text",
+          "text": " The change "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "It would replace the two-hour limit on Main Street parking with an eight-hour limit, but raise the rates based on duration. ",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870",
+              "title": "Hanover changes parking rates, effective January 2027 - WPTZ"
+            }
+          ],
+          "type": "text",
+          "text": "would replace the two-hour limit on Main Street parking with an eight-hour limit"
+        },
+        {
+          "type": "text",
+          "text": ". "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "A long-term lease in the parking garage, located on South Street, will also increase from $150 to $200 per month.\n\n",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/",
+              "title": "Hanover increases parking fees, effective in January - Valley News"
+            }
+          ],
+          "type": "text",
+          "text": "A long-term lease in the parking garage, located on South Street, will also increase from $150 to $200 per month."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Parklet (outdoor seating) season, May 1 to September 30, 2027, on South Main Street. The host is the Town of Hanover, and the season repeats every year. The changes approved in January 2027 shorten the season, "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "It also shortens the season, which will now run from May 1 to Sept. 30.\n\n",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870",
+              "title": "Hanover changes parking rates, effective January 2027 - WPTZ"
+            }
+          ],
+          "type": "text",
+          "text": "which will now run from May 1 to Sept. 30."
+        },
+        {
+          "type": "text",
+          "text": " The parklet fee "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "In the biggest change approved by the Selectboard, the town’s parklet fee, allowing restaurants to take over spaces for outdoor seating, will go up by...",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/",
+              "title": "Hanover increases parking fees, effective in January - Valley News"
+            }
+          ],
+          "type": "text",
+          "text": "allowing restaurants to take over spaces for outdoor seating, will go up by $825 per space."
+        },
+        {
+          "type": "text",
+          "text": " This takes some South Main Street parking spaces out of use from May 1, 2027.\n\nEVENT: Winter overnight parking ban, November 15, 2026 to April 30, 2027, from 12:01 to 7 a.m., on all town streets and lots. The host is the Hanover Police Department, and the ban repeats every year. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "**: There is a winter parking ban in effect every year for the same period, which is November 15 through April 30, with prohibited hours between 12:01...",
+              "url": "https://www.hanovernh.org/FAQ.aspx?QID=111",
+              "title": "FAQs • What is the Winter Parking Ban?"
+            }
+          ],
+          "type": "text",
+          "text": "There is a winter parking ban in effect every year for the same period, which is November 15 through April 30, with prohibited hours between 12:01 am and 7 am."
+        },
+        {
+          "type": "text",
+          "text": " "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The ban includes all Town streets and lots, with the only overnight parking allowed under covered sections of the Hanover Parking Garage at 7 Lebanon ...",
+              "url": "https://www.hanovernh.org/FAQ.aspx?QID=111",
+              "title": "FAQs • What is the Winter Parking Ban?"
+            }
+          ],
+          "type": "text",
+          "text": "The ban includes all Town streets and lots, with the only overnight parking allowed under covered sections of the Hanover Parking Garage at 7 Lebanon Street."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: Free parking on town holidays during the window: Thanksgiving (Nov 26, 2026), Christmas (Dec 25, 2026), New Year's Day (Jan 1, 2027), Martin Luther King Jr. Day (Jan 18, 2027) and Presidents' Day (Feb 15, 2027). It covers all meters and the town garage, is hosted by the Town of Hanover and repeats every year. The dates are my own calculation from the town's holiday list. "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "There is free parking at all meters and in the Parking Garage at 7 Lebanon Street on holidays observed by the Town of Hanover each year.\n\n",
+              "url": "https://www.hanovernh.org/253/Public-Holidays---Free-Parking",
+              "title": "Public Holidays - Free Parking"
+            }
+          ],
+          "type": "text",
+          "text": "There is free parking at all meters and in the Parking Garage at 7 Lebanon Street on holidays observed by the Town of Hanover each year."
+        },
+        {
+          "type": "text",
+          "text": " Also, "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "The parking Garage is FREE on Saturdays and Sundays. ",
+              "url": "https://www.hanovernh.org/243/Parking",
+              "title": "Parking"
+            }
+          ],
+          "type": "text",
+          "text": "the parking Garage is FREE on Saturdays and Sundays."
+        },
+        {
+          "type": "text",
+          "text": "\n\nEVENT: FY27 paving night work, spring 2027 (no exact dates), 7 p.m. to 7 a.m., on South Park Street (Lebanon Street to East Wheelock) and East Wheelock Street (Park Street to South Balch). The host is Hanover Public Works and its contractor, and this is one project. The bid specifications say "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "Item #9 work will occur in the spring of 2027. All work on South Park Street and East Wheelock shall be done at night between 7 pm and 7\n\n2. ",
+              "url": "https://www.hanovernh.org/DocumentCenter/View/9684/FY27-Paving-Project-Bid-Specifications",
+              "title": "FY27 Paving Projects Bid Specifications Town of Hanover"
+            }
+          ],
+          "type": "text",
+          "text": "Item #9 work will occur in the spring of 2027. All work on South Park Street and East Wheelock shall be done at night between 7 pm and 7"
+        },
+        {
+          "type": "text",
+          "text": " am. Evening diners using these streets could face delays.\n\nEVENT: Hanover School District Annual Meeting, Saturday, February 27, 2027, 11:30 a.m., at Hanover High School. The host is the Hanover School District (SAU 70), and it repeats every year. The SAU 70 page lists the "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "## Annual Meetings & Voting Dates for March 2027\n\nHanover & Dresden\n\n### Hanover School District Annual Meeting\n\nSaturday, February 27, 2027, 11:30 AM...",
+              "url": "https://www.sau70.org/resources/voter-information",
+              "title": "Voter Information - SAU 70"
+            }
+          ],
+          "type": "text",
+          "text": "Hanover School District Annual Meeting Saturday, February 27, 2027, 11:30 AM Hanover High School (no voting that day)"
+        },
+        {
+          "type": "text",
+          "text": ". That page is about 20 months old, so check the date before relying on it.\n\nHanover Town Meeting falls just outside the window. It is held every year on the second Tuesday in May, which would be May 11, 2027. Expect all-day ballot voting and a 7 p.m. business meeting at the Hanover High School gym. The town page only says "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "2nd Tuesday in May\n\n# Town Meetings\n## 2026 Town Meeting - Tuesday, May 12, 2026 - Hanover High School Gym\n\n**Ballot Voting:  7:00 AM - 7:00 PM  & Bus...",
+              "url": "https://www.hanovernh.org/362/Town-Meetings",
+              "title": "Town Meetings"
+            }
+          ],
+          "type": "text",
+          "text": "2nd Tuesday in May"
+        },
+        {
+          "type": "text",
+          "text": ", and the 2026 meeting had "
+        },
+        {
+          "citations": [
+            {
+              "type": "web_search_result_location",
+              "cited_text": "2026 Town Meeting - Tuesday, May 12, 2026 - Hanover High School Gym\n\n# Town Meetings\n## 2026 Town Meeting - Tuesday, May 12, 2026 - Hanover High Schoo...",
+              "url": "https://www.hanovernh.org/362/Town-Meetings",
+              "title": "Town Meetings"
+            }
+          ],
+          "type": "text",
+          "text": "Ballot Voting: 7:00 AM - 7:00 PM & Business Meeting: 7:00 PM"
+        },
+        {
+          "type": "text",
+          "text": ". The town hasn't posted the 2027 date yet."
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 222,
+        "cache_creation_input_tokens": 41925,
+        "cache_read_input_tokens": 132967,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 2956,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "server_tool_use": {
+          "web_search_requests": 6,
+          "web_fetch_requests": 0
+        },
+        "iterations": [
+          {
+            "input_tokens": 210,
+            "output_tokens": 59,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 221,
+            "cache_read_input_tokens": 3025,
+            "cache_creation_input_tokens": 7542,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7542,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 115,
+            "cache_read_input_tokens": 10567,
+            "cache_creation_input_tokens": 7832,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 7832,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 221,
+            "cache_read_input_tokens": 18399,
+            "cache_creation_input_tokens": 8202,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 8202,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 275,
+            "cache_read_input_tokens": 26601,
+            "cache_creation_input_tokens": 6443,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 6443,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 157,
+            "cache_read_input_tokens": 33044,
+            "cache_creation_input_tokens": 5262,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 5262,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          },
+          {
+            "input_tokens": 2,
+            "output_tokens": 1908,
+            "cache_read_input_tokens": 38306,
+            "cache_creation_input_tokens": 6644,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 6644,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 742
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    },
+    {
+      "model": "claude-opus-5-5",
+      "id": "msg_011ChD2UDQc3LrjoF8fVZjBG",
+      "type": "message",
+      "role": "assistant",
+      "content": [
+        {
+          "type": "text",
+          "text": "{\"events\":[{\"title\":\"New South Main Street parking rates take effect\",\"kind\":\"event\",\"category\":\"civic\",\"startDate\":\"2027-01-11\",\"endDate\":\"2027-01-11\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"smain\",\"hostRef\":\"selectboard\",\"competitor\":null,\"sourceIds\":[\"S23\",\"S21\"],\"dateQuote\":\"The change will take effect starting Jan. 11.\",\"confidence\":\"medium\"},{\"title\":\"Parklet outdoor seating season\",\"kind\":\"season\",\"category\":\"dining\",\"startDate\":\"2027-05-01\",\"endDate\":\"2027-05-18\",\"weekdays\":null,\"startTime\":null,\"status\":\"scheduled\",\"venueRef\":\"smain\",\"hostRef\":\"town\",\"competitor\":null,\"sourceIds\":[\"S23\"],\"dateQuote\":\"It also shortens the season, which will now run from May 1 to Sept. 30.\",\"confidence\":\"medium\"},{\"title\":\"Winter overnight parking ban\",\"kind\":\"season\",\"category\":\"civic\",\"startDate\":\"2026-11-19\",\"endDate\":\"2027-04-30\",\"weekdays\":null,\"startTime\":\"00:01\",\"status\":\"scheduled\",\"venueRef\":null,\"hostRef\":\"police\",\"competitor\":null,\"sourceIds\":[\"S34\"],\"dateQuote\":\"There is a winter parking ban in effect every year for the same period, which is November 15 through April 30\",\"confidence\":\"high\"},{\"title\":\"Hanover School District Annual Meeting\",\"kind\":\"event\",\"category\":\"civic\",\"startDate\":\"2027-02-27\",\"endDate\":\"2027-02-27\",\"weekdays\":null,\"startTime\":\"11:30\",\"status\":\"scheduled\",\"venueRef\":\"hhs\",\"hostRef\":\"sau70\",\"competitor\":null,\"sourceIds\":[\"S7\"],\"dateQuote\":\"Hanover School District Annual Meeting Saturday, February 27, 2027, 11:30 AM\",\"confidence\":\"high\"}],\"entities\":[{\"ref\":\"smain\",\"type\":\"venue\",\"name\":\"South Main Street\",\"sourceIds\":[\"S21\"]},{\"ref\":\"selectboard\",\"type\":\"organization\",\"name\":\"Hanover Selectboard\",\"sourceIds\":[\"S21\"]},{\"ref\":\"town\",\"type\":\"organization\",\"name\":\"Town of Hanover\",\"sourceIds\":[\"S23\"]},{\"ref\":\"police\",\"type\":\"organization\",\"name\":\"Hanover Police Department\",\"sourceIds\":[\"S34\"]},{\"ref\":\"hhs\",\"type\":\"venue\",\"name\":\"Hanover High School\",\"sourceIds\":[\"S7\"]},{\"ref\":\"sau70\",\"type\":\"organization\",\"name\":\"Hanover School District (SAU 70)\",\"sourceIds\":[\"S7\"]}]}"
+        }
+      ],
+      "container": null,
+      "stop_reason": "end_turn",
+      "stop_sequence": null,
+      "stop_details": null,
+      "usage": {
+        "input_tokens": 6698,
+        "cache_creation_input_tokens": 0,
+        "cache_read_input_tokens": 0,
+        "cache_creation": {
+          "ephemeral_5m_input_tokens": 0,
+          "ephemeral_1h_input_tokens": 0
+        },
+        "output_tokens": 882,
+        "service_tier": "standard",
+        "inference_geo": "global",
+        "speed": "standard",
+        "iterations": [
+          {
+            "input_tokens": 6698,
+            "output_tokens": 882,
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+            "cache_creation": {
+              "ephemeral_5m_input_tokens": 0,
+              "ephemeral_1h_input_tokens": 0
+            },
+            "type": "message",
+            "model": null
+          }
+        ],
+        "output_tokens_details": {
+          "thinking_tokens": 0
+        }
+      },
+      "diagnostics": null,
+      "parsed_output": null
+    }
+  ],
+  "expected": {
+    "kind": "recorded",
+    "costMicroUsd": 400659,
+    "searches": 6,
+    "fetches": 0,
+    "continuations": 0,
+    "sources": 46,
+    "verified": {
+      "events": [
+        {
+          "title": "New South Main Street parking rates take effect",
+          "kind": "event",
+          "category": "civic",
+          "start": "2027-01-11",
+          "end": "2027-01-11",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "smain",
+          "hostRef": "selectboard",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Hanover changes parking rates, effective January 2027 - WPTZ",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870"
+            },
+            {
+              "label": "Hanover increases parking fees, effective in January - Valley News",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "high",
+          "confidence": "medium"
+        },
+        {
+          "title": "Parklet outdoor seating season",
+          "kind": "season",
+          "category": "dining",
+          "start": "2027-05-01",
+          "end": "2027-05-18",
+          "weekdays": null,
+          "startTime": null,
+          "status": "scheduled",
+          "venueRef": "smain",
+          "hostRef": "town",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Hanover changes parking rates, effective January 2027 - WPTZ",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        },
+        {
+          "title": "Winter overnight parking ban",
+          "kind": "season",
+          "category": "civic",
+          "start": "2026-11-19",
+          "end": "2027-04-30",
+          "weekdays": null,
+          "startTime": "00:01",
+          "status": "scheduled",
+          "venueRef": null,
+          "hostRef": "police",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "FAQs • What is the Winter Parking Ban?",
+              "url": "https://www.hanovernh.org/FAQ.aspx?QID=111"
+            }
+          ],
+          "grounded": false,
+          "codeConfidence": "low",
+          "confidence": "low"
+        },
+        {
+          "title": "Hanover School District Annual Meeting",
+          "kind": "event",
+          "category": "civic",
+          "start": "2027-02-27",
+          "end": "2027-02-27",
+          "weekdays": null,
+          "startTime": "11:30",
+          "status": "scheduled",
+          "venueRef": "hhs",
+          "hostRef": "sau70",
+          "competitor": null,
+          "sources": [
+            {
+              "label": "Voter Information - SAU 70",
+              "url": "https://www.sau70.org/resources/voter-information"
+            }
+          ],
+          "grounded": true,
+          "codeConfidence": "medium",
+          "confidence": "medium"
+        }
+      ],
+      "entities": [
+        {
+          "ref": "smain",
+          "type": "venue",
+          "name": "South Main Street",
+          "sources": [
+            {
+              "label": "Hanover increases parking fees, effective in January - Valley News",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/"
+            }
+          ]
+        },
+        {
+          "ref": "selectboard",
+          "type": "organization",
+          "name": "Hanover Selectboard",
+          "sources": [
+            {
+              "label": "Hanover increases parking fees, effective in January - Valley News",
+              "url": "https://vnews.com/2026/11/10/hanover-increases-parking-fees-effective-in-january/"
+            }
+          ]
+        },
+        {
+          "ref": "town",
+          "type": "organization",
+          "name": "Town of Hanover",
+          "sources": [
+            {
+              "label": "Hanover changes parking rates, effective January 2027 - WPTZ",
+              "url": "https://www.mynbc5.com/article/hanover-downtown-parking-rate-change/74356870"
+            }
+          ]
+        },
+        {
+          "ref": "police",
+          "type": "organization",
+          "name": "Hanover Police Department",
+          "sources": [
+            {
+              "label": "FAQs • What is the Winter Parking Ban?",
+              "url": "https://www.hanovernh.org/FAQ.aspx?QID=111"
+            }
+          ]
+        },
+        {
+          "ref": "hhs",
+          "type": "venue",
+          "name": "Hanover High School",
+          "sources": [
+            {
+              "label": "Voter Information - SAU 70",
+              "url": "https://www.sau70.org/resources/voter-information"
+            }
+          ]
+        },
+        {
+          "ref": "sau70",
+          "type": "organization",
+          "name": "Hanover School District (SAU 70)",
+          "sources": [
+            {
+              "label": "Voter Information - SAU 70",
+              "url": "https://www.sau70.org/resources/voter-information"
+            }
+          ]
+        }
+      ],
+      "drops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "no_source": 0,
+        "unknown_source": 0,
+        "bad_dates": 0,
+        "bad_title": 0,
+        "bad_competitor": 0
+      },
+      "entityDrops": {
+        "bad_shape": 0,
+        "over_cap": 0,
+        "bad_ref": 0,
+        "bad_name": 0,
+        "no_source": 0
+      }
+    }
+  }
+}

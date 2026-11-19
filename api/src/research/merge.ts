@@ -3,7 +3,7 @@
 // is the only writer of researched events and entities; this file reads and writes nothing.
 //
 // 1. Union the threads' findings and dedupe them (dedupe.ts sameEvent): the higher confidence wins, sources unioned.
-// 2. Drop a finding that repeats a curated row (`curated_dupe`), or a `schools` finding on a curated term's first or
+// 2. Drop a finding that repeats a curated row (`curated_dupe`), or a `schools` (or any school) finding on a curated term's first or
 //    last day, so term state stays the curated rows' alone; drop a location finding that repeats one of its town's
 //    stored rows (`town_dupe`).
 // 3. Entities by type and nameKey, across threads, with the stored entity's id when there is one.
@@ -208,7 +208,8 @@ export function planMerge(input: MergeInput): MergePlan {
   const terms = input.curated.filter((row) => row.kind === 'term');
   const fresh = kept.filter((candidate) => {
     const { start, end } = candidate.finding;
-    const onTermDay = candidate.thread === 'schools'
+    // A schools finding, or a school finding of any thread (the live eval's tourism thread restated a term as finals).
+    const onTermDay = (candidate.thread === 'schools' || candidate.finding.category === 'school')
       && terms.some((term) => [term.start, term.end].some((day) => day === start || day === end));
     if (onTermDay || input.curated.some((row) => sameEvent(comparable(candidate), curatedComparable(row)))) {
       drops.curated_dupe += 1;
