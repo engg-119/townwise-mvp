@@ -646,7 +646,7 @@ An item is `{ ref, locationId, via, kind, name, addedAt, addedByEmail, sizeBytes
 
 | Method and path | Policy | Request | Success | Errors |
 |---|---|---|---|---|
-| `GET /api/org/locations/:locationId/notes` | member | | 200 `{ notes }`, by start date, each with `createdByEmail` and `canEdit` | 404 |
+| `GET /api/org/locations/:locationId/notes` | member | | 200 `{ notes }`, by start date, each with `createdByEmail` (“TownwiseAI” for a note it saved on its own, D59) and `canEdit` | 404 |
 | `POST /api/org/locations/:locationId/notes` | member | note, and optionally `fromEvent: { calendarId, uid }` (Make a note; Flows, Notes) | 201 `{ note }`, `note.fromEvent` the link or null | 404; 409 `note_limit` |
 | `PATCH /api/org/locations/:locationId/notes/:noteId` | member (author or org admin) | note (full replace) | 200 `{ note }` | 403 `forbidden`; 404 |
 | `DELETE /api/org/locations/:locationId/notes/:noteId` | member (author or org admin) | | 204 | 403 `forbidden`; 404 |
@@ -664,7 +664,7 @@ A note is `{ kind, startDate, endDate, weekdays, startTime, endTime, effect, exp
 
 A schedule is `{ kind, startDate, endDate, weekdays, effect, expectedGuests, startTime, endTime, season? }`: a note's fields and rules (Notes, above) but the detail, which it never has (an `other` schedule needs none), with `endDate` null or left out for no end; `season` (spec D46) is `{ repeat: 'yearly', from: 'MM-DD', to: 'MM-DD' }`, or null or left out for none, only with `endDate` null (Business rules, above); any other key is 400.
 
-A rule is `{ id, text, addedVia, createdByEmail, createdAt, updatedAt, canEdit, schedule, scheduleSummary }`. `schedule` is the rule's schedule or null, and `scheduleSummary` its plain words built from the fields (“Closed on Mondays from Jan 5, 2027”), or null. `addedVia` is `page`, or `townwise_ai` for a rule written by accepting one of TownwiseAI's suggestions; `createdByEmail` is the author's current email, “Townwise staff” for one staff added while open as admin, or “Deleted person”; `canEdit` is true for the author and org admins. Another location's or organization's rule id is 404, before any 403. The routes have no limiter of their own (the writes spend `writes`), run while open as admin, and under view-as answer the GET and refuse every write with 403 `view_as_read_only`. The text is never logged.
+A rule is `{ id, text, addedVia, createdByEmail, createdAt, updatedAt, canEdit, schedule, scheduleSummary }`. `schedule` is the rule's schedule or null, and `scheduleSummary` its plain words built from the fields (“Closed on Mondays from Jan 5, 2027”), or null. `addedVia` is `page`, or `townwise_ai` for a rule written by accepting one of TownwiseAI's suggestions or (D59 slice 3) one TownwiseAI added on its own; `createdByEmail` is the author's current email, “Townwise staff” for one staff added while open as admin, “TownwiseAI” for one TownwiseAI added on its own (`createdBy: 'townwise_ai'`; a note it saved on its own reads the same), or “Deleted person”; `canEdit` is true for the author and org admins (so only org admins for one TownwiseAI added). Another location's or organization's rule id is 404, before any 403. The routes have no limiter of their own (the writes spend `writes`), run while open as admin, and under view-as answer the GET and refuse every write with 403 `view_as_read_only`. The text is never logged.
 
 ### Team
 
