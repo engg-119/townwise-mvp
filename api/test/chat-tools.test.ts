@@ -204,7 +204,7 @@ describe('the views on a tool call’s card', () => {
     const contexts = [
       { ...base, actor: member, turn: { readUntrusted: true, readWeb: false, pictureBytes: 0 } },
       { ...base, actor: member, turn: { readUntrusted: true, readWeb: true, pictureBytes: 0 } },
-      { ...base, actor: { ...member, actorRole: 'superadmin', viewAsGrantId: 'g1' }, turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 } },
+      { ...base, actor: { ...member, actorRole: 'superadmin', viewAsGrantId: 'g1' }, turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0 } },
     ] as unknown as ToolContext[];
     const input = tool.parse({
       kind: 'closure', startDate: '2026-06-20', endDate: '2026-06-20', weekdays: null, effect: 'closed', expectedGuests: null, detail: null,
@@ -308,7 +308,7 @@ describe('get_day', () => {
       timeZone: 'America/New_York',
       role: 'member',
       actor: { actorUserId: SENTINEL_USER, actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
+      turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0 },
       files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
     };
     return { tc, byIds, ranges };
@@ -329,6 +329,25 @@ describe('get_day', () => {
     for (const bad of [{ date: '2009-12-31' }, { date: '2027-12-11' }, { date: '2026-02-30' }, { date: '11/21/2026' }, {}, { date: 20261121 }]) {
       expect(inputViewOf('get_day', bad, TODAY)).toBeNull();
     }
+  });
+
+  it('marks the turn as having read words nobody typed when a covering note was written from a file or a calendar (D59 slice 4)', async () => {
+    const mine = context({ notes: [note({})] });
+    await run({ date: '2026-11-21' }, mine.tc);
+    expect(mine.tc.turn.readNotTyped).toBe(false);
+    const link = {
+      calendarId: 'a'.repeat(24), uid: 'uid-1', startDate: '2026-11-21', endDate: '2026-11-21', startTime: null, endTime: null, linkedAt: new Date(),
+    };
+    const written: Partial<NoteRecord>[] = [{ createdBy: 'townwise_ai' }, { source: { via: 'ai_file', fileId: 'f'.repeat(24) } }, { fromEvent: link }];
+    for (const fields of written) {
+      const { tc } = context({ notes: [note(fields)] });
+      await run({ date: '2026-11-21' }, tc);
+      expect(tc.turn.readNotTyped).toBe(true);
+    }
+    // A note on another day is not listed, so it marks nothing.
+    const elsewhere = context({ notes: [note({ createdBy: 'townwise_ai', startDate: '2026-11-22', endDate: '2026-11-22' })] });
+    await run({ date: '2026-11-21' }, elsewhere.tc);
+    expect(elsewhere.tc.turn.readNotTyped).toBe(false);
   });
 
   it('gives the day’s row, the notes and calendar entries that cover it, and when its upload was made, never who made it', async () => {

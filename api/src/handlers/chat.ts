@@ -246,8 +246,14 @@ async function conversationView(
       if (row.status === 'saving') return OPEN;
       const state = { status: row.status, noteId: row.status === 'saved' ? row.noteId : null };
       const change = row.changeId === null ? undefined : changeById.get(row.changeId);
-      return change === undefined ? state : {
-        ...state, auto: { changeId: change.id, status: change.status, undoable: undoable(caller, change, states) },
+      if (change === undefined) return state;
+      // An applied row whose note someone edited or deleted on Notes since: the card says so (its Undo is gone).
+      const target = states.get(change.id)?.state;
+      return {
+        ...state, auto: {
+          changeId: change.id, status: change.status, undoable: undoable(caller, change, states),
+          ...(target === 'changed' || target === 'gone' ? { target } : {}),
+        },
       };
     }
     // A proposal added with the notes route (the Add note button before proposals were recorded) reads as saved when a
@@ -593,8 +599,8 @@ export async function postTurn(ctx: TownwiseContext, req: Request, res: Response
         tools: {
           ctx, scope, conversationId, location: toolLocation, today: localDay(ctx.now(), timeZone), timeZone, role: caller.role, actor: actorOf(caller),
           // read_data_item sets readUntrusted too, once it hands back an item's text or a picture; runTurn sets both for
-          // web pages.
-          turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, pictureBytes: attached?.pictureBytes ?? 0 },
+          // web pages. get_owner_calendar, list_notes and get_day set readNotTyped (D59 slice 4).
+          turn: { readUntrusted: (attached?.content.length ?? 0) > 0, readWeb: false, readNotTyped: false, pictureBytes: attached?.pictureBytes ?? 0 },
           files: { attached: attachedRefs, by: filesBy, bytes: turnBytes, sent: new Map(attached?.sent) },
         },
         history: modelHistory,

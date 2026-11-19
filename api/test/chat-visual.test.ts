@@ -286,7 +286,7 @@ describe('show_visual’s run', () => {
       // The forecast lab's fields (#59); show_visual reads neither.
       role: 'member',
       actor: { actorUserId: '000000000000000000000002', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-      turn: { readUntrusted: false, readWeb: false, pictureBytes: 0 },
+      turn: { readUntrusted: false, readWeb: false, readNotTyped: false, pictureBytes: 0 },
       files: { attached: new Set(), by: 0, bytes: { reserve: () => false, release: () => undefined }, sent: new Map() },
     };
     return { tc, dayReads, windowReads };

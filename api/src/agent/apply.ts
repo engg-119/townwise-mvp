@@ -10,8 +10,9 @@
 // row is set `applied` with the target's updatedAt by compare-and-set; the audit event is recorded only by the call
 // whose compare-and-set lands; then the location is marked as wanting a refit when the change touches a training day. A
 // retry finds the row by its key, sees its own planned target, and finishes the steps left. A weekly or sales change
-// plans a new target id each pass, so no later candidate retries one: each pass first finishes the location's weekly and
-// sales rows left `applying` for an hour or more (finishStaleChanges). A key another change holds, in any status (an
+// plans a new target id each pass, and a chat change's turn is never run again (slice 4), so no later candidate retries
+// one: each weekly pass first finishes the location's weekly, sales and chat rows left `applying` for an hour or more
+// (finishStaleChanges). A key another change holds, in any status (an
 // undone one included), is a duplicate, so nothing undone is ever made again. Before the row, a note
 // or a rule is checked against the notes and scheduled rules a person made on its days: one that decides a day
 // differently is a conflict, and the candidate waits as a suggestion instead (the caller's choice). Logs and audit events carry ids,
@@ -188,7 +189,10 @@ export const CLOSED_DAYS_PER_READ = 31;
  * TownwiseAI writes spans at most 14; a standing rule, up to 400 from today, its past days included).
  */
 const CONFLICT_DAYS = 400;
-/** A weekly or sales row `applying` this long is an attempt that died (a pass takes minutes); finishStaleChanges finishes it. */
+/**
+ * A weekly, sales or chat row `applying` this long is an attempt that died (a pass takes minutes, a chat turn at most 150
+ * seconds); finishStaleChanges finishes it.
+ */
 export const STALE_APPLYING_MS = 60 * 60_000;
 
 /** The last day a candidate's conflict check reads: its end, or at most 400 days from its start or `today`, the later. */
@@ -388,16 +392,18 @@ export async function applyChange(
 }
 
 /**
- * The location's weekly and sales changes left `applying` for an hour or more (their pass died mid-apply; those sources
- * plan a new target id each pass, so no later candidate retries one): one whose note or rule was written, as it was
- * written, is finished through applyChange under its own target (marked applied, its audit event as TownwiseAI, its
- * refit); any other (nothing written, or changed since) is removed, which frees its key. A weekly pass runs it first.
+ * The location's weekly, sales and chat changes left `applying` for an hour or more (their pass or turn died mid-apply;
+ * those sources plan a new target id each pass, and a failed chat turn is never run again, so no later candidate retries
+ * one): one whose note or rule was written, as it was written, is finished through applyChange under its own target
+ * (marked applied, its audit event as TownwiseAI finishing it, the row's onBehalfOf naming whose it is, its refit); any
+ * other (nothing written, or changed since) is removed, which frees its key. A weekly pass runs it first. A chat row's
+ * claim in tw_chat_proposals is left as it is: its turn was not kept, so no card reads it.
  */
 export async function finishStaleChanges(ctx: ApplyContext, scope: OrgScope, locationId: string): Promise<void> {
   const { stores } = ctx;
   const before = new Date(ctx.now().getTime() - STALE_APPLYING_MS);
   for (const row of await stores.agentChanges.listApplying(scope, locationId, { before })) {
-    if (row.sourceKind !== 'weekly' && row.sourceKind !== 'sales') continue;
+    if (row.sourceKind !== 'weekly' && row.sourceKind !== 'sales' && row.sourceKind !== 'chat') continue;
     const base = {
       locationId, sourceKind: row.sourceKind, sourceId: row.sourceId, targetId: row.targetId, confidence: row.confidence, why: row.why,
       onBehalfOf: row.onBehalfOf, actor: TOWNWISE_AI_ACTOR,

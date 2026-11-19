@@ -53,7 +53,7 @@ function context(fakes: Fakes = {}): ToolContext {
     timeZone: 'America/New_York',
     role: 'member',
     actor: { actorUserId: 'user-1', actorEmail: 'member@example.test', actorRole: 'member', viewAsGrantId: null },
-    turn: { readUntrusted: true, readWeb: fakes.readWeb ?? false, pictureBytes: 0 },
+    turn: { readUntrusted: true, readWeb: fakes.readWeb ?? false, readNotTyped: false, pictureBytes: 0 },
     files: { ...files, sent: fakes.sent ?? new Map<string, SentFile>([[REF, { text: TEXT, truncated: false }]]) },
   };
 }

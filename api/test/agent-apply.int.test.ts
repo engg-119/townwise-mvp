@@ -395,4 +395,33 @@ describe('applyChange, slice 3: rules', () => {
       server.clock.advance(-60 * 60_000);
     }
   });
+
+  it('finishStaleChanges finishes a chat row whose turn died after the note was written (slice 4), and frees one with none', async () => {
+    const p = await place();
+    const at = server.clock.now();
+    const note = content({ kind: 'closure', effect: 'closed', expectedGuests: null, title: null, detail: null });
+    const conversationId = id();
+    const applying = async (key: string, targetId: string) => (await server.ctx.stores.agentChanges.insertApplying(p.scope, {
+      id: id(), locationId: p.locationId, sourceKind: 'chat', sourceId: conversationId, action: 'note.add', targetId, dedupeKey: key,
+      confidence: 'high', why: null, onBehalfOf: 'person', startDate: note.startDate, endDate: note.endDate, noteKind: 'closure', now: at,
+    })).record;
+    // The turn wrote the note in the person's name, then stopped before marking its row applied.
+    const written = await applying(dedupeKeyOf({ action: 'note.add', note }), id());
+    await server.ctx.stores.notes.create(p.scope, p.locationId, note, { createdBy: 'person', now: at, id: written.targetId, agent: { changeId: written.id } });
+    // Another turn stopped before writing anything.
+    const empty = await applying(dedupeKeyOf({ action: 'note.add', note: { ...note, startDate: '2026-12-13', endDate: '2026-12-13' } }), id());
+    server.clock.advance(60 * 60_000);
+    try {
+      await finishStaleChanges(server.ctx, p.scope, p.locationId);
+      const rows = await rowsOf(p);
+      expect(rows.map((each) => [String(each._id), each.status, each.targetUpdatedAt])).toEqual([[written.id, 'applied', at]]);
+      expect(rows.some((each) => String(each._id) === empty.id)).toBe(false);
+      expect(await notesOf(p)).toEqual([expect.objectContaining({ createdBy: 'person' })]);
+      const events = (await auditEvents(server)).filter((event) => event.action === 'agent.change_applied' && String(event.orgId) === p.orgId);
+      expect(events.map((event) => event.details)).toEqual([{ locationId: p.locationId, action: 'note.add', sourceKind: 'chat' }]);
+      expect(await refitOf(p)).toBeUndefined();
+    } finally {
+      server.clock.advance(-60 * 60_000);
+    }
+  });
 });

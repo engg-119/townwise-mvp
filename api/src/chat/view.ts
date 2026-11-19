@@ -25,13 +25,16 @@ import { citedSources, searchCard, WEB_SEARCH, type SourceLink } from './web-sea
 
 /**
  * What the author did with a proposal (tw_chat_proposals). `noteId` is the saved note's id, else null. D59 slice 4:
- * `auto` only on a note TownwiseAI saved itself from the person's own words: its ledger row's id and status, and
- * whether the caller is offered Undo (agent/changes.ts undoable).
+ * `auto` only on a note TownwiseAI saved itself from the person's own words: its ledger row's id and status, whether the
+ * caller is offered Undo (agent/changes.ts undoable), and, while the row is still `applied`, `target` when someone has
+ * since edited the note (`changed`) or deleted it (`gone`) on Notes.
  */
 export interface ProposalState {
   readonly status: 'open' | 'saved' | 'dismissed';
   readonly noteId: string | null;
-  readonly auto?: { readonly changeId: string; readonly status: AgentChangeStatus; readonly undoable: boolean };
+  readonly auto?: {
+    readonly changeId: string; readonly status: AgentChangeStatus; readonly undoable: boolean; readonly target?: 'changed' | 'gone';
+  };
 }
 
 export const OPEN: ProposalState = { status: 'open', noteId: null };

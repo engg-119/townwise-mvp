@@ -23,7 +23,8 @@
 //   the day (notesDecide), every TownwiseAI note covering it is set aside (outcome `overridden`) before anything else is
 //   read, as a covering note beats a rule. A note is TownwiseAI's while nobody edited it since it was saved: it carries
 //   `agent` and its `updatedAt` is still `agent.at`, or (D34, from before D59) it carries a file `source` and was never
-//   edited. Once a person edits it, it is theirs. The lab input applies the same rule (../lab/input.ts). [CONFIRM: a note
+//   edited. Once a person edits it, it is theirs. A note TownwiseAI saved from the person's own words in chat (slice 4:
+//   the person its author, no file `source`) is theirs from the start. The lab input applies the same rule (../lab/input.ts). [CONFIRM: a note
 //   a person made beats a TownwiseAI note on the same day] Pure: no store, no clock.
 import { isBuyout, isClosure, notesDecide } from '../closed-days.ts';
 import type { BusinessRuleRecord, RuleSchedule } from '../stores/business-rules.ts';
@@ -88,11 +89,18 @@ export function flagsAfterData(entry: Effect): boolean {
   return entry.kind === 'private_event' && !isBuyout(entry) && !isParty(entry);
 }
 /** What owner-beats-agent reads of a note. */
-type Authored = Pick<NoteRecord, 'agent' | 'source' | 'createdAt' | 'updatedAt'>;
+type Authored = Pick<NoteRecord, 'agent' | 'source' | 'createdBy' | 'createdAt' | 'updatedAt'>;
 
-/** D59: a note TownwiseAI saved and nobody has edited since (see the top). */
+/**
+ * D59: a note TownwiseAI saved and nobody has edited since (see the top). A note it saved in a person's name from their
+ * own words in chat (slice 4: `agent` set, the person its author, no file `source`) is the person's from the start.
+ */
 export function isAgentNote(note: Authored): boolean {
-  if (note.agent !== null) return note.updatedAt.getTime() === note.agent.at.getTime();
+  if (note.agent !== null) {
+    // agent/apply.ts TOWNWISE_AI_AUTHOR, written out: apply.ts imports this file.
+    const fromSource = note.createdBy === 'townwise_ai' || note.source !== null;
+    return fromSource && note.updatedAt.getTime() === note.agent.at.getTime();
+  }
   return note.source !== null && note.updatedAt.getTime() === note.createdAt.getTime();
 }
 

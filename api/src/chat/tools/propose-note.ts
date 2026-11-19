@@ -3,7 +3,8 @@
 // (`plain`, the model's mark) is saved by TownwiseAI itself, through the one writer (agent/apply.ts, `sourceKind:
 // 'chat'`), and its card shows Saved with Undo. Code checks it first: TOWNWISE_AGENT_AUTO and the organization's switch
 // on, a member's own seat (never staff open as admin; view-as sends no turn), the turn has read nothing a person did not
-// type (no attached file, item text, picture or web page: ToolContext.turn.readUntrusted), the location under the note
+// type (no attached file, item text, picture or web page: ToolContext.turn.readUntrusted; no calendar event's title, and
+// no note written from a file or a calendar: turn.readNotTyped), the location under the note
 // limit, and applyChange's conflict and dedupe checks. Anything else is the card, as before. The save is ordered for
 // retries as a press is: the proposal is claimed (tw_chat_proposals, which plans the note's id), the note is applied
 // under that id, then the claim is marked saved with its ledger row; a claim whose note was not applied is taken back.
@@ -35,7 +36,7 @@ async function saveStated(tc: ToolContext, note: NoteContent, callId: string): P
   const { ctx, scope, location, actor } = tc;
   const userId = actor.actorUserId;
   // Staff open as admin act as 'superadmin' (handlers/team.ts actorOf), and view-as sends no turn.
-  if (tc.turn.readUntrusted || actor.actorRole === 'superadmin' || actor.viewAsGrantId !== null) return null;
+  if (tc.turn.readUntrusted || tc.turn.readNotTyped || actor.actorRole === 'superadmin' || actor.viewAsGrantId !== null) return null;
   if (!await agentAutoOn(ctx, scope.orgId)) return null;
   if (await ctx.stores.notes.count(scope, location.id) >= MAX_NOTES) return null;
   const key = { conversationId: tc.conversationId, proposalId: callId };

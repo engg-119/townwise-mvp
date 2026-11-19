@@ -6,7 +6,7 @@
 // (handlers/chat-proposals.ts, handlers/chat-item-proposals.ts). Every row gets its `noteId` when it is inserted, a
 // dismissed one too. Holds no note content, title or text. D59 slice 4: a note propose_note saved itself, because the
 // person stated it plainly, is claimed the same way inside the turn and marked saved with `changeId`, its row in
-// tw_agent_changes (agent/chat-notes.ts); a claim whose note was not saved is taken back, so the card stays open.
+// tw_agent_changes (chat/tools/propose-note.ts saveStated); a claim whose note was not saved is taken back, so the card stays open.
 import { isDuplicateKeyError } from '@ckeith26/mongo';
 import { Schema, trusted, Types, type Connection, type Model } from 'mongoose';
 

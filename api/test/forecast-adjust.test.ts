@@ -353,6 +353,13 @@ describe('owner beats agent (D59)', () => {
     expect(adjustDay(DAY, TODAY, OPEN, WEEKDAY, [edited, party(40)]).status).toBe('closed');
   });
 
+  it('a note TownwiseAI saved from the person’s own words in chat (slice 4) is theirs: it sets aside TownwiseAI’s note', () => {
+    const stated = agent({ kind: 'private_event', effect: 'more_guests', expectedGuests: 40, createdBy: 'author' });
+    const theirs = agent();
+    const day = adjustDay(DAY, TODAY, OPEN, WEEKDAY, [theirs, stated]);
+    expect(day.notes).toEqual([{ note: stated, outcome: 'added' }, { note: theirs, outcome: 'overridden' }]);
+  });
+
   it('a past day keeps the model’s numbers, and every note there is past_day, TownwiseAI’s included', () => {
     expect(adjustDay('2026-05-30', TODAY, OPEN, WEEKDAY, [agent(), party(40)]).notes.map((entry) => entry.outcome)).toEqual(['past_day', 'past_day']);
   });

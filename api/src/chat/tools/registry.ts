@@ -54,9 +54,13 @@ export interface ToolContext {
    * results, which the API puts back in the model's context on every later request too: from the start when the history
    * holds one, and otherwise before the client tools of the message that got one run. `readWeb` says which refusal.
    * `pictureBytes` (D36) is the bytes of the pictures the turn's requests carry: the message's, then each picture
-   * read_data_item reads, which it refuses past MESSAGE_PICTURE_BYTES.
+   * read_data_item reads, which it refuses past MESSAGE_PICTURE_BYTES. D59 slice 4: `readNotTyped` is set by a tool
+   * whose result carries words nobody typed into Townwise themselves: get_owner_calendar once it lists an event (a
+   * title anyone who sends an invitation or runs a subscribed feed can write), and list_notes or get_day once they list
+   * a note TownwiseAI wrote from a file or a calendar, or one made from a calendar event (notTypedNote). While it or
+   * `readUntrusted` is set, propose_note saves nothing itself and only shows its card. start_calibration does not read it.
    */
-  readonly turn: { readUntrusted: boolean; readWeb: boolean; pictureBytes: number };
+  readonly turn: { readUntrusted: boolean; readWeb: boolean; readNotTyped: boolean; pictureBytes: number };
   readonly files: TurnFiles;
 }
 

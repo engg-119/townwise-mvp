@@ -82,13 +82,22 @@ describe('conflictsWith', () => {
   });
 
   it('a TownwiseAI note nobody edited never blocks; once a person edits it, it is theirs and does', () => {
-    const agentNote = record({ kind: 'private_event', effect: 'more_guests', agent: { changeId: 'c1', at: AT } });
+    const agentNote = record({ kind: 'private_event', effect: 'more_guests', createdBy: 'townwise_ai', agent: { changeId: 'c1', at: AT } });
     expect(conflictsWith(closure, { notes: [agentNote], rules: [] })).toBe(false);
     const edited = { ...agentNote, updatedAt: new Date(AT.getTime() + 60_000) };
     expect(conflictsWith(closure, { notes: [edited], rules: [] })).toBe(true);
     // A note D34 made from a file before D59 counts as TownwiseAI's until edited.
     const fromFile = record({ kind: 'private_event', effect: 'more_guests', source: { via: 'ai_file', fileId: 'f1' } });
     expect(conflictsWith(closure, { notes: [fromFile], rules: [] })).toBe(false);
+  });
+
+  it('a note TownwiseAI saved from the person’s own words in chat (slice 4) is theirs from the start, and blocks', () => {
+    // The person its author, `agent` set, no file `source`: what propose_note writes for a note stated plainly.
+    const stated = record({ kind: 'private_event', effect: 'more_guests', createdBy: 'person', agent: { changeId: 'c1', at: AT } });
+    expect(conflictsWith(closure, { notes: [stated], rules: [] })).toBe(true);
+    // A read the person pressed writes in their name too, but from a file: TownwiseAI's until edited.
+    const pressed = { ...stated, source: { via: 'ai_file' as const, fileId: 'f1' } };
+    expect(conflictsWith(closure, { notes: [pressed], rules: [] })).toBe(false);
   });
 
   it('a person’s rule that closes the day conflicts with an opening, and one saying more guests with a closure', () => {
