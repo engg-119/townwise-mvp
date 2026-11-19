@@ -1012,7 +1012,7 @@ export type MonthItem =
   | { kind: 'imported'; key: string; first: string; dates: string; imported: ImportedEvent };
 
 /** One key per item across the month's days: an event, a note, a rule, or an event of one of the location's calendars. */
-function itemOf(entry: DayEntry, date: string): MonthItem {
+function itemOf(entry: Exclude<DayEntry, { kind: 'researched' }>, date: string): MonthItem {
   switch (entry.kind) {
     case 'note': return { kind: 'note', key: `note:${entry.note.id}`, first: date, dates: dayMonthRange(entry.note.startDate, entry.note.endDate), note: entry.note };
     // A rule can repeat with no end, so it is dated by its first day this month; its summary says when it runs.
@@ -1035,6 +1035,8 @@ export function monthItems(today: string, calendar: Pick<CalendarInput, 'notes' 
   const items = new Map<string, MonthItem>();
   for (let date = from; date <= to; date = addDays(date, 1)) {
     for (const entry of compactEntries(dayEntries(date, calendar, { periods: true }))) {
+      // Home reads no found events yet (D66 task 7.4), so none reach here.
+      if (entry.kind === 'researched') continue;
       const item = itemOf(entry, date);
       if (!items.has(item.key)) items.set(item.key, item);
     }

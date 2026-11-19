@@ -2,12 +2,16 @@ import { useRef } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import { theme } from '../../theme';
+import type { ResearchedEvent } from '../analytics/api';
 import { formatCount } from '../format';
 import { noteWords } from '../analytics/panel';
 import { eventLine } from '../analytics/week';
 import type { Note } from '../locations/api';
 import { Loading } from '../locations/parts';
 import { datesLine, hoursLine, KIND_LABEL, weekdaysLine } from '../locations/noteRules';
+import {
+  EDITED_LINE, FOUND_ACTIONS, FOUND_LABEL, FOUND_NOTE, foundActionLabel, foundChips, foundLine, whereWho,
+} from '../research/copy';
 import { itemHref } from '../routing';
 import { Actions, Button, LinkButton, type ButtonProps } from '../ui/Button';
 import { Notice, ReadOnlyLine } from '../ui/feedback';
@@ -33,6 +37,10 @@ import { FIGURE_KEY, forecastLabel, forecastWords, type CalendarDayView, type Ef
 // Each entry keeps its source, with no dedupe (D49): a note shows its event name, then its kind words and detail, and a
 // note TownwiseAI made from a file a "Your file" chip to that file's item while its ref exists; an imported event ends
 // with a chip to its calendar's page in Your data (`c_<calendarId>`), named by the calendar's own label.
+// Last, "Found by research" (D66, design decision 15): each event town research found on the day, with its dates, where
+// and who, an Unconfirmed chip for a low-confidence finding and a Cancelled one, its sources, Edit (the page's edit
+// sheet, anchored to it), Hide and Ask TownwiseAI, and on an edited one "Edited by your team" with Reset. Under view-as
+// Edit, Hide and Reset are not shown (the route refuses view-as); Ask TownwiseAI is, since the chat page reads.
 
 export const PANEL_ID = 'calendar-day';
 
@@ -96,6 +104,47 @@ function WhyRow(props: { reason: ReasonLine }): React.JSX.Element {
   );
 }
 
+/** One found event in the day panel (see the top of this file). */
+function FoundRow(props: {
+  event: ResearchedEvent;
+  readOnly: boolean;
+  pending: boolean;
+  onEdit: (anchor: PopoverAnchor) => void;
+  onAction: (op: 'hide' | 'restore') => void;
+  onAsk: () => void;
+}): React.JSX.Element {
+  const { event } = props;
+  const place = whereWho(event);
+  const chips = foundChips(event);
+  const busy = props.pending ? { disabled: true } : {};
+  return (
+    <View style={styles.item}>
+      <Small white>{event.title}</Small>
+      <Mono>{foundLine(event)}</Mono>
+      {place === null ? null : <Small>{place}</Small>}
+      {chips.length === 0 ? null : <View style={styles.chips}>{chips.map((chip) => <Mono key={chip} tone="white">{chip}</Mono>)}</View>}
+      <SourceChips sources={event.sources} />
+      {event.edited ? (
+        <View style={styles.effect}>
+          <Small>{EDITED_LINE}</Small>
+          {props.readOnly ? null : (
+            <Button variant="link" label={FOUND_ACTIONS.reset} accessibilityLabel={foundActionLabel('reset', event.title)} {...busy} onPress={() => { props.onAction('restore'); }} />
+          )}
+        </View>
+      ) : null}
+      <Actions>
+        {props.readOnly ? null : (
+          <Opener variant="link" label={FOUND_ACTIONS.edit} accessibilityLabel={foundActionLabel('edit', event.title)} {...busy} onPress={props.onEdit} />
+        )}
+        {props.readOnly ? null : (
+          <Button variant="link" label={FOUND_ACTIONS.hide} accessibilityLabel={foundActionLabel('hide', event.title)} {...busy} onPress={() => { props.onAction('hide'); }} />
+        )}
+        <Button variant="link" label={FOUND_ACTIONS.ask} accessibilityLabel={foundActionLabel('ask', event.title)} onPress={props.onAsk} />
+      </Actions>
+    </View>
+  );
+}
+
 export function CalendarDay(props: {
   /** Null while the selected day's month loads. */
   view: CalendarDayView | null;
@@ -119,6 +168,14 @@ export function CalendarDay(props: {
   onDelete: (note: Note) => void;
   /** Opens the note form from an event in one of the location's calendars (D33), anchored to its Make a note. */
   onMakeNote: (event: ImportedEvent, anchor: PopoverAnchor) => void;
+  /** Opens the edit sheet on a found event (D66), anchored to its Edit. */
+  onEditFound: (event: ResearchedEvent, anchor: PopoverAnchor) => void;
+  /** Hide, or Reset (a restore to what research found), sent with the event's head. */
+  onFoundAction: (event: ResearchedEvent, op: 'hide' | 'restore') => void;
+  /** Opens TownwiseAI on a new conversation with a draft about the event. */
+  onAskFound: (event: ResearchedEvent) => void;
+  /** The found event whose Hide or Reset is out: its buttons wait. */
+  foundPending?: string | null;
 }): React.JSX.Element {
   const { view, readOnlyId } = props;
   // When a save took the focused control away, the panel takes focus in place of the notice, which is a toast.
@@ -131,7 +188,8 @@ export function CalendarDay(props: {
   // The figure's kind in words, unless the part's label already says it (UI review S2): an outlook keeps “Forecast”.
   const figureKey = words.figure === null || FIGURE_KEY[words.figure.source] === label ? null : FIGURE_KEY[words.figure.source];
   const ro = readOnlyId === null ? null : { disabled: true, describedBy: readOnlyId };
-  const nothing = view.events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0;
+  const nothing = view.events.length === 0 && view.notes.length === 0 && view.rules.length === 0 && view.imported.length === 0
+    && view.researched.length === 0;
   const nothingWords = view.shownInWhy > 0 ? 'Nothing else on the calendar this day.' : 'Nothing on the calendar this day.';
   return (
     <View role="region" aria-label="Selected day" nativeID={PANEL_ID} {...fallback} style={styles.root}>
@@ -223,6 +281,19 @@ export function CalendarDay(props: {
           </View>
         ))}
         {view.imported.length === 0 ? null : <Small>Events from your calendar don’t change the forecast until you make a note from them.</Small>}
+        {view.researched.length === 0 ? null : <Mono tone="text3">{FOUND_LABEL}</Mono>}
+        {view.researched.map((event) => (
+          <FoundRow
+            key={event.id}
+            event={event}
+            readOnly={readOnlyId !== null}
+            pending={props.foundPending === event.id}
+            onEdit={(anchor) => { props.onEditFound(event, anchor); }}
+            onAction={(op) => { props.onFoundAction(event, op); }}
+            onAsk={() => { props.onAskFound(event); }}
+          />
+        ))}
+        {view.researched.length === 0 ? null : <Small>{FOUND_NOTE}</Small>}
       </Part>
       {readOnlyId === null ? null : <ReadOnlyLine text={props.readOnlyText} nativeID={readOnlyId} />}
       <Actions>
@@ -244,6 +315,7 @@ const styles = StyleSheet.create({
   item: { gap: 2, minWidth: 0 },
   effect: { flexDirection: 'row', alignItems: 'flex-start', gap: theme.space[2], minWidth: 0 },
   words: { flex: 1, minWidth: 0 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', columnGap: theme.space[3] },
 });
 
 /** The effect ramp's color for each grade (theme.ts). */

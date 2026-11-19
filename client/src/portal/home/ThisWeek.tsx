@@ -13,6 +13,7 @@ import type { CalendarInput } from '../calendar/model';
 import type { ForecastDay, ForecastWindow } from '../estimates/api';
 import { useBreakpoint } from '../hooks';
 import { ShowNumbers } from '../locations/parts';
+import { FOUND_LABEL } from '../research/copy';
 import { DataTable, type Column } from '../ui/DataTable';
 import { SourceChips } from '../ui/SourceChip';
 import { Stack } from '../ui/layout';
@@ -47,6 +48,7 @@ function entryKind(entry: DayEntry): string {
   if (entry.kind === 'note') return 'Your note';
   if (entry.kind === 'rule') return 'Your rule';
   if (entry.kind === 'imported') return 'Your calendar';
+  if (entry.kind === 'researched') return FOUND_LABEL;
   return EVENT_WORDS[entry.kind];
 }
 
