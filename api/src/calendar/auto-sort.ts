@@ -17,7 +17,10 @@
 //      each its own `note.add` change, so a person's note on the day, an undone note or the same note from elsewhere
 //      keeps it from being written. No calibration starts: a label on a past day wants a refit (agent/refit.ts).
 // Undo per calendar is handlers/agent-changes.ts. Logs carry the calendar's id, codes and counts only; never a title,
-// a uid, an event's date or a label per event.
+// a uid, an event's date or a label per event. [CONFIRM: a calendar file imported while TownwiseAI works on its own is
+// sorted and its labels used for forecasts with no press] [CONFIRM: a label other than unsure counts as sure, so an
+// import's labels are used for forecasts at once] [CONFIRM: a calendar file staff import with an organization open as
+// its admin is not sorted on its own]
 import type { OrgScope } from '../access/policy.ts';
 import { agentAutoOn, applyChange, dedupeKeyOf, TOWNWISE_AI_AUTHOR } from '../agent/apply.ts';
 import type { TownwiseContext } from '../app.ts';

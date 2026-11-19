@@ -8,7 +8,8 @@
 // leaves it `undone` (200). A retry of any step finishes it. A calibration already started is never undone. Undo per
 // calendar (slice 2, a `booking.label` change): the notes that calendar's sort made are undone first, each as its own
 // change (one a person changed since is theirs and stays), then the labels that sort set that nobody changed since are
-// cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again. Logs and
+// cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again. [CONFIRM:
+// Undo per calendar takes back the notes, labels and confirm TownwiseAI made that nobody changed since] Logs and
 // audit events carry ids, the action and the source kind only: never a title, a why, a file name or a figure.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
