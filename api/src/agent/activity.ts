@@ -156,7 +156,9 @@ export const agentChangeSource: ActivitySource = async ({ ctx, scope, locationId
 /**
  * D65: the location's finished forecast runs among its newest calibrations, and live ones past their 20 minutes as failed
  * runs. A run is the first forecast when no run other than its own had been published by the time it finished; a
- * location whose published runs lapsed is not on its first.
+ * location whose published runs lapsed is not on its first. One `firstPublished` read serves every item, so a calibration
+ * whose run is the location's earliest published one reads as first even if another was published before it finished:
+ * only a `not_judged` calibration (its run an older one) can be so, and its words are the same either way.
  */
 export const forecastMadeSource: ActivitySource = async ({ ctx, scope, locationId }) => {
   const now = ctx.now();
