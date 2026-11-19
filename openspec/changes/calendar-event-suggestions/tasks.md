@@ -98,4 +98,4 @@ Spec decision D53; CONFIRM index items numbered after develop's last (116 to 129
   Done: D46 merged first (nullable `why`, `source`, both partial indexes in agent-suggestions.ts) and D49 was merged in (0.3). Merged to develop on 2026-11-18 (4ccc242b) with CONFIRM items 116 to 129, and released in #104.
 - [ ] 11.4 `/verify` (the full `npm run verify`, coordinated with the release session).
 - [x] 11.5 Renumber the CONFIRM index items against develop once more (as 0.2), then push only after the owner's go.
-  Done: D46 merged first (nullable `why`, `source`, both partial indexes in agent-suggestions.ts) and D49 was merged in (0.3). Merged to develop on 2026-11-18 (4ccc242b) with CONFIRM items 116 to 129, and released in #104.
+  Done: the change's CONFIRM items are 116 to 129 in develop's spec 22.2, each citing D53. It merged into develop through PR #102 on 2026-11-18 (merge commit 4ccc242b), by the coordinator; the owner's go for that push is not recorded in this change.
