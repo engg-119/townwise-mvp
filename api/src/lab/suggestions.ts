@@ -28,6 +28,7 @@
 // Owner-calendar events (openspec change calendar-event-suggestions, design decisions 6 to 8 and 11). While the
 // organization's weekly suggestions and its calendar titles switch are both on, the request also sends `ownerEvents`:
 // the location's keyed events overlapping the 91 days, soonest first, at most 150, leaving out events linked to a note,
+// events that carry a label on a confirmed file calendar (D58, learn-from-calendar-bookings design decision 13),
 // events an earlier `event` suggestion named in any status, a Google calendar's events unless its connection is not
 // revoked and its connect came from the explainer that says titles are read weekly, and a file's or link's unless its
 // add came from the popover that says so (`titlesNotice`, stored by the add or the connect; design decision 11). Each is
@@ -633,7 +634,8 @@ function monthOf(at: Date): string {
 
 /**
  * The owner-calendar events a pass sends, with what each ref stands for: the location's keyed events overlapping the
- * range, soonest first, at most 150, leaving out events linked to a note, events an earlier `event` suggestion named, a
+ * range, soonest first, at most 150, leaving out events linked to a note, labeled events of a confirmed calendar (D58),
+ * events an earlier `event` suggestion named, a
  * Google calendar's events unless its connection is not revoked and its connect showed the weekly notice
  * (`titlesNotice`), and a file's or link's unless its add showed it.
  */
@@ -655,7 +657,7 @@ async function ownerEventsFor(
     const connection = await stores.googleConnections.find(scope, id);
     return connection !== null && connection.revokedAt === null && connection.titlesNotice ? [id] : [];
   }))).flat());
-  const chosen = events.filter((event) => !skip.has(keyOf(event.calendarId, event.uid))
+  const chosen = events.filter((event) => !event.labeled && !skip.has(keyOf(event.calendarId, event.uid))
     && (event.kind === 'google' ? event.connectionId !== null && noticed.has(event.connectionId) : event.titlesNotice))
     .slice(0, SUGGESTIONS_MAX_OWNER_EVENTS);
   const entries: OwnerEventEntry[] = [];

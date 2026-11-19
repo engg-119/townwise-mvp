@@ -60,8 +60,10 @@ Spec decision D58 (check develop's spec section 2 and the reservation list again
 
 - [x] 8.1 `labInputOf` takes `bookings` (default empty) and `buildLabInput` reads `bookingsBetween`. Tests (`api/test/lab-input.test.ts`, new cases; the golden unchanged): a buyout sets `booked` on a history day; a party sets `privateEvent`; a covering private-event or closure note decides; a counted party note on the day is not counted twice; a party on a likely-closed Monday leaves it closed with null guests; a label after `dataThrough` sets nothing; an unconfirmed calendar changes nothing; the fingerprint changes with a confirmed label and not with an unconfirmed one. `npm test -w @townwise/api -- test/lab-input.test.ts test/lab-contract.test.ts`
   Done: as designed; the golden and `modeling/` are unchanged. A buyout label sets `booked` only (not `privateEvent` as a buyout note does), per decision 9. `test/isolation.test.ts` now admits `lab/input.ts` among the files that reach stored calendars and pins that it reads only `bookingsBetween`.
-- [ ] 8.2 `lab/suggestions.ts` leaves labeled events of confirmed calendars out of `ownerEvents`. Tests in its suites. `npm test -w @townwise/api -- test/weekly-suggestions.test.ts test/weekly-suggestions.int.test.ts`
-- [ ] 8.3 Lab side: confirm no Python change is needed (`private_event` and `booked` keep their meaning). `cd modeling/lab && uv run pytest tests/test_contract.py tests/test_parity.py`
+- [x] 8.2 `lab/suggestions.ts` leaves labeled events of confirmed calendars out of `ownerEvents`. Tests in its suites. `npm test -w @townwise/api -- test/weekly-suggestions.test.ts test/weekly-suggestions.int.test.ts`
+  Done: the store marks each keyed row `labeled` (5.1) and `ownerEventsFor` skips it. Test in `test/weekly-refresh.int.test.ts`, where the pass's owner events are tested; `weekly-suggestions.test.ts` and `weekly-suggestions.int.test.ts` pass unchanged.
+- [x] 8.3 Lab side: confirm no Python change is needed (`private_event` and `booked` keep their meaning). `cd modeling/lab && uv run pytest tests/test_contract.py tests/test_parity.py`
+  Done: no Python change; `uv run pytest tests/test_contract.py tests/test_parity.py`: 23 passed.
 
 ## 9. Client Bookings section and the offline check (decisions 7, 12 and 15)
 
