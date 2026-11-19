@@ -616,3 +616,28 @@ describe('the input the API builds, against the lab', () => {
     expect(readFileSync(GOLDEN, 'utf8')).toBe(text);
   });
 });
+
+describe('owner beats agent in the lab input (D59)', () => {
+  const AT = new Date('2026-05-10T00:00:00Z');
+  const days = history('2025-06-01', '2026-05-31');
+
+  it('a person’s note that decides a history day sets aside TownwiseAI’s note there, in the flags', () => {
+    const agentClosure = note({
+      id: 'd4'.repeat(12), kind: 'closure', startDate: '2026-05-16', effect: 'closed', createdBy: 'townwise_ai',
+      agent: { changeId: 'e5'.repeat(12), at: AT }, createdAt: AT, updatedAt: AT,
+    });
+    const party = note({ kind: 'private_event', startDate: '2026-05-16', effect: 'more_guests', expectedGuests: null });
+    expect(dayOf(inputOf(days, [agentClosure]), '2026-05-16')).toMatchObject({ closed: true });
+    expect(dayOf(inputOf(days, [agentClosure, party]), '2026-05-16')).toMatchObject({ closed: false, privateEvent: true, booked: false });
+    // Once a person edits it, the note is theirs and both count.
+    const edited = { ...agentClosure, updatedAt: new Date(AT.getTime() + 1000) };
+    expect(dayOf(inputOf(days, [edited, party]), '2026-05-16')).toMatchObject({ closed: true, privateEvent: true });
+  });
+
+  it('a TownwiseAI note alone sets its flags as any note does, and a D34 note from a file counts as TownwiseAI’s until edited', () => {
+    const fromFile = note({ kind: 'private_event', startDate: '2026-05-20', effect: 'closed', source: { via: 'ai_file', fileId: 'f6'.repeat(12) } });
+    expect(dayOf(inputOf(days, [fromFile]), '2026-05-20')).toMatchObject({ booked: true, privateEvent: true });
+    const closure = note({ kind: 'closure', startDate: '2026-05-20', effect: 'closed' });
+    expect(dayOf(inputOf(days, [fromFile, closure]), '2026-05-20')).toMatchObject({ closed: true, booked: false, privateEvent: false });
+  });
+});

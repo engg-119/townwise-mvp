@@ -39,6 +39,22 @@ describe('isolation (source)', () => {
     ]);
   });
 
+  it('D59: only stores/index.ts and the writer import the ledger of TownwiseAI’s changes, and only agent/apply.ts adds to it', () => {
+    const importers = sourceFiles()
+      .filter((file) => [...file.text.matchAll(/^import (?!type )[^;]*from '(\.[^']+)';/gm)]
+        .some((match) => posix.normalize(posix.join(posix.dirname(file.path), match[1] ?? '')) === 'stores/agent-changes.ts'))
+      .map((file) => file.path)
+      .sort();
+    // agent/apply.ts reads the why's length cap from it.
+    expect(importers).toEqual(['agent/apply.ts', 'stores/index.ts']);
+    // The one writer: every change TownwiseAI saves goes through applyChange. Undo moves a row's status
+    // (handlers/agent-changes.ts), and a file's own undo marks its rows (handlers/data.ts).
+    const writers = sourceFiles().filter((file) => /agentChanges\.(insertApplying|markApplied|removeApplying)\(/.test(file.text)).map((file) => file.path);
+    expect(writers).toEqual(['agent/apply.ts']);
+    const undoers = sourceFiles().filter((file) => /agentChanges\.(markUndoing|markUndone|markAdopted|markSourceUndone)\(/.test(file.text)).map((file) => file.path).sort();
+    expect(undoers.every((path) => ['handlers/agent-changes.ts', 'handlers/data.ts'].includes(path))).toBe(true);
+  });
+
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {
     const with401 = sourceFiles().filter((file) => /\b401\b/.test(file.text)).map((file) => file.path).sort();
     // calendar/google.ts reads Google's 401 to pick its `unauthorized` code and never answers one: it builds no AppError,
