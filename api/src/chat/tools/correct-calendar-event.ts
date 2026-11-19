@@ -93,6 +93,8 @@ const WORDS: Readonly<Record<Exclude<CorrectionCode, 'needs_tap'>, string>> = {
 };
 
 const NEEDS_TAP = 'This conversation read a web page or a file, so nothing was changed: the owner sees the change as a card and applies it with one tap if it’s right.';
+/** D66: the corrections past the first in a reply that read researched events (their titles came from web pages). */
+const NEEDS_TAP_FOUND = 'This reply read events research found on the web, and only one correction applies on its own after that, so nothing was changed: the owner sees the change as a card and applies it with one tap if it’s right.';
 const APPLIED = 'Changed on this location’s calendar only. The owner can undo it from TownwiseAI’s activity.';
 
 function json(value: Readonly<Record<string, JsonValue>>): { content: string } {
@@ -163,7 +165,7 @@ async function correct(tc: ToolContext, request: CorrectionInput, callId: string
   if (tc.turn.readUntrusted || capped || callId === undefined) {
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, conversationId: tc.conversationId, eventId, outcome: 'needs_tap' }, 'townwise.chat_event_corrected');
     return json({
-      applied: false, code: 'needs_tap', eventId, changeId: null, proposed: { change: request.change, fields: fieldsJson(fields) }, message: NEEDS_TAP,
+      applied: false, code: 'needs_tap', eventId, changeId: null, proposed: { change: request.change, fields: fieldsJson(fields) }, message: tc.turn.readUntrusted || !capped ? NEEDS_TAP : NEEDS_TAP_FOUND,
     });
   }
   tc.turn.directCorrections = direct + 1;

@@ -155,7 +155,7 @@ test('a proposal shows the change and why it waits; Apply sends the person’s o
   const shown = await card();
   expect(within(shown).getByText('TownwiseAI suggests changing an event town research found.')).toBeTruthy();
   expect(within(shown).getByText('Dates: Dec 10, 2026')).toBeTruthy();
-  expect(within(shown).getByText('This conversation read a web page or a file, so nothing changes until you apply it. It changes this location’s calendar only.')).toBeTruthy();
+  expect(within(shown).getByText('This conversation read a web page, a file or events research found on the web, so nothing changes until you apply it. It changes this location’s calendar only.')).toBeTruthy();
   fireEvent.click(within(shown).getByRole('button', { name: 'Apply' }));
   expect(await within(shown).findByText('Applied. Only this location’s calendar changed. Reset it on the Calendar to undo.')).toBeTruthy();
   expect(within(shown).queryByRole('button', { name: 'Apply' })).toBeNull();

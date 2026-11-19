@@ -162,7 +162,7 @@ export const CORRECTION = {
   applied: 'Applied. Only this location’s calendar changed. Reset it on the Calendar to undo.',
   /** Apply found the event already reading as proposed: nothing was sent, so Reset would undo someone else's edit. */
   already: 'This event already reads that way. Nothing changed.',
-  why: 'This conversation read a web page or a file, so nothing changes until you apply it. It changes this location’s calendar only.',
+  why: 'This conversation read a web page, a file or events research found on the web, so nothing changes until you apply it. It changes this location’s calendar only.',
   open: 'Open the Calendar',
 } as const;
 

@@ -262,6 +262,9 @@ describe('correct_calendar_event in a clean turn', () => {
       codes.push((JSON.parse((await correctCalendarEventTool.run(tc, input, `toolu_found_${String(i)}`)).content) as { code: unknown }).code);
     }
     expect(codes).toEqual([null, 'needs_tap', 'needs_tap']);
+    const again = correctCalendarEventTool.parse({ eventId: ids[1], change: 'hide', why }, '2026-06-01');
+    if (again === null) throw new Error('fixture input refused');
+    expect((JSON.parse((await correctCalendarEventTool.run(tc, again, 'toolu_found_again')).content) as { message: string }).message).toMatch(/^This reply read events research found on the web/);
     expect(await revisions(t)).toHaveLength(1);
   });
 });
