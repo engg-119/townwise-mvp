@@ -83,7 +83,9 @@ async function show(me: MeResponse, current: unknown, locations = EMPTY): Promis
       <ExpoRoot context={getMockContext(appRoutes(seededRoot(auth), { '(marketing)/index': () => null }))} location={path} />
     </Head.Provider>,
   );
-  await screen.findByText(/^Townwise hasn’t published a forecast for /);
+  // Home's lead: its forecast line, or (UI review 2026-11-19) the skeleton in its place while the forecast read is out.
+  // Waiting for the line itself would return only after the step's first history read was answered.
+  await waitFor(() => { expect(screen.queryByText(/^Townwise hasn’t published a forecast for /) ?? screen.queryByTestId('skeleton-home-lead-forecast')).not.toBeNull(); });
   return { api, files, analytics };
 }
 

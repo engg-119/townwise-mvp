@@ -657,6 +657,15 @@ export function shortReasons(day: Pick<ForecastDay, 'reasons' | 'model'>, past: 
   });
 }
 
+/**
+ * UI review 2026-11-19: on a closed day, without the run's own closure reason (“Closed”, no note), which only repeats the
+ * day's status; a closure note or rule still names itself. For the tooltip and Home's Why.
+ */
+export function besideClosed(day: Pick<ForecastDay, 'status'>, rows: readonly ShortReason[]): ShortReason[] {
+  if (day.status !== 'closed') return [...rows];
+  return rows.filter((row) => !(row.reason.kind === 'closure' && (row.reason.note ?? null) === null && row.line === row.reason.label));
+}
+
 /** The lines of shortReasons: “Saturday: usually more guests”, or a reason's label alone. */
 export function reasonShortLines(day: Pick<ForecastDay, 'reasons' | 'model'>, past: boolean, count: number): string[] {
   return shortReasons(day, past, count).map((each) => each.line);
@@ -826,7 +835,7 @@ export function tooltipLines(date: string, input: CalendarInput): TooltipLines |
       if (day.noteGuests > 0) lines.push(`Includes ${plural(day.noteGuests, 'guest', 'guests')} from ${guestsFromWords(day)}`);
     }
   }
-  const reasons = day === null ? [] : shortReasons(day, date < input.today, TOOLTIP_REASONS);
+  const reasons = day === null ? [] : besideClosed(day, shortReasons(day, date < input.today, TOOLTIP_REASONS));
   const names: string[] = [];
   // A note or rule whose reason is shown is already named, whatever its words.
   const shownIds = new Set<string>();

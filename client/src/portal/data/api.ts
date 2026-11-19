@@ -121,6 +121,33 @@ export const dataItemSchema = z.object({
 export type DataItem = z.infer<typeof dataItemSchema>;
 export type DataItemCalendar = NonNullable<DataItem['calendar']>;
 
+const CALENDAR_EXTENSIONS: ReadonlySet<string> = new Set(['ics', 'ical']);
+
+/** An .ics or .ical name, as api/src/files/sniff.ts isCalendarFileName tells a calendar file (D60, D63). */
+export function isCalendarFileName(name: string | null): boolean {
+  const dot = name?.lastIndexOf('.') ?? -1;
+  return name !== null && dot > 0 && CALENDAR_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
+}
+
+/**
+ * UI review 2026-11-19: on one item's page, a calendar file kept before D60 imported calendar files: no `calendar`, and
+ * an .ics or .ical file's kind (`other`) and name. Never under view-as, which sends no name.
+ */
+export function isUnimportedCalendarFile(item: Pick<DataItem, 'kind' | 'name' | 'calendar'>): boolean {
+  return item.calendar === null && item.kind === 'other' && isCalendarFileName(item.name);
+}
+
+/**
+ * A calendar file, which Townwise imports as a calendar (D60) rather than TownwiseAI reading it: one whose import found a
+ * calendar (added, removed since, or refused for its size, the limit or a read), or one kept before D60. An .ics file
+ * that is no calendar (`not_calendar`) is any other file.
+ */
+export function isCalendarFile(item: Pick<DataItem, 'kind' | 'name' | 'calendar'>): boolean {
+  const calendar = item.calendar ?? null;
+  if (calendar !== null) return !(calendar.status === 'refused' && calendar.reason === 'not_calendar');
+  return isUnimportedCalendarFile({ ...item, calendar: null });
+}
+
 /**
  * D61: one of the list's calendars, an item of the Calendars folder opening at `c_<id>`: never its address. `kind` and
  * `status` are read as strings, as Your calendars reads them.

@@ -502,6 +502,65 @@ describe('what shows nothing says why', () => {
     expect(screen.getByText('Not added to your calendars: Townwise couldn’t read this file just now.')).toBeTruthy();
   });
 
+  // UI review 2026-11-19: a calendar file's page talks about its import, never that TownwiseAI can't read it or that
+  // Townwise can't show it.
+  test('a calendar file’s TownwiseAI section and viewer never say it can’t be read or shown', async () => {
+    const ref = refOf('f', 48);
+    setup([storedFile(ref, {
+      kind: 'other', name: 'Bookings.ics', canAiRead: true,
+      calendar: { status: 'added', calendarId: '0123456789abcdef01234567', label: 'Bookings', eventCount: 12 },
+    })], ref);
+    expect(await screen.findByText('Added to your calendars as Bookings: 12 events.')).toBeTruthy();
+    expect(await screen.findByText(
+      'Townwise doesn’t show a calendar file here: its events show on the Calendar once it’s one of your calendars. Use Download original to open it on your computer.',
+    )).toBeTruthy();
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    expect(screen.queryByText(/can’t show this kind of file/)).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'TownwiseAI' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Let TownwiseAI read this file' })).toBeNull();
+    cleanup();
+    // Refused for a fixable cause: the same, with Try again.
+    const full = refOf('f', 49);
+    setup([storedFile(full, { kind: 'other', name: 'Late.ics', canAiRead: true, calendar: { status: 'refused', reason: 'calendar_limit', retry: true } })], full);
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeTruthy();
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    expect(screen.queryByText(/can’t show this kind of file/)).toBeNull();
+  });
+
+  test('an .ics file that is no calendar keeps the general words', async () => {
+    const ref = refOf('f', 50);
+    setup([storedFile(ref, { kind: 'other', name: 'Broken.ics', canAiRead: true, calendar: { status: 'refused', reason: 'not_calendar', retry: false } })], ref);
+    expect(await screen.findByText('TownwiseAI reads PDFs, pictures, Excel and Word files, CSV and text files, and ZIPs of them, so it can’t read this file.')).toBeTruthy();
+    expect(await screen.findByText('Townwise can’t show this kind of file here. Use Download original to open it on your computer.')).toBeTruthy();
+  });
+
+  test('a calendar file kept before calendar files were imported says so, and Import as a calendar adds it', async () => {
+    const ref = refOf('f', 51);
+    const { fake } = setup([storedFile(ref, { kind: 'other', name: 'Old bookings.ics', canAiRead: true, calendar: null })], ref);
+    expect(await screen.findByText(
+      'This calendar file was kept before Townwise added calendar files to your calendars, so it isn’t one of them. Import it as a calendar, or delete it if it’s already one of your calendars.',
+    )).toBeTruthy();
+    expect(screen.queryByText(/can’t read this file/)).toBeNull();
+    const added = storedFile(ref, { kind: 'other', name: 'Old bookings.ics', calendar: { status: 'added', calendarId: 'c7', label: 'Old bookings', eventCount: 4 } });
+    fake.answers['POST calendar'] = () => {
+      fake.items = [added];
+      return { item: added };
+    };
+    fireEvent.click(screen.getByRole('button', { name: 'Import as a calendar' }));
+    expect(await screen.findByText('Added to your calendars as Old bookings: 4 events.')).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Import as a calendar' })).toBeNull();
+    expect(fake.calendarRetries).toEqual([ref]);
+    cleanup();
+    // Its original deleted: nothing to import, and it says so.
+    const gone = refOf('f', 52);
+    const old = storedFile(gone, { kind: 'other', name: 'Old.ics', calendar: null });
+    setup([{ ...old, file: old.file === null ? null : { ...old.file, rawAvailable: false } }], gone);
+    expect(await screen.findByText(
+      'This calendar file was kept before Townwise added calendar files to your calendars, and its original was deleted, so it can’t be imported.',
+    )).toBeTruthy();
+    expect(screen.queryByRole('button', { name: 'Import as a calendar' })).toBeNull();
+  });
+
   test('under view-as Try again stays in place, disabled, described by the read-only line (D60)', async () => {
     const ref = refOf('f', 47);
     const { fake } = setup(
