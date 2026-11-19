@@ -25,6 +25,7 @@ import type { MemberPrincipal, OrgScope, Principal } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
 import { recordAfter } from '../audit.ts';
 import type { CalendarFetchCode } from '../calendar/fetch.ts';
+import { queueAutoSort } from '../calendar/auto-sort.ts';
 import { followLinkedNotes } from '../calendar/follow-up.ts';
 import {
   endUnusedGoogleAccess, googleAccessDeps, googleAccessToken, logGoogleFailure, markCalendarForCheck,
@@ -375,7 +376,8 @@ async function googleToAdd(
  * code); its address is stored sealed, with its host. A Google calendar is checked and read as googleToAdd says, stored
  * with its Google calendar id sealed and its connection, and checked again after storing: a connection ended meanwhile
  * takes the new calendar with it (409 google_not_connected). A sixth calendar answers 409 calendar_limit. 201 with the
- * calendar and `skippedRows`, a CSV's rows whose start could not be read (0 otherwise).
+ * calendar and `skippedRows`, a CSV's rows whose start could not be read (0 otherwise). D59 slice 2: a file is then
+ * queued for TownwiseAI's sort on its own (calendar/auto-sort.ts queueAutoSort says when).
  */
 export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, res: Response, principal: Principal): Promise<void> {
   const caller = memberOf(principal);
@@ -422,6 +424,8 @@ export async function createOwnerCalendar(ctx: TownwiseContext, req: Request, re
   // As at the other switch points; a new calendar's events have no linked notes yet, so this finds none.
   await followLinkedNotes(ctx, scope, location, added.id, ADDED_REPLACE, now);
   await recordCalendar(ctx, caller, 'owner_calendar.added', added, now);
+  // D59 slice 2: a file TownwiseAI sorts on its own, after the add is recorded; it never fails the request.
+  if (added.kind === 'file') await queueAutoSort(ctx, scope, added, { openAsAdmin: caller.openAsAdmin !== null });
   res.status(201).json({ calendar: shownView(added, caller), skippedRows });
 }
 

@@ -13,18 +13,21 @@
 // `agent_auto_off`; one whose fingerprint matches a file of the location TownwiseAI already read, `duplicate`; past 20
 // a day per organization, `daily_auto_limit`; and one that would leave $1 or less of the files month after its ceiling,
 // `budget_spent`, so a press still runs. [CONFIRM: automatic reads leave $1 of the files month for presses] [CONFIRM: 20
-// automatic file reads a day per organization] Its audit event's actor is TownwiseAI. Logs and audit carry ids, kinds,
-// codes and counts only: never a file name, its content, the summary, a title or a figure.
+// automatic file reads a day per organization] Its audit event's actor is TownwiseAI. D59 slice 2: when no read is
+// waiting, the same loop claims a file calendar's automatic sort (stores/cross-tenant.ts claimNextCalendarSort, one job
+// per organization across both) under the same lease, heartbeat and waits, and hands it to calendar/auto-sort.ts. Logs
+// and audit carry ids, kinds, codes and counts only: never a file name, its content, the summary, a title or a figure.
 import type { AuthStores } from '@ckeith26/auth';
 import type { Logger } from '@ckeith26/server-core';
 import type { Connection } from 'mongoose';
 
-import { scopeForClaimedAiRead, type OrgScope } from '../access/policy.ts';
+import { scopeForClaimedAiRead, scopeForClaimedCalendarSort, type OrgScope } from '../access/policy.ts';
+import type { CalendarSorts } from '../calendar/auto-sort.ts';
 import { isCalendarCsvText } from '../calendar/csv-events.ts';
 import { TOWNWISE_AI_ACTOR } from '../audit.ts';
 import { DELETED_PERSON } from '../people.ts';
 import { EARLIEST_DATE, utcDay } from '../dates.ts';
-import { claimNextAiRead, type ClaimedAiRead } from '../stores/cross-tenant.ts';
+import { claimNextAiRead, claimNextCalendarSort, type ClaimedAiRead } from '../stores/cross-tenant.ts';
 import type { AiActionsOutcome, AiReadResult, FileRecord } from '../stores/files.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import { localDay, timeZoneOf } from '../time-zones.ts';
@@ -78,6 +81,8 @@ export interface AiReaderDeps {
   readonly onRead?: OnAiRead;
   /** D59: TOWNWISE_AGENT_AUTO. Off (left out), a queued automatic read is skipped `agent_auto_off`. */
   readonly agentAuto?: boolean;
+  /** D59 slice 2: file calendars' automatic sorts (calendar/auto-sort.ts); left out, none is claimed. */
+  readonly sorts?: CalendarSorts;
 }
 
 export interface AiReader {
@@ -339,9 +344,28 @@ export function createAiReader(deps: AiReaderDeps): AiReader {
     await audit(scope, file, result, done);
   }
 
+  /** D59 slice 2: a calendar's automatic sort, claimed when no read is waiting; false when there is none. */
+  async function sortTick(sorts: CalendarSorts): Promise<boolean> {
+    const claim = await claimNextCalendarSort(deps.connection, { now: now(), leaseMs });
+    if (claim === null) return false;
+    const scope = scopeForClaimedCalendarSort(claim);
+    const heartbeat = setInterval(() => {
+      void sorts.renew(scope, claim, new Date(now().getTime() + leaseMs)).catch(() => undefined);
+    }, deps.heartbeatMs ?? HEARTBEAT_MS);
+    try {
+      await sorts.run(scope, claim);
+    } catch (err) {
+      logger.warn({ calendarId: claim.calendarId, errType: err instanceof Error ? err.name : 'unknown' }, 'townwise.calendar_auto_sort_attempt_failed');
+      await sorts.release(scope, claim, new Date(now().getTime() + retryDelayMs(claim.attempt))).catch(() => undefined);
+    } finally {
+      clearInterval(heartbeat);
+    }
+    return true;
+  }
+
   async function tick(): Promise<boolean> {
     const claim = await claimNextAiRead(deps.connection, { now: now(), leaseMs });
-    if (claim === null) return false;
+    if (claim === null) return deps.sorts === undefined ? false : sortTick(deps.sorts);
     const scope = scopeForClaimedAiRead(claim);
     const heartbeat = setInterval(() => {
       void stores.files.renewAiLease(scope, claim.id, claim.attempt, new Date(now().getTime() + leaseMs)).catch(() => undefined);

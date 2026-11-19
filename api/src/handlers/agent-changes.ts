@@ -5,7 +5,10 @@
 // note by compare-and-set on its updatedAt; an item through the file removal; days through the upload removal D34's undo
 // uses); then the row goes `undoing` to `undone`, and only the call whose compare-and-set lands records
 // `agent.change_undone`. A target a person changed since leaves the row `adopted` (409 changed_since); one deleted since
-// leaves it `undone` (200). A retry of any step finishes it. A calibration already started is never undone. Logs and
+// leaves it `undone` (200). A retry of any step finishes it. A calibration already started is never undone. Undo per
+// calendar (slice 2, a `booking.label` change): the notes that calendar's sort made are undone first, each as its own
+// change (one a person changed since is theirs and stays), then the labels that sort set that nobody changed since are
+// cleared and the confirm TownwiseAI made is taken back, so the calendar waits for Use for forecasts again. Logs and
 // audit events carry ids, the action and the source kind only: never a title, a why, a file name or a figure.
 import { objectId } from '@ckeith26/mongo';
 import { AppError, parseInput } from '@ckeith26/server-core';
@@ -15,6 +18,7 @@ import { z } from 'zod';
 import { applyRecorded, recordAfter, recordBefore, recordNotApplied } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
+import { TOWNWISE_AI_AUTHOR } from '../agent/apply.ts';
 import { changeView, mayUndo, targetStates, type AgentChangeView } from '../agent/changes.ts';
 import { wantRefitFor } from '../agent/refit.ts';
 import type { AgentChangeRecord } from '../stores/agent-changes.ts';
@@ -148,9 +152,19 @@ async function removeTarget(ctx: TownwiseContext, caller: MemberPrincipal, locat
       await removeUpload(ctx, scope, location.id, upload.id);
       return 'removed';
     }
+    case 'booking.label': {
+      // Its notes first, so a retry after the labels went still finds them.
+      for (const row of await ctx.stores.agentChanges.listBySource(scope, location.id, { kind: 'calendar', id: change.targetId })) {
+        if (row.action === 'note.add' && (row.status === 'applied' || row.status === 'undoing')) await undoRow(ctx, caller, location, row, { pastChanged: true });
+      }
+      const calendars = ctx.stores.ownerCalendars;
+      const cleared = await calendars.clearAiLabels(scope, location.id, change.targetId, change.targetUpdatedAt ?? change.appliedAt);
+      if (cleared === null) return 'gone';
+      await calendars.unconfirmBy(scope, location.id, change.targetId, TOWNWISE_AI_AUTHOR);
+      return cleared > 0 ? 'removed' : 'gone';
+    }
     case 'rule.add':
-    case 'booking.label':
-      // Not written in slice 1.
+      // Not written before slice 3.
       return 'gone';
   }
 }
@@ -170,29 +184,42 @@ export async function undoAgentChange(ctx: TownwiseContext, req: Request, res: R
   const { scope } = caller;
   const changeId = parseInput(objectId, req.params.changeId);
   const location = await loadLocation(ctx, scope, req.params.locationId);
-  let change = await ctx.stores.agentChanges.find(scope, location.id, changeId);
+  const change = await ctx.stores.agentChanges.find(scope, location.id, changeId);
   if (change === null) throw notFound();
   const author = change.action === 'note.add' ? (await ctx.stores.notes.find(scope, location.id, change.targetId))?.createdBy ?? null : null;
   if (!mayUndo(caller, change, author)) throw new AppError(403, 'forbidden', 'Only an org admin can undo this');
-  const answer = async (row: AgentChangeRecord): Promise<void> => {
-    const states = await targetStates(ctx, scope, location.id, [row]);
-    res.status(200).json({ change: changeView(caller, row, states) });
-  };
+  const after = await undoRow(ctx, caller, location, change);
+  const states = await targetStates(ctx, scope, location.id, [after]);
+  res.status(200).json({ change: changeView(caller, after, states) });
+}
+
+/**
+ * The undo's steps for one row the caller may undo (the top): the row after, `undone`; throws 409 changed_since once a
+ * person changed the target (the row reads `adopted`; with `pastChanged`, a calendar's undo of its notes, it answers the
+ * row instead) and 409 change_in_progress while it is still being applied.
+ */
+async function undoRow(
+  ctx: TownwiseContext, caller: MemberPrincipal, location: LocationRecord, row: AgentChangeRecord, opts: { pastChanged?: boolean } = {},
+): Promise<AgentChangeRecord> {
+  const { scope } = caller;
+  let change: AgentChangeRecord | null = row;
   if (change.status === 'applied') {
     change = await ctx.stores.agentChanges.markUndoing(scope, location.id, change.id, { by: caller.userId, now: ctx.now() })
       ?? await ctx.stores.agentChanges.find(scope, location.id, change.id);
     if (change === null) throw notFound();
   }
-  if (change.status === 'undone') {
-    await answer(change);
-    return;
+  if (change.status === 'undone') return change;
+  if (change.status === 'adopted') {
+    if (opts.pastChanged === true) return change;
+    throw changedSince();
   }
-  if (change.status === 'adopted') throw changedSince();
   if (change.status === 'applying') throw new AppError(409, 'change_in_progress', 'TownwiseAI is still saving this');
   const removed = await removeTarget(ctx, caller, location, change);
   if (removed === 'changed') {
     await ctx.stores.agentChanges.markAdopted(scope, location.id, change.id, { now: ctx.now() });
     ctx.logger.info({ orgId: scope.orgId, locationId: location.id, changeId: change.id, action: change.action }, 'townwise.agent_change_adopted');
+    // A calendar's own undo goes on past a note a person changed: that note is theirs now.
+    if (opts.pastChanged === true) return change;
     throw changedSince();
   }
   if (await ctx.stores.agentChanges.markUndone(scope, location.id, change.id, { by: caller.userId, now: ctx.now() })) {
@@ -209,5 +236,5 @@ export async function undoAgentChange(ctx: TownwiseContext, req: Request, res: R
   }
   const after = await ctx.stores.agentChanges.find(scope, location.id, change.id);
   if (after === null) throw notFound();
-  await answer(after);
+  return after;
 }

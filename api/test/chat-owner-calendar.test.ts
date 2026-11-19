@@ -28,7 +28,7 @@ function calendar(fields: Partial<OwnerCalendarRecord> = {}): OwnerCalendarRecor
     eventCount: 1, skippedRepeating: 3, status: 'ok', lastSuccessAt: new Date('2026-11-05T00:00:00Z'),
     lastAttemptAt: new Date('2026-11-05T00:00:00Z'), nextRefreshAt: new Date('2026-11-05T06:00:00Z'), leaseUntil: null,
     consecutiveFailures: 0, lastManualRefreshAt: null, createdBy: SENTINEL_USER, createdAt: new Date('2026-11-01T00:00:00Z'), format: null,
-    bookings: null, ...fields,
+    bookings: null, autoSort: null, ...fields,
   };
 }
 

@@ -1,6 +1,6 @@
 // TownwiseAI's changes as people see them (D59, openspec change auto-apply-agent-reads design decisions 10 and 11): who
 // may undo which action, what each change's target is now (there, gone, or changed by a person since), and the log's
-// view of a row. Shared by the activity (agent/activity.ts), the log and the undo (handlers/agent-changes.ts). Reads
+// view of a row (slice 2: a calendar sort's labels are there while any of them is still TownwiseAI's). Shared by the activity (agent/activity.ts), the log and the undo (handlers/agent-changes.ts). Reads
 // only; never a title, a file name or a figure, and the why only in the log, outside view-as.
 import type { MemberPrincipal, OrgScope } from '../access/policy.ts';
 import type { TownwiseContext } from '../app.ts';
@@ -52,6 +52,12 @@ export async function targetStates(
     ctx.stores.files.byIds(scope, ids('item.add')),
     Promise.all(ids('sales_days.add').map((id) => ctx.stores.uploads.get(scope, locationId, id))),
   ]);
+  // Slice 2: a calendar's labels are there while any label of that sort is still TownwiseAI's, unchanged.
+  const labelRows = applied.filter((change) => change.action === 'booking.label');
+  const labelCounts = await Promise.all(labelRows.map((change) => ctx.stores.ownerCalendars.aiLabelCount(
+    scope, locationId, change.targetId, change.targetUpdatedAt ?? change.appliedAt,
+  )));
+  const labelsThere = new Set(labelRows.filter((_, index) => (labelCounts[index] ?? 0) > 0).map((change) => change.id));
   const noteById = new Map(notes.map((note) => [note.id, note]));
   const itemIds = new Set(items.filter((file) => file.status !== 'deleting').map((file) => file.id));
   const uploadIds = new Set(uploads.flatMap((upload) => (upload === null ? [] : [upload.id])));
@@ -64,6 +70,7 @@ export async function targetStates(
     }
     if (change.action === 'item.add') return [change.id, target(itemIds.has(change.targetId) ? 'there' : 'gone')];
     if (change.action === 'sales_days.add') return [change.id, target(uploadIds.has(change.targetId) ? 'there' : 'gone')];
+    if (change.action === 'booking.label') return [change.id, target(labelsThere.has(change.id) ? 'there' : 'gone')];
     return [change.id, target('there')];
   }));
 }
@@ -88,6 +95,8 @@ export interface AgentChangeView {
   startDate: string | null;
   endDate: string | null;
   noteKind: NoteKind | null;
+  /** How many records it added (a calendar sort's labels); null otherwise. */
+  count: number | null;
   why: string | null;
   undoable: boolean;
   /** The note, item or upload it added (an id: a note's page opens by it), or null for a row never applied. */
@@ -100,7 +109,7 @@ export function changeView(
   return {
     id: change.id, at: change.appliedAt.toISOString(), action: change.action, sourceKind: change.sourceKind,
     sourceRef: change.sourceKind === 'file' && change.sourceId !== null ? `f_${change.sourceId}` : null, status: change.status,
-    startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, why: caller.viewAs === null ? change.why : null,
+    startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, count: change.count, why: caller.viewAs === null ? change.why : null,
     undoable: undoable(caller, change, states), targetId: change.status === 'applying' ? null : change.targetId,
   };
 }

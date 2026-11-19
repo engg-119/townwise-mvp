@@ -1,7 +1,8 @@
 // The one writer of TownwiseAI's own changes (D59, openspec change auto-apply-agent-reads design decisions 5, 6, 7 and
 // 9): every source calls applyChange with a typed candidate, and it answers `applied`, `duplicate`, `conflict` or
-// `invalid`. It only adds: a note (`note.add`), a summary item (`item.add`) or missing sales days (`sales_days.add`);
-// it never changes or deletes anything that exists. There are no transactions (DocumentDB), so the writes are ordered
+// `invalid`. It only adds: a note (`note.add`), a summary item (`item.add`), missing sales days (`sales_days.add`) or
+// (slice 2) the labels of a file calendar sorted on import (`booking.label`, one change per calendar, whose writer labels
+// only events nobody labeled); it never changes or deletes anything that exists. There are no transactions (DocumentDB), so the writes are ordered
 // for retries: the ledger row is inserted `applying` under the planned target id and a dedupe key unique per location in
 // every status; the target is written under that id (a second create fails on its primary key and counts as done); the
 // row is set `applied` with the target's updatedAt by compare-and-set; the audit event is recorded only by the call
@@ -29,7 +30,7 @@ import { MAX_WHY_CHARS } from '../stores/agent-changes.ts';
 import type { AuditEventInput } from '../stores/audit-events.ts';
 import type { RuleSchedule } from '../stores/business-rules.ts';
 import type { AiSource } from '../stores/files.ts';
-import type { NoteContent, NoteRecord } from '../stores/notes.ts';
+import type { NoteContent, NoteLink, NoteRecord } from '../stores/notes.ts';
 import { noteCovers } from './questions.ts';
 import { wantRefitFor } from './refit.ts';
 
@@ -62,19 +63,24 @@ export interface NoteCandidate extends CandidateBase {
   readonly createdBy: string;
   readonly byStaff?: boolean;
   readonly source?: AiSource;
+  /** Slice 2: the calendar event a note for an upcoming booking is made from (D58's link). */
+  readonly fromEvent?: NoteLink;
 }
 
 /**
- * An item or missing sales days, written by the caller's own writer under the planned id. `key` is the content the
- * dedupe key is made of. `write` resolves the target's updatedAt, or null when it added nothing after all (the row is
- * then removed, and the answer is `invalid`); a second call must complete the first's write.
+ * An item, missing sales days or a calendar's labels, written by the caller's own writer under the planned id. `key` is
+ * the content the dedupe key is made of. `write` is handed the ledger row (`applying`; a retry gets the same row, so its
+ * `appliedAt` is a time planned before any write) and resolves the target's updatedAt, or null when it added nothing
+ * after all (the row is then removed, and the answer is `invalid`); a second call must complete the first's write.
  */
 export interface WrittenCandidate extends CandidateBase {
-  readonly action: 'item.add' | 'sales_days.add';
+  readonly action: 'item.add' | 'sales_days.add' | 'booking.label';
   readonly key: string;
-  /** The dates the days cover, for the activity and the refit; null for an item. */
+  /** The dates the days (or a calendar's buyouts and parties) cover, for the activity and the refit; null for an item. */
   readonly dates: { readonly startDate: string; readonly endDate: string } | null;
-  readonly write: () => Promise<Date | null>;
+  /** How many records it adds, for the activity's words (a calendar's labels); left out otherwise. */
+  readonly count?: number;
+  readonly write: (change: AgentChangeRecord) => Promise<Date | null>;
 }
 
 export type ChangeCandidate = NoteCandidate | WrittenCandidate;
@@ -167,6 +173,7 @@ async function writeNote(ctx: TownwiseContext, scope: OrgScope, candidate: NoteC
     return await ctx.stores.notes.create(scope, candidate.locationId, candidate.note, {
       createdBy: candidate.createdBy, now: ctx.now(), id: candidate.targetId, agent: { changeId: change.id },
       ...(candidate.byStaff === true ? { byStaff: true } : {}), ...(candidate.source === undefined ? {} : { source: candidate.source }),
+      ...(candidate.fromEvent === undefined ? {} : { fromEvent: candidate.fromEvent }),
     });
   } catch (err) {
     if (!isDuplicateKeyError(err)) throw err;
@@ -204,7 +211,8 @@ export async function applyChange(
       id: new Types.ObjectId().toHexString(), locationId: candidate.locationId, sourceKind: candidate.sourceKind, sourceId: candidate.sourceId,
       action: candidate.action, targetId: candidate.targetId, dedupeKey, confidence: candidate.confidence, why: cutWhy(candidate.why),
       onBehalfOf: candidate.onBehalfOf, startDate: dates?.startDate ?? null, endDate: dates?.endDate ?? null,
-      ...(candidate.action === 'note.add' ? { noteKind: candidate.note.kind } : {}), now: ctx.now(),
+      ...(candidate.action === 'note.add' ? { noteKind: candidate.note.kind } : {}),
+      ...(candidate.action !== 'note.add' && candidate.count !== undefined ? { count: candidate.count } : {}), now: ctx.now(),
     });
     row = inserted.record;
     // Another change took the key between the read and the insert.
@@ -223,7 +231,7 @@ export async function applyChange(
   if (candidate.action === 'note.add') {
     updatedAt = (await writeNote(ctx, scope, candidate, row))?.updatedAt ?? null;
   } else {
-    updatedAt = await candidate.write();
+    updatedAt = await candidate.write(row);
   }
   if (updatedAt === null) {
     // Nothing was added after all (a cap, or the target went): the key is freed, so a later read may try again.

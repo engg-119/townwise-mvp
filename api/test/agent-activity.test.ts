@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import type { MemberPrincipal, OrgScope } from '../src/access/policy.ts';
 import { activityFor, agentChangeSource, ACTIVITY_SOURCES, type ActivityInput } from '../src/agent/activity.ts';
-import { changeView, mayUndo, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
+import { changeView, mayUndo, targetStates, undoable, type Target, type TargetState } from '../src/agent/changes.ts';
 import type { TownwiseContext } from '../src/app.ts';
 import type { AgentChangeRecord } from '../src/stores/agent-changes.ts';
 
@@ -23,7 +23,7 @@ function change(over: Partial<AgentChangeRecord> = {}): AgentChangeRecord {
   return {
     id: n, locationId: LOCATION, sourceKind: 'file', sourceId: 'f'.repeat(24), action: 'note.add', targetId: `t${n.slice(1)}`,
     dedupeKey: `key-${n}`, confidence: 'high', why: SENTINEL, onBehalfOf: 'adder', status: 'applied', targetUpdatedAt: AT,
-    startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', appliedAt: AT, statusAt: AT, statusBy: 'townwise_ai', ...over,
+    startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', count: null, appliedAt: AT, statusAt: AT, statusBy: 'townwise_ai', ...over,
   };
 }
 
@@ -33,7 +33,9 @@ const ADMIN: Caller = { role: 'org_admin', userId: 'admin', viewAs: null };
 const VIEW_AS: Caller = { role: 'org_admin', userId: 'admin', viewAs: { grantId: 'g', actor: { userId: 's', email: 's@example.test', sessionId: 'x', verifiedUntil: '' } } };
 
 /** A context whose stores answer `changes` and their targets: notes by id (with their updatedAt), items and uploads. */
-function contextWith(changes: readonly AgentChangeRecord[], targets: { notes?: Record<string, Date>; items?: string[]; uploads?: string[] } = {}): TownwiseContext {
+function contextWith(
+  changes: readonly AgentChangeRecord[], targets: { notes?: Record<string, Date>; items?: string[]; uploads?: string[]; labels?: Record<string, number> } = {},
+): TownwiseContext {
   return {
     stores: {
       agentChanges: { page: () => Promise.resolve({ changes: [...changes], next: null }) },
@@ -43,6 +45,9 @@ function contextWith(changes: readonly AgentChangeRecord[], targets: { notes?: R
       })) },
       files: { byIds: (_scope: OrgScope, wanted: readonly string[]) => Promise.resolve(wanted.filter((id) => targets.items?.includes(id)).map((id) => ({ id, status: 'kept' }))) },
       uploads: { get: (_scope: OrgScope, _location: string, id: string) => Promise.resolve(targets.uploads?.includes(id) === true ? { id } : null) },
+      ownerCalendars: {
+        aiLabelCount: (_scope: OrgScope, _location: string, id: string, at: Date) => Promise.resolve(at.getTime() === AT.getTime() ? targets.labels?.[id] ?? 0 : 0),
+      },
     },
   } as unknown as TownwiseContext;
 }
@@ -61,7 +66,7 @@ describe('TownwiseAI’s changes in its activity (D59)', () => {
     expect(items).toEqual([
       {
         at: AT.toISOString(), kind: 'agent_change', changeId: note.id, action: 'note.add', sourceKind: 'file', status: 'applied',
-        startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', undoable: true,
+        startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', count: null, undoable: true,
       },
       expect.objectContaining({ changeId: undone.id, status: 'undone', undoable: false }),
     ]);
@@ -122,12 +127,34 @@ describe('who may undo, and the log’s view (D59)', () => {
     expect(undoable(MEMBER, { ...row, status: 'adopted' }, states('there'))).toBe(false);
   });
 
+  it('slice 2: a calendar’s labels are one line with their count, undone by an org admin only while any label of that sort is left', async () => {
+    const calendarId = 'c'.repeat(24);
+    const labels = change({
+      action: 'booking.label', sourceKind: 'calendar', sourceId: calendarId, targetId: calendarId, why: null, noteKind: null, count: 12,
+      startDate: '2025-07-12', endDate: '2026-06-20',
+    });
+    expect(mayUndo(MEMBER, labels, null)).toBe(false);
+    expect(mayUndo(ADMIN, labels, null)).toBe(true);
+    const there = await activityFor(input(contextWith([labels], { labels: { [calendarId]: 3 } }), ADMIN), [agentChangeSource]);
+    expect(there).toEqual([{
+      at: AT.toISOString(), kind: 'agent_change', changeId: labels.id, action: 'booking.label', sourceKind: 'calendar', status: 'applied',
+      startDate: '2025-07-12', endDate: '2026-06-20', noteKind: null, count: 12, undoable: true,
+    }]);
+    expect(await activityFor(input(contextWith([labels], { labels: { [calendarId]: 3 } }), MEMBER), [agentChangeSource]))
+      .toEqual([expect.objectContaining({ undoable: false })]);
+    // A person changed every label since (or the calendar went): nothing of the sort is left to undo.
+    expect(await activityFor(input(contextWith([labels], { labels: {} }), ADMIN), [agentChangeSource]))
+      .toEqual([expect.objectContaining({ undoable: false })]);
+    const view = changeView(ADMIN, labels, await targetStates(contextWith([labels], { labels: { [calendarId]: 1 } }), SCOPE, LOCATION, [labels]));
+    expect(view).toMatchObject({ action: 'booking.label', sourceRef: null, count: 12, undoable: true, targetId: calendarId });
+  });
+
   it('the log carries the why outside view-as only, and points at the file and the target', () => {
     const row = change();
     const states = new Map<string, Target>([[row.id, { state: 'there', author: 'townwise_ai' }]]);
     expect(changeView(MEMBER, row, states)).toEqual({
       id: row.id, at: AT.toISOString(), action: 'note.add', sourceKind: 'file', sourceRef: `f_${'f'.repeat(24)}`, status: 'applied',
-      startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', why: SENTINEL, undoable: true, targetId: row.targetId,
+      startDate: '2026-06-14', endDate: '2026-06-14', noteKind: 'private_event', count: null, why: SENTINEL, undoable: true, targetId: row.targetId,
     });
     expect(changeView(VIEW_AS, row, states)).toMatchObject({ why: null, undoable: false });
     expect(changeView(MEMBER, { ...row, status: 'applying' }, states)).toMatchObject({ targetId: null, undoable: false });

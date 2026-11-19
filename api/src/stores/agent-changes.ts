@@ -14,9 +14,12 @@ import type { NoteKind } from './notes.ts';
 
 export const AGENT_CHANGES_COLLECTION = 'tw_agent_changes';
 
-/** What TownwiseAI may do (design decision 6). `rule.add` (slice 3) and `booking.label` (slice 2) are not written yet. */
+/**
+ * What TownwiseAI may do (design decision 6). `rule.add` (slice 3) is not written yet. `booking.label` (slice 2) is one
+ * row per file calendar sorted on import: its target is the calendar, and it covers every label that sort set.
+ */
 export type AgentChangeAction = 'note.add' | 'item.add' | 'sales_days.add' | 'rule.add' | 'booking.label';
-/** Where the change came from. Slice 1 writes `file` only. */
+/** Where the change came from: `file` (slice 1) and `calendar` (slice 2) are written. */
 export type AgentSourceKind = 'file' | 'calendar' | 'weekly' | 'chat';
 export type AgentChangeStatus = 'applying' | 'applied' | 'undoing' | 'undone' | 'adopted';
 export type AgentConfidence = 'high' | 'medium' | 'low';
@@ -49,6 +52,8 @@ interface ChangeFields {
   endDate: string | null;
   /** A note's kind, for the activity's words; absent otherwise. */
   noteKind?: NoteKind;
+  /** How many records the change added, for the activity's words (a calendar sort's labels); absent otherwise. */
+  count?: number;
   appliedAt: Date;
   statusAt: Date;
   /** Who last changed the status (a member's user id, or `townwise_ai`); null once that person is deleted. */
@@ -72,6 +77,7 @@ function changeSchema(): Schema<ChangeFields> {
     startDate: { type: String, default: null },
     endDate: { type: String, default: null },
     noteKind: { type: String, enum: ['closure', 'private_event', 'opening', 'other'] },
+    count: { type: Number, min: 0 },
     appliedAt: { type: Date, required: true },
     statusAt: { type: Date, required: true },
     statusBy: { type: String, default: null },
@@ -107,6 +113,7 @@ export interface AgentChangeRecord {
   readonly startDate: string | null;
   readonly endDate: string | null;
   readonly noteKind: NoteKind | null;
+  readonly count: number | null;
   readonly appliedAt: Date;
   readonly statusAt: Date;
   readonly statusBy: string | null;
@@ -127,6 +134,7 @@ export interface NewAgentChange {
   readonly startDate: string | null;
   readonly endDate: string | null;
   readonly noteKind?: NoteKind;
+  readonly count?: number;
   readonly now: Date;
 }
 
@@ -158,6 +166,8 @@ export interface AgentChangeStore {
    */
   markSourceUndone(scope: OrgScope, locationId: string, source: { kind: AgentSourceKind; id: string }, input: { by: string; now: Date }): Promise<number>;
   find(scope: OrgScope, locationId: string, id: string): Promise<AgentChangeRecord | null>;
+  /** D59 slice 2: every change from one source (a calendar's labels and notes, for its Undo), oldest first. */
+  listBySource(scope: OrgScope, locationId: string, source: { kind: AgentSourceKind; id: string }): Promise<AgentChangeRecord[]>;
   findByKey(scope: OrgScope, locationId: string, dedupeKey: string): Promise<AgentChangeRecord | null>;
   /** The location's changes newest first, `limit` a page, older than `before` when given. */
   page(scope: OrgScope, locationId: string, input: { before?: { at: Date; id: string }; limit: number }): Promise<AgentChangePage>;
@@ -186,6 +196,7 @@ function toChange(doc: ChangeDoc): AgentChangeRecord {
     startDate: doc.startDate,
     endDate: doc.endDate,
     noteKind: doc.noteKind ?? null,
+    count: doc.count ?? null,
     appliedAt: doc.appliedAt,
     statusAt: doc.statusAt,
     statusBy: doc.statusBy,
@@ -204,7 +215,8 @@ export function createAgentChangeStore(connection: Connection): AgentChangeStore
           _id: new Types.ObjectId(input.id), ...of(scope, input.locationId), sourceKind: input.sourceKind, sourceId: input.sourceId,
           action: input.action, targetId: new Types.ObjectId(input.targetId), dedupeKey: input.dedupeKey, confidence: input.confidence,
           why: input.why, onBehalfOf: input.onBehalfOf, status: 'applying', targetUpdatedAt: null, startDate: input.startDate,
-          endDate: input.endDate, ...(input.noteKind === undefined ? {} : { noteKind: input.noteKind }), appliedAt: input.now,
+          endDate: input.endDate, ...(input.noteKind === undefined ? {} : { noteKind: input.noteKind }),
+          ...(input.count === undefined ? {} : { count: input.count }), appliedAt: input.now,
           statusAt: input.now, statusBy: 'townwise_ai',
         });
         return { record: toChange(doc.toObject<ChangeDoc>()), created: true };
@@ -254,6 +266,10 @@ export function createAgentChangeStore(connection: Connection): AgentChangeStore
     async find(scope, locationId, id) {
       const doc = await Change.findOne(one(scope, locationId, id)).lean();
       return doc === null ? null : toChange(doc);
+    },
+    async listBySource(scope, locationId, source) {
+      const docs = await Change.find({ ...of(scope, locationId), sourceKind: source.kind, sourceId: source.id }).sort({ appliedAt: 1, _id: 1 }).lean();
+      return docs.map(toChange);
     },
     async findByKey(scope, locationId, dedupeKey) {
       const doc = await Change.findOne({ ...of(scope, locationId), dedupeKey }).lean();

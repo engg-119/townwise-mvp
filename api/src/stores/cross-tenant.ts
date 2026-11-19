@@ -1,7 +1,7 @@
 // Operations keyed by a person, or spanning organizations (spec 6.10 rule 8). The list is closed:
 // findActiveSeat, findOpenInvites, claimInvite, declineInvite, latestRemovedSeat, adminOrgStats, peopleRecords,
 // deletePersonRecords, the forecast lab's findLabCallback, the file reader's claimNextImport, the TownwiseAI reader's
-// claimNextAiRead, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
+// claimNextAiRead and (D59) claimNextCalendarSort, the daily file sweep's claimFileSweep, finishFileSweep, sweepCandidates, removeOldUploadDays and
 // existingFileIds, the calendar refresh loop's claimDueCalendar and claimDueGoogleConnection, Google access's
 // hasGoogleConnectionElsewhere and googleConnectionsOfPerson (openspec change connect-google-calendar, design decisions
 // 10 and 11), the weekly refresh's weeklyCandidates, liveScheduledCalibrations, staleStartingWeeks and
@@ -436,17 +436,14 @@ export interface ClaimedAiRead {
  * `queued` (and past its `notBefore`, when an attempt put it back), or `reading` under a lease that ran out (its replica
  * stopped), leaving out a suspended organization's (they wait until it is active again), files being deleted, and every
  * read of an organization that has one `reading` under a live lease, so one organization never holds two replicas'
- * readers at once. The claim sets `reading`, the lease for `leaseMs`, the start, and counts the attempt.
+ * readers at once (D59: nor while one of its calendars is being sorted under a live lease). The claim sets `reading`,
+ * the lease for `leaseMs`, the start, and counts the attempt.
  */
 export async function claimNextAiRead(
   connection: Connection, input: { readonly now: Date; readonly leaseMs: number },
 ): Promise<ClaimedAiRead | null> {
   const File = fileModel(connection);
-  const [held, busy] = await Promise.all([
-    orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean(),
-    File.distinct('orgId', { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $gte: input.now }) }),
-  ]);
-  const skipped = [...held.map((org) => org._id), ...busy];
+  const skipped = await busyAiOrgs(connection, input.now);
   const doc = await File.findOneAndUpdate(
     {
       $or: [
@@ -465,6 +462,55 @@ export async function claimNextAiRead(
   ).lean();
   if (doc?.ai === undefined) return null;
   return { id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), attempt: doc.ai.attempts };
+}
+
+/**
+ * The organizations the TownwiseAI reader's loop leaves alone now: a suspended one, and one with a file read or (D59) a
+ * calendar sort under a live lease, so an organization holds one of its jobs at a time.
+ */
+async function busyAiOrgs(connection: Connection, now: Date): Promise<Types.ObjectId[]> {
+  const [held, reading, sorting] = await Promise.all([
+    orgModel(connection).find({ status: trusted({ $ne: 'active' }) }, { _id: 1 }).lean(),
+    fileModel(connection).distinct('orgId', { 'ai.status': 'reading', 'ai.leaseUntil': trusted({ $gte: now }) }),
+    calendarSourceModel(connection).distinct('orgId', { 'autoSort.status': 'sorting', 'autoSort.leaseUntil': trusted({ $gte: now }) }),
+  ]);
+  return [...held.map((org) => org._id), ...reading, ...sorting];
+}
+
+/**
+ * D59: a file calendar's automatic sort the TownwiseAI reader's loop claimed. Only access/policy.ts's
+ * scopeForClaimedCalendarSort turns it into an OrgScope. `attempt` is the claim's token, as a read's.
+ */
+export interface ClaimedCalendarSort {
+  readonly calendarId: string;
+  readonly orgId: string;
+  readonly locationId: string;
+  readonly attempt: number;
+}
+
+/**
+ * D59 (openspec change auto-apply-agent-reads design decision 3): the TownwiseAI reader's loop claims a file calendar's
+ * automatic sort as it claims a read: the one queued first that is past its `notBefore`, or `sorting` under a lease that
+ * ran out, leaving out the organizations busyAiOrgs names. The claim sets `sorting` and the lease, and counts the attempt.
+ */
+export async function claimNextCalendarSort(
+  connection: Connection, input: { readonly now: Date; readonly leaseMs: number },
+): Promise<ClaimedCalendarSort | null> {
+  const skipped = await busyAiOrgs(connection, input.now);
+  const doc = await calendarSourceModel(connection).findOneAndUpdate(
+    {
+      kind: 'file',
+      $or: [
+        { 'autoSort.status': 'queued', 'autoSort.notBefore': trusted({ $not: { $gt: input.now } }) },
+        { 'autoSort.status': 'sorting', 'autoSort.leaseUntil': trusted({ $lt: input.now }) },
+      ],
+      ...(skipped.length === 0 ? {} : { orgId: trusted({ $nin: skipped }) }),
+    },
+    { $set: { 'autoSort.status': 'sorting', 'autoSort.leaseUntil': new Date(input.now.getTime() + input.leaseMs) }, $inc: { 'autoSort.attempts': 1 } },
+    { sort: { 'autoSort.queuedAt': 1, _id: 1 }, returnDocument: 'after' },
+  ).lean();
+  if (doc?.autoSort === undefined) return null;
+  return { calendarId: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), attempt: doc.autoSort.attempts };
 }
 
 const SWEEP_ID = 'sweeper';

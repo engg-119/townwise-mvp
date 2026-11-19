@@ -134,6 +134,11 @@ describe('isolation (source)', () => {
     expect(callers).toEqual(['access/policy.ts', 'files/ai-reader.ts']);
   });
 
+  it('D59 slice 2: only access/policy.ts mints a claimed calendar sort’s scope, and only files/ai-reader.ts asks for it', () => {
+    const callers = sourceFiles().filter((file) => file.text.includes('scopeForClaimedCalendarSort(')).map((file) => file.path).sort();
+    expect(callers).toEqual(['access/policy.ts', 'files/ai-reader.ts']);
+  });
+
   it('a file’s own text leaves the parse code only for a file someone let TownwiseAI read (spec 11A.9), attached (D36) or gave Ordering setup (D41)', () => {
     // readPdfText and readWordText are the only ways a PDF's or Word document's text outside a table leaves the parse
     // code; only the AI text thread calls them, and only the TownwiseAI readers' input (files/extract/input.ts), the
@@ -245,10 +250,14 @@ describe('isolation (source)', () => {
     // a figure (calendar-event-suggestions). D58 (learn-from-calendar-bookings): the booking routes
     // (handlers/calendar-bookings.ts) label a file calendar's events and write notes from them, and the lab input
     // (lab/input.ts) reads only the confirmed buyouts and parties, as dates and label, through bookingsBetween (below).
+    // D59 slice 2: TownwiseAI's sort on import (calendar/auto-sort.ts) labels a file calendar's events and notes its
+    // upcoming bookings as the booking routes do, and its Undo per calendar (handlers/agent-changes.ts) and the changes'
+    // views (agent/changes.ts) clear and count the labels that sort set, never reading a title.
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
-      'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts', 'chat/tools/owner-calendar.ts', 'handlers/calendar-bookings.ts',
-      'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
-      'handlers/weekly-suggestions.ts', 'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
+      'agent/changes.ts', 'calendar/auto-sort.ts', 'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts',
+      'chat/tools/owner-calendar.ts', 'handlers/agent-changes.ts', 'handlers/calendar-bookings.ts', 'handlers/deletion.ts',
+      'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts', 'handlers/weekly-suggestions.ts',
+      'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts', 'stores/owner-calendars.ts',
     ]);
     const input = sourceFiles().find((each) => each.path === 'lab/input.ts')?.text ?? '';
     expect([...input.matchAll(/\bownerCalendars\b\.?(\w*)/g)].map((match) => match[1])).toEqual(['bookingsBetween']);

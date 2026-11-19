@@ -6,8 +6,8 @@ import type { Request } from 'express';
 
 import type { ListedBlob } from '../files/blobs.ts';
 import type {
-  ClaimedAiRead, ClaimedCalendar, ClaimedGoogleConnection, ClaimedImport, JoinedSeat, LabCallbackClaim, LiveScheduledCalibration,
-  RefitCandidate, StaleChatTurn, StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, UntitledAiNote, WeeklyCandidate,
+  ClaimedAiRead, ClaimedCalendar, ClaimedCalendarSort, ClaimedGoogleConnection, ClaimedImport, JoinedSeat, LabCallbackClaim,
+  LiveScheduledCalibration, RefitCandidate, StaleChatTurn, StaleStartingWeek, StaleSuggestionPass, SweptFile, SweptImport, UntitledAiNote, WeeklyCandidate,
 } from '../stores/cross-tenant.ts';
 import type { OrgRecord, OrgStore } from '../stores/orgs.ts';
 import type { OpenAsAdminGrantRecord } from '../stores/view-as-grants.ts';
@@ -43,6 +43,11 @@ export function scopeForClaimedImport(claim: ClaimedImport): OrgScope {
 
 /** The TownwiseAI reader only (files/ai-reader.ts), for the organization of the file whose read it just claimed. */
 export function scopeForClaimedAiRead(claim: ClaimedAiRead): OrgScope {
+  return mint(claim.orgId);
+}
+
+/** D59: the TownwiseAI reader's loop only (files/ai-reader.ts), for the organization of the calendar sort it just claimed. */
+export function scopeForClaimedCalendarSort(claim: ClaimedCalendarSort): OrgScope {
   return mint(claim.orgId);
 }
 

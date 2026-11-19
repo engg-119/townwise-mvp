@@ -1,7 +1,8 @@
 // D59: the one writer (agent/apply.ts) against the database: a note applied with its ledger row, its audit event (ids,
 // the action and the source kind only) and a refit wanted only for a training day; a crash between the steps finished by
 // a retry with one note; two sources racing write one note; a person's covering note blocks; an undone change is never
-// made again; a writer that adds nothing frees its key. Synthetic notes and days only.
+// made again; a writer that adds nothing frees its key; (slice 2) a calendar's labels are one change whose retry writes at
+// the time planned first. Synthetic notes and days only.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -183,5 +184,38 @@ describe('applyChange', () => {
     const written = await applyChange(server.ctx, p.scope, { ...base, targetId: id(), write: () => Promise.resolve(at) });
     expect(written.outcome).toBe('applied');
     expect(written.change).toMatchObject({ action: 'item.add', targetUpdatedAt: at, startDate: null });
+  });
+
+  it('slice 2: a calendar’s labels are one change whose writer gets the row, so a retry writes at the time planned first', async () => {
+    const p = await place();
+    await addSalesDay(server, { orgId: p.orgId, locationId: p.locationId, date: '2026-05-01', guests: 50, netSalesCents: 100_000 });
+    const calendarId = id();
+    const seen: Date[] = [];
+    const label = (write: (at: Date) => Promise<Date | null>) => applyChange(server.ctx, p.scope, {
+      action: 'booking.label', locationId: p.locationId, sourceKind: 'calendar', sourceId: calendarId, targetId: calendarId, confidence: 'high',
+      why: null, onBehalfOf: 'adder', actor: TOWNWISE_AI_ACTOR, key: `calendar:${calendarId}`,
+      dates: { startDate: '2026-04-11', endDate: '2026-06-20' }, count: 7,
+      write: (change) => {
+        seen.push(change.appliedAt);
+        return write(change.appliedAt);
+      },
+    });
+    // The labels were written, then the attempt stopped before the row was marked applied.
+    await expect(label(() => Promise.reject(new Error('stopped')))).rejects.toThrow('stopped');
+    expect((await rowsOf(p)).map((row) => row.status)).toEqual(['applying']);
+    server.clock.advance(5_000);
+    const retried = await label((at) => Promise.resolve(at));
+    expect(retried.outcome).toBe('applied');
+    expect(seen).toHaveLength(2);
+    expect(seen[1]).toEqual(seen[0]);
+    expect(retried.change).toMatchObject({
+      action: 'booking.label', sourceKind: 'calendar', targetId: calendarId, count: 7, targetUpdatedAt: seen[0], startDate: '2026-04-11',
+    });
+    // A past booking: the training days changed.
+    expect(await refitOf(p)).toMatchObject({ wantedAt: expect.any(Date) as unknown });
+    // The same calendar again (its key) is the change already made.
+    expect((await label((at) => Promise.resolve(at))).outcome).toBe('applied');
+    expect(seen).toHaveLength(2);
+    expect(await rowsOf(p)).toHaveLength(1);
   });
 });

@@ -11,7 +11,7 @@
 // does not know as nothing.
 //
 // D59 (openspec change auto-apply-agent-reads, design decision 11): each change TownwiseAI saved on its own, as
-// `agent_change { changeId, action, sourceKind, status, startDate, endDate, noteKind, undoable }`, dated when it was
+// `agent_change { changeId, action, sourceKind, status, startDate, endDate, noteKind, count, undoable }`, dated when it was
 // applied, with no title, why, file name or figure (the why is in the log). `undoable` is false under view-as, once a
 // person changed the target, and for a caller the action's role refuses. The upload a `sales_days.add` change wrote is
 // then left out, so the change shows once.
@@ -39,7 +39,7 @@ export type ActivityItem =
   | { at: string; kind: 'file_processed'; fileId: string; firstDate: string; lastDate: string; dayCount: number }
   | {
     at: string; kind: 'agent_change'; changeId: string; action: AgentChangeAction; sourceKind: AgentSourceKind; status: AgentChangeStatus;
-    startDate: string | null; endDate: string | null; noteKind: NoteKind | null; undoable: boolean;
+    startDate: string | null; endDate: string | null; noteKind: NoteKind | null; count: number | null; undoable: boolean;
   };
 
 export interface ActivityInput {
@@ -129,7 +129,7 @@ export const agentChangeSource: ActivitySource = async ({ ctx, scope, locationId
   const states = await targetStates(ctx, scope, locationId, shown);
   return shown.map((change): SourceItem => ({
     at: change.appliedAt.toISOString(), kind: 'agent_change', changeId: change.id, action: change.action, sourceKind: change.sourceKind,
-    status: change.status, startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind,
+    status: change.status, startDate: change.startDate, endDate: change.endDate, noteKind: change.noteKind, count: change.count,
     undoable: caller === undefined ? false : undoable(caller, change, states),
     ...(change.action === 'sales_days.add' ? { uploadId: change.targetId } : {}),
   }));

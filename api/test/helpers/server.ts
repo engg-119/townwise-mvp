@@ -25,6 +25,7 @@ import { createTurnRunner, type TurnRunner } from '../../src/chat/turn-runner.ts
 import { configSchema as townwiseSchema } from '../../src/config.ts';
 import { createAiReadActions } from '../../src/files/ai-actions.ts';
 import { createAiReader, type AiReader, type AiReaderDeps, type OnAiRead } from '../../src/files/ai-reader.ts';
+import { createCalendarSorts } from '../../src/calendar/auto-sort.ts';
 import type { FileBlobs } from '../../src/files/blobs.ts';
 import type { FileReaderModel } from '../../src/files/extract/reader.ts';
 import type { AiTextInput, AiTextOutcome } from '../../src/files/parse/ai-text.ts';
@@ -241,10 +242,11 @@ export async function startTownwiseServer(opts?: {
         : OFF_ACTIVITY,
     };
     const { aroundOnRead = (actions: OnAiRead) => actions, ...readerOpts } = opts?.aiReader ?? { model: undefined };
+    const aiContext = createTownwiseContext(baseDeps);
     const aiReader = files === undefined || readerOpts.model === undefined ? null : createAiReader({
       connection: mongo.connection, stores: createTownwiseStores(mongo.connection), authStores, blobs: files, logger, now: clock.now,
-      pollMs: 60_000, filesMonthlyBudgetUsd: 5, onRead: aroundOnRead(createAiReadActions(createTownwiseContext(baseDeps))),
-      agentAuto: config.TOWNWISE_AGENT_AUTO, ...readerOpts,
+      pollMs: 60_000, filesMonthlyBudgetUsd: 5, onRead: aroundOnRead(createAiReadActions(aiContext)),
+      agentAuto: config.TOWNWISE_AGENT_AUTO, sorts: createCalendarSorts(aiContext), ...readerOpts,
       model: readerOpts.model,
     });
     const deps = { ...baseDeps, aiReader: aiReader ?? undefined };
