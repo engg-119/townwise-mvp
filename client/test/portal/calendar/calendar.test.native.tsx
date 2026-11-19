@@ -351,7 +351,7 @@ describe('found by research (D66)', () => {
   test('the banner shows for Research now on native too', async () => {
     const { api } = setup({ research: researchBody('press', 'running') });
     await renderApp(`/locations/l1/calendar?day=${SATURDAY}`, api);
-    expect(await screen.findByText(/^Researching .+ and its town\. What it finds shows on the calendar when it finishes\./)).toBeTruthy();
+    expect(await screen.findByText(/^Researching .+ and nearby\. What it finds shows on the calendar when it finishes\./)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Dismiss' })).toBeTruthy();
   });
 });

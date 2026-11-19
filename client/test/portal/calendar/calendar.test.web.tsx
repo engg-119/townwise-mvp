@@ -1155,8 +1155,8 @@ describe('found by research (D66)', () => {
   test('a running run a person started says it is researching; a weekly run shows no banner', async () => {
     const running = setup(meOf(ACCESS.member), { research: researchBody('early', 'running') });
     await renderAt('/locations/l1/calendar?day=2026-11-21', running.api);
-    const words = await screen.findByText(/^Researching .+ and its town\. What it finds shows on the calendar when it finishes\./);
-    expect(words.textContent).toMatch(/^Researching .+ and its town\. What it finds shows on the calendar when it finishes\. Open the Town tab\.$/);
+    const words = await screen.findByText(/^Researching .+ and nearby\. What it finds shows on the calendar when it finishes\./);
+    expect(words.textContent).toMatch(/^Researching .+ and nearby\. What it finds shows on the calendar when it finishes\. Open the Town tab\.$/);
     cleanup();
     window.localStorage.clear();
     const weekly = setup(meOf(ACCESS.member), { research: researchBody('weekly', 'done', 4) });
