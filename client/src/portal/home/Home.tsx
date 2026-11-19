@@ -179,7 +179,10 @@ function HomeView(props: {
           readOnlyId={readOnlyId}
         />
       )}
-      <ThisWeek week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} />
+      <ThisWeek
+        week={week} calendar={calendar} metric={metric} history={hasDays} forecast={forecast?.available === true ? forecast : null} entries={entries}
+        locationId={locationId}
+      />
       <BlockRow
         items={[
           {
