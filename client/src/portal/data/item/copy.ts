@@ -22,6 +22,8 @@ export const ITEM = {
   calendarGone: 'This calendar isn’t here anymore. It may have been removed.',
   /** Under a calendar's status: Refresh and Remove live in the Calendar's Your calendars. */
   manageCalendars: 'Manage it on the Calendar',
+  /** Under a calendar export's status (D58, kept `calendar_export`): its events are imported in Your calendars. */
+  importCalendar: 'Open Your calendars on the Calendar',
   show: 'Show',
   days: 'Days',
   original: 'Original file',
