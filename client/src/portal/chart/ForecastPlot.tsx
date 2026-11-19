@@ -11,8 +11,12 @@ import { Mono } from '../ui/text';
 // forecast; the same weekday last year is a faint 1px `line` line with small dots. A day with no point leaves a gap in
 // the lines. Home draws its 7 days with it (home/WeekChart.tsx), the Calendar its month above the grid
 // (calendar/MonthChart.tsx) and each day of its week view as a slice (`from`, `to`): the viewBox shows only those
-// columns, and the lines keep the neighbors' points, so a line runs on across a slice's edge. `shaded` is today's
-// column (`white` at 5%), `lit` the chosen or hovered one (`white` at 8% on Home, as before). `words` stand upright in
+// columns, and the lines keep the neighbors' points, so a line runs on across a slice's edge (a slice is handed only its
+// own day and its neighbors, calendar/chart.ts chartWindow, so a long week strip draws each day in constant time).
+// `shaded` is today's column (`white` at 5%), `lit` the chosen or hovered one (`white` at 8% on Home, as before), and
+// `chosen` the Calendar's selected day (`mint` at 16% with 1px `mint` edges, D64), so it never reads as today's shade
+// and a hovered column beside it doesn't take its place [CONFIRM: the chart's selected day tinted `mint` at 16% with
+// 1px `mint` edges, apart from today's `white` 5% shade]. `words` stand upright in
 // columns too narrow for words across (the month's). The drawing is always aria-hidden: the surface that draws it says
 // each day in words. `PlotKey` names only what is drawn.
 
@@ -86,6 +90,12 @@ function columnBox(index: number, slot: number, height: number): string {
   return `M${String(r2(index * slot))} 0 h${String(r2(slot))} V${String(height)} h${String(-r2(slot))} Z`;
 }
 
+/** The chosen column's box, half a pixel in, so its 1px edges are whole. */
+function chosenBox(index: number, slot: number, height: number): string {
+  const inner = r2(Math.max(0, slot - 1));
+  return `M${String(r2(index * slot + 0.5))} 0.5 h${String(inner)} V${String(height - 0.5)} h${String(-inner)} Z`;
+}
+
 export function ForecastPlot(props: {
   days: readonly PlotDay[];
   /** The scale's round top. */
@@ -100,6 +110,8 @@ export function ForecastPlot(props: {
   lit?: number | null;
   /** Today's column, shaded. */
   shaded?: number | null;
+  /** The Calendar's selected day's column, tinted `mint` with `mint` edges. */
+  chosen?: number | null;
   /** Words standing upright in each column, bottom up (a status word in place of a point). */
   words?: readonly (string | null)[];
 }): React.JSX.Element {
@@ -121,10 +133,14 @@ export function ForecastPlot(props: {
   const drawn = (index: number): boolean => index >= from && index < to;
   const shaded = props.shaded ?? null;
   const lit = props.lit ?? null;
+  const chosen = props.chosen ?? null;
   return (
     <Svg width="100%" height={height} viewBox={`${String(r2(from * slot))} 0 ${String(r2(width))} ${String(height)}`} preserveAspectRatio="none" aria-hidden>
       {shaded === null || !drawn(shaded) ? null : <Path data-shade="today" d={columnBox(shaded, slot, height)} fill={C.white} fillOpacity={0.05} />}
       {lit === null || !drawn(lit) ? null : <Path data-hover="day" d={columnBox(lit, slot, height)} fill={C.white} fillOpacity={0.08} />}
+      {chosen === null || !drawn(chosen) ? null : (
+        <Path data-chosen="day" d={chosenBox(chosen, slot, height)} fill={C.mint} fillOpacity={0.16} stroke={C.mint} strokeWidth={1} />
+      )}
       <Path d={`M${String(r2(from * slot))} 0.5 h${String(r2(width))} M${String(r2(from * slot))} ${String(height - 0.5)} h${String(r2(width))}`} stroke={C.border} strokeWidth={1} />
       {band(false).map((d) => <Path key={d} data-series="range" d={d} fill={C.raised} stroke={C.line} strokeWidth={1} />)}
       {band(true).map((d) => <Path key={d} data-series="outlook-range" d={d} fill={C.raised} fillOpacity={0.5} stroke={C.line} strokeWidth={1} strokeDasharray="3 2" />)}

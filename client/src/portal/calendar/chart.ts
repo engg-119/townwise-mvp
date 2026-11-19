@@ -65,19 +65,44 @@ export function calendarChart(dates: readonly string[], input: CalendarInput, la
     };
   });
   const values = days.flatMap((day) => [day.point?.high ?? null, day.actual, day.lastYear]).filter((value): value is number => value !== null);
+  return { days, top: scaleTop(Math.max(0, ...values)), drawn: chartDrawn(days) };
+}
+
+/** Which series `days` draw, for the key: the week view's key names those of the 7 days in view. */
+export function chartDrawn(days: readonly CalendarChartDay[]): Required<PlotDrawn> {
   return {
-    days,
-    top: scaleTop(Math.max(0, ...values)),
-    drawn: {
-      forecast: days.some((day) => day.point !== null),
-      actual: days.some((day) => day.actual !== null),
-      lastYear: days.some((day) => day.lastYear !== null),
-      outlook: days.some((day) => day.outlook),
-    },
+    forecast: days.some((day) => day.point !== null),
+    actual: days.some((day) => day.actual !== null),
+    lastYear: days.some((day) => day.lastYear !== null),
+    outlook: days.some((day) => day.outlook),
   };
 }
 
 /** Whether the chart draws anything: with nothing to draw it is left out. */
 export function chartDraws(chart: CalendarChart): boolean {
   return chart.drawn.forecast || chart.drawn.actual || chart.drawn.lastYear;
+}
+
+/**
+ * The month chart's upright words: each day's status word while the chart draws a forecast somewhere, else none, since
+ * a month with no forecast would be a column of words per day that the grid already says; the chart says it once
+ * under the plot instead (MonthChart.tsx). [CONFIRM: a month chart with no forecast point draws no status words and
+ * one line, “No forecast for these days yet.”]
+ */
+export function chartWords(chart: CalendarChart): (string | null)[] {
+  return chart.days.map((day) => (chart.drawn.forecast ? day.status : null));
+}
+
+/** A day's slice of the chart in the week view: the day with its neighbors either side, and where it is among them. */
+export interface ChartWindow { days: CalendarChartDay[]; at: number; top: number }
+
+/**
+ * Each day's slice (D64), by date: the day and its neighbors, which its lines run on to, so each of the week strip's
+ * columns draws a constant few days however long the strip grows, rather than all of them.
+ */
+export function chartWindows(chart: CalendarChart): Map<string, ChartWindow> {
+  return new Map(chart.days.map((day, index) => {
+    const from = Math.max(0, index - 1);
+    return [day.date, { days: chart.days.slice(from, index + 2), at: index - from, top: chart.top }];
+  }));
 }

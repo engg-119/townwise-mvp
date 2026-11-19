@@ -1,5 +1,5 @@
-import { Dimensions, StyleSheet } from 'react-native';
-import { render, screen, within } from '@testing-library/react-native';
+import { AccessibilityInfo, Animated, Dimensions, StyleSheet } from 'react-native';
+import { act, render, screen, within } from '@testing-library/react-native';
 
 import { CalendarGrid } from '../../../src/portal/calendar/CalendarGrid';
 import { buildGrid, gridRange } from '../../../src/portal/calendar/grid';
@@ -129,4 +129,41 @@ test('the selected day stands out (D64): a 2px mint border over the state fill, 
   expect(today.props.accessibilityState).toMatchObject({ selected: false });
   expect(styleOf(today).backgroundColor).toBe(theme.color.raised);
   expect(styleOf(within(today).getByText('11')).fontWeight).toBe('600');
+});
+
+describe('a new selection eases the wider column over (D64)', () => {
+  function grid(selected: string): React.JSX.Element {
+    return (
+      <CalendarGrid
+        rows={buildGrid('2026-11', input(), BOUNDS)}
+        selected={selected}
+        month="2026-11"
+        bounds={BOUNDS}
+        onSelect={() => undefined}
+        busy={false}
+        label={monthLabel('2026-11')}
+        tooltip={() => null}
+      />
+    );
+  }
+
+  test.each([false, true])('over 150ms, or at once under Reduce Motion (reduce motion %s)', async (reduced) => {
+    widthOf(1280);
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(reduced);
+    const timing = jest.spyOn(Animated, 'timing');
+    const view = await render(grid('2026-11-21'));
+    await act(async () => { await Promise.resolve(); });
+    expect(timing).not.toHaveBeenCalled();
+    // Saturday to Wednesday: Wednesday's column (the third) grows to 1.3, Saturday's (the sixth) back to 1.
+    await view.rerender(grid('2026-11-18'));
+    if (reduced) {
+      expect(timing).not.toHaveBeenCalled();
+      expect(styleOf(screen.getByTestId('calendar-column-2026-11-18')).flexGrow).toBe(1.3);
+      expect(styleOf(screen.getByTestId('calendar-column-2026-11-21')).flexGrow).toBe(1);
+    } else {
+      expect(timing).toHaveBeenCalledTimes(7);
+      expect(timing.mock.calls[2]?.[1]).toMatchObject({ toValue: 1.3, duration: theme.motion.select });
+      expect(timing.mock.calls[5]?.[1]).toMatchObject({ toValue: 1 });
+    }
+  });
 });

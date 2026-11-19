@@ -412,7 +412,7 @@ function CalendarView(): React.JSX.Element {
   // The forecast and the calendars hold the page back only for their first read: after one answer or failure, Try
   // again, a month change and a note write keep the page showing, dimmed, with no forecast figures until it answers.
   if (input === null || shown === null || !forecast.settled || !calendars.settled) {
-    return <CalendarSkeleton label="Loading the calendar" />;
+    return <CalendarSkeleton label="Loading the calendar" view={view} />;
   }
   const readOnlyId = readOnly ? READ_ONLY_ID : null;
   const busy = monthData.busy || notes.busy || forecast.busy || !sameRange(shown.range, range);

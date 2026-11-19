@@ -14,7 +14,7 @@ import { calendarFake, forecastDay, forecastOf, PATH, setToday, type CalendarFak
 // it, a month whose reads are in flight renders at once with its uncovered days pending, the cells are the same height
 // every month, the filters sit where the width puts them, and focus survives a change of grid. The week view: 7-day
 // blocks counted from today, Month and Week kept in `?view=`, no read on a switch while the block lies inside the grid
-// and its own days' read when it runs past, the grid's month kept across it, Previous, Next and the keys by blocks, its
+// and, when it runs past, the grid of the month it runs into (D64), the grid's month kept across it, Previous, Next and the keys by blocks, its
 // own forecast notice, and focus that survives a switch from outside the page. Today is Wed, Nov 11, 2026 unless a
 // test sets it. Synthetic figures and made-up titles only.
 
@@ -392,7 +392,7 @@ test('Home and End in the week view go to the block’s first and last day', asy
   expect(screen.getByRole('grid', { name: 'Nov 15 to 21, 2026' })).toBeTruthy();
 });
 
-test('Next week and Previous week move a block; a block past the grid reads its own days, and the grid’s month follows the day', async () => {
+test('Next week and Previous week move a block; a block past the grid reads the next month’s grid, and the grid’s month follows the day', async () => {
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?day=2026-11-21&view=week', api, 'Nov 18 to 24, 2026');
   fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
@@ -401,15 +401,16 @@ test('Next week and Previous week move a block; a block past the grid reads its 
   await waitFor(() => { expect(day()).toBe('2026-11-28'); });
   // Nov 25 to Dec 1 is still in November's grid: nothing new is read.
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST]);
-  // Dec 2 to 8 runs past it (Dec 6), so its own days are read; Dec 5 keeps November's grid.
+  // Dec 2 to 8 runs past it (Dec 6), so December's grid, which holds it, is read (D64); Dec 5 keeps November's grid.
   fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
   expect(await screen.findByRole('grid', { name: 'Dec 2 to 8, 2026' })).toBeTruthy();
-  await waitFor(() => { expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-12-02&to=2026-12-08`]); });
-  // Dec 12 leaves November's grid, so December's grid is read.
+  await waitFor(() => { expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`]); });
+  const reads = forecastReads(fake).length;
+  // Dec 12 leaves November's grid, so the grid's month is December, whose grid is already read.
   fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
   expect(await screen.findByRole('grid', { name: 'Dec 9 to 15, 2026' })).toBeTruthy();
-  await waitFor(() => { expect(forecastReads(fake)).toContain(`${PATH}/forecast?from=2026-11-30&to=2027-01-10`); });
-  const reads = forecastReads(fake).length;
+  await waitFor(() => { expect(day()).toBe('2026-12-12'); });
+  expect(forecastReads(fake)).toHaveLength(reads);
   // Dec 2 to 8 is inside December's grid now.
   fireEvent.click(screen.getByRole('button', { name: 'Previous week' }));
   expect(await screen.findByRole('grid', { name: 'Dec 2 to 8, 2026' })).toBeTruthy();
@@ -419,7 +420,7 @@ test('Next week and Previous week move a block; a block past the grid reads its 
   expect(await screen.findByRole('grid', { name: 'December 2026' })).toBeTruthy();
 });
 
-test('a block past the grid’s last day reads its own days, keeps the covered days showing while it reads, and Month reads the grid again', async () => {
+test('a block past the grid’s last day reads the next month’s grid, keeps the covered days showing while it reads, and Month reads the grid again', async () => {
   setToday('2026-11-15');
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?view=week', api, 'Nov 15 to 21, 2026');
@@ -428,16 +429,17 @@ test('a block past the grid’s last day reads its own days, keeps the covered d
   fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
   expect(await screen.findByRole('grid', { name: 'Nov 29 to Dec 5, 2026' })).toBeTruthy();
   expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST]);
-  const releases = (['calendar', 'forecast', 'owner-calendars/events'] as const).map((route) => fake.hold(route, '2026-12-06'));
+  const releases = (['calendar', 'forecast', 'owner-calendars/events'] as const).map((route) => fake.hold(route, '2026-11-30'));
   const reads = fake.paths.length;
-  // Dec 6 to 12: Dec 6 is the last day of November's grid (Oct 26 to Dec 6), the rest past it.
+  // Dec 6 to 12: Dec 6 is the last day of November's grid (Oct 26 to Dec 6), the rest past it, so December's grid
+  // (Nov 30 to Jan 10), which holds the block, is read (D64).
   fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
   const grid = await screen.findByRole('grid', { name: 'Dec 6 to 12, 2026' });
   await waitFor(() => { expect(fake.paths.length).toBe(reads + 4); });
   // No day of it is past, so no sales days but the chart's same weekdays last year (D64).
   expect([...fake.paths.slice(reads)].sort()).toEqual([
-    `${PATH}/calendar?from=2026-12-06&to=2026-12-12`, `${PATH}/forecast?from=2026-12-06&to=2026-12-12`,
-    `${PATH}/owner-calendars/events?from=2026-12-06&to=2026-12-12`, `${PATH}/sales/days?from=2025-12-07&to=2025-12-13`,
+    `${PATH}/calendar?from=2026-11-30&to=2027-01-10`, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`,
+    `${PATH}/owner-calendars/events?from=2026-11-30&to=2027-01-10`, `${PATH}/sales/days?from=2025-12-01&to=2026-01-11`,
   ]);
   expect(grid.getAttribute('aria-busy')).toBe('true');
   expect(cell('2026-12-06').textContent).toContain('212');
@@ -458,7 +460,7 @@ test('a block past the grid’s last day reads its own days, keeps the covered d
   await waitFor(() => { expect(forecastReads(fake).filter((path) => path === NOVEMBER_FORECAST)).toHaveLength(2); });
 });
 
-test('a day past the grid’s edge inside a block that crosses it moves the grid’s month, read once with the block dimmed', async () => {
+test('a day past the grid’s edge inside a block that crosses it moves the grid’s month, which the block already read', async () => {
   setToday('2026-11-15');
   const { api, fake } = setup();
   await renderAt('/locations/l1/calendar?view=week', api, 'Nov 15 to 21, 2026');
@@ -467,24 +469,16 @@ test('a day past the grid’s edge inside a block that crosses it moves the grid
     expect(await screen.findByRole('grid', { name: label })).toBeTruthy();
   }
   await waitFor(() => { expect(screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' }).getAttribute('aria-busy')).toBe('false'); });
-  expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-12-06&to=2026-12-12`]);
-  const releases = (['calendar', 'forecast', 'owner-calendars/events'] as const).map((route) => fake.hold(route, '2026-11-30'));
+  // The block ran past November's grid, so December's grid was read for it (D64).
+  expect(forecastReads(fake)).toEqual([NOVEMBER_FORECAST, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`]);
   const reads = fake.paths.length;
-  // Dec 9 is past November's grid (Oct 26 to Dec 6), so the grid's month becomes December, whose grid holds the block.
+  // Dec 9 is past November's grid (Oct 26 to Dec 6), so the grid's month becomes December, whose grid holds the block
+  // and is already read: nothing more is read and nothing dims.
   fireEvent.click(cell('2026-12-09'));
   await waitFor(() => { expect(day()).toBe('2026-12-09'); });
-  await waitFor(() => { expect(fake.paths.length).toBe(reads + 4); });
-  expect([...fake.paths.slice(reads)].sort()).toEqual([
-    `${PATH}/calendar?from=2026-11-30&to=2027-01-10`, `${PATH}/forecast?from=2026-11-30&to=2027-01-10`,
-    `${PATH}/owner-calendars/events?from=2026-11-30&to=2027-01-10`, `${PATH}/sales/days?from=2025-12-01&to=2026-01-11`,
-  ]);
-  // The same days stay on screen, with the kept reads' data, dimmed while December's grid reads.
-  const grid = screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' });
-  expect(grid.getAttribute('aria-busy')).toBe('true');
+  expect(screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' }).getAttribute('aria-busy')).toBe('false');
   expect(cell('2026-12-09').textContent).toContain('212');
-  await act(async () => { for (const release of releases) release(); await Promise.resolve(); });
-  await waitFor(() => { expect(screen.getByRole('grid', { name: 'Dec 6 to 12, 2026' }).getAttribute('aria-busy')).toBe('false'); });
-  expect(fake.paths).toHaveLength(reads + 4);
+  expect(fake.paths).toHaveLength(reads);
 });
 
 test('Week inside the grid reads nothing more: the block shows its data at once', async () => {

@@ -1,5 +1,5 @@
-import { StyleSheet } from 'react-native';
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { AccessibilityInfo, ScrollView, StyleSheet } from 'react-native';
+import { act, fireEvent, render, screen, within } from '@testing-library/react-native';
 
 import { CalendarWeek } from '../../../src/portal/calendar/CalendarWeek';
 import { calendarChart } from '../../../src/portal/calendar/chart';
@@ -13,7 +13,9 @@ import { forecastDay, forecastOf } from './fakes';
 // The week view's scroll on native (P28, D64): a horizontal strip of the strip's days that snaps to each day's left
 // edge, hidden from screen readers, each day its chart slice and short head, a tap selecting it; a stop hands the page
 // the day nearest the scroll; under it the agenda of the 7 days in view, the selected row with a 2px mint border over
-// the state fill. The view is 697 wide, so a day's step is 100. Today is Wed, Nov 11, 2026. Synthetic figures only.
+// the state fill; where the strip scrolls to (at once on its first layout, a far jump or under Reduce Motion, animated
+// otherwise, and days added before the first keeping what is on screen); and the key under the strip. The view is 697
+// wide, so a day's step is 100. Today is Wed, Nov 11, 2026. Synthetic figures only.
 
 const TODAY = '2026-11-11';
 const BOUNDS = monthBounds(TODAY);
@@ -72,6 +74,87 @@ test('a tap on a day of the strip selects it', async () => {
   const { onSelect } = await renderStrip();
   await fireEvent.press(screen.getByTestId('calendar-strip-2026-11-26', { includeHiddenElements: true }));
   expect(onSelect).toHaveBeenCalledWith('2026-11-26');
+});
+
+/** The strip's props with a new first day in view (and strip), as the page hands them after a stop or Next week. */
+function strip(start: string, dates: readonly string[] = DATES): React.JSX.Element {
+  return (
+    <CalendarWeek
+      days={buildDays(dates, READS, BOUNDS)}
+      selected={start}
+      weekStart={start}
+      bounds={BOUNDS}
+      onSelect={jest.fn()}
+      busy={false}
+      label={weekLabel(start)}
+      tooltip={() => null}
+      chart={calendarChart(dates, READS, null)}
+      onSettle={jest.fn()}
+    />
+  );
+}
+
+/** The system's Reduce Motion answer, before the strip renders. */
+function reduceMotion(on: boolean): void {
+  jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(on);
+}
+
+/** Every scrollTo the strip sent (the ScrollView mock's one shared jest.fn). */
+function scrolls(): unknown[] {
+  return (ScrollView.prototype as unknown as { scrollTo: jest.Mock<unknown, [unknown]> }).scrollTo.mock.calls.map((call) => call[0]);
+}
+
+async function layOut(): Promise<void> {
+  const found = screen.getByTestId('calendar-strip', { includeHiddenElements: true });
+  await fireEvent(found.parent ?? found, 'layout', { nativeEvent: { layout: { width: 697, height: 120, x: 0, y: 0 } } });
+}
+
+describe('where the strip scrolls to', () => {
+  beforeEach(() => { (ScrollView.prototype as unknown as { scrollTo: jest.Mock }).scrollTo.mockClear(); });
+  afterEach(() => { jest.restoreAllMocks(); });
+
+  test('at once on its first layout; animated to a new first day in view; at once for a jump of more than 3 weeks', async () => {
+    reduceMotion(false);
+    const view = await render(strip('2026-11-18'));
+    await act(async () => { await Promise.resolve(); });
+    await layOut();
+    expect(scrolls().at(-1)).toEqual({ x: 1400, animated: false });
+    await view.rerender(strip('2026-11-25'));
+    expect(scrolls().at(-1)).toEqual({ x: 2100, animated: true });
+    // A fresh strip from Feb 2027, its view 14 days in: far away, so at once.
+    const far = stripDates({ from: '2027-01-27', to: '2027-03-02' });
+    await view.rerender(strip('2027-02-10', far));
+    expect(scrolls().at(-1)).toEqual({ x: 1400, animated: false });
+  });
+
+  test('under Reduce Motion, at once', async () => {
+    reduceMotion(true);
+    const view = await render(strip('2026-11-18'));
+    await act(async () => { await Promise.resolve(); });
+    await layOut();
+    await view.rerender(strip('2026-11-25'));
+    expect(scrolls().at(-1)).toEqual({ x: 2100, animated: false });
+  });
+
+  test('days added before the first keep what is on screen (maintainVisibleContentPosition), and the strip stays on its day', async () => {
+    reduceMotion(false);
+    const view = await render(strip('2026-11-18'));
+    await act(async () => { await Promise.resolve(); });
+    await layOut();
+    const found = screen.getByTestId('calendar-strip', { includeHiddenElements: true });
+    expect(found.props.maintainVisibleContentPosition).toEqual({ minIndexForVisible: 0 });
+    // A stop on Nov 18 near the start grows the strip 3 weeks before it: Nov 18 is now 35 days in.
+    await view.rerender(strip('2026-11-18', stripDates({ from: '2026-10-14', to: '2026-12-08' })));
+    expect(scrolls().at(-1)).toMatchObject({ x: 3500 });
+  });
+});
+
+test('under the strip, the key of what the 7 days in view draw and the scale', async () => {
+  await renderStrip();
+  const key = screen.getByTestId('calendar-week-chart-key', { includeHiddenElements: true });
+  expect(screen.queryByTestId('calendar-week-chart-key')).toBeNull();
+  expect(within(key).getByText('Forecast', { includeHiddenElements: true })).toBeTruthy();
+  expect(within(key).getByText('Scale 0 to 250 guests.', { includeHiddenElements: true })).toBeTruthy();
 });
 
 test('the agenda lists the 7 days in view, the selected one with a 2px mint border over the state fill', async () => {

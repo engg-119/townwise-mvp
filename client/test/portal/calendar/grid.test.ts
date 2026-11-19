@@ -347,17 +347,40 @@ describe('the week view’s 7-day blocks, counted from today', () => {
     expect(weekRange('2027-11-28', bounds)).toEqual({ from: '2027-11-28', to: '2027-11-30' });
   });
 
-  test('readRangeFor: the grid’s range in the month view, and in the week view while the clamped block lies inside it; else the block’s own days', () => {
+  test('readRangeFor: the grid’s range in the month view, and in the week view while the clamped block lies inside it; else the grid of the view’s first or last day’s month', () => {
     const bounds = monthBounds(TODAY);
     const november = { from: '2026-10-26', to: '2026-12-06' };
     expect(readRangeFor('month', '2026-11', '2026-12-06', bounds)).toEqual(november);
     // A block inside November's grid reads nothing of its own.
     expect(readRangeFor('week', '2026-11', '2026-11-15', bounds)).toEqual(november);
     expect(readRangeFor('week', '2026-11', '2026-11-29', bounds)).toEqual(november);
-    // Dec 6 to 12 runs past it (today Nov 15, with Dec 6 selected in November's grid).
-    expect(readRangeFor('week', '2026-11', '2026-12-06', monthBounds('2026-11-15'))).toEqual({ from: '2026-12-06', to: '2026-12-12' });
+    // Dec 6 to 12 runs past it (today Nov 15, with Dec 6 selected in November's grid): December's grid holds it.
+    expect(readRangeFor('week', '2026-11', '2026-12-06', monthBounds('2026-11-15'))).toEqual({ from: '2026-11-30', to: '2027-01-10' });
     // At the first end, Oct 29 to Nov 4, 2025 clamps to Nov 1 to 4, which November 2025's grid covers.
     expect(readRangeFor('week', '2025-11', '2025-10-29', bounds)).toEqual({ from: '2025-11-01', to: '2025-12-07' });
+  });
+
+  test('readRangeFor: a week view stepping back a day at a time past the selected month’s grid keeps one read (D64)', () => {
+    const bounds = monthBounds(TODAY);
+    // March 2027 starts on a Monday, so its grid is Mar 1 to Apr 11; February's is Feb 1 to Mar 14.
+    const february = { from: '2027-02-01', to: '2027-03-14' };
+    for (const start of ['2027-02-25', '2027-02-24', '2027-02-23', '2027-02-22', '2027-02-15']) {
+      expect(readRangeFor('week', '2027-03', start, bounds)).toEqual(february);
+    }
+  });
+
+  test('readRangeFor: every week view, on any day, for a today every 11 days from 2026 to 2028, reads one grid that holds it', () => {
+    for (let today = '2026-01-01'; today <= '2028-12-31'; today = addDays(today, 11)) {
+      const bounds = monthBounds(today);
+      for (let start = addDays(`${bounds.first}-01`, -6); start <= bounds.lastDay; start = addDays(start, 1)) {
+        const week = weekRange(start, bounds);
+        const range = readRangeFor('week', today.slice(0, 7), start, bounds);
+        expect(range.from <= week.from && range.to >= week.to).toBe(true);
+        expect(daysBetween(range.from, range.to) + 1).toBeLessThanOrEqual(GRID_DAYS);
+        expect(daysBetween(range.from, today)).toBeLessThanOrEqual(396);
+        expect(daysBetween(today, range.to)).toBeLessThanOrEqual(396);
+      }
+    }
   });
 
   test('every week read stays within 7 days and 396 days of today, for every today from 2026 to 2029', () => {

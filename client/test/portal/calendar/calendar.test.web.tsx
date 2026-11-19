@@ -966,6 +966,19 @@ test('an outlook day (D52): its cell shows its figure marked Outlook, its toolti
   expect(cell('2026-11-20').textContent).toContain('212');
 });
 
+test('in the week view the key line follows the 7 days in view, not the outlook days rendered beside them (D64)', async () => {
+  const { api } = setup(meOf(ACCESS.member), { forecasts: { '2026-11': novemberWithOutlook() } });
+  // Nov 11 to 17 in view; the strip renders on to Dec 1, the outlook days from the 20th among them, read and drawn.
+  await renderAt('/locations/l1/calendar?day=2026-11-11&view=week', api, 'Nov 11 to 17, 2026');
+  expect(cell('2026-11-21').getAttribute('aria-label')).toMatch(/^Sat, Nov 21, 2026\. Outlook: 212 guests/);
+  expect(cell('2026-11-21').hasAttribute('data-view')).toBe(false);
+  expect(screen.queryByText(OUTLOOK_KEY)).toBeNull();
+  // Next week brings Nov 18 to 24 into view, the 20th to the 24th outlook days.
+  fireEvent.click(screen.getByRole('button', { name: 'Next week' }));
+  expect(await screen.findByRole('grid', { name: 'Nov 18 to 24, 2026' })).toBeTruthy();
+  expect(await screen.findByText(OUTLOOK_KEY)).toBeTruthy();
+});
+
 test('no key line while no shown day is an outlook day', async () => {
   const { api } = setup();
   await renderAt('/locations/l1/calendar', api);

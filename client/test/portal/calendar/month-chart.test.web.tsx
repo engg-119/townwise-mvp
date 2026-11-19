@@ -5,12 +5,14 @@ import { gridDays } from '../../../src/portal/calendar/grid';
 import { MIN_SLOT, MonthChart, monthSlot } from '../../../src/portal/calendar/MonthChart';
 import { ALL_FILTERS, type CalendarInput } from '../../../src/portal/calendar/model';
 import type { ForecastWindow } from '../../../src/portal/estimates/api';
+import { theme } from '../../../src/theme';
 import { forecastDay, forecastOf } from './fakes';
 
 // The month view's forecast chart on web (P28, D64), from calendarChart over November 2026's days: the forecast's
-// points and range, an outlook day's dashed range, the status words standing upright, today shaded and the selected
-// day lit with a mint mark, a press on a column selecting its day, and the whole chart hidden from screen readers
-// with no tab stop. Today is Wed, Nov 11, 2026. Synthetic figures only.
+// points and range, an outlook day's dashed range, the status words standing upright (none in a month with no
+// forecast, which says so once), today shaded and the selected day tinted mint with a mint mark, apart from today's
+// shade and from a hovered column, a press on a column selecting its day, and the whole chart hidden from screen
+// readers with no tab stop, its scroller included. Today is Wed, Nov 11, 2026. Synthetic figures only.
 
 afterEach(cleanup);
 
@@ -32,9 +34,9 @@ function chartOf() {
   return calendarChart(NOVEMBER, reads, [{ date: '2025-11-13', guests: 96, netSalesCents: 192_000 }]);
 }
 
-function renderChart(selected = '2026-11-21'): jest.Mock {
+function renderChart(selected = '2026-11-21', drawn = chartOf()): jest.Mock {
   const onSelect = jest.fn();
-  render(<MonthChart chart={chartOf()} selected={selected} onSelect={onSelect} busy={false} />);
+  render(<MonthChart chart={drawn} selected={selected} onSelect={onSelect} busy={false} />);
   return onSelect;
 }
 
@@ -61,7 +63,7 @@ test('the forecast’s points and range, the outlook day’s range dashed, the s
   expect(series('outlook-range')[0]?.getAttribute('stroke-dasharray')).toBe('3 2');
   expect(series('actual')).toHaveLength(1);
   expect(series('last-year-point')).toHaveLength(1);
-  expect(screen.getByTestId('calendar-month-chart-key').textContent).toBe('ForecastLikely rangeOutlook rangeActual guestsSame weekday last year');
+  expect(screen.getByTestId('calendar-month-chart-key-items').textContent).toBe('ForecastLikely rangeOutlook rangeActual guestsSame weekday last year');
   expect(chart().textContent).toContain('Scale 0 to 500 guests.');
 });
 
@@ -73,12 +75,34 @@ test('a day with no point says why, standing upright in its column', () => {
   expect(words).toContain('NO FORECAST');
   expect(words).toContain('NO DATA');
   expect(series('status')[0]?.getAttribute('transform')).toMatch(/rotate\(-90\)$/);
+  expect(chart().textContent).not.toContain('No forecast for these days yet.');
 });
 
-test('today is shaded and its date bold; the selected day is lit with a mint mark', () => {
+test('a month with no forecast point draws no words, and says so once under the plot', () => {
+  const reads: CalendarInput = {
+    today: TODAY, covered: { from: '2026-10-26', to: '2026-12-06' }, forecast: forecastOf([]) as ForecastWindow,
+    salesDays: [], events: [], notes: [], rules: [], imported: [], filters: ALL_FILTERS,
+  };
+  const empty = calendarChart(NOVEMBER, reads, [{ date: '2025-11-13', guests: 96, netSalesCents: 192_000 }]);
+  // Every day of it has a status word to give (No data, No forecast), which the grid's cells already say.
+  expect(empty.days.every((day) => day.status !== null)).toBe(true);
+  expect(empty.drawn.forecast).toBe(false);
+  renderChart('2026-11-21', empty);
+  expect(series('status')).toHaveLength(0);
+  expect(series('last-year-point')).toHaveLength(1);
+  expect(chart().textContent).toContain('No forecast for these days yet.');
+});
+
+test('today is shaded and its date bold; the selected day is tinted mint with a mint mark', () => {
   renderChart('2026-11-21');
   expect(chart().querySelectorAll('svg [data-shade="today"]')).toHaveLength(1);
-  expect(chart().querySelectorAll('svg [data-hover="day"]')).toHaveLength(1);
+  // The selected column is mint (fill and edges), so it never reads as today's white shade; nothing is hovered.
+  const chosen = chart().querySelectorAll('svg [data-chosen="day"]');
+  expect(chosen).toHaveLength(1);
+  expect(chosen[0]?.getAttribute('fill')).toBe(theme.color.mint);
+  expect(chosen[0]?.getAttribute('stroke')).toBe(theme.color.mint);
+  expect(chart().querySelector('svg [data-shade="today"]')?.getAttribute('fill')).toBe(theme.color.white);
+  expect(chart().querySelectorAll('svg [data-hover="day"]')).toHaveLength(0);
   const today = screen.getByTestId(`calendar-month-chart-${TODAY}`);
   expect(today.textContent).toBe('11');
   // Today's date has its own style (`white`, bold), which no other date has.
@@ -92,6 +116,18 @@ test('today is shaded and its date bold; the selected day is lit with a mint mar
   expect(drawn).toEqual(['2026-11-21']);
 });
 
+test('a pointer over another column lights it white, and the selected column keeps its mint', () => {
+  renderChart('2026-11-21');
+  fireEvent.mouseOver(screen.getByTestId('calendar-month-chart-2026-11-12'));
+  fireEvent.pointerOver(screen.getByTestId('calendar-month-chart-2026-11-12'), { pointerType: 'mouse' });
+  fireEvent.mouseEnter(screen.getByTestId('calendar-month-chart-2026-11-12'));
+  expect(chart().querySelectorAll('svg [data-hover="day"]')).toHaveLength(1);
+  expect(chart().querySelectorAll('svg [data-chosen="day"]')).toHaveLength(1);
+  // The hovered box sits at the 12th's column (the 11th index), the chosen one at the 21st's.
+  const x = (selector: string): number => Number(/^M([\d.]+)/.exec(chart().querySelector(selector)?.getAttribute('d') ?? '')?.[1]);
+  expect(x('svg [data-hover="day"]')).toBeLessThan(x('svg [data-chosen="day"]'));
+});
+
 test('pressing a column selects its day', () => {
   const onSelect = renderChart();
   fireEvent.click(screen.getByTestId('calendar-month-chart-2026-11-14'));
@@ -102,4 +138,6 @@ test('the chart is hidden from screen readers and takes no tab stop', () => {
   renderChart();
   expect(chart().getAttribute('aria-hidden')).toBe('true');
   expect(chart().querySelectorAll('[tabindex="0"]')).toHaveLength(0);
+  // Its scroller too: a browser makes an overflowing scroller a tab stop unless it says otherwise.
+  expect(screen.getByTestId('calendar-month-chart-scroller').getAttribute('tabindex')).toBe('-1');
 });

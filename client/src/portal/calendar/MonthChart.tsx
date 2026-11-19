@@ -4,20 +4,23 @@ import { Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent }
 import { useReducedMotion } from '../../motion';
 import { theme } from '../../theme';
 import { formatCount } from '../format';
-import { ForecastPlot, PlotKey } from '../chart/ForecastPlot';
-import type { CalendarChart } from './chart';
+import { ForecastPlot, PlotKey, type PlotDrawn } from '../chart/ForecastPlot';
+import { chartWords, type CalendarChart } from './chart';
 import { FIGURE_KEY } from './model';
 
 // The month view's forecast chart (P28, D64), on web and native (react-native-svg through chart/ForecastPlot.tsx):
 // above the grid, one column per day of the grid's month (calendar/chart.ts), with the forecast's middle and range, an
 // outlook day's range dashed, a past day's stored guests, the same weekday last year, and a status word standing
-// upright in a column with no point. Today's column is shaded and its date `white` and bold; the selected day's column
-// is lit with a `mint` mark under its date; a mouse or pen over another column (web, never touch) lights that one
-// instead. A column is at least 24px wide, so a month that doesn't fit (a phone) scrolls sideways, brought to the
-// selected day. Pressing a column selects its day as pressing it in the grid does. The chart is hidden from screen
-// readers and its columns are not focusable: the grid's cells say each day's forecast and range. Under it, the key
-// (only what is drawn) and the printed scale. [CONFIRM: the forecast chart shown by default on the Calendar with a
-// “Forecast chart” chip to hide it]
+// upright in a column with no point while the month has a forecast somewhere; a month with none draws no words and
+// says “No forecast for these days yet.” once under the plot (chart.ts chartWords). Today's column is shaded and its
+// date `white` and bold; the selected day's column is tinted `mint` with `mint` edges and a `mint` mark under its date,
+// so it never reads as today's; a mouse or pen over another column (web, never touch) lights that one `white` as well,
+// and the selected column keeps its tint. A column is at least 24px wide, so a month that doesn't fit (a phone) scrolls
+// sideways, brought to the selected day (animated unless reduced motion). Pressing a column selects its day as
+// pressing it in the grid does. The chart is hidden from screen readers and neither its columns nor its scroller are
+// focusable (tabIndex -1): the grid's cells say each day's forecast and range. Under it, the key (only what is drawn)
+// and the printed scale (ChartKey, which the week view draws under its strip too). [CONFIRM: the forecast chart shown
+// by default on the Calendar with a “Forecast chart” chip to hide it]
 
 const C = theme.color;
 const HEIGHT = 120;
@@ -29,6 +32,16 @@ const START_WIDTH = 320;
 /** A column's width: the measured width shared by the days, never under MIN_SLOT. */
 export function monthSlot(width: number, days: number): number {
   return days <= 0 ? MIN_SLOT : Math.max(MIN_SLOT, width / days);
+}
+
+/** The chart's key (only what `drawn` names) and its printed scale, under the month chart and the week's strip. */
+export function ChartKey(props: { drawn: PlotDrawn; top: number; testID: string }): React.JSX.Element {
+  return (
+    <View testID={props.testID} aria-hidden importantForAccessibility="no-hide-descendants" accessibilityElementsHidden style={styles.key}>
+      <PlotKey drawn={props.drawn} actual={FIGURE_KEY.actual} testID={`${props.testID}-items`} />
+      <Text style={styles.scale}>{`Scale 0 to ${formatCount(props.top)} guests.`}</Text>
+    </View>
+  );
 }
 
 export function MonthChart(props: {
@@ -50,6 +63,7 @@ export function MonthChart(props: {
     return at < 0 ? null : at;
   };
   const chosen = index(selected);
+  const lit = hovered === selected ? null : index(hovered);
   const today = chart.days.findIndex((day) => day.isToday);
 
   // A month wider than the box keeps the selected day in view.
@@ -72,7 +86,14 @@ export function MonthChart(props: {
       style={[styles.box, props.busy ? styles.busy : null]}
     >
       <View onLayout={onLayout}>
-        <ScrollView ref={scroller} horizontal showsHorizontalScrollIndicator={total > width} contentContainerStyle={{ width: total }}>
+        <ScrollView
+          ref={scroller}
+          testID="calendar-month-chart-scroller"
+          horizontal
+          tabIndex={-1}
+          showsHorizontalScrollIndicator={total > width}
+          contentContainerStyle={{ width: total }}
+        >
           <View style={{ width: total }}>
             <View style={styles.plot}>
               <ForecastPlot
@@ -81,8 +102,9 @@ export function MonthChart(props: {
                 width={total}
                 height={HEIGHT}
                 shaded={today < 0 ? null : today}
-                lit={index(hovered) ?? chosen}
-                words={chart.days.map((day) => day.status)}
+                lit={lit}
+                chosen={chosen}
+                words={chartWords(chart)}
               />
             </View>
             <View style={styles.days}>
@@ -109,8 +131,8 @@ export function MonthChart(props: {
           </View>
         </ScrollView>
       </View>
-      <PlotKey drawn={chart.drawn} actual={FIGURE_KEY.actual} testID="calendar-month-chart-key" />
-      <Text style={styles.scale}>{`Scale 0 to ${formatCount(chart.top)} guests.`}</Text>
+      {chart.drawn.forecast ? null : <Text style={styles.scale}>No forecast for these days yet.</Text>}
+      <ChartKey drawn={chart.drawn} top={chart.top} testID="calendar-month-chart-key" />
     </View>
   );
 }
@@ -126,5 +148,6 @@ const styles = StyleSheet.create({
   today: { color: C.white, fontWeight: '600' },
   mark: { width: 12, height: 2, marginTop: 2 },
   markOn: { backgroundColor: C.mint },
+  key: { gap: theme.space[2] },
   scale: { ...theme.type.mono, color: C.text3 },
 });

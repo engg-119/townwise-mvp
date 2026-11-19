@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { memo, useCallback, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   Pressable, ScrollView, StyleSheet, Text, View, type LayoutChangeEvent, type NativeScrollEvent, type NativeSyntheticEvent,
 } from 'react-native';
@@ -8,18 +8,23 @@ import { theme } from '../../theme';
 import { ForecastPlot } from '../chart/ForecastPlot';
 import { addDays, daysBetween } from '../locations/dates';
 import { AgendaCard } from './AgendaCard';
-import type { CalendarChart } from './chart';
+import { chartDrawn, chartWindows, type CalendarChart, type ChartWindow } from './chart';
 import { cardWords, CELL_GAP, headLine, weekHead, type InertCell, type MonthBounds, type WeekDay, type WeekSlot } from './grid';
 import { figureTone, markedFigure, statusWord, type TooltipLines } from './model';
+import { ChartKey } from './MonthChart';
 import { nearestDay, snapOffsets, stripStep, STRIP_GROW_DAYS, VIEW_DAYS } from './strip';
 
 // The Calendar's week view (P28, spec 16.3, step 2), on native at every width: on top, the days as a strip that
 // scrolls sideways and snaps to a day (D64; a horizontal ScrollView with `snapToOffsets` at each day's left edge and a
 // fast deceleration), 7 in view, each day its slice of the forecast chart (chart/ForecastPlot.tsx, when the page passes
-// one) over a short head (the day, and its figure or status word); a tap on one selects it. The strip is hidden from
-// screen readers. A stop (momentum's end, or a drag's end with none) hands the day nearest the scroll to the page
-// (`onSettle`), which keeps it as the first day in view (`weekStart`); a change of `weekStart` from the page scrolls
-// there, animated unless Reduce Motion is on, and days the page adds before the first move the scroll by their width.
+// one; each day draws its slice over itself and its neighbors, chart.ts chartWindows, so a long strip stays cheap) over
+// a short head (the day, and its figure or status word); a tap on one selects it. Under the strip, the key of what the
+// 7 days in view draw and the scale (MonthChart.tsx ChartKey). The strip is hidden from screen readers. A stop
+// (momentum's end, or a drag's end with none) hands the day nearest the scroll to the page (`onSettle`), which keeps it
+// as the first day in view (`weekStart`); a change of `weekStart` from the page scrolls there in a layout effect,
+// animated unless Reduce Motion is on (or not yet known), it is the first layout or a new width, or the jump is more
+// than 3 weeks. Days the page adds before the first keep what is on screen through the ScrollView's
+// `maintainVisibleContentPosition` (the first visible day stays put), so the strip never shows other days for a frame.
 // Under the strip, an agenda of the 7 days in view: each row a Pressable labeled as its month cell, with its selected
 // state, holding the day's head line (the day, a Today tag under today, the status word, the figure with "+70", an
 // actual solid and a forecast lighter after a "~", D49 decision 10, and under a forecast "forecast" with its range) over
@@ -56,6 +61,8 @@ export interface CalendarWeekProps {
 }
 
 const STRIP_CHART_HEIGHT = 72;
+/** The first visible day stays put when days are added before it. */
+const MAINTAIN = { minIndexForVisible: 0 } as const;
 /** A day's width until the view is measured. */
 const START_DAY = 48;
 
@@ -111,11 +118,10 @@ function InertRow(props: { day: InertCell }): React.JSX.Element {
 }
 
 /** A day of the strip: its chart slice and short head; hidden from screen readers with the strip. */
-function StripDay(props: {
-  day: WeekSlot; width: number; selected: boolean; chart: CalendarChart | null; index: number | null; selectedIndex: number | null;
-  todayIndex: number | null; onSelect: (date: string) => void;
+const StripDay = memo(function StripDay(props: {
+  day: WeekSlot; width: number; selected: boolean; plot: ChartWindow | null; onSelect: (date: string) => void;
 }): React.JSX.Element {
-  const { day, chart, index } = props;
+  const { day, plot } = props;
   const inert = day.kind === 'inert';
   const status = inert || day.pending ? null : statusWord(day.status);
   const figure = inert || day.pending ? null : day.figure;
@@ -127,17 +133,17 @@ function StripDay(props: {
       onPress={() => { props.onSelect(day.date); }}
       style={[styles.stripDay, { width: props.width }, inert ? styles.inert : props.selected ? styles.stripSelected : null]}
     >
-      {chart === null || index === null ? null : (
+      {plot === null ? null : (
         <View style={styles.stripChart}>
           <ForecastPlot
-            days={chart.days}
-            top={chart.top}
+            days={plot.days}
+            top={plot.top}
             width={props.width - 2 * (props.selected ? 2 : 1)}
             height={STRIP_CHART_HEIGHT}
-            from={index}
-            to={index + 1}
-            shaded={props.todayIndex}
-            lit={props.selectedIndex}
+            from={plot.at}
+            to={plot.at + 1}
+            shaded={plot.days[plot.at]?.isToday === true ? plot.at : null}
+            chosen={props.selected ? plot.at : null}
           />
         </View>
       )}
@@ -148,7 +154,7 @@ function StripDay(props: {
       {figure !== null || status === null ? null : <Text style={styles.stripStatus}>{status}</Text>}
     </Pressable>
   );
-}
+});
 
 export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
   const { days, weekStart, onSettle } = props;
@@ -156,30 +162,30 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
   const reduced = useReducedMotion();
   const scroller = useRef<React.ComponentRef<typeof ScrollView>>(null);
   const [viewport, setViewport] = useState(0);
-  /** The first day rendered and the first day in view, as the last scroll saw them. */
-  const placed = useRef<{ first: string; start: string } | null>(null);
+  /** The first day in view and the step, as the last scroll saw them. */
+  const placed = useRef<{ start: string; step: number } | null>(null);
   const step = stripStep(viewport);
   const dayWidth = step > 0 ? step - CELL_GAP : START_DAY;
-  const first = days[0]?.date ?? weekStart;
   const startIndex = Math.max(0, days.findIndex((day) => day.date === weekStart));
   const last = addDays(weekStart, VIEW_DAYS - 1);
-  const chartIndex = (date: string | null): number | null => {
-    if (chart === null || date === null) return null;
-    const at = chart.days.findIndex((day) => day.date === date);
-    return at < 0 ? null : at;
-  };
-  const todayIndex = chartIndex(chart?.days.find((day) => day.isToday)?.date ?? null);
-  const selectedIndex = chartIndex(props.selected);
+  const windows = useMemo(() => (chart === null ? null : chartWindows(chart)), [chart]);
+  const drawn = useMemo(() => (chart === null ? null : chartDrawn(chart.days.filter((day) => day.date >= weekStart && day.date <= last))), [chart, weekStart, last]);
+  const offsets = useMemo(() => (step > 0 ? snapOffsets(step, days.length) : undefined), [step, days.length]);
+  // One callback for every strip day, so a render of the page doesn't redraw them all.
+  const onSelect = useRef(props.onSelect);
+  useLayoutEffect(() => { onSelect.current = props.onSelect; });
+  const select = useCallback((date: string) => { onSelect.current(date); }, []);
 
-  // Keep the strip where the page says: at once on its first layout, after days are added before the first, a jump of
-  // more than 3 weeks, or under Reduce Motion; animated otherwise.
-  useEffect(() => {
+  // Keep the strip where the page says, before it is drawn: at once on its first layout, a new width, a jump of more
+  // than 3 weeks, or under Reduce Motion; animated otherwise. Days added before the first don't move what is on screen
+  // (maintainVisibleContentPosition), so the strip scrolls from the days it showed.
+  useLayoutEffect(() => {
     if (step <= 0) return;
     const before = placed.current;
-    placed.current = { first, start: weekStart };
-    const jump = before?.first !== first || Math.abs(daysBetween(before.start, weekStart)) > STRIP_GROW_DAYS || reduced !== false;
+    placed.current = { start: weekStart, step };
+    const jump = before?.step !== step || Math.abs(daysBetween(before.start, weekStart)) > STRIP_GROW_DAYS || reduced !== false;
     scroller.current?.scrollTo({ x: startIndex * step, animated: !jump });
-  }, [first, weekStart, startIndex, step, reduced]);
+  }, [weekStart, startIndex, step, reduced]);
 
   const onLayout = (event: LayoutChangeEvent): void => {
     const next = Math.round(event.nativeEvent.layout.width);
@@ -199,10 +205,11 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
           testID="calendar-strip"
           horizontal
           showsHorizontalScrollIndicator={false}
-          snapToOffsets={step > 0 ? snapOffsets(step, days.length) : undefined}
+          snapToOffsets={offsets}
           snapToStart
           snapToEnd
           decelerationRate="fast"
+          maintainVisibleContentPosition={MAINTAIN}
           onMomentumScrollEnd={settle}
           onScrollEndDrag={(event) => { if (Math.abs(event.nativeEvent.velocity?.x ?? 0) < 0.05) settle(event); }}
         >
@@ -212,16 +219,14 @@ export function CalendarWeek(props: CalendarWeekProps): React.JSX.Element {
                 day={day}
                 width={dayWidth}
                 selected={day.date === props.selected}
-                chart={chart}
-                index={chartIndex(day.date)}
-                selectedIndex={selectedIndex}
-                todayIndex={todayIndex}
-                onSelect={props.onSelect}
+                plot={windows?.get(day.date) ?? null}
+                onSelect={select}
               />
             </View>
           ))}
         </ScrollView>
       </View>
+      {chart === null || drawn === null ? null : <ChartKey drawn={drawn} top={chart.top} testID="calendar-week-chart-key" />}
       {days.filter((day) => day.date >= weekStart && day.date <= last).map((day) => (day.kind === 'inert'
         ? <InertRow key={day.date} day={day} />
         : <Row key={day.date} day={day} selected={day.date === props.selected} onSelect={props.onSelect} />))}

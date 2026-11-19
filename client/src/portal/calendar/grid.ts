@@ -88,13 +88,24 @@ export function weekRange(start: string, bounds: MonthBounds): DateRange {
  * What every read of the page covers (the town calendar, the sales days through pastRangeFor, the stored calendar
  * events and the forecast, one request of at most 42 days each): the grid's range in the month view, and in the week
  * view too while the week's days inside the 25 months (weekRange, not its raw 7 days, which at the range's ends run past
- * the grid) lie inside it, so switching views reads nothing; else the week's own days, which run past the grid.
+ * the grid) lie inside it, so switching views reads nothing. Past it, the grid of the month that holds the view's first
+ * day, or else its last (D64): the scrolling week moves a day at a time, and a grid keeps the reads still over a run of
+ * stops rather than reading again at each. One of the two always holds the 7 days (a Monday-first grid runs at least 5
+ * weeks past its month's 1st); the week's own days only where neither month is one of the 25. [CONFIRM: the week view
+ * reading the grid of the month that holds its first or last day in view once it leaves the selected month's grid]
  */
 export function readRangeFor(view: 'month' | 'week', month: string, weekStart: string, bounds: MonthBounds): DateRange {
   const grid = gridRange(month, bounds);
   if (view === 'month') return grid;
   const week = weekRange(weekStart, bounds);
-  return week.from >= grid.from && week.to <= grid.to ? grid : week;
+  const holds = (range: DateRange): boolean => week.from >= range.from && week.to <= range.to;
+  if (holds(grid)) return grid;
+  for (const other of [week.from.slice(0, 7), week.to.slice(0, 7)]) {
+    if (other < bounds.first || other > bounds.last) continue;
+    const range = gridRange(other, bounds);
+    if (holds(range)) return range;
+  }
+  return week;
 }
 
 /**

@@ -762,12 +762,14 @@ export function HomeSkeleton(props: LabelProps): React.JSX.Element {
  * is, the Month and Week switch's 130px and the "Your calendars" button's 170px, as the row's own items, so it wraps
  * where the page's does: one line at 1024px, two at 375px; the button's panel is closed on load), the filters' legend over four chips where the page puts
  * them for the width (heading the grid's column from 641px, so from 1024px the panel beside it starts level with the
- * legend; after the grid below; the fifth, “Forecast chart”, D64), the forecast chart above the grid, shown by
- * default (D64: its plot and date row, 144px, then its key and scale lines), then the month's grid, always six weeks of
- * seven days, each cell as tall as the loaded grid's (grid.ts cellSize), with the day panel beside it from 1024px and
- * under it below.
+ * legend; after the grid below; the fifth, “Forecast chart”, D64), in the month view the forecast chart above the
+ * grid, shown by default (D64: its plot and date row, 144px, then its key and scale lines), then the month's grid,
+ * always six weeks of seven days, each cell as tall as the loaded grid's (grid.ts cellSize), with the day panel beside
+ * it from 1024px and under it below. The week view (`view` 'week') draws its chart inside its days, which are at least
+ * as tall as the grid, so its skeleton is the grid with the chart's key and scale lines under it (D64).
  */
-export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
+export function CalendarSkeleton(props: LabelProps & { view?: 'month' | 'week' }): React.JSX.Element {
+  const week = props.view === 'week';
   const { desktop, phone, width } = useBreakpoint();
   const filters = (
     <View testID="skeleton-calendar-filters" style={styles.calendarFilters}>
@@ -797,12 +799,20 @@ export function CalendarSkeleton(props: LabelProps): React.JSX.Element {
         <View style={desktop ? styles.split : styles.stacked}>
           <View style={[styles.calendarColumn, desktop ? styles.wide : null]}>
             {phone ? null : filters}
-            <View testID="skeleton-calendar-chart" style={styles.calendarChart}>
-              <SkeletonBlock height={144} />
-              <SkeletonText type="mono" width={320} />
-              <SkeletonText type="mono" width={180} />
-            </View>
+            {week ? null : (
+              <View testID="skeleton-calendar-chart" style={styles.calendarChart}>
+                <SkeletonBlock height={144} />
+                <SkeletonText type="mono" width={320} />
+                <SkeletonText type="mono" width={180} />
+              </View>
+            )}
             <SkeletonMonth cellTestID="skeleton-calendar-cell" cellHeight={cellSize(width).height} />
+            {week ? (
+              <View testID="skeleton-calendar-week-key" style={styles.calendarChart}>
+                <SkeletonText type="mono" width={320} />
+                <SkeletonText type="mono" width={180} />
+              </View>
+            ) : null}
           </View>
           {phone ? filters : null}
           <View testID="skeleton-calendar-panel" style={desktop ? styles.narrow : null}>

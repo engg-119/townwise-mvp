@@ -132,6 +132,18 @@ describe('the location pages', () => {
     expect(window.getComputedStyle(screen.getByTestId('skeleton-calendar-label')).width).toBe('216px');
   });
 
+  test('P28 Calendar in the week view: no chart block above the grid (the week draws its chart inside its days), its key and scale lines under it (D64)', async () => {
+    renderPage('/locations/l1/calendar?view=week', hangLocal());
+    await expectSkeleton('calendar', 'Loading the calendar');
+    expect(screen.queryByTestId('skeleton-calendar-chart')).toBeNull();
+    const cells = screen.getAllByTestId('skeleton-calendar-cell');
+    expect(cells).toHaveLength(42);
+    const key = screen.getByTestId('skeleton-calendar-week-key');
+    const last = cells.at(-1);
+    if (last === undefined) throw new Error('no cells');
+    expect(last.compareDocumentPosition(key) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
   test('P28 Calendar: after the label the header row holds the view switch’s 130px block and the Your calendars button’s 170px block, the row’s last item', async () => {
     renderPage('/locations/l1/calendar', hangLocal());
     await expectSkeleton('calendar', 'Loading the calendar');
