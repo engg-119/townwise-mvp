@@ -290,10 +290,15 @@ function checkedFields(view: ResearchedEventView, input: z.infer<typeof editFiel
   if (where === null && input.where !== null && input.where !== undefined) throw new AppError(400, 'bad_where', 'That place can’t be used');
   const weekdays = input.weekdays === undefined || input.weekdays === null ? input.weekdays : [...new Set(input.weekdays)].sort((x, y) => x - y);
   const datesChanged = input.start !== undefined || input.end !== undefined || input.weekdays !== undefined;
+  // A start the edit keeps is held to no window: research accepted it when found, so an ongoing season's end or weekdays
+  // stay editable after its start has passed. A start the person types is held to the window as research's is.
+  const startWindow = input.start !== undefined ? window : {
+    from: view.start < window.from ? view.start : window.from, to: view.start > window.to ? view.start : window.to,
+  };
   if (datesChanged && datesRefused({
     kind: view.kind, startDate: input.start ?? view.start, endDate: input.end ?? view.end,
     weekdays: weekdays === undefined ? (view.weekdays === null ? null : [...view.weekdays]) : weekdays,
-  }, window)) {
+  }, startWindow)) {
     throw new AppError(400, 'bad_dates', 'Those dates can’t be used');
   }
   return {

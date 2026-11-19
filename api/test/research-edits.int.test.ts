@@ -7,9 +7,10 @@
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { scopeForNewOrg, type OrgScope } from '../src/access/policy.ts';
+import { researchRevisionModel } from '../src/stores/research-revisions.ts';
 import type { EventInsertBase } from '../src/stores/research-shared.ts';
 import { addLocation, addSeat, createOrg } from './helpers/fixtures.ts';
 import { call, signIn, startTownwiseServer, type TestSession, type TownwiseTestServer } from './helpers/server.ts';
@@ -171,6 +172,47 @@ describe('PATCH .../research/events/:eventId', () => {
     expect(member.status).toBe(200);
     expect(await undo(again.id)).toBeNull();
     expect((await found(a)).find((view) => view.id === eventId)).toMatchObject({ title: 'Member Title' });
+  });
+
+  it('a lost race on the unique index (another revision lands after the head check) answers 409 changed_since', async () => {
+    const eventId = await ownEvent(a);
+    // The route's context has its own stores, but they share the connection's model: its count runs after the head
+    // check and before the append, so a member's hide landing there is a real race lost on the unique index.
+    const edits = () => server.connection.collection('tw_audit_events').countDocuments({ orgId: new Types.ObjectId(a.orgId), action: 'research.event_edited' });
+    const editsBefore = await edits();
+    const model = researchRevisionModel(server.connection);
+    const countDocuments = model.countDocuments.bind(model);
+    let competing: string | null = null;
+    // The store awaits the count, so a promise stands in for mongoose's query.
+    const spy = vi.spyOn(model, 'countDocuments').mockImplementationOnce(((filter: Parameters<typeof countDocuments>[0]) =>
+      server.ctx.stores.researchRevisions.append(a.scope, {
+        locationId: a.locationId, eventId, op: 'hide', fields: null, reverts: null, basedOn: 'base', by: { kind: 'person', userId: a.member.userId }, now: server.clock.now(),
+      }).then(async (won) => {
+        competing = won?.id ?? null;
+        return countDocuments(filter);
+      })) as never);
+    try {
+      const res = await patch(a, eventId, { op: 'edit', basedOn: 'base', fields: { title: 'Lost Title' } });
+      expect(res.status).toBe(409);
+      expect(competing).not.toBeNull();
+      expect(await res.json()).toMatchObject({ error: 'changed_since', event: { id: eventId, head: competing, hidden: true, title: 'Riverbank Trivia Night' } });
+    } finally {
+      spy.mockRestore();
+    }
+    expect((await revisionsOf(a)).map((each) => String(each.op))).toEqual(['hide']);
+    expect(await edits()).toBe(editsBefore);
+  });
+
+  it('an ongoing season’s end and weekdays stay editable after its start has passed; a typed start is held to the window', async () => {
+    // The clock is 2026-06-01: the season began a month before, more than research's 7 days of slack.
+    const eventId = await ownEvent(a, { kind: 'season', category: 'market', title: 'Riverside Farmers Market', titleKey: 'riverside farmers market', start: '2026-05-01', end: '2026-08-31' });
+    const ended = await patch(a, eventId, { op: 'edit', basedOn: 'base', fields: { end: '2026-09-30', weekdays: [6] } });
+    expect(ended.status).toBe(200);
+    const event = (await ended.json() as { event: EventBody }).event;
+    expect(event).toMatchObject({ start: '2026-05-01', end: '2026-09-30', edited: true });
+    const moved = await patch(a, eventId, { op: 'edit', basedOn: event.head, fields: { start: '2026-05-02' } });
+    expect(moved.status).toBe(400);
+    expect(await moved.json()).toMatchObject({ error: 'bad_dates' });
   });
 
   it('a hidden event stays hidden when research finds it again (a merge changes the base only)', async () => {
