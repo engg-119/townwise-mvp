@@ -23,6 +23,12 @@ export interface LocationFields {
   createdBy: string;
   /** True on a location Townwise staff added during setup (D23), with their user id as `createdBy`; absent otherwise. */
   byStaff?: boolean;
+  /**
+   * D59 (openspec change auto-apply-agent-reads, design decision 12): a change to the days the lab trains on wants a
+   * refit: `wantedAt`, the latest such change (set with `$max`, cleared by compare-and-set on the value read), and
+   * `startedAt`, when the hourly pass last started one for it. Absent until the first.
+   */
+  refit?: { wantedAt?: Date; startedAt?: Date };
 }
 
 function locationSchema(): Schema<LocationFields> {
@@ -35,6 +41,7 @@ function locationSchema(): Schema<LocationFields> {
     createdAt: { type: Date, required: true },
     createdBy: { type: String, required: true },
     byStaff: { type: Boolean },
+    refit: { type: new Schema({ wantedAt: { type: Date }, startedAt: { type: Date } }, { _id: false, strict: true }) },
   }, { strict: true, versionKey: false, read: 'primary' });
   schema.index({ orgId: 1, nameKey: 1 }, { unique: true });
   schema.index({ orgId: 1, createdAt: 1 });
@@ -86,7 +93,18 @@ export interface LocationStore {
     Promise<{ id: string; inserted: boolean; placeId: string | null }>;
   /** Organization deletion (spec 10.7). Resolves the number deleted. */
   removeForOrg(scope: OrgScope): Promise<number>;
+  /** D59: marks the location as wanting a refit at `at`, or later (`$max`). False when the location is gone. */
+  wantRefit(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
+  /** D59: the location's refit marks; nulls when none (or the location is gone). */
+  refitState(scope: OrgScope, locationId: string): Promise<RefitState>;
+  /** D59: clears the mark only while it is still `wantedAt` (a compare-and-set), so a change landing meanwhile stays. */
+  clearRefitWanted(scope: OrgScope, locationId: string, wantedAt: Date): Promise<boolean>;
+  /** D59: records that the hourly pass started a refit at `at`. */
+  markRefitStarted(scope: OrgScope, locationId: string, at: Date): Promise<boolean>;
 }
+
+/** D59: when a training change last wanted a refit, and when the hourly pass last started one. */
+export interface RefitState { readonly wantedAt: Date | null; readonly startedAt: Date | null }
 
 function toLocation(doc: LocationFields & { _id: Types.ObjectId }): LocationRecord {
   return {
@@ -177,6 +195,20 @@ export function createLocationStore(connection: Connection): LocationStore {
     },
     async removeForOrg(scope) {
       return (await Location.deleteMany({ orgId: scope.orgId })).deletedCount;
+    },
+    async wantRefit(scope, locationId, at) {
+      return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $max: { 'refit.wantedAt': at } })).matchedCount === 1;
+    },
+    async refitState(scope, locationId) {
+      const doc = await Location.findOne({ _id: locationId, orgId: scope.orgId }, { refit: 1 }).lean();
+      return { wantedAt: doc?.refit?.wantedAt ?? null, startedAt: doc?.refit?.startedAt ?? null };
+    },
+    async clearRefitWanted(scope, locationId, wantedAt) {
+      const result = await Location.updateOne({ _id: locationId, orgId: scope.orgId, 'refit.wantedAt': wantedAt }, { $unset: { 'refit.wantedAt': 1 } });
+      return result.modifiedCount === 1;
+    },
+    async markRefitStarted(scope, locationId, at) {
+      return (await Location.updateOne({ _id: locationId, orgId: scope.orgId }, { $set: { 'refit.startedAt': at } })).matchedCount === 1;
     },
   };
 }

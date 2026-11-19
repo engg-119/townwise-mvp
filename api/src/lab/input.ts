@@ -14,7 +14,7 @@ import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import { closingRules, closureOf, isClosure, typicalByDate } from '../closed-days.ts';
 import { daysBetween, isoDate, utcDay } from '../dates.ts';
-import { flagsAfterData, scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
+import { flagsAfterData, ownerBeatsAgent, scheduledRules, type ScheduledRule } from '../forecasts/adjust.ts';
 import { canonicalSha256, eachDay } from '../forecasts/file.ts';
 import { engineOf } from '../forecasts/reader.ts';
 import { termEntries } from '../people-in-town/term.ts';
@@ -257,6 +257,9 @@ function isParty(note: Flagged): boolean {
  * the forecast as the linked note confirming made, which editing can undo. [CONFIRM: a confirmed buyout label books a past
  * day and a party label marks it a private event, unless a note on the day decides] [CONFIRM: labels never change a day's
  * closed or likely-closed status or its guests]
+ * Owner beats agent (D59): on any day, a note a person made that decides the day sets aside every TownwiseAI note
+ * covering it (forecasts/adjust.ts ownerBeatsAgent) before the flags are read. [CONFIRM: a note a person made beats a
+ * TownwiseAI note on the same day]
  */
 export function labInputOf(args: {
   calibration: Pick<CalibrationRecord, 'id' | 'regimeStart'>;
@@ -287,7 +290,8 @@ export function labInputOf(args: {
     const past = date < args.today;
     const row = rows.get(date);
     const typicalOn = typical.get(date) ?? null;
-    const notes: Flagged[] = args.notes.filter((note) => noteCovers(note, date));
+    // D59: a person's note that decides the day sets aside TownwiseAI's notes on it, as the forecast read does.
+    const notes: Flagged[] = ownerBeatsAgent(args.notes.filter((note) => noteCovers(note, date))).kept;
     const rules = schedules.filter((schedule) => noteCovers(schedule, date));
     // A rule's closure or buyout only where it holds (closed-days.ts); its other fields always count.
     const holding = closingRules(rules, notes, row, typicalOn, past);

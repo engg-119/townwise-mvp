@@ -349,6 +349,8 @@ export async function deletePersonRecords(
   await orgModel(connection).updateMany({ 'weeklySuggestions.by': userId }, { $set: { 'weeklySuggestions.by': null } });
   // And who last switched sending calendar event titles to TownwiseAI (calendar-event-suggestions). Not counted.
   await orgModel(connection).updateMany({ 'calendarTitlesToAi.by': userId }, { $set: { 'calendarTitlesToAi.by': null } });
+  // D59: who last switched TownwiseAI working on its own; the switch stays. Not counted.
+  await orgModel(connection).updateMany({ 'agentAuto.by': userId }, { $set: { 'agentAuto.by': null } });
   await agentSuggestionModel(connection).updateMany({ decidedBy: userId }, { $set: { decidedBy: null } });
   // D58: the org admin who confirmed a file calendar's bookings; the confirmation stays. Not counted.
   await calendarSourceModel(connection).updateMany({ 'bookings.confirmedBy': userId }, { $set: { 'bookings.confirmedBy': null } });

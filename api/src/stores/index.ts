@@ -3,6 +3,7 @@ import type { Connection } from 'mongoose';
 import { createAccessRequestStore, type AccessRequestStore } from './access-requests.ts';
 import { createActivityDayStore, type ActivityDayStore } from './activity-days.ts';
 import { createAgentAnswerStore, type AgentAnswerStore } from './agent-answers.ts';
+import { createAgentChangeStore, type AgentChangeStore } from './agent-changes.ts';
 import { createAgentSuggestionStore, type AgentSuggestionStore } from './agent-suggestions.ts';
 import { createAuditEventStore, type AuditEventStore } from './audit-events.ts';
 import { createBusinessRuleStore, type BusinessRuleStore } from './business-rules.ts';
@@ -65,6 +66,8 @@ export interface TownwiseStores {
   readonly agentAnswers: AgentAnswerStore;
   /** TownwiseAI's weekly suggestions and each location's weekly pass (openspec change weekly-forecast-suggestions). */
   readonly agentSuggestions: AgentSuggestionStore;
+  /** D59: the ledger of the changes TownwiseAI saved on its own (openspec change auto-apply-agent-reads). */
+  readonly agentChanges: AgentChangeStore;
   /** U11, statement moments. */
   readonly welcomes: WelcomeStore;
   /** The display name for TownwiseAI's greeting (account-level, spec 6.22). */
@@ -118,6 +121,8 @@ export function createTownwiseStores(connection: Connection): TownwiseStores {
     agentAnswers: createAgentAnswerStore(connection),
     // TownwiseAI's weekly suggestions.
     agentSuggestions: createAgentSuggestionStore(connection),
+    // D59: the changes TownwiseAI saved on its own.
+    agentChanges: createAgentChangeStore(connection),
     // U11, statement moments.
     welcomes: createWelcomeStore(connection),
     profiles: createProfileStore(connection),

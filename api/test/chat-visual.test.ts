@@ -416,7 +416,7 @@ describe('show_visual’s run', () => {
     const days = mondays.map((each) => day(each.date, changed.get(each.date) ?? 100));
     const closure = {
       id: '0000000000000000000000aa', kind: 'closure', startDate: '2026-10-12', endDate: '2026-10-12', weekdays: null, effect: 'closed', expectedGuests: null,
-      detail: null, title: null, startTime: null, endTime: null, createdBy: 'u', byStaff: false, source: null, fromEvent: null, createdAt: new Date(0), updatedAt: new Date(0),
+      detail: null, title: null, startTime: null, endTime: null, createdBy: 'u', byStaff: false, source: null, fromEvent: null, agent: null, createdAt: new Date(0), updatedAt: new Date(0),
     } satisfies NoteRecord;
     const rule = {
       id: 'r1', schedule: { kind: 'closure', startDate: '2026-10-19', endDate: null, weekdays: [1], effect: 'closed', expectedGuests: null, startTime: null, endTime: null },

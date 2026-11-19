@@ -812,7 +812,7 @@ export async function undoAiRead(ctx: TownwiseContext, req: Request, res: Respon
  * may still have had a write in flight: days it landed meanwhile go too. Shared by DELETE .../data/:ref and an undo of
  * a TownwiseAI read (whose upload no stored file wrote).
  */
-async function removeUpload(ctx: TownwiseContext, scope: OrgScope, locationId: string, uploadId: string): Promise<{ deletedDays: number; deletedFiles: number }> {
+export async function removeUpload(ctx: TownwiseContext, scope: OrgScope, locationId: string, uploadId: string): Promise<{ deletedDays: number; deletedFiles: number }> {
   // Read whether files are on or not: an upload read from a stored file keeps it, and its blobs, while files are off.
   const files = await ctx.stores.files.byUploadIds(scope, [uploadId]);
   if (files.length > 0) {

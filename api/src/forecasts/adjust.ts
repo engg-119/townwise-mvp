@@ -18,7 +18,13 @@
 //   rule's closure or buyout: when a covering note decides the day (a closure, a buyout, or one that says it is open:
 //   an opening, a private event, or more or fewer guests; ../closed-days.ts notesDecide), each rule's closure and buyout
 //   is set aside (outcome `overridden`), so a one-day opening or party note opens a day a standing closure rule would
-//   close. [CONFIRM: a note covering a day beats a rule schedule's closure or buyout] Pure: no store, no clock.
+//   close. [CONFIRM: a note covering a day beats a rule schedule's closure or buyout]
+// - Owner beats agent (D59, openspec change auto-apply-agent-reads design decision 9): when a note a person made decides
+//   the day (notesDecide), every TownwiseAI note covering it is set aside (outcome `overridden`) before anything else is
+//   read, as a covering note beats a rule. A note is TownwiseAI's while nobody edited it since it was saved: it carries
+//   `agent` and its `updatedAt` is still `agent.at`, or (D34, from before D59) it carries a file `source` and was never
+//   edited. Once a person edits it, it is theirs. The lab input applies the same rule (../lab/input.ts). [CONFIRM: a note
+//   a person made beats a TownwiseAI note on the same day] Pure: no store, no clock.
 import { isBuyout, isClosure, notesDecide } from '../closed-days.ts';
 import type { BusinessRuleRecord, RuleSchedule } from '../stores/business-rules.ts';
 import type { NoteContent, NoteRecord } from '../stores/notes.ts';
@@ -38,7 +44,7 @@ export type NoteOutcome =
   | 'not_counted' //         an opening, an other note, fewer guests or unknown: listed, never changes a number
   | 'day_closed' //          a private event on a day that stays closed
   | 'day_booked' //          a private event (not a buyout) on a day that is booked
-  | 'overridden' //          a rule's closure or buyout on a day a covering note decides: the note wins
+  | 'overridden' //          a rule's closure or buyout on a day a covering note decides, or (D59) a TownwiseAI note on a day a person's note decides
   | 'past_day'; //           the day is before the town's today: the model's numbers stand
 
 /** The outcomes that changed the day; their reasons come before the run's. */
@@ -81,21 +87,42 @@ const closes = (entry: Effect): boolean => isClosure(entry) && !isBuyout(entry);
 export function flagsAfterData(entry: Effect): boolean {
   return entry.kind === 'private_event' && !isBuyout(entry) && !isParty(entry);
 }
+/** What owner-beats-agent reads of a note. */
+type Authored = Pick<NoteRecord, 'agent' | 'source' | 'createdAt' | 'updatedAt'>;
+
+/** D59: a note TownwiseAI saved and nobody has edited since (see the top). */
+export function isAgentNote(note: Authored): boolean {
+  if (note.agent !== null) return note.updatedAt.getTime() === note.agent.at.getTime();
+  return note.source !== null && note.updatedAt.getTime() === note.createdAt.getTime();
+}
+
+/**
+ * D59: the notes covering a day, with every TownwiseAI note set aside when the person's own notes among them decide the
+ * day; `overridden` holds those set aside, in their order.
+ */
+export function ownerBeatsAgent<N extends Authored & Pick<NoteContent, 'kind' | 'effect'>>(notes: readonly N[]): { kept: N[]; overridden: N[] } {
+  const persons = notes.filter((note) => !isAgentNote(note));
+  if (persons.length === notes.length || !notesDecide(persons)) return { kept: [...notes], overridden: [] };
+  return { kept: persons, overridden: notes.filter(isAgentNote) };
+}
+
 const applied = <T extends { outcome: NoteOutcome }>(entries: readonly T[]): T[] => entries.filter((entry) => APPLIED.has(entry.outcome));
 const unapplied = <T extends { outcome: NoteOutcome }>(entries: readonly T[]): T[] => entries.filter((entry) => !APPLIED.has(entry.outcome));
 
 /** `notes` and `rules` are the ones covering `date` (noteCovers), oldest first. */
 export function adjustDay(
-  date: string, today: string, model: ModelDay, runReasons: readonly { kind: ReasonKind }[], notes: readonly NoteRecord[],
+  date: string, today: string, model: ModelDay, runReasons: readonly { kind: ReasonKind }[], covering: readonly NoteRecord[],
   rules: readonly ScheduledRule[] = [],
 ): AdjustedDay {
   if (date < today) {
     return {
       ...model, noteGuests: 0,
-      notes: notes.map((note) => ({ note, outcome: 'past_day' })),
+      notes: covering.map((note) => ({ note, outcome: 'past_day' })),
       rules: rules.map((rule) => ({ rule, outcome: 'past_day' })),
     };
   }
+  // D59: a person's note that decides the day sets aside TownwiseAI's notes on it, before anything else is read.
+  const { kept: notes, overridden: setAside } = ownerBeatsAgent(covering);
   // A rule's closure or buyout gives way to a covering note that decides the day.
   const overridden = (entry: Effect): boolean => notesDecide(notes) && isClosure(entry);
   const effects: Effect[] = [...notes, ...rules.map((rule) => rule.schedule).filter((schedule) => !overridden(schedule))];
@@ -116,7 +143,10 @@ export function adjustDay(
     if (entry.effect !== 'more_guests') return 'not_counted';
     return counted ? 'added' : 'already_in_forecast';
   };
-  const allNotes = notes.map((note): AdjustedNote => ({ note, outcome: outcomeOf(note) }));
+  const allNotes = [
+    ...notes.map((note): AdjustedNote => ({ note, outcome: outcomeOf(note) })),
+    ...setAside.map((note): AdjustedNote => ({ note, outcome: 'overridden' })),
+  ];
   const allRules = rules.map((rule): AdjustedRule => ({ rule, outcome: overridden(rule.schedule) ? 'overridden' : outcomeOf(rule.schedule) }));
   const ordered = {
     notes: [...applied(allNotes), ...unapplied(allNotes)],

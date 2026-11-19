@@ -16,6 +16,7 @@ import { recordAfter } from '../audit.ts';
 import type { TownwiseContext } from '../app.ts';
 import type { MemberPrincipal, Principal } from '../access/policy.ts';
 import { activityFor, type ActivityItem } from '../agent/activity.ts';
+import { agentAutoView, type AgentAutoView } from './agent-changes.ts';
 import {
   answerOfNote, noteFor, parseQuestionId, QUESTION_ANSWERS, questionsFor, questionWindow, type AskedQuestion, type Question,
   type QuestionAnswer,
@@ -45,6 +46,8 @@ const answerBody = z.strictObject({ answer: z.enum(QUESTION_ANSWERS) });
 export interface AgentPanel {
   questions: Question[]; activity: ActivityItem[]; suggestions: SuggestionView[]; weeklySuggestions: WeeklySuggestionsView;
   ruleSuggestions: RuleSuggestionView[];
+  /** D59: whether TownwiseAI works on its own here, and whether the caller turns it. */
+  agentAuto: AgentAutoView;
 }
 
 export interface AnswerResult {
@@ -94,12 +97,13 @@ export async function getAgent(ctx: TownwiseContext, req: Request, res: Response
   const caller = memberOf(principal);
   const location = await loadLocation(ctx, caller.scope, req.params.locationId);
   const { questions, notes, answers } = await currentQuestions(ctx, caller, location);
-  const [activity, suggested, ruleSuggestions] = await Promise.all([
-    activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, notes, answers }),
+  const [activity, suggested, ruleSuggestions, agentAuto] = await Promise.all([
+    activityFor({ ctx, scope: caller.scope, locationId: location.id, userId: caller.userId, caller, notes, answers }),
     suggestionsPanel(ctx, caller, location),
     ruleSuggestionViews(ctx, caller, location),
+    agentAutoView(ctx, caller),
   ]);
-  const body: AgentPanel = { questions, activity, ...suggested, ruleSuggestions };
+  const body: AgentPanel = { questions, activity, ...suggested, ruleSuggestions, agentAuto };
   res.status(200).json(body);
 }
 
