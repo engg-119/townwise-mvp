@@ -40,7 +40,7 @@ test('at phone width a row stacks its date over its words; wide, they sit side b
   expect(document.body.textContent).toBe(phone);
 });
 
-test('while it loads, the groups’ skeleton stands in above the jobs, with one status line and no other words', async () => {
+test('while it loads, the groups’ skeleton stands in above the jobs, with one status line and only masked words', async () => {
   const api = analyticsFake({});
   const json = api.json.bind(api);
   api.json = (path, schema, opts) => (path === PEOPLE_PATH ? new Promise(() => undefined) : json(path, schema, opts));
@@ -48,7 +48,10 @@ test('while it loads, the groups’ skeleton stands in above the jobs, with one 
   render(<Wrapper><InTown today="2026-11-05" townId="hanover-nh" locationId={LOCATION_ID} /></Wrapper>);
   const skeleton = await screen.findByTestId('skeleton-in-town');
   expect(within(skeleton).getByRole('status').textContent).toBe('Loading who’s in town…');
-  expect(skeleton.textContent).toBe('Loading who’s in town…');
+  // The shapes draw the page's sentences to wrap like them, every letter and digit masked as an s.
+  const shapes = skeleton.textContent.replace('Loading who’s in town…', '');
+  expect(shapes).not.toBe('');
+  expect(shapes).toMatch(/^[^\p{L}\p{N}]*(?:s[^\p{L}\p{N}]*)*$/u);
   // The county's jobs don't wait for the read, so they sit under the shapes already.
   const jobs = screen.getByText('Food-service jobs in Grafton County');
   expect(skeleton.compareDocumentPosition(jobs) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
