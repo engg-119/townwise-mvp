@@ -74,6 +74,8 @@ function context(fakes: Fakes = {}): ToolContext {
     },
     orderCounts: { latest: () => Promise.resolve(new Map([[LAGER, { quantity: 1.5, date: '2026-11-08' }]])) },
     salesDays: { days: () => Promise.resolve([]) },
+    // The board reads notes over its guest days, so a day marked wrong leaves its baseline (D67).
+    notes: { overlapping: () => Promise.resolve([]) },
     orders: {
       listDecisions: () => Promise.resolve([]),
       listRules: () => Promise.resolve([]),
