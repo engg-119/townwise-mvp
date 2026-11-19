@@ -107,6 +107,10 @@ test('slice 4: a note saved from your own message, and pasted text read on its o
   const items = screen.getAllByRole('listitem');
   const conversations = items.find((item) => item.textContent.startsWith('TownwiseAI conversations.'));
   expect(conversations?.textContent).toContain('Where TownwiseAI works on its own, a note for a dated event you state plainly in your own message is saved to your notes for you, as yours, and its card shows Undo');
+  // The Anthropic item's "only when you ask" is about a conversation: pasted text saved with its box checked is read on its own.
+  const anthropic = items.find((item) => item.textContent.startsWith('Anthropic,'));
+  expect(anthropic?.textContent).toContain('In a conversation, it reads a text item on Your data (text you pasted or a text file you added)');
+  expect(anthropic?.textContent).not.toMatch(/\. It reads a text item on Your data/);
   const changes = items.find((item) => item.textContent.startsWith('Changes TownwiseAI makes.'));
   expect(changes?.textContent).toContain('from a file you add or text you paste on Your data (a note, a summary on Your data, or sales days you didn’t have), from a message you send it (a note for a dated event you state plainly in your own words)');
 });

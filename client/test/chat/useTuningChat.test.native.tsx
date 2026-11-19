@@ -1491,6 +1491,24 @@ describe('a turn that outlives its connection', () => {
     expect(api.turns).toHaveLength(1);
   });
 
+  test('D59 slice 4: a note TownwiseAI saves in a turn the page reattached to marks the organization stale, as in a sent one', async () => {
+    const api = fakeChatApi();
+    api.summary = { ...SUMMARY, liveTurn: { conversationId: 'c1', turnId: 'turn-9' } };
+    api.conversation = LIVE_VIEW;
+    const added = jest.fn();
+    const chat = await ready(api, { onNoteAdded: added });
+    await waitFor(() => { expect(api.turns).toHaveLength(1); });
+    api.conversation = SAVED_VIEW;
+    await act(() => {
+      turn(api).emit('conversation', { id: 'c1', title: 'Earlier chat', userNodeId: 'u2', replyNodeId: 'a2', parentId: 'a1', turnId: 'turn-9' }, 1);
+      turn(api).emit('proposal', { ...PROPOSAL_EVENT, saved: { noteId: 'n1', changeId: 'ch1' } }, 2);
+      turn(api).emit('done', { stopReason: 'end_turn', costUsd: 0, leafId: 'a2' }, 3);
+      turn(api).end();
+    });
+    await waitFor(() => { expect(chat.current.state.streaming).toBe(false); });
+    expect(added).toHaveBeenCalledTimes(1);
+  });
+
   test('a dropped stream is read again from its last number after 1, 2 and 4 seconds, at once when the app comes back, and no text shows twice', async () => {
     jest.useFakeTimers();
     let listeners: ((state: AppStateStatus) => void)[] = [];

@@ -1424,7 +1424,8 @@ export function useTuningChat(api: ApiClient, locationId: string, options: Tunin
     if (turn.message !== null) request = { conversationId: id, content: turn.message.text, parentId: turn.parentId };
     else if (turn.parentId !== null) request = { conversationId: id, replyTo: turn.parentId };
     dispatch({ type: 'reattach', id, shown: shownOf(load, id), asked, replyKey: nextKey(), request, live: turn });
-    const onEvent = listener(handle, () => undefined);
+    // D59 slice 4: a note TownwiseAI saves in the part of the turn followed here marks the organization stale too.
+    const onEvent = listener(handle, (event) => { if (event.type === 'proposal' && event.saved !== undefined) onNoteAdded?.(); });
     turnEnd.current = follow(handle, { conversationId: id, turnId: turn.turnId }, onEvent, false).then(() => reread(handle)).then(
       () => {
         if (handle.left) return;

@@ -50,3 +50,21 @@ test('undone, or changed since: says what became of it, with no Undo', () => {
   expect(screen.getByText('You changed this since, so it’s yours now. Delete it from Notes if you don’t want it.')).toBeTruthy();
   expect(screen.queryByText('Undo')).toBeNull();
 });
+
+test('edited or deleted on Notes since, while its change still reads applied: says so, with no Undo', () => {
+  const view = render(<ProposalCard card={card({ changeId: 'ch1', status: 'applied', undoable: false, target: 'changed' })} locationId="l1" actions={actions()} readOnlyId={null} />);
+  expect(screen.getByText('Saved to Notes. You changed it since, so it’s yours.')).toBeTruthy();
+  expect(screen.getByText('Open Notes')).toBeTruthy();
+  expect(screen.queryByText('Undo')).toBeNull();
+  view.rerender(<ProposalCard card={card({ changeId: 'ch1', status: 'applied', undoable: false, target: 'gone' })} locationId="l1" actions={actions()} readOnlyId={null} />);
+  expect(screen.getByText('Saved to Notes, and deleted from Notes since.')).toBeTruthy();
+  expect(screen.queryByText('Open Notes')).toBeNull();
+  expect(screen.queryByText('TownwiseAI saved this to Notes, as you said it.')).toBeNull();
+});
+
+test('an answered Undo moves focus to the line that says what became of the note (its button is gone)', () => {
+  const view = render(<ProposalCard card={card({ changeId: 'ch1', status: 'undoing', undoable: true })} locationId="l1" actions={actions()} readOnlyId={null} />);
+  view.rerender(<ProposalCard card={card({ changeId: 'ch1', status: 'undone', undoable: false })} locationId="l1" actions={actions()} readOnlyId={null} />);
+  expect(document.activeElement?.getAttribute('role')).toBe('status');
+  expect(document.activeElement?.textContent).toBe('Undone. TownwiseAI took this note back out of Notes.');
+});

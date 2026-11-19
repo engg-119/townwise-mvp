@@ -61,10 +61,12 @@ const viewSchema = z.record(z.string(), z.unknown()).nullable();
 const proposalStatusSchema = z.enum(['open', 'saved', 'dismissed']);
 /**
  * D59 slice 4: on a note TownwiseAI saved itself from the person's own message, its change (the activity's and the log's
- * row): its status, and whether this caller is offered Undo. Absent on any other proposal, and from an older API.
+ * row): its status, whether this caller is offered Undo, and `target` when someone edited (`changed`) or deleted
+ * (`gone`) the note on Notes since. Absent on any other proposal, and from an older API.
  */
 const autoSchema = z.object({
   changeId: z.string(), status: z.enum(['applying', 'applied', 'undoing', 'undone', 'adopted']), undoable: z.boolean(),
+  target: z.enum(['changed', 'gone']).optional(),
 });
 export type AutoSaved = z.infer<typeof autoSchema>;
 const proposalViewSchema = noteProposalSchema.extend({

@@ -55,6 +55,13 @@ export function ProposalCard(props: {
     if (previous.current === 'saving' && card.status === 'saved' && Platform.OS === 'web') savedLine.current?.focus();
     previous.current = card.status;
   }, [card.status]);
+  // D59 slice 4: so does an Undo once it is answered (its button, and once undone Open Notes, go or change under it).
+  const autoStatus = card.auto?.status;
+  const previousAuto = useRef(autoStatus);
+  useEffect(() => {
+    if (previousAuto.current === 'undoing' && autoStatus !== 'undoing' && Platform.OS === 'web') savedLine.current?.focus();
+    previousAuto.current = autoStatus;
+  }, [autoStatus]);
 
   if (card.status === 'editing') {
     return (
@@ -102,9 +109,9 @@ export function ProposalCard(props: {
     footer = (
       <View style={styles.saved}>
         <View ref={savedLine} {...(Platform.OS === 'web' ? { tabIndex: -1 } : {})} role="status">
-          <Text style={styles.savedText}>{autoLine(auto.status)}</Text>
+          <Text style={styles.savedText}>{autoLine(auto)}</Text>
         </View>
-        {auto.status === 'undone' ? null : <LinkButton href={locationHref(props.locationId, 'notes')} label="Open Notes" />}
+        {auto.status === 'undone' || auto.target === 'gone' ? null : <LinkButton href={locationHref(props.locationId, 'notes')} label="Open Notes" />}
         {(auto.status === 'applied' || undoing) && auto.undoable ? (
           <Button variant="link" label={undoing ? 'Undoing…' : 'Undo'} disabled={readOnly || undoing} {...described(props.readOnlyId)} onPress={() => { actions.undo(card.id); }} />
         ) : null}
@@ -147,12 +154,11 @@ export function ProposalCard(props: {
 }
 
 /** D59 slice 4: what became of a note TownwiseAI saved from the person's message. */
-function autoLine(status: NonNullable<Card['auto']>['status']): string {
-  switch (status) {
-    case 'undone': return 'Undone. TownwiseAI took this note back out of Notes.';
-    case 'adopted': return 'Saved to Notes. You changed it since, so it’s yours.';
-    default: return 'TownwiseAI saved this to Notes, as you said it.';
-  }
+function autoLine(auto: NonNullable<Card['auto']>): string {
+  if (auto.status === 'undone') return 'Undone. TownwiseAI took this note back out of Notes.';
+  if (auto.status === 'adopted' || auto.target === 'changed') return 'Saved to Notes. You changed it since, so it’s yours.';
+  if (auto.target === 'gone') return 'Saved to Notes, and deleted from Notes since.';
+  return 'TownwiseAI saved this to Notes, as you said it.';
 }
 
 const c = theme.color;
