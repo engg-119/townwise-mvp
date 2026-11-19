@@ -1,7 +1,9 @@
 // Who pays for a calibration and how much history it needs (D27, D42): a person's start (an org admin's or staff's) is
-// one of the organization's 4 a day, is charged $0.10 to its TownwiseAI month, is refused on a spent month and needs a
-// 595-day span; the weekly refresh's start (the system requester) is none of those and may start from 230 days. The
-// services are called directly, as the weekly refresh will (phase 3b), with a fake runner. Every number is synthetic.
+// one of the organization's 4 a day, is charged $0.10 to its TownwiseAI month and is refused on a spent month; the weekly
+// refresh's start (the system requester) is none of those. Both may start from a 230-day span (a person's since
+// 2026-11-19), and the lab is handed the same input whoever started it, so it picks the same engine: the baseline alone
+// under 595 days. The services are called directly, as the weekly refresh does, with a fake runner. Every number is
+// synthetic.
 import { randomUUID } from 'node:crypto';
 
 import { Types } from 'mongoose';
@@ -11,6 +13,7 @@ import type { OrgScope } from '../src/access/policy.ts';
 import { calibrationFor, calibrationWords } from '../src/calibration.ts';
 import { utcDay } from '../src/dates.ts';
 import { runFileSha256, type ForecastRunFile } from '../src/forecasts/file.ts';
+import { buildLabInput } from '../src/lab/input.ts';
 import {
   CALIBRATION_CHARGE_MICRO_USD, CALIBRATIONS_PER_ORG_PER_DAY, checkStart, finishCalibration, launch, SYSTEM_REQUESTER, type StartRequest,
 } from '../src/lab/service.ts';
@@ -101,17 +104,55 @@ describe('the weekly refresh’s start (system requester, D42)', () => {
   });
 });
 
-describe('a person’s start keeps D27', () => {
-  it('is charged $0.10 to the month and needs a 595-day span', async () => {
+describe('a person’s start keeps D27’s charge and limits', () => {
+  /** Every way a person starts one: staff's Calibrate, TownwiseAI's chat and a file TownwiseAI read (D34), staff open as admin. */
+  const PEOPLE = [
+    PERSON,
+    { userId: 'admin-0000', role: 'org_admin', via: 'chat' },
+    { userId: 'admin-0000', role: 'org_admin', via: 'file' },
+    { userId: 'staff-0000', role: 'superadmin', via: 'file' },
+  ] as const;
+
+  it('is charged $0.10 to the month', async () => {
     const p = await place(600);
     const started = await startAndFree(p, PERSON);
     if (!started.ok) return expect.unreachable('the start starts');
     const doc = await server.connection.collection('tw_calibrations').findOne({ _id: new Types.ObjectId(started.calibration.id) });
     expect(doc?.chargedMicroUsd).toBe(CALIBRATION_CHARGE_MICRO_USD);
     expect(await usage(p.orgId)).toBe(1);
-    expect(await checkStart(server.ctx, await request(await place(594), PERSON))).toBe('not_enough_history');
-    expect(await checkStart(server.ctx, await request(await place(300), PERSON))).toBe('not_enough_history');
-    expect(await checkStart(server.ctx, await request(await place(595), PERSON))).toBeNull();
+  });
+
+  it('may start from a 230-day span as the weekly refresh does (2026-11-19); 229 is not_enough_history', async () => {
+    const spans = { 229: await place(229), 230: await place(230), 594: await place(594), 595: await place(595) };
+    for (const requester of PEOPLE) {
+      expect(await checkStart(server.ctx, await request(spans[229], requester))).toBe('not_enough_history');
+      for (const span of [230, 594, 595] as const) expect(await checkStart(server.ctx, await request(spans[span], requester))).toBeNull();
+    }
+  });
+
+  it('under 595 days is still charged $0.10, one of the 4 a day, and refused on a spent month', async () => {
+    const p = await place(300);
+    for (let i = 0; i < CALIBRATIONS_PER_ORG_PER_DAY; i += 1) expect((await startAndFree(p, PERSON)).ok).toBe(true);
+    expect(await launch(server.ctx, await request(p, PERSON))).toEqual({ ok: false, code: 'rate_limited' });
+    const month = await server.connection.collection('tw_chat_usage').findOne({ orgId: new Types.ObjectId(p.orgId) });
+    expect(month?.costMicroUsd).toBe(CALIBRATIONS_PER_ORG_PER_DAY * CALIBRATION_CHARGE_MICRO_USD);
+    const spent = await place(300);
+    await addChatUsage(server, { orgId: spent.orgId, month: '2026-06', costMicroUsd: 20_000_000 });
+    expect(await checkStart(server.ctx, await request(spent, PERSON))).toBe('budget_exhausted');
+  });
+
+  it('hands the lab the same input as the weekly refresh’s start, so the lab picks the same engine', async () => {
+    const p = await place(400);
+    const person = await startAndFree(p, PERSON);
+    const system = await startAndFree(p, SYSTEM_REQUESTER);
+    if (!person.ok || !system.ok) return expect.unreachable('both start');
+    const [ours, weekly] = await Promise.all([person, system].map((started) => buildLabInput(server.ctx, p.scope, started.calibration)));
+    if (ours == null || weekly == null) return expect.unreachable('both have an input');
+    // Only the calibration's id differs: the same days, today, champion (none) and calendar
+    expect(ours.calibrationId).not.toBe(weekly.calibrationId);
+    expect({ ...ours, calibrationId: null }).toEqual({ ...weekly, calibrationId: null });
+    // Nothing in it names who started it
+    expect(JSON.stringify(ours)).not.toMatch(/superadmin|console|scheduled/);
   });
 });
 

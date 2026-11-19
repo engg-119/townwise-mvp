@@ -209,20 +209,26 @@ describe('starting a calibration', () => {
     expect(usage?.costMicroUsd).toBe(4 * CALIBRATION_CHARGE_MICRO_USD);
   });
 
-  it('under 595 days of history is 409 not_enough_history and starts no job', async () => {
-    // 2024-10-14 to 2026-05-31 spans 594 days; one day more is enough.
-    const short = await team({ from: '2024-10-14' });
+  it('under 230 days of history is 409 not_enough_history, saying which engine runs from when, and starts no job', async () => {
+    // 2025-10-14 to 2026-05-31 spans 229 days; one day more is enough for the baseline (2026-11-19).
+    const short = await team({ from: '2025-10-14' });
     const jobs = runner.jobs.length;
     const before = (await auditEvents(server)).length;
     const res = await start(short);
     expect(await res.clone().json()).toMatchObject({
-      error: 'not_enough_history', message: 'Calibration needs at least 595 days from the first to the last day of sales history.',
+      error: 'not_enough_history',
+      message: 'Calibration needs at least 230 days from the first to the last day of sales history, for Townwise’s baseline. Its demand model also runs from 595 days, which a location needs while its current forecast is from the demand model.',
     });
     expect(res.status).toBe(409);
     expect(runner.jobs).toHaveLength(jobs);
     expect((await auditEvents(server)).length).toBe(before);
     expect(await count('tw_calibrations', { orgId: new Types.ObjectId(short.orgId) })).toBe(0);
-    await started(await team({ from: '2024-10-13' }));
+    // 230 and 594 days start (the baseline alone runs) as 595 does (the model too), each charged $0.10
+    for (const from of ['2025-10-13', '2024-10-14', '2024-10-13']) {
+      const t = await team({ from });
+      const { calibration } = await started(t);
+      expect(calibration).toMatchObject({ via: 'console', requestedByRole: 'superadmin', chargedUsd: 0.1 });
+    }
   });
 
   it('a guest day after the town’s today is not history yet: the span and the input stop at today', async () => {

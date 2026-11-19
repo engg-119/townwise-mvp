@@ -21,6 +21,11 @@ import type { OrgLocation, StaffOrg } from './schemas';
 // others above and withdrawn with the same Withdraw.
 
 const ACTIVITY = 'Its admins see this in their Townwise staff activity.';
+/**
+ * Which engine a calibration runs, by its history's span, as for the weekly refresh's (D42; a staff start from 230 days
+ * since 2026-11-19). The console doesn't know the span the API reads, so the dialog states the rule.
+ */
+const ENGINES = 'With 595 days of sales history or more it runs Townwise’s demand model beside its baseline, as the weekly refresh does; with 230 to 594 days it runs the baseline only, unless the current forecast is from the demand model, which then needs 595 days.';
 const DATE = /^\d{4}-\d{2}-\d{2}$/;
 
 const STATUS_WORDS: Readonly<Record<Calibration['status'], string>> = {
@@ -31,7 +36,7 @@ const STATUS_WORDS: Readonly<Record<Calibration['status'], string>> = {
 // client’s errors carry the code, not the text. calibrations.test.web.tsx pins each line to the server’s file.
 export const REFUSALS: readonly (readonly [number, string, string])[] = [
   [503, 'lab_unavailable', 'Calibration isn’t available right now.'],
-  [409, 'not_enough_history', 'Calibration needs at least 595 days from the first to the last day of sales history.'],
+  [409, 'not_enough_history', 'Calibration needs at least 230 days from the first to the last day of sales history, for Townwise’s baseline. Its demand model also runs from 595 days, which a location needs while its current forecast is from the demand model.'],
   [400, 'invalid_regime_start', 'The pattern change date must fall inside the sales history, at least 8 weeks before its last day.'],
   [409, 'chat_budget_exhausted', 'This month’s TownwiseAI budget is used up, so a calibration can’t start until it resets.'],
   [409, 'calibration_in_progress', 'A calibration for this location is already running.'],
@@ -71,7 +76,7 @@ function CalibrateDialog(props: {
   return (
     <Dialog
       title={`Calibrate ${location.name}?`}
-      body={`Townwise refits ${location.name}’s forecast on its sales history and notes, on Townwise’s servers, and scores it on held-out weeks. It costs $0.10 of ${org.name}’s TownwiseAI budget. If it passes every check and forecasts are on, it publishes itself. ${ACTIVITY}`}
+      body={`Townwise refits ${location.name}’s forecast on its sales history and notes, on Townwise’s servers, and scores it on held-out weeks. ${ENGINES} It costs $0.10 of ${org.name}’s TownwiseAI budget. If it passes every check and forecasts are on, it publishes itself. ${ACTIVITY}`}
       confirmLabel="Calibrate"
       pendingLabel="Starting…"
       pending={act.pending}

@@ -247,7 +247,8 @@ describe('start_calibration', () => {
     });
     expect(failed.views).toEqual([{ input: null, result: { available: true, status: 'failed', weeks: null, published: null } }]);
     await refusal('invalid_regime_start', t, { regimeStart: '2026-05-20' });
-    await refusal('not_enough_history', await team('2024-10-14'));
+    // 229 days (230 start the baseline, 2026-11-19)
+    await refusal('not_enough_history', await team('2025-10-14'));
     const unstarted = await team();
     runner.failNext(new LabStartError('upstream_status', { status: 403 }));
     await refusal('start_failed', unstarted);

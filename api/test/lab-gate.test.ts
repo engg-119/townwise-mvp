@@ -556,7 +556,10 @@ describe('GATE_WORDS', () => {
     expect(GATE_WORDS.biased).toContain(`${String(GATE.baselineBiasMax * 100)} points`);
     expect(GATE_WORDS.jump_held).toContain(`${String(GATE.jumpDays)} days`);
     expect(GATE_WORDS.jump_held).toContain(`${String(GATE.jumpMax * 100)}%`);
-    expect(START_REFUSAL_WORDS.not_enough_history).toContain(`${String(GATE.minHistoryDays)} days`);
+    // A start needs the baseline's span and says which engine runs from which (2026-11-19).
+    expect(START_REFUSAL_WORDS.not_enough_history).toContain(`at least ${String(GATE.baselineMinHistoryDays)} days`);
+    expect(START_REFUSAL_WORDS.not_enough_history).toContain('baseline');
+    expect(START_REFUSAL_WORDS.not_enough_history).toContain(`demand model also runs from ${String(GATE.minHistoryDays)} days`);
   });
 
   it('the lab’s own history minimums are the gate’s', () => {

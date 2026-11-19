@@ -173,7 +173,7 @@ const FORECAST: Readonly<Record<string, string>> = {
   not_needed: 'The forecast wasn’t updated: TownwiseAI added no notes or days.',
   not_admin: 'An org admin can update the forecast from this.',
   lab_unavailable: 'The forecast wasn’t updated: forecast updates are off right now.',
-  not_enough_history: 'The forecast wasn’t updated: it needs at least 595 days from the first to the last day of sales history.',
+  not_enough_history: 'The forecast wasn’t updated: it needs at least 230 days from the first to the last day of sales history, or 595 while its current forecast is from Townwiseâs demand model.',
   regime: 'The forecast wasn’t updated: this location’s sales history doesn’t allow an update right now.',
   budget_spent: 'The forecast wasn’t updated: this month’s TownwiseAI budget is spent.',
   in_progress: 'The forecast wasn’t updated: an update for this location is already running.',
