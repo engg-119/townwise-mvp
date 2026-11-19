@@ -13,7 +13,6 @@ import { CAN_DROP } from '../onboarding/HistoryStepDrop';
 import { noticeShowsAt, usePortal, useReadOnly } from '../PortalProvider';
 import { locationHref } from '../routing';
 import { useLocation } from '../shell/LocationShell';
-import { TableSkeleton } from '../skeleton';
 import { Actions, Button, LinkButton } from '../ui/Button';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { EmptyState, Messages, Notice, ReadOnlyLine } from '../ui/feedback';
@@ -24,7 +23,7 @@ import { Lead, Small } from '../ui/text';
 import { AddFile } from './AddFile';
 import { listData, type DataCalendar, type DataItem } from './api';
 import { DATA, dataError, empty, isReference, lead, tableLabel } from './copy';
-import { DataList } from './DataList';
+import { DataList, DataListSkeleton } from './DataList';
 import { useDataView } from './dataView';
 import { entriesOf } from './folders';
 import { ImportCalendar } from './ImportCalendar';
@@ -230,7 +229,7 @@ function Data(): React.JSX.Element {
         <ImportCalendar locationId={location.id} readOnlyId={readOnlyId} onAdded={fresh} />
         <ViewSwitch value={view} onChange={setView} />
         {loadError !== null ? <LoadFailure error={loadError} onRetry={reload} /> : entries === null ? (
-          <TableSkeleton name="data" label={DATA.loading} columns={SKELETON_COLUMNS} rowHeight={56} />
+          <DataListSkeleton view={view} all={all} label={DATA.loading} />
         ) : entries.length === 0 ? (
           <EmptyState text={empty(all ? DATA.allLocations.toLowerCase() : locationName)} />
         ) : (
@@ -254,12 +253,6 @@ function Data(): React.JSX.Element {
     </Section>
   );
 }
-
-/** The loading table's columns: the list's, for one location. */
-const SKELETON_COLUMNS = [
-  { key: 'item', label: 'Item', flex: 1.6 }, { key: 'added', label: 'Added', flex: 1.5 }, { key: 'kind', label: 'Kind', flex: 1 },
-  { key: 'size', label: 'Size', flex: 0.8 }, { key: 'status', label: 'Status', flex: 1.4 }, { key: 'days', label: 'Days', flex: 1.4 },
-] as const;
 
 const styles = StyleSheet.create({
   ordering: { gap: theme.space[1] },

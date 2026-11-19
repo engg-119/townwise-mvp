@@ -5,11 +5,13 @@ import { getMockContext } from 'expo-router/testing-library';
 
 import { LAST_YEAR_FOOTNOTE } from '../../../src/portal/analytics/week';
 import { cellSize } from '../../../src/portal/calendar/grid';
+import { FOLDERS } from '../../../src/portal/data/folders';
 import { AnalyticsSkeleton } from '../../../src/portal/skeleton';
 import { readingLine, sendingLine } from '../../../src/portal/upload/copy';
 import { appRoutes, seededRoot } from '../../helpers/app';
 import { fakeAuth } from '../../helpers/fakes';
 import { ACCESS, EMAIL, fakePortalApi, meOf, orgOf, type FakePortalApi } from '../../helpers/portal';
+import { choose } from '../../helpers/select';
 import { locationsFake } from '../locations/fakes';
 import { consoleApi, renderAt as renderConsole, setWidth } from '../console/helpers';
 
@@ -56,10 +58,35 @@ async function expectSkeleton(name: string, words: string): Promise<void> {
   expect(within(skeleton).getByTestId('skeleton-shapes').getAttribute('aria-hidden')).toBe('true');
 }
 
-test('P26 Your data: the table’s skeleton under the page’s actions', async () => {
-  const api = hang(fakePortalApi({ me: meOf(ACCESS.member), org: orgOf('member') }), '/api/org/data?locationId=l1');
-  renderPage('/locations/l1/data', api);
-  await expectSkeleton('data', 'Loading your data');
+describe('P26 Your data', () => {
+  afterEach(() => { window.localStorage.clear(); });
+
+  /** An org admin of two locations, whose list reads (one location's or every location's) never answer. */
+  function hangData(): FakePortalApi {
+    return hang(hang(fakePortalApi({ me: meOf(ACCESS.admin), org: orgOf('org_admin') }), '/api/org/data?locationId=l1'), '/api/org/data');
+  }
+
+  /** The columns of a skeleton table: the cells of its head row (SkeletonTable: clip, width, head row). */
+  function columnsOf(table: HTMLElement): number {
+    return table.firstElementChild?.firstElementChild?.firstElementChild?.children.length ?? 0;
+  }
+
+  test('Organized, the default: a row for each folder under the page’s actions, and no table', async () => {
+    renderPage('/locations/l1/data', hangData());
+    await expectSkeleton('data', 'Loading your data');
+    expect(screen.getAllByTestId('skeleton-data-folder')).toHaveLength(FOLDERS.length);
+    expect(screen.queryByTestId('skeleton-data-table')).toBeNull();
+  });
+
+  test('Newest first: the table with the list’s columns, the Location column under All locations', async () => {
+    window.localStorage.setItem(`townwise.dataView.${meOf(ACCESS.admin).user.id}`, 'newest');
+    renderPage('/locations/l1/data', hangData());
+    await expectSkeleton('data', 'Loading your data');
+    expect(screen.queryByTestId('skeleton-data-folder')).toBeNull();
+    expect(columnsOf(screen.getByTestId('skeleton-data-table'))).toBe(6);
+    choose(screen.getByRole('combobox', { name: 'Show' }), 'All locations');
+    expect(columnsOf(await screen.findByTestId('skeleton-data-table'))).toBe(7);
+  });
 });
 
 describe('the location pages', () => {

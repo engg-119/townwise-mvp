@@ -2554,7 +2554,7 @@ The location's chat with TownwiseAI (server contract: `docs/portal/tuning-chat.m
 
 | State | Shows |
 |---|---|
-| Loading | The table’s skeleton with its columns (15.7), with “Loading your data” |
+| Loading | The view’s own shapes (15.7), with “Loading your data”: Organized, a row for each folder with its name and a bar for its count; Newest first, the table’s skeleton with its columns (Location included under All locations) |
 | Empty | “Nothing here yet. What your team uploads or adds for {location} shows here.” |
 | Error | Network copy with Try again; 404 as on P11 |
 | Files off | Add a file and Paste text are hidden; uploads still list. A refusal reads “File storage is off right now, so this can’t be done.” |

@@ -7,6 +7,7 @@ import { COPY as FILE_COPY, formatSize } from '../files/copy';
 import { ZipEntries } from '../files/ZipEntries';
 import { formatDate } from '../format';
 import { itemHref } from '../routing';
+import { Skeleton, SkeletonTable, SkeletonText, SkeletonWords } from '../skeleton';
 import { webAria } from '../ui/aria';
 import { DataTable, RowLink, type Column, type Row } from '../ui/DataTable';
 import { Small } from '../ui/text';
@@ -14,7 +15,7 @@ import { rowAiLine } from './aiCopy';
 import type { DataCalendar, DataItem } from './api';
 import { addedLine, COLUMNS, DATA, daysLine, folderCountLine, isReference, itemName, kindLabel, shownName, stateLine, VIA_LINE } from './copy';
 import type { DataView } from './dataView';
-import { byFolder, type Entry, type Folder } from './folders';
+import { byFolder, FOLDERS, type Entry, type Folder } from './folders';
 
 // Your data's one list (D61): every upload, stored file and calendar, as a table (DataTable) of the same columns.
 // "Newest first" is one table, newest at the top. "Organized" is the folders (folders.ts), each a button naming the
@@ -22,7 +23,8 @@ import { byFolder, type Entry, type Folder } from './folders';
 // closed at first; an empty folder opens to a line saying so. A row opens its item's page from a press anywhere on it,
 // its name the row's one link (RowLink); an item still uploading has nothing to open, so its row is not linked. A
 // calendar's row names it, its kind and event count ("File, 12 events"), and opens its page (`c_<id>`, D49); its
-// status shows only when a refresh failed. Opening is a read, so rows and folders work under view-as too.
+// status shows only when a refresh failed. Opening is a read, so rows and folders work under view-as too. While the
+// list loads, DataListSkeleton draws the view's own shapes: the folders' rows, or the table with the same columns.
 
 export function DataList(props: {
   view: DataView;
@@ -35,20 +37,53 @@ export function DataList(props: {
   /** An older page is still to load, so the folders' counts are of what is loaded. */
   more: boolean;
 }): React.JSX.Element {
-  const columns: Column[] = [
+  const columns = columnsOf(props.all);
+  const rowsOf = (entries: readonly Entry[]): Row[] => entries.map((entry) => rowOf(entry, props.nameOf));
+  if (props.view === 'newest') return <DataTable label={props.label} columns={columns} rows={rowsOf(props.entries)} />;
+  return <Folders entries={props.entries} label={props.label} more={props.more} render={(name, entries) => (
+    <DataTable label={`${name}, ${props.label}`} columns={columns} rows={rowsOf(entries)} />
+  )} />;
+}
+
+/** The list's columns; `all`: every location's, with a Location column. */
+function columnsOf(all: boolean): Column[] {
+  return [
     { key: 'item', label: COLUMNS.item, flex: 1.6 },
-    ...(props.all ? [{ key: 'location', label: COLUMNS.location, flex: 1.1 }] : []),
+    ...(all ? [{ key: 'location', label: COLUMNS.location, flex: 1.1 }] : []),
     { key: 'added', label: COLUMNS.added, flex: 1.5 },
     { key: 'kind', label: COLUMNS.kind, flex: 1 },
     { key: 'size', label: COLUMNS.size, flex: 0.8 },
     { key: 'status', label: COLUMNS.status, flex: 1.4 },
     { key: 'days', label: COLUMNS.days, flex: 1.4 },
   ];
-  const rowsOf = (entries: readonly Entry[]): Row[] => entries.map((entry) => rowOf(entry, props.nameOf));
-  if (props.view === 'newest') return <DataTable label={props.label} columns={columns} rows={rowsOf(props.entries)} />;
-  return <Folders entries={props.entries} label={props.label} more={props.more} render={(name, entries) => (
-    <DataTable label={`${name}, ${props.label}`} columns={columns} rows={rowsOf(entries)} />
-  )} />;
+}
+
+/**
+ * The list while it loads (spec 15.7), in the view's own shapes so nothing moves when it arrives: Organized as a row
+ * for each folder, its name in place and its count a bar; Newest first as the table, with the same columns (the
+ * Location column under All locations). `label`: the page's loading words.
+ */
+export function DataListSkeleton(props: { view: DataView; all: boolean; label: string }): React.JSX.Element {
+  return (
+    <Skeleton name="data" label={props.label}>
+      {props.view === 'newest' ? (
+        // The name's 44px link and the cell's padding.
+        <View testID="skeleton-data-table"><SkeletonTable columns={columnsOf(props.all)} rowHeight={56} /></View>
+      ) : (
+        <View>
+          {FOLDERS.map((folder) => (
+            <View key={folder.key} testID="skeleton-data-folder" style={styles.folder}>
+              <View style={styles.folderButton}>
+                <View style={styles.square} />
+                <Text style={styles.folderName}><SkeletonWords>{folder.label}</SkeletonWords></Text>
+                <SkeletonText type="mono" width={16} />
+              </View>
+            </View>
+          ))}
+        </View>
+      )}
+    </Skeleton>
+  );
 }
 
 function Folders(props: {
