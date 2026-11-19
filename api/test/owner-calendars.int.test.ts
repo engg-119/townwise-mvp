@@ -459,6 +459,9 @@ describe('with the calendar key', () => {
     expect(calendarOf(refreshed)).toEqual({ ...calendar, eventCount: 3, skippedRepeating: 0, lastSuccessAt: firstAt, lastAttemptAt: firstAt });
     expect(sent).toHaveLength(1);
     expect(await titles(t)).toEqual(['Wine tasting', 'Book club', 'Graduation lunch']);
+    // D59 slice 3: events added in the next 91 days bring the location's weekly pass forward.
+    expect((await server.connection.collection('tw_locations').findOne({ _id: new Types.ObjectId(t.locationId) }))?.earlyPass)
+      .toEqual({ wantedAt: server.clock.now() });
 
     // A second within 5 minutes: 429, and nothing is fetched.
     server.clock.advance(4 * MINUTE);

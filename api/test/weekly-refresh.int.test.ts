@@ -849,15 +849,15 @@ describe('weekly suggestions', () => {
       expect(await earlyPassOf(p)).toEqual({});
     });
 
-    it('with TownwiseAI’s own work or the calendar titles switch off, clears the mark and makes no call', async () => {
-      for (const off of ['agentAuto', 'titles'] as const) {
+    it('with TOWNWISE_AGENT_AUTO false, or TownwiseAI’s own work or the calendar titles switch off, clears the mark and makes no call', async () => {
+      for (const off of ['env', 'agentAuto', 'titles'] as const) {
         const p = await place();
         await pass({ chat: answering([]) });
         server.clock.advance(DAY);
         if (off === 'agentAuto') await server.ctx.stores.orgs.setAgentAuto(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
-        else await server.ctx.stores.orgs.setCalendarTitlesToAi(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
+        else if (off === 'titles') await server.ctx.stores.orgs.setCalendarTitlesToAi(p.scope, { on: false, at: server.clock.now(), by: 'admin-0000' });
         await mark(p);
-        expect((await pass({ chat: answering() })).suggestions).toMatchObject({ early: 0 });
+        expect((await pass({ chat: answering(), ...(off === 'env' ? { config: { agentAuto: false } } : {}) })).suggestions).toMatchObject({ early: 0 });
         expect(await passRow(p, '2026-06-02')).toBeNull();
         expect(await earlyPassOf(p)).toEqual({});
         server.clock.advance(-DAY);

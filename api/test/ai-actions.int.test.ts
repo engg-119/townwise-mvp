@@ -1154,6 +1154,35 @@ describe('TownwiseAI works on its own (D59)', () => {
     expect(await fileNoteSuggestions(l2)).toHaveLength(1);
   });
 
+  it('slice 3: TownwiseAI’s own closure rule nobody edited blocks no event; once a person edits it, it does', async () => {
+    const l1 = await newLocation();
+    const sundays = {
+      kind: 'closure', startDate: '2026-06-01', endDate: null, weekdays: [0], effect: 'closed', expectedGuests: null, startTime: null, endTime: null,
+    } as const;
+    const rule = await server.ctx.stores.businessRules.create(scopeOf(team.orgId), l1, {
+      text: 'Closed on Sundays', schedule: sundays, addedVia: 'townwise_ai', createdBy: 'townwise_ai', now: server.clock.now(),
+      agent: { changeId: new Types.ObjectId().toHexString() },
+    });
+    // The party on Sunday the 14th: TownwiseAI's own closure is not a person's, so the event is applied.
+    const first = await seedStored(l1);
+    answers = [answer({ events: [{ ...EVENT, confidence: 'high' }] })];
+    await readAs(team.member, l1, first);
+    expect((await outcomeOf(first)).notes).toHaveLength(1);
+    expect(await fileNoteSuggestions(l1)).toEqual([]);
+    // A person edits the rule: it is theirs now, and a party on Sunday the 21st waits as a suggestion.
+    server.clock.advance(1_000);
+    try {
+      await server.ctx.stores.businessRules.update(scopeOf(team.orgId), l1, rule.id, { text: 'Shut on Sundays' }, server.clock.now());
+      const second = await seedStored(l1);
+      answers = [answer({ events: [{ ...EVENT, title: 'Anniversary dinner', startDate: '2026-06-21', endDate: '2026-06-21', confidence: 'high' }] })];
+      await readAs(team.member, l1, second);
+      expect((await outcomeOf(second)).notes).toEqual([]);
+      expect((await fileNoteSuggestions(l1)).map((row) => (row.content as { startDate: string }).startDate)).toEqual(['2026-06-21']);
+    } finally {
+      server.clock.advance(-1_000);
+    }
+  });
+
   it('with the organization’s switch off, a pressed read writes every event as D34 does, with no ledger row or suggestion', async () => {
     const l1 = await newLocation();
     expect((await switchTo(false)).status).toBe(200);
