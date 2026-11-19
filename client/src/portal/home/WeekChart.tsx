@@ -165,7 +165,7 @@ export function WeekChart(props: {
   model: Model; input: CalendarInput; metric: Metric; history: boolean; published: boolean; locationId: string;
 }): React.JSX.Element {
   const { model, metric } = props;
-  const { desktop } = useBreakpoint();
+  const { desktop, phone } = useBreakpoint();
   const [width, setWidth] = useState(START_WIDTH);
   const [chosen, setChosen] = useState<string | null>(null);
   const [hovered, setHovered] = useState<string | null>(null);
@@ -202,7 +202,7 @@ export function WeekChart(props: {
                   style={styles.slot}
                 >
                   <View style={styles.zone}>
-                    {day.status?.map((words) => <Mono key={words} tone="text2" style={styles.status}>{words}</Mono>)}
+                    {day.status?.map((words) => <Mono key={words} tone="text2" style={phone ? [styles.status, styles.statusPhone] : styles.status}>{words}</Mono>)}
                   </View>
                   <View style={styles.dayLabel}>
                     <View style={styles.weekday}>
@@ -241,6 +241,8 @@ const styles = StyleSheet.create({
   slot: { flex: 1, minWidth: 0 },
   zone: { height: HEIGHT, justifyContent: 'flex-end', alignItems: 'center', paddingBottom: 6, paddingHorizontal: 2 },
   status: { textAlign: 'center' },
+  // A phone's column is about 44px at 375: “forecast”, 8 letters of 0.6em less 0.5px each, fits it at 10px.
+  statusPhone: { fontSize: 10, lineHeight: 12, letterSpacing: -0.5 },
   dayLabel: { alignItems: 'center', paddingTop: theme.space[2], gap: 2 },
   weekday: { flexDirection: 'row', alignItems: 'center', columnGap: 4 },
   square: { width: 6, height: 6, backgroundColor: C.mint },
