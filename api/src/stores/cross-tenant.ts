@@ -11,7 +11,7 @@
 // TownwiseAI turn sweep's staleChatTurns and removeEndedChatTurns (openspec change resumable-chat-turns), the
 // boot-time title backfill's untitledAiNotes (D49), and (D66, town research) the planner's researchTownsInUse and
 // researchLocationCandidates and the runner's claimNextLocationResearchThread, claimLocationResearchMerge (also the
-// planner's merge sweep) and staleLocationResearchThreads.
+// planner's merge sweep), staleLocationResearchThreads and the planner's removeOrphanResearchRevisions.
 // Only access/resolve.ts, the active days recorder (access/activity.ts), the join and decline handlers, the staff
 // handlers (admin.ts, deletion.ts, overview.ts), the TownwiseAI turn sweep (chat/turn-sweeper.ts), the file reader (files/worker.ts), the TownwiseAI reader (files/ai-reader.ts), the file sweeper (files/sweeper.ts), the lab job's
 // callback (lab/callback.ts), the calendar refresh loop (calendar/refresher.ts), Google access
@@ -50,9 +50,10 @@ import { orderCardModel } from './orders.ts';
 import { orgModel } from './orgs.ts';
 import { calendarSourceModel } from './owner-calendars.ts';
 import { profileModel } from './profiles.ts';
-import { locationResearchRunModel, locationResearchThreadModel } from './research-locations.ts';
+import { locationEventModel, locationResearchRunModel, locationResearchThreadModel } from './research-locations.ts';
 import { researchRevisionModel } from './research-revisions.ts';
 import { allThreadsEnded, type ThreadDoc } from './research-shared.ts';
+import { townEventModel } from './research-towns.ts';
 import { HAS_VALUE, SALES_DAYS_COLLECTION } from './sales-days.ts';
 import { uploadDayModel } from './upload-days.ts';
 import { UPLOADS_COLLECTION } from './uploads.ts';
@@ -1150,4 +1151,32 @@ export async function staleLocationResearchThreads(connection: Connection, now: 
   return docs.map((doc) => ({
     id: doc._id.toHexString(), orgId: doc.orgId.toHexString(), locationId: doc.locationId.toHexString(), runId: doc.runId.toHexString(),
   }));
+}
+
+/**
+ * Revision retention (design decisions 8 and 11): deletes every location's revisions of a researched event that no
+ * longer exists (`t-<hex>` with no town row, `l-<hex>` with no location row), which retention's 400 days removed. So a
+ * member's typed title and `where` never outlive the event, and dead revisions never count toward a location's 1,000.
+ * The planner runs it each tick. Ids only: it reads no revision's text. Resolves the number deleted.
+ */
+export async function removeOrphanResearchRevisions(connection: Connection): Promise<number> {
+  const Revision = researchRevisionModel(connection);
+  const eventIds: string[] = await Revision.distinct('eventId');
+  const town: Types.ObjectId[] = [];
+  const own: Types.ObjectId[] = [];
+  for (const eventId of eventIds) {
+    const match = /^([tl])-([0-9a-f]{24})$/.exec(eventId);
+    if (match === null) continue;
+    (match[1] === 't' ? town : own).push(new Types.ObjectId(match[2]));
+  }
+  const [townLeft, ownLeft] = await Promise.all([
+    town.length === 0 ? [] : townEventModel(connection).distinct('_id', { _id: trusted({ $in: town }) }),
+    own.length === 0 ? [] : locationEventModel(connection).distinct('_id', { _id: trusted({ $in: own }) }),
+  ]);
+  const left = new Set([
+    ...townLeft.map((id: Types.ObjectId) => `t-${id.toHexString()}`), ...ownLeft.map((id: Types.ObjectId) => `l-${id.toHexString()}`),
+  ]);
+  const gone = eventIds.filter((eventId) => /^[tl]-[0-9a-f]{24}$/.test(eventId) && !left.has(eventId));
+  if (gone.length === 0) return 0;
+  return (await Revision.deleteMany({ eventId: trusted({ $in: gone }) })).deletedCount;
 }

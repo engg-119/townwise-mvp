@@ -313,7 +313,8 @@ describe('isolation (source)', () => {
       expect(importersOf('stores/research-shared.ts')).toEqual([
         'stores/cross-tenant.ts', 'stores/research-locations.ts', 'stores/research-revisions.ts', 'stores/research-towns.ts',
       ]);
-      expect(importersOf('stores/research-towns.ts')).toEqual(['stores/index.ts']);
+      // cross-tenant.ts reads town event ids for revision retention (removeOrphanResearchRevisions).
+      expect(importersOf('stores/research-towns.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
       expect(importersOf('stores/research-spend.ts')).toEqual(['stores/index.ts']);
       expect(importersOf('stores/research-locations.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
       expect(importersOf('stores/research-revisions.ts')).toEqual(['stores/cross-tenant.ts', 'stores/index.ts']);
@@ -344,6 +345,10 @@ describe('isolation (source)', () => {
       const reachesEdits = (file: { path: string; text: string }): boolean => importsOf(file, false).includes('stores/research-revisions.ts')
         || /\bresearchRevisions\b|\btw_research_revisions\b/.test(file.text);
       expect(research.filter(reachesEdits).map((file) => file.path).every((path) => ['research/read.ts', 'research/revisions.ts'].includes(path))).toBe(true);
+      // The planner's one touch is revision retention through cross-tenant.ts, which deletes by event id and reads no
+      // revision's text; nothing else in it names the edits.
+      const plan = research.find((each) => each.path === 'research/plan.ts');
+      expect([...new Set([...(plan?.text ?? '').matchAll(/\w+Revisions?\w*/g)].map((match) => match[0]))]).toEqual(['removeOrphanResearchRevisions']);
       for (const path of ['research/prompt.ts', 'research/call.ts', 'research/runner.ts']) {
         const file = research.find((each) => each.path === path);
         const reached = file === undefined ? [] : importsOf(file, false).filter((each) => ['research/read.ts', 'research/revisions.ts', 'stores/research-revisions.ts'].includes(each));

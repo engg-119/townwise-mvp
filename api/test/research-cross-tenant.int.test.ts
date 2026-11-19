@@ -10,8 +10,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 
 import { scopeForNewOrg, scopeForResearch, type OrgScope } from '../src/access/policy.ts';
 import {
-  claimLocationResearchMerge, claimNextLocationResearchThread, researchLocationCandidates, researchTownsInUse,
-  staleLocationResearchThreads,
+  claimLocationResearchMerge, claimNextLocationResearchThread, removeOrphanResearchRevisions, researchLocationCandidates,
+  researchTownsInUse, staleLocationResearchThreads,
 } from '../src/stores/cross-tenant.ts';
 import type { TownwiseStores } from '../src/stores/index.ts';
 import { addLocation, createOrg } from './helpers/fixtures.ts';
@@ -32,7 +32,9 @@ beforeAll(async () => {
 });
 afterAll(async () => { await server.close(); });
 beforeEach(async () => {
-  for (const name of ['tw_orgs', 'tw_locations', 'tw_location_research_runs', 'tw_location_research_threads']) {
+  for (const name of [
+    'tw_orgs', 'tw_locations', 'tw_location_research_runs', 'tw_location_research_threads', 'tw_location_events', 'tw_town_events', 'tw_research_revisions',
+  ]) {
     await server.connection.collection(name).deleteMany({});
   }
 });
@@ -245,5 +247,38 @@ describe('the stale sweep', () => {
       { id: first?.id, orgId: a.orgId, locationId: a.locationId, runId: first?.runId },
       { id: second?.id, orgId: b.orgId, locationId: b.locationId, runId: run.id },
     ]);
+  });
+});
+
+describe('revision retention', () => {
+  it('deletes the revisions of events retention removed, in every location, and keeps those of events still stored', async () => {
+    const t = await tenant();
+    const u = await tenant();
+    const seen = NOW;
+    const run = new Types.ObjectId().toHexString();
+    const row = (start: string) => ({
+      title: 'Sentinel Night', titleKey: `sentinel night ${start}`, kind: 'event' as const, category: 'festival' as const, start, end: start, weekdays: null,
+      startTime: null, status: 'scheduled' as const, venueId: null, hostId: null, confidence: 'high' as const,
+      sources: [{ label: 'News', url: 'https://news.example/x' }], firstRunId: run, lastRunId: run, firstSeenAt: seen, lastSeenAt: seen, seenCount: 1,
+    });
+    const own = (start: string) => stores.researchLocations.insertEvent(t.scope, t.locationId, {
+      ...row(start), placeId: null, town: 'hanover-nh', origin: 'neighborhood', competitorEntityId: null, competitorPlaceId: null,
+    });
+    const [oldOwn, keptOwn] = [await own('2024-01-01'), await own('2026-12-01')];
+    const [oldTown, keptTown] = [await stores.researchTowns.insertEvent('hanover-nh', row('2024-01-02')), await stores.researchTowns.insertEvent('hanover-nh', row('2026-12-02'))];
+    const edit = (who: Tenant, eventId: string) => stores.researchRevisions.append(who.scope, {
+      locationId: who.locationId, eventId, op: 'edit', fields: { title: 'A member typed this' }, reverts: null, basedOn: 'base',
+      by: { kind: 'person', userId: null }, now: NOW,
+    });
+    for (const eventId of [`l-${oldOwn.id}`, `l-${keptOwn.id}`, `t-${oldTown.id}`, `t-${keptTown.id}`]) await edit(t, eventId);
+    for (const eventId of [`t-${oldTown.id}`, `t-${keptTown.id}`]) await edit(u, eventId);
+    // Retention removed the two old events.
+    await stores.researchLocations.removeOld(t.scope, t.locationId, { endedBefore: '2025-01-01', unseenBefore: new Date(0), createdBefore: new Date(0) });
+    await stores.researchTowns.removeOld('hanover-nh', { endedBefore: '2025-01-01', unseenBefore: new Date(0), createdBefore: new Date(0) });
+    expect(await removeOrphanResearchRevisions(server.connection)).toBe(3);
+    expect((await stores.researchRevisions.list(t.scope, t.locationId)).map((each) => each.eventId).sort()).toEqual([`l-${keptOwn.id}`, `t-${keptTown.id}`].sort());
+    expect((await stores.researchRevisions.list(u.scope, u.locationId)).map((each) => each.eventId)).toEqual([`t-${keptTown.id}`]);
+    expect(await stores.researchRevisions.count(t.scope, t.locationId)).toBe(2);
+    expect(await removeOrphanResearchRevisions(server.connection)).toBe(0);
   });
 });

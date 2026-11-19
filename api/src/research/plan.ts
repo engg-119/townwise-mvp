@@ -15,6 +15,8 @@
 // - Merge sweep: claims the merge of any `running` run whose threads are all terminal, or a merge whose lease passed,
 //   and hands it to the runner's merge, so a run never stays `running` because the lane that settled its last thread
 //   died.
+// - Revision retention: deletes the revisions of events that no longer exist (stores/cross-tenant.ts
+//   removeOrphanResearchRevisions, ids only), so an edit never outlives its event or counts toward the 1,000.
 //
 // TOWNWISE_RESEARCH_TOWN_MONTHLY_USD at 0 plans no town run, and TOWNWISE_RESEARCH_ORG_MONTHLY_USD at 0 no automatic
 // location run (design decision 17). Logs carry counts only, never a town's or a location's name.
@@ -25,7 +27,9 @@ import { Types, type Connection } from 'mongoose';
 
 import { scopeForResearch, type OrgScope } from '../access/policy.ts';
 import type { ResolvedTownwiseConfig } from '../config.ts';
-import { claimLocationResearchMerge, researchLocationCandidates, researchTownsInUse } from '../stores/cross-tenant.ts';
+import {
+  claimLocationResearchMerge, removeOrphanResearchRevisions, researchLocationCandidates, researchTownsInUse,
+} from '../stores/cross-tenant.ts';
 import type { TownwiseStores } from '../stores/index.ts';
 import type { LocationRecord } from '../stores/locations.ts';
 import type { LocationRunRecord, RunTrigger } from '../stores/research-locations.ts';
@@ -328,6 +332,12 @@ export async function planTick(ctx: PlanContext, owner: string, merge: (claimed:
     }
   }
   counts.merges = await sweepMerges(ctx, owner, merge);
+  // Revision retention: the edits of events the merges' retention removed go too (ids only; no edit's text is read).
+  try {
+    await removeOrphanResearchRevisions(ctx.connection);
+  } catch (err) {
+    ctx.logger.warn({ errType: err instanceof Error ? err.name : 'unknown' }, 'townwise.research_plan_failed');
+  }
   if (counts.towns + counts.locations + counts.merges > 0) ctx.logger.info({ ...counts }, 'townwise.research_plan');
   return counts;
 }
