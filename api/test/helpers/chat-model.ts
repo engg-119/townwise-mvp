@@ -86,6 +86,56 @@ export function cited(value: string, urls: readonly string[]): BetaContentBlock 
   };
 }
 
+/** Text citing search results with the given cited words (D66 grounding reads them), one citation per entry. */
+export function citedQuotes(value: string, quotes: readonly { url: string; quote: string }[]): BetaContentBlock {
+  return {
+    citations: quotes.map(({ url, quote }) => ({
+      type: 'web_search_result_location', cited_text: quote, url, title: 'Sentinel-title', encrypted_index: `Sentinel-index/${url}`,
+    })),
+    type: 'text', text: value,
+  };
+}
+
+/** D66: a page fetch (web_fetch_20260209) as the API returns it, called directly. */
+export function webFetch(id: string, url: string): BetaContentBlock {
+  return { type: 'server_tool_use', id, name: 'web_fetch', input: { url }, caller: { type: 'direct' } };
+}
+
+/** Its result: the fetched page as a plain-text document with citations on (task 0.2's probe). */
+export function fetchResult(id: string, url: string, value: string): BetaContentBlock {
+  return {
+    type: 'web_fetch_tool_result', tool_use_id: id, caller: { type: 'direct' },
+    content: {
+      type: 'web_fetch_result', url, retrieved_at: '2026-11-19T12:00:00Z',
+      content: { type: 'document', title: 'Sentinel-doc-title', citations: { enabled: true }, source: { type: 'text', media_type: 'text/plain', data: value } },
+    },
+  };
+}
+
+/** A fetch that failed: its result holds the API's error code instead of a page. */
+export function fetchError(id: string, code: 'url_not_accessible' | 'url_not_allowed' | 'unavailable' = 'url_not_accessible'): BetaContentBlock {
+  return { type: 'web_fetch_tool_result', tool_use_id: id, caller: { type: 'direct' }, content: { type: 'web_fetch_tool_result_error', error_code: code } };
+}
+
+/**
+ * Text citing fetched pages: `char_location` citations with no URL, naming the page by `document_index` (its position
+ * among the fetch results, task 0.2's probe) and the cited words.
+ */
+export function docCited(value: string, quotes: readonly { documentIndex: number; quote: string }[]): BetaContentBlock {
+  return {
+    citations: quotes.map(({ documentIndex, quote }) => ({
+      type: 'char_location', cited_text: quote, document_index: documentIndex, document_title: 'Sentinel-doc-title',
+      start_char_index: 0, end_char_index: quote.length, file_id: null,
+    })),
+    type: 'text', text: value,
+  };
+}
+
+/** A message the API paused (`pause_turn`) after its server tools ran; the caller resends it unchanged. */
+export function pause(content: BetaContentBlock[], opts: { usage?: UsageInput } = {}): BetaMessage {
+  return message(content, { ...opts, stopReason: 'pause_turn' });
+}
+
 /** A text block of a reply after a search that cites nothing: in S0 step c it has no `citations` key at all. */
 export function bareText(value: string): BetaContentBlock {
   return { type: 'text', text: value } as unknown as BetaContentBlock;
