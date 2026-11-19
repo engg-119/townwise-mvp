@@ -19,6 +19,8 @@ const DESIGN_TABLE = {
     'note.created', 'note.updated', 'note.deleted', 'rule.created', 'rule.updated', 'rule.deleted', 'owner_calendar.added',
     'owner_calendar.removed', 'owner_calendar.refreshed', 'google_calendar.connected', 'google_calendar.disconnected',
     'owner_calendar.booking_labeled', 'owner_calendar.bookings_confirmed',
+    // D66: a person's edit, hide or restore of a researched event.
+    'research.event_edited', 'research.event_hidden', 'research.event_restored',
   ],
   townwiseAi: [
     'chat.turn_completed', 'chat.conversation_deleted', 'agent.question_answered', 'agent.suggestion_accepted', 'agent.suggestion_dismissed',

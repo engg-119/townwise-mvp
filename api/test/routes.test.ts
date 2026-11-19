@@ -121,6 +121,15 @@ describe('route table', () => {
     ]);
   });
 
+  it('D66: editing a researched event is a member PATCH with an 8kb body, no route limiter, open as admin', () => {
+    const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.research.event_update')
+      .map(({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }) => ({ id, method, path, policy, bodyLimit, limiter, openAsAdmin }));
+    expect(rows).toEqual([{
+      id: 'org.research.event_update', method: 'PATCH', path: '/org/locations/:locationId/research/events/:eventId', policy: 'member',
+      bodyLimit: '8kb', limiter: undefined, openAsAdmin: true,
+    }]);
+  });
+
   it('U13A: people in town and how Townwise estimates are member reads with no body and no limiter', () => {
     const rows = TOWNWISE_ROUTES.filter((r) => r.id === 'org.people.get' || r.id === 'org.estimates.about')
       .map(({ id, method, path, policy, bodyLimit, limiter }) => ({ id, method, path, policy, bodyLimit, limiter }));
