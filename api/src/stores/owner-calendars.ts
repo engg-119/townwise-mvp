@@ -465,6 +465,8 @@ export interface OwnerCalendarStore {
   googleSources(scope: OrgScope, locationId: string): Promise<GoogleSource[]>;
   /** How many Google calendars of the organization the connection reads. */
   countForConnection(scope: OrgScope, connectionId: string): Promise<number>;
+  /** D59 slice 5: the Google calendars of the organization the connection reads, as ids and their location's id. */
+  listForConnection(scope: OrgScope, connectionId: string): Promise<{ id: string; locationId: string }[]>;
   /**
    * Every Google calendar of the organization the connection reads, with their events (events, then calendars, then
    * events). Resolves the number of calendars deleted.
@@ -843,6 +845,10 @@ export function createOwnerCalendarStore(connection: Connection): OwnerCalendarS
     },
     countForConnection(scope, connectionId) {
       return Source.countDocuments(ofConnection(scope, connectionId));
+    },
+    async listForConnection(scope, connectionId) {
+      const docs = await Source.find(ofConnection(scope, connectionId), { _id: 1, locationId: 1 }).lean();
+      return docs.map((doc) => ({ id: doc._id.toHexString(), locationId: doc.locationId.toHexString() }));
     },
     async removeForConnection(scope, connectionId) {
       // Only the calendars found here go, each after its events, so no calendar leaves rows behind.

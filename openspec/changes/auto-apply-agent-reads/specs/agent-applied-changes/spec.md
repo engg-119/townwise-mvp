@@ -61,3 +61,22 @@ The activity feed SHALL list each change as `agent_change` with its date, action
 #### Scenario: View-as
 - **WHEN** staff view the activity as a member
 - **THEN** they see the changes, and no Undo is offered
+
+### Requirement: A calendar answers open closure questions
+When a location's calendar events switch (a calendar added, the refresh loop, Refresh now), after a file read or a sales upload, and after its weekly pass whatever its outcome, Townwise SHALL check, with no model call, the location's open closure questions and suggestions against the keyed all-day events of all its calendars whose titles plainly say the business is closed (design decision 16's word rule). A gap or likely-closed question SHALL not ask about a day such an event covers. A dated closure rule or closure note suggestion every day of which is covered, and a standing closed weekday whose next 8 days of each weekday are covered, SHALL be answered unless a person's note or rule decides one of its days differently. While TownwiseAI works on its own, an answer SHALL first save, through the one writer with `sourceKind: 'calendar'`, a closure note linked to each answering event whose days closure notes do not all close yet (or, for a standing weekday, the suggestion's rule), and SHALL leave the suggestion open when any of them is not written and still applied. While it does not, nothing SHALL be written, and a standing closed weekday SHALL stay open. Removing a calendar SHALL take back, as TownwiseAI, the closure notes its answers saved that nobody changed since. An answered suggestion SHALL read `answered` with `decidedBy: 'calendar'`, and SHALL no longer be listed or counted anywhere. Logs and audit events SHALL carry ids and counts only.
+
+#### Scenario: The owner puts "Closed" on his Google calendar
+- **WHEN** TownwiseAI works on its own, a file suggested "Closed Dec 24 to Dec 26", and the owner connects a Google calendar with an all-day event "Closed for the holidays" on those days
+- **THEN** the suggestion is gone from TownwiseAI's panel, its counts, Home and Business rules, a closure note linked to the event shows in the activity with Undo, and the forecast closes those days
+
+#### Scenario: The switch is off
+- **WHEN** the same calendar is connected while TownwiseAI does not work on its own
+- **THEN** the suggestion is answered and gone from every place, and no note or rule is written
+
+#### Scenario: A person's note disagrees
+- **WHEN** a member's note says Dec 24 is a private party and the calendar says closed
+- **THEN** the suggestion stays open and nothing is written
+
+#### Scenario: A title that does not plainly say closed
+- **WHEN** the calendar's event on those days reads "Closed early" or "Kitchen closed"
+- **THEN** nothing is answered

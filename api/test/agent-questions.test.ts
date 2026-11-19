@@ -636,3 +636,32 @@ describe('the audit summary of an answer', () => {
     ]);
   });
 });
+
+describe('days a calendar says closed (D59 slice 5)', () => {
+  const hole = range('2026-03-01', '2026-03-03');
+  const withHole = input(FROM, TO, (day) => hole.includes(day));
+
+  it('a gap every day of which a closed event covers is not asked', () => {
+    expect(questionsFor(withHole)).toEqual([gap('2026-03-01', '2026-03-03')]);
+    expect(questionsFor({ ...withHole, calendarClosed: hole })).toEqual([]);
+  });
+
+  it('a gap covered in part shrinks to the days left', () => {
+    expect(questionsFor({ ...withHole, calendarClosed: ['2026-03-01'] })).toEqual([gap('2026-03-02', '2026-03-03')]);
+    expect(questionsFor({ ...withHole, calendarClosed: ['2026-03-02'] })).toEqual([gap('2026-03-03', '2026-03-03'), gap('2026-03-01', '2026-03-01')]);
+  });
+
+  it('a likely-closed day a closed event covers is not asked', () => {
+    const SAT = '2026-03-14';
+    const base = input(FROM, TO, () => false);
+    const nearEmpty: QuestionInput = { ...base, days: base.days.map((day) => (day.date === SAT ? { date: SAT, guests: 1, netSalesCents: null } : day)) };
+    expect(questionsFor(nearEmpty).map((q) => q.id)).toEqual([`likely_closed_${SAT}`]);
+    expect(questionsFor({ ...nearEmpty, calendarClosed: [SAT] })).toEqual([]);
+  });
+
+  it('never makes a weekday look usually closed, and leaves days with sales as they are', () => {
+    const closedMondays = input(FROM, TO, (day) => weekday(day) === 1);
+    expect(weekdayEvidence({ ...closedMondays, calendarClosed: mondays }).map((each) => each.weekday)).toEqual([1]);
+    expect(questionsFor({ ...input(FROM, TO, () => false), calendarClosed: hole })).toEqual([]);
+  });
+});

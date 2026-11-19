@@ -48,11 +48,12 @@ describe('isolation (source)', () => {
     // agent/apply.ts reads the why's length cap from it; stores/cross-tenant.ts clears a deleted person's id from its rows.
     expect(importers).toEqual(['agent/apply.ts', 'stores/cross-tenant.ts', 'stores/index.ts']);
     // The one writer: every change TownwiseAI saves goes through applyChange. Undo moves a row's status
-    // (handlers/agent-changes.ts), and a file's own undo marks its rows (handlers/data.ts).
+    // (handlers/agent-changes.ts), a file's own undo marks its rows (handlers/data.ts), and (D59 slice 5) a removed
+    // calendar's answer notes are taken back as TownwiseAI (calendar/answers.ts takeBackAnswers).
     const writers = sourceFiles().filter((file) => /agentChanges\.(insertApplying|setWritten|markApplied|removeApplying)\(/.test(file.text)).map((file) => file.path);
     expect(writers).toEqual(['agent/apply.ts']);
     const undoers = sourceFiles().filter((file) => /agentChanges\.(markUndoing|markUndone|markAdopted|markSourceUndone)\(/.test(file.text)).map((file) => file.path).sort();
-    expect(undoers.every((path) => ['handlers/agent-changes.ts', 'handlers/data.ts'].includes(path))).toBe(true);
+    expect(undoers.every((path) => ['calendar/answers.ts', 'handlers/agent-changes.ts', 'handlers/data.ts'].includes(path))).toBe(true);
   });
 
   it('product code answers 401 only through userGone() in access/resolve.ts', () => {
@@ -255,9 +256,12 @@ describe('isolation (source)', () => {
     // list shows each calendar as a row through the calendar routes' own view (handlers/data.ts). Neither reads an event.
     // D59 slice 2: TownwiseAI's sort on import (calendar/auto-sort.ts) labels a file calendar's events and notes its
     // upcoming bookings as the booking routes do, and its Undo per calendar (handlers/agent-changes.ts) and the changes'
-    // views (agent/changes.ts) clear and count the labels that sort set, never reading a title.
+    // views (agent/changes.ts) clear and count the labels that sort set, never reading a title. D59 slice 5: the
+    // questions' input (agent/question-input.ts) and a calendar's answers (calendar/answers.ts) read the events whose
+    // titles plainly say closed, to explain question days and to answer suggestions with notes and rules through the one
+    // writer, never a figure; a stored event still changes no forecast figure by itself.
     expect(sourceFiles().filter(reaches).map((file) => file.path).sort()).toEqual([
-      'agent/changes.ts', 'calendar/auto-sort.ts', 'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts',
+      'agent/changes.ts', 'agent/question-input.ts', 'calendar/answers.ts', 'calendar/auto-sort.ts', 'calendar/follow-up.ts', 'calendar/google-access.ts', 'calendar/refresher.ts',
       'chat/tools/owner-calendar.ts', 'files/calendar-import.ts', 'handlers/agent-changes.ts', 'handlers/calendar-bookings.ts', 'handlers/data.ts',
       'handlers/deletion.ts', 'handlers/google-calendars.ts', 'handlers/locations.ts', 'handlers/notes.ts', 'handlers/owner-calendars.ts',
       'handlers/weekly-suggestions.ts', 'lab/input.ts', 'lab/suggestions.ts', 'stores/cross-tenant.ts', 'stores/index.ts',

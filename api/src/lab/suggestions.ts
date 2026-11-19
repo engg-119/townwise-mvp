@@ -81,6 +81,7 @@ import { salesSuggestions } from '../agent/rule-suggestion-views.ts';
 import { noteCovers } from '../agent/questions.ts';
 import type { TownwiseContext } from '../app.ts';
 import { TOWNWISE_AI_ACTOR } from '../audit.ts';
+import { answerFromCalendars } from '../calendar/answers.ts';
 import type { ChatModel } from '../chat/model.ts';
 import { ceilingCostMicroUsd, costMicroUsd, messageCostMicroUsd, tokensOf, type TokenCounts } from '../chat/pricing.ts';
 import { CHAT_MODEL } from '../chat/turn.ts';
@@ -966,9 +967,22 @@ async function suggestionsOn(stores: SuggestionsContext['stores'], scope: OrgSco
  * date has come; builds the request and reserves its amount of the month (`budget` when less is left), holding it on the
  * row; makes the call; stores what passes the checks; and records the outcome on the row, which hands the reservation
  * back, corrected to what the call cost. When the location was deleted meanwhile, the week's row and what it stored are
- * removed. A store error after the claim records `failed` and is thrown, for the pass to log the location's ids.
+ * removed. A store error after the claim records `failed` and is thrown, for the pass to log the location's ids. Then,
+ * whatever the outcome (D59 slice 5), the location's calendars answer what is open now, this pass's suggestions
+ * included: code only, so it never waits on the switch, the budget or the call (it never throws).
  */
 export async function suggestFor(
+  ctx: SuggestionsContext, scope: OrgScope, location: LocationRecord, week: string,
+): Promise<SuggestionsOutcome> {
+  try {
+    return await suggestPass(ctx, scope, location, week);
+  } finally {
+    await answerFromCalendars({ stores: ctx.stores, logger: ctx.logger, now: ctx.now, agentAuto: ctx.config.agentAuto }, scope, location);
+  }
+}
+
+/** suggestFor's pass, before the calendars answer. */
+async function suggestPass(
   ctx: SuggestionsContext, scope: OrgScope, location: LocationRecord, week: string,
 ): Promise<SuggestionsOutcome> {
   const { stores, chat: model } = ctx;

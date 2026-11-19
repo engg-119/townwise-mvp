@@ -136,7 +136,7 @@ function whatOf(change: Pick<AgentChange, 'action' | 'noteKind' | 'startDate' | 
 
 /** [CONFIRM: the words for what TownwiseAI saves from its weekly suggestions and the sales history] */
 const SOURCE_WORDS: Readonly<Record<AgentChange['sourceKind'], string>> = {
-  file: 'from a file you added', calendar: 'from a calendar you imported', weekly: 'from its weekly look ahead', sales: 'from your sales history',
+  file: 'from a file you added', calendar: 'from your calendar', weekly: 'from its weekly look ahead', sales: 'from your sales history',
   chat: 'from your message',
 };
 
@@ -187,8 +187,11 @@ export function undoErrorFinal(error: unknown): boolean {
  * TownwiseAI saves from its weekly suggestions and the sales history] [CONFIRM: the words for pasted text TownwiseAI reads
  * and a note it saves from your message] Only a link or Google calendar's refresh brings the
  * weekly look ahead forward (api/src/calendar/early-pass.ts), and only while the titles switch is on, so they say so.
+ * D59 slice 5: a calendar that plainly says closed answers TownwiseAI's open closure questions (api/src/calendar/answers.ts),
+ * whatever the titles switch says, since nothing is sent. [CONFIRM: the switch's and activity's words for answers from a
+ * calendar]
  */
-export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add or text you paste on Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. When you tell it about a dated event plainly in a message, it saves that note too. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
+export const AGENT_AUTO_WORDS = 'Let TownwiseAI work on its own. It reads each file you add or text you paste on Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. When you tell it about a dated event plainly in a message, it saves that note too. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. When your calendar plainly says you’re closed on days it asked about, it stops asking, whether this is on or off. With this on, it also saves that closure from the calendar, so the forecast closes those days; with it off, make a note from that event on the Calendar. Each change shows here with Undo. Anything it isn’t sure of waits for you.';
 
 /** How TownwiseAI works' sentence, by the switch (design decision 14). [CONFIRM: the panel's and switch's words] */
 export function savesLine(on: boolean): string {
