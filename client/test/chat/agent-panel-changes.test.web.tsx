@@ -110,7 +110,7 @@ test('slice 2: Undo on a calendar’s labels reads the panel again, since it als
   });
   renderAt(api, meOf(ACCESS.admin));
   const panel = await side();
-  const line = 'Added booking labels on 3 events, used for forecasts, from a calendar you imported.';
+  const line = 'Added booking labels on 3 events, used for forecasts, from your calendar.';
   const loads = api.panelLoads;
   fireEvent.click(within(panel).getByRole('button', { name: `Undo: ${line}` }));
   await waitFor(() => { expect(api.panelLoads).toBe(loads + 1); });

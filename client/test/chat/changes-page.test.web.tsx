@@ -114,9 +114,9 @@ test('slice 2: a calendar sorted on import is one line with its count and Undo, 
   };
   renderAt(api, meOf(ACCESS.admin));
   const list = await screen.findByRole('list', { name: 'TownwiseAI’s changes' });
-  const line = 'Added booking labels on 12 events, used for forecasts, from a calendar you imported.';
+  const line = 'Added booking labels on 12 events, used for forecasts, from your calendar.';
   expect(within(list).getByText(line)).toBeTruthy();
-  expect(within(list).getByText('Added booking labels, used for forecasts, from a calendar you imported.')).toBeTruthy();
+  expect(within(list).getByText('Added booking labels, used for forecasts, from your calendar.')).toBeTruthy();
   fireEvent.click(within(list).getByRole('button', { name: `Undo: ${line}` }));
   expect(await screen.findByText(`${line} Undone.`)).toBeTruthy();
   expect(screen.queryByRole('button', { name: `Undo: ${line}` })).toBeNull();
@@ -124,6 +124,13 @@ test('slice 2: a calendar sorted on import is one line with its count and Undo, 
   expect(undoErrorText(refusal(403, 'forbidden'), 'booking.label')).toBe('Only an org admin can undo booking labels.');
   expect(undoErrorText(refusal(409, 'changed_since'), 'booking.label'))
     .toBe('You changed this since, so it’s yours now. Delete it from Your calendars if you don’t want it.');
+});
+
+test('slice 5: a closure TownwiseAI saved from a calendar’s answer says it came from your calendar', () => {
+  const line = changeLine({
+    action: 'note.add', noteKind: 'closure', startDate: '2026-12-24', endDate: '2026-12-26', count: null, sourceKind: 'calendar', status: 'applied',
+  });
+  expect(line).toMatch(/^Added a note: Closure, .*, from your calendar\.$/);
 });
 
 test('slice 2: Undo on a calendar’s labels reads the log again, so the notes it took back read undone too', async () => {
@@ -145,9 +152,9 @@ test('slice 2: Undo on a calendar’s labels reads the log again, so the notes i
   renderAt(api, meOf(ACCESS.admin));
   const list = await screen.findByRole('list', { name: 'TownwiseAI’s changes' });
   expect(screen.getByText(CHANGES_INTRO)).toBeTruthy();
-  const note = 'Added a note: Private event, Jun 20, 2026, from a calendar you imported.';
+  const note = 'Added a note: Private event, Jun 20, 2026, from your calendar.';
   expect(within(list).getByRole('button', { name: `Undo: ${note}` })).toBeTruthy();
-  fireEvent.click(within(list).getByRole('button', { name: 'Undo: Added booking labels on 3 events, used for forecasts, from a calendar you imported.' }));
+  fireEvent.click(within(list).getByRole('button', { name: 'Undo: Added booking labels on 3 events, used for forecasts, from your calendar.' }));
   // The list is drawn again from the second read.
   expect(await screen.findByText(`${note} Undone.`)).toBeTruthy();
   expect(screen.queryByRole('button', { name: /^Undo: / })).toBeNull();
@@ -159,7 +166,7 @@ test('the log’s intro and the switch’s words name calendar labels, and the s
     'Each note, business rule, summary, set of sales days or set of booking labels TownwiseAI saved here, newest first. Undo removes what it added, as long as nobody changed it since. Undo on a calendar’s booking labels also removes the notes TownwiseAI made from that calendar and stops using its labels for forecasts. Once you change something it added, it’s yours.',
   );
   expect(AGENT_AUTO_WORDS).toBe(
-    'Let TownwiseAI work on its own. It reads each file you add or text you paste on Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. When you tell it about a dated event plainly in a message, it saves that note too. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
+    'Let TownwiseAI work on its own. It reads each file you add or text you paste on Your data, sorts the bookings in each calendar file your team imports while sending your calendars’ titles is on, and saves what it’s sure of, such as a dated private event, so the forecast updates. When you tell it about a dated event plainly in a message, it saves that note too. Each week it also saves the suggestions it’s sure of, and days your sales history shows you’re closed, with at most 2 business rules a week. While sending your calendars’ titles is on, a calendar link or Google calendar whose refresh adds or moves an event in the next 3 months brings that forward, at most once a day. When your calendar plainly says you’re closed on days it asked about, it saves that closure from the calendar and stops asking. Each change shows here with Undo. Anything it isn’t sure of waits for you.',
   );
 });
 
